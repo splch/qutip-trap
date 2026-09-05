@@ -41,3 +41,29 @@ def test_comparison_detects_a_changed_number_and_tolerates_artifacts() -> None:
         "value = 1.2345678\nInstalled 3 packages\n", "value = 1.23456780001\n", rtol=1e-9, atol=1e-12
     )
     assert fine.ok and fine.numbers_compared == 1
+
+
+def test_residual_class_numbers_compare_to_an_order_of_magnitude() -> None:
+    """A leaked population 4.06e-10 (macOS oracle) against 4.08e-10 (Linux runner) is a residual and passes; the physics
+    number on the same line stays strict; a residual off by more than a factor 3 still fails."""
+    rc = _load_runner()
+    assert (
+        rc.is_residual("4.06e-10")
+        and rc.is_residual("3e-16")
+        and not rc.is_residual("1.86924e-08")
+        and not rc.is_residual("0.00410")
+    )
+    assert rc.significant_digits("4.06e-10") == 3 and rc.significant_digits("150000.000000000") == 15
+    exp = "Delta/2pi = 1.00 MHz: phase = +0.00410 rad, population leaked 4.06e-10\n"
+    ok = rc.compare(
+        exp, "Delta/2pi = 1.00 MHz: phase = +0.00410 rad, population leaked 4.08e-10\n", rtol=1e-9, atol=1e-12
+    )
+    assert ok.ok and ok.residual_numbers == 1 and ok.max_rel_dev == 0.0
+    bad_phase = rc.compare(
+        exp, "Delta/2pi = 1.00 MHz: phase = +0.00411 rad, population leaked 4.06e-10\n", rtol=1e-9, atol=1e-12
+    )
+    assert not bad_phase.ok
+    bad_residual = rc.compare(
+        exp, "Delta/2pi = 1.00 MHz: phase = +0.00410 rad, population leaked 4.06e-09\n", rtol=1e-9, atol=1e-12
+    )
+    assert not bad_residual.ok

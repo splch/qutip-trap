@@ -84,7 +84,11 @@ Added on 2026-09-04 (evening) by the Run 5 revision:
 
 `run_checks.py` re-executes every `check_*.py` under the project interpreter (`uv run python
 validation/scripts/run_checks.py`), matches each numeric line of the committed output to the fresh output by
-its non-numeric skeleton and compares the numbers to a relative tolerance of 1e-9 (wall times are never
+its non-numeric skeleton and compares the numbers to a relative tolerance of 1e-9, except for the residual class
+(numbers below 1e-6 in magnitude printed with at most three significant digits: leaked populations, norm losses,
+element differences at the round-off level), whose last digits depend on the machine's BLAS and integrator and
+which are therefore compared to a factor of 3, their order of magnitude (the first Linux CI run differed from the
+macOS oracle by 4.06e-10 against 4.08e-10 on exactly such a number); wall times are never
 compared; `bench_*.py` run only with `--bench` and are not compared). `--report` writes
 `validation/report/convergence_report.{json,md}` and the fresh outputs, which CI uploads as the
 `convergence-report` artifact; it is the first CI job (`.github/workflows/ci.yml`). The committed outputs of
