@@ -1,0 +1,77 @@
+[project]
+name = "qutip-trap"
+version = "0.0.1"
+description = "First-principles trapped-ion quantum computer simulator built on QuTiP (PLAN.md; milestone M0: scaffolding and public interfaces)"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+authors = [{ name = "Spencer Churchill", email = "25377399+splch@users.noreply.github.com" }]
+dependencies = [
+    "qutip>=5.3.1,<5.4",
+    "numpy>=2.5.2,<3",
+    "scipy>=1.18.1,<2",
+    "pyyaml>=6.0.2",
+]
+
+[project.optional-dependencies]
+# Section 1.5 / M0: the graphical front end is an optional extra so the physics core has no UI dependency.
+# Flet 0.86 is the announced last line before 1.0; review the pin when 1.0 ships.
+gui = ["flet[all]>=0.86,<1.0", "flet-charts>=0.86,<1.0"]
+plot = ["matplotlib>=3.10"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "hypothesis>=6.135",
+    "ruff>=0.13",
+    "mypy>=1.17",
+    "types-PyYAML>=6.0.12",
+    # needed by the committed check scripts under validation/scripts/ (Appendix D)
+    "sympy>=1.14",
+    "mpmath>=1.3",
+]
+
+[tool.uv.workspace]
+members = ["qutip_trap_app"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qutip_trap"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "convergence: tests whose pass/fail feeds the convergence-report artifact (Section 5.5)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+extend-exclude = [
+    "plan_sources",
+    "*.md",
+    # the committed oracle scripts behind every [recomputed here] number are not restyled
+    "validation/scripts/check_*.py",
+    "validation/scripts/bench_*.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# E501: the formatter governs code line length; long docstring/comment lines are allowed
+ignore = ["B905", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["qutip_trap", "qutip_trap_app"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["qutip_trap", "validation/scripts/run_checks.py", "tools"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["qutip", "qutip.*", "scipy", "scipy.*", "flet", "flet.*"]
+ignore_missing_imports = true

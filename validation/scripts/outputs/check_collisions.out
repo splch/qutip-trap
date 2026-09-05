@@ -1,0 +1,3 @@
+ion    9.0 u: k_L = 1.63e-09 cm^3/s, n = 3.22e+05 cm^-3, Gamma_L = 5.25e-04 s^-1 per ion, one per 32 min per ion, one per 1.1 min for 30 ions
+ion   40.1 u: k_L = 1.51e-09 cm^3/s, n = 3.22e+05 cm^-3, Gamma_L = 4.87e-04 s^-1 per ion, one per 34 min per ion, one per 1.1 min for 30 ions
+ion  171.0 u: k_L = 1.48e-09 cm^3/s, n = 3.22e+05 cm^-3, Gamma_L = 4.78e-04 s^-1 per ion, one per 35 min per ion, one per 1.2 min for 30 ions

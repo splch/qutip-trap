@@ -1,0 +1,7 @@
+  op = FunctionCoefficient(base, args.copy(), style=function_style)
+== exact per-tone H, (hbar Omega/2) sigma_+ per tone
+  eta*Omega/eps = 0.25: Omega/2pi = 50.0 kHz, concurrence = 0.3825, populations = [0.038 0.    0.    0.962]
+  eta*Omega/eps = 0.5: Omega/2pi = 100.0 kHz, concurrence = 0.9999, populations = [0.4926 0.     0.     0.5074]
+== effective H = -(hbar eta Omega/2) S_y (a^dag e^{i eps t} + h.c.)
+  eta*Omega/eps = 0.25: Omega/2pi = 50.0 kHz, concurrence = 0.3827, populations = [0.0381 0.     0.     0.9619]
+  eta*Omega/eps = 0.5: Omega/2pi = 100.0 kHz, concurrence = 1.0000, populations = [0.5 0.  0.  0.5]

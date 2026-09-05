@@ -1,0 +1,13 @@
+D5/2 - P3/2 : lambda = 1032.7309 nm, hbar*omega = 1.2005 eV
+degeneracy factor (2Jp+1)/(2Jd+1) = 0.6667
+
+   T /K  hbar w/kT   n_bar(BBR)    rate /s^-1    vs A=2.559 s^-1
+    300     46.439    6.787e-21     3.700e-14           1.45e-14
+    293     47.549    2.238e-21     1.220e-14           4.77e-15
+    400     34.829    7.478e-16     4.077e-09           1.59e-09
+   1000     13.932    8.902e-07     4.854e+00           1.90e+00
+   2000      6.966    9.444e-04     5.149e+03           2.01e+03
+
+At T = 300 K:  rate = 3.70e-14 s^-1  (thesis Sec. 5.6.3 states 'a quenching rate of 10^-14 s^-1')
+  fractional effect on tau = 1.4e-14   -> shifts 390.8 ms by 5.65e-12 ms
+  i.e. 11 orders of magnitude below the 1.6 ms measurement uncertainty

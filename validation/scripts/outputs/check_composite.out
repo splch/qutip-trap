@@ -1,0 +1,298 @@
+
+====================================================================================================
+1. Order ladder: log-log slopes of 1 - F_K at theta = pi under the static primitive
+====================================================================================================
+sequence      pulses  amp slope  det slope  simul slope   total rotation/pi
+primitive          1        2.0        2.0          2.0                 1.0
+SK1                3        4.0        2.0          2.0                 5.0
+BB1 = B2           4        6.0        2.0          2.0                 5.0
+PB1 = P2           5        6.0        2.0          2.0                 9.0
+CORPSE             3        2.0        4.0          2.0             4.33333
+short-CORPSE       3        2.0        4.0          2.0             2.33333
+SCROFULOUS         3        4.0        2.0          2.0                 3.0
+red. CinSK         5        4.0        4.0          4.0             8.33333
+red. CinBB         6        6.0        4.0          4.0             8.33333
+expected: primitive 2/2, SK1 4/2, BB1 6/2, CORPSE 2/4, SCROFULOUS 4/2, CinSK & CinBB 4 simultaneous
+
+====================================================================================================
+2. Leading coefficients at theta = pi (eps = 1e-12, dps raised per order)
+====================================================================================================
+   a slope-6 sequence sits at 1-F_K ~ 1e-72 there and underflows the default 60 digits
+  primitive    a: (1-F_K)/eps^2 =  2.46740110027e-24 / eps^2 ->      2.46740110027   (1-F_C form: 1.23370055014)
+  primitive    d: (1-F_K)/eps^2 =            1.0e-24 / eps^2 ->                1.0   (1-F_C form: 0.5)
+  SK1          a: (1-F_K)/eps^4 =  2.28302557111e-47 / eps^4 ->      22.8302557111   (1-F_C form: 11.4151278555)
+  BB1 = B2     a: (1-F_K)/eps^6 =  9.38856634351e-72 / eps^6 ->      9.38856634351   (1-F_C form: 4.69428317175)
+  PB1 = P2     a: (1-F_K)/eps^6 =  1.18295935928e-70 / eps^6 ->      118.295935928   (1-F_C form: 59.1479679641)
+  SCROFULOUS   a: (1-F_K)/eps^4 =  4.56605114222e-48 / eps^4 ->      4.56605114222   (1-F_C form: 2.28302557111)
+  SCROFULOUS   d: (1-F_K)/eps^2 =            4.0e-24 / eps^2 ->                4.0   (1-F_C form: 2.0)
+  CORPSE       d: (1-F_K)/eps^4 =  6.50075189242e-51 / eps^4 ->   0.00650075189242   (1-F_C form: 0.00325037594621)
+  red. CinSK   d: (1-F_K)/eps^4 =            7.5e-49 / eps^4 ->               0.75   (1-F_C form: 0.375)
+  red. CinBB   d: (1-F_K)/eps^4 =            7.5e-49 / eps^4 ->               0.75   (1-F_C form: 0.375)
+  red. CinBB   a: (1-F_K)/eps^6 =  9.38856634351e-72 / eps^6 ->      9.38856634351   (1-F_C form: 4.69428317175)
+  red. CinSK   a: (1-F_K)/eps^4 =  2.28302557111e-47 / eps^4 ->      22.8302557111   (1-F_C form: 11.4151278555)
+  closed forms: SK1 (pi^2 sin 2 phi_1)^2 = 22.8302557111  with sin 2 phi_1 = -sqrt(15)/8 = -0.4841229183
+  primitive amplitude infidelity is EXACT: 1-F_K = sin^2(theta eps_a/2); at eps=1e-3, 2.46739907092e-6 vs 2.46739907092e-6
+  primitive detuning:   1-F_K = (1/2)(1-cos theta) eps_d^2 + O(eps^4) -> 1 at theta = pi
+
+====================================================================================================
+3. Fidelity-measure relations, and the two printed forms that are identically constant
+====================================================================================================
+  F_C = 0.999990774257777   F_C^2 = 0.999981548600668   F_K = 0.999981548600668   |F_K - F_C^2| = 0.0
+  F_avg = 0.999987699067112   (2 F_C^2 + 1)/3 = 0.999987699067112
+  1 - F_K = 1.84513993321e-5 against 2(1 - F_C) = 1.84514844464e-5  (ratio 0.9999953871, -> 1 as eps -> 0)
+  1 - F_avg = 1.23009328881e-5 against (4/3)(1 - F_C) = 1.23009896309e-5
+  LYC's printed F = ||U V^dag||_2 for unitaries = 1.0  (identically 1)
+  BHC's printed 1 - ||V^dag U||_2               = 7.779e-62  (identically 0)
+  order n  <=>  residual O(eps^{n+1})  <=>  distance slope n+1  <=>  infidelity slope 2(n+1)
+
+====================================================================================================
+4. NEGATIVE CONTROL: the printed SK1 sign (BHC Eq. 10), spectral-norm distance at theta = pi/2
+====================================================================================================
+sequence               eps=1e-2           1e-3           1e-4    slope
+bare pulse            0.00785396    0.000785398     7.85398e-5      1.0
+SK1 AS PRINTED         0.0157046     0.00157079     0.00015708  0.99991
+SK1 corrected        0.000244777     2.44805e-6     2.44805e-8      2.0
+BB1                   1.35947e-6     1.35955e-9    1.35955e-12      3.0
+PB1                    5.2365e-6     5.23757e-9    5.23758e-12   2.9999
+  bare closed form 2|sin(theta eps/4)| at eps = 1e-2: 0.0078539614
+  the printed U_1X(+theta) form is exactly TWICE the bare-pulse error: the correction adds.
+  ceiling trap: ceil(-theta/(4 pi)) = 0 for 0 < theta <= 4 pi (zero denominator); ceil(|a|/(4 pi)) = 1
+
+====================================================================================================
+5. NEGATIVE CONTROL: the Trotter-Suzuki recursion factor f_j = (2^{2j-1} - 2) f_{j-1}
+====================================================================================================
+   (theta = pi/2; P2j and B2j scored against amplitude error, N2j against addressing error)
+  P4 corrected (2^{2j-1}-2) f_2 =  24  phi = arccos(-theta/48 pi)  1-F_K(0.05) =   1.61629e-10  slope   9.9734  (37 pulses)
+  P4 PRINTED (2^{2j-1}-1)   f_2 =  28  phi = arccos(-theta/56 pi)  1-F_K(0.05) =    3.15927e-5  slope   2.0052  (37 pulses)
+  B4 corrected (2^{2j-1}-2) f_2 =  12  phi = arccos(-theta/24 pi)  1-F_K(0.05) =   6.77402e-13  slope   9.9925  (37 pulses)
+  B4 PRINTED (2^{2j-1}-1)   f_2 =  14  phi = arccos(-theta/28 pi)  1-F_K(0.05) =    3.14792e-5  slope   2.0003  (37 pulses)
+  N4 corrected (2^{2j-1}-2) f_2 =  12  phi = arccos(-theta/24 pi)  1-F_K(0.05) =   6.77402e-13  slope   9.9925  (37 pulses)
+  N4 PRINTED (2^{2j-1}-1)   f_2 =  14  phi = arccos(-theta/28 pi)  1-F_K(0.05) =    3.14792e-5  slope   2.0003  (37 pulses)
+  anchors the recursion must reproduce: phi_P2 = arccos(-theta/8 pi) [f_1 = 4], phi_P4 = arccos(-theta/48 pi) [f_2 = 24]; f_j for P2j: [4, 24, 720, 90720], for N2j/B2j: [2, 12, 360, 45360]
+
+====================================================================================================
+6. NEGATIVE CONTROL: the odd-k B2j bottom layer (three printed pulses versus four)
+====================================================================================================
+  ||corrected 4-pulse layer - Eq.43 corrector|| at eps_A = 0.05: 4.91439e-63 (the two middle 3 phi pulses merge into M(2 pi, 3 phi))
+variant                         1-F_K          1-F_C    slope
+Eq.43 B2                   2.87975e-8     1.43987e-8   5.9969
+corrected odd-k            2.87975e-8     1.43987e-8   5.9969
+PRINTED 3-pulse              0.993832       0.921462 -0.0066999
+uncorrected pulse          0.00154133    0.000770964   1.9994
+  the printed layer is not palindromic and is ~1200x WORSE than no correction at all.
+  P2 structure discriminator at eps_A = 0.1: five-pulse P2 1-F_C = 1.31612e-5, the same phase forced into a THREE-pulse corrector 0.0487462, bare pulse 0.00308267 (the mistake is ~3700x worse than P2 and ~16x worse than no correction)
+
+====================================================================================================
+7. BB1's phi = arccos(-theta/4 pi) reproduces the plan's B2 sequence and its general axis
+====================================================================================================
+  theta_t = 0.5 pi: phi_B2 = 1.696124158 rad = 97.180756 deg; ||plan - MB Eq.43|| = 0.0; ideal-pulse residual ||U - R|| = 1.103e-61
+  theta_t = 1.0 pi: phi_B2 = 1.823476582 rad = 104.47751 deg; ||plan - MB Eq.43|| = 0.0; ideal-pulse residual ||U - R|| = 3.649e-61
+  theta_t = 1.5 pi: phi_B2 = 1.955193101 rad = 112.02431 deg; ||plan - MB Eq.43|| = 0.0; ideal-pulse residual ||U - R|| = 1.101e-61
+  general target axis: ||U_T^(phi_0) - Z(phi_0) U_T^(0) Z(phi_0)^dag|| = 1.748e-61 at phi_0 = 0.7 (ADD the offset to every phase, zeroth pulse included)
+  W1 = R(pi,phi)R(2 pi,3 phi)R(pi,phi) at zero error: ||W1 - I|| = 3.649e-61, ||W1 + I|| = 2.0 -- it is +I, NOT -I as the brief's check claims
+    (two pi pulses give (-i sigma)^2 = -I and the 2 pi filler gives -I, so the product is +I; a lone 2 pi segment IS -I: ||M(2 pi, 0.7) + I|| = 1.142e-61)
+
+====================================================================================================
+8. Cross-paper checks: Wimperis / Cummins / Merrill-Brown / Low-Yoder-Chuang
+====================================================================================================
+  CORPSE angles against Cummins Table I (degrees, n = (1,1,0)):
+    theta =  30 deg -> (367.5645, 345.1291, 7.564528)
+    theta =  45 deg -> (371.4689, 337.9378, 11.4689)
+    theta =  90 deg -> (384.2952, 318.5904, 24.29519)
+    theta = 180 deg -> (420.0, 300.0, 60.0)
+  SCROFULOUS at theta = 180 deg -> 180_60.0 180_300.0 180_60.0  (Tycko's 180_60 180_300 180_60)
+  N2 in the addressing model equals B2 in the amplitude model, numerically:
+    eps =    0.2: N2 addressing 1-F_C =   5.6473935e-5   B2 amplitude 1-F_C =   5.6473935e-5
+    eps =    0.1: N2 addressing 1-F_C =   9.1355951e-7   B2 amplitude 1-F_C =   9.1355951e-7
+    eps =   0.05: N2 addressing 1-F_C =   1.4398728e-8   B2 amplitude 1-F_C =   1.4398728e-8
+  eps-free certificate Phi_L^j(phi) = f_L^j(gamma) for 0 < j <= n at theta_0 = 2 pi:
+    gamma = 0.25  AP1: max|Phi_L^j - f_L^j| (j <= n) =    7.779e-62; at j = n+1 it FAILS by 0.248039  [phi_1 = 1.6961242]
+    gamma = 0.25  PD2: max|Phi_L^j - f_L^j| (j <= n) =    3.112e-61; at j = n+1 it FAILS by 0.16892  [phi_1 = 1.6333371]
+    gamma = 0.5   AP1: max|Phi_L^j - f_L^j| (j <= n) =    7.779e-62; at j = n+1 it FAILS by 0.484123  [phi_1 = 1.8234766]
+    gamma = 0.5   PD2: max|Phi_L^j - f_L^j| (j <= n) =    1.556e-61; at j = n+1 it FAILS by 0.35078  [phi_1 = 1.6961242]
+    gamma = 1.0   AP1: max|Phi_L^j - f_L^j| (j <= n) =    1.556e-61; at j = n+1 it FAILS by 0.866025  [phi_1 = 2.0943951]
+    gamma = 1.0   PD2: max|Phi_L^j - f_L^j| (j <= n) =    1.556e-61; at j = n+1 it FAILS by 0.790569  [phi_1 = 1.8234766]
+  theta_0 = pi toggling: PD2 at gamma = 1 through psi_k must give Wimperis BB1 at theta = pi
+    psi = (1.8234766, 5.4704297, 5.4704297, 1.8234766)  against (phi_1, 3 phi_1, 3 phi_1, phi_1) = (1.8234766, 5.4704297, 5.4704297, 1.8234766)
+    toggled (broadband)      D =   3.06384e-6,   3.06407e-9  slope 3.0
+    untoggled (narrowband)   D =    0.0304152,   0.00304183  slope 0.99996
+
+====================================================================================================
+9. Toggling-frame control matrix R_ij(t) = (1/2)Tr[U_c^dag sigma_i U_c sigma_j]
+====================================================================================================
+  Omega t =  0.3: ||R R^T - I|| =  1.556e-61, R_zx = 0.0, R_zy = 0.2955202067 (= sin Omega t = 0.2955202067), R_zz = 0.9553364891 (= cos Omega t)
+  Omega t =  1.1: ||R R^T - I|| =  1.556e-61, R_zx = 0.0, R_zy = 0.8912073601 (= sin Omega t = 0.8912073601), R_zz = 0.4535961214 (= cos Omega t)
+  Omega t =  2.7: ||R R^T - I|| =  1.556e-61, R_zx = 0.0, R_zy = 0.4273798802 (= sin Omega t = 0.4273798802), R_zz = -0.904072142 (= cos Omega t)
+  per-pulse frequency-domain control vector: corrected Green Eq. (40) (explicit Tr/2) against
+  direct quadrature of -i omega int_0^T dt e^{i omega t} R^{P}_{zj}(t), and the printed 2x form:
+    (theta,phi,T,w) = (1.571,1.571,1.0,0.4): max|closed - quad| = 3.889e-62;  printed/exact ratio = (2.0, n/a, 1.0)
+    (theta,phi,T,w) = (2.0,0.7,1.3,2.3): max|closed - quad| = 2.49e-61;  printed/exact ratio = (2.0, 2.0, 1.0)
+    (theta,phi,T,w) = (3.142,0.0,1.0,2.9): max|closed - quad| = 2.805e-61;  printed/exact ratio = (n/a, 2.0, 1.0)
+  primitive pi_X (Green Eqs. 46a/46b, Omega = pi/tau_pi, tau_pi = 1):
+    w =  0.4: R_zz = (-0.03165625976 - 0.006417041539j) (46a (-0.03165625976 - 0.006417041539j)), R_zy = (0.05039932639 - 0.2486276827j) (46b (0.05039932639 - 0.2486276827j)), R_zx = 0.0
+    w =  1.9: R_zz = (-0.3902682194 - 0.5457442831j) (46a (-0.3902682194 - 0.5457442831j)), R_zy = (0.9023717003 - 0.6452967215j) (46b (0.9023717003 - 0.6452967215j)), R_zx = 0.0
+    w =  5.5: R_zz = (2.536126466 - 1.047212001j) (46a (2.536126466 - 1.047212001j)), R_zy = (0.598166096 + 1.44863205j) (46b (0.598166096 + 1.44863205j)), R_zx = 0.0
+  free evolution / pure z rotation (theta_l = 0 AND Omega_l = 0 together), T = 1.4, w = 0.5: R_z = (0, 0, (0.235157812716 - 0.644217687238j))
+
+====================================================================================================
+10. Amplitude filter function: dc closed polygon, exact primitive form, roll-off, crossover
+====================================================================================================
+  dc first-order cancellation sum_l theta_l rho-tilde_a^(l) = 0 (a closed polygon), theta = pi:
+    primitive     (     3.14159,          0.0,          0.0)   |.| = 3.14159
+    SK1           (-6.22302e-61,          0.0, -2.58769e-60)   |.| = 2.66146e-60
+    BB1 = B2      (-3.88938e-61,  3.11151e-61, -9.46469e-61)   |.| = 1.06953e-60
+    PB1 = P2      ( 1.08903e-60,          0.0, 4.51628e-122)   |.| = 1.08903e-60
+    CORPSE        (     3.14159,  1.79384e-61, -5.17837e-61)   |.| = 3.14159
+    short-CORPSE  (    -3.14159,  1.79384e-61, -5.17837e-61)   |.| = 3.14159
+    SCROFULOUS    ( 6.22302e-61,  3.11151e-61,  3.10702e-61)   |.| = 7.61978e-61
+    red. CinSK    (-4.66726e-61,          0.0,  2.06985e-60)   |.| = 2.12182e-60
+    red. CinBB    (-9.33452e-61,   1.2446e-60, -1.46431e-60)   |.| = 2.13648e-60
+  primitive amplitude FF is exactly sin^2(omega tau_P/2):
+    omega tau_P = 0.3 pi: F_a = 0.206107373854   sin^2 = 0.206107373854
+    omega tau_P = 0.7 pi: F_a = 0.793892626146   sin^2 = 0.793892626146
+    omega tau_P = 1.9 pi: F_a = 0.0244717418524   sin^2 = 0.0244717418524
+  low-frequency log-log slopes of F_a between omega = 1e-5 and 1e-4 Omega (theta = pi):
+    primitive     slope      2.0   F_a(1e-4 Omega) = 2.4674e-8
+    SK1           slope      4.0   F_a(1e-4 Omega) = 5.17486e-14
+    BB1 = B2      slope      4.0   F_a(1e-4 Omega) = 1.52202e-14
+    PB1 = P2      slope      4.0   F_a(1e-4 Omega) = 4.93134e-14
+    CORPSE        slope      2.0   F_a(1e-4 Omega) = 2.4674e-8
+    short-CORPSE  slope      2.0   F_a(1e-4 Omega) = 2.4674e-8
+    SCROFULOUS    slope      4.0   F_a(1e-4 Omega) = 7.30568e-15
+    red. CinSK    slope      4.0   F_a(1e-4 Omega) = 1.7351e-13
+    red. CinBB    slope      4.0   F_a(1e-4 Omega) = 1.36981e-13
+  printed bound (1/16)(omega tau_CP)^4 at omega = 1e-4: 3.80504e-13 -- an UPPER BOUND, ~7x above SK1 and ~25x above BB1
+  bound crossover 2 tau_P/tau_CP^2 = 0.0254648 Omega (the paper's 0.025 Omega); true crossovers: SK1 0.0702926 Omega, BB1 0.132464 Omega
+
+====================================================================================================
+11. dc frozen-noise floor: the Omega^{-2(m+1)} normalization and the alternatives it excludes
+====================================================================================================
+  benchmark spectrum: one-sided power 2.07e+9 (rad/s)^2 held fixed by the A_mu normalizer; <beta^2> = (1/pi) x power = 6.5890146e+8 (rad/s)^2 at Omega = 1.5e+6 rad/s
+  dimensionless (beta/Omega)^2 = 0.0002928451; Gaussian moments <beta^{2(m+1)}> = (2m+1)!! <beta^2>^{m+1} (3!! = 3, 5!! = 15)
+    SK1     c-hat_2 =    22.8302557111, floor = c-hat x 3!! x rel^2 = 5.87365e-6   (paper 5.86e-6)
+    BB1     c-hat_3 =      9.388566343, floor = c-hat x 15!! x rel^3 = 3.53675e-9   (paper 3.9e-9)
+    CORPSE  c-hat_2 =   0.006500751892, floor = c-hat x 3!! x rel^2 = 1.67248e-9   (paper 3.0e-9)
+  excluded normalizations for the SK1 floor:
+    one-sided with 1/(2 pi)      1.46841e-6
+    two-sided without 1/(2 pi)   0.000231882
+    one-sided without 1/(2 pi)   5.79706e-5
+    Omega^-4 dropped entirely    2.97353e+19  [the brief quotes 2.9e20 for this; it does NOT reproduce]
+
+====================================================================================================
+12. END-TO-END dephasing normalization on free precession (the load-bearing regression)
+====================================================================================================
+  Gaussian S_b(omega) = sqrt(2 pi) (dbz^2/sigma) exp[-omega^2/(2 sigma^2)] with sigma = 2.0 and
+  dbz = rms of the sigma_z COEFFICIENT = 0.3; tau = 1; F = 4 sin^2(omega tau/2)
+    C(0) = (1/2 pi) int S_b d omega  = 0.09  (= dbz^2 = 0.09)
+    <a_1^2> = (1/pi) int_0^inf S_b F/omega^2 = 0.06875600894468
+    direct double integral of C(t1-t2) = 0.06875600894468   (agreement 0.0)
+    W = exp(-2<a_1^2>) = 0.871523876057   [the printed exp(-<a_1^2>) = 0.933554431223 UNDER-predicts the exponent by 2x]
+    F_av = (1 + W)/2 = 0.935761938028;  1 - F_av = 0.0642380619717 against the linear <a_1^2> = 0.0687560089447
+    Biercuk chi = (2/pi) int_0^inf S_b F/omega^2 = 0.137512017889 = 2<a_1^2> exactly
+    reading S_beta as the SPLITTING-fluctuation PSD (4 S_b) instead: 0.550048071557, a factor 4 too large
+    matched-pair check: |int_0^tau rho e^{i omega t} dt|^2 = F/omega^2 is finite as omega -> 0: F/omega^2 at omega = 1e-8 is 1.0 (-> tau^2 = 1)
+
+====================================================================================================
+13. Filter-function limits, and Biercuk's (-1)^{n+1} form against Green's even-n-only Eq. 45
+====================================================================================================
+  n = 0 (FID), x =  0.3: F =    0.0893270217488   4 sin^2(x/2) = 0.0893270217488
+  n = 0 (FID), x =  1.7: F =      2.25768898859   4 sin^2(x/2) = 2.25768898859
+  n = 0 (FID), x =  5.0: F =      1.43267562907   4 sin^2(x/2) = 1.43267562907
+  n = 1 (Hahn), x =  0.3: F =  0.000504354762874   16 sin^4(x/4) = 0.000504354762874
+  n = 1 (Hahn), x =  1.7: F =     0.462445844329   16 sin^4(x/4) = 0.462445844329
+  n = 1 (Hahn), x =  5.0: F =      12.9764732953   16 sin^4(x/4) = 12.9764732953
+  CP timings at x = 0.9:
+    n = 1: Biercuk    0.0396431177199   Green Eq.45      4.75678006346   (Green Eq.45 invalid at odd n)
+    n = 2: Biercuk  0.000505997145284   Green Eq.45  0.000505997145284   (agree, even n)
+    n = 3: Biercuk  0.000418274151569   Green Eq.45      4.07408115673   (Green Eq.45 invalid at odd n)
+    n = 4: Biercuk   3.06275154428e-5   Green Eq.45   3.06275154428e-5   (agree, even n)
+  Green Eq.45 at omega -> 0 and odd n gives |R_zz|^2 = ['4.0', '4.0', '4.0'] -- no low-frequency suppression at all
+  annihilation point omega tau_pi = pi (n = 4, delta_pi = 0.07): F = 0.753020396283 = 4 sin^2(omega tau/2) = 0.753020396283 (the FID form)
+  UDD and CPMG timings coincide at n = 1 and n = 2 and first differ at n = 3:
+    n = 1: UDD ['0.5']  CPMG ['0.5']
+    n = 2: UDD ['0.25', '0.75']  CPMG ['0.25', '0.75']
+    n = 3: UDD ['0.1464466094', '0.5', '0.8535533906']  CPMG ['0.1666666667', '0.5', '0.8333333333']
+
+====================================================================================================
+14. Low-frequency suppression orders at high precision (mpmath; double precision fails here)
+====================================================================================================
+  Carr-Purcell delta_l = (l - 1/2)/n, bang-bang: lowest nonvanishing Taylor order of R_zz
+    n = 2: order        3.0 (so F_z ~ omega^6, alpha = 2, 18 dB/octave); leading x^3 coefficient 0.03125 i
+    n = 4: order        3.0 (so F_z ~ omega^6, alpha = 2, 18 dB/octave); leading x^3 coefficient 0.0078125 i
+    n = 6: order        3.0 (so F_z ~ omega^6, alpha = 2, 18 dB/octave); leading x^3 coefficient 0.003472222222 i
+    n = 8: order        3.0 (so F_z ~ omega^6, alpha = 2, 18 dB/octave); leading x^3 coefficient 0.001953125 i
+  Uhrig delta_l = sin^2[pi l/(2n+2)], bang-bang: order n+1, so F_z ~ omega^{2(n+1)}, alpha = n
+    n =  2: order        3.0   expected 3
+    n =  3: order        4.0   expected 4
+    n =  4: order        5.0   expected 5
+    n =  5: order        6.0   expected 6
+    n =  6: order        7.0   expected 7
+    n =  8: order        9.0   expected 9
+    n = 10: order       11.0   expected 11
+    n = 12: order       13.0   expected 13
+  ideal-pulse leading coefficients (F -> (omega tau)^{2n+2}/(16^n (n!)^2) for UDD):
+    UDD  n = 1:               0.0625   closed form               0.0625
+    UDD  n = 2:         0.0009765625   closed form         0.0009765625
+    UDD  n = 3:     6.78168402778e-6   closed form     6.78168402778e-6
+    UDD  n = 4:     2.64909532335e-8   closed form     2.64909532335e-8
+    UDD  n = 5:    6.62273830838e-11   closed form    6.62273830838e-11
+    UDD  n = 6:    1.14978095632e-13   closed form    1.14978095632e-13
+    UDD  n = 7:    1.46655734224e-16   closed form    1.46655734224e-16
+    UDD  n = 8:    1.43218490453e-19   closed form    1.43218490453e-19
+    CPMG n = 1 (odd):  F/(omega tau)^4 =             0.0625   1/(16 n^4) = 0.0625
+    CPMG n = 3 (odd):  F/(omega tau)^4 =  0.000771604938272   1/(16 n^4) = 0.000771604938272
+    CPMG n = 5 (odd):  F/(omega tau)^4 =             0.0001   1/(16 n^4) = 0.0001
+    CPMG n = 7 (odd):  F/(omega tau)^4 =   2.60308204915e-5   1/(16 n^4) = 2.60308204915e-5
+    CPMG n = 2 (even): F/(omega tau)^6 =       0.0009765625   1/(64 n^4) = 0.0009765625
+    CPMG n = 4 (even): F/(omega tau)^6 =     6.103515625e-5   1/(64 n^4) = 6.103515625e-5
+    CPMG n = 6 (even): F/(omega tau)^6 =   1.20563271605e-5   1/(64 n^4) = 1.20563271605e-5
+    CPMG n = 8 (even): F/(omega tau)^6 =   3.81469726562e-6   1/(64 n^4) = 3.81469726563e-6
+  FINITE-PULSE COLLAPSE of the UDD order at delta_pi = tau_pi/tau = 0.02:
+    n =  1: F exponent      4.0 ideal ->      4.0 at delta_pi = 0.02
+    n =  2: F exponent      6.0 ideal ->      6.0 at delta_pi = 0.02
+    n =  3: F exponent      8.0 ideal ->      4.0 at delta_pi = 0.02   F/(omega tau_pi)^4 = 0.0625 (= 1/16, universal in n)
+    n =  4: F exponent     10.0 ideal ->      6.0 at delta_pi = 0.02   F/[(omega tau)^2 (omega tau_pi)^4] = 0.015625 (= 1/64)
+    n =  5: F exponent     12.0 ideal ->      4.0 at delta_pi = 0.02   F/(omega tau_pi)^4 = 0.0625 (= 1/16, universal in n)
+    n =  6: F exponent     14.0 ideal ->      6.0 at delta_pi = 0.02   F/[(omega tau)^2 (omega tau_pi)^4] = 0.015625 (= 1/64)
+    n = 12: F exponent     26.0 ideal ->      6.0 at delta_pi = 0.02   F/[(omega tau)^2 (omega tau_pi)^4] = 0.015625 (= 1/64)
+  echo moment conditions A_k = sum_j (-1)^j delta_j^k, satisfied by BOTH families:
+    n = 3 UDD : A_0 =  -1.0, A_1 =       -0.5, A_2 =         -0.5
+    n = 3 CPMG: A_0 =  -1.0, A_1 =       -0.5, A_2 =  -0.47222222
+    n = 4 UDD : A_0 =   0.0, A_1 =        0.5, A_2 =          0.5
+    n = 4 CPMG: A_0 =   0.0, A_1 =        0.5, A_2 =          0.5
+    n = 5 UDD : A_0 =  -1.0, A_1 =       -0.5, A_2 =         -0.5
+    n = 5 CPMG: A_0 =  -1.0, A_1 =       -0.5, A_2 =        -0.49
+    n = 6 UDD : A_0 =   0.0, A_1 =        0.5, A_2 =          0.5
+    n = 6 CPMG: A_0 =   0.0, A_1 =        0.5, A_2 =          0.5
+
+====================================================================================================
+15. IR convergence of chi on an ambient-like 1/omega^4 spectrum (tau = 1, tau_pi = 0.05)
+====================================================================================================
+  UDD n = 3: chi(omega_min = 1e-7) =      2.4871932, chi(1e-8) =      24.868357, ratio 9.9985627   (odd n: chi proportional to 1/omega_min, IR DIVERGENT)
+  UDD n = 4: chi(omega_min = 1e-7) =  0.00012092569, chi(1e-8) =  0.00012092569, ratio 1.0   (even n: IR convergent)
+  UDD n = 5: chi(omega_min = 1e-7) =      2.4868452, chi(1e-8) =      24.868009, ratio 9.999822   (odd n: chi proportional to 1/omega_min, IR DIVERGENT)
+  UDD n = 6: chi(omega_min = 1e-7) =   2.3951314e-5, chi(1e-8) =   2.3951314e-5, ratio 1.0   (even n: IR convergent)
+  any chi quoted on a 1/omega^4 spectrum at odd n is meaningless without omega_min stated.
+
+====================================================================================================
+16. Durations at constant amplitude: sum_l theta_l against the closed forms of PLAN.md Section 4.3.5
+====================================================================================================
+   (2026-09-04 critique: the concatenations are 8 pi + theta - 4k, not 8 pi + 2 theta - 4k)
+  theta = 0.5 pi SK1         : sum theta_l =        4.5 pi = closed form        4.5 pi
+  theta = 0.5 pi BB1 = B2    : sum theta_l =        4.5 pi = closed form        4.5 pi
+  theta = 0.5 pi CORPSE      : sum theta_l =  4.0398931 pi = closed form  4.0398931 pi
+  theta = 0.5 pi red. CinSK  : sum theta_l =  8.0398931 pi = closed form  8.0398931 pi   (printed 8 pi + 2 theta - 4k = 8.5398931 pi, WRONG)
+  theta = 0.5 pi red. CinBB  : sum theta_l =  8.0398931 pi = closed form  8.0398931 pi   (printed 8 pi + 2 theta - 4k = 8.5398931 pi, WRONG)
+  theta = 1.0 pi SK1         : sum theta_l =        5.0 pi = closed form        5.0 pi
+  theta = 1.0 pi BB1 = B2    : sum theta_l =        5.0 pi = closed form        5.0 pi
+  theta = 1.0 pi CORPSE      : sum theta_l =  4.3333333 pi = closed form  4.3333333 pi
+  theta = 1.0 pi red. CinSK  : sum theta_l =  8.3333333 pi = closed form  8.3333333 pi   (printed 8 pi + 2 theta - 4k = 9.3333333 pi, WRONG)
+  theta = 1.0 pi red. CinBB  : sum theta_l =  8.3333333 pi = closed form  8.3333333 pi   (printed 8 pi + 2 theta - 4k = 9.3333333 pi, WRONG)
+  theta = 1.5 pi SK1         : sum theta_l =        5.5 pi = closed form        5.5 pi
+  theta = 1.5 pi BB1 = B2    : sum theta_l =        5.5 pi = closed form        5.5 pi
+  theta = 1.5 pi CORPSE      : sum theta_l =  5.0398931 pi = closed form  5.0398931 pi
+  theta = 1.5 pi red. CinSK  : sum theta_l =  9.0398931 pi = closed form  9.0398931 pi   (printed 8 pi + 2 theta - 4k = 10.539893 pi, WRONG)
+  theta = 1.5 pi red. CinBB  : sum theta_l =  9.0398931 pi = closed form  9.0398931 pi   (printed 8 pi + 2 theta - 4k = 10.539893 pi, WRONG)
+
+done.
+exit 0

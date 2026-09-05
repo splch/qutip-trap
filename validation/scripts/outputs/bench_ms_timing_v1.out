@@ -1,0 +1,12 @@
+/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/__init__.py:24: UserWarning: matplotlib not found: Graphics will not work.
+  warnings.warn("matplotlib not found: Graphics will not work.")
+MS pulse, 2 ions, motion-Schroedinger picture, T = 20 us (scale x5 for 100 us), atol 1e-10 rtol 1e-8
+modes=1 nmax=12 dim=   48 nnz(H0+V)=-1 vern9   wall=   0.14s  stats={'method': 'vern9', 'run time': 0.13569188117980957}
+modes=1 nmax=12 dim=   48 nnz(H0+V)=-1 dop853  wall=   0.09s  stats={'method': 'scipy ode dop853', 'run time': 0.09427976608276367}
+modes=2 nmax=8 dim=  256 nnz(H0+V)=-1 vern9   wall=   0.46s  stats={'method': 'vern9', 'run time': 0.46060609817504883}
+modes=2 nmax=8 dim=  256 nnz(H0+V)=-1 dop853  wall=   0.37s  stats={'method': 'scipy ode dop853', 'run time': 0.3645319938659668}
+modes=3 nmax=6 dim=  864 nnz(H0+V)=-1 vern9   wall=  14.46s  stats={'method': 'vern9', 'run time': 14.427024126052856}
+modes=3 nmax=6 dim=  864 nnz(H0+V)=-1 dop853  wall=  10.10s  stats={'method': 'scipy ode dop853', 'run time': 10.072670936584473}
+modes=3 nmax=8 dim= 2048 nnz(H0+V)=-1 vern9   wall= 131.29s  stats={'method': 'vern9', 'run time': 131.0418689250946}
+modes=3 nmax=8 dim= 2048 nnz(H0+V)=-1 dop853  wall= 101.98s  stats={'method': 'scipy ode dop853', 'run time': 101.7356309890747}
+stats keys: ['method', 'init time', 'preparation time', 'run time', 'solver']

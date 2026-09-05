@@ -1,0 +1,20 @@
+case                                                              A /s^-1    |<..>| /m^2     /a0^2
+----------------------------------------------------------------------------------------------------
+40Ca+  D5/2  (Barton 2000, PLAN check -> 9.73 a0^2)              0.856164   2.724537e-20    9.7295
+88Sr+  D5/2  Gerz 1987      tau = 0.345   s (PLAN current -> 14.70 a0^2)   2.898551   4.115854e-20   14.6980
+88Sr+  D5/2  Madej/Sankey 1990 tau = 0.372 s                     2.688172   3.963675e-20   14.1545
+88Sr+  D5/2  Barwood 1994   tau = 0.347   s                      2.881844   4.103976e-20   14.6556
+88Sr+  D5/2  Biemont 2000   tau = 0.408   s                      2.450980   3.784770e-20   13.5157
+88Sr+  D5/2  Letchumanan thesis 2004 tau = 0.3903 s              2.562132   3.869637e-20   13.8187
+88Sr+  D5/2  Letchumanan PRA 2005 tau = 0.3908 s  <-- MODERN     2.558854   3.867161e-20   13.8099
+
+88Sr+ modern:  tau = 390.8(1.6) ms
+  A            = 2.558854 s^-1   (natural linewidth A/2pi = 0.4073 Hz)
+  k            = 9.321879e+06 m^-1  (lambda_vac = 674.02559 nm)
+  element      = 3.867161e-20 m^2 = 13.8099(0.0283) a0^2
+
+  PLAN current (tau = 0.345 s) : 14.70 a0^2
+  change                       : -0.8901 a0^2  (-6.06 %)
+  ratio  = sqrt(0.345/0.3908)  = 0.939577  (element scales as 1/sqrt(tau))
+
+  every 674 nm E2 Rabi frequency scales by the same -6.06 %

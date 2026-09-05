@@ -1,0 +1,38 @@
+[project]
+name = "qutip-trap-app"
+version = "0.0.1"
+description = "Zoomable trapped-ion simulator application (PLAN.md Section 14, milestone M11); consumes qutip-trap through its public API only"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+authors = [{ name = "Spencer Churchill", email = "25377399+splch@users.noreply.github.com" }]
+dependencies = [
+    "qutip-trap",
+    "flet[all]>=0.86,<1.0",
+    "flet-charts>=0.86,<1.0",
+]
+
+[dependency-groups]
+dev = [
+    # Integration testing with `flet test` / pytest. The `test` extra brings in
+    # pytest, pytest-asyncio and the screenshot-comparison dependencies.
+    "flet[test]>=0.86,<1.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+qutip-trap = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.flet]
+org = "io.github.splch"
+product = "qutip-trap-app"
+company = "qutip-trap"
+copyright = "Copyright (C) 2026 Spencer Churchill"
+
+[tool.flet.app]
+path = "src"

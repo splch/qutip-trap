@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validation-checks:
+    name: Appendix D check scripts on the pinned toolchain (first job, PLAN.md M0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Sync the pinned environment (Python from .python-version, versions from uv.lock)
+        run: uv sync --group dev
+      - name: Re-run the check scripts and compare with the committed outputs
+        run: uv run python validation/scripts/run_checks.py --report
+      - name: Upload the convergence report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: convergence-report
+          path: validation/report/
+
+  core:
+    name: lint, type-check, tests
+    needs: validation-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --group dev
+      - name: ruff (lint and format)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: mypy --strict (the Hz / rad-s types are enforced here)
+        run: uv run mypy
+      - name: provenance ledger is current with the species tables
+        run: uv run python tools/ledger_from_tables.py --check
+      - name: pytest
+        run: uv run pytest
+
+  gui:
+    name: Flet extra installs and `flet doctor` passes (M0)
+    needs: validation-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --extra gui
+      - run: uv run flet doctor

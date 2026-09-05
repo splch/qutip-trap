@@ -1,0 +1,11 @@
+MS pulse, 2 ions, motion-Schroedinger picture, T = 20 us (scale x5 for 100 us), atol 1e-10 rtol 1e-8
+modes=1 nmax=12 dim=   48 nnz(H0+V)=-1 vern9   wall=   0.11s  stats={'method': 'vern9', 'run time': 0.10985207557678223}
+modes=1 nmax=12 dim=   48 nnz(H0+V)=-1 dop853  wall=   0.08s  stats={'method': 'scipy ode dop853', 'run time': 0.07803225517272949}
+modes=2 nmax=8 dim=  256 nnz(H0+V)=-1 vern9   wall=   0.43s  stats={'method': 'vern9', 'run time': 0.4264998435974121}
+modes=2 nmax=8 dim=  256 nnz(H0+V)=-1 dop853  wall=   0.43s  stats={'method': 'scipy ode dop853', 'run time': 0.42788219451904297}
+modes=3 nmax=6 dim=  864 nnz(H0+V)=-1 vern9   wall=  14.66s  stats={'method': 'vern9', 'run time': 14.631503820419312}
+modes=3 nmax=6 dim=  864 nnz(H0+V)=-1 dop853  wall=  13.62s  stats={'method': 'scipy ode dop853', 'run time': 13.588573932647705}
+modes=3 nmax=8 dim= 2048 nnz(H0+V)=-1 vern9   wall= 132.26s  stats={'method': 'vern9', 'run time': 132.00925588607788}
+modes=3 nmax=8 dim= 2048 nnz(H0+V)=-1 dop853  wall= 179.33s  stats={'method': 'scipy ode dop853', 'run time': 179.0842366218567}
+stats keys: ['method', 'init time', 'preparation time', 'run time', 'solver']
+done

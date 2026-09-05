@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+.env
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+
+# Flet
+qutip_trap_app/.flet/
+qutip_trap_app/build/
+qutip_trap_app/storage/
+
+# CI artifacts produced locally by validation/scripts/run_checks.py
+validation/report/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

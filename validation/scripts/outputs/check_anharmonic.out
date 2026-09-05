@@ -1,0 +1,11 @@
+/Users/churchill/.cache/uv/archive-v0/lfXoqhnZpqnyDehB/lib/python3.14/site-packages/qutip/__init__.py:24: UserWarning: matplotlib not found: Graphics will not work.
+  warnings.warn("matplotlib not found: Graphics will not work.")
+g t = 0.892 rad (the plan's first-order estimate for 100 us)
+Delta/2pi =  1.00 MHz: phase(|1,0>) = +0.00410 rad, population leaked 4.06e-10; g^2/(2pi Delta) t = 0.0013 rad
+Delta/2pi =  0.30 MHz: phase(|1,0>) = +0.00339 rad, population leaked 1.46e-09; g^2/(2pi Delta) t = 0.0042 rad
+Delta/2pi =  0.10 MHz: phase(|1,0>) = +0.00324 rad, population leaked 9.74e-09; g^2/(2pi Delta) t = 0.0127 rad
+Delta/2pi =  0.03 MHz: phase(|1,0>) = +0.00318 rad, population leaked 9.70e-08; g^2/(2pi Delta) t = 0.0422 rad
+state |2,0> (coupled to |0,1> by a a b^dag):
+Delta/2pi =  1.00 MHz: phase = +0.00940 rad, leaked 2.14e-09; geff^2/(2pi Delta) t = 0.0025 rad, (geff/2pi Delta)^2 = 4.03e-06
+Delta/2pi =  0.30 MHz: phase = +0.00142 rad, leaked 1.09e-08; geff^2/(2pi Delta) t = 0.0084 rad, (geff/2pi Delta)^2 = 4.47e-05
+Delta/2pi =  0.10 MHz: phase = -0.01589 rad, leaked 7.54e-07; geff^2/(2pi Delta) t = 0.0253 rad, (geff/2pi Delta)^2 = 4.03e-04
