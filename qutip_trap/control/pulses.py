@@ -2,8 +2,9 @@
 
 Conventions (Section 13): a tone's detuning mu is measured from the carrier and delta_{i,m} = mu_i - omega_m is
 always two-indexed; the drive term is (hbar/2) sum_tones Omega(t) e^{-i(mu t - phi(t))} sigma_+ (x) prod_m
-D_m(i eta) + h.c. (Section 5.7); the effective wavevector is Delta k = k_1 - k_2 with beam 1 coupling to the
-upper level, |Delta k| = 2k sin(theta_cross/2) for a Raman pair, k for one beam and 0 for a microwave.
+D_m(i eta) + h.c. (Section 5.7); the effective wavevector is Delta k = k_1 - k_2 with beam 1 the higher-frequency
+beam absorbed from the lower qubit level (Wineland 2003 Eq. 2.3, Section 13; the row's 'coupling to the upper level'
+wording is ambiguous), |Delta k| = 2k sin(theta_cross/2) for a Raman pair, k for one beam and 0 for a microwave.
 """
 
 from __future__ import annotations
@@ -36,8 +37,9 @@ class Tone:
     """mu(t) from the carrier (ordinary Hz in the public API)."""
     phase_rad: Callable[[float], float] | float
     """phi_tone(t) in the ion frame (Section 5.2)."""
-    envelope_hz: Callable[[float], float] | np.ndarray
-    """Omega(t), the Rabi frequency in the (hbar Omega/2) convention, as an ordinary frequency."""
+    envelope_hz: Callable[[float], float] | np.ndarray | float
+    """Omega(t), the Rabi frequency in the (hbar Omega/2) convention, as an ordinary frequency: a callable of the
+    time since the pulse start, an array uniformly sampled over the pulse (cubic spline), or a constant (square)."""
     theta_bessel_rad: float | None = None
     """Kick backend: the Bessel argument of exp[i Theta_B sin(Delta k x + phi) sigma_x]; a perfect
     spin-dependent kick sits at sum_k Theta_{B,k} = pi (Appendix E, Run 5 amendment)."""
@@ -75,7 +77,7 @@ class Drive:
     def delta_k(self, beams: Sequence[Beam]) -> np.ndarray:
         """The effective wavevector, DERIVED from the beams' wavelengths and directions, never a free field.
 
-        Raman: k_1 - k_2 with beam 1 coupling to the upper level (Section 13, "Effective wavevector");
+        Raman: k_1 - k_2 with beam 1 the higher-frequency beam absorbed from the lower qubit level (Section 13, "Effective wavevector");
         single-photon optical: k k_hat; microwave and gradient: 0. Appendix E declares this as a property; it
         takes the device's beam list here because a ``Drive`` stores indices into ``Device.beams``.
         """

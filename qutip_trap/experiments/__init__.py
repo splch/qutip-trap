@@ -1,18 +1,32 @@
-"""User-facing simulated experiments built on the PulseEngine protocol (PLAN.md Sections 7.5, 7.9; M8).
+"""User-facing simulated experiments built on the PulseEngine protocol (PLAN.md Sections 7.5, 7.9; M2 for the single-ion
+Rabi, Ramsey and sideband scans, M8 for the rest).
 
-Each returns data plus the fitted parameters with uncertainties; ``calibration/`` uses them.
+Each returns data plus the fitted parameters with uncertainties; ``calibration/`` uses them. The M2 experiments drive one
+ion of the device through the JOINT_EXACT engine with the derived drive of ``light/`` (Raman or single-photon optical
+from the device's beams, microwave from a supplied Rabi frequency), an initial internal |0> and per-mode thermal
+occupations; fits use the closed forms of Sections 4.2.7 and 13: the carrier Rabi curve with the thermal Debye-Waller
+envelope sum_n P_n sin^2(Omega_n t/2), Omega_n = Omega e^{-eta^2/2} L_n(eta^2), and the Ramsey fringe
+P = A cos(2 pi delta t + phi_0) + B.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from scipy.optimize import least_squares
+from scipy.special import eval_genlaguerre
 
 if TYPE_CHECKING:
+    from qutip_trap.control.pulses import Drive
+    from qutip_trap.control.schedule import GateDrive
     from qutip_trap.device.model import Device
+    from qutip_trap.dynamics.engine import SolverOptions
+    from qutip_trap.dynamics.hamiltonian import BuilderOptions
+    from qutip_trap.hilbert.space import HilbertSpace
 
 M8 = "milestone M8 (experiments/, PLAN.md Section 7.5)"
 
@@ -26,34 +40,312 @@ class ExperimentResult:
     provenance_id: str
 
 
+# ---- shared machinery of the M2 experiments ----------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Setup:
+    drive: Drive
+    space: HilbertSpace
+    eta_driven: float
+    driven_mode: int | None
+    rabi_hz: float
+    nbar: dict[int, float]
+
+
+def _setup(device: Device, ion: int, kw: dict[str, Any]) -> _Setup:
+    from qutip_trap.control.schedule import default_gate_drives
+    from qutip_trap.hilbert.operators import required_margin
+    from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+    from qutip_trap.light.microwave import square_microwave_drive
+    from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive, square_drive
+
+    nbar: dict[int, float] = {int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()}
+    gate_drive: GateDrive = kw.get("gate_drive") or default_gate_drives(device)[ion]
+    detuning = float(kw.get("detuning_hz", 0.0))
+    phase = float(kw.get("phase_rad", 0.0))
+    n_modes = len(device.crystal.modes)
+    if gate_drive.kind == "microwave":
+        rabi = kw.get("rabi_hz")
+        if rabi is None:
+            raise ValueError("a microwave experiment needs rabi_hz (no beams to derive it from)")
+        drive = square_microwave_drive(
+            ion,
+            float(rabi),
+            detuning_hz=detuning,
+            phase_rad=phase,
+            stark_shift_hz=float(kw.get("stark_shift_hz", 0.0)),
+        )
+        etas = {m: 0.0 for m in range(n_modes)}
+        rabi_hz = float(rabi)
+    else:
+        if gate_drive.kind == "raman":
+            derived = derive_raman_drive(
+                device, ion, (gate_drive.beams[0], gate_drive.beams[1]), scattering=False
+            )
+        else:
+            derived = derive_optical_drive(device, ion, gate_drive.beams[0], scattering=False)
+        drive = square_drive(
+            derived, detuning_hz=detuning, phase_rad=phase, include_stark=bool(kw.get("include_stark", True))
+        )
+        etas = derived.etas
+        rabi_hz = derived.carrier_rabi_hz
+    space = kw.get("space")
+    driven = max(range(n_modes), key=lambda m: abs(etas[m])) if n_modes else None
+    eta_driven = abs(etas[driven]) if driven is not None else 0.0
+    if space is None:
+        ion_dims = tuple(2 for _ in range(device.crystal.n_ions))
+        if driven is None or eta_driven == 0.0:
+            space = HilbertSpace(ion_dims, (), None, tuple(range(n_modes)))
+            driven = None
+        else:
+            nb = nbar.get(driven, 0.0)
+            n_hi = int(math.ceil(nb + 5.0 * math.sqrt(nb * (nb + 1.0)) + 2.0))
+            d = int(kw.get("d", n_hi + 1 + required_margin(eta_driven)))
+            space = HilbertSpace(
+                ion_dims,
+                (ModeTruncation(driven, d, (0, min(n_hi, d - 1)), eta_driven * 1.5),),
+                None,
+                tuple(m for m in range(n_modes) if m != driven),
+            )
+    return _Setup(
+        drive=drive, space=space, eta_driven=eta_driven, driven_mode=driven, rabi_hz=rabi_hz, nbar=nbar
+    )
+
+
+def _run(
+    device: Device,
+    ion: int,
+    pulses: Sequence[Any],
+    setup: _Setup,
+    kw: dict[str, Any],
+    store_times: Sequence[float] = (),
+) -> Any:
+    from qutip_trap.control.schedule import Schedule
+    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+    from qutip_trap.noise.sampling import quiet_sample
+
+    idle = tuple(kw.get("idle", ()))
+    schedule = Schedule(tuple(pulses), idle, (), {q: 0.0 for q in range(device.crystal.n_ions)})
+    options: SolverOptions = kw.get("options") or SolverOptions()
+    bopts: BuilderOptions | None = kw.get("builder_options")
+    engine = JointExactEngine(
+        builder_options=bopts,
+        store_per_segment=2,
+        store_times_s=tuple(store_times),
+        qubit_shifts_hz={int(k): float(v) for k, v in dict(kw.get("qubit_shifts_hz", {})).items()},
+    )
+    internal = [0] * device.crystal.n_ions
+    state = setup.space.initial_state(internal, thermal=setup.nbar)
+    return engine.run_pulses(
+        device, schedule, state, setup.space, quiet_sample(), SeedSpec(int(kw.get("seed", 0))), options
+    )
+
+
+def _fit(
+    model: Any,
+    x0: Sequence[float],
+    t: np.ndarray,
+    y: np.ndarray,
+    bounds: tuple[Sequence[float], Sequence[float]] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    def resid(p: np.ndarray) -> np.ndarray:
+        return np.asarray(model(p, t) - y)
+
+    kwargs: dict[str, Any] = {"x_scale": "jac"}
+    if bounds is not None:
+        kwargs["bounds"] = bounds
+    res = least_squares(resid, np.asarray(x0, dtype=float), **kwargs)
+    dof = max(len(t) - len(x0), 1)
+    s2 = float(np.sum(res.fun**2)) / dof
+    try:
+        cov = np.linalg.inv(res.jac.T @ res.jac) * s2
+        err = np.sqrt(np.maximum(np.diag(cov), 0.0))
+    except np.linalg.LinAlgError:
+        err = np.full(len(x0), np.nan)
+    return np.asarray(res.x), err
+
+
+def thermal_rabi_model(p: np.ndarray, t: np.ndarray, eta: float, n_max: int = 200) -> np.ndarray:
+    """P_1(t) = A sum_n P_n(nbar) sin^2(Omega_n t/2), Omega_n = 2 pi f e^{-eta^2/2} L_n(eta^2): p = (f_hz, nbar, A) (Section 4.2.7)."""
+    f, nbar, amp = float(p[0]), max(float(p[1]), 0.0), float(p[2])
+    n = np.arange(n_max)
+    if nbar == 0.0:
+        weights = np.zeros(n_max)
+        weights[0] = 1.0
+    else:
+        weights = np.exp(n * math.log(nbar) - (n + 1) * math.log1p(nbar))
+    omegas = 2.0 * math.pi * f * math.exp(-(eta**2) / 2.0) * eval_genlaguerre(n, 0, eta**2)
+    out = amp * np.sum(weights[None, :] * np.sin(0.5 * omegas[None, :] * np.asarray(t)[:, None]) ** 2, axis=1)
+    return np.asarray(out)
+
+
+# ---- the M2 experiments ---------------------------------------------------------------------------------------------------------
+
+
 def rabi_scan(device: Device, ion: int, durations_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    raise NotImplementedError(f"rabi_scan is {M8}")
+    """Carrier (or sideband, with ``detuning_hz``) Rabi flopping of ``ion`` against pulse duration, fitted with the thermal
+    Debye-Waller envelope (Section 4.2.7): fitted f_rabi_hz, nbar and contrast; data columns (t, P1)."""
+    from qutip_trap.control.pulses import Pulse
+
+    setup = _setup(device, ion, kw)
+    ts = np.array(sorted(float(t) for t in durations_s))
+    if ts.size < 2 or ts[0] < 0.0:
+        raise ValueError("durations_s: at least two non-negative durations")
+    t_max = float(ts[-1]) if ts[-1] > 0.0 else 1e-9
+    pulse = Pulse(setup.drive, 0.0, t_max, "rabi_scan", ())
+    traces = _run(device, ion, [pulse], setup, kw, store_times=[t for t in ts if 0.0 < t < t_max])
+    p1 = np.interp(ts, traces.times_s, np.real(traces.expectations[f"P1[{ion}]"]))
+    data = np.column_stack([ts, p1])
+    eta = setup.eta_driven if float(kw.get("detuning_hz", 0.0)) == 0.0 else 0.0
+    nb0 = setup.nbar.get(setup.driven_mode, 0.0) if setup.driven_mode is not None else 0.0
+    guess = [setup.rabi_hz, nb0, 1.0]
+    fitted: dict[str, tuple[float, float]] = {}
+    if float(kw.get("detuning_hz", 0.0)) == 0.0 and ts.size >= 4:
+        x, err = _fit(
+            lambda p, t: thermal_rabi_model(p, t, eta),
+            guess,
+            ts,
+            p1,
+            bounds=([0.0, 0.0, 0.0], [np.inf, np.inf, 1.0]),
+        )
+        fitted = {
+            "f_rabi_hz": (float(x[0]), float(err[0])),
+            "nbar": (float(x[1]), float(err[1])),
+            "contrast": (float(x[2]), float(err[2])),
+        }
+    return ExperimentResult(
+        data=data, fitted=fitted, model="thermal_debye_waller_rabi", provenance_id="conv.rabi_frequency"
+    )
 
 
 def ramsey(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    raise NotImplementedError(f"ramsey is {M8}")
+    """pi/2 - delay - pi/2(phase ``analysis_phase_rad``) on ``ion`` at drive detuning ``detuning_hz``; data columns (delay, P1);
+    fitted fringe P = A cos(2 pi delta t + phi_0) + B: delta_hz, contrast (Section 7.5, the Ramsey-frequency experiment's core)."""
+    from qutip_trap.control.pulses import Pulse
+
+    setup = _setup(device, ion, kw)
+    detuning = float(kw.get("detuning_hz", 0.0))
+    dead = float(device.hardware.dead_time_s)
+    t_half = 0.25 / setup.rabi_hz
+    analysis = float(kw.get("analysis_phase_rad", 0.0))
+    rows = []
+    for delay in sorted(float(x) for x in delays_s):
+        if delay < 0.0:
+            raise ValueError("delays are non-negative")
+        gap = max(delay, 0.0)
+        p1_pulse = Pulse(setup.drive, 0.0, t_half, "ramsey_1", ())
+        start2 = t_half + gap
+        base_phase = float(kw.get("phase_rad", 0.0))
+        drive2 = replace(setup.drive, tones=(replace(setup.drive.tones[0], phase_rad=base_phase + analysis),))
+        p2_pulse = Pulse(drive2, start2, start2 + t_half, "ramsey_2", ())
+        idle = ((t_half, start2),) if gap > 0.0 else ()
+        traces = _run(device, ion, [p1_pulse, p2_pulse], setup, {**kw, "idle": idle})
+        rows.append((delay, float(np.real(traces.expectations[f"P1[{ion}]"][-1]))))
+        _ = dead
+    data = np.array(rows)
+    fitted: dict[str, tuple[float, float]] = {}
+    if data.shape[0] >= 4:
+        t, y = data[:, 0], data[:, 1]
+
+        def model(p: np.ndarray, tt: np.ndarray) -> np.ndarray:
+            return np.asarray(p[0] * np.cos(2.0 * math.pi * p[1] * tt + p[2]) + p[3])
+
+        guess = [0.5, detuning if detuning != 0.0 else 1.0 / max(float(t[-1]), 1e-9), analysis, 0.5]
+        x, err = _fit(model, guess, t, y)
+        fitted = {
+            "contrast": (abs(float(x[0])), float(err[0])),
+            "delta_hz": (float(x[1]), float(err[1])),
+            "phi0_rad": (float(x[2]), float(err[2])),
+            "offset": (float(x[3]), float(err[3])),
+        }
+    return ExperimentResult(
+        data=data, fitted=fitted, model="ramsey_fringe", provenance_id="conv.detuning_symbols"
+    )
 
 
 def ramsey_frequency(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """Qubit frequency for the table; the scheduler never reads the true value (Section 7.5)."""
-    raise NotImplementedError(f"ramsey_frequency is {M8}")
+    """Qubit frequency for the table: the frame (drive reference) frequency plus the fitted Ramsey fringe frequency, with the
+    sign resolved by two scans at drive detunings +-``probe_hz`` (default 1 kHz); the scheduler never reads the true value."""
+    probe = abs(float(kw.get("probe_hz", 1e3)))
+    frame_hz = float(kw.get("frame_hz", 0.0))
+    plus = ramsey(device, ion, delays_s, **{**kw, "detuning_hz": +probe})
+    minus = ramsey(device, ion, delays_s, **{**kw, "detuning_hz": -probe})
+    fp = abs(plus.fitted["delta_hz"][0]) if plus.fitted else math.nan
+    fm = abs(minus.fitted["delta_hz"][0]) if minus.fitted else math.nan
+    # a fringe at |probe - x| for the + scan and |probe + x| for the - scan pins the true offset x of the transition from the frame
+    x = 0.5 * (fm - fp)
+    unc = 0.5 * math.hypot(
+        plus.fitted["delta_hz"][1] if plus.fitted else 0.0,
+        minus.fitted["delta_hz"][1] if minus.fitted else 0.0,
+    )
+    data = np.vstack(
+        [
+            np.column_stack([plus.data, np.full(len(plus.data), +probe)]),
+            np.column_stack([minus.data, np.full(len(minus.data), -probe)]),
+        ]
+    )
+    return ExperimentResult(
+        data=data,
+        fitted={
+            "qubit_offset_hz": (x, unc),
+            "qubit_freq_hz": (frame_hz + x, unc),
+            "fringe_plus_hz": (fp, 0.0),
+            "fringe_minus_hz": (fm, 0.0),
+        },
+        model="ramsey_two_probe",
+        provenance_id="conv.detuning_symbols",
+    )
+
+
+def sideband_spectroscopy(
+    device: Device, ion: int, detunings_hz: Sequence[float], **kw: Any
+) -> ExperimentResult:
+    """P1 after a pulse of ``duration_s`` (default the carrier pi time) against the drive detuning; the fitted entries are the
+    detunings of the local maxima nearest the carrier and the driven mode's first sidebands (Section 7.9)."""
+    from qutip_trap.control.pulses import Pulse
+
+    base = _setup(device, ion, {**kw, "detuning_hz": 0.0})
+    duration = float(kw.get("duration_s", 0.5 / base.rabi_hz))
+    rows = []
+    for mu in sorted(float(x) for x in detunings_hz):
+        setup = _setup(device, ion, {**kw, "detuning_hz": mu, "space": base.space})
+        pulse = Pulse(setup.drive, 0.0, duration, "sideband_spectroscopy", ())
+        traces = _run(device, ion, [pulse], setup, kw)
+        rows.append((mu, float(np.real(traces.expectations[f"P1[{ion}]"][-1]))))
+    data = np.array(rows)
+    fitted: dict[str, tuple[float, float]] = {}
+    mus, p1 = data[:, 0], data[:, 1]
+    step = float(np.median(np.diff(mus))) if len(mus) > 1 else 0.0
+    if base.driven_mode is not None:
+        f_mode = device.crystal.modes[base.driven_mode].omega_hz
+        for name, centre in (("carrier_hz", 0.0), ("blue_sideband_hz", f_mode), ("red_sideband_hz", -f_mode)):
+            window = np.abs(mus - centre) <= max(0.25 * f_mode, 2 * step)
+            if np.any(window):
+                idx = int(np.argmax(np.where(window, p1, -np.inf)))
+                fitted[name] = (float(mus[idx]), step)
+        if "blue_sideband_hz" in fitted and "red_sideband_hz" in fitted:
+            fitted["mode_hz"] = (0.5 * (fitted["blue_sideband_hz"][0] - fitted["red_sideband_hz"][0]), step)
+    else:
+        idx = int(np.argmax(p1))
+        fitted["carrier_hz"] = (float(mus[idx]), step)
+    return ExperimentResult(
+        data=data, fitted=fitted, model="sideband_spectrum_peaks", provenance_id="conv.detuning_symbols"
+    )
+
+
+# ---- milestone M8 ----------------------------------------------------------------------------------------------------------------
 
 
 def micromotion_scan(
     device: Device,
     ion: int,
     beam: int,
-    shim_ranges_v: dict[str, tuple[float, float]],
+    shim_ranges_v: Mapping[str, tuple[float, float]],
     method: str = "rf_photon_correlation",
     **kw: Any,
 ) -> ExperimentResult:
     raise NotImplementedError(f"micromotion_scan is {M8}")
-
-
-def sideband_spectroscopy(
-    device: Device, ion: int, detunings_hz: Sequence[float], **kw: Any
-) -> ExperimentResult:
-    raise NotImplementedError(f"sideband_spectroscopy is {M8}")
 
 
 def ms_scan(
@@ -91,4 +383,5 @@ __all__ = [
     "ramsey",
     "ramsey_frequency",
     "sideband_spectroscopy",
+    "thermal_rabi_model",
 ]

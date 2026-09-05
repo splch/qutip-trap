@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 import sys
 import textwrap
@@ -93,6 +94,8 @@ def test_type_checker_refuses_hz_where_rad_s_is_expected(tmp_path: Path) -> None
             str(path),
         ],
         capture_output=True,
+        env={k: v for k, v in os.environ.items() if k not in ("FORCE_COLOR", "CLICOLOR_FORCE")}
+        | {"NO_COLOR": "1"},
         text=True,
         check=False,
     )

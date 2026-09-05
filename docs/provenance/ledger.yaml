@@ -628,6 +628,134 @@ records:
     source: "tests/test_trap_model.py"
     equation: "171Yb+ at 1 MHz, q = 0.28: E_dc = 1, 10, 100 V/m give u0 = 14.3, 143, 1429 nm, beta = 0.034, 0.340, 3.40 at 369.5 nm, J0 = 0.9997, 0.971, -0.365; J1^2/J0^2 -> (beta/2)^2"
     corrected_form: "the carrier sign inverts past the first zero at beta = 2.4048; Berkeland's Eq. 21 prints a stray factor Omega"
+  # ---- Section 13 conventions the M2 spin-motion code encodes ---------------------------------------------------
+  - id: conv.computational_ordering
+    symbol: "sigma_z = |1><1| - |0><0|"
+    tag: derived
+    section: "5.2, 5.7, 7.6; hilbert/operators.py"
+    source: "PLAN.md Sections 5.7 and 7.6; tests/test_native_pulses.py"
+    equation: "qudit index 0 is the lower qubit level |0> = Species.qubit[0], index 1 the upper; sigma_+ = |1><0|; the ENERGY sigma_z of H_int = (Delta/2) sigma_z and H_Stark puts the upper level up; the native-gate matrices act on (|0>, |1>) as printed"
+    corrected_form: "the computational Pauli Z of control/native.py (Z|0> = +|0>) is the NEGATIVE of the energy sigma_z; the two are never aliased (M2)"
+  - id: conv.drive_coefficient_and_phase_continuity
+    symbol: "c(t) = (1/2) sum_tones Omega(tau) e^{-i(mu t - phi(tau))}"
+    tag: derived
+    section: "5.2, 7.10; dynamics/hamiltonian.py"
+    source: "PLAN.md Section 7.10 (phase-continuous operation at the nominal qubit frequency, the mode the virtual-Z rule was pinned in)"
+    equation: "the beat-note phase is mu t in ABSOLUTE time for a phase-continuous tone (mu tau under phase_mode='reset'; the FM integral int mu dtau for a detuning schedule); envelopes, phases and detunings are callables of the time since the pulse start, a constant is a square pulse, an array is uniformly sampled over the pulse and cubic-spline interpolated; the static factors are rabi_scale x eps_ij x J_0(beta) x prod_frozen e^{-eta^2/2} L_n(eta^2)"
+    corrected_form: "coefficients are QuTiP 5.3 f(t, **kwargs) callables carrying a shared evaluation counter, never strings (Section 5.2)"
+  - id: conv.raman_beam_labels
+    symbol: "Delta k = k_1 - k_2, mu = (omega_1 - omega_2) - omega_0"
+    tag: derived
+    section: "4.3.2, 13 Effective wavevector; light/raman.py"
+    source: "Wineland 2003 Eq. 2.3; AtomicStructure.raman_coupling_rad_s(g1 = lower, g2 = upper, beam1, beam2)"
+    equation: "beam 1 is the higher-frequency beam ABSORBED from the lower qubit level and beam 2 the beam emitted into from the intermediate state, Omega_R = sum_e conj(Omega^(2)_{e up}) Omega^(1)_{e down}/(2 Delta_e); the tone at beat note omega_1 - omega_2 = omega_0 + mu drives |down> -> |up> with momentum k_1 - k_2"
+    corrected_form: "Section 13's row wording 'beam 1 coupling to the upper level' is ambiguous (the intermediate level is 'upper' to both beams); the M0 pulses.py docstring repeated it and now states the frequency-ordering reading (M2)"
+  - id: conv.virtual_z_concrete_sequence
+    symbol: "RZ(0.1) then GPi2(0) on |0>"
+    tag: recomputed here
+    section: "5.2, 7.6, 9.6; control/schedule.py, dynamics/frames.py"
+    source: "tests/test_native_pulses.py"
+    equation: "the scheduler plays GPi2 at phase 0 - 0.1 and leaves the frame at 0.1; the simulated state equals GPi2(-0.1)|0> and, with RZ(0.1) applied afterwards, GPi2(0) RZ(0.1)|0> as multiplied matrices; GPi2(+0.1)|0> is asserted to FAIL so the rule is pinned by the sequence, not by a sign convention"
+    corrected_form: "phi -> phi - theta in time order (Section 7.6); the documentation's +theta holds in matrix order"
+  - id: conv.frozen_spectator_shot_sample
+    symbol: "n_m per shot"
+    tag: derived
+    section: "5.2, 3.4; dynamics/engine.py"
+    source: "PLAN.md Sections 3.4 and 5.2"
+    equation: "a frozen mode's Fock state comes from the sample key frozen_n[m] or, absent that, from a thermal draw at the state's nbar with the keyed stream (sample, 0, 0, 0, 'frozen_n[m]'); it multiplies every drive on the shot by e^{-eta^2/2} L_n(eta^2) and is recorded in the engine report"
+    corrected_form: "never the ensemble-mean factor exp[-eta^2(nbar + 1/2)] inside one shot (Section 13, Debye-Waller statistics)"
+  - id: conv.oracle_margin_rule
+    symbol: "margin >= 4"
+    tag: derived
+    section: "5.1.1 rule ii, 5.5; hilbert/space.py"
+    source: "the Section 5.1.1 table (bench_numerics.py); tests/test_hilbert_layer.py"
+    equation: "HilbertSpace.displacement_factor asserts the interior elements against the analytic oracle to interior_tolerance(margin, eta) (the table row d = 2 margin, log-interpolated, floored at 1e-12) whenever the margin above the declared range is at least 4 levels; below the table's smallest row the difference is reported by oracle_status and the boundary monitor governs; required margins 6/10/20 at eta 0.1/0.5/1.0 are stored as an interpolated fixture"
+    corrected_form: "a fatal oracle at small caps would defeat the cap-raising retries of Section 5.5, which start from a deliberately small cap (M2 rule)"
+  # ---- Sections 4.3, 5.1.1, 9.2, 9.10, 9.12, 9.13, 9.15 anchors reproduced by the M2 spin-motion layer ------------------
+  - id: anchor.m2.displacement_table
+    symbol: "max |D_expm - D_analytic|, norm loss"
+    tag: recomputed here
+    section: "5.1.1 table; 9.13 Displacement operator"
+    source: "tests/test_hilbert_layer.py; bench_numerics.py"
+    equation: "block n, n' < d/2: 2e-13/2e-6/1e-3 (d = 8), 3e-16/7e-8/2e-4 (10), 1e-16/1e-15/3e-9 (20), <= 1e-14 (40) at eta = 0.1/0.5/1.0, the round-off rows compared at the 1e-12 floor; expm unitary to 1e-13; analytic top-column norm loss 9.3% at (10, 0.1); both branches alpha^(n'-n) below and (-alpha*)^(n-n') above the diagonal match qutip.displace for complex alpha to 1e-13"
+    corrected_form: "the d = 40 rows read 6e-15/5e-15/7e-16 here against the table's 7e-16/8e-16/7e-16: BLAS round-off, inside the 1e-12 floor"
+  - id: anchor.m2.rabi_matrix_elements
+    symbol: "Omega_{n',n}/Omega = |<n'|D(i eta)|n>|"
+    tag: recomputed here
+    section: "4.3.1, 9.2 Exact Rabi matrix elements, 9.16 rows 4.3-2 and 4.3-3"
+    source: "tests/test_hilbert_layer.py"
+    equation: "the modulus form matches |<n'|expm(i eta (a + a^dag))|n>| at N = 400 to rtol 1e-10 over eta in {-0.9, -0.1, 0.05, 0.1, 0.3, 0.5, 0.9, 1.0, 1.5}, n, n' <= 8, and is non-negative; the signed Laguerre form is negative at eta = +0.5 for n = n' >= 6; the drive phase on the k-th sideband is arg (i eta)^k = k pi/2; <p|D|0> exceeds the eta^p/p! heuristic by sqrt(p!) e^{-eta^2/2} = 2.4373 (p = 3), 4.8745 (p = 4)"
+    corrected_form: "the quartic Debye-Waller residual at n = 1, eta = 0.1 is 0.9850623544 exact against 1 - 3x/2 + 5x^2/8 = 0.9850625000, scaling as eta^6 with coefficient -7/48"
+  - id: anchor.m2.debye_waller_identity
+    symbol: "sum_n P_n e^{-eta^2/2} L_n(eta^2)"
+    tag: recomputed here
+    section: "4.2.7, 9.2 Debye-Waller, 9.10, 9.12 Debye-Waller identity"
+    source: "tests/test_hilbert_layer.py"
+    equation: "0.9851119396031 at eta^2 = 0.01, nbar = 1 and 0.8203698531378 at eta^2 = 0.09, nbar = 1.7 to 13 digits; the sum from n = 1 in the second case is 0.4662967 (0.4876057 in the first); 100 modes at nbar = 0.1, eta = 0.01: rms 3.3e-4 and P(|dOmega/Omega| < 1e-4) = erf(1e-4/sqrt(2 x 1e-6 x 0.11)) = 0.237, 0.330 without the 2"
+    corrected_form: "the thermal mean equals exp[-eta^2(nbar + 1/2)] EXACTLY (a thermal state's characteristic function is Gaussian), so Section 4.2.7's 'approximately' is an identity; Section 9.12's 'the n = 1 start gives 0.4662967' attaches to the (0.09, 1.7) case, not to the (0.01, 1) case it follows in the sentence (M2 finding)"
+  - id: anchor.m2.picture_equivalence_and_step_density
+    symbol: "||psi_S - e^{-i H_0 t} psi_I||"
+    tag: recomputed here
+    section: "5.2, 5.3, 9.13 Picture equivalence and Step density"
+    source: "tests/test_builder_physics.py; the diagnostic run of 2026-09-05"
+    equation: "Schroedinger-motion and sideband-decomposed interaction pictures agree to 1.5e-8 for a blue-sideband pulse at n_max = 11; k_max = 2 to 1e-4 with the dropped weight reported; the interaction picture holds the right-hand-side evaluations near 1000 for k_max = 1, 3 and all 21 sidebands (scipy's DOP853 on the same operators: 1058) while the Schroedinger picture needs 27 steps per mode period under QuTiP's dop853 wrapper (12 under scipy's solve_ivp DOP853 at the same tolerances)"
+    corrected_form: "the plan's 14 to 45 steps per period (Section 5.2, measured with solve_ivp) brackets the QuTiP figure; the engine reports steps per period of the highest MODE, not of the top Fock component"
+  - id: anchor.m2.sideband_two_level_forms
+    symbol: "P = [Omega_{n'n}^2/(Omega_{n'n}^2 + Delta^2)] sin^2((t/2) sqrt(Omega_{n'n}^2 + Delta^2))"
+    tag: recomputed here
+    section: "4.3.1 Two-level propagators; 9.2; 13 Sideband excitation lineshape"
+    source: "tests/test_builder_physics.py"
+    equation: "in the interaction picture with rwa (one sideband term) the closed form holds to 1e-9 at Delta = 0, +Omega_10, -0.6 Omega_10 with the plan's generalized Rabi frequency; the full model (every sideband, exact D) deviates by the carrier's light shift of the sideband, of order (Omega/(2 eta omega))^2 = 2e-3 at Omega/2pi = 30 kHz, eta = 0.111, omega/2pi = 3 MHz; the transition amplitude carries phi + pi/2 on the first sideband to 2e-3 rad; the blue sideband from |0> and the red from |1> flop at Omega eta e^{-eta^2/2}"
+    corrected_form: "a native-gate identity test on a sideband must either use the rwa option or budget the carrier light shift; the plan's 9.6 budget '(Omega/nu)^2' is the carrier-on-carrier figure, the sideband figure is (Omega/(2 eta nu))^2 (M2 finding)"
+  - id: anchor.m2.micromotion_carrier_factor
+    symbol: "J_0(beta)"
+    tag: recomputed here
+    section: "4.3.6, 9.2 Micromotion factors"
+    source: "tests/test_builder_physics.py"
+    equation: "171Yb+ at omega_x/2pi = 3 MHz in a 30 MHz rf trap with a 50 V/m stray field along x: beta = 0.409 for the counter-propagating 355 nm pair (u_0 = 80 nm, q = 0.28), J_0 = 0.9586; the unlocked drive's carrier pi time is pi/(J_0 Omega e^{-eta^2/2}) to 1e-5 in population, the rf-locked modulated drive e^{i beta cos(Omega_rf t + delta)} agrees to 1e-4, C0 sits inside eta (0.11289 against 0.11113 without the rf record)"
+    corrected_form: "an unlocked drive with micromotion='modulated' and no sampled rf phase is refused: the default is the J_0 average (Section 4.3.6)"
+  - id: anchor.m2.harty_randomized_benchmarking
+    symbol: "EPG"
+    tag: recomputed here
+    section: "4.3.3, 9.2 Microwave RB, 9.12 Harty budget decomposition"
+    source: "qutip_trap/validation/harty_rb.py; tests/test_harty_rb.py; Harty et al. 2014 (arXiv:1403.1524) main text and supplement"
+    equation: "Pauli (two pi/2 pulses about +-x, +-y; +-z as a delay plus a frame rotation by pi; +-I as delays) then Clifford (one pi/2 about +-x, +-y) per computational gate, 14 us dead time after every pulse, 2000 gates, final pi/2 pulses into |down> or |up>; 12.1 us pulses, +4.5 Hz and a constant 5e-4 Rabi error give 0.77(11)e-6 over sets of 32 sequences (paper 0.81(14)e-6), the Rabi error alone 0.31e-6 (paper 0.3e-6), the detuning alone 0.59e-6 with the -1.0 Hz ac Zeeman shift applied during pulses only and 0.80e-6 with 5.5 Hz everywhere (paper 0.7e-6)"
+    corrected_form: "the paper leaves the identity timing ambiguous ('delays of the same duration (12 us) as the pi/2-pulses'); one delay per replaced pi/2 pulse (two slots each followed by the dead time) reproduces the budget, a single delay gives 0.53e-6; delta_eff = delta - delta_ac = +5.5 Hz (Section 9.2)"
+  - id: anchor.m2.mount_pd6
+    symbol: "phi_PD6:k"
+    tag: recomputed here
+    section: "4.3.5, 9.2 Composite pulses, 9.10 Composite pulses"
+    source: "Mount et al. 2015 Table I (arXiv:1504.01440); tests/test_composite_pulses.py"
+    equation: "PD6 phases (0.38266, -2.51430, -1.75192, 0.05941, 2.67572, 0.39344) for theta_t = pi and (0.34769, -3.06979, 1.55852, -0.70890, 3.09692, -0.62174) for pi/2, twelve pi pulses palindromic after the target: 2.447e-2 -> 3.713e-11 at theta_t = pi, eps = 0.1, and 6.156e-3 -> 1.348e-11 at pi/2, the cross-keyed rows leaving 6.156e-3; B2 below 1% for |eps| < 0.4 (6.3e-3 at 0.4, 2.2e-2 at 0.5) and PD6 for |eps| < 0.6 (6.5e-3 at 0.6, 3.3e-2 at 0.7) in 1 - F_K"
+    corrected_form: "the table's phi_t column is theta_t (the plan's source typo); Section 9.10's 'target-first and target-last orderings separate at delta-hat = 0.1 (4.33e-3 vs 1.84e-3)' is not reproduced: at theta_t = pi, eps_d = 0.1 the two orderings give 9.80e-3 and 1.00e-2 for B2 and 1.00e-2 and 9.87e-3 for PD6 in 1 - F_K, coinciding at eps_d = 0 (M2, recorded rather than absorbed)"
+  - id: anchor.m2.composite_order_ladder
+    symbol: "slopes of 1 - F_K"
+    tag: recomputed here
+    section: "4.3.5, 9.15"
+    source: "tests/test_composite_pulses.py; check_composite.py"
+    equation: "amplitude/detuning infidelity slopes at theta = pi: primitive 2/2, SK1 4/2, BB1 6/2, CORPSE 2/4 (fitted below 1e-4), SCROFULOUS 4/2, CinSK 4/4 and CinBB 6/4 with 4 under simultaneous error; coefficients SK1 22.830256 eps_a^4, BB1 and CinBB 9.388566 eps_a^6, SCROFULOUS 4.566051 eps_a^4 and 4.0 eps_d^2, CORPSE 6.5008e-3 eps_d^4 degraded to 0.75 by either concatenation; the printed SK1 sign is twice the bare error, the three-pulse P2 3700x worse than P2; f_j = 4, 24, 720, 90720 and 2, 12, 360, 45360; toggled PD2 = BB1; durations 5 pi, 5 pi - 4k, 9 pi - 4k (1500 degrees)"
+    corrected_form: "below 1 - F ~ 1e-8 the spectral-norm distance E converts as 1 - F_K ~ E^2 (1 - F_C ~ E^2/2): the plan's 'E^2/2' (Sections 4.3.5, 13) is the F_C form and halves every F_K coefficient if applied to F_K (M2 finding, pinned by the primitive's 1 - F_K = eps_d^2 at theta = pi); short-CORPSE's (0, 1, 0) winding returns -R, a global phase"
+  - id: anchor.m2.comb_numbers
+    symbol: "sech(pi l nu_rep tau), C_00,10, q, lock"
+    tag: recomputed here
+    section: "4.3.7, 9.15"
+    source: "tests/test_comb_drive.py; check_comb.py"
+    equation: "pair weight 0.863911 at l = 105 (0.595332 with the single-tooth argument), exact convolution 0.821; sum rule 1.000000000000 at nu_rep tau = 1.68e-3 and 3.14 at 1; C_00,10 = 0.746343, 0.453162, 0.450920, 0.669087, 0.940671, 0.943780, 0.943789 for |k| <= 0, 5, 10, 100, 500, 1000, 5000; C_10,11 = C_10,1-1 = 0.988841; Hayes q = 156.5090, 313.0181, 469.5213; Islam n = 157, |Delta nu_M| = 11.381 MHz; Rosen-Zener 0.720860 and 0.914142; widths 1.6768 and 1.1222 tau; amplitude-noise 5.6179e-3 (Hz) against (2 pi)^2 x that"
+    corrected_form: "the tone set excludes the self-beat l = 0 pair (it is the intensity, not a drive) and cuts at |mu_j - mu_res| <= 10/t_g, the rest folded into the fourth-order shift"
+  - id: anchor.m2.cetina_curvature
+    symbol: "C = prod (1 + theta^2 Omega^2 t^2)^(-1/2), phi = sum arctan(theta Omega t)"
+    tag: recomputed here
+    section: "6.2, 9.2 Beam-curvature Rabi decay, 9.12 Cetina curvature numbers"
+    source: "tests/test_builder_physics.py"
+    equation: "Omega''/Omega = -2/w^2 = -2.6424e12 m^-2 at w = 870 nm; xi_0 = 17.19 nm at 100 kHz and 14.53 nm at 140 kHz for 171Yb+; the exact Omega(x) = Omega_0(1 + (Omega''/2 Omega_0) x^2) drive on a thermal axial mode (nbar = 4, d = 60, mesolve) reproduces the frozen-Fock secular sum sum_n P_n sin^2(Omega_n t/2), Omega_n = Omega_0(1 + kappa xi^2 (n + 1/2)), to 1e-6 and Cetina's continuum form to 2e-3, the latter converging as nbar grows (5e-5 at 20)"
+    corrected_form: "phi is a phase LAG (the source's Eq. 2 prints the wrong sign); the mechanism is distinct from the Debye-Waller factor (modes perpendicular to the beam, algebraic contrast)"
+  - id: anchor.m2.derived_raman_drive
+    symbol: "Omega_R, Delta k, eta, delta_St, Gamma"
+    tag: recomputed here
+    section: "3.3, 4.3.2, 4.5.4, 4.5.5, 6.6"
+    source: "tests/test_light_layer.py"
+    equation: "171Yb+ clock transition, counter-propagating 355 nm pair along x with lin-perp-lin polarizations (y, z) and B along x, 10 mW in 20 um waists: Omega_R/2pi = 30.28 kHz, |Delta k| = 2k, eta_x = 0.1111 = the 0.1103011 anchor scaled to 3.0 MHz, Stark shift -11.5 Hz (blue-detuned light raises both levels), Raman probability per pi pulse 1.6e-6; a co-propagating pair has Delta k = 0 and eta = 0 on every mode; pi-pi polarizations give no clock coupling (the vector light shift vanishes); the neighbour ratio under beams pointed at ion 0 is the product of two Gaussian FIELD factors exp(-s^2/w^2)"
+    corrected_form: "the two-ion 90-degree fixture of tests/fixtures.py (both beams polarized along B) cannot drive the clock transition and is a data-model fixture only (M2 finding)"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

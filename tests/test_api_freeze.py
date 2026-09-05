@@ -141,7 +141,9 @@ def test_unimplemented_entry_points_name_their_milestone() -> None:
     with pytest.raises(NotImplementedError, match=r"milestone M\d"):
         api.compile_to_native(api.Circuit(1, (), (0,)), dev)  # type: ignore[arg-type]
     space = api.HilbertSpace((2,), (api.ModeTruncation(0, 4, (0, 1), 0.1),), None, ())
+    # the Hilbert layer of M2 is implemented: operators() no longer raises, the M9a selector still names its milestone
+    assert len(space.operators().sigma_plus) == 1
     with pytest.raises(NotImplementedError, match=r"milestone M\d"):
-        space.operators()
+        api.HilbertSpace.for_(dev, None, api.SolverOptions())  # type: ignore[arg-type]
     # the atomic layer of M0a is implemented: this no longer raises
     assert api.species_by_name("171Yb+").zeeman_spectrum("S1/2", 5.0).labels

@@ -3,31 +3,36 @@
 A first-principles trapped-ion quantum computer simulator built on QuTiP. The specification is
 [`PLAN.md`](PLAN.md); this repository implements it milestone by milestone (Section 10 of the plan).
 
-**Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer) and M1 (trap and
-crystal).** No gate is simulated yet. What exists is the `uv`-managed project, the units module with the Hz/rad·s
-convention enforced by types, the public API of Appendix E frozen as Python dataclasses and protocols (every
-unimplemented method raises `NotImplementedError` naming its milestone), the species data tables, the provenance
-ledger, the committed check scripts behind every `[recomputed here]` number, the CI definition, the atomic layer of
-Section 4.5 (exact 3j/6j algebra, hyperfine-Zeeman diagonalization with adiabatic labels and clock-point finder,
-Wigner-Eckart dipole elements, the Gamma to reduced element to I_sat chain, polarization decomposition, Raman
-couplings, light shifts, Kramers-Heisenberg scattering, electric-quadrupole coupling), and the trap layer of
-Section 4.1: the Mathieu equation by the monodromy method (scalar and the coupled 3 x 3 system) with the Floquet
-function under the Wronskian normalization that yields the micromotion factor C0, the gapless-plane
-surface-electrode model (strip complex potentials and House's rectangle potential, rf null, escape-point saddle,
-depth, principal axes, the map to Mathieu parameters, House's Eq. 30 minimum-norm dc solution), Berkeland's rod-trap
-map, the ion crystal (James equilibrium by Newton iteration, the mass-weighted eigenproblem for mixed species, three
-mode families in the canonical Appendix E order, the zigzag refusal, per-ion per-mode Lamb-Dicke parameters with C0
-applied exactly once), excess micromotion indices, heating rates from single-sided S_E with the mode-projected
-correlation model and the micromotion-sideband sum, and the cubic and quartic Coulomb mode couplings with a
-three-mode resonance checker. Acceptance tests are the anchors of Sections 9.1, 9.10, 9.12, 9.13, 9.14, 9.16 and 9.17
-(among them C0 = 1.001890/1.007741/1.018161, the House five-wire fixture, Nizamani's q_N versus q, James's spectrum
-and the zigzag ratios, Home's Be+/Mg+ table, the 171Yb+ Lamb-Dicke triple 0.1103/0.0493/0.0268, the 40 quanta/s heating
-round trip, D_222 = -1.1225).
+**Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
+crystal) and M2 (single ion, spin-motion coupling, single-qubit gates).** The simulator now evolves one ion with its
+motional modes through the one Hamiltonian builder of Section 4.3: exact displacement operators by matrix exponential
+asserted against the analytic Laguerre elements over the populated range (Section 5.1.1), cached operators and
+marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman, single-photon optical (E1
+and E2) and microwave drives whose Rabi frequencies, Stark shifts and scattering rates are derived from the beams and
+the atomic layer rather than entered (`light/`), frames (Schroedinger-motion default, the sideband-decomposed
+interaction picture with `k_max` and `rwa` as declared approximations), the `dop853` -> `vern9` ladder with the
+step-density record (Section 5.3), a JOINT_EXACT pulse engine (`JointExactEngine.run_pulses`) that segments a schedule
+at pulse boundaries, applies frozen-spectator Debye-Waller factors drawn per shot from the keyed seeds, micromotion
+J_0 factors or the rf-locked modulation, crosstalk terms, Stark and anharmonic terms and Cetina's beam-curvature
+coupling, single-qubit native gates (GPi, GPi2) as pulses with virtual-RZ frame tracking through the scheduler subset
+of Section 7.3, the composite-pulse library of Section 4.3.5 (SK1, BB1, NB1, PB1, the P2j/N2j/B2j ladder, CORPSE,
+SCROFULOUS, CinSK, CinBB, Mount's PD6, the Low-Yoder-Chuang certificate), the frequency-comb tone set of Section
+4.3.7, Harty's microwave randomized-benchmarking model, and the Rabi, Ramsey, Ramsey-frequency and
+sideband-spectroscopy experiments on the engine. Everything before M2 is as described below. Acceptance tests are the
+anchors of Sections 9.2, 9.6, 9.10, 9.12, 9.13, 9.15 and 9.16 (among them the Section 5.1.1 displacement table, the
+exact Rabi matrix elements to rtol 1e-10, the Debye-Waller identity 0.9851119396031, picture equivalence to 1.5e-8, the
+RZ(0.1)-then-GPi2(0) sequence, Harty's 0.81(14)e-6 reproduced as 0.77(11)e-6, Mount's PD6 3.713e-11, every Section
+9.15 comb number, Cetina's -2.6424e12 m^-2 and 17.19 nm). Two-ion entangling gates (M4), cooling (M3) and readout
+(M5) are not simulated yet.
 
-Three plan inconsistencies surfaced by M1 are recorded in the ledger (`anchor.trap.house_five_wire`,
-`anchor.trap.be9_infinite_chain`, `anchor.trap.marquet_selection_rules`): the "4.077 MHz Floquet" of Section 9.13
-is the preprint closed form, not the exact exponent (4.080 MHz); the 7.806 MHz 9Be+ zigzag example uses m = 9 u;
-and the leading sign of the cubic Coulomb term printed in Section 4.1.4 does not match its own D_222 = -1.1225.
+Plan inconsistencies surfaced by M1 and M2 are recorded in the ledger rather than absorbed (`anchor.trap.*`,
+`anchor.m2.*`): the "4.077 MHz Floquet" of Section 9.13 is the preprint closed form, not the exact exponent (4.080 MHz);
+the 7.806 MHz 9Be+ zigzag example uses m = 9 u; the leading sign of the cubic Coulomb term printed in Section 4.1.4
+does not match its own D_222 = -1.1225; the distance-to-infidelity conversion "E^2/2" of Sections 4.3.5 and 13 is the
+1 - F_C form (1 - F_K needs E^2); Section 9.12's Debye-Waller "n = 1 start gives 0.4662967" belongs to its second case
+(eta^2 = 0.09, nbar = 1.7) and the thermal mean is exactly exp[-eta^2(nbar + 1/2)]; Section 9.10's target-first versus
+target-last composite-pulse numbers under detuning (4.33e-3 vs 1.84e-3) are not reproduced; Harty's identity-gate
+timing is ambiguous in the source and the one-delay-per-replaced-pulse reading is the one that reproduces the budget.
 
 ## Layout
 
@@ -38,9 +43,15 @@ and the leading sign of the cubic Coulomb term printed in Section 4.1.4 does not
 | `qutip_trap/units.py` | CODATA constants and the `Hz` / `RadPerS` and `Gauss` / `Tesla` types (Sections 5.6, 13) |
 | `qutip_trap/species/` | one table of cited constants per isotope, the `Species` builder, and the atomic layer (`wigner`, `zeeman`, `dipole`, `polarization`, `raman`, `quadrupole`; `atomic.py` is the facade) |
 | `qutip_trap/trap/` | the trap layer of Section 4.1: `mathieu` (monodromy, Floquet function, C0), `pseudopotential` (rf drive, geometry-free maps), `surface` (gapless-plane electrodes), `crystal` (equilibrium, mass-weighted modes, Lamb-Dicke), `micromotion`, `heating`, `anharmonic`; `model.py` is the `Trap` record |
+| `qutip_trap/hilbert/` | the composite space of Section 5.1: `operators` (analytic Laguerre elements, expm displacement, the Section 5.1.1 tolerance and margin fixture, Debye-Waller factors, qubit operators in the computational ordering), `space` (cached operators, marginals with the ENR index sums, state constructors), `truncation` (boundary monitor, cap growth, the tolerance-tightening test) |
+| `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators) |
+| `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams` |
+| `qutip_trap/control/` | native gates, the circuit IR, `pulses` (Tone/Drive/Pulse), `schedule` (single-qubit gates as pulses with virtual-RZ tracking, M2 subset), `composite` (Section 4.3.5 library) |
+| `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` on the engine (M2); the rest is M8 |
+| `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, Harty's RB model `harty_rb`) |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
-| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17) |
+| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests) |
 | `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 
