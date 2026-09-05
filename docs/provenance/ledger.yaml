@@ -430,6 +430,204 @@ records:
     source: "Roos 2000 p. 31; James 1998 Eqs. 5.11, 5.13; tests/test_quadrupole.py"
     equation: "E0 = 2.3e5 V/m, lambda_air 729.147 nm, tau 1.045 s: 1.1495 MHz; E0 = 2.3e5 V/m, lambda_vac 729.347 nm, tau 1.168 s: 1.0877 MHz and a 460 ns pi time; E0 = 2.309e5 V/m (100 mW in 30 um): 1.0920 MHz"
     corrected_form: "Section 9.14 prints 1.088 MHz 'with 2.309e5 V/m'; that value belongs to E0 = 2.3e5 V/m, a 0.4% inconsistency in the plan's row (2026-09-04, M0a)"
+  # ---- Section 13 conventions the M1 trap code encodes -----------------------------------------------------
+  - id: conv.mathieu_sign_house
+    symbol: "Q_House = -q"
+    tag: corrected
+    section: "13 Mathieu sign in House 2008; 4.1.6"
+    source: "House 2008 Eqs. 4, 7"
+    equation: "the standard form u'' + (a - 2q cos 2tau) u = 0; House's x'' + [A + 2Q cos 2tau] x = 0 has Q = -q, and his Eq. 7 prints the first-order matrix's lower-left block with the wrong sign"
+    corrected_form: "copied as printed, a stable trap (a_z = 0.005, q = 0.20) is reported unstable; trap/mathieu.py companion_matrix(lower_left_sign=+1) is the negative control (tests/test_mathieu.py)"
+  - id: conv.floquet_branch_normalization
+    symbol: "beta in (-1, 1]"
+    tag: corrected
+    section: "13 Floquet branch and normalization; 4.1.7"
+    source: "Landa 2012; House 2008"
+    equation: "omega_j = beta_j Omega/2 on the principal branch; companion matrix F = [[0, 1], [-(A - 2Q cos 2tau), 0]] with U(0) = 1 and monodromy at tau = pi; |tr M| < 2 for stability"
+    corrected_form: "House's Eq. 7 sign; unitarity of Gamma^-1(0) as a check; the paper-literal inverted C_-2 step (the Floquet-Lyapunov modes themselves are not built in M1)"
+  - id: conv.mode_eigenvector_gauge
+    symbol: "b^(p), c^(k)"
+    tag: verified
+    section: "13 Mode eigenvectors; 4.1.3"
+    source: "Marquet 2003; James 1998"
+    equation: "orthonormal, axial eigenvalues increasing, last component positive; transverse families numbered ascending in frequency (Appendix E), so the COM is the last transverse mode"
+    corrected_form: "James's Table 2 eigenvectors ARE sign-consistent with the closed forms (an extracted item claimed otherwise)"
+  - id: conv.mass_weighted_eigenvectors_parity
+    symbol: "c_i = sqrt(m_i) b_i"
+    tag: corrected
+    section: "13 Mass-weighted eigenvectors and parity; 4.1.7"
+    source: "Morigi-Walther 2001; Kielpinski 2000; Wubbena 2012; Home 2013; Landa 2012"
+    equation: "eigenvectors orthonormal in u_i = sqrt(m_i) z_i only; physical amplitudes carry 1/sqrt(m_i); inversion parity p = +1 means an ANTISYMMETRIC displacement pattern (centre ion at rest), exempt from uniform-field noise and uncoolable by a centre ion"
+    corrected_form: "renormalizing in raw displacements is a 20 to 160% error invisible at mu = 1 (b1^2 = 0.40641 instead of 0.31608 at mu = 40/27); 'even' read as 'in-phase' inverts the rule"
+  - id: conv.zero_point_energy
+    symbol: "H_mot"
+    tag: verified
+    section: "13 Zero-point energy; 4.1.3"
+    source: "Wineland 1998; Marquet 2003"
+    equation: "H = sum hbar omega_k a^dag a, zero-point energy dropped; x = x0 (a + a^dag) with x0 = sqrt(hbar/(2 m omega))"
+    corrected_form: "James keeps +hbar omega/2 per mode and uses the Kittel convention with a factor i and (a - a^dag), which the code never mixes in"
+  - id: conv.heating_rate_meaning
+    symbol: "n_dot"
+    tag: verified
+    section: "13 Heating-rate meaning; 4.1.5"
+    source: "Brownnutt 2015"
+    equation: "a quoted rate is d<n>/dt at n = 0, i.e. Gamma N_bar; thermal diffusion is Gamma(2 N_bar + 1); n_dot ~ omega^-(alpha+1) when S_E ~ omega^-alpha; the coherence of (|n0> + |m0>)/sqrt 2 decays at Gamma_h (n0 + m0 + 1)"
+    corrected_form: "Trout's symmetric infinite-temperature pair {sqrt(n_dot) a, sqrt(n_dot) a^dag} is the N_bar >> 1 limit, never to be imported with a finite N_bar"
+  - id: conv.surface_electrode_geometry
+    symbol: "Theta_i = phi_i/V"
+    tag: corrected
+    section: "13 Surface-electrode geometry; 4.1.6"
+    source: "House 2008; Wesenberg 2008; Nizamani 2012"
+    equation: "widths from gap centre to gap centre; ion height h; the ion at the minimum of the total potential, not the rf null; escape point a saddle from f''(w) = 0; rf pseudopotential exactly isotropic transversely at a 2D null, axes set by the dc; five-wire h = sqrt(a(a + 2b))/2 for FULL widths; two-rail null x0 = ac/(b + c), y0 = sqrt(abc(a + b + c))/(b + c)"
+    corrected_form: "y0/h/d for one height; the rf Hessian angle used as a mode axis; a maximum finder for a saddle; the first plan version's sqrt(a(a + b)) with a as an unstated half-width"
+  - id: conv.micromotion_amplitude_convention
+    symbol: "peak | rms"
+    tag: corrected
+    section: "13 Micromotion amplitude convention; 4.1.1; Appendix E MicromotionIndex"
+    source: "Blakestad 2011 Sec. II; Berkeland 1998"
+    equation: "declared explicitly: peak amplitude u_1 = (1/2) q u_0 for the stray-field term; the in-phase (nullable) and out-of-phase ((1/4) q R alpha phi_ac, not nullable) indices never collapse into one number; total adds in quadrature"
+    corrected_form: "Blakestad's zone-E numbers are inconsistent in one convention (68 nm peak against 47 nm rms)"
+  # ---- Sections 9.1, 9.10, 9.12, 9.13, 9.16, 9.17 anchors reproduced by the M1 trap layer ----------------------------
+  - id: anchor.trap.c0_wronskian
+    symbol: "C0(q)"
+    tag: recomputed here
+    section: "9.10 Micromotion carrier and comb; 4.1.1"
+    source: "check_c0_floquet.py; tests/test_mathieu.py"
+    equation: "C0 = 1.001890, 1.007741, 1.018161 at q = 0.1, 0.2, 0.3 (tolerance 1e-6) from the recursion null vector AND from direct integration; equal to 1 + 3q^2/16 to O(q^4); even in q"
+    corrected_form: "(1 + q/2)^-1 = 0.952381, 0.909091, 0.869565 and the u(0) = 1 average are the negative controls"
+  - id: anchor.trap.floquet_sign_ratios
+    symbol: "c_{+-1}/c_0"
+    tag: recomputed here
+    section: "9.17 Mathieu sign of the Floquet function; 4.1.1"
+    source: "check_critique_v3.py; tests/test_mathieu.py"
+    equation: "under a - 2q cos 2xi at q = 0.1: c_+1/c_0 = -0.023322, c_-1/c_0 = -0.026875 (= -q/((2 +- beta)^2 - a)), u'(0)/(i nu u(0)) = 1.1036 (1 + q); trajectory ratios (c_1 + c_-1)/c_0 -> -q/2 and (c_2 + c_-2)/c_0 -> q^2/32"
+    corrected_form: "the RMP's quantum section, Wineland's trajectory and the plan's second revision use the opposite rf phase origin (+0.0233, 1 - q)"
+  - id: anchor.trap.stability_edge
+    symbol: "q(beta = 1, a = 0)"
+    tag: recomputed here
+    section: "9.1 Monodromy beta; 4.1.1"
+    source: "tests/test_mathieu.py"
+    equation: "the monodromy trace reaches -2 at q = 0.9080 for a = 0 (Mathieu tables: 0.908); beta^2 - (a + q^2/2) = O(q^4)"
+    corrected_form: "the printed continued fractions of RMP 2003 Eqs. 10-11 carry an index error and are not used"
+  - id: anchor.trap.companion_sign_guard
+    symbol: "beta_j of the coupled system"
+    tag: recomputed here
+    section: "9.13 Floquet companion-matrix sign guard"
+    source: "tests/test_mathieu.py"
+    equation: "A = diag(-0.004, -0.004, 0.008), Q rotated by 20 deg at q = 0.30: all |lambda| = 1, beta = {0.0894 = sqrt 0.008 exactly, 0.2061 (x2)}; with House's printed sign |lambda| = 1.3244 and 0.7550"
+    corrected_form: "the Hamiltonian-matrix check K F + F^T K = 0 passes for both signs and cannot detect the misprint"
+  - id: anchor.trap.james_spectrum
+    symbol: "mu_p(N)"
+    tag: recomputed here
+    section: "9.1 Equilibrium positions, Axial modes; 9.12 Equilibrium and Hessian fixtures"
+    source: "tests/test_crystal.py"
+    equation: "u = -+(1/2)^(2/3) (N = 2), -+(5/4)^(1/3), 0 (N = 3); mu_1 = 1, mu_2 = 3 for all N; mu_3 = 29/5, 5.81, 5.818, 5.824, 5.829, 5.834, 5.838, 5.841 (N = 3..10); mu_N = 3.0000, 5.8000, 13.4748, 43.2405, 86.5334, 107.3793, 288.6657 (N = 2, 3, 5, 10, 15, 17, 30)"
+    corrected_form: "James Table 1 positions are not printed in the plan; they are reproduced through these eigenvalue anchors and the closed forms"
+  - id: anchor.trap.zigzag_threshold
+    symbol: "(omega_r/omega_z)_crit"
+    tag: recomputed here
+    section: "9.1 Zigzag threshold; 9.12 Exact zigzag bound; 9.17 Zigzag pair"
+    source: "check_critique_v3.py; tests/test_crystal.py"
+    equation: "alpha_crit = 2/(mu_N - 1) = 1, 5/12 at N = 2, 3; (omega_r/omega_z)_crit = 1.0000, 1.5492, 2.4975, 4.5957, 6.5396, 7.2931, 11.9930 for N = 2, 3, 5, 10, 15, 17, 30; solve_crystal raises ZigzagError below it"
+    corrected_form: "the fit 0.73 N^0.86 is 13 to 32% off (negative control); sqrt(12/5) is the ratio, not alpha_crit"
+  - id: anchor.trap.be9_infinite_chain
+    symbol: "omega_r (force balance)"
+    tag: recomputed here
+    section: "9.1 Zigzag threshold (infinite chain); 4.1.2"
+    source: "tests/test_crystal.py"
+    equation: "omega_r^2 = (7 zeta(3)/(8 pi eps0)) e^2/(m s_c^3): 7.806 MHz for 9Be+ at s_c = 3 um with m = 9 u (Wineland 1998's example); 7.8006 MHz with the isotope mass 9.0121822 u; Landsman's dispersion vanishes at kappa d = pi for eps = 2/(7 zeta(3))"
+    corrected_form: "the plan's row does not state its mass; the 0.07% difference is the 9 u versus 9.012 u choice (M1 finding)"
+  - id: anchor.trap.yb171_lamb_dicke_triple
+    symbol: "eta_COM(N)"
+    tag: recomputed here
+    section: "9.16 row 13-6; 13 Lamb-Dicke base"
+    source: "tests/test_crystal.py"
+    equation: "171Yb+ at 355 nm counter-propagating (|Delta k| = 3.5398227e7 1/m), f = 3.045 MHz, ion mass 170.93578 u: 0.1103011324, 0.0493281660, 0.0267519541 for N = 1, 5, 17 (reproduced to 2e-10)"
+    corrected_form: "with 171 u exactly the N = 17 value rounds to 0.0267 instead of 0.0268: the anchor must state its mass"
+  - id: anchor.trap.mixed_two_ion_axial
+    symbol: "omega_-+^2/omega_z1^2"
+    tag: recomputed here
+    section: "9.13 Mixed two-ion axial modes; 9.13 Mixed two-ion axial closed forms"
+    source: "check_surface_mixed.py; tests/test_crystal.py"
+    equation: "0.500847 and 2.250636 at mu = 23.985042/9.0121822 (sum 2.751484); mu = 0.675: (1.0828427249, 1.9468987123, b1^2 = 0.6839213464); mu = 40/27: (0.8896460800, 1.5995405129, 0.3160786536); (1, 3) at mu = 1; the mass-weighted Hessian reproduces all to 1e-9"
+    corrected_form: "the natural-abundance mass 24.305 u gives 0.495185 and 2.246406; renormalizing in raw displacements gives 0.40641 instead of 0.31608 (negative control)"
+  - id: anchor.trap.home_2013_table
+    symbol: "Be+/Mg+ modes"
+    tag: recomputed here
+    section: "9.13 Mixed-species two-ion table; 9.13 Home mixed-species end to end"
+    source: "check_home_table.py; tests/test_crystal.py"
+    equation: "single-ion (12.26, 11.19, 2.69) and (4.82, 3.72, 1.65) MHz: x 12.11/4.67, y 11.03/3.53, z 4.04/1.90 MHz; axial eigenvectors (-0.926, 0.379), (0.379, 0.926); off-species amplitudes 0.018 (x), 0.020 (y); separation 4.76 um; eta_Be = 0.1844 on the 1.90 MHz mode at 313 nm, 90 deg crossing; eta_Be/eta_Mg = 91 on the 12.11 MHz mode"
+    corrected_form: "the caption's transposed (3.72, 4.82) order gives 0.017 and 0.022 (negative control)"
+  - id: anchor.trap.kielpinski_three_ion
+    symbol: "zeta_{1,2,3}(mu)"
+    tag: recomputed here
+    section: "9.13 Three-ion mixed closed forms; 9.13 Three-ion mixed crossing and gaps"
+    source: "tests/test_crystal.py"
+    equation: "0.7811, 1.7321, 1.8881 at mu = 24/9 and 1.1093, 1.7321, 3.5454 at 9/24 from both the closed forms and the mass-weighted Hessian (1e-6); zeta_2 = sqrt 3 with zero impurity amplitude for all mu; zeta_3(17/3) = sqrt 3; zeta_3(7.3) = 1.7034 < zeta_2; gaps 1.560 and 6.228 MHz at f_z = 10 MHz"
+    corrected_form: "mode order is not monotonic in mu, so modes are identified by eigenvector structure, not by index"
+  - id: anchor.trap.morigi_walther_eta
+    symbol: "eta_Mg, eta_In"
+    tag: recomputed here
+    section: "9.13 Mixed Lamb-Dicke signs and participation"
+    source: "tests/test_crystal.py"
+    equation: "115In+/25Mg+ at mu = 4.6: |beta'-| = (0.26543, 0.96413), |beta'+| = (0.96413, 0.26543), Omega+/Omega- = 2.63550; with eta_Mg+ = 0.5: |eta_Mg-| = 0.22347, |eta_In-| = 0.37846, eta_In+ = -0.06418, compared up to a per-mode sign"
+    corrected_form: "the published ratio 2.6377 is a ratio of rounded values; W^max by the explicit sum (0.193) belongs to the cooling layer (M3)"
+  - id: anchor.trap.house_five_wire
+    symbol: "x0, y0, y_E, psi_E, Q11"
+    tag: recomputed here
+    section: "9.13 House five-wire fixture; 9.13 Five-wire null and depth; 4.1.6"
+    source: "check_surface_mixed.py; tests/test_surface.py"
+    equation: "a = 100 um, b = c = 120 um, V_rf = 300 V, Omega = 2 pi x 50 MHz, m = 1.46e-25 kg: x0 = 50.000000 um, y0 = 92.195445 um, y_E = 169.655527 um, psi_E = 0.184465 eV, Q11 = -Q22 = 0.2284260, Q12 = 0, 4.038 MHz pseudopotential; the exact monodromy exponent gives 4.0804 MHz"
+    corrected_form: "the plan's '4.077 MHz Floquet' is the preprint closed form [(a + q^2/2)/(1 - 3q^2/8)]^(1/2), 0.06% below the exact exponent (M1 finding); House's 11.5 MHz drops a 1/(2 sqrt 2); his gapped escape radical needs 2, not 1/2 (1.69656 against 1.16494 at a = 1, b = 1.2)"
+  - id: anchor.trap.nizamani_figure_of_merit
+    symbol: "q_N versus q"
+    tag: recomputed here
+    section: "9.13 Nizamani figure of merit versus Mathieu q"
+    source: "tests/test_surface.py"
+    equation: "a = 60, b = 300, c = 150 um, 171 u, Omega = 2 pi x 55 MHz, V_rf = 500 V: h = 82.46 um, q_N = 0.6948, |Q11| q = 0.1976, principal-axis q = sqrt(Q11^2 + Q12^2) = 0.2171 (ratio 3.2002), 4.222 MHz; 450 V at h = 85 um gives q_N = 0.589"
+    corrected_form: "q_N must never enter omega = q Omega/(2 sqrt 2) or a stability boundary; his quoted h = 85 um and q = 0.7 are not self-consistent"
+  - id: anchor.trap.depth_optima
+    symbol: "b/a optima, kappa_max"
+    tag: recomputed here
+    section: "9.13 Five-wire null and depth; 4.1.6"
+    source: "tests/test_surface.py"
+    equation: "depth maximal at b/a = 1.1914879 = cbrt(54 - 6 sqrt 33)/6 + cbrt(54 + 6 sqrt 33)/6 for fixed a; at fixed ion height b/a = 3.676 with kappa = 0.022542 = (5 sqrt 5 - 11)/8 for c = b, and 4.902 with 0.020038 = 8/9 of it for c = b/2; Nizamani's kappa equals House's Eq. 29 for c = b"
+    corrected_form: "the c = b/2 branch extrapolates a formula House derived for c = b only: the House formula applied to unequal rails is 8 to 40% off the numerical saddle at Nizamani's design point"
+  - id: anchor.trap.marquet_selection_rules
+    symbol: "D_mn1, D_mn2, D_222"
+    tag: recomputed here
+    section: "9.1 Anharmonic selection rules; 4.1.4"
+    source: "tests/test_anharmonic.py"
+    equation: "D_mn1 = 0 and D_mn2 = ((1 - mu_m)/(2|u|)) delta_mn to 1e-12 for N = 2, 3, 4, 6 with C_mnp = (1/6) d^3 F/du^3; D_222 = -1.1225 at N = 2; the Cartesian third-derivative route reproduces the closed form to 1e-9"
+    corrected_form: "the cubic energy along the stretch mode is D_222 s^3 < 0 (the Coulomb spring softens on expansion), so the potential's cubic term is +sum D xi xi xi in this convention; Section 4.1.4 prints a leading minus sign, inconsistent with its own D_222 unless C carries the opposite sign (M1 finding)"
+  - id: anchor.trap.nonlinearity_epsilon
+    symbol: "eps, g = eps omega_z"
+    tag: recomputed here
+    section: "9.12 Cubic anharmonicity gate; 4.1.4"
+    source: "tests/test_anharmonic.py"
+    equation: "eps = x0/(4 l) = 1.06e-3 (9Be+, 5 MHz), 7.09e-4 (40Ca+, 2 MHz), 3.79e-4 (171Yb+, 0.2 MHz); g/2pi = 1419 Hz and 76 Hz; the axial coefficient of X_p X_q X_r is 2 eps omega_z D_pqr (mu_p mu_q mu_r)^(-1/4) times the multiplicity"
+    corrected_form: "eps is reverse-engineered from the plan's three numbers as x0/(4 l); Marquet's own -3 eps hbar omega_3 operator form was not re-derived (the coefficient stored is first-principles)"
+  - id: anchor.trap.heating_round_trip
+    symbol: "n_dot"
+    tag: recomputed here
+    section: "9.15 heating round trip; 9.1 Heating conversion, Multi-ion heating"
+    source: "tests/test_heating.py"
+    equation: "S_E = 2.2250e-13 (V/m)^2/Hz for 9Be+ at 3.6 MHz gives 40 quanta/s; uniform noise heats a 9-ion COM at 9 x 7.2 = 65 quanta/s and no other equal-mass mode; uncorrelated noise heats every mode at the single-ion rate; the two-ion mixed sum rule sum hbar omega_k n_dot_k = (e^2 S_E/4)(1/m1 + 1/m2) holds for every mu"
+    corrected_form: "a two-sided density needs the factor 2 at the boundary; the correlation length is a required argument, never defaulted to uniform"
+  - id: anchor.trap.heating_dynamics
+    symbol: "n_bar(t), coherence decay"
+    tag: recomputed here
+    section: "9.1 Heating dynamics; 4.1.5"
+    source: "tests/test_heating.py (mesolve)"
+    equation: "mesolve with sqrt(Gamma_h) a and sqrt(Gamma_h) a^dag gives n_bar(t) = Gamma_h t to 2e-3; the coherence of (|n0> + |m0>)/sqrt 2 decays at Gamma_h (n0 + m0 + 1): 2.01, 4.03, 10.09 Gamma_h over a short window for (0, 1), (1, 2), (3, 6)"
+    corrected_form: "not Gamma_h (2 N_bar + 1)(n0 + m0); the +1 is the absorption channel on the lower level"
+  - id: anchor.trap.berkeland_excess_micromotion
+    symbol: "u0, beta_mm, J0"
+    tag: recomputed here
+    section: "9.12 Excess micromotion from a stray field; 4.1.1"
+    source: "tests/test_trap_model.py"
+    equation: "171Yb+ at 1 MHz, q = 0.28: E_dc = 1, 10, 100 V/m give u0 = 14.3, 143, 1429 nm, beta = 0.034, 0.340, 3.40 at 369.5 nm, J0 = 0.9997, 0.971, -0.365; J1^2/J0^2 -> (beta/2)^2"
+    corrected_form: "the carrier sign inverts past the first zero at beta = 2.4048; Berkeland's Eq. 21 prints a stray factor Omega"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

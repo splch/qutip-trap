@@ -69,7 +69,7 @@ from qutip_trap.transport.budget import (
 from qutip_trap.transport.waveforms import FilterStage, VoltageWaveform
 from qutip_trap.transport.zones import Zone
 from qutip_trap.trap.anharmonic import AnharmonicTerms
-from qutip_trap.trap.crystal import Crystal, Mode
+from qutip_trap.trap.crystal import Crystal, Mode, ZigzagError, solve_crystal
 from qutip_trap.trap.mathieu import MathieuParameters
 from qutip_trap.trap.micromotion import MicromotionIndex
 from qutip_trap.trap.model import Trap
@@ -149,6 +149,7 @@ __all__ = [
     "VoltageWaveform",
     "Waveform",
     "ZeemanSpectrum",
+    "ZigzagError",
     "Zone",
     "available",
     "calibrate",
@@ -175,6 +176,7 @@ __all__ = [
     "run",
     "schedule",
     "sideband_spectroscopy",
+    "solve_crystal",
     "species_by_name",
     "split_feasible",
     "transport_budget",
