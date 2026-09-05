@@ -756,6 +756,125 @@ records:
     source: "tests/test_light_layer.py"
     equation: "171Yb+ clock transition, counter-propagating 355 nm pair along x with lin-perp-lin polarizations (y, z) and B along x, 10 mW in 20 um waists: Omega_R/2pi = 30.28 kHz, |Delta k| = 2k, eta_x = 0.1111 = the 0.1103011 anchor scaled to 3.0 MHz, Stark shift -11.5 Hz (blue-detuned light raises both levels), Raman probability per pi pulse 1.6e-6; a co-propagating pair has Delta k = 0 and eta = 0 on every mode; pi-pi polarizations give no clock coupling (the vector light shift vanishes); the neighbour ratio under beams pointed at ion 0 is the product of two Gaussian FIELD factors exp(-s^2/w^2)"
     corrected_form: "the two-ion 90-degree fixture of tests/fixtures.py (both beams polarized along B) cannot drive the clock transition and is a data-model fixture only (M2 finding)"
+  - id: conv.scattering_rate_object
+    symbol: "W(Delta) = sum_lines sum_k Tr(C_k^dag C_k rho_ss)"
+    tag: corrected
+    section: "13 Scattering-rate object; 4.2.8; 8.1"
+    source: "qutip_trap/light/bloch.py (M3a)"
+    equation: "one multi-level optical-Bloch steady state supplies the cooling rate W(Delta) in s^-1, the readout rates R_o, R_d, R_b and the dark-state physics; every photon rate is asserted against the equal-population ceiling n_e/(n_e + n_g) of the resonant closed manifold (Gamma/4 for the 171Yb+ F = 1 -> F' = 0 cycle); R_o is the rate of the CONDITIONAL bright state from the slow-manifold coarse graining, because the full steady state of a detected ion sits in F = 0 with weight R_d/(R_d + R_b) ~ 0.95"
+    corrected_form: "the two-level Lorentzian saturates at Gamma/2 where the four-level manifold saturates at Gamma/4; the second revision's Gamma/6 prefactor with (2/3) s_o folded one polarization share too few"
+  - id: conv.emission_collapse_operators
+    symbol: "C_q = sqrt(omega^3/(3 pi eps0 hbar c^3)) T_q^- per decay line and polarization"
+    tag: corrected
+    section: "4.2.8; 4.5.2; 8.1"
+    source: "qutip_trap/dynamics/multilevel.py (M3a)"
+    equation: "one collapse operator per fine-structure decay line (lower, upper) and emitted polarization index q, the lower<-upper block of the dipole operator in C m times sqrt(g_LU); sum_q C_q^dag C_q = Gamma_{U->L} P_U by the Wigner-Eckart sum rule (residual 1e-16 in the tests); the excited-to-ground feeding term carries the product of two matrix elements that transfers excited coherence into ground coherence; with a mode each C_q is resolved over emission directions as C_q (x) D(-i eta_em u), entered INCOHERENTLY over directions; decay into excluded levels follows the leak policy include / sink / renormalize"
+    corrected_form: "never one operator per excited sublevel (Berkeland's Eq. 12 as printed), never a coherent sum over recoil classes (Joshi Eq. A.3); QuTiP's auto-tidyup zeroes elements below 1e-12, so the rate prefactor must multiply the 1e-29 C m elements before the Qobj is built (M3a implementation finding)"
+  - id: conv.multilevel_frame_assignment
+    symbol: "f_level, delta_b = omega_b - (f_U - f_L)"
+    tag: background
+    section: "4.2.8 rotating frame; 5.3"
+    source: "qutip_trap/dynamics/multilevel.py (M3a)"
+    equation: "frame frequencies assigned manifold by manifold along the beams from the lowest included level at f = 0 so that every detuning sits on the diagonal; levels reached only by decay take the transition frequency as frame (the dissipator is invariant); a beam inconsistent with two assigned manifolds (two tones on one transition, a closed loop) leaves a residual beat, the Hamiltonian is time periodic, and the steady state is the fixed point of the one-period propagator (vern9, nsteps 1e7) period-averaged, the same machinery serving a polarization modulation; incommensurate beats fall back to propagating 1000/Gamma and averaging"
+    corrected_form: "the plan's own construction, tagged background; validated against the secular static model (5e-4 in populations, 2e-3 in rate at a 14.7 GHz beat) rather than against a source"
+  - id: conv.qutip_spectrum_sign
+    symbol: "S_qutip(omega) = int exp(-i omega tau) <dF(tau) dF(0)> dtau = W(Delta - omega)"
+    tag: recomputed here
+    section: "4.2.8 (iii); 9.3 Lamb-Dicke rate framework"
+    source: "qutip_trap/light/bloch.py; tests/test_level_c.py"
+    equation: "for a weak two-level drive QuTiP's spectrum at omega equals the scattering rate at the detuning Delta - omega, so the heating coefficient is A_+ = S_qutip(+nu) + 2D and the cooling one A_- = S_qutip(-nu) + 2D, with 2D = sum_channels alpha_q eta_em^2 Gamma rho_ee (one alpha per polarization channel and one eta_em per line from its own wavenumber); at Omega = Gamma/2, Gamma/nu = 0.02: S(+nu) = 6.71368e-3 against eta^2 W(Delta - nu) = 6.71410e-3 s^-1, 2D = 1.074137e-2 against alpha eta_em^2 W(Delta) = 1.074135e-2"
+    corrected_form: "the W(Delta -+ nu) closed form fed the SATURATED W is off by exactly 1 + s (nbar 9.7493e-5 against 6.4998e-5 at s = 0.5): Section 4.2.8 (vii)'s Omega << Gamma is enforced by rate_coefficients_from_model (M3a finding)"
+  - id: anchor.m3a.two_level_lorentzian
+    symbol: "Gamma rho_ee = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2)"
+    tag: recomputed here
+    section: "4.2.1, 9.3 Doppler force"
+    source: "tests/test_bloch.py"
+    equation: "the J = 0 -> J' = 1 fixture driven by pi light (a unit-strength closed two-level line, 2 Omega^2/Gamma^2 = I/I_sat exactly) reproduces RMP Eq. 96 to 1e-9 at (Omega, Delta) = (0.05, -0.5), (0.5, 0), (2, 0.3) Gamma; ceiling 1/2"
+    corrected_form: "none"
+  - id: anchor.m3a.yb171_detection_rate
+    symbol: "R_o = (Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2]"
+    tag: recomputed here
+    section: "8.1, 8.8, 4.5.2, 9.13"
+    source: "validation/scripts/check_bloch.py; tests/test_bloch.py"
+    equation: "171Yb+ S1/2 + P1/2 (the 0.501 percent D3/2 branch folded back), magic-angle linear polarization, Gamma_S = 2 pi x 19.62 MHz, I_sat = 50.83 mW/cm^2: the exact four-level conditional-bright-state rate over the closed form, maximized over the destabilizing field at Delta = 0, is 0.99505, 0.99513, 0.99547, 0.99857 at B = 0.299, 0.954, 3.041, 4.476 G for s_o = 0.01, 0.1, 1, 2.45 (at 1 G: 0.984, 0.995, 0.636, 0.240); the (2 Delta/Gamma)^2 bracket holds to 2e-4 at Delta = -Gamma/2; the excited population never exceeds the Gamma/4 ceiling"
+    corrected_form: "the closed form is the CEILING of the exact rate to 0.15-0.5 percent, not reproduced to nine digits as Section 8.1 states; the optimum field scales with the pumping rate (Gamma s_o/18 = 0.011, 0.11, 1.09, 2.67 MHz against g_F mu_B B/h = 0.42, 1.34, 4.26, 6.27 MHz), so Crain's about 5 G is the optimum for his inferred s_o = 2.45 rather than a factor 2 above it (M3a finding)"
+  - id: anchor.m3a.yb171_leakage_prefactors
+    symbol: "R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2, R_b = (2/9)(Gamma/2) s_o (Gamma/(2(Delta_HFP + Delta_HFS)))^2"
+    tag: recomputed here
+    section: "8.1, 8.8, 9.5"
+    source: "validation/scripts/check_bloch.py; tests/test_bloch.py"
+    equation: "from the slowest Liouvillian eigenvalue and the stationary weights: at s_o = 0.1, B = 1 G, R_d = 9.9734 Hz (Noek's (2/3)(1/3) form with s = s_o/3: 9.9208; Crain's 1/3: 14.881), R_b = 0.60939 Hz (Noek's (2/3) form 0.60634), R_b/R_d = 0.0611 (3/49 = 0.06122); at Crain's s_o = 2.45 and the fluorescence-optimal 4.7 G, R_d = 248.9 Hz (Noek 243.1, Crain 364.6) and R_b = 14.93 Hz (14.86), the slow mode separated from the fast ones by 3e3 to 3e4"
+    corrected_form: "the angular algebra settles the Noek-Crain factor 2 in Noek's favour, as Section 8.1 anticipated; R_d is field dependent through the bright-manifold redistribution (346.9 Hz at 1 G, near Crain's measured 341(13) Hz where the fluorescence is only 0.24 of its optimum), so the measured triple constrains the apparatus, not the prefactor"
+  - id: anchor.m3a.dark_states
+    symbol: "null space of Omega_{qp} over the resonant ground manifold"
+    tag: recomputed here
+    section: "8.1, 13 Zeeman-degenerate dark-state condition, 13 Dark-state destabilization optimum"
+    source: "tests/test_bloch.py"
+    equation: "171Yb+ F = 1 -> F' = 0 at the magic angle: 3 ground + 1 excited, ceiling 1/4, two dark states, theta_BE = 54.7356 deg; sigma+ light along B leaves exactly span{|1,0>, |1,+1>} dark (the straight pairing of Section 13); F = 1 -> F' = 1 linear light: one dark state at zero field; F = 0 -> F' = 1: none; 40Ca+ S-P-D with two beams: 6 + 2 states, four dark states"
+    corrected_form: "at a finite field the hyperfine admixture (Zeeman/HFS = 1e-4 at 1 G) makes a Table-I dark state bright at that level, so the Berkeland count is evaluated on the zero-field coupling matrix and the finite-field residual is a singular value, not a null one"
+  - id: anchor.m3a.optical_pumping
+    symbol: "P(F=0)(t), photons scattered"
+    tag: recomputed here
+    section: "4.2.6, 8.1"
+    source: "tests/test_bloch.py"
+    equation: "171Yb+ pumped on F = 1 -> F' = 1 at s_o = 0.5, 5 G, magic-angle polarization, by the exact exponential of the 64-dimensional Liouvillian: 99 percent in |0,0> at 2.6 us, 3.00 photons scattered on average (1/3 branching into |0> per excitation), residual F = 1 population 2e-6 from the 12.6 GHz off-resonant F = 0 -> F' = 1 excitation; at s_o = 0.02 the level-C curve agrees with the weak-drive rate equations built from the Lorentzian excitation rates and the channel branchings to 0.01"
+    corrected_form: "the photon count needs the coherent oscillations of the photon rate resolved (5 ns sampling): a 100 ns grid aliases them to 2.83 photons"
+  - id: anchor.m3a.floquet_fallback
+    symbol: "fixed point of P_T = exp(L T)"
+    tag: recomputed here
+    section: "4.2.8, 8.1, 13 Polarization-modulation mappings"
+    source: "tests/test_bloch.py"
+    equation: "369 nm on F = 1 -> F' = 0 plus its 14.7478 GHz sideband on F = 0 -> F' = 1 (period 67.8 ps): the period-propagator fixed point agrees with the secular static model (each tone in its own hyperfine frame) to 5e-4 in every population and 2e-3 in the photon rate, and repumps F = 0 so the long-time state is more than 90 percent bright; an 'aom' polarization modulation at 3 MHz and B = 0 has period 333 ns and restores fluorescence by more than 10x over the static dark-state-trapped beam"
+    corrected_form: "the one-period propagator must be integrated with the Section 5.3 ladder (vern9, nsteps 1e7): QuTiP's default multistep integrator returns a non-physical fixed point at the 12.6 GHz hyperfine detuning (M3a implementation finding)"
+  - id: anchor.m3a.ca40_dark_resonance
+    symbol: "W(Delta_866 - Delta_397)"
+    tag: recomputed here
+    section: "4.2.1, 8.1 dark resonances, 12"
+    source: "tests/test_bloch.py"
+    equation: "40Ca+ S1/2-P1/2-D3/2 (8 states) at 4 G, 397 nm at -Gamma/2 with s = 0.3 and 866 nm with s = 3, both polarized perpendicular to B: W = 1e-7 s^-1 at equal detunings (the S(-1/2)-D(-1/2) superposition through P(+1/2) is dark at any field because the P energy cancels from the two-photon condition), 9.5e5 s^-1 at +0.5 Gamma, 8.8e4 at -1.5 Gamma, with the Zeeman-shifted two-photon dips at about -0.4 and +0.3 Gamma; a pi-only 866 nm beam at zero field leaves the D3/2 m = +-3/2 states as traps holding more than 99.9 percent"
+    corrected_form: "the 397 nm beam also addresses S1/2-P3/2 (1 percent away); with the P3/2 level excluded its light shift and scattering are declared dropped"
+  - id: anchor.m3a.sideband_floor
+    symbol: "nbar_SB = (Gamma/2 nu)^2 [alpha (k_em/k_L)^2 / cos^2 theta_L + 1/4]"
+    tag: recomputed here
+    section: "4.2.2, 4.2.8 (iv), 9.3 Sideband floor decomposition, 9.3 Lamb-Dicke rate framework"
+    source: "validation/scripts/check_bloch.py; tests/test_level_c.py"
+    equation: "level C (two-level fixture, sigma+ along B, Delta = -nu, Gamma/nu = 0.02, Omega = Gamma/2, 14 Fock levels): mode along B (alpha = 2/5, weight 0.4) nbar = 6.49987e-5 against 6.5e-5, mode at 45 degrees (alpha = 0.35, cos^2 = 1/2, weight 0.7) 9.4997e-5 against 9.5e-5, identical for the minimal, marginal and vector recoil discretizations (9, 48, 96 operators); recoil off 2.50002e-5 against (Gamma/4 nu)^2 = 2.5e-5; halving Omega leaves the floor, a four times lighter ion leaves it too (eta cancels); relaxation rate from the Liouvillian's slowest eigenvalue 268.544 s^-1 against the spectrum path 268.547"
+    corrected_form: "the Stenholm floor is reproduced only with the drive's eta and the emitted photon's eta~ kept distinct (the participation b cancels between them, Section 4.2.2); Roos Eq. 3.20's (eta~/eta)^2 = alpha (k_em/k_L)^2 / cos^2 theta_L is the tested form"
+  - id: anchor.m3a.mixed_emission_channels
+    symbol: "2D = sum_channels alpha_q eta_em^2 Gamma_q rho_ee"
+    tag: recomputed here
+    section: "4.2.8 (ii), 9.3 V-system diffusion"
+    source: "validation/scripts/check_bloch.py; tests/test_level_c.py"
+    equation: "a beam at 45 degrees to B with pi and sigma components populates |e, 0> and |e, +-1> (2.5e-5 and 1.2e-5 each): level C nbar = 8.500721e-5 (minimal and vector recoil alike, mode along B) against the per-channel spectrum path 8.500664e-5, while a single mean alpha of 0.2, 0.4 or 1/3 in the same steady state misses 2D by more than 10 percent; with the mode perpendicular to B the vector form and the per-q scalar patterns differ by more than 1e-3 through Steck's q-coherence tensor"
+    corrected_form: "the plan's 'one mean alpha is up to 37 percent wrong for mixed pi and sigma channels' is confirmed in mechanism; the azimuthal symmetry about B kills the q-coherence cross terms for a mode along B and not otherwise"
+  - id: anchor.m3a.doppler_limit
+    symbol: "nbar_D = (Gamma/4 nu)(1 + alpha/cos^2 theta_L) at Delta = -Gamma/2"
+    tag: recomputed here
+    section: "4.2.1, 4.2.8 (iv), 9.3 Doppler limit with recoil"
+    source: "validation/scripts/check_bloch.py; tests/test_level_c.py"
+    equation: "two-level fixture, sigma+ along B, nu = Gamma/20, Omega = Gamma/20: level A (W(Delta -+ nu) coefficients) nbar_D = 6.5426 against (Gamma/4 nu)(1 + 2/5) = 7.0 and its zero-point-offset form 6.5; level C on the two populated states with 70 Fock levels 6.531 (boundary population 1.6e-5); the argmin over Delta on a 0.025 Gamma grid is -0.500 Gamma"
+    corrected_form: "Itano and Wineland's E_K = 7 hbar Gamma/40 for alpha = 2/5 is the (1 + alpha)/4 form; the 1/2 is the zero-point offset the plan's 349.5 against 350 records"
+  - id: anchor.m3a.morigi_eit_figure
+    symbol: "Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta = 2.5 gamma"
+    tag: corrected
+    section: "4.2.3, 4.2.8, 13 EIT detuning sign, 9.3 EIT"
+    source: "validation/scripts/check_bloch.py; tests/test_level_c.py; Morigi, Eschner and Keitel, PRL 85, 4458 (2000), Fig. 3 caption read from arXiv:quant-ph/0005009"
+    equation: "Morigi's Eq. (5) at the caption's parameters gives nbar_S = 0.010833 and Eq. (6) the rate eta^2 (A_- - A_+) = 6157 s^-1; the Lambda level-C solve (sigma+ and sigma- counter-propagating along B, the third ground state renormalized away, 30 Fock levels) gives nbar = 0.01130 with P(0) = 0.989 (her '99 percent occupation') and W = 5938 s^-1 (5964 with recoil off); at the delta = nu tuning Omega_r^2 = 4 nu (nu + Delta) the closed form is (gamma/4 Delta)^2 exactly and level C approaches it from above as the probe weakens (0.00545 at Omega_g = 2, 0.00529 at 0.5 against 0.005103 at Delta = 3.5 gamma), the residual being the O(nu/Delta) the closed form drops"
+    corrected_form: "the plan's 'Morigi Fig. 3' fixture (nu = 2.0068, gamma = 20, Omega_1 = Omega_2 = 17 MHz, Delta = 70 MHz, Omega_r = 24.04 as the quadrature sum) is NOT the caption of that figure, which reads Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta_g = Delta_r = 2.5 gamma for the Ca+ Lambda system; at the plan's numbers level C gives 0.012479, 2.45x the closed form, because equal beams are outside the weak-probe regime (M3a finding)"
+  - id: anchor.m3a.phonon_rate_equation
+    symbol: "<n>(t) = nbar + (n_0 - nbar) exp(-W t)"
+    tag: recomputed here
+    section: "4.2.3, 9.3 Phonon rate equation"
+    source: "tests/test_level_c.py"
+    equation: "mesolve on {sqrt(eta^2 A_+) a^dag, sqrt(eta^2 A_-) a} with A_+ = 3e4, A_- = 4e5 s^-1, eta = 0.1, n_0 = 5, 40 Fock levels reproduces the closed form to better than 1e-9 in <n> over 3 ms; the birth-death generator has zero column sums and the geometric stationary distribution (A_+/A_-)^n; A_- <= A_+ raises CoolingError rather than returning a negative occupation"
+    corrected_form: "none"
+  - id: anchor.m3a.yb171_repump_level_gap
+    symbol: "tau(3D[3/2]1/2), branching to S1/2"
+    tag: contested
+    section: "4.2.6, 4.5.6, 8.1 metastable manifold during detection"
+    source: "Olmschenk et al. 2007 (arXiv:0708.0657) read on 2026-09-05; qutip_trap/species/yb171.py MISSING"
+    equation: "Olmschenk 2007 prints no lifetime or branching for the 935 nm upper level (its Sec. II says the ion 'quickly returns' to S1/2 and cites Bell et al., PRA 44, R20 (1991)), so the D3/2 -> 3D[3/2]1/2 -> S1/2 repump cycle cannot be closed from cited constants; the 171Yb+ detection model folds the 0.501 percent D3/2 branch back into the S line (leak = renormalize, a 0.5 percent effect on the saturation denominator) or routes it to a sink state that fills at Gamma_D P_e (leak = sink, trace preserved, about 200 photons before the ion is dark without a repump)"
+    corrected_form: "Section 8.1's requirement that the Bloch model include the D manifold and the repump beams waits on that constant being cited; the two-tone 935 nm repump (3.07 GHz sideband) is otherwise the Floquet-fallback case the builder already handles"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

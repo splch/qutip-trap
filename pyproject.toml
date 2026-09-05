@@ -45,6 +45,7 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "convergence: tests whose pass/fail feeds the convergence-report artifact (Section 5.5)",
+    "slow: level-C solves that take more than a few seconds (run in CI, deselect locally with -m 'not slow')",
 ]
 
 [tool.ruff]

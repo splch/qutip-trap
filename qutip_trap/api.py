@@ -17,7 +17,7 @@ from qutip_trap.control.schedule import Schedule, ScheduledEvent, schedule
 from qutip_trap.control.table import CalEntry, CalibrationTable, Segment, Waveform
 from qutip_trap.device.model import DerivedQuantities, Device, Field
 from qutip_trap.dynamics.channels import CollapseOp
-from qutip_trap.dynamics.engine import (
+from qutip_trap.dynamics.engine import (  # noqa: I001
     ChannelSummary,
     MotionalModel,
     PulseEngine,
@@ -26,6 +26,7 @@ from qutip_trap.dynamics.engine import (
     State,
     Traces,
 )
+from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions
 from qutip_trap.experiments import (
     ExperimentResult,
     detection_histogram,
@@ -42,6 +43,7 @@ from qutip_trap.hilbert.space import CachedOperators, HilbertSpace, ModeTruncati
 from qutip_trap.io.ionq import dump_ionq_json, load_ionq_json
 from qutip_trap.io.openqasm import load_openqasm2
 from qutip_trap.light.beams import Beam, PolarizationModulation, PolGradientBeams
+from qutip_trap.light.bloch import BlochModel, DetectionRates, SteadyStateReport
 from qutip_trap.light.comb import CombSpec
 from qutip_trap.noise.decoupling import DecouplingSequence, decoupling_sequence, filter_function
 from qutip_trap.noise.model import NoiseModel
@@ -79,6 +81,12 @@ from qutip_trap.units import Gauss, Hz, RadPerS, Tesla, hz_from_rad_s, rad_s_fro
 
 __all__ = [
     "POVM",
+    "BlochModel",
+    "DetectionRates",
+    "ModeSpec",
+    "MultiLevelOptions",
+    "SteadyStateReport",
+    "BlochModel",
     "AnharmonicTerms",
     "AtomicStructure",
     "Beam",

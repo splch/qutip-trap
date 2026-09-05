@@ -1,7 +1,8 @@
 """Laser cooling and state preparation (PLAN.md Section 4.2; milestone M3 on the M3a Bloch builder).
 
 Order (Section 4.2.6): Doppler cooling first, then sideband or EIT cooling with its own repump, then a final
-optical pump immediately before the circuit.
+optical pump immediately before the circuit. ``prep.level_c`` (M3a) holds the one-mode level-C solve and the level-B
+Fock rate equation that the cooling stages of M3 are validated against.
 """
 
 from __future__ import annotations

@@ -94,3 +94,13 @@ compared; `bench_*.py` run only with `--bench` and are not compared). `--report`
 `convergence-report` artifact; it is the first CI job (`.github/workflows/ci.yml`). The committed outputs of
 2026-09-04 carry a few capture artifacts (a trailing `done`, an `exit 0`, a QuTiP warning line that went to
 stdout) that the comparison ignores because they contain no numbers.
+
+Added on 2026-09-05 by milestone M3a:
+
+- `check_bloch.py`: the multi-level optical-Bloch scattering-rate object (Sections 4.2.8, 8.1, 9.3): the 171Yb+
+  four-level detection rate against (Gamma/18) s_o/[1 + (2/9) s_o] maximized over the destabilizing field, the
+  leakage prefactors R_d and R_b from the angular algebra against Noek's and Crain's forms, the level-C sideband floor
+  (Gamma/2 nu)^2 [alpha/cos^2 theta_L + 1/4] with the three recoil discretizations and the saturation error of the
+  W(Delta -+ nu) closed form, the mixed pi + sigma emission channels, the Doppler limit (Gamma/4 nu)(1 + alpha) and
+  Morigi's EIT figure from the Lambda level-C solve. Runs the package (`uv run python validation/scripts/check_bloch.py`,
+  about two minutes); the fixtures live in `tests/bloch_fixtures.py`.

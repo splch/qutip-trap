@@ -42,6 +42,13 @@ from scipy.special import eval_genlaguerre, jv
 from qutip_trap.control.pulses import Drive, Pulse
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.frames import interaction_picture
+from qutip_trap.dynamics.multilevel import (  # the multi-level mode of Section 4.2.8 (M3a): one builder module
+    ModeSpec,
+    MultiLevelBuild,
+    MultiLevelOptions,
+    assign_frames,
+    build_multilevel,
+)
 from qutip_trap.hilbert.operators import debye_waller_factor, qudit_sigma_plus
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.noise.sampling import (
@@ -57,7 +64,7 @@ from qutip_trap.trap.mathieu import MathieuParameters
 from qutip_trap.units import TWO_PI
 
 M2 = "milestone M2 (dynamics/hamiltonian.py, PLAN.md Section 4.3.1)"
-M3A = "milestone M3a (the multi-level mode of Section 4.2.8)"
+M3A = "milestone M3a (the multi-level mode of Section 4.2.8, dynamics/multilevel.py)"
 
 Frame = Literal["schrodinger", "interaction"]
 MicromotionMode = Literal["none", "carrier_j0", "modulated"]
@@ -696,7 +703,12 @@ __all__ = [
     "BuiltHamiltonian",
     "CurvatureSpec",
     "DriveRecord",
+    "ModeSpec",
+    "MultiLevelBuild",
+    "MultiLevelOptions",
+    "assign_frames",
     "build_hamiltonian",
+    "build_multilevel",
     "carrier_debye_waller_frozen",
     "free_hamiltonian",
     "lamb_dicke_parameters",

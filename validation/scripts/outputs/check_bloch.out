@@ -1,0 +1,63 @@
+
+==============================================================================
+A. 171Yb+ detection rate: exact four-level Bloch steady state against (Gamma/18) s_o/[1 + (2/9) s_o] (Section 8.1)
+==============================================================================
+Gamma_S/2pi = 19.6230 MHz (partial), I_sat = 50.830 mW/cm^2, magic angle 54.7356 deg
+s_o =  0.01: closed form 6.834530e+04 s^-1; max over B of R_o/closed = 0.99505 at B = 0.299 G (Zeeman 1.4 MHz/G x B = 0.42 MHz, pumping Gamma s_o/18 = 0.0109 MHz); at 1 G: 0.98391
+s_o =  0.10: closed form 6.700811e+05 s^-1; max over B of R_o/closed = 0.99513 at B = 0.954 G (Zeeman 1.4 MHz/G x B = 1.34 MHz, pumping Gamma s_o/18 = 0.1090 MHz); at 1 G: 0.99481
+s_o =  1.00: closed form 5.604315e+06 s^-1; max over B of R_o/closed = 0.99547 at B = 3.041 G (Zeeman 1.4 MHz/G x B = 4.26 MHz, pumping Gamma s_o/18 = 1.0902 MHz); at 1 G: 0.63594
+s_o =  2.45: closed form 1.086592e+07 s^-1; max over B of R_o/closed = 0.99857 at B = 4.476 G (Zeeman 1.4 MHz/G x B = 6.27 MHz, pumping Gamma s_o/18 = 2.6709 MHz); at 1 G: 0.23987
+-> the closed form is the CEILING of the exact rate to 0.15-0.5 %, not reproduced 'to nine digits' (M3a finding)
+
+==============================================================================
+B. Leakage prefactors from the angular algebra (Sections 8.1, 8.8): R_d, R_b at s_o = 0.1, B = 1 G, and Crain's s_o = 2.45
+==============================================================================
+s_o = 0.1, B = 1.0 G: R_d = 9.9734 Hz (Noek 9.9208, Crain 14.8812); R_b = 0.60939 Hz (Noek (2/3) form 0.60634); R_b/R_d = 0.06110 (3/49 = 0.06122); slow/fast separation 32173
+s_o = 2.45, B = 4.7 G: R_d = 248.9062 Hz (Noek 243.0602, Crain 364.5904); R_b = 14.93008 Hz (Noek (2/3) form 14.85539); R_b/R_d = 0.05998 (3/49 = 0.06122); slow/fast separation 28754
+-> Noek's (2/3)(1/3) prefactor with s = s_o/3, i.e. R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2; Crain's 1/3 is refuted
+
+==============================================================================
+C. Level-C sideband floor: sigma+ along B, Delta = -nu, Gamma/nu = 0.02, Omega = 0.5 Gamma (two-level fixture)
+==============================================================================
+mode axis [0. 0. 1.]: cos^2 theta_L = 1.000, alpha_sigma = 0.400, (eta~/eta)^2 = alpha/cos^2 = 0.400, eta = 0.00295
+  recoil = off      (  3 operators): nbar_C = 2.500021e-05, closed form 2.500000e-05, ratio 1.00001
+  recoil = minimal  (  9 operators): nbar_C = 6.499870e-05, closed form 6.500000e-05, ratio 0.99998
+  recoil = marginal ( 48 operators): nbar_C = 6.499870e-05, closed form 6.500000e-05, ratio 0.99998
+  recoil = vector   ( 96 operators): nbar_C = 6.499870e-05, closed form 6.500000e-05, ratio 0.99998
+  spectrum path: nbar = 6.499810e-05, W = 2.68547e+02 s^-1; level-C relaxation eigenvalue W = 2.68544e+02 s^-1 (ratio 0.99999)
+  W(Delta -+ nu) closed form with the SATURATED W at Omega = 0.5 Gamma: nbar = 9.749325e-05 = 1.4999 x the exact value (1 + s = 1.50); W = 1.79043e+02
+mode axis [0.7071 0.     0.7071]: cos^2 theta_L = 0.500, alpha_sigma = 0.350, (eta~/eta)^2 = alpha/cos^2 = 0.700, eta = 0.00209
+  recoil = off      (  3 operators): nbar_C = 2.500010e-05, closed form 2.500000e-05, ratio 1.00000
+  recoil = minimal  (  9 operators): nbar_C = 9.499721e-05, closed form 9.500000e-05, ratio 0.99997
+  recoil = marginal ( 48 operators): nbar_C = 9.499721e-05, closed form 9.500000e-05, ratio 0.99997
+  recoil = vector   ( 96 operators): nbar_C = 9.499721e-05, closed form 9.500000e-05, ratio 0.99997
+  spectrum path: nbar = 9.499667e-05, W = 1.34274e+02 s^-1; level-C relaxation eigenvalue W = 1.34273e+02 s^-1 (ratio 0.99999)
+  W(Delta -+ nu) closed form with the SATURATED W at Omega = 0.5 Gamma: nbar = 1.424882e-04 = 1.4999 x the exact value (1 + s = 1.50); W = 8.95213e+01
+
+==============================================================================
+D. Mixed pi + sigma emission channels: beam at 45 deg to B with pi and sigma components, mode along B
+==============================================================================
+steady-state populations: {'S0/2 mJ=0': '9.99950e-01', 'P2/2 mJ=-1': '1.24975e-05', 'P2/2 mJ=0': '2.49950e-05', 'P2/2 mJ=1': '1.24975e-05'}
+  level C (minimal): nbar = 8.500721e-05; spectrum path with per-channel alpha: 8.500664e-05 (ratio 1.00001)
+  level C (vector): nbar = 8.500721e-05; spectrum path with per-channel alpha: 8.500664e-05 (ratio 1.00001)
+  single mean alpha = 0.2000: nbar = 1.299880e-04 (1.5292 x exact)
+  single mean alpha = 0.4000: nbar = 2.099760e-04 (2.4701 x exact)
+  single mean alpha = 0.3333: nbar = 1.833133e-04 (2.1565 x exact)
+
+==============================================================================
+E. Doppler regime: nu = Gamma/20, Delta = -Gamma/2, sigma+ along B, mode along B: nbar_D = (Gamma/4 nu)(1 + alpha)
+==============================================================================
+level A: nbar_D = 6.54260; (Gamma/4 nu)(1 + alpha) = 7.00000; minus the 1/2 zero-point offset 6.50000
+level C: nbar = 6.53099 (boundary population 1.6e-05)
+argmin over Delta of nbar_D (grid step 0.025 Gamma): Delta = -0.500 Gamma
+
+==============================================================================
+F. Morigi 2000 Fig. 3 as printed: Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta_g = Delta_r = 2.5 gamma
+==============================================================================
+two-photon eta = 0.1450 (mass 141.8 u)
+Morigi Eq. (5): nbar_S = 0.010833; Eq. (6) rate eta^2 (A_- - A_+) = 6.1574e+03 s^-1; (gamma/4 Delta)^2 = 0.01
+  level C (recoil off    ): nbar = 0.011202, P(0) = 0.9890, W = 5.9643e+03 s^-1
+  level C (recoil minimal): nbar = 0.011301, P(0) = 0.9890, W = 5.9380e+03 s^-1
+  level C (recoil vector ): nbar = 0.011301, P(0) = 0.9890, W = 5.9380e+03 s^-1
+-> the plan's 'Fig. 3' fixture (nu = 2.0068, Omega_1 = Omega_2 = 17, Delta = 70 MHz) is not this caption (M3a finding)
+done
