@@ -24,21 +24,38 @@ is normalized to one over the sphere, the one-dimensional marginal to one on [-1
 isotropic), and the recoil heating per photon into the mode is alpha_m eta_em^2 quanta. Three assertions run before
 any solve (Section 4.2.8): sum_j p_j = 1 and sum_j p_j u_j^2 = alpha to 1e-12 (a failure is a quadrature bug, never
 a physics one), sum_k C_k^dagger C_k = Gamma |e><e| (x) 1 because the kicks are unitary, and the single-kick
-expectation <n> = alpha eta_em^2 with <p> = 0. The per-ion participation b_{i,m} and the product over the modes of one
-axis (the recoil-energy unit test) are milestone M3.
+expectation <n> = alpha eta_em^2 with <p> = 0.
+
+Milestone M3 adds the per-ion participation and the joint multi-mode kick (Section 4.2.8, "The recoil term"): the
+emitting ion i's position resolves into modes as k_hat . x_i = sum_m c_{i,m} (k_hat . e_m) x0_{i,m} (a_m + a_m^dagger)
+with the mass-weighted eigenvector component c_{i,m} of Section 4.1.3 (b_{i,m} for equal masses) and x0 with the
+ion's OWN mass (Section 13, "Lamb-Dicke base"), so one sampled direction kicks every mode at once through the product
+prod_m D_m(-i k_em c_{i,m} x0_{i,m} k_hat . e_m) (``multi_mode_kick``), the recoil heating per photon into mode m is
+alpha_m c_{i,m}^2 (k_em x0_{i,m})^2 quanta (``recoil_heating_quanta``) and, summed over the N modes of one axis family,
+the deposited energy equals alpha_axis (hbar k_em)^2/(2 m_i) exactly because the eigenvectors of a family are complete
+(``recoil_energy_ratio``, the unit test the plan names). ``recoil_kernel_matrix`` is the Fock-basis kernel of one emitted
+photon, sum_j p_j |<n|D(-i eta u_j)|n'>|^2, column stochastic, exact in eta through the Laguerre elements (Section 4.3.1);
+``recoil_velocity_m_per_s`` and ``recoil_temperature_k`` are Steck's free-atom regressions (Section 9.3, "Recoil unit
+regression": k_B T_r = (hbar k)^2/m = 2 hbar omega_r, no factor 2 in V_p -> D_p t).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy.polynomial.legendre import leggauss
 
 from qutip_trap.species.polarization import Vec, spherical_basis
+
+if TYPE_CHECKING:
+    import qutip as qt
+
+    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.trap.crystal import Crystal
 
 RecoilMode = Literal["off", "minimal", "marginal", "vector"]
 PatternQ = Literal[-1, 0, 1]
@@ -264,6 +281,122 @@ def free_recoil_energy_j(k_em_rad_per_m: float, mass_kg: float) -> float:
     return (HBAR_J_S * k_em_rad_per_m) ** 2 / (2.0 * mass_kg)
 
 
+def recoil_velocity_m_per_s(k_rad_per_m: float, mass_kg: float) -> float:
+    """v_r = hbar k / m (Steck Eq. 1.94): 133Cs 852 nm 3.5 mm/s, 87Rb 780 nm 5.9 mm/s (Section 9.3)."""
+    from qutip_trap.units import HBAR_J_S
+
+    if k_rad_per_m <= 0.0 or mass_kg <= 0.0:
+        raise ValueError("k and the mass are positive")
+    return HBAR_J_S * k_rad_per_m / mass_kg
+
+
+def recoil_temperature_k(k_rad_per_m: float, mass_kg: float) -> float:
+    """k_B T_r = (hbar k)^2/m = 2 hbar omega_r (Steck Eqs. 1.113, 5.430; Section 13 "Momentum diffusion and recoil temperature").
+
+    198 nK for 133Cs at 852 nm and 362 nK for 87Rb at 780 nm; the k_B T_r = hbar omega_r found elsewhere is half this.
+    """
+    from qutip_trap.units import HBAR_J_S, K_B_J_PER_K
+
+    return (HBAR_J_S * k_rad_per_m) ** 2 / (mass_kg * K_B_J_PER_K)
+
+
+# ---- per-ion participation and the joint multi-mode kick (M3) ---------------------------------------------------------------
+
+
+def recoil_projections(
+    crystal: Crystal, ion: int, k_em_rad_per_m: float, k_hat: Vec, *, modes: Sequence[int] | None = None
+) -> dict[int, float]:
+    """eta_{i,m}(k_hat) = k_em c_{i,m} x0_{i,m} (k_hat . e_m) for every mode: the displacement each mode receives from a photon
+    of wavenumber k_em emitted along k_hat by ion i (Section 4.2.8, "The recoil term"; no micromotion factor on emission)."""
+    k = k_em_rad_per_m * _unit(k_hat, "k_hat")
+    which = range(len(crystal.modes)) if modes is None else modes
+    return {m: crystal.lamb_dicke(ion, m, k, micromotion=None) for m in which}
+
+
+def emission_lamb_dicke(crystal: Crystal, ion: int, k_em_rad_per_m: float, mode: int) -> float:
+    """eta_em,{i,m} = k_em |c_{i,m}| x0_{i,m}: the emitted photon's Lamb-Dicke parameter on mode m BEFORE the angular
+    projection, so that eta~^2 = alpha_m eta_em^2 (Section 4.2.8, "Angular factors")."""
+    e = np.asarray(crystal.modes[mode].e_hat, dtype=float)
+    return abs(crystal.lamb_dicke(ion, mode, k_em_rad_per_m * e, micromotion=None))
+
+
+def recoil_heating_quanta(
+    crystal: Crystal, ion: int, k_em_rad_per_m: float, q: int | None, b_hat: Vec
+) -> dict[int, float]:
+    """alpha_m c_{i,m}^2 (k_em x0_{i,m})^2 per mode: the mean recoil heating of one photon of polarization type q (None:
+    isotropic) emitted by ion i, alpha_m evaluated at the angle between the mode axis and B_hat (Section 4.2.8)."""
+    b = _unit(b_hat, "B_hat")
+    out: dict[int, float] = {}
+    for m, mode in enumerate(crystal.modes):
+        cos_chi = float(np.dot(np.asarray(mode.e_hat, dtype=float), b))
+        out[m] = angular_factor(q, cos_chi) * emission_lamb_dicke(crystal, ion, k_em_rad_per_m, m) ** 2
+    return out
+
+
+def recoil_energy_ratio(
+    crystal: Crystal, ion: int, k_em_rad_per_m: float, q: int | None, b_hat: Vec, family: str
+) -> float:
+    """sum over the modes of one axis family of alpha_m c^2 (k x0)^2 hbar omega_m, over alpha_axis (hbar k)^2/(2 m_i): exactly 1.
+
+    The modes of a family share the axis e_hat, so alpha_m = alpha_axis, and x0_{i,m}^2 hbar omega_m = hbar^2/(2 m_i) for
+    every mode; completeness of the family's mass-weighted eigenvectors, sum_m c_{i,m}^2 = 1, then gives the free-ion recoil
+    energy along that axis (Section 4.2.8: "the module's unit test"; Section 9.3 "Recoil quadrature identities").
+    """
+    from qutip_trap.units import HBAR_J_S
+
+    quanta = recoil_heating_quanta(crystal, ion, k_em_rad_per_m, q, b_hat)
+    members = [m for m, mode in enumerate(crystal.modes) if mode.family == family]
+    if not members:
+        raise ValueError(f"the crystal has no {family!r} modes")
+    e = np.asarray(crystal.modes[members[0]].e_hat, dtype=float)
+    alpha_axis = angular_factor(q, float(np.dot(e, _unit(b_hat, "B_hat"))))
+    energy = sum(quanta[m] * HBAR_J_S * crystal.modes[m].omega_rad_s for m in members)
+    free = alpha_axis * free_recoil_energy_j(k_em_rad_per_m, float(crystal.masses_kg[ion]))
+    return float(energy / free)
+
+
+def multi_mode_kick(space: HilbertSpace, etas_by_mode: Mapping[int, float]) -> qt.Qobj:
+    """prod_m D_m(-i eta_m) on the space's motional factors, identity on the ions: the joint kick of one sampled direction
+    (Section 4.2.8), each factor the exact expm displacement of Section 5.1.1 (ENR members through the summed generator)."""
+    factors: dict[int, qt.Qobj] = {}
+    enr: dict[int, float] = {}
+    for mode, eta in etas_by_mode.items():
+        if space.mode_class(mode) == "resolved":
+            factors[space.mode_factor(mode)] = space.displacement_factor(mode, -float(eta))
+        elif space.mode_class(mode) == "enr":
+            enr[mode] = -float(eta)
+        else:
+            raise ValueError(
+                f"mode {mode} is frozen: a frozen mode receives no kick operator (its nbar is bookkeeping)"
+            )
+    if enr:
+        assert space.enr_factor is not None
+        factors[space.enr_factor] = space.enr_displacement(enr)
+    if not factors:
+        return space.identity()
+    return space.embed_many(factors)
+
+
+def recoil_kernel_matrix(d: int, eta_em: float, quad: Quadrature1D) -> np.ndarray:
+    """K[n, n'] = sum_j p_j |<n|D(-i eta_em u_j)|n'>|^2 on d Fock levels: the Fock-population kernel of one emitted photon
+    along a mode, exact in eta through the Laguerre elements (Section 4.2.8, "the recoil kernel over Delta n").
+
+    Column stochastic up to the population the truncation loses from the top columns (reported by the caller as the boundary
+    population); the mean kick of column n' is sum_n (n - n') K[n, n'] = alpha eta_em^2 exactly for every n' in the
+    infinite space (the Kraus map's single-kick expectation generalized to |n'>).
+    """
+    from qutip_trap.hilbert.operators import displacement_matrix_analytic
+
+    if d < 2:
+        raise ValueError("at least two Fock levels")
+    kernel = np.zeros((d, d))
+    for u, p in zip(quad.nodes, quad.weights):
+        if p <= 0.0:
+            continue
+        kernel += p * np.abs(displacement_matrix_analytic(d, -1j * eta_em * float(u))) ** 2
+    return kernel
+
+
 __all__ = [
     "MOMENT_TOLERANCE",
     "DirectionQuadrature",
@@ -275,12 +408,20 @@ __all__ = [
     "derived_angular_factors",
     "derived_pattern_norms",
     "direction_quadrature",
+    "emission_lamb_dicke",
     "free_recoil_energy_j",
     "marginal",
     "marginal_quadrature",
     "minimal_quadrature",
+    "multi_mode_kick",
     "pattern_density",
+    "recoil_energy_ratio",
+    "recoil_heating_quanta",
+    "recoil_kernel_matrix",
     "recoil_lamb_dicke",
+    "recoil_projections",
     "recoil_quanta_per_photon",
+    "recoil_temperature_k",
+    "recoil_velocity_m_per_s",
     "vector_channels",
 ]

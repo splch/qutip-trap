@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -163,6 +163,24 @@ class PumpingTrace:
     photons_scattered: np.ndarray
     """Cumulative integral of the photon rate."""
     final: qt.Qobj
+    photon_rates_per_line: dict[str, np.ndarray] = field(default_factory=dict)
+    """Photon rate per decay line "lower<-upper" against time (M3: the recoil bookkeeping of optical pumping)."""
+    photon_rates_per_operator: np.ndarray | None = None
+    """(n_times, n_c_ops) rate Tr(C_k^dagger C_k rho) per collapse operator, so each emitted polarization's photons can be counted."""
+
+    def photons_per_line(self) -> dict[str, float]:
+        """Trapezoid integral of each line's photon rate over the trace."""
+        out: dict[str, float] = {}
+        for key, rate in self.photon_rates_per_line.items():
+            out[key] = float(np.sum(0.5 * (rate[1:] + rate[:-1]) * np.diff(self.times_s)))
+        return out
+
+    def photons_per_operator(self) -> np.ndarray:
+        """Trapezoid integral of each collapse operator's rate over the trace."""
+        if self.photon_rates_per_operator is None:
+            return np.zeros(0)
+        r = self.photon_rates_per_operator
+        return np.asarray(np.sum(0.5 * (r[1:] + r[:-1]) * np.diff(self.times_s)[:, None], axis=0))
 
     def population(self, labels: Sequence[str]) -> np.ndarray:
         return np.asarray(np.sum([self.populations[lab] for lab in labels], axis=0))
@@ -299,18 +317,19 @@ class BlochModel:
 
     # ---- rates from a state ----------------------------------------------------------------------------------
 
+    def operator_rates(self, rho: qt.Qobj) -> np.ndarray:
+        """Tr(C_k^dagger C_k rho) for every collapse operator k, in s^-1."""
+        r = rho if rho.isoper else qt.ket2dm(rho)
+        return np.array([float(np.real(qt.expect(c.dag() * c, r))) for c in self.build.c_ops])
+
     def photon_rates(self, rho: qt.Qobj) -> dict[str, float]:
         """sum_k Tr(C_k^dagger C_k rho) per decay line, in s^-1 (exact for every leak policy and recoil mode)."""
-        r = rho if rho.isoper else qt.ket2dm(rho)
+        rates = self.operator_rates(rho)
         out: dict[str, float] = {}
         for ch in self.build.channels:
             start, stop = ch.operator_slice
-            total = 0.0
-            for k in range(start, stop):
-                c = self.build.c_ops[k]
-                total += float(np.real(qt.expect(c.dag() * c, r)))
             key = f"{ch.lower}<-{ch.upper}"
-            out[key] = out.get(key, 0.0) + total
+            out[key] = out.get(key, 0.0) + float(np.sum(rates[start:stop]))
         return out
 
     def resonant_manifold(
@@ -484,16 +503,25 @@ class BlochModel:
             states = list(res.states)
         pops = {lab: np.zeros(times.size) for lab in b.labels}
         rate = np.zeros(times.size)
+        per_op = np.zeros((times.size, len(b.c_ops)))
         for i, s in enumerate(states):
             for lab, p in b.populations(s).items():
                 pops[lab][i] = p
-            rate[i] = sum(v for k, v in self.photon_rates(s).items() if not k.startswith(SINK))
+            per_op[i] = self.operator_rates(s)
+        per_line: dict[str, np.ndarray] = {}
+        for ch in b.channels:
+            start, stop = ch.operator_slice
+            key = f"{ch.lower}<-{ch.upper}"
+            per_line[key] = per_line.get(key, 0.0) + np.sum(per_op[:, start:stop], axis=1)
+        for key, arr in per_line.items():
+            if not key.startswith(SINK):
+                rate += arr
         levels: dict[str, np.ndarray] = {}
         for lab, arr in pops.items():
             key = SINK if lab == SINK else b.level_of(lab)
             levels[key] = levels.get(key, 0.0) + arr
         photons = np.concatenate([[0.0], np.cumsum(0.5 * (rate[1:] + rate[:-1]) * np.diff(times))])
-        return PumpingTrace(times, pops, levels, rate, photons, states[-1])
+        return PumpingTrace(times, pops, levels, rate, photons, states[-1], per_line, per_op)
 
     # ---- slow-manifold analysis ----------------------------------------------------------------------------
 
@@ -768,19 +796,34 @@ def rate_coefficients_from_spectrum(model: BlochModel, mode: ModeSpec) -> Spectr
     df = f - float(np.real(qt.expect(f, rho)))
     s = qt.spectrum(b.H, np.array([mode.omega_rad_s, -mode.omega_rad_s]), list(b.c_ops), df, df)
     s_plus, s_minus = float(np.real(s[0])), float(np.real(s[1]))
-    cos_chi = float(np.dot(np.asarray(mode.axis), model.structure.b_hat))
+    two_d = emission_diffusion_two_d(model, mode.axis, mode.x0_m, rho)
+    return SpectrumCoefficients(s_plus + two_d, s_minus + two_d, two_d, s_plus, s_minus)
+
+
+def emission_diffusion_two_d(
+    model: BlochModel, axis: Sequence[float], x0_m: float, rho: qt.Qobj | None = None
+) -> float:
+    """2D = sum_channels alpha_q(chi) (k_em x0)^2 Gamma_q rho_ee: the emission recoil heating rate into a mode of axis ``axis``
+    and zero-point length ``x0`` (participation folded into x0 for a multi-ion mode), one Lamb-Dicke parameter per decay line
+    from its own wavenumber and one alpha per polarization channel (Section 4.2.8 ii); ``rho`` defaults to the steady state."""
+    b = model.build
+    if rho is None:
+        if b.space is not None or not b.static:
+            raise NotImplementedError("the emission diffusion needs the static internal-only steady state")
+        assert isinstance(b.H, qt.Qobj)
+        rho = qt.steadystate(b.H, list(b.c_ops), method="direct")
+    cos_chi = float(np.dot(np.asarray(axis, dtype=float), model.structure.b_hat))
+    rates = model.operator_rates(rho)
     two_d = 0.0
     for ch in b.channels:
         if ch.kind == "sink":
             continue
-        eta_em = ch.wavenumber_rad_per_m * mode.x0_m
+        eta_em = ch.wavenumber_rad_per_m * x0_m
         start, stop = ch.operator_slice
         for k in range(start, stop):
             q = ch.operator_qs[k - start]
-            c = b.c_ops[k]
-            rate = float(np.real(qt.expect(c.dag() * c, rho)))
-            two_d += angular_factor(None if q == 9 else q, cos_chi) * eta_em**2 * rate
-    return SpectrumCoefficients(s_plus + two_d, s_minus + two_d, two_d, s_plus, s_minus)
+            two_d += angular_factor(None if q == 9 else q, cos_chi) * eta_em**2 * float(rates[k])
+    return two_d
 
 
 __all__ = [
@@ -797,6 +840,7 @@ __all__ = [
     "SteadyStateReport",
     "beam_for_transition",
     "carrier_weight",
+    "emission_diffusion_two_d",
     "intensity_over_isat",
     "WEAK_DRIVE_MAX",
     "rate_coefficients",

@@ -15,7 +15,6 @@ from typing import Literal
 import numpy as np
 
 M2 = "milestone M2 (light/, PLAN.md Section 4.3)"
-M3 = "milestone M3 (prep/, PLAN.md Section 4.2.4)"
 
 
 def _unit(v: tuple[float, float, float], what: str) -> None:
@@ -122,16 +121,32 @@ class PolGradientBeams:
             raise ValueError("the lin-perp-lin pair must have orthogonal polarizations")
 
     def xi(self, mode_freq_hz: float, s_single_beam: float) -> float:
-        """Delta*s/(3*omega), angular: the light-shift modulation AMPLITUDE over the mode frequency (Section 13)."""
-        raise NotImplementedError(f"PolGradientBeams.xi is {M3}")
+        """Delta*s/(3*omega), angular: the light-shift modulation AMPLITUDE over the mode frequency (Section 13), with ``s`` Joshi's
+        single-beam saturation parameter referenced to the S1/2-P3/2 stretched transition (Section 4.2.4)."""
+        from qutip_trap.prep.polarization_gradient import xi_depth
+
+        return xi_depth(2.0 * math.pi * self.detuning_hz, s_single_beam, 2.0 * math.pi * mode_freq_hz)
 
     def limits(self, mode_freq_hz: float, s_single_beam: float) -> tuple[float, float]:
-        """(fixed-phase <n_0>, phase-averaged <n>); raises for level_scheme != "jg12_je12"."""
-        raise NotImplementedError(f"PolGradientBeams.limits is {M3}")
+        """(fixed-phase <n_0> at this pair's phase, phase-averaged <n>) of the analytic model; raises for level_scheme != "jg12_je12"
+        because the prefactors carry to no other scheme (Section 4.2.4), and at a node of the gradient."""
+        if self.level_scheme != "jg12_je12":
+            raise ValueError(
+                "the analytic polarization-gradient limits hold for j_g = 1/2 <-> j_e = 1/2 only; no source prints them for "
+                f"{self.level_scheme} (Section 4.2.4)"
+            )
+        from qutip_trap.prep.polarization_gradient import fixed_phase_nbar, phase_averaged_nbar
+
+        xi = self.xi(mode_freq_hz, s_single_beam)
+        return fixed_phase_nbar(xi, self.phase_rad), phase_averaged_nbar(xi)
 
     def moving_gradient_ok(self, cooling_rate_hz: float, mode_freq_hz: float) -> bool:
-        """W < delta < omega."""
-        raise NotImplementedError(f"PolGradientBeams.moving_gradient_ok is {M3}")
+        """W < delta < omega: the beat must outrun the cooling and stay below the trap frequency (Section 4.2.4)."""
+        from qutip_trap.prep.polarization_gradient import moving_gradient_window
+
+        return moving_gradient_window(
+            2.0 * math.pi * cooling_rate_hz, 2.0 * math.pi * self.beat_hz, 2.0 * math.pi * mode_freq_hz
+        )
 
 
 __all__ = ["Beam", "PolGradientBeams", "PolarizationModulation"]

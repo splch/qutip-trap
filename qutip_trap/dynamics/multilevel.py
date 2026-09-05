@@ -94,7 +94,7 @@ class ModeSpec:
         """sqrt(hbar/(2 m omega)) (Section 13, "Ladder operators")."""
         return math.sqrt(HBAR_J_S / (2.0 * self.mass_kg * self.omega_rad_s))
 
-    def eta(self, k_vector_rad_per_m: Sequence[float]) -> float:
+    def eta(self, k_vector_rad_per_m: Sequence[float] | np.ndarray) -> float:
         """(k . e_m) x0: the Lamb-Dicke parameter of one beam's wavevector on this mode (single ion, b = 1)."""
         return float(np.dot(np.asarray(k_vector_rad_per_m, dtype=float), np.asarray(self.axis))) * self.x0_m
 

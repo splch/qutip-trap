@@ -4,7 +4,8 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 [`PLAN.md`](PLAN.md); this repository implements it milestone by milestone (Section 10 of the plan).
 
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
-crystal), M2 (single ion, spin-motion coupling, single-qubit gates) and M3a (multi-level optical-Bloch builder).** The
+crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder) and M3 (cooling
+and state preparation).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -41,7 +42,46 @@ photons per optical pump into |0>; the Floquet fixed point against the secular s
 resonance; Stenholm's sideband floor (Gamma/2 nu)^2 [alpha/cos^2 theta_L + 1/4] from level C with all three recoil
 discretizations (alpha -> 0 leaving (Gamma/4 nu)^2), the mixed pi + sigma channels needing one alpha per channel, the
 Doppler limit (Gamma/4 nu)(1 + alpha) at Delta = -Gamma/2, the phonon rate equation to 1e-12, and Morigi's EIT figure.
-Two-ion entangling gates (M4), the cooling stages themselves (M3) and readout (M5) are not simulated yet.
+M3 adds the cooling and preparation stages of Section 4.2 on top of the M3a builder (`prep/`). `light/recoil.py` gained the
+per-ion participation and the joint multi-mode kick: the emitted photon's Lamb-Dicke parameter eta_em,{i,m} = k |c_{i,m}| x0_{i,m}
+with the ion's own mass, the product of displacements over the modes for one sampled direction, and the recoil-energy identity
+(the modes of one axis family share exactly alpha_axis (hbar k)^2/(2 m_i), to 1e-16, for single and mixed crystals). `prep/rates.py`
+is the level-A engine every stage shares: per illuminated ion and mode the phonon heating and cooling rates c^2 [S(+-nu) + 2D]
+from the dipole-force spectrum of the ion's internal steady state under all its beams (exact in the saturation) with the
+emission-recoil diffusion per channel, the participation folded into the zero-point length so the rates carry W_k = sum_i c^2
+and nbar is participation independent, and the guard that raises for a mode no cooling beam addresses. `prep/doppler.py`
+produces nbar_D per mode at any nu/Gamma, optimizes one detuning per beam group over the participation-weighted mode set and
+reports the RMP force model only where nu/Gamma < 0.1. `prep/sideband.py` holds the resolved-sideband and Raman closed forms
+(Stenholm's floor with Marzoli's effective two-level parameters, the saturating rate), the exact pulsed transfer matrices with
+higher sidebands and the three schedule optimizations, the Laguerre nodes where single-order cooling strands population, the
+repump recoil kernel, and the thermometry of Section 4.2.7 (the exact sideband ratio, Rasmusson's tail sums, blue-sideband
+flopping inversion, the double-thermal fit). `prep/eit.py` is Section 4.2.3 in the plan's sign with the Zeeman-resolved level-C
+model; `prep/polarization_gradient.py` carries Joshi's analytic j = 1/2 <-> 1/2 model (with the static-gradient raise) and builds
+the Lindblad layer through the M3a builder (`PolGradientBeams.xi/limits/moving_gradient_ok` now work); `prep/pumping.py`
+evolves the pump from the scrambled manifold and returns the preparation error, duration, photon count and per-mode recoil
+heating; `prep/sequence.py` enforces the Doppler -> sideband/EIT -> final-pump order and hands off the Appendix E `State`.
+Acceptance tests (`tests/test_recoil_modes.py`, `test_cooling_closed_forms.py`, `test_doppler.py`, `test_sideband_cooling.py`,
+`test_eit.py`, `test_polarization_gradient.py`, `test_pumping.py`, `test_prep_sequence.py`): the Doppler fork 0.480/0.336 mK,
+the force model's 349.5 against 350, Stenholm's 7/12 and 13/20, the Morigi-Walther steady-state list, Marzoli's 0.55/5.5 and
+-0.058, Cirac's 0.554 and 2.66, Che's 0.031117 repump recoil, the Laguerre nodes 39.79/71.77/112.29/202.01, Che's accumulation
+centres and Rasmusson's fixed-pulse prediction, the Turchette ratio to 1e-13, the EIT fixture 0.005102 with its negative controls
+and the RMP tuning 0.00361702, the PGC minima 1/2 and 0.8693 with alpha = 1/3, the 171Yb+ pump's three photons and 8.5e-3 quanta
+of recoil, and the level-C checks of the Doppler limit, the PGC limit (0.756 against 0.75) and the multi-ion participation
+weights. Two-ion entangling gates (M4) and readout (M5) are not simulated yet; `run.prepare` waits for M6, where the Device
+carries the preparation recipe.
+
+Plan inconsistencies surfaced by M3 (recorded in the ledger as `anchor.m3.*`): Monroe 1995's 'theoretical 0.484' is the
+semiclassical force model with isotropic emission at Delta = -30 MHz, outside that model's nu << Gamma regime, and one oblique
+beam does not reproduce his measured triple (0.47, 0.30, 0.18) at any saturation, so the Section 4.2.1 acceptance test needs
+the D1-D3 beam geometry; the 40Ca+ 'two-level estimate fails because of the multi-level structure' is not reproduced (the
+eight-state model is within 10 % of the S-P model at the plan's parameters); Section 9.13 row 123 prints half the A_+- of
+Section 4.2.3's own formula for the EIT fixture (nbar unaffected, W halved); Section 9.12's Lechner rate ratio is inverted
+(the higher mode cools faster, 3.2 against the measured 3.4); Rasmusson's 0.06 after 50 optimized pulses is not reached
+(0.11-0.12 with independent durations) and his 'about 0.3 quanta stranded above n = 112' is 0.1 for the thermal tail; Joshi's
+twelve-operator kernel is nine in the Wigner-Eckart form (one operator per emitted polarization and recoil class, the two pi
+decays summed) with identical second moments; the analytic polarization-gradient W at Joshi's operating point is 9.9e4 s^-1
+against the quoted 6.6e4 (the window W < delta < omega_z holds either way).
+
 
 Plan inconsistencies surfaced by M3a (recorded in the ledger as `anchor.m3a.*`): the four-level 171Yb+ steady state
 reproduces (Gamma/18, 2/9) as a CEILING to 0.15-0.5 % at the best destabilizing field, not "to nine digits"; the
@@ -74,13 +114,13 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/hilbert/` | the composite space of Section 5.1: `operators` (analytic Laguerre elements, expm displacement, the Section 5.1.1 tolerance and margin fixture, Debye-Waller factors, qubit operators in the computational ordering), `space` (cached operators, marginals with the ENR index sums, state constructors), `truncation` (boundary monitor, cap growth, the tolerance-tightening test) |
 | `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a) |
 | `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a) |
-| `qutip_trap/prep/` | `level_c` (the one-mode level-C cooling solve and the level-B Fock rate equation; M3a); the cooling stages are M3 |
+| `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a) |
 | `qutip_trap/control/` | native gates, the circuit IR, `pulses` (Tone/Drive/Pulse), `schedule` (single-qubit gates as pulses with virtual-RZ tracking, M2 subset), `composite` (Section 4.3.5 library) |
 | `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` on the engine (M2); the rest is M8 |
 | `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, Harty's RB model `harty_rb`) |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
-| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests) |
+| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests) |
 | `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 

@@ -875,6 +875,161 @@ records:
     source: "Olmschenk et al. 2007 (arXiv:0708.0657) read on 2026-09-05; qutip_trap/species/yb171.py MISSING"
     equation: "Olmschenk 2007 prints no lifetime or branching for the 935 nm upper level (its Sec. II says the ion 'quickly returns' to S1/2 and cites Bell et al., PRA 44, R20 (1991)), so the D3/2 -> 3D[3/2]1/2 -> S1/2 repump cycle cannot be closed from cited constants; the 171Yb+ detection model folds the 0.501 percent D3/2 branch back into the S line (leak = renormalize, a 0.5 percent effect on the saturation denominator) or routes it to a sink state that fills at Gamma_D P_e (leak = sink, trace preserved, about 200 photons before the ion is dark without a repump)"
     corrected_form: "Section 8.1's requirement that the Bloch model include the D manifold and the repump beams waits on that constant being cited; the two-tone 935 nm repump (3.07 GHz sideband) is otherwise the Floquet-fallback case the builder already handles"
+  # ---- milestone M3: cooling and state preparation (Section 4.2) ------------------------------------------------
+  - id: conv.level_a_rates_participation
+    symbol: "heating_{i,m} = c_{i,m}^2 [S_i(+nu) + 2D_i], cooling_{i,m} = c_{i,m}^2 [S_i(-nu) + 2D_i]"
+    tag: derived
+    section: "4.2 (level A), 4.2.2, 4.2.8 (ii, iii); 13 Cooling coefficients A_+-"
+    source: "qutip_trap/prep/rates.py; tests/test_doppler.py"
+    equation: "per illuminated ion and mode the phonon rates come from the dipole-force spectrum of the ion's internal steady state under all its beams (exact in the saturation) plus the per-channel emission diffusion, with the mass-weighted participation folded into the zero-point length x0_eff = |c| sqrt(hbar/(2 m_i omega)); the mode rate carries W_k = sum_i c_{i,k}^2 and nbar = sum heating/(sum cooling - sum heating) is participation independent when the ions see one intensity (a two-ion COM mode: nbar equal to the single ion's to 1e-6, the rate halved when one ion is illuminated)"
+    corrected_form: "the W(Delta -+ nu) closed form with each beam shifted in turn is the weak-drive alternative, refused above Omega/Gamma = 0.1 (Section 4.2.8 vii); a mode whose projection on every cooling beam is below (k_hat . e_m)^2 = 1e-2 raises UncooledModeError instead of returning a steady state (Section 4.2)"
+  - id: conv.doppler_stage_producer
+    symbol: "nbar_D per mode from the rate framework; force model only for nu/Gamma < 0.1"
+    tag: corrected
+    section: "4.2.1; 13 Doppler limit; 9.17 Doppler detuning per beam"
+    source: "qutip_trap/prep/doppler.py; validation/scripts/check_cooling.py"
+    equation: "the Doppler stage is the Section 4.2.2 rate framework at any nu/Gamma with W from the Bloch steady state; one detuning per beam group is chosen to minimize the participation-weighted mean nbar (uniform weights when no gate mode is given) and every mode's residual is reported; the RMP force model E = (hbar Gamma/8)(1 + alpha/cos^2 theta_L)[(1 + s) Gamma/(2|Delta|) + 2|Delta|/Gamma] is reported as a cross-check for modes with nu/Gamma < 0.1 only, its emission weight read from the same steady state"
+    corrected_form: "the two-level closed forms hbar Gamma/2 and 0.35 hbar Gamma (0.480 against 0.336 mK at 20 MHz, ratio 1.4286, 9.5 against 6.5 quanta at 1 MHz) are oracles in prep/closed_forms.py, never the producer"
+  - id: conv.pulsed_transfer_matrix
+    symbol: "W_k(t): a_n = cos^2(Omega_{n,n-k} t/2), b_n = sin^2(Omega_{n,n-k} t/2), Omega_{n,n-k} = Omega_0 |<n-k|D(i eta)|n>|"
+    tag: verified
+    section: "4.2.8 Pulsed sideband cooling; 13 Sideband-cooling trapping condition"
+    source: "qutip_trap/prep/sideband.py; Che et al. 2017 Eq. 2; Rasmusson et al. 2021 Eqs. 6-7"
+    equation: "column-stochastic transfer matrices on the Fock populations with the exact Laguerre elements, coherences discarded between pulses, N pulses composed as an ordered product; the plan's Rabi convention traps population at Omega_{n-1,n} t = 2 m pi (the sources' half-Rabi m pi); the stranded state of order k is round(n'_zero + k) with the first Laguerre zero as a continuous degree; a repump between pulses is a column-stochastic recoil kernel sum_k Poisson(k) K^k"
+    corrected_form: "three schedule optimizations (shared duration, independent durations, one duration per order with higher orders first) with a coarse grid before the bounded scalar search, because the occupation is oscillatory in the pulse time (a bounded minimizer alone returned 6.7 against the global 3.1 on Rasmusson's fixed-pulse schedule)"
+  - id: conv.eit_plan_sign_and_composition
+    symbol: "Delta > 0, Omega_r^2 = 4 nu (nu + Delta), Omega_r = sqrt(sum Omega_j^2)"
+    tag: corrected
+    section: "4.2.3; 13 EIT detuning sign; 9.17 Morigi EIT fixture"
+    source: "qutip_trap/prep/eit.py; tests/test_eit.py"
+    equation: "A_+- = (Omega_g^2/gamma) gamma^2 nu^2/{gamma^2 nu^2 + 4 [Omega_r^2/4 - nu (nu -+ Delta)]^2}, <n>_S = A_+/(A_- - A_+) with the poles Delta = 0 and Omega_r = 2 nu raising CoolingError, the light shift (sqrt(Delta^2 + Omega_r^2) - |Delta|)/2 and the tuning Omega_r = 2 sqrt(nu (nu + Delta)); Morigi's Delta is the negative of the plan's"
+    corrected_form: "no carrier recoil term (W = 0 at the dark resonance, Morigi 2003); the two-photon eta is the projected difference of the legs"
+  - id: conv.pgc_two_models
+    symbol: "xi = Delta s/(3 omega); W = (16/9) eta^2 Gamma s xi cos^2 2phi; H = (2/9) eta^2 Gamma s (8 xi^2 cos^4 2phi + 2 + sin^2 2phi)"
+    tag: verified
+    section: "4.2.4; 13 Polarization-gradient depth parameter, Position dependence in the PGC model, Two saturation parameters"
+    source: "qutip_trap/prep/polarization_gradient.py; Joshi et al. 2020"
+    equation: "the analytic j_g = 1/2 <-> j_e = 1/2 model with the isotropic alpha = 1/3, the static-gradient per-ion average that raises at |cos 2phi|^2 < 1e-2, and the moving-gradient window W < delta < omega; the Lindblad layer is the M3a builder on two counter-propagating linear beams along B with recoil = minimal (the three-class kernel) and beam phases (2 phi, 0), so the sigma+- standing waves are offset by pi/2 automatically; xi is read from the D1 sigma Rabi frequency as Omega_1^2 Delta/(4 omega (Delta^2 + Gamma^2/4)) = (1/3) Delta s with s referenced to the D2 stretched line (Omega_1 = sqrt(2/3) Omega_stretched)"
+    corrected_form: "the 171Yb+ F = 1 -> F' = 0 scheme shares no coefficient with either model; only its beam projections and the bridge s_Joshi = (3/2) s0 (Gamma/2)^2/((Gamma/2)^2 + Delta^2) [background] are computed"
+  - id: conv.preparation_stage_order
+    symbol: "Doppler -> sideband/EIT/PGC -> final pump"
+    tag: corrected
+    section: "4.2.6; 7.3; 9.17 Preparation stage order"
+    source: "qutip_trap/prep/sequence.py"
+    equation: "PreparationSequence refuses a sequence that does not start with Doppler cooling, a sub-Doppler stage with no Doppler precooling before it, and a pump followed by a cooling stage with no later pump; the hand-off State takes each mode's nbar from the LAST stage that addressed it and each ion's internal state from its last pump (or an explicit state for an unpumped coolant/qubit)"
+    corrected_form: "the second revision printed the reverse order (pump first); run.prepare (Appendix E) waits for M6, where the Device carries the recipe"
+  - id: anchor.m3.recoil_energy_identity
+    symbol: "sum_m alpha_m c_{i,m}^2 (k x0_{i,m})^2 hbar omega_m = alpha_axis (hbar k)^2/(2 m_i)"
+    tag: recomputed here
+    section: "4.2.8 Angular factors; 9.3 Recoil quadrature identities"
+    source: "validation/scripts/check_cooling.py; tests/test_recoil_modes.py"
+    equation: "for both ions of a two-171Yb+ chain and every family and pattern (pi, sigma, isotropic) the ratio is 1 to 2e-16; for a 171Yb+/40Ca+ pair (rf 60 MHz, c_Yb = 0.961 on the 1.184 MHz mode) it is 1 to 1e-12 for each ion with its OWN mass; the joint kick of one sigma photon over a 6 x 8 direction quadrature on three modes deposits R (the Cartesian sum rule, 1 - 1e-9) with per-mode quanta alpha_m eta_em^2 (3.4196e-3, 8.549e-4, 8.844e-4 at 1.0, 3.0, 2.9 MHz); the Fock kernel of one photon is column stochastic with mean kick alpha eta_em^2 in every column"
+    corrected_form: "none"
+  - id: anchor.m3.recoil_unit_regression
+    symbol: "v_r, T_r, R/h, R/(hbar gamma)"
+    tag: recomputed here
+    section: "9.3 Recoil unit regression; 13 Momentum diffusion and recoil temperature"
+    source: "validation/scripts/check_cooling.py; tests/test_recoil_modes.py"
+    equation: "133Cs 852 nm 3.52 mm/s, 198.3 nK; 87Rb 780 nm 5.88 mm/s, 362.0 nK with k_B T_r = (hbar k)^2/m; 138Ba+ 493 nm R/h = 5.9 kHz, R/(hbar gamma) = 2.83e-4; 24Mg+ 280 nm 106.4 kHz, 2.47e-3"
+    corrected_form: "none"
+  - id: anchor.m3.doppler_rate_framework
+    symbol: "nbar_D = (Gamma/4 nu)(1 + alpha/cos^2 theta_L) - 1/2"
+    tag: recomputed here
+    section: "4.2.1; 9.3 Doppler limit with recoil; 9.12 Doppler-limit fork"
+    source: "validation/scripts/check_cooling.py; tests/test_doppler.py; tests/test_cooling_closed_forms.py"
+    equation: "two-level fixture, one sigma+ beam along B = (1,1,1)/sqrt3 (cos^2 = 1/3, alpha = 1/3) at Omega = Gamma/20, Delta = -Gamma/2: nbar = 9.5375 at nu = Gamma/20 against 9.5000 (force model 9.5000), 3.490 and 3.342 at nu/Gamma = 0.128 and 0.133 against 3.42 and 3.27 (force model not reported); the detuning optimum for the low mode is -0.503 Gamma against -(1/2) sqrt(1 + s) = -0.501; the force model gives 349.5 against 350 at Gamma/nu = 1e3; the fork 0.480 against 0.336 mK at 20 MHz (1.680 against 1.176 at 70 MHz), 9.5 against 6.5 quanta at 1 MHz"
+    corrected_form: "none"
+  - id: anchor.m3.monroe_doppler_triple
+    symbol: "9Be+ nbar = (0.47, 0.30, 0.18) at (11.2, 18.2, 29.8) MHz, Delta = -30 MHz, theory 0.484"
+    tag: corrected
+    section: "4.2.1; 9.3 Doppler anchors; 12 (the acceptance test 'not yet computed')"
+    source: "validation/scripts/check_cooling.py; tests/test_doppler.py; Monroe et al. 1995"
+    equation: "the force model with the isotropic alpha = 1/3, cos^2 = 1 and Delta = -30 MHz gives 0.486 for the 11.2 MHz mode, Monroe's 'theoretical 0.484' to 0.4 percent, although nu/Gamma = 0.58 is outside that model's regime; the rate framework valid there gives 0.573 (sigma pattern along B) or 0.533 (alpha = 1/3) for a weak beam along the mode, 0.211 and 0.065 for the 18.2 and 29.8 MHz modes; one sigma+ beam along (1,1,1)/sqrt3 gives (0.95, 0.38, 0.12) at s = 0.1, (1.02, 0.41, 0.13) at 0.5 and (1.28, 0.56, 0.16) at 2"
+    corrected_form: "the Section 4.2.1 acceptance test as designed (three nbar from one Delta with one beam) does not reproduce the measured triple at any saturation (x twice too hot, z 30 percent too cold); it needs the D1-D3 beam geometry, which the plan does not carry (M3 finding)"
+  - id: anchor.m3.ca40_multilevel_doppler
+    symbol: "40Ca+ nbar_z, nbar_y under 397 nm at -20 MHz with the 866 nm repumper"
+    tag: corrected
+    section: "4.2.1; 9.3 Doppler anchors; Roos et al. 2000"
+    source: "validation/scripts/check_cooling.py; tests/test_doppler.py"
+    equation: "S1/2-P1/2-D3/2 (8 states, 4 G along z) with the 397 nm beam along (1,1,1)/sqrt3 polarized perpendicular to B and the 866 nm repumper in the xy plane, modes 3.3 (z) and 1.6 MHz (y): nbar_z, nbar_y = 3.43, 7.60 at s_397 = 0.3; 3.74, 8.74 at s_397 = 1; 4.92, 12.40 at s_397 = 3 (s_866 = 3, 3, 10), against the S-P two-level model with the D branch renormalized 3.42, 7.53; 3.65, 8.50; 4.58, 11.21"
+    corrected_form: "the plan's 'the two-level estimate (n_z ~ 3, n_y ~ 6) fails because the multi-level structure invalidates the two-level assumption' is not reproduced: the level structure changes nbar by less than 10 percent at these parameters and the measured 6.5(1.0) and 16(2) need saturation or geometry factors (M3 finding)"
+  - id: anchor.m3.laguerre_nodes_and_che_schedules
+    symbol: "first zeros of L^{(k)}_{n'}(eta^2); Che's accumulation centres"
+    tag: recomputed here
+    section: "4.2.8 Pulsed sideband cooling; 9.12 Laguerre nodes in pulsed cooling"
+    source: "validation/scripts/check_cooling.py; tests/test_sideband_cooling.py"
+    equation: "39.7908 (k = 1) and 71.7720 (k = 2) at eta = 0.3, 112.2895 and 202.0112 at eta = 0.18 as continuous degrees; stranded states round(zero + k) = 41, 74, 113; Che's 25Mg+ (eta = 0.3, nbar = 17, 151 levels, 9 us pulses at 150 kHz): first-order cycles peak at n = 43, 42, 41 after 40, 150, 500 pulses (centres 45.6, 41.9, 41.2) and second-order at 77, 74, 74 (76.8, 74.4, 73.7); his 75-pulse schedule leaves nbar = 0.716 with P(0) = 0.973"
+    corrected_form: "Che's printed 40 and 72 label the degree n' = n - k; his reported centres (43, 41, 40) and (75, 73, 72) are reproduced to within one Fock state with the shifted index"
+  - id: anchor.m3.rasmusson_pulsed_cooling
+    symbol: "171Yb+ eta = 0.18: 25 fixed pulses, 50 multiorder pulses, the stranded tail"
+    tag: corrected
+    section: "4.2.8 Pulsed sideband cooling; 9.3 Thermometry"
+    source: "validation/scripts/check_cooling.py; tests/test_sideband_cooling.py"
+    equation: "25 first-order pulses of one shared duration from nbar = 14.6 reach 3.14 (the pi time of n = 15 gives 3.15) against Rasmusson's nbar_sim = 3.57(58), his measured 0.58 (ratio), 8.0 (SVD) and 4.1 (time-averaged) being estimator biases; from 15.36, 50 multiorder pulses with one duration per order (17 x k = 3, 17 x k = 2, 16 x k = 1, higher first) reach 0.77 and independently optimized durations 0.11-0.12; 50 first-order pulses leave the thermal tail above the node n = 113 (8.0e-4 of the population, 0.10 quanta)"
+    corrected_form: "Rasmusson's 0.06 after 50 optimized pulses is not reached by this optimizer (0.11-0.12), and his 'about 0.3 quanta stranded above n = 112' is 0.10 for the thermal tail; the transfer matrices conserve probability to 4e-16 per pulse and the truncated tail at n_max = 150 is 7.3e-5"
+  - id: anchor.m3.thermometry_exactness
+    symbol: "P_rsb/P_bsb = [nbar/(nbar + 1)]^k"
+    tag: recomputed here
+    section: "4.2.7; 9.3 Thermometry; 9.12 Sideband-ratio thermometry, exact"
+    source: "validation/scripts/check_cooling.py; tests/test_sideband_cooling.py"
+    equation: "at eta = 1.5, nbar = 8 the exact sideband ratio equals (nbar/(nbar + 1))^k to 1.6e-15 for k = 1, 2 and three pulse durations (Turchette 2000; the plan's 6e-15); a double-thermal state shows a duration-dependent ratio; Rasmusson's time-averaged red-sideband signal is (1/2) sum_{n >= m} p(n) and stepping m returns the populations to 1e-14; the blue-sideband flopping inverts by NNLS to 2e-3"
+    corrected_form: "none"
+  - id: anchor.m3.repump_recoil_per_cycle
+    symbol: "Delta nbar = t s Gamma^3 eta^2/(4 Delta_HF^2)"
+    tag: recomputed here
+    section: "4.2.8; 9.15 Repump recoil per cycle and probability guards"
+    source: "tests/test_cooling_closed_forms.py"
+    equation: "0.031117 for Che's 25Mg+ (t = 10 us, s = 1, Gamma = 2 pi x 41.3 MHz, eta = 0.3, Delta_HF = 2 pi x 1.789 GHz), 0.0049524 with ordinary Hz fed in (low by exactly 2 pi); R_sc = s Gamma^3/(8 Delta^2) = 1.7287e4 s^-1 times t times 2 eta^2 reproduces it"
+    corrected_form: "none"
+  - id: anchor.m3.stenholm_floors_and_sympathetic_list
+    symbol: "(gamma/nu)^2 (alpha + 1/4); nbar_ss = 0.5, 0.1475, 0.039522, 0.0064703, 0.0016231"
+    tag: recomputed here
+    section: "4.2.2; 9.3 Sideband limit, Lamb-Dicke rate framework, Sideband floor decomposition; 9.13 Sympathetic-cooling optimum and steady state"
+    source: "tests/test_cooling_closed_forms.py"
+    equation: "Stenholm's coefficients with the weak-drive Lorentzian give 7/12 and 13/20 in units of (gamma/nu)^2 for alpha = 1/3 and 2/5, alpha -> 0 leaves (Gamma/4 nu)^2 = 6.25e-6 at Gamma/nu = 0.01, the carrier term cancels in A_- - A_+ and not in nbar (ratio 2.6), halving Omega leaves nbar; the Morigi-Walther row 127 list is the same form with alpha = 2/5 and their Omega the trap frequency: A_- - A_+ normalized = 1 - 1/(16 Omega^2/gamma^2 + 1) exactly and nbar = 0.5, 0.1475, 0.039522, 0.0064703, 0.0016231 at Omega/gamma = 0.5, 1, 2, 5, 10, limit 0.1625 (gamma/Omega)^2"
+    corrected_form: "none"
+  - id: anchor.m3.marzoli_effective_two_level
+    symbol: "Pi = (Omega_aux/2)^2/[delta^2 + ((Gamma_10 + Gamma_12)/2)^2]; gamma'/Gamma'"
+    tag: recomputed here
+    section: "4.2.8 (v); 9.3 Effective two-level parameters, V-system diffusion; 13 Effective two-level roles"
+    source: "tests/test_cooling_closed_forms.py"
+    equation: "Gamma_12 = 0.1 Gamma_10, Omega_12 = 0.2, delta_12 = -1: Pi = 0.007678, gamma'/Gamma' = 0.55 (Xi) and 5.5 (V), light shift +0.0077 Gamma_10, optimum delta_20 = -0.0577 (Marzoli Fig. 3's -0.058); the V configuration cools at +nu; the V-system diffusion D = (s_10/4) rho_00 [Gamma_12 (eta_10^2 + alpha eta_12^2) + Gamma_10 eta_10^2 (1 + alpha)] equals the half-rate emission diffusion plus the absorption recoil, and alpha on the absorbed photon or the Gamma_10 branch without its 1 fail"
+    corrected_form: "none"
+  - id: anchor.m3.cirac_lambda_repumper
+    symbol: "<n>_min = 1/sqrt(beta) - 1/2 at Omega_phi^2 = 4 Delta nu/sqrt(beta)"
+    tag: recomputed here
+    section: "4.2.8 (v); 9.3 Lambda system with repumper"
+    source: "tests/test_cooling_closed_forms.py"
+    equation: "0.554 at beta = 0.9 (Omega_phi = 2.05) and 2.66 at beta = 0.1 (3.56) for nu = 0.1, Delta = 10; Doppler reference Gamma/(2 nu) - 1/2 = 4.5"
+    corrected_form: "none"
+  - id: anchor.m3.eit_fixture_and_lechner
+    symbol: "<n>_S = 0.005102 at Delta = +70, Omega_r = 24.04 MHz; R(3.29)/R(1.13)"
+    tag: corrected
+    section: "4.2.3; 9.3 EIT; 9.12 EIT rate versus mode frequency; 9.13 row 123; 9.17 Morigi EIT fixture"
+    source: "validation/scripts/check_cooling.py; tests/test_eit.py"
+    equation: "the plan's fixture (nu = 2.0068, gamma = 20, Omega_1 = Omega_2 = 17 MHz) in the plan's sign: 0.005102 against (gamma/4 Delta)^2 = 0.0051020, Delta = -70 raises, a single 17 gives 0.1467 (29x); the RMP tuning Omega_r^2 = 4 nu Delta gives exactly (Gamma^2 + 4 nu^2)/(16 Delta (Delta - nu)) = 0.00361702 (the (Delta + nu) form 0.00320755); Roos's Delta = 70 MHz, Omega_sigma = 21.4 MHz light shift 1.599 MHz; Lechner's Omega_sigma = 30, Omega_pi = 6.2 MHz with a 2.2-2.3 MHz light shift: R(3.29 MHz)/R(1.13 MHz) = 2.66-3.83 (3.19 at 2.25 MHz) with eta^2 ∝ 1/nu, and the measured 19e3 s^-1 needs eta = 0.134 at 3.29 MHz (|Delta k| = 1.37 k)"
+    corrected_form: "Section 9.13 row 123 prints A_- = 7.225 and A_+ = 0.036676 MHz, half of Section 4.2.3's own formula at Omega_g = 17 (14.45 and 0.0734; nbar unaffected, W = 5.75 kHz against the row's 2.875 at eta = 0.02); Section 9.12's 'R(1.13)/R(3.29) = 2.9' is inverted, the mode nearer the bright resonance cools faster (M3 findings)"
+  - id: anchor.m3.eit_level_c_roos
+    symbol: "level C, 40Ca+ S1/2 + P1/2 Zeeman-resolved, Roos geometry"
+    tag: recomputed here
+    section: "4.2.3 (level C is the four-level master equation [corrected]); 9.3 EIT"
+    source: "validation/scripts/check_cooling.py"
+    equation: "sigma+ beam along B, pi beam along x, Delta = +70 MHz, Omega_sigma/2pi = 21.41 MHz (delta = nu on the 1.6 MHz mode), Omega_pi/2pi = 3 MHz, mode along Delta k (two-photon eta = 0.199), 24 Fock levels: nbar = 0.01026 with P(0) = 0.9907 and W = 7.55e4 s^-1, against the three-level closed form 0.00593 = (gamma/4 Delta)^2 and W = 1.03e5"
+    corrected_form: "the Zeeman-resolved four-level structure (the pi beam also drives S(-1/2) -> P(-1/2)) and the eta = 0.2 Lamb-Dicke corrections raise the floor 1.7x above the idealized Lambda closed form; Roos's measured 0.18 sits far above both and is not a floor of this model"
+  - id: anchor.m3.pgc_limits_and_lindblad
+    symbol: "<n_0> = xi + 1/(4 xi) - 1/2; <n> = (3/4) xi + 5/(8 xi) - 1/2; the Lindblad layer"
+    tag: recomputed here
+    section: "4.2.4; 9.15 PGC cooling limits, PGC recoil-heating angular factor, PGC operating-point round trips, Three-axis Lamb-Dicke triple; 13 Recoil kernel discretization"
+    source: "validation/scripts/check_cooling.py; tests/test_polarization_gradient.py"
+    equation: "fixed-phase minimum 0.5000000000 at xi = 0.5, phase-averaged minimum 0.8693063938 at xi = 0.9128709292, the phase average by quadrature to 1e-6; alpha = 1/3 makes H_carr + H_sb the non-xi^2 part of H exactly and 2/5 fails by 5 percent; s = 0.02098 at xi = 1.35, 210 MHz, 1088 kHz; the 171Yb+ triple (0.05201, 0.05282, 0.09023); the Lindblad layer through the M3a builder (40Ca+ S1/2 + P1/2, two linear beams along B, recoil = minimal, 20 Fock levels) at Delta = +500 MHz and omega = 2 pi x 4 MHz: 9 collapse operators with the sum rule to 1e-16, nbar = 0.7560 against the analytic 0.7500 at xi = 1 (0.5468 against 0.5000 at xi = 0.5, eta = 0.089), relaxation rate 3.88e4 against 4.58e4 s^-1, and nbar = 6.0 at the gradient node phi = pi/4 where the analytic model raises"
+    corrected_form: "Joshi's twelve operators are nine in the Wigner-Eckart form (one operator per emitted polarization and recoil class, the two pi decays summed into one) with the same second moments 2/5 and 1/5; the analytic W at the source's operating point is 9.9e4 s^-1 (phase-averaged) against the quoted 6.6e4, the window W < delta < omega_z holding either way (M3 findings)"
+  - id: anchor.m3.optical_pumping_recoil
+    symbol: "171Yb+ pump: photons, error, recoil quanta per mode; spin-zero Zeeman pump: 3 photons"
+    tag: recomputed here
+    section: "4.2.6; 4.2.8 Sizes; 9.3"
+    source: "validation/scripts/check_cooling.py; tests/test_pumping.py"
+    equation: "F = 1 -> F' = 1 at s_o = 0.5 and 5 G from the uniform F = 1 mixture: 3.0006 photons, 99.99 percent in |0,0> at 5.25 us, error 2.48e-6 (the steady state), recoil heating 8.55e-3 quanta on a 1 MHz mode along B (eta_em = 0.0925) and 2.85e-3 / 2.95e-3 on the 3.0 / 2.9 MHz modes with the ion's participation and one alpha per emitted polarization; sigma+ light on S1/2 -> P1/2 of a spin-zero ion pumps |-1/2> into |+1/2> with exactly 3.0000 photons (pi branching 1/3) and error 2e-12"
+    corrected_form: "the two-tone 9Be+ pump into |2,2> (F = 2 and F = 1 tones on one line) is the periodic-frame case of the builder, not a static solve"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

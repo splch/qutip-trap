@@ -30,15 +30,25 @@ MASS_KG = 170.93578 * U_KG
 CITES = ("Steck",)
 
 
-def _species(name: str, ground: str, excited: str, g_ground: float, g_excited: float) -> Species:
-    e_hz = C_M_PER_S / WAVELENGTH_M
-    tau = 1.0 / (TWO_PI * GAMMA_HZ)
+def _species(
+    name: str,
+    ground: str,
+    excited: str,
+    g_ground: float,
+    g_excited: float,
+    *,
+    gamma_hz: float = GAMMA_HZ,
+    wavelength_m: float = WAVELENGTH_M,
+    mass_kg: float = MASS_KG,
+) -> Species:
+    e_hz = C_M_PER_S / wavelength_m
+    tau = 1.0 / (TWO_PI * gamma_hz)
     lower = Level(ground, 0.0, None, 0.0, 0.0, g_ground, CITES)
     upper = Level(excited, e_hz, tau, 0.0, 0.0, g_excited, CITES)
-    tr = Transition(ground, excited, WAVELENGTH_M, GAMMA_HZ, 1.0, "E1", CITES)
+    tr = Transition(ground, excited, wavelength_m, gamma_hz, 1.0, "E1", CITES)
     return Species(
         name=name,
-        mass_u=MASS_KG / U_KG,
+        mass_u=mass_kg / U_KG,
         nuclear_spin=0.0,
         mu_I_nuclear_magnetons=0.0,
         levels=(lower, upper),
@@ -50,9 +60,21 @@ def _species(name: str, ground: str, excited: str, g_ground: float, g_excited: f
     )
 
 
-def two_level_atom() -> Species:
-    """J = 0 -> J' = 1: pi light on |g> <-> |e, 0> is an exactly closed two-level system."""
-    return _species("two-level fixture", "S0/2", "P2/2", 0.0, 1.0)
+def two_level_atom(
+    *, gamma_hz: float = GAMMA_HZ, wavelength_m: float = WAVELENGTH_M, mass_kg: float = MASS_KG
+) -> Species:
+    """J = 0 -> J' = 1: pi light on |g> <-> |e, 0> is an exactly closed two-level system (171Yb+ 369.5 nm numbers by default; the
+    M3 Doppler anchors pass 9Be+'s 313 nm, Gamma/2pi = 19.4 MHz and mass)."""
+    return _species(
+        "two-level fixture",
+        "S0/2",
+        "P2/2",
+        0.0,
+        1.0,
+        gamma_hz=gamma_hz,
+        wavelength_m=wavelength_m,
+        mass_kg=mass_kg,
+    )
 
 
 def lambda_atom() -> Species:
@@ -90,7 +112,8 @@ def power_for_rabi(
     k_hat: tuple[float, float, float],
 ) -> float:
     """The beam power that gives |Omega_{eg}| = omega for the pair (polarization-resolved element)."""
-    probe = Beam(WAVELENGTH_M, k_hat, polarization, waist_m, 1e-3, (0.0, 0.0, 0.0))
+    lam = TWO_PI * C_M_PER_S / (TWO_PI * (st.state(upper).energy_hz - st.state(lower).energy_hz))
+    probe = Beam(lam, k_hat, polarization, waist_m, 1e-3, (0.0, 0.0, 0.0))
     om = abs(st.single_photon_coupling_rad_s(st.state(lower), st.state(upper), probe))
     return 1e-3 * (omega_rad_s / om) ** 2
 

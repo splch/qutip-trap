@@ -104,3 +104,16 @@ Added on 2026-09-05 by milestone M3a:
   W(Delta -+ nu) closed form, the mixed pi + sigma emission channels, the Doppler limit (Gamma/4 nu)(1 + alpha) and
   Morigi's EIT figure from the Lambda level-C solve. Runs the package (`uv run python validation/scripts/check_bloch.py`,
   about two minutes); the fixtures live in `tests/bloch_fixtures.py`.
+
+Added on 2026-09-05 by milestone M3:
+
+- `check_cooling.py`: laser cooling and state preparation (Sections 4.2.1-4.2.8, 9.3, 9.12, 9.13, 9.15, 9.17): the recoil
+  identity with the per-ion participation for single and mixed crystals and the joint multi-mode kick's Cartesian sum rule,
+  the Doppler stage against (Gamma/4 nu)(1 + alpha/cos^2 theta_L) - 1/2 and the force model with the detuning optimum, Monroe's
+  9Be+ triple from one beam (his theory value identified as the force model with alpha = 1/3), the 40Ca+ S-P-D Doppler limit
+  against the S-P two-level model, Che's and Rasmusson's pulsed schedules with exact matrix elements, the exactness of the
+  sideband-ratio thermometry, the EIT fixture in the plan's sign with the RMP tuning, Roos's light shift, Lechner's rate
+  ratio and a Zeeman-resolved level-C solve of Roos's configuration, the polarization-gradient limits against the Lindblad
+  layer built through the M3a builder, and the 171Yb+ optical pump with its recoil heating. Runs the package
+  (`uv run python validation/scripts/check_cooling.py`, two to three minutes); the fixtures live in `tests/bloch_fixtures.py`
+  and `tests/atomic_fixtures.py`.
