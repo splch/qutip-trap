@@ -12,8 +12,8 @@ s_o =  2.45: closed form 1.086592e+07 s^-1; max over B of R_o/closed = 0.99857 a
 ==============================================================================
 B. Leakage prefactors from the angular algebra (Sections 8.1, 8.8): R_d, R_b at s_o = 0.1, B = 1 G, and Crain's s_o = 2.45
 ==============================================================================
-s_o = 0.1, B = 1.0 G: R_d = 9.9734 Hz (Noek 9.9208, Crain 14.8812); R_b = 0.60939 Hz (Noek (2/3) form 0.60634); R_b/R_d = 0.06110 (3/49 = 0.06122); slow/fast separation 32173
-s_o = 2.45, B = 4.7 G: R_d = 248.9062 Hz (Noek 243.0602, Crain 364.5904); R_b = 14.93008 Hz (Noek (2/3) form 14.85539); R_b/R_d = 0.05998 (3/49 = 0.06122); slow/fast separation 28754
+s_o = 0.1, B = 1.0 G: R_d = 9.973 Hz (Noek 9.9208, Crain 14.8812); R_b = 0.6094 Hz (Noek (2/3) form 0.60634); R_b/R_d = 0.0611 (3/49 = 0.06122); slow/fast separation 3.22e+04
+s_o = 2.45, B = 4.7 G: R_d = 248.9 Hz (Noek 243.0602, Crain 364.5904); R_b = 14.93 Hz (Noek (2/3) form 14.85539); R_b/R_d = 0.0600 (3/49 = 0.06122); slow/fast separation 2.88e+04
 -> Noek's (2/3)(1/3) prefactor with s = s_o/3, i.e. R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2; Crain's 1/3 is refuted
 
 ==============================================================================

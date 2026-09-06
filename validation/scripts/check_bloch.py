@@ -113,9 +113,11 @@ for s0, b in ((0.1, 1.0), (2.45, 4.7)):
     rd_crain = (1 / 3) * (G_S / 2) * (s0 / 3) * (G_S / (2 * D_HFP)) ** 2
     rb_noek = (2 / 3) * (G_S / 2) * (s0 / 3) * (G_S / (2 * (D_HFP + D_HFS))) ** 2
     print(
-        f"s_o = {s0}, B = {b} G: R_d = {dr.R_dark_pumping_per_s:.4f} Hz (Noek {rd_noek:.4f}, Crain {rd_crain:.4f}); "
-        f"R_b = {dr.R_bright_pumping_per_s:.5f} Hz (Noek (2/3) form {rb_noek:.5f}); R_b/R_d = {dr.R_bright_pumping_per_s / dr.R_dark_pumping_per_s:.5f} (3/49 = {3 / 49:.5f}); "
-        f"slow/fast separation {dr.separation:.0f}"
+        # the slow-manifold rates come from the Liouvillian's eigen-decomposition, whose last digit depends on the BLAS
+        # (Linux CI printed R_b = 0.60940 against 0.60939 here): four significant digits are what reproduces
+        f"s_o = {s0}, B = {b} G: R_d = {dr.R_dark_pumping_per_s:.4g} Hz (Noek {rd_noek:.4f}, Crain {rd_crain:.4f}); "
+        f"R_b = {dr.R_bright_pumping_per_s:.4g} Hz (Noek (2/3) form {rb_noek:.5f}); R_b/R_d = {dr.R_bright_pumping_per_s / dr.R_dark_pumping_per_s:.4f} (3/49 = {3 / 49:.5f}); "
+        f"slow/fast separation {dr.separation:.3g}"
     )
 print(
     "-> Noek's (2/3)(1/3) prefactor with s = s_o/3, i.e. R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2; Crain's 1/3 is refuted"

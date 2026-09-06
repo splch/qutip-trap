@@ -12,7 +12,7 @@
     exact leakage P01 + P10 = 7.0399e-03; residual quanta rocking = 7.1097e-03 against sum |alpha|^2 = 7.2167e-03; COM = 3.01e-05; Bell fidelity 0.99273
   five-segment AM pulse (mu = 2.914 MHz, 100 us): amplitudes/2pi kHz [101.093, 102.071, 213.9, 97.447, 88.753], chi by mode {2: 0.399922, 3: 0.385477}, max |alpha| = 2.4e-17
     exact chi = 0.772031 (surrogate 0.785398), leakage 8.749e-05, residual quanta {2: '3.94e-06', 3: '1.84e-04'}, fidelity 0.99961, joint space dims [2, 2, 10, 10]
-    calibration: 3 exact checks, amplitude factor 1.008661, exact chi 0.785398, fidelity 0.999773, surrogate error 0.0170
+    calibration converged: True; amplitude factor 1.0087, exact chi 0.78540, fidelity 0.99977, surrogate error 0.0170
 
 == 3. Ballance's motional-dephasing coefficient alpha_K = (8K + 3)/(16 K^2) from the block Liouvillians
   K = 1: (1 - F) tau/t_g at t_g/tau = 1e-4: 0.687376; (8K + 3)/(16 K^2) = 0.687500

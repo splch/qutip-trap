@@ -86,7 +86,9 @@ table_am = table_with_waveform((0, 1), am.waveform)
 check_am, tr_am = exact_gate_check(dev2, am.waveform, (0, 1), drives, table_am, space=space_am)
 print(f"    exact chi = {check_am.chi_rad:.6f} (surrogate {am.chi_rad:.6f}), leakage {check_am.leakage:.3e}, residual quanta {dict((m, f'{v:.2e}') for m, v in check_am.residual_quanta.items())}, fidelity {check_am.fidelity:.5f}, joint space dims {space_am.dims}")
 run = calibrate_entangling_angle(dev2, am.waveform, (0, 1), drives, table_am, space=space_am, tolerance_rad=1e-5)
-print(f"    calibration: {len(run.checks)} exact checks, amplitude factor {run.factors[-1]:.6f}, exact chi {run.checks[-1].chi_rad:.6f}, fidelity {run.checks[-1].fidelity:.6f}, surrogate error {run.surrogate_error:.4f}")
+# the iteration count and the last digits of the factor depend on where the Newton step lands within the 1e-5 rad tolerance,
+# which integrator round-off moves across platforms: print them at their reproducible precision
+print(f"    calibration converged: {run.converged}; amplitude factor {run.factors[-1]:.4f}, exact chi {run.checks[-1].chi_rad:.5f}, fidelity {run.checks[-1].fidelity:.5f}, surrogate error {run.surrogate_error:.4f}")
 
 section("3. Ballance's motional-dephasing coefficient alpha_K = (8K + 3)/(16 K^2) from the block Liouvillians")
 d = 24
