@@ -59,12 +59,20 @@ from qutip_trap.hilbert.operators import debye_waller_factor, qudit_projector, q
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.light.raman import lamb_dicke_parameters, mathieu_or_none
 from qutip_trap.noise.sampling import (
+    KEY_INTENSITY_TRAJECTORY,
+    KEY_LASER_OFFSET_HZ,
+    KEY_LASER_PHASE_TRAJECTORY,
     KEY_RABI_SCALE,
+    KEY_RF_FRACTION_TRAJECTORY,
     KEY_RF_PHASE,
     NoiseSample,
+    key_beam_offset_m,
+    key_beam_phase_rad,
     key_frozen_n,
     key_mode_offset_hz,
+    key_position_offset_m,
     key_qubit_offset_hz,
+    key_qubit_trajectory_hz,
     quiet_sample,
 )
 from qutip_trap.units import TWO_PI
@@ -166,14 +174,26 @@ class _DriveCoefficient:
     modulation_delta: float
     k_dot_omega: float
     counter: _Counter
+    phase_trajectory: Callable[[float], float] | None = None
+    """phi_L(t) of the laser (rad), added to every tone's phase (single-photon optical drives, Section 6.3)."""
+    amplitude_trajectory: Callable[[float], float] | None = None
+    """dI/I(t) of the light; the envelope is multiplied by (1 + dI/I)^amplitude_power (Section 6.4)."""
+    amplitude_power: float = 1.0
 
     def __call__(self, t: float) -> complex:
         self.counter.calls += 1
         tau = t - self.t_start
+        extra_phase = 0.0 if self.phase_trajectory is None else float(self.phase_trajectory(t))
         total = 0.0 + 0.0j
         for tone in self.tones:
-            total += 0.5 * tone.envelope(tau) * np.exp(-1j * (tone.beat_phase(t, tau) - tone.phase(tau)))
+            total += (
+                0.5
+                * tone.envelope(tau)
+                * np.exp(-1j * (tone.beat_phase(t, tau) - tone.phase(tau) - extra_phase))
+            )
         c = total * self.scale
+        if self.amplitude_trajectory is not None:
+            c = c * (1.0 + float(self.amplitude_trajectory(t))) ** self.amplitude_power
         if self.modulation_beta != 0.0:
             c = c * np.exp(
                 1j * self.modulation_beta * math.cos(self.modulation_omega * t + self.modulation_delta)
@@ -198,6 +218,11 @@ def _coef_plain(t: float, coef: _DriveCoefficient | _ScalarCoefficient, **_: obj
     return complex(coef(t))
 
 
+def _traj_coef(t: float, traj: Callable[[float], float], scale: float, **_: object) -> float:
+    """A sampled trajectory (Section 6.1 route d) as a coefficient: scale x traj(t), the fixed-grid interpolation of M7."""
+    return float(scale * traj(t))
+
+
 def _coef_conj(t: float, coef: _DriveCoefficient, **_: object) -> complex:
     return complex(np.conj(coef(t)))
 
@@ -220,6 +245,9 @@ class BuiltHamiltonian:
     dropped_weight: float
     mode_frequencies_rad_s: dict[int, float]
     counter: _Counter
+    drive_parts: dict[str, qt.QobjEvo] = field(default_factory=dict)
+    """Per pulse (gate_id), the QobjEvo of that pulse's drive terms alone: what the white intensity-noise channel
+    sqrt(D) H_drive(t) of Section 6.4 multiplies (M7)."""
 
     @property
     def rhs_evaluations(self) -> int:
@@ -429,6 +457,43 @@ def build_hamiltonian(
         )
         if delta != 0.0:
             static = static + (0.5 * TWO_PI * delta) * space.sigma_z(i)
+    # the sampled part of the transition offsets (S_B through the sensitivities plus the mains, Section 6.3): a
+    # time-dependent (delta nu_i(t)/2) sigma_z^i on the fixed grid of the sample, whatever the integrator's steps
+    trajectory_terms: list[Any] = []
+    for i in range(space.n_ions):
+        traj = smp.trajectory(key_qubit_trajectory_hz(i))
+        if traj is not None:
+            trajectory_terms.append(
+                [
+                    (0.5 * TWO_PI * space.sigma_z(i)).to("CSR"),
+                    qt.coefficient(_traj_coef, args={"traj": traj, "scale": 1.0}),
+                ]
+            )
+            approximations.append(
+                f"ion {i}: sampled qubit-frequency trajectory (rms {traj.rms():.3g} Hz) on {traj.times_s.size} grid points"
+            )
+    rf_traj = smp.trajectory(KEY_RF_FRACTION_TRAJECTORY)
+    if rf_traj is not None:
+        if opts.frame != "schrodinger":
+            raise NotImplementedError(
+                "a sampled rf-amplitude trajectory needs the Schroedinger frame (H_mot present)"
+            )
+        op_rf = 0.0 * space.identity()
+        for m in range(n_modes):
+            if space.mode_class(m) != "frozen" and crystal.modes[m].family in (
+                "transverse_1",
+                "transverse_2",
+            ):
+                op_rf = op_rf + omegas[m] * space.number(m)
+        trajectory_terms.append(
+            [op_rf.to("CSR"), qt.coefficient(_traj_coef, args={"traj": rf_traj, "scale": 1.0})]
+        )
+        approximations.append(
+            f"sampled rf-amplitude trajectory (rms {rf_traj.rms():.3g}) on the transverse modes"
+        )
+    laser_phase_traj = smp.trajectory(KEY_LASER_PHASE_TRAJECTORY)
+    intensity_traj = smp.trajectory(KEY_INTENSITY_TRAJECTORY)
+    laser_offset_hz = smp.get(KEY_LASER_OFFSET_HZ, 0.0)
 
     # H_anh
     anh = device.trap.anharmonic()
@@ -457,16 +522,51 @@ def build_hamiltonian(
         )
 
     terms.append(static)
+    terms.extend(trajectory_terms)
     records: list[DriveRecord] = []
     frozen_states = _frozen_fock_states(space, smp, frozen_n)
     rabi_scale = smp.get(KEY_RABI_SCALE, 1.0)
     dropped_total = 0.0
     n_drive_terms = 0
     duration = t_end - t_start
+    drive_parts: dict[str, list[Any]] = {}
 
     for pulse in pulses:
         drive: Drive = pulse.drive
         delta_k = drive.delta_k(device.beams)
+        part_key = pulse.gate_id or f"pulse@{pulse.t_start_s:.9g}"
+        part = drive_parts.setdefault(part_key, [])
+        # quasi-static beam-path phases (Section 13 row "Optical phase factor on sigma_+": e^{+i(Delta k . X - Delta phi)})
+        beam_phase = 0.0
+        if drive.kind in ("raman", "light_shift"):
+            beam_phase = smp.get(key_beam_phase_rad(drive.beams[0]), 0.0) - smp.get(
+                key_beam_phase_rad(drive.beams[1]), 0.0
+            )
+        elif drive.kind in ("optical_E1", "optical_E2"):
+            beam_phase = smp.get(key_beam_phase_rad(drive.beams[0]), 0.0)
+        if beam_phase != 0.0:
+            approximations.append(
+                f"pulse {pulse.gate_id!r}: quasi-static beam-path phase {beam_phase:.3g} rad"
+            )
+        is_laser = drive.kind in ("raman", "light_shift", "optical_E1", "optical_E2")
+        phase_traj = laser_phase_traj if drive.kind in ("optical_E1", "optical_E2") else None
+        amp_traj = intensity_traj if is_laser else None
+        amp_power = 0.5 if drive.kind in ("optical_E1", "optical_E2") else 1.0
+        laser_rotation = (
+            -TWO_PI * laser_offset_hz
+            if (drive.kind in ("optical_E1", "optical_E2") and laser_offset_hz != 0.0)
+            else 0.0
+        )
+        if phase_traj is not None:
+            approximations.append(
+                f"pulse {pulse.gate_id!r}: sampled laser phase trajectory (rms {phase_traj.rms():.3g} rad)"
+            )
+        if amp_traj is not None:
+            approximations.append(
+                f"pulse {pulse.gate_id!r}: sampled intensity trajectory (rms {amp_traj.rms():.3g}) at power {amp_power:g}"
+            )
+        if laser_rotation != 0.0:
+            approximations.append(f"pulse {pulse.gate_id!r}: laser frequency offset {laser_offset_hz:.3g} Hz")
         # micromotion modulation parameters
         rf_omega = 0.0
         rf_delta = 0.0
@@ -536,7 +636,12 @@ def build_hamiltonian(
                 if ion == primary
                 else float(np.dot(delta_k, np.asarray(crystal.positions_m[ion]) - x_primary))
             )
-            scale = rabi_scale * eps * carrier * dw * np.exp(1j * geometric)
+            pointing = _pointing_factor(device, drive, ion, smp)
+            if pointing != 1.0:
+                approximations.append(
+                    f"pulse {pulse.gate_id!r}, ion {ion}: beam pointing/position factor {pointing:.6f} on Omega"
+                )
+            scale = rabi_scale * eps * carrier * dw * pointing * np.exp(1j * (geometric - beam_phase))
             active_etas = {m: e for m, e in etas.items() if space.mode_class(m) != "frozen"}
             peak = 0.0
             for tone in drive.tones:
@@ -603,11 +708,16 @@ def build_hamiltonian(
                         beta if opts.micromotion == "modulated" else 0.0,
                         rf_omega,
                         rf_delta,
-                        extra_rotation,
+                        extra_rotation + laser_rotation,
                         counter,
+                        phase_traj,
+                        amp_traj,
+                        amp_power,
                     )
-                    terms.append([op, qt.coefficient(_coef_plain, args={"coef": coef})])
-                    terms.append([op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})])
+                    t_plain = [op, qt.coefficient(_coef_plain, args={"coef": coef})]
+                    t_conj = [op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})]
+                    terms.extend([t_plain, t_conj])
+                    part.extend([t_plain, t_conj])
                     n_drive_terms += 2
                     continue
                 if opts.curvature.get(ion) is not None:
@@ -664,11 +774,16 @@ def build_hamiltonian(
                         0.0,
                         0.0,
                         0.0,
-                        k_dot_w + extra_rotation,
+                        k_dot_w + extra_rotation + laser_rotation,
                         counter,
+                        phase_traj,
+                        amp_traj,
+                        amp_power,
                     )
-                    terms.append([term.op, qt.coefficient(_coef_plain, args={"coef": coef})])
-                    terms.append([term.op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})])
+                    t_plain = [term.op, qt.coefficient(_coef_plain, args={"coef": coef})]
+                    t_conj = [term.op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})]
+                    terms.extend([t_plain, t_conj])
+                    part.extend([t_plain, t_conj])
                     n_drive_terms += 2
             if opts.lamb_dicke_order is not None:
                 approximations.append(
@@ -710,7 +825,30 @@ def build_hamiltonian(
         dropped_weight=dropped_total,
         mode_frequencies_rad_s=omegas,
         counter=counter,
+        drive_parts={k: qt.QobjEvo(v) for k, v in drive_parts.items() if v},
     )
+
+
+def _pointing_factor(device: Device, drive: Drive, ion: int, sample: NoiseSample) -> float:
+    """sqrt(prod_beams I_b(x_ion + dx_ion - d_b)/I_b(x_ion)) for the drive's beams: a beam pointing offset d_b or an ion
+    displacement dx_ion (a stray field) moves the ion on the intensity profile, so Omega and the crosstalk ratios change
+    together (Sections 6.6, 7.10); 1 for a microwave drive and for the nominal sample."""
+    if not drive.beams:
+        return 1.0
+    x = np.asarray(device.crystal.positions_m[ion], dtype=float)
+    dx = np.array([sample.get(key_position_offset_m(ion, ax), 0.0) for ax in range(3)])
+    factor = 1.0
+    for b in drive.beams:
+        d_b = np.array([sample.get(key_beam_offset_m(b, ax), 0.0) for ax in range(3)])
+        if not np.any(dx) and not np.any(d_b):
+            continue
+        beam = device.beams[b]
+        i0 = beam.intensity_at(x)
+        i1 = beam.intensity_at(x + dx - d_b)
+        if i0 <= 0.0:
+            continue
+        factor *= math.sqrt(i1 / i0)
+    return float(factor)
 
 
 def free_hamiltonian(

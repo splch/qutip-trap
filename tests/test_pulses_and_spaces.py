@@ -132,8 +132,10 @@ def test_decoupling_sequence_feasibility_and_moments() -> None:
     cpmg2 = DecouplingSequence("cpmg", 2, 1e-3, 1e-6, (0.25, 0.75), (0.0, 0.0))
     assert cpmg2.is_single_axis() and cpmg2.feasible()
     a1, a2 = cpmg2.moments()
-    assert a1 == pytest.approx(0.25 - 0.75)
-    assert a2 == pytest.approx(0.25**2 - 0.75**2)
+    # A_k = sum_{j=1}^{n} (-1)^j delta_j^k with j counting from 1 as in Biercuk's pulse sum (Section 9.5), so that A_1 = (-1)^n / 2
+    # is the first-order cancellation condition of that sum (the plan's "A_1 = -/+ 1/2")
+    assert a1 == pytest.approx(-0.25 + 0.75)
+    assert a2 == pytest.approx(-(0.25**2) + 0.75**2)
     fat = DecouplingSequence("cpmg", 2, 1e-3, 0.6e-3, (0.25, 0.75), (0.0, 0.0))
     assert not fat.feasible()
     xy = DecouplingSequence("xy4", 2, 1e-3, 1e-6, (0.25, 0.75), (0.0, math.pi / 2))

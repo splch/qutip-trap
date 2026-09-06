@@ -136,7 +136,7 @@ def test_instances_are_immutable() -> None:
 def test_unimplemented_entry_points_name_their_milestone() -> None:
     dev = object()
     # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; the full simulated-experiment
-    # calibration (M8), GATE_LOCAL tomography (M9a), the noise sampler (M7) and Device.derived() still name their milestones
+    # calibration (M8), GATE_LOCAL tomography (M9a) and Device.derived() still name their milestones
     with pytest.raises(NotImplementedError, match=r"milestone M8"):
         api.calibrate(dev, surrogate=False)  # type: ignore[arg-type]
     assert api.load_openqasm2("OPENQASM 2.0; qreg q[1]; x q[0];").ops[0].name == "x"
@@ -151,8 +151,8 @@ def test_unimplemented_entry_points_name_their_milestone() -> None:
         JointExactEngine().process_tomography(dev, None, space, None, None, api.SeedSpec(0))  # type: ignore[arg-type]
     from tests.fixtures import make_device, make_noise
 
-    with pytest.raises(NotImplementedError, match=r"milestone M7"):
-        make_noise().sample(np.random.default_rng(0))
+    # the noise sampler of M7 is implemented: a quiet model returns a quiet sample
+    assert make_noise().sample(np.random.default_rng(0), t_s=0.0, duration_s=1e-3, sample_id=0).is_quiet
     with pytest.raises(NotImplementedError, match=r"M1 to M8"):
         make_device().derived()
     # the atomic layer of M0a is implemented: this no longer raises

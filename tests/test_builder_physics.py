@@ -318,7 +318,12 @@ def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type:
 def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: ignore[no-untyped-def]
     """Idle evolution with sqrt(Gamma) a and sqrt(Gamma) a^dag heats at Gamma quanta per second; sqrt(gamma/2) sigma_z decays the
     coherence at gamma (Section 13 rows)."""
-    dev, _, _ = raman
+    dev0, _, _ = raman
+    import dataclasses
+
+    from tests.fixtures import make_noise
+
+    dev = dataclasses.replace(dev0, noise=make_noise(s_e_two_sided=1e-13))
     space = HilbertSpace((2,), (ModeTruncation(KX, 14, (0, 4), 0.2),), None, (0, 2))
     rates = device_heating_rates(dev, space)
     assert set(rates) == {KX} and rates[KX] > 0.0

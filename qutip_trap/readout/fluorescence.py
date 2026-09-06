@@ -587,13 +587,23 @@ class ReadoutScheme:
         return cls("shelving", tuple(classes), None if ideal else tuple(transfer))
 
     @classmethod
-    def for_species(cls, species: Species, bright_labels: Sequence[str]) -> ReadoutScheme:
-        """The ideal scheme of a species: a qubit label in the bright manifold is bright, one in a metastable D level is the
-        shelf (optical qubits), any other is dark (hyperfine qubits under direct fluorescence)."""
+    def for_species(
+        cls, species: Species, bright_labels: Sequence[str], *, labels: Sequence[str] | None = None
+    ) -> ReadoutScheme:
+        """The ideal scheme of a species: a label in the bright manifold is bright, one in a metastable D level is the shelf
+        (optical qubits), any other is dark (hyperfine qubits under direct fluorescence). ``labels`` extends the classes to
+        every level of a register factor with d > 2 (``noise/levels.py``, M7): a leaked F = 1 sublevel of 171Yb+ is bright,
+        the SINK is read as dark (a D-level population is repumped during detection; the scheme records the approximation
+        through its class, not its dynamics)."""
+        from qutip_trap.noise.levels import SINK
         from qutip_trap.species.model import parse_state_label
 
+        wanted = tuple(species.qubit) if labels is None else tuple(labels)
         classes: list[ReadoutClass] = []
-        for lab in species.qubit:
+        for lab in wanted:
+            if lab == SINK:
+                classes.append("dark")
+                continue
             level, _ = parse_state_label(lab)
             if lab in bright_labels:
                 classes.append("bright")
@@ -602,6 +612,9 @@ class ReadoutScheme:
             else:
                 classes.append("dark")
         kind: Literal["direct", "shelving"] = "shelving" if "shelf" in classes else "direct"
+        if kind == "direct":
+            return cls(kind, tuple(classes))
+        # a shelving scheme with leaked D-sublevels: those are shelf too, and the direct-scheme check on 'shelf' does not apply
         return cls(kind, tuple(classes))
 
 

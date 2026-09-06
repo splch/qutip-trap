@@ -6,7 +6,8 @@ n = 0; qubit dephasing L = sqrt(gamma_phi/2) sigma_z so that the coherence decay
 dephasing L = a^dagger a sqrt(2/tau); the Rayleigh operator (1/2) sqrt(Gamma_el) sigma_z, whose dissipator prefactor
 is Gamma_el/4 while the coherence decays at Gamma_el/2, both correct; recoil-resolved emission channels one operator
 per (decay channel, recoil class), never summed coherently. M2 supplies the constructors the engine needs for the
-motional and qubit channels; M7 assembles them from the device's spectra (``NoiseModel.channels``).
+motional and qubit channels; M7 assembles them from the device's spectra (``NoiseModel.channels``), adds the scattering
+operators of ``noise/scattering.py`` per pulse and the white intensity-noise channel below.
 """
 
 from __future__ import annotations
@@ -32,12 +33,18 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CollapseOp:
-    op: qt.Qobj
+    op: qt.Qobj | qt.QobjEvo
+    """A constant operator, or a QobjEvo whose coefficient is the time-dependent amplitude (a shaped pulse's scattering,
+    the white intensity-noise channel proportional to the drive term; M7)."""
     rate_hz: float
     """The rate the operator carries under its root, as an ordinary frequency for reporting."""
     channel: str
     ion: int | None
     mode: int | None
+
+    @property
+    def time_dependent(self) -> bool:
+        return isinstance(self.op, qt.QobjEvo)
 
 
 def heating_channels(
@@ -127,8 +134,38 @@ def rayleigh_dephasing_channels(
     return tuple(out)
 
 
+def intensity_noise_channels(
+    drive_parts: Mapping[str, qt.QobjEvo], densities: Mapping[str, float]
+) -> tuple[CollapseOp, ...]:
+    """L = sqrt(D_Omega) H_drive(t) per pulse: white multiplicative intensity noise on a drive term (Section 6.4; M7).
+
+    A fractional Rabi fluctuation eps(t) with a flat two-sided density D_Omega (1/(rad/s), the ``white_level`` of the
+    laser-intensity spectrum times 1 for a two-photon drive or 1/4 for a single-photon one, Omega proportional to I and to
+    sqrt I respectively) averages to rho_dot = -(D/2)[H_d, [H_d, rho]], the dissipator of sqrt(D) H_d; Bermudez's
+    c_op = sqrt(2k) H_int with Gamma_I = k Omega^2 (Section 9.16 row 4.4-8) is this with D = 2k, so Gamma_I = D Omega^2/2.
+    """
+    out: list[CollapseOp] = []
+    for gate_id, part in drive_parts.items():
+        dens = float(densities.get(gate_id, 0.0))
+        if dens <= 0.0:
+            continue
+        out.append(
+            CollapseOp(
+                math.sqrt(dens) * part, float(dens / TWO_PI), f"intensity_noise[{gate_id}]", None, None
+            )
+        )
+    return tuple(out)
+
+
+def gamma_i_from_density(density_two_sided: float, omega_rad_s: float) -> float:
+    """Gamma_I = D Omega^2/2: the zero-frequency intensity-noise rate of Section 6.4 from the fractional density D."""
+    return 0.5 * density_two_sided * omega_rad_s**2
+
+
 __all__ = [
     "CollapseOp",
+    "gamma_i_from_density",
+    "intensity_noise_channels",
     "device_heating_rates",
     "heating_channels",
     "motional_dephasing_channels",

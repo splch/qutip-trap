@@ -5,7 +5,8 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
-and state preparation), M4 (two-ion entangling gates), M5 (readout) and M6 (end-to-end circuits in JOINT_EXACT).** The
+and state preparation), M4 (two-ion entangling gates), M5 (readout), M6 (end-to-end circuits in JOINT_EXACT) and M7 (noise
+and error channels).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -185,6 +186,78 @@ eps theta rotations on the neighbours and an ideal MS gate gives 5.4, because th
 crosstalk rotations onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct
 rotations) and the readout's eps_B > eps_D adds to both flips.
 
+M7 gives the simulator its noise and error channels (Section 6), every one a physical process routed by Section 6.1's rule
+rather than a phenomenological channel. `noise/spectra.py` keeps every spectrum two-sided in angular frequency with the
+e^{-i omega t} kernel and declares its white part as a separate field (`NoiseSpectrum.white_level`, the Lindblad route),
+the tabulated band being the sampled-trajectory route: `noise/processes.py` synthesizes Gaussian realizations on a fixed
+grid with (1/pi) int S d omega as the variance, so an integrator's step sequence never changes what the drive sees
+(Section 9.17). `NoiseModel.channels` turns S_E through the mode-projected multi-ion formula with the configured
+correlation length (never the uniform limit by default) into heating operators, the white rf-amplitude density into the
+motional dephasing operator a^dag a sqrt(2/tau) on the rf-derived modes, and the white field density through the computed
+Zeeman sensitivities into sqrt(gamma/2) sigma_z with gamma = 2 pi^2 (d nu/dB)^2 S_B (a Ramsey coherence decays as
+e^{-gamma t}); `NoiseModel.sample_sequence` draws every Drift as an Ornstein-Uhlenbeck chain over the shot clock with its
+ramp, converts the field offset through the exact diagonalization at the shifted field, moves every transverse mode by the
+common rf fraction plus its differential drift, draws beam phases and pointing offsets, and synthesizes the per-ion
+transition-frequency trajectories (S_B through d nu/dB and d^2 nu/dB^2 plus the mains at a per-shot trigger phase), the laser
+phase and intensity trajectories and the rf-amplitude trajectory. The Hamiltonian builder consumes all of it: a time-dependent
+(delta nu_i(t)/2) sigma_z^i and omega_m dV/V(t) a^dag a term, beam-path phases as e^{-i Delta phi} on sigma_+, pointing and
+stray-field displacements as intensity factors on Omega and the crosstalk ratios together, the laser phase on single-photon
+drives and (1 + dI/I)^p on every laser drive, and it exposes each pulse's drive term for the white intensity-noise channel
+sqrt(D) H_drive(t). `noise/scattering.py` builds the photon-scattering operators of every pulse from the atomic layer's
+signed amplitudes: the diagonal Rayleigh operator over the register levels (Uys's Gamma_el/4 dissipator automatically), one
+Raman operator per (a -> b), leakage into a SINK level when the register factor has d > 2 (`noise/levels.py`; the leaked F = 1
+sublevels of 171Yb+ read bright, the SINK dark) and a reported estimate at d = 2, each with the recoil D(i(eta_abs -
+eta_em)) of the absorbed beam and a moment-exact six-direction emission quadrature about B, at the played intensity. The
+engine integrates a segment with collapse operators through `mesolve` up to `SolverOptions.mesolve_dimension_max` and through
+`SolverOptions.ntraj` keyed quantum-jump trajectories above it (each trajectory identical under its own seed whatever the
+worker count, the jumps returned in `Traces.jumps`), and passes every schedule through the control hardware chain of Section
+7.10 (`control/hardware.py`: DDS words, the modulator's first-order response with an 8 tau tail continuous across a pulse
+train, the amplifier bandwidth for microwaves, saturation, rigid per-train timing jitter from the keyed seeds; the drive's
+Stark shift follows the played light with the drive kind's scaling power, so a tail carries the decaying shift and not the
+programmed one).
+`noise/decoupling.py` is the filter-function layer of Section 6.9 with the full 3 x 3 toggling machinery (the closed-form
+segment integrals with removable poles, CPMG, UDD, XY4, XY8, KDD, CDD, custom timings; the amplitude quadrature and its dc
+polygon; chi = (2/pi) int S_b F/omega^2 with omega_min and d ln chi/d ln omega_min reported; the dc floor and the max rule;
+a Monte Carlo over sampled trajectories through the builder as the route (c)/(d) closure; `DecouplingSequence.moments`
+counts the pulses from j = 1 as Biercuk's sum does, so A_1 = (-1)^n/2 is its first-order cancellation condition, and
+`feasible()` is a query on the record while `decoupling_sequence` refuses infeasible timings), `noise/collisions.py` the
+Langevin collision process, `noise/summary.py` the Section 6.8 reporting (entanglement and average infidelity, the Pauli
+twirl, Chen's depolarizing normalization). `run()` distributes shots round-robin over dynamical samples at the shot clock
+(default min(shots, 64) unless the model is quiet), evolves every initial-mixture branch of every sample, reads each sample's
+register state out with the seeds keyed by (sample, trajectory, shot, ion, channel), derives the histogram's error bars from
+the between/within-sample effective sample size, applies the collision process per shot (heralds, discarded shots, a
+permuted ion order, dark and lost ions read dark for every later shot), carries leakage levels (`internal_levels`) and the
+Section 6.6 echo schemes (`crosstalk_suppression="local"|"neighbour"`), and adds the per-pulse scattering probabilities to
+the intrinsic budget. Acceptance (`tests/test_noise_*.py`, `test_decoupling.py`, `test_hardware_chain.py`,
+`test_scattering_channels.py`, `test_collisions.py`, `test_run_noise.py`; `validation/scripts/check_noise.py`): heating and
+motional dephasing during the two-ion gate reproduce Ballance's ndot t_g/(2K) and alpha_K t_g/tau to 3-4 % at K = 1 and 2
+(alpha_K = 11/16, 19/64); Fang's exact crosstalk forms (0.900790, 0.097217) and the echo identities to 1e-15; the scattering
+operators' sum rule to 1e-9 with the flip and leakage rates in `mesolve`; the filter-function machinery against every
+`check_composite.py` number (gated CPMG equals Biercuk to 1e-15, the finite-pulse UDD collapse to 4 and 6 with the
+universal 1/16 and 1/64, the SK1/BB1 dc floors 5.87365e-6 and 3.53675e-9); the OU heating slope 9.97506e-4 with its rival
+prefactors excluded; the Langevin rates of `check_collisions.py`; and the two-ion Bell circuit through `run()` with a quiet
+model reproducing M6 (register infidelity 2.35e-3 to 2.36e-3 with the branch threshold, M6's 2.353e-3) and with heating, a
+field drift and a Rabi drift on the trajectory path.
+
+Plan inconsistencies surfaced by M7 (ledger `conv.*` records of the noise layer, `anchor.m7.*`): the control hardware
+chain reintroduces Roos's spin-axis tilt after the per-gate beat-note reset, because the modulator's first-order response
+delays the envelope while the beat note advances 2 pi mu tau_r = 0.96 rad on the two-ion fixture (fidelity 0.99700, leakage
+2.9e-3 uncompensated); the tone phases must carry the phase of the response at the beat frequency, arctan(2 pi mu tau_r)
+(0.99992 / 3.3e-5 against 0.99987 / 4.5e-5 for an ideal modulator; the linear mu tau_r leaves 2.2e-4), a reference no source
+states and one M8's phase scans will absorb; the Section 9.16 row 4.4-8 intensity-noise budget reproduces its two-term
+structure and the Gamma_I-independent ratio B/A = 3(N - 1)/(4K) exactly, but with c_op = sqrt(2k) H_int and Gamma_I = k
+Omega^2 defined by the carrier-contrast rate (checked analytically) both terms are twice the plan's derived A = Gamma_I t_g
+eta^2/2 and B, so the plan's A pairs with Gamma_I equal to half the contrast rate or with another fidelity measure; the
+derived dephasing forms N t_g/(2 T2) and N^2 t_g/(4 T2) are bounds (Cov_t <= 1) and the N = 3 force model sits at 0.67 and
+0.68 of them with the global > local ordering; Ballance's gate budgets hold for the gate as calibrated, and a symmetric pulse
+whose two-mode closure is played with one mode frozen returns 0.84 and 0.80 of them; the row 4.1-3 estimator ratio 0.99991
+is not reproduced (the exact double integral over 200 gives 0.99975 of the slope, the slope itself and the rival prefactors
+are); Biercuk's finite-pulse filter function assumes the noise gated off during the pulses, so the toggling machinery
+carries a `gated` option, and with the noise on through a finite pulse every odd-n sequence keeps a first-order transverse
+term (F proportional to omega^2); the KDD sequence needs 20 pulses (an XY4 cycle of Knill blocks) to return to identity,
+two blocks being a pi rotation about z; and Bermudez's three-variant Pauli mapping of Section 6.8 is not transcribed in the
+plan and is not provided.
+
 Plan inconsistencies surfaced by M6 (ledger `conv.*` records of the compiler, scheduler and run path, `anchor.m6.*`):
 Section 7.7's CP overlaps 0.854 (pi/2) and 0.691 (pi/4) belong to Debnath's template with fixed RZ(pi/2) rotations,
 while CP(theta) = RZ(theta/2)^x2 ZZ(-theta/2) is exact; the same section's s = sgn(chi) is a free convention here
@@ -266,15 +339,16 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/species/` | one table of cited constants per isotope, the `Species` builder, and the atomic layer (`wigner`, `zeeman`, `dipole`, `polarization`, `raman`, `quadrupole`; `atomic.py` is the facade) |
 | `qutip_trap/trap/` | the trap layer of Section 4.1: `mathieu` (monodromy, Floquet function, C0), `pseudopotential` (rf drive, geometry-free maps), `surface` (gapless-plane electrodes), `crystal` (equilibrium, mass-weighted modes, Lamb-Dicke), `micromotion`, `heating`, `anharmonic`; `model.py` is the `Trap` record |
 | `qutip_trap/hilbert/` | the composite space of Section 5.1: `operators` (analytic Laguerre elements, expm displacement, the Section 5.1.1 tolerance and margin fixture, Debye-Waller factors, qubit operators in the computational ordering), `space` (cached operators, marginals with the ENR index sums, state constructors), `truncation` (boundary monitor, cap growth, the tolerance-tightening test) |
-| `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a) |
+| `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a); the engine's mesolve and keyed-trajectory paths, per-segment channels, jump records and the hardware chain (M7); the builder's sampled trajectories, beam phases, pointing factors and drive parts (M7) |
 | `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a), `roles` (which beams are resonant cooling/detection light and which are far-detuned gate light; M6) |
+| `qutip_trap/noise/` | the noise layer of Section 6 (M7): `spectra` (two-sided spectra with a declared white level, Drift, Mains, Collisions), `processes` (fixed-grid Gaussian and OU trajectories, mains), `sampling` (the NoiseSample keys), `model` (`NoiseModel.channels` and `sample_sequence`), `scattering` (Raman, Rayleigh, leakage and recoil operators per pulse), `levels` (register level maps with the SINK), `collisions` (Langevin events), `decoupling` (the Section 6.9 filter-function machinery and sequences), `summary` (Section 6.8 reporting) |
 | `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a), `recipe` (the device's PreparationRecipe, `standard_recipe`, `run_preparation`; M6) |
-| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library) |
+| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library), `hardware` (the Section 7.10 chain and `apply_hardware_chain`; the beat-phase reference `response_phase_rad` and the `crosstalk_suppression` echoes in `schedule`, M7) |
 | `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule; M4); `readout` (the detection threshold and window, M5); `surrogate` and `calibrate(surrogate=True)` (the Section 7.5 surrogate table: derived seeds, spot-checked waveforms on the resolved-mode space, detection; M6); the simulated-experiment path `calibrate(surrogate=False)` is M8 |
 | `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` (M2), `ms_scan`, `parity_scan` (M4) on the engine; the rest is M8; `detection_histogram` (M5) |
-| `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`) |
+| `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`); samples at the shot clock, the effective sample size, collisions and heralds, leakage levels (M7) |
 | `qutip_trap/io/` | `ionq` (IonQ circuit JSON, both ways), `openqasm` (the OpenQASM 2 subset importer with custom-gate inlining; M6) |
-| `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`) |
+| `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`); the Fang, Landsman and OU-heating forms of M7 |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
 | `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests) |

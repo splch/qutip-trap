@@ -1393,6 +1393,91 @@ records:
     source: "check_circuits.py 4 on the three-ion fixture (data ions 0 and 2, the middle ion the ancilla, eps = 0.0128 onto nearest neighbours)"
     equation: "exact register data-string populations 00: 1.81e-3, 01: 0.998, 10: 6.9e-7, 11: 3.87e-4; declared through the POVM 00: 2.41e-3, 11: 7.32e-4, so the 1 -> 0 flip of the secret exceeds the 0 -> 1 flip by 3.30 with per-ion eps_B = 6.11e-4 against eps_D = 3.47e-4; the coherent-only matrix model (compiled circuit, eps theta rotations on the neighbours, ideal MS) gives 00: 2.22e-3 and 11: 4.11e-4, a ratio 5.39 before any readout; register 1 - F = 4.344e-3 inside the budget; 4000-shot histogram 011: 0.9942, 001: 0.0035, 010: 0.0013"
     corrected_form: "the 1 -> 0 dominance the row predicts emerges, and mostly from the coherent circuit: the oracle CNOT maps the ancilla's crosstalk rotations (from the data ions' Hadamard pulses) onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct rotations, and the readout asymmetry (eps_B > eps_D) then lowers the ratio from 5.4 to 3.3; the magnitude (3.1e-3 total flip weight at eps = 0.0128) is that of this fixture, not Wright's 3 % applied twice, which the plan's 'stated magnitude' cannot fix without his beam profile"
+  # ---- milestone M7: noise and error channels (PLAN.md Section 6; Sections 9.7, 9.16, 9.17) ------------------------------------
+  - id: conv.noise_routing
+    symbol: "route (b) Lindblad / (c) quasi-static / (d) sampled / (e) events"
+    tag: verified
+    section: "6.1; 5.5; 13"
+    source: "PLAN.md Section 6.1 (M7 implementation: noise/model.py, noise/processes.py)"
+    equation: "a NoiseSpectrum's tabulated band is synthesized per dynamical sample on a fixed grid (x(t) = sum_k sqrt(S(omega_k) d omega_k/pi)[a_k cos + b_k sin], <x^2> = (1/pi) int S d omega); its white_level is a Lindblad rate; Drift records are OU chains over the shot clock; collisions are Poisson events per shot"
+    corrected_form: "no heuristic on a spectrum's shape decides its route: the two fields declare the split; a grid that cannot resolve the band refuses with the remedy (declare the band above it as white_level)"
+  - id: conv.qubit_dephasing_from_field_noise
+    symbol: "gamma_phi = 2 pi^2 (d nu/dB)^2 S_B,white"
+    tag: derived
+    section: "6.3; 13 'Qubit dephasing operator', 'Dephasing noise variable'"
+    source: "Section 13 chain: H_deph = b sigma_z, b = pi delta nu, S_b = S_delta/4, L = sqrt(gamma/2) sigma_z decays the coherence at gamma = 2 S_b(0)"
+    equation: "S_delta = (2 pi d1)^2 S_B (d1 in Hz/G, S_B in G^2/(rad/s)); gamma_phi = S_delta/2; the Ramsey coherence decays as e^{-gamma_phi t} (tests/test_noise_model.py)"
+    corrected_form: "the white field level is a device declaration (NoiseSpectrum.white_level), never inferred from the band"
+  - id: conv.motional_dephasing_from_rf_noise
+    symbol: "2/tau = omega_m^2 S_V,white (rf-derived modes)"
+    tag: derived
+    section: "6.2; 13 'Motional dephasing operator'"
+    source: "Section 13 row L = a^dag a sqrt(2/tau) with omega_m proportional to V_rf for the transverse families"
+    equation: "a white fractional rf-amplitude density S_V gives a white mode-frequency density omega_m^2 S_V and the coherence of |n> + |n'> decays at (n - n')^2/tau; the axial (dc) family does not follow the rf amplitude"
+    corrected_form: "the tabulated band of the same spectrum is a common-mode fractional trajectory of the transverse modes, never M independent offsets (Section 6.2)"
+  - id: conv.scattering_channels
+    symbol: "L_{q', k_hat} = sqrt(w_k) sum_{a,b} r_{a->b q'} |b><a| (x) D(i(eta_abs - eta_em))"
+    tag: background
+    section: "4.5.5; 6.5; 4.2.8; 13 'Rayleigh dephasing dissipator', 'Recoil kernel discretization'"
+    source: "Uys 2010 Eqs. 6-8 (the diagonal Rayleigh operator), Ozeri 2007 (the recoil operator e^{i(k_L - k_s) x}), Joshi 2020 (the moment-exact direction quadrature); assembled in noise/scattering.py"
+    equation: "one operator per (emitted polarization, direction node): Rayleigh diagonal over the resolved levels (Gamma_el/4 dissipator prefactor automatically), one Raman operator per (a, b), the out-of-manifold rates summed into the SINK at d > 2 and reported at d = 2; the absorbed beam's e^{+i k_b x} multiplies the emission kick; six axis directions about B with weights alpha_par/2 and alpha_perp/2 are exact in the first and second moments for every dipole pattern and every mode axis; rates scale with the played intensity as (Omega/Omega_nom)^p, p the Stark scaling power"
+    corrected_form: "the absorption factor in an eliminated jump operator is the plan's own construction (Section 13's 'never both in a collapse operator' rule is stated for the explicit multi-level builder); the recoil quanta per photon eta_abs^2 + alpha eta_em^2 are the test"
+  - id: conv.intensity_noise_channel
+    symbol: "L = sqrt(D) H_drive(t), Gamma_I = D Omega^2/2"
+    tag: derived
+    section: "6.4; 9.16 row 4.4-8"
+    source: "white multiplicative noise eps(t) on Omega with two-sided density D averages to -(D/2)[H_d, [H_d, rho]]; Bermudez's c_op = sqrt(2k) H_int is D = 2k"
+    equation: "a two-photon drive scales as I (D = S_eps,white), a single-photon one as sqrt I (D/4); the carrier-contrast rate of sqrt(2k)(Omega/2) sigma_x is exactly k Omega^2 (the definition of Gamma_I checked analytically)"
+    corrected_form: "see anchor.m7.intensity_noise_factor_two"
+  - id: conv.hardware_chain
+    symbol: "Omega(t) -> quantized words, first-order response, jittered trains"
+    tag: background
+    section: "7.10"
+    source: "standard instrumentation physics exposed as HardwareChain parameters (control/hardware.py)"
+    equation: "the envelope of every tone through y' = (x - y)/tau_r with tau_r = aom_rise_s for laser light and 1/(2 pi B) of the amplifier for microwaves (B = inf is an ideal envelope), continuously across a pulse train, an 8 tau_r tail (e^-8 dropped), truncated at the next pulse on a shared ion; the drive's Stark shift follows the played light as delta_ref mean_tones (|Omega_played(t)|/Omega_ref)^p with p = stark_scaling_power(kind) and the reference at the programmed peak (the tail carries the decaying shift, not the programmed one); constant detunings to f_clk/2^bits, phases to 2 pi/2^bits, amplitudes to full_scale/2^bits without resampling an unfiltered envelope; rigid per-train jitter from the keyed seeds"
+    corrected_form: "an omitted parameter is ideal electronics and HardwareChain.describe() says so (Section 7.10's closing rule)"
+  - id: conv.response_phase_reference
+    symbol: "phi_leg -> phi_leg + sgn(mu) arctan(2 pi |mu| tau_r)"
+    tag: recomputed here
+    section: "7.10; 4.4.1 (Roos); 9.6"
+    source: "check_noise.py 7 on the two-ion 171Yb+ fixture (mu/2pi = 3.06 MHz, tau_r = 50 ns: 2 pi mu tau_r = 0.96 rad)"
+    equation: "the first-order response delays the envelope, so the bichromatic beat note advances arctan(2 pi mu tau_r) = 0.766 rad (the phase of H(mu) = 1/(1 - i 2 pi mu tau_r)) before the field arrives and Roos's spin-axis tilt returns after the per-gate reset: fidelity 0.99700 with 2.9e-3 leakage uncompensated, 0.99974 / 2.2e-4 with the linear mu tau_r reference, 0.99992 / 3.3e-5 with the arctan reference against 0.99987 / 4.5e-5 for an ideal modulator"
+    corrected_form: "the tone phases of every entangling pulse (scheduler and exact spot check alike) carry the arctan reference; the residual is what the exact check reports; a laboratory absorbs it in its phase calibration (M8's scans)"
+  - id: conv.filter_function_machinery
+    symbol: "R_ij(omega) = -i omega sum_l M_l(omega) Lambda^{(l-1)}"
+    tag: recomputed here
+    section: "6.9; 13 'Filter-function normalization stack', 'Toggling-frame control matrix', 'Dynamical-decoupling filter function'"
+    source: "check_composite.py sections 9-15 reproduced by noise/decoupling.py (tests/test_decoupling.py)"
+    equation: "per segment M_l = e^{i omega t_{l-1}}[I_c 1 + (I_1 - I_c) n n^T + I_s [n]_x] with the elementary integrals of cos, sin and 1 against e^{i omega s} (removable poles at omega = +-Omega_l); R^P(theta) = cos theta 1 + (1 - cos theta) n n^T + sin theta [n]_x is the adjoint of U^dag; the gated option switches the noise off during pulses and reproduces Biercuk's (-1)^{n+1} form to 1e-15 at both parities; the ungated (physical) finite-pulse form keeps a first-order transverse term at odd n (F ~ omega^2)"
+    corrected_form: "XY4, XY8, KDD, CDD and (XY)^N compose per-pulse blocks with Lambda^{(l-1)} (never the scalar (-1)^l), return to identity to 1e-12 and match brute-force propagation to 1e-8 with a second-order rule (the check script's mpmath quadrature reaches 4e-10); no source validates them [background]"
+  - id: anchor.m7.gate_budgets
+    symbol: "eps_h = ndot t_g/(2K), eps_d = alpha_K t_g/tau through the exact engine"
+    tag: recomputed here
+    section: "9.7 rows 1-2; 6.2"
+    source: "check_noise.py 1 on the two-ion 171Yb+ fixture (COM gate closed on the COM alone, rocking frozen, d_m = 12, mesolve)"
+    equation: "K = 1, 2 at 400 quanta/s: loss/(ndot t_g/(2K)) = 0.96-0.97; motional dephasing at tau = t_g/5e-3: loss/(alpha_K t_g/tau) = 0.96; the two-mode closure played with the rocking mode frozen over-rotates the gate and returns 0.84 and 0.80"
+    corrected_form: "Ballance's forms hold for the gate as calibrated; a fixture that closes two modes and resolves one is not that gate"
+  - id: anchor.m7.intensity_noise_factor_two
+    symbol: "A/(Gamma_I t_g eta^2) = 1.000, B/A = 3(N - 1)/(4K)"
+    tag: recomputed here
+    section: "9.16 row 4.4-8; 4.4.7; 6.4"
+    source: "check_noise.py 2 in the force model (d = 40 Fock levels; the d = 18 space of a first attempt truncated the nbar = 1 thermal state and spoiled the fit)"
+    equation: "with c_op = sqrt(2k) H_int and Gamma_I = k Omega^2 the carrier-contrast rate, the Bell-state infidelity from |00> fits A (2 nbar + 1) + B with A = Gamma_I t_g eta^2 (the plan's derived form has Gamma_I t_g eta^2/2) and B/A = 3(N - 1)/(4K) exactly as derived (the printed (N - 1)/4 would give 1/2)"
+    corrected_form: "the derived two-term structure and its Gamma_I-independent ratio are reproduced; the absolute scale is twice the plan's under this Gamma_I, so the plan's A pairs with Gamma_I = half the carrier-contrast rate (or a different fidelity measure): a convention to state, not tune"
+  - id: anchor.m7.dephasing_correlation
+    symbol: "N = 3 local against global sigma_z noise under the derived bounds"
+    tag: recomputed here
+    section: "9.7 row 4; 4.4.7"
+    source: "check_noise.py 3 (force model, one loop, T2 = t_g/2e-3)"
+    equation: "the losses sit below N t_g/(2 T2) = 3e-3 (local) and N^2 t_g/(4 T2) = 4.5e-3 (global), with global > local; Bermudez's printed forms are 4 and 8 times the bounds"
+    corrected_form: "the derived forms are upper bounds (Cov_t <= 1), reproduced as bounds and ordering, not as equalities"
+  - id: anchor.m7.ou_field_heating
+    symbol: "OU field noise: slope ratio and MC"
+    tag: recomputed here
+    section: "9.16 row 4.1-3"
+    source: "check_noise.py 6 (sigma^2 = 0.02, tau_c = 0.05, omega = 1, e = m = hbar = 1)"
+    equation: "e^2 S_E^(1)/(4 m hbar omega) = 9.97506e-4 reproduced; the exact double integral <n>(200)/200 gives 0.99975 of it (the row's 0.99991 belongs to an estimator the audit did not specify); a symplectic Monte Carlo of 4000 classical trajectories agrees within its error"
+    corrected_form: "rival prefactors excluded: (1/2) S^(1) gives 2.0, (1/4) S^(2) gives 0.4997"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

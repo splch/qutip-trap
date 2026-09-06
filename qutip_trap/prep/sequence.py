@@ -149,10 +149,13 @@ def prepare_state(
     leak: LeakToQubit = "to_upper",
     internal: Mapping[int, qt.Qobj] | None = None,
     extra_nbar: Mapping[int, float] | None = None,
+    levels: Mapping[int, Sequence[str]] | None = None,
 ) -> State:
     """The Appendix E ``State`` after the sequence: per-mode thermal states at the final nbar, each ion's internal state from its
     last pump (or from ``internal`` for ions the sequence never pumped, e.g. an explicitly prepared qubit next to a coolant);
-    ``extra_nbar`` adds quanta per mode on top of the last cooling stage (the pumps' recoil heating of Section 4.2.8, M6)."""
+    ``extra_nbar`` adds quanta per mode on top of the last cooling stage (the pumps' recoil heating of Section 4.2.8, M6);
+    ``levels`` gives the register labels of every ion whose factor has d > 2 (the pumped populations land on the resolved
+    sublevels and the remainder in the SINK, M7)."""
     nbar = sequence.final_nbar()
     for m, dn in (extra_nbar or {}).items():
         if int(m) in nbar:
@@ -173,10 +176,13 @@ def prepare_state(
         if pump is not None:
             labels = qubit_labels[ion] if isinstance(qubit_labels, Mapping) else qubit_labels
             if d != 2:
-                raise NotImplementedError(
-                    "d > 2 register factors take the full pumped manifold in milestone M6"
-                )
-            parts.append(pump.qubit_density_matrix(labels, leak=leak))
+                if levels is None or ion not in levels or len(levels[ion]) != d:
+                    raise ValueError(
+                        f"ion {ion} has a register factor of dimension {d}: pass its level labels (noise/levels.py, M7)"
+                    )
+                parts.append(pump.qudit_density_matrix(levels[ion]))
+            else:
+                parts.append(pump.qubit_density_matrix(labels, leak=leak))
         elif internal is not None and ion in internal:
             rho = internal[ion]
             parts.append(rho if rho.isoper else qt.ket2dm(rho))

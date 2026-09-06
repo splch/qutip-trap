@@ -29,7 +29,7 @@ from qutip_trap.control.compiler import (
     ideal_probabilities,
 )
 from qutip_trap.control.composite import CompositePulse, composite_pulse
-from qutip_trap.control.hardware import HardwareChain
+from qutip_trap.control.hardware import HardwareChain, apply_hardware_chain
 from qutip_trap.control.pulses import Drive, LightShiftCouplings, Pulse, Tone
 from qutip_trap.control.schedule import GateDrive, PlayedGate, Schedule, ScheduledEvent, schedule
 from qutip_trap.control.shaping import (
@@ -72,10 +72,36 @@ from qutip_trap.light.beams import Beam, PolarizationModulation, PolGradientBeam
 from qutip_trap.light.bloch import BlochModel, DetectionRates, SteadyStateReport
 from qutip_trap.light.comb import CombSpec
 from qutip_trap.light.raman import derive_light_shift_drive, derive_raman_drive
-from qutip_trap.noise.decoupling import DecouplingSequence, decoupling_sequence, filter_function
+from qutip_trap.noise.collisions import CollisionEvent, collision_rate_per_ion
+from qutip_trap.noise.decoupling import (
+    ControlSegment,
+    DecouplingSequence,
+    decoupling_sequence,
+    filter_function,
+)
+from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.noise.model import NoiseModel
+from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import NoiseSample
-from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum
+from qutip_trap.noise.scattering import ScatteringOptions, scattering_channels, scattering_estimates
+from qutip_trap.noise.spectra import (
+    Collisions,
+    Drift,
+    Mains,
+    NoiseSpectrum,
+    gaussian_spectrum,
+    ou_spectrum,
+    power_law_spectrum,
+    white_spectrum,
+)
+from qutip_trap.noise.summary import (
+    average_gate_infidelity,
+    choi_from_unitary,
+    depolarizing_choi,
+    depolarizing_rate,
+    entanglement_infidelity,
+    pauli_twirl,
+)
 from qutip_trap.prep.recipe import (
     PreparationRecipe,
     PreparationRun,
@@ -134,6 +160,26 @@ from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import Gauss, Hz, RadPerS, Tesla, hz_from_rad_s, rad_s_from_hz
 
 __all__ = [
+    "CollisionEvent",
+    "ControlSegment",
+    "InternalLevels",
+    "ScatteringOptions",
+    "Trajectory",
+    "apply_hardware_chain",
+    "average_gate_infidelity",
+    "choi_from_unitary",
+    "collision_rate_per_ion",
+    "depolarizing_choi",
+    "depolarizing_rate",
+    "entanglement_infidelity",
+    "gaussian_spectrum",
+    "internal_levels",
+    "ou_spectrum",
+    "pauli_twirl",
+    "power_law_spectrum",
+    "scattering_channels",
+    "scattering_estimates",
+    "white_spectrum",
     "POVM",
     "AdaptiveML",
     "ApparatusPreset",

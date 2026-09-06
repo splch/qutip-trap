@@ -104,15 +104,23 @@ def ms_schedule(
     phases_rad: tuple[float, float] = (0.0, 0.0),
     t0_s: float = 0.0,
     gate_id: str = "ms",
+    response_delay_s: float = 0.0,
 ) -> Schedule:
-    """The bare MS(phi_0, phi_1, .) pulse train of ``waveform`` on ``pair`` (no rescaling), as the scheduler would play it."""
+    """The bare MS(phi_0, phi_1, .) pulse train of ``waveform`` on ``pair`` (no rescaling), as the scheduler would play it;
+    ``response_delay_s`` is the modulator delay the tone phases compensate (``control.schedule.response_phase_rad``, M7)."""
     n = max(pair) + 1
     if waveform.kind == "ms":
         spins, _chi = ms_spin_phases(waveform, pair, phases_rad, PhaseFrame())
     else:
         spins = {pair[0]: 0.0, pair[1]: 0.0}
     pulses = entangling_pulses(
-        waveform, dict(gate_drives), spin_phases_rad=spins, t_start_s=t0_s, table=table, gate_id=gate_id
+        waveform,
+        dict(gate_drives),
+        spin_phases_rad=spins,
+        t_start_s=t0_s,
+        table=table,
+        gate_id=gate_id,
+        response_delay_s=response_delay_s,
     )
     return Schedule(tuple(pulses), (), (), {q: 0.0 for q in range(n)})
 
@@ -126,6 +134,7 @@ def light_shift_echo_schedule(
     *,
     dead_time_s: float,
     t0_s: float = 0.0,
+    response_delay_s: float = 0.0,
     gate_id: str = "zz",
 ) -> Schedule:
     """Section 4.4.4's spin-echo form of the sigma_z sigma_z gate: the waveform, GPi(0) on both ions, the waveform again, GPi(pi) on
@@ -142,6 +151,7 @@ def light_shift_echo_schedule(
             spin_phases_rad=spins,
             t_start_s=t0_s,
             table=table,
+            response_delay_s=response_delay_s,
             gate_id=f"{gate_id}/loop1",
         )
     )
@@ -172,6 +182,7 @@ def light_shift_echo_schedule(
             spin_phases_rad=spins,
             t_start_s=t,
             table=table,
+            response_delay_s=response_delay_s,
             gate_id=f"{gate_id}/loop2",
         )
     )
@@ -268,6 +279,8 @@ def exact_gate_check(
     """
     n_ions = space.n_ions
     x_basis = waveform.kind == "light_shift"
+    # the tone phases compensate the modulator's envelope delay exactly as the scheduler does (Section 7.10; M7)
+    delay = float(device.hardware.aom_rise_s) if (options or SolverOptions()).hardware_chain else 0.0
     if x_basis:
         if single_qubit_drives is None:
             raise ValueError(
@@ -280,9 +293,10 @@ def exact_gate_check(
             single_qubit_drives,
             table,
             dead_time_s=float(device.hardware.dead_time_s),
+            response_delay_s=delay,
         )
     else:
-        sched = ms_schedule(waveform, pair, gate_drives, table, phases_rad=phases_rad)
+        sched = ms_schedule(waveform, pair, gate_drives, table, phases_rad=phases_rad, response_delay_s=delay)
     if internal is None:
         # an equatorial force needs a sigma_z eigenstate input, a sigma_z force an equatorial one: |+x +x> on the pair
         if x_basis:

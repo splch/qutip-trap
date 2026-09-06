@@ -153,3 +153,11 @@ Added on 2026-09-05 by milestone M6:
   fixture. Runs the package (`uv run python validation/scripts/check_circuits.py`, about eleven minutes); the fixtures
   live in `tests/m6_fixtures.py`; lines prefixed `MC:` are Monte Carlo histograms the runner records but does not
   compare.
+- `check_noise.py` (2026-09-06, milestone M7): the noise layer against Section 9.7 and Section 9.16 rows 4.1-3, 4.4-8, 6-3
+  and 6-4: heating and motional dephasing during the two-ion Molmer-Sorensen gate through the exact engine (Ballance's
+  ndot t_g/(2K) and alpha_K t_g/tau), the intensity-noise channel's two-term fit and its Gamma_I convention (a factor 2
+  against the plan's derived A, the same ratio), the N = 3 local-against-global dephasing bounds, Fang's crosstalk forms
+  with the echo identities and Landsman's bound, the scattering operators' sum rule, flip and leakage rates and recoil
+  quanta on the single-ion fixture, the Ornstein-Uhlenbeck field-heating slope with a classical Monte Carlo (MC: line),
+  the hardware chain's beat-phase reference on the calibrated gate, the filter-function machinery against
+  `check_composite.py`, the Langevin rates and the Section 6.8 summaries. Runs the package (about four minutes).

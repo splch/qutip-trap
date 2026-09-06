@@ -16,9 +16,19 @@ evolved as PURE states with ``sesolve`` and recombined with their weights, the F
 the branches below ``SolverOptions.branch_weight_min`` whose total weight is reported (``mesolve`` on the joint space is a
 reference path for dimensions below about 100 only, and the trajectory path of M7/M9b carries the Lindblad channels). The
 frozen spectators' Fock states are part of the same enumeration (Wineland's shot-to-shot Debye-Waller statistics, Section
-5.2, as a weighted sum rather than a per-shot draw). Shots are then drawn from the recombined register state: one quiet
-noise sample in this milestone (``NoiseModel.sample`` is M7), so the shots are independent draws and the effective sample
-size is the shot count; the seeds are keyed by (sample, trajectory, shot, ion, channel) exactly as Section 3.4 requires.
+5.2, as a weighted sum rather than a per-shot draw). With collapse operators present (the device's noise model, M7) every
+branch runs through ``mesolve`` up to ``SolverOptions.mesolve_dimension_max`` and through ``SolverOptions.ntraj`` keyed
+quantum-jump trajectories above it (Section 5.3).
+
+Shots are distributed round-robin over dynamical samples (Section 3.4: default samples = min(shots, 64) when the noise model
+has quasi-static or sampled content, 1 when it is quiet): sample k is drawn at the shot clock t0 + k_first T_rep with every
+Drift an Ornstein-Uhlenbeck chain over the sample times (Section 7.5), the shots of one sample are drawn from that sample's
+register state, and the error bars use the effective sample size of the between/within-sample decomposition, since shots of
+one sample are not independent draws from the ensemble. Background-gas collisions (Section 6.7) are Poisson events per shot:
+a heating kick during the cooling stages is heralded and kept (the crystal is recooled), any other event is heralded and the
+shot discarded, a reorder permutes the persistent ion order, a loss or dark-ion event flags the ion so that every later shot
+reads it dark; the remaining ions' dynamics stay on the nominal crystal (an approximation the notes record). The seeds are
+keyed by (sample, trajectory, shot, ion, channel) exactly as Section 3.4 requires.
 """
 
 from __future__ import annotations
@@ -33,11 +43,20 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.control.compiler import CompileReport, compile_with_report
-from qutip_trap.control.schedule import GateDrive, Schedule, default_gate_drives, schedule
+from qutip_trap.control.schedule import (
+    CrosstalkSuppression,
+    GateDrive,
+    Schedule,
+    default_gate_drives,
+    schedule,
+)
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions, State, Traces
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.noise.collisions import collision_rate_per_ion, sample_collisions
+from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.noise.sampling import NoiseSample, key_frozen_n, quiet_sample
+from qutip_trap.noise.scattering import scattering_estimates
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
 from qutip_trap.prep.sequence import prepare_state
 from qutip_trap.readout.detection import RecordModel
@@ -82,16 +101,41 @@ def prepare(
     seeds: SeedSpec | None = None,
     *,
     preparation: PreparationRun | None = None,
+    levels: Mapping[int, InternalLevels] | None = None,
 ) -> State:
     """Doppler -> sideband/EIT -> optical pump, in that order (Section 4.2.6): the Appendix E ``State`` on ``space`` with
     thermal resolved modes at the recipe's occupations (the pumps' recoil included), the frozen modes' nbar, and every ion's
     pumped internal state with its preparation error. The recipe is the device's or the standard one; ``table`` and
-    ``sample`` are accepted for the Appendix E signature (the M6 preparation reads the device's physics only)."""
+    ``sample`` are accepted for the Appendix E signature (the M6 preparation reads the device's physics only); ``levels``
+    are the register level maps of ions with d > 2 (M7), else derived from the space."""
     run_prep = preparation if preparation is not None else run_preparation(device, recipe_of(device))
     species = device.crystal.species[0]
+    lv = levels if levels is not None else level_maps(device, space)
     return prepare_state(
-        space, run_prep.sequence, qubit_labels=species.qubit, extra_nbar=run_prep.pump_heating
+        space,
+        run_prep.sequence,
+        qubit_labels=species.qubit,
+        extra_nbar=run_prep.pump_heating,
+        levels={i: m.labels for i, m in lv.items()} if lv else None,
     )
+
+
+def level_maps(device: Device, space: HilbertSpace) -> dict[int, InternalLevels]:
+    """The register level maps of every ion whose factor has d > 2 (``noise/levels.py``)."""
+    out: dict[int, InternalLevels] = {}
+    for i, d in enumerate(space.ion_dims):
+        if d > 2:
+            out[i] = internal_levels(
+                device.crystal.species[i],
+                int(d),
+                device.field.B_gauss,
+                (
+                    float(device.field.direction[0]),
+                    float(device.field.direction[1]),
+                    float(device.field.direction[2]),
+                ),
+            )
+    return out
 
 
 def _raman_pair_hint(drives: Mapping[int, GateDrive]) -> tuple[int, int] | None:
@@ -182,9 +226,14 @@ class ReadoutStage:
 
 
 def readout_stage(
-    device: Device, table: CalibrationTable, *, discriminator: Discriminator | None = None
+    device: Device,
+    table: CalibrationTable,
+    *,
+    discriminator: Discriminator | None = None,
+    levels: Mapping[int, InternalLevels] | None = None,
 ) -> ReadoutStage:
-    """The per-ion rate objects of the device's detection beams, the table's threshold and window, and the POVM."""
+    """The per-ion rate objects of the device's detection beams, the table's threshold and window, and the POVM; ``levels``
+    extends each scheme's classes to the leakage levels of a d > 2 register factor (M7)."""
     from qutip_trap.light.roles import detection_beams
 
     rates: list[FluorescenceRates] = []
@@ -192,13 +241,16 @@ def readout_stage(
     models: list[RecordModel] = []
     for i in range(device.crystal.n_ions):
         beams = [device.beams[k] for k in detection_beams(device, i)]
-        r, scheme, _model = detection_rates_for_ion(
+        r, scheme, model = detection_rates_for_ion(
             device.crystal.species[i],
             device.field.B_gauss,
             device.field.direction,
             beams,
             position_m=tuple(float(x) for x in device.crystal.positions_m[i]),
         )
+        if levels is not None and i in levels:
+            ground, _ = model.resonant_manifold()
+            scheme = ReadoutScheme.for_species(device.crystal.species[i], ground, labels=levels[i].labels)
         rates.append(r)
         schemes.append(scheme)
         models.append(RecordModel.from_rates(r, device.detector))
@@ -304,8 +356,42 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
                 scale = max(scale, (eta * omega / device.crystal.modes[m].omega_rad_s) ** 2)
         out[f"{gid}.sideband_scale"] = scale
         total += scale
+    # photon scattering per pulse (Section 9.7 row 'Scattering'): the estimate reported whether or not the channels are simulated
+    for pulse in sched.pulses:
+        gid = pulse.gate_id or ""
+        for key, val in scattering_estimates(device, pulse).items():
+            out[f"{gid}.{key}"] = val
+            if key.endswith((".P_raman", ".P_leak", ".rayleigh_dephasing")):
+                total += val
     out["total"] = total
     return out
+
+
+def effective_sample_size(bits_per_sample: Sequence[np.ndarray]) -> float:
+    """The effective number of independent shots behind a histogram assembled from several dynamical samples (Section 3.4):
+    with S samples of M_s shots and per-sample frequencies p_s of a bitstring, Var(p_hat) = s^2_between/S + mean[p_s(1 - p_s)/M_s]/S
+    and n_eff = p(1 - p)/Var(p_hat); the minimum over the bitstrings seen. One sample returns the shot count."""
+    total = sum(int(b.shape[0]) for b in bits_per_sample)
+    non_empty = [b for b in bits_per_sample if b.shape[0] > 0]
+    if len(non_empty) <= 1:
+        return float(total)
+    keys: set[str] = set()
+    for b in non_empty:
+        keys |= set(aggregate(b)[1])
+    n_eff = float(total)
+    s_count = len(non_empty)
+    for key in keys:
+        ps = np.array([aggregate(b)[1].get(key, 0.0) for b in non_empty])
+        ms = np.array([b.shape[0] for b in non_empty], dtype=float)
+        p = float(np.average(ps, weights=ms))
+        if p <= 0.0 or p >= 1.0:
+            continue
+        between = float(np.var(ps, ddof=1)) / s_count
+        within = float(np.mean(ps * (1.0 - ps) / ms)) / s_count
+        var = between + within
+        if var > 0.0:
+            n_eff = min(n_eff, p * (1.0 - p) / var)
+    return float(n_eff)
 
 
 # ---- run --------------------------------------------------------------------------------------------------------------------
@@ -361,13 +447,21 @@ def run(
     parallel: bool = False,
     keep_final_state: bool = False,
     calibrate_kwargs: Mapping[str, Any] | None = None,
+    noise: bool = True,
+    internal_levels: int = 2,
+    crosstalk_suppression: CrosstalkSuppression = "none",
 ) -> Result:
     """Compile -> calibrate -> schedule -> prepare -> evolve -> readout -> Result (Section 3.4).
 
     ``table=None`` builds the surrogate table at ``t0_s`` for the pairs the circuit uses; ``shot_period_s=None`` derives
     T_rep from the preparation, the schedule and the detection window. ``readout="fast"`` applies the POVM to the joint
-    outcome, ``"full"`` generates every photon record (Section 5.7, never both). ``channels`` are explicit collapse
-    operators for the reference ``mesolve`` path on small spaces (the device's channels are assembled in M7).
+    outcome, ``"full"`` generates every photon record (Section 5.7, never both). ``noise=True`` (M7) draws the device's
+    dynamical samples (``NoiseModel.sample_sequence``), assembles its collapse operators (heating, dephasing, and under the
+    SolverOptions switches the scattering and intensity-noise operators), applies the hardware chain and the collision
+    process; ``noise=False`` runs the quiet nominal sample without channels (the M6 behaviour). ``channels`` are extra
+    explicit collapse operators. ``internal_levels`` > 2 gives every ion a register factor with leakage levels
+    (``noise/levels.py``) so that scattering out of the qubit pair is simulated and read out by the manifold's class.
+    ``crosstalk_suppression`` selects Section 6.6's echo schemes for the MS gates.
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
@@ -375,10 +469,6 @@ def run(
     drives = dict(gate_drives) if gate_drives is not None else default_gate_drives(device)
     ent_drives = dict(entangling_drives) if entangling_drives is not None else drives
     notes: list[str] = []
-    if samples not in (None, 1):
-        notes.append(
-            f"samples={samples} requested: NoiseModel.sample is milestone M7, one quiet sample is used (Section 6.1)"
-        )
     # 1. compile
     report = compile_with_report(circuit, device, entangler=entangler)
     compiled = report.circuit
@@ -403,7 +493,14 @@ def run(
         notes.extend(sur.notes)
     # 3. schedule
     sched = schedule(
-        compiled, device, table, gate_drives=drives, entangling_drives=ent_drives, t0_s=0.0, parallel=parallel
+        compiled,
+        device,
+        table,
+        gate_drives=drives,
+        entangling_drives=ent_drives,
+        t0_s=0.0,
+        parallel=parallel,
+        crosstalk_suppression=crosstalk_suppression,
     )
     # 4. preparation (the physics of the recipe) and the space
     cooling_pair = _raman_pair_hint(ent_drives)
@@ -411,8 +508,13 @@ def run(
     if device.preparation is None:
         notes.append("preparation recipe inferred by prep.recipe.standard_recipe (the device carries none)")
     notes.extend(prep_run.notes)
+    n_ions = device.crystal.n_ions
+    if internal_levels < 2:
+        raise ValueError("internal_levels is at least 2")
     if space is None:
-        selection = select_space(device, sched, opts, nbar=prep_run.nbar, caps=caps)
+        selection = select_space(
+            device, sched, opts, nbar=prep_run.nbar, caps=caps, ion_dims=[int(internal_levels)] * n_ions
+        )
     else:
         selection = SpaceSelection(
             space,
@@ -425,6 +527,12 @@ def run(
             ("space supplied by the caller",),
         )
     joint_space = selection.space
+    levels = level_maps(device, joint_space)
+    if levels:
+        notes.append(
+            "register factors with leakage levels: "
+            + "; ".join(f"ion {i}: {', '.join(m.labels)}" for i, m in levels.items())
+        )
     ok, dim, nnz = within_budget(joint_space, opts)
     resolved_level: FidelityLevel = "JOINT_EXACT" if ok else "GATE_LOCAL"
     if level == "GATE_LOCAL" or (level == "auto" and resolved_level == "GATE_LOCAL"):
@@ -435,8 +543,7 @@ def run(
     if level == "JOINT_EXACT" and not ok:
         notes.append(f"JOINT_EXACT forced above the Section 11.5 guards (dimension {dim}, non-zeros {nnz})")
     seeds = SeedSpec(int(seed))
-    sample0 = quiet_sample(0)
-    state0 = prepare(device, joint_space, table, sample0, seeds, preparation=prep_run)
+    state0 = prepare(device, joint_space, table, quiet_sample(0), seeds, preparation=prep_run, levels=levels)
     # 5. the branches of the initial mixture
     probs_int = internal_probabilities(state0, joint_space)
     from qutip_trap.light.raman import lamb_dicke_parameters
@@ -459,7 +566,7 @@ def run(
         )
     # 6. the qubit-frequency shifts: the true transition minus the table's frame (Section 7.3; M2 hand-off)
     shifts: dict[int, float] = {}
-    for i in range(device.crystal.n_ions):
+    for i in range(n_ions):
         sp = device.crystal.species[i]
         f_true, _d1, _d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], device.field.B_gauss)
         entry = table.qubit_freq.get(i)
@@ -470,85 +577,228 @@ def run(
             )
         else:
             shifts[i] = float(f_true - entry.value)
-    # 7. evolve every branch
-    engine = JointExactEngine(
-        builder_options=builder_options, store_per_segment=2, channels=tuple(channels), qubit_shifts_hz=shifts
+    # 7. timing (Section 7.5) and the dynamical samples (Section 3.4; M7)
+    stage = readout_stage(device, table, discriminator=discriminator, levels=levels or None)
+    window = float(stage.discriminator.window_s)
+    t_rep = (
+        float(shot_period_s)
+        if shot_period_s is not None
+        else prep_run.duration_s + sched.pulses_end_s + window + float(device.hardware.dead_time_s)
     )
-    n_ions = joint_space.n_ions
-    rho_int = np.zeros((int(np.prod(joint_space.ion_dims)),) * 2, dtype=complex)
+    quiet = (not noise) or device.noise.is_quiet(device)
+    if quiet:
+        n_samples = 1
+        if samples not in (None, 1):
+            notes.append(
+                f"samples={samples} requested but the noise model has no quasi-static or sampled content (or noise=False): "
+                "one nominal sample"
+            )
+    else:
+        n_samples = int(samples) if samples is not None else min(int(shots), 64)
+        n_samples = max(1, min(n_samples, int(shots)))
+    counts_per_sample = [shots // n_samples + (1 if k < shots % n_samples else 0) for k in range(n_samples)]
+    first_shots = [sum(counts_per_sample[:k]) for k in range(n_samples)]
+    sample_times = [t0_s + f * t_rep for f in first_shots]
+    if quiet:
+        samples_seq: tuple[NoiseSample, ...] = tuple(quiet_sample(k, t) for k, t in enumerate(sample_times))
+    else:
+        rng_noise = np.random.default_rng(seeds.child(0, 0, 0, 0, "noise_samples"))
+        samples_seq = device.noise.sample_sequence(
+            rng_noise, sample_times, device=device, duration_s=sched.pulses_end_s, t0_s=t0_s
+        )
+    # 8. evolve every branch of every sample
+    engine = JointExactEngine(
+        builder_options=builder_options,
+        store_per_segment=2,
+        channels=tuple(channels),
+        qubit_shifts_hz=shifts,
+        device_channels=bool(noise),
+        levels_by_ion=levels or None,
+        hardware_chain=True,
+    )
+    dims_int = [list(joint_space.ion_dims), list(joint_space.ion_dims)]
+    d_int = int(np.prod(joint_space.ion_dims))
     traces_all: list[Traces] = []
     boundary: dict[int, float] = {m.mode: 0.0 for m in joint_space.resolved}
     integrators: list[str] = []
     approximations: list[str] = []
+    methods: list[str] = []
+    n_traj_max = 1
     total_weight = sum(b.weight for b in branches)
-    for k, br in enumerate(branches):
-        fock_res = {m: n for m, n in br.fock.items() if joint_space.mode_class(m) == "resolved"}
-        thermal_frozen = {m: float(state0.motional.nbar.get(m, 0.0)) for m in joint_space.frozen}
-        st = joint_space.initial_state(
-            list(br.levels),
-            fock=fock_res,
-            thermal={m: v for m, v in thermal_frozen.items()},
-            provenance=tuple(state0.provenance) + (f"m6.branch[{k}]",),
-        )
-        values = {
-            key_frozen_n(m): float(n) for m, n in br.fock.items() if joint_space.mode_class(m) == "frozen"
-        }
-        sample_b = NoiseSample(sample_id=0, values=values, ou_grids={})
-        tr = engine.run_pulses(device, sched, st, joint_space, sample_b, seeds, opts)
-        traces_all.append(tr)
-        rho_int += (br.weight / total_weight) * np.asarray(tr.final.internal.full())
-        for m, v in tr.boundary_population.items():
-            boundary[m] = max(boundary.get(m, 0.0), float(v))
-        rep = engine.last_report
-        if rep is not None:
-            for seg in rep.segments:
-                if seg.integrator not in integrators:
-                    integrators.append(seg.integrator)
-            for a in rep.approximations:
-                if a not in approximations:
-                    approximations.append(a)
-    rho_register = qt.Qobj(rho_int, dims=[list(joint_space.ion_dims), list(joint_space.ion_dims)])
-    # 8. readout on the recombined register state
-    stage = readout_stage(device, table, discriminator=discriminator)
+    register_states: list[qt.Qobj] = []
+    for smp in samples_seq:
+        rho_int = np.zeros((d_int, d_int), dtype=complex)
+        for k, br in enumerate(branches):
+            fock_res = {m: n for m, n in br.fock.items() if joint_space.mode_class(m) == "resolved"}
+            thermal_frozen = {m: float(state0.motional.nbar.get(m, 0.0)) for m in joint_space.frozen}
+            st = joint_space.initial_state(
+                list(br.levels),
+                fock=fock_res,
+                thermal={m: v for m, v in thermal_frozen.items()},
+                provenance=tuple(state0.provenance) + (f"m6.branch[{k}]",),
+            )
+            values = dict(smp.values)
+            values.update(
+                {
+                    key_frozen_n(m): float(n)
+                    for m, n in br.fock.items()
+                    if joint_space.mode_class(m) == "frozen"
+                }
+            )
+            sample_b = NoiseSample(
+                sample_id=smp.sample_id, values=values, ou_grids=dict(smp.ou_grids), t_s=smp.t_s
+            )
+            tr = engine.run_pulses(device, sched, st, joint_space, sample_b, seeds, opts)
+            traces_all.append(tr)
+            rho_int += (br.weight / total_weight) * np.asarray(tr.final.internal.full())
+            for m, v in tr.boundary_population.items():
+                boundary[m] = max(boundary.get(m, 0.0), float(v))
+            rep = engine.last_report
+            if rep is not None:
+                for seg in rep.segments:
+                    if seg.integrator not in integrators:
+                        integrators.append(seg.integrator)
+                for a in rep.approximations:
+                    if a not in approximations:
+                        approximations.append(a)
+                if rep.method not in methods:
+                    methods.append(rep.method)
+                n_traj_max = max(n_traj_max, rep.trajectories)
+        register_states.append(qt.Qobj(rho_int, dims=dims_int))
+    rho_register = sum((r for r in register_states[1:]), register_states[0]) / len(register_states)
+    # 9. readout per sample on its register state, the collision process per shot (Section 6.7)
     register_space = HilbertSpace(tuple(joint_space.ion_dims), (), None, ())
-    reg_state = State(
-        internal=rho_register,
-        motional=MotionalModel(reduced={}, nbar={}, frozen=()),
-        joint=rho_register,
-        provenance=tuple(state0.provenance) + ("m6.register_mixture",),
-    )
-    outcome = measure(
-        register_space,
-        reg_state,
-        stage.schemes,
-        stage.models,
-        stage.discriminator,
-        seeds,
-        shots=int(shots),
-        sample=0,
-        trajectory=0,
-        leakage=stage.leakage or None,
-        mode=readout,
-        povm=stage.povm if readout == "fast" else None,
-        keep_records=(readout == "full"),
-    )
+    run_state = RunState.nominal(n_ions)
+    collisions = device.noise.collisions if noise else None
+    coll_rates: dict[int, float] = {}
+    if collisions is not None and collisions.pressure_pa > 0.0:
+        coll_rates = {
+            i: collision_rate_per_ion(collisions, float(device.crystal.masses_kg[i])) for i in range(n_ions)
+        }
     measured = tuple(sorted(compiled.measure)) if compiled.measure else tuple(range(n_ions))
-    bits = np.asarray(outcome.bits[:, list(measured)], dtype=np.uint8)
+    bits_kept: list[np.ndarray] = []
+    heralds_kept: list[int] = []
+    posteriors_kept: list[np.ndarray] = []
+    records_kept: list[list[int]] = []
+    bits_per_sample: list[np.ndarray] = []
+    discarded = 0
+    prep_duration = prep_run.duration_s
+    for s_idx, (smp, rho_s) in enumerate(zip(samples_seq, register_states)):
+        n_s = counts_per_sample[s_idx]
+        if n_s == 0:
+            bits_per_sample.append(np.zeros((0, len(measured)), dtype=np.uint8))
+            continue
+        reg_state = State(
+            internal=rho_s,
+            motional=MotionalModel(reduced={}, nbar={}, frozen=()),
+            joint=rho_s,
+            provenance=tuple(state0.provenance) + ("m6.register_mixture",),
+        )
+        outcome = measure(
+            register_space,
+            reg_state,
+            stage.schemes,
+            stage.models,
+            stage.discriminator,
+            seeds,
+            shots=n_s,
+            sample=smp.sample_id,
+            trajectory=0,
+            first_shot=first_shots[s_idx],
+            leakage=stage.leakage or None,
+            mode=readout,
+            povm=stage.povm if readout == "fast" else None,
+            keep_records=(readout == "full"),
+        )
+        sample_bits: list[np.ndarray] = []
+        for j in range(n_s):
+            shot = first_shots[s_idx] + j
+            herald = 0
+            keep = True
+            if coll_rates:
+                rng_c = np.random.default_rng(seeds.child(smp.sample_id, 0, shot, 0, "collisions"))
+                assert collisions is not None
+                for ev in sample_collisions(rng_c, collisions, coll_rates, t_rep):
+                    herald |= 1
+                    run_state = RunState(
+                        run_state.order,
+                        run_state.dark,
+                        run_state.lost,
+                        run_state.events + ((shot, f"collision:{ev.outcome}:ion{ev.ion}"),),
+                    )
+                    if ev.outcome == "heating_kick":
+                        if ev.time_s >= prep_duration:
+                            keep = False  # the crystal melted during the sequence; the Doppler stage recools only before it
+                    elif ev.outcome == "reorder":
+                        keep = False
+                        order = list(run_state.order)
+                        pos = order.index(ev.ion) if ev.ion in order else 0
+                        other = pos + 1 if pos + 1 < n_ions else pos - 1
+                        if 0 <= other < n_ions and other != pos:
+                            order[pos], order[other] = order[other], order[pos]
+                        run_state = RunState(tuple(order), run_state.dark, run_state.lost, run_state.events)
+                    elif ev.outcome == "loss":
+                        keep = False
+                        run_state = RunState(
+                            run_state.order, run_state.dark, run_state.lost | {ev.ion}, run_state.events
+                        )
+                    else:  # dark_ion
+                        keep = False
+                        run_state = RunState(
+                            run_state.order, run_state.dark | {ev.ion}, run_state.lost, run_state.events
+                        )
+            row = np.asarray(outcome.bits[j, list(measured)], dtype=np.uint8).copy()
+            unusable = run_state.dark | run_state.lost
+            if unusable:
+                herald |= 2
+                for col, q in enumerate(measured):
+                    if q in unusable:
+                        row[col] = stage.schemes[q].bit_of_class("dark")
+            if not keep:
+                discarded += 1
+                continue
+            bits_kept.append(row)
+            sample_bits.append(row)
+            heralds_kept.append(herald)
+            if outcome.posteriors is not None:
+                posteriors_kept.append(np.asarray(outcome.posteriors[j]))
+            if readout == "full" and outcome.records is not None:
+                records_kept.append([rec.total for rec in outcome.records[j]])
+        bits_per_sample.append(
+            np.asarray(sample_bits, dtype=np.uint8).reshape(-1, len(measured))
+            if sample_bits
+            else np.zeros((0, len(measured)), dtype=np.uint8)
+        )
+    bits = np.asarray(bits_kept, dtype=np.uint8).reshape(-1, len(measured))
     counts, probabilities = aggregate(bits)
-    n_eff = float(shots)  # one quiet sample: shots are independent draws (Section 3.4)
+    n_eff = effective_sample_size(bits_per_sample)
     error_bars = binomial_error_bars(probabilities, n_eff)
     spam: dict[str, tuple[float, float]] = {}
     for i, (eps_b, eps_d) in enumerate(stage.product.per_ion_errors()):
         spam[f"q{i}"] = (float(eps_b), float(eps_d))
         spam[f"q{i}.state_preparation"] = (float(prep_run.preparation_error(i)), 0.0)
-    photon_records = None
-    if readout == "full" and outcome.records is not None:
-        photon_records = np.array([[rec.total for rec in shot] for shot in outcome.records], dtype=int)
-    # timing (Section 7.5): T_rep = preparation + pulses + detection
-    t_rep = float(shot_period_s) if shot_period_s is not None else prep_run.duration_s + sched.duration_s
-    approximations.append(
-        "noise: one quiet sample, no Lindblad channels unless passed explicitly (NoiseModel.sample and channels are M7)"
-    )
+    photon_records = np.array(records_kept, dtype=int) if (readout == "full" and records_kept) else None
+    posteriors = np.array(posteriors_kept) if posteriors_kept else None
+    if not noise:
+        approximations.append(
+            "noise: the nominal sample without the device's collapse operators (noise=False)"
+        )
+    elif quiet and any(m != "sesolve" for m in methods):
+        approximations.append(
+            "noise: the nominal sample (no quasi-static or sampled content) with the device's collapse operators, solver "
+            + "/".join(methods)
+        )
+    elif quiet:
+        approximations.append("noise: the nominal sample; the noise model is quiet")
+    else:
+        approximations.append(
+            f"noise: {n_samples} dynamical samples at the shot clock (T_rep = {t_rep:.4g} s), solver {'/'.join(methods)}"
+        )
+    if run_state.dark or run_state.lost:
+        approximations.append(
+            "collisions: after a dark-ion or loss event the remaining ions' dynamics stay on the nominal crystal (the reduced "
+            "crystal is milestone M8's recalibration); the flagged ions read dark"
+        )
     approximations.append(
         "SPAM definition: readout (eps_B, eps_D) of the threshold discriminator at zero crosstalk (Section 13 row "
         "'Readout figure of merit'); state preparation 1 - P(target) of the optical pump (Section 4.2.6)"
@@ -558,11 +808,12 @@ def run(
             f"readout fast path: the {'register-wide confusion' if stage.leakage else 'product POVM'} applied to the joint outcome "
             "(Section 5.7)"
         )
+    approximations.extend(device.hardware.describe())
     diagnostics = Diagnostics(
         level="JOINT_EXACT",
         space=joint_space,
         mode_class=dict(selection.mode_class),
-        run_state=RunState.nominal(n_ions),
+        run_state=run_state,
         wall_clock_span_s=float((shots - 1) * t_rep),
         boundary_population=boundary,
         margin_levels={m.mode: m.margin_levels for m in joint_space.resolved},
@@ -570,9 +821,9 @@ def run(
         frozen_contribution=selection.frozen_contribution,
         integrator=",".join(integrators) if integrators else "none",
         tolerances=(opts.atol, opts.rtol),
-        samples=1,
-        trajectories=len(branches),
-        shots_per_sample=int(shots),
+        samples=n_samples,
+        trajectories=len(branches) * n_traj_max,
+        shots_per_sample=int(shots // n_samples),
         effective_sample_size=n_eff,
         root_seed=int(seed),
         calibration=table,
@@ -587,11 +838,11 @@ def run(
         probabilities=probabilities,
         error_bars=error_bars,
         photon_records=photon_records,
-        posteriors=outcome.posteriors,
-        noise_samples=(sample0,),
-        heralds=np.zeros(int(shots), dtype=np.uint8),
-        discarded_shots=0,
-        run_state=RunState.nominal(n_ions),
+        posteriors=posteriors,
+        noise_samples=tuple(samples_seq),
+        heralds=np.asarray(heralds_kept, dtype=np.uint8),
+        discarded_shots=int(discarded),
+        run_state=run_state,
         spam=spam,
         final_state=rho_register if keep_final_state else None,
         diagnostics=diagnostics,
@@ -647,7 +898,14 @@ def register_fidelity(result: Result, target: np.ndarray | qt.Qobj | None = None
     n = result.n_qubits
     tgt = ideal_register_state(result) if target is None else target
     vec = np.asarray(tgt.full() if isinstance(tgt, qt.Qobj) else tgt, dtype=complex).ravel()
-    ket = qt.Qobj(vec.reshape(-1, 1), dims=[[2] * n, [1] * n])
+    dims = [int(x) for x in rho.dims[0]]
+    if all(d == 2 for d in dims):
+        ket = qt.Qobj(vec.reshape(-1, 1), dims=[[2] * n, [1] * n])
+    else:
+        # a qudit register (leakage levels, M7): the ideal ket lives on the qubit levels 0 and 1 of every factor
+        full = np.zeros(dims, dtype=complex)
+        full[tuple(slice(0, 2) for _ in dims)] = vec.reshape([2] * n)
+        ket = qt.Qobj(full.reshape(-1, 1), dims=[dims, [1] * n])
     return float(np.real(qt.expect(rho, ket)))
 
 
@@ -656,11 +914,13 @@ __all__ = [
     "ReadoutStage",
     "RunError",
     "RunRecord",
+    "effective_sample_size",
     "enumerate_branches",
     "ideal_register_state",
     "intrinsic_budget",
     "internal_probabilities",
     "last_record",
+    "level_maps",
     "prepare",
     "readout_stage",
     "register_fidelity",

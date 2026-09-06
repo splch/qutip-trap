@@ -293,6 +293,24 @@ def beat_phase_offset_rad(detuning_hz: float | Callable[[float], float], t_gate_
     return (TWO_PI * float(detuning_hz) * float(t_gate_start_s)) % TWO_PI
 
 
+def response_phase_rad(detuning_hz: float | Callable[[float], float], delay_s: float) -> float:
+    """The per-leg phase that keeps the bichromatic beat note where the calibration put it when the modulator's first-order
+    response delays the envelope (Section 7.10; M7): arctan(2 pi |mu| tau_r) with the sign of the leg's detuning mu.
+
+    The field the ion sees is the programmed envelope through the response h(t) = e^{-t/tau_r}/tau_r; the switch-on
+    transient's spectral weight at the beat frequency is H(mu) = 1/(1 - i 2 pi mu tau_r), whose phase arctan(2 pi mu tau_r)
+    is the beat phase the envelope's arrival lags by (the linear mu tau_r for mu tau_r << 1). Without it Roos's spin-axis
+    tilt returns at the gate start even after the per-gate reset (M7 finding on the two-ion fixture: mu tau_r = 0.96 rad,
+    leakage 2.9e-3 uncompensated, 2.2e-4 with the linear phase, 3.3e-5 with the arctan against 4.5e-5 for an ideal
+    modulator). A laboratory calibrates its tone phases against the delivered field; this is that calibration for a
+    modelled chain, and the residual is what the exact check reports. A frequency-modulated leg uses its initial detuning.
+    """
+    if delay_s == 0.0:
+        return 0.0
+    mu = float(detuning_hz(0.0)) if callable(detuning_hz) else float(detuning_hz)
+    return math.copysign(math.atan(TWO_PI * abs(mu) * delay_s), mu)
+
+
 def entangling_pulses(
     waveform: Waveform,
     gate_drives: dict[int, GateDrive],
@@ -303,6 +321,7 @@ def entangling_pulses(
     gate_id: str,
     crosstalk: dict[int, dict[int, complex]] | None = None,
     beat_phase_reset: bool = False,
+    response_delay_s: float = 0.0,
 ) -> list[Pulse]:
     """One Pulse per (segment, ion) from a calibrated Waveform: tones per leg with the segment's phase offsets plus the ion's spin
     phase (already in its frame), the segment's amplitudes and detunings, the Stark shift scaled with the played amplitude.
@@ -331,7 +350,8 @@ def entangling_pulses(
                     detuning_hz=seg.detuning_hz[leg],
                     phase_rad=float(seg.phase_rad[(ion, leg)])
                     + float(spin_phases_rad.get(ion, 0.0))
-                    + (beat_phase_offset_rad(seg.detuning_hz[leg], t_start_s) if beat_phase_reset else 0.0),
+                    + (beat_phase_offset_rad(seg.detuning_hz[leg], t_start_s) if beat_phase_reset else 0.0)
+                    + response_phase_rad(seg.detuning_hz[leg], response_delay_s),
                     envelope_hz=seg.amplitude_hz[(ion, leg)],
                 )
                 for leg in seg.legs
@@ -397,6 +417,9 @@ def _single_qubit(
     )
 
 
+CrosstalkSuppression = Literal["none", "neighbour", "local"]
+
+
 def schedule(
     circuit: Circuit,
     device: Device,
@@ -406,8 +429,16 @@ def schedule(
     entangling_drives: dict[int, GateDrive] | None = None,
     t0_s: float = 0.0,
     parallel: bool = False,
+    crosstalk_suppression: CrosstalkSuppression = "none",
+    response_delay: bool = True,
 ) -> Schedule:
     """Native gates -> pulses with absolute times from the calibration table (Section 7.3).
+
+    ``crosstalk_suppression`` (Section 6.6, Fang et al. 2022; M7): every MS gate is split into two half-angle plays with a
+    physical echo between them, exact to first order in the leaked drives. ``local``: Y(pi) (a GPi(pi/2) pulse) on both
+    targets between the halves and again after the second, since Y X Y = -X flips the leaked X^(1) sigma^(j) terms while
+    Y (x) Y commutes with XX; ``neighbour``: a physical Z(pi) = GPi(0) then GPi(pi/2) on every crosstalk spectator of the pair
+    between the halves (Z sigma_phi Z = -sigma_phi), absorbed afterwards into the spectator's virtual frame (rz(pi)).
 
     gpi and gpi2 become carrier pulses of area pi and pi/2 at the frame-shifted phase; rz is a frame update (no pulse,
     no time beyond the dead time the hardware inserts between pulses, Section 7.6); ms and zz play the pair's calibrated
@@ -417,10 +448,13 @@ def schedule(
     """
     if not circuit.is_native:
         raise ScheduleError("schedule() takes a native circuit; compile_to_native first (Section 7.2)")
+    if crosstalk_suppression != "none" and parallel:
+        raise ScheduleError("crosstalk suppression is scheduled on the serial path (Section 6.6)")
     drives = gate_drives or default_gate_drives(device)
     ent_drives = entangling_drives or drives
     dead = float(device.hardware.dead_time_s)
     reset = not bool(device.hardware.phase_continuous)
+    delay = float(device.hardware.aom_rise_s) if response_delay else 0.0
     frame = PhaseFrame()
     pulses: list[Pulse] = []
     idle: list[tuple[float, float]] = []
@@ -466,23 +500,126 @@ def schedule(
                         "MS(phi_0, phi_1, theta) needs an MS (spin-flip) waveform; zz plays a light-shift one"
                     )
                 spins, chi_abs = ms_spin_phases(wf, (a, b), (phi0, phi1), frame)
-                play = _rescaled(wf, 0.5 * theta, chi_abs)
-                new = entangling_pulses(
-                    play,
-                    ent_drives,
-                    spin_phases_rad=spins,
-                    t_start_s=start,
-                    table=table,
-                    gate_id=f"ms[{k}]",
-                    beat_phase_reset=reset,
-                )
-                pulses.extend(new)
-                gates.append(
-                    PlayedGate(
-                        f"ms[{k}]", "ms", (a, b), play, ent_drives[a].beams, start, start + play.duration_s
+                if crosstalk_suppression == "none":
+                    play = _rescaled(wf, 0.5 * theta, chi_abs)
+                    new = entangling_pulses(
+                        play,
+                        ent_drives,
+                        spin_phases_rad=spins,
+                        t_start_s=start,
+                        table=table,
+                        gate_id=f"ms[{k}]",
+                        beat_phase_reset=reset,
+                        response_delay_s=delay,
                     )
+                    pulses.extend(new)
+                    gates.append(
+                        PlayedGate(
+                            f"ms[{k}]",
+                            "ms",
+                            (a, b),
+                            play,
+                            ent_drives[a].beams,
+                            start,
+                            start + play.duration_s,
+                        )
+                    )
+                    advance((a, b), start + play.duration_s)
+                    continue
+                # Section 6.6 echo schemes: two half-angle plays around a physical echo (M7)
+                half = _rescaled(wf, 0.25 * theta, chi_abs)
+                spectators = sorted(
+                    {
+                        j
+                        for (i, j), e in table.crosstalk.items()
+                        if i in (a, b) and j not in (a, b) and e.status != "uncalibrated" and e.value != 0.0
+                    }
                 )
-                advance((a, b), start + play.duration_s)
+                echo_ions = [a, b] if crosstalk_suppression == "local" else spectators
+                echo_pulses: list[tuple[float, float]] = (
+                    [(NATIVE_AREAS["gpi"], 0.5 * math.pi)]
+                    if crosstalk_suppression == "local"
+                    else [(NATIVE_AREAS["gpi"], 0.0), (NATIVE_AREAS["gpi"], 0.5 * math.pi)]
+                )
+
+                def play_half(
+                    t_half: float,
+                    tag: str,
+                    *,
+                    _half: Waveform = half,
+                    _spins: dict[int, float] = spins,
+                    _k: int = k,
+                    _ab: tuple[int, int] = (a, b),
+                ) -> float:
+                    pulses.extend(
+                        entangling_pulses(
+                            _half,
+                            ent_drives,
+                            spin_phases_rad=_spins,
+                            t_start_s=t_half,
+                            table=table,
+                            gate_id=f"ms[{_k}]/{tag}",
+                            beat_phase_reset=reset,
+                            response_delay_s=delay,
+                        )
+                    )
+                    gates.append(
+                        PlayedGate(
+                            f"ms[{_k}]/{tag}",
+                            "ms",
+                            _ab,
+                            _half,
+                            ent_drives[_ab[0]].beams,
+                            t_half,
+                            t_half + _half.duration_s,
+                        )
+                    )
+                    return t_half + _half.duration_s
+
+                def play_echo(
+                    t_echo: float,
+                    tag: str,
+                    *,
+                    _ions: list[int] = echo_ions,
+                    _echo: list[tuple[float, float]] = echo_pulses,
+                    _k: int = k,
+                    _frame: PhaseFrame = frame,
+                ) -> float:
+                    end = t_echo
+                    for q in _ions:
+                        t_q = t_echo
+                        for area, phase in _echo:
+                            p = _single_qubit(
+                                q,
+                                area,
+                                _frame.pulse_phase(q, phase),
+                                drives,
+                                table,
+                                t_q,
+                                f"ms[{_k}]/{tag}/ion{q}",
+                            )
+                            pulses.append(p)
+                            t_q = p.t_end_s + dead
+                        end = max(end, t_q - dead)
+                    return end
+
+                t = play_half(start, "half1")
+                idle.append((t, t + dead))
+                t = t + dead
+                if echo_ions:
+                    t = play_echo(t, "echo")
+                    idle.append((t, t + dead))
+                    t = t + dead
+                t = play_half(t, "half2")
+                if crosstalk_suppression == "local":
+                    idle.append((t, t + dead))
+                    t = t + dead
+                    t = play_echo(t, "unecho")
+                else:
+                    # a physical Z(pi) is a frame operation on every later pulse of the spectator: absorb it (Section 7.6)
+                    for j in echo_ions:
+                        frame = frame.rz(j, math.pi)
+                advance((a, b), t)
                 continue
             (theta,) = op.params
             if wf.kind == "ms":
@@ -518,6 +655,7 @@ def schedule(
                         table=table,
                         gate_id=f"zz[{k}]/ms",
                         beat_phase_reset=reset,
+                        response_delay_s=delay,
                     )
                 )
                 gates.append(
@@ -560,6 +698,7 @@ def schedule(
                     table=table,
                     gate_id=f"zz[{k}]/loop1",
                     beat_phase_reset=reset,
+                    response_delay_s=delay,
                 )
             )
             gates.append(
@@ -593,6 +732,7 @@ def schedule(
                     table=table,
                     gate_id=f"zz[{k}]/loop2",
                     beat_phase_reset=reset,
+                    response_delay_s=delay,
                 )
             )
             gates.append(
@@ -675,6 +815,7 @@ def _rescaled(waveform: Waveform, chi_target_abs: float, chi_abs: float) -> Wave
 
 
 __all__ = [
+    "CrosstalkSuppression",
     "FORCE_AXIS_OFFSET_RAD",
     "M6_MID_CIRCUIT",
     "MICROWAVE_BEAM_KEY",
@@ -689,6 +830,7 @@ __all__ = [
     "default_gate_drives",
     "entangling_pulses",
     "ms_spin_phases",
+    "response_phase_rad",
     "schedule",
     "single_qubit_pulse",
     "stark_scaling_power",

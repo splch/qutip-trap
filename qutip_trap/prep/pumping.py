@@ -80,6 +80,21 @@ class PumpingResult:
         # the pumped state carries no coherence between the qubit levels (the pump erases it): a diagonal state
         return qt.Qobj(np.diag([p_lower, p_upper]), dims=[[2], [2]])
 
+    def qudit_density_matrix(self, labels: Sequence[str]) -> qt.Qobj:
+        """The d x d diagonal state on a register factor with the given level labels (``noise/levels.py``; M7): every resolved
+        atomic label takes its pumped population, the SINK (if present) the remainder, and without a SINK the remainder is
+        counted as the upper qubit level (the ``to_upper`` policy)."""
+        from qutip_trap.noise.levels import SINK
+
+        pops = [0.0 if lab == SINK else float(self.populations.get(lab, 0.0)) for lab in labels]
+        rest = max(0.0, 1.0 - sum(pops))
+        if SINK in labels:
+            pops[list(labels).index(SINK)] = rest
+        else:
+            pops[1] += rest
+        d = len(labels)
+        return qt.Qobj(np.diag(pops), dims=[[d], [d]])
+
 
 def scrambled_initial_state(model: BlochModel, labels: Sequence[str] | None = None) -> qt.Qobj:
     """The uniform mixture over ``labels`` (default: the resonant ground manifold of the beams): what Doppler cooling leaves."""

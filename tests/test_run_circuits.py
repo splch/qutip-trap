@@ -139,7 +139,9 @@ def test_bell_diagnostics_report_the_space_classes_branches_and_approximations(b
     assert d.trajectories >= 3 and d.dropped_branch_weight < 1e-4
     assert d.integrator.startswith("dop853") and d.tolerances == (FAST.atol, FAST.rtol)
     assert d.root_seed == 0 and d.calibration is sur.table
-    assert any("M7" in a for a in d.approximations) and any("product POVM" in a for a in d.approximations)
+    assert any(a.startswith("noise:") for a in d.approximations) and any(
+        "product POVM" in a for a in d.approximations
+    )
     assert d.wall_clock_span_s > 0.0
     assert res.spam["q0"][0] == pytest.approx(res.spam["q1"][0]) and 1e-4 < res.spam["q0"][0] < 5e-3
     assert res.spam["q0.state_preparation"][0] < 1e-4

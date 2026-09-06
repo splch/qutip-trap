@@ -494,6 +494,16 @@ def thermal_average(values_by_n: Sequence[float], nbar: float) -> float:
 
 
 __all__ = [
+    "fang_bell_fidelity",
+    "fang_crosstalk_unitary",
+    "fang_printed_bell_fidelity",
+    "fang_printed_spectator_excitation",
+    "fang_spectator_excitation",
+    "inter_pair_phase_scaling",
+    "landsman_parallel_gate_bound",
+    "ou_field_heating_finite_time",
+    "ou_field_heating_slope",
+    "sigma_phi",
     "HUGHES_MAXIMAL_ANGLE_RAD",
     "PUBLISHED_RECORDS",
     "ThermalReference",
@@ -552,3 +562,89 @@ __all__ = [
     "zhu_lab_frame_force_rad_s",
     "zhu_state_infidelity_as_printed",
 ]
+
+# ---- crosstalk, parallel gates and field-noise heating (Sections 6.2, 6.6; Section 9.7 rows 'Crosstalk unitary', 'Parallel gates';
+# Section 9.16 rows 4.1-3, 6-4; M7) ------------------------------------------------------------------------------------------------
+
+
+def _pauli(name: str) -> np.ndarray:
+    return {
+        "I": np.eye(2, dtype=complex),
+        "X": np.array([[0, 1], [1, 0]], dtype=complex),
+        "Y": np.array([[0, -1j], [1j, 0]], dtype=complex),
+        "Z": np.array([[1, 0], [0, -1]], dtype=complex),
+    }[name]
+
+
+def _kron3(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
+    return np.kron(np.kron(a, b), c)
+
+
+def sigma_phi(phi: float) -> np.ndarray:
+    return math.cos(phi) * _pauli("X") + math.sin(phi) * _pauli("Y")
+
+
+def fang_crosstalk_unitary(theta: float, theta_13: float, theta_23: float, phi_beam: float) -> np.ndarray:
+    """U_xtalk = XX(theta) exp[-i(theta_13 X^(1) sigma_phi^(3) + theta_23 X^(2) sigma_phi^(3))] on ions (1, 2, 3), the leading-order
+    crosstalk model of Fang et al. 2022 (Section 6.6): XX(theta) = exp(-i theta X1 X2) with no 1/2 (Section 13)."""
+    from scipy.linalg import expm
+
+    x1x2 = _kron3(_pauli("X"), _pauli("X"), _pauli("I"))
+    gate = expm(-1j * theta * x1x2)
+    leak = theta_13 * _kron3(_pauli("X"), _pauli("I"), sigma_phi(phi_beam)) + theta_23 * _kron3(
+        _pauli("I"), _pauli("X"), sigma_phi(phi_beam)
+    )
+    return np.asarray(gate @ expm(-1j * leak))
+
+
+def fang_bell_fidelity(theta_13: float, theta_23: float) -> float:
+    """The exact Bell-state fidelity of the pair under the crosstalk unitary: cos^2 theta_13 cos^2 theta_23 (0.900790 at
+    (0.1644, -0.2763)); Fang's printed form carries half the angles (0.974422) [corrected]."""
+    return math.cos(theta_13) ** 2 * math.cos(theta_23) ** 2
+
+
+def fang_spectator_excitation(theta_13: float, theta_23: float) -> float:
+    """P_ion3 = [1 - cos(2 theta_13) cos(2 theta_23)]/2 exactly (0.097217 at the quoted angles; 0 at theta = pi/2 where the
+    printed halved form gives 0.5) [corrected]."""
+    return 0.5 * (1.0 - math.cos(2.0 * theta_13) * math.cos(2.0 * theta_23))
+
+
+def fang_printed_bell_fidelity(theta_13: float, theta_23: float) -> float:
+    """The printed closed form, a factor 2 inside the cosines: cos^2(theta_13/2) cos^2(theta_23/2)."""
+    return math.cos(theta_13 / 2.0) ** 2 * math.cos(theta_23 / 2.0) ** 2
+
+
+def fang_printed_spectator_excitation(theta_13: float, theta_23: float) -> float:
+    return 0.5 * (1.0 - math.cos(theta_13) * math.cos(theta_23))
+
+
+def landsman_parallel_gate_bound(inter_pair_phases_rad: Sequence[float]) -> tuple[float, bool]:
+    """(1/2)||E||_diamond <= sum_rs |Theta_rs| over the four inter-pair phases of two parallel gates (Landsman 2019; the 1/2 is
+    load-bearing [corrected]); returns the bound on (1/2)||E||_diamond and whether it is vacuous (above 1, since
+    ||E||_diamond <= 2 always), in which case the simulator reports the exact simulated channel instead."""
+    bound = float(sum(abs(t) for t in inter_pair_phases_rad))
+    return bound, bound > 1.0
+
+
+def inter_pair_phase_scaling(n_sites: float, theta_adjacent: float) -> float:
+    """Theta proportional to 1/n^3 with the ion separation in sites (Landsman 2019; Section 9.7 row 'Parallel gates')."""
+    return theta_adjacent / float(n_sites) ** 3
+
+
+def ou_field_heating_slope(sigma2: float, tau_c: float, omega: float) -> float:
+    """d<n>/dt = e^2 S_E^(1)(omega)/(4 m hbar omega) for Ornstein-Uhlenbeck field noise of variance sigma^2 and correlation time
+    tau_c in units e = m = hbar = 1: S_E^(1) = 4 sigma^2 tau_c/(1 + omega^2 tau_c^2), so the slope is sigma^2 tau_c/(1 + omega^2
+    tau_c^2) (Section 9.16 row 4.1-3: 9.97506e-4 at sigma^2 = 0.02, tau_c = 0.05, omega = 1)."""
+    return sigma2 * tau_c / (1.0 + (omega * tau_c) ** 2)
+
+
+def ou_field_heating_finite_time(sigma2: float, tau_c: float, omega: float, t: float) -> float:
+    """<n>(t) = (1/(2 hbar m omega)) int_0^t int_0^t C(t' - t'') cos(omega (t' - t'')) dt' dt'' for the classical oscillator driven by
+    the OU field (units e = m = hbar = 1): the exact double integral whose slope approaches ``ou_field_heating_slope``."""
+    from scipy.integrate import quad
+
+    def inner(u: float) -> float:
+        return float((t - u) * sigma2 * math.exp(-u / tau_c) * math.cos(omega * u))
+
+    val = quad(inner, 0.0, t, limit=400)[0]
+    return float(2.0 * val / (2.0 * omega))

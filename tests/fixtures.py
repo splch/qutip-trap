@@ -67,13 +67,15 @@ def make_field() -> Field:
     return Field(B_gauss=5.0, direction=(0.0, 0.0, 1.0), noise=None)
 
 
-def make_noise() -> NoiseModel:
+def make_noise(s_e_two_sided: float = 0.0, correlation_length_m: float = 0.0) -> NoiseModel:
+    """A quiet noise model by default (M7: run() assembles the device's channels, so the shared fixture carries no heating unless
+    asked); ``s_e_two_sided`` sets a flat electric-field density in (V/m)^2/(rad/s) with the given correlation length."""
     omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
-    flat = NoiseSpectrum(omega_rad_s=omega, S=np.full(5, 1e-13), unit="(V/m)^2/(rad/s)")
+    flat = NoiseSpectrum(omega_rad_s=omega, S=np.full(5, s_e_two_sided), unit="(V/m)^2/(rad/s)")
     quiet = Drift(rms=0.0, tau_s=1.0, servo_bandwidth_hz=None)
     return NoiseModel(
         S_E=flat,
-        correlation_length_m=None,
+        correlation_length_m=correlation_length_m,
         S_B=None,
         mains=None,
         laser_phase=None,
@@ -104,12 +106,25 @@ def make_detector() -> Detector:
     )
 
 
-def make_hardware() -> HardwareChain:
+def make_hardware(realistic: bool = False) -> HardwareChain:
+    """Near-ideal electronics by default (32-bit phase and 24-bit amplitude words, zero modulator rise time, infinite amplifier
+    bandwidth), so that the
+    exactness tests of M2 to M6 see the pulses they specify (Section 7.10: a device without these parameters gets ideal
+    electronics and says so); ``realistic=True`` is the 16-bit / 14-bit / 50 ns chain the M7 hardware tests exercise."""
+    if realistic:
+        return HardwareChain(
+            dds_phase_bits=16,
+            dds_amplitude_bits=14,
+            aom_rise_s=50e-9,
+            amplifier_bandwidth_hz=1e8,
+            dead_time_s=1e-6,
+            phase_continuous=True,
+        )
     return HardwareChain(
-        dds_phase_bits=16,
-        dds_amplitude_bits=14,
-        aom_rise_s=50e-9,
-        amplifier_bandwidth_hz=1e8,
+        dds_phase_bits=32,
+        dds_amplitude_bits=24,
+        aom_rise_s=0.0,
+        amplifier_bandwidth_hz=float("inf"),
         dead_time_s=1e-6,
         phase_continuous=True,
     )
