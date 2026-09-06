@@ -7,7 +7,8 @@ pinned toolchain as the first CI job", with "a convergence-report artifact". Thi
 token of the committed ``outputs/<name>.out`` with the fresh output line by line (lines matched by their
 non-numeric skeleton, numbers compared to a relative tolerance), and with ``--report`` writes
 ``validation/report/convergence_report.{json,md}`` plus the fresh outputs, which CI uploads as the
-``convergence-report`` artifact. Wall times are recorded but never compared.
+``convergence-report`` artifact. Wall times are recorded but never compared, and neither are lines a script
+prefixes with ``MC:`` (Monte Carlo results whose last digits depend on the platform's libm; M5).
 
     uv run python validation/scripts/run_checks.py --report
     uv run python validation/scripts/run_checks.py --only check_atomic check_ms_closure
@@ -31,6 +32,7 @@ REPORT_DIR = HERE.parent / "report"
 
 _NUMBER = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 _SKIP = (
+    "MC:",
     "Installed ",
     "Downloaded ",
     "Downloading ",

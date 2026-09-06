@@ -1158,6 +1158,113 @@ records:
     source: "tests/test_shaping.py"
     equation: "two-mode fixture: Leung's nine-vertex FM schedule closes both modes and the robust cost nulls the time-averaged trajectory, so a common 500 Hz drift costs 4e-6 against 9e-4 for the unconstrained schedule; Blumel's first-order stabilized sixteen-function Fourier pulse nulls d alpha/d omega_m and is far less sensitive to a 1 kHz shift than the unstabilized one"
     corrected_form: "five and seven vertices leave the robust system underdetermined for two modes (four closure plus four robustness residuals)"
+  # ---- Section 13 conventions the M5 readout code encodes (Section 8) ------------------------------------------
+  - id: conv.readout_polarity_scheme
+    symbol: "ReadoutScheme"
+    tag: verified
+    section: "13 Bright/dark polarity; 8.1, 8.4"
+    source: "Myerson 2008; Christensen 2020; Harty 2014 (direct fluorescence and shelving invert the polarity within one paper)"
+    equation: "bright/dark is a property of the readout SCHEME stored as an enum: 171Yb+ direct fluorescence has |1> = F = 1 bright; the 40Ca+ optical qubit has |0> = S1/2 bright and |1> = D5/2 the shelf; shelving transfer is a START distribution per level, so Pi_dark = sum_l p_l |l><l| is not rank one"
+    corrected_form: "the qubit label carries no polarity; the code refuses a scheme in which no level fluoresces"
+  - id: conv.detection_efficiency_once
+    symbol: "eps_sys R_o, R_bg"
+    tag: verified
+    section: "13 Detection efficiency; 8.1, 8.2"
+    source: "Crain 2019 (Eq. 3 corrected); Acton 2006 (alpha/eta)"
+    equation: "epsilon_sys enters once, in RecordModel.from_rates (scattered -> detected); the background rate is a separate additive Poisson rate; apparatus presets ingest a DETECTED rate by dividing epsilon_sys out once (rates_from_detected)"
+    corrected_form: "Crain's printed Eq. 3 carries the scattered R_o in the no-jump exponent, which makes it vanish and changes the bright error at 11 us by a factor 8.7 (6.26e-3 corrected against 7.18e-4 printed)"
+  - id: conv.readout_chain_exact
+    symbol: "P(n | start) by expm"
+    tag: derived
+    section: "8.2; 5.7"
+    source: "Markov-modulated Poisson process on the bright/dark/shelf chain (derived here); Crain Eq. 1 and Acton Eqs. 5-6 as its single-jump limits"
+    equation: "the count distribution over a window is one matrix exponential of the augmented generator (blocks Q - diag(lambda) with diag(lambda) one block up, an absorbing overflow block); the fast path samples the chain exactly (Gillespie) with Poisson counts at the piecewise rates, the trajectory path runs mcsolve on the class space with a photon-counting collapse operator"
+    corrected_form: "the single-jump forms are the small-k-tau oracles: with one transition rate the exponential equals them to 1e-13; with both rates it differs by the second jump (1e-3 relative at Crain's 22 us). mcsolve needs the problem in units of the window (its collapse-time search has an absolute time tolerance)"
+  - id: conv.readout_crosstalk_added_counts
+    symbol: "leakage[|i - j|] eps_sys R_o,j"
+    tag: corrected
+    section: "8.5; 5.7"
+    source: "Wineland 1998 (degraded discrimination, not a changed eta_d); Burrell 2010 (PSF overlap)"
+    equation: "a bright neighbour's leaked light is ADDED COUNTS on its neighbours at the configured PSF fraction; the register confusion at configured crosstalk is factored by neighbour range (per-ion conditional tables, exact for per-ion decisions on additive light with the neighbours' pumping frozen at their start class), dense to N = 12"
+    corrected_form: "the product POVM is exact only at zero crosstalk: at 4 % leakage a dark 171Yb+ ion beside a bright one under the zero-threshold SNSPD protocol reads bright 34 % of the time (0.42 leaked counts in 22 us), the bounded, reported discrepancy of Section 9.5"
+  - id: conv.readout_likelihood_first_order
+    symbol: "p_D = (1 - t_b/tau) M_N + (t_s/tau) S_N"
+    tag: verified
+    section: "8.3"
+    source: "Myerson 2008 Eqs. 1-2; the exact hidden-Markov forward likelihood derived here (Section 8.7 gap)"
+    equation: "the O(N) recursion in the log domain with log-sum-exp; the decay rate 1/tau is the dark class's rate of becoming bright (the shelf lifetime, or R_b); ties go to bright; the posterior error uses equal priors"
+    corrected_form: "the exact forward likelihood on the chain's sub-bin kernel agrees with the first-order form to 1e-5 for the hypothesis matching the record and differs at the percent level for the hypothesis that must invoke a decay (its position inside the sub-bin), with the same decision; the linear brute force underflows near 227 sub-bins"
+  - id: conv.mean_count_curve
+    symbol: "n̄(τ) = εR_o[(R_b/k) τ + (R_d/k^2)(1 - e^{-kτ})]"
+    tag: verified
+    section: "8.2; 7.5 item 5"
+    source: "Noek 2013 Eq. 4 with ṗ_1 = R_b p_0 - R_d p_1"
+    equation: "the calibration fit for (εR_o, R_d, R_b) from bright-prepared records; equals the exact chain's mean when only R_d and R_b act"
+    corrected_form: "the fit is degenerate at bin-time windows (tens of us: R_b unconstrained, the least-squares returned 1e4 Hz); it needs windows long against 1/R_d and 1/R_b, as Noek's 60 ms, so calibrate_detection draws a separate long record set for the fit"
+  - id: conv.spectator_dephasing_gaussian
+    symbol: "exp(-tau^2/alpha^2)"
+    tag: verified
+    section: "8.5; 5.7"
+    source: "Crain 2019 Fig. 3 (alpha = 94(5) ms at 200 um, 814(77) ms at 370 um, 1716(80) ms baseline)"
+    equation: "a spectator's coherence during a neighbour's detection decays as a Gaussian; implemented as a quasi-static frequency offset drawn per shot from N(0, sqrt(2)/alpha), whose ensemble average reproduces the Gaussian exactly"
+    corrected_form: "a constant-rate sigma_z Lindblad term would give an exponential lineshape; the distance dependence between the two anchors is interpolated as a power law of exponent 3.5 (apparatus data, not physics)"
+  # ---- Section 9.5 anchors reproduced by M5 ---------------------------------------------------------------------
+  - id: anchor.m5.yb171_rate_object
+    symbol: "R_o, R_d, R_b"
+    tag: recomputed here
+    section: "9.5 rows '171Yb+ rates', 'CPT'; 8.1, 8.8"
+    source: "check_readout.py A; tests/test_readout_rates.py"
+    equation: "the M3a Bloch solve through rates_from_bloch: R_o/closed = 0.9948 (s_o = 0.1, 1 G) and 0.9969 (2.45, 4.7 G) with the ceiling 1/4 asserted; R_d and R_b within 0.5 to 2.4 % of Noek's prefactors; R_b/R_d = 0.0611 and 0.0600 against 3/49 = 0.0612 and the measured 0.048 (30 % band)"
+    corrected_form: "the Section 9.5 CPT row prints 's_o = 0.815' for the point R_o = 0.0880 Gamma: that is Noek's s = 0.815, i.e. s_o = 2.45 (the two saturation parameters Section 8.8 warns against aliasing); at s_o = 0.815 the form gives 0.0383 Gamma (M5 finding)"
+  - id: anchor.m5.acton_factors_and_ceiling
+    symbol: "M_1, M_2pi, M_2-, F_max"
+    tag: verified
+    section: "9.5 rows 'Clebsch-Gordan factors', '111Cd+ ceiling', 'Corrected I_sat'"
+    source: "Acton 2006 Eqs. 9, 12, 13, 20, 22; check_readout.py B"
+    equation: "M_1 = 2/9, 20/81, 1/4, 56/225, 20/81, 12/49 for I = 1/2..3; (2/9, 1/9, 1/9) at I = 1/2 pins the normalization; F_max = 99.9375 % at gamma/2pi = 60 MHz, omega_HFP/2pi = 800 MHz; 87Rb D2 I_sat 1.669 mW/cm^2; Cd+ I_ion/I_sat = 1.09e-4 at 4 um (the printed 7e-4 is 2 pi too large)"
+    corrected_form: "Acton's Eqs. 5-6 are the single-jump Poisson-exponential mixtures: normalized to 1e-15 and equal to the Gauss-Legendre quadrature of Crain's corrected Eq. 1 to 1e-15 (the plan's 'agree with quadrature to 2e-16' is machine precision)"
+  - id: anchor.m5.crain_corrections_and_operating_point
+    symbol: "eps_B(11 us), eps at t*"
+    tag: recomputed here
+    section: "9.5 rows 'Crain corrections', 'SNSPD operating point'"
+    source: "Crain 2019 Eqs. 1-3, 5-8; check_readout.py C"
+    equation: "Eq. 1 sums to 1 only with the no-jump branch (0.0068 without at 20 us); Eq. 3 at 11 us: 6.26e-3 corrected against 7.18e-4 printed; the zero-threshold average error has its minimum 5.84e-4 at 21.5 us (5.39e-4 without background) against the measured 6.9e-4 at 11 us average detection time"
+    corrected_form: "Crain's 11 us is the AVERAGE detection time of the stop-on-first-photon protocol (a bright ion stops at its first photon after 2 us), not the record window; the closed-form optimum window is 20 to 25 us"
+  - id: anchor.m5.myerson_optimum_and_recursion
+    symbol: "eps(n_c, t_b)"
+    tag: recomputed here
+    section: "9.5 rows 'Myerson recursion', '40Ca+ optimum'"
+    source: "Myerson 2008; check_readout.py D; tests/test_discriminators.py"
+    equation: "recursion equals brute force to 1e-14 in log; with ideal Poisson statistics the exact chain's optimum is eps = 1.24e-4 at n_c = 3.5, t_b = 320 us and 1.37e-4 at the paper's (5.5, 420 us) against the measured 1.8(1)e-4; time-resolved ML Monte Carlo eps_D ~ 1.0e-4 to 1.5e-4 with eps_B <= 5e-5 (paper 1.5(2)e-4, asymptote 0.87e-4); adaptive 60/177 us average (paper 72/219 us)"
+    corrected_form: "the measured optimum sits at a higher threshold and longer window than the ideal-Poisson one because the PMT dark counts are non-Poissonian (the paper attributes about 20 % of eps_D to cosmic rays), which the model does not carry (M5 finding)"
+  - id: anchor.m5.burrell_camera
+    symbol: "eps_D floor, PSF leakage"
+    tag: recomputed here
+    section: "9.5 row 'Camera'; 8.3, 8.5"
+    source: "Burrell 2010; check_readout.py E; tests/test_photon_records.py, test_discriminators.py"
+    equation: "eps_D -> t_exp/(2 tau) = 1.71e-4 at 400 us (1.667e-4, 1.704e-4, 1.710e-4 as the bright count grows); the diffraction-limited NA 0.25 Airy pattern leaks 0.20 % into a one-spacing ROI at 14 um; a Gaussian PSF of sigma 4.1 um reproduces the measured 4.0 % nearest neighbour; the neighbour-conditioned ICM decode and sum_k e^{-R_k}"
+    corrected_form: "the measured 0.9 % next-nearest leakage is a wing no Gaussian has and no diffraction-limited Airy pattern reaches at this spacing: the aberrated PSF of the apparatus is not derivable from its NA (Burrell's Airy scale 1.22 lambda/tan alpha is read as 1.22 lambda/NA here, contested)"
+  - id: anchor.m5.povm_domains
+    symbol: "product POVM vs register confusion"
+    tag: recomputed here
+    section: "9.5 row 'Budgets'; 5.7; 9.17 'POVM fast-path domain'"
+    source: "check_readout.py F; tests/test_readout_povm.py"
+    equation: "at zero crosstalk the full record path and the product POVM agree in per-ion confusion within statistics and both keep the Bell state's bit correlations (P(equal) > 0.995 at Crain's 1.2e-3 per-shot error); at 4 % leakage the register form differs from the product form by 0.34 in one entry and the full path follows the register form"
+    corrected_form: "the readout error is applied once: the fast path replaces the record layer; the projective outcome is keyed by (sample, trajectory, shot, ion = 0, 'register_outcome') and the records by (.., ion, 'photon_record'), so two shots on one (sample, trajectory) draw different records"
+  - id: anchor.m5.budgets
+    symbol: "eps = (eps_B + eps_D)/2"
+    tag: verified
+    section: "9.5 row 'Budgets'; 8.4"
+    source: "Harty 2014 Table I; Christensen 2020 Table I; Egan 2021 (via PLAN.md 6.7); check_readout.py G"
+    equation: "Harty 1.8 + 1.8 + 1.7 + 1.5 = 6.8e-4 closes; Christensen 0.1 + 0.5 + 0.7 + 1.0 + 1.0 + 0.1 = 3.4e-4 against 2.9(6)e-4 with the decay row 1 - exp(-4.5 ms/30 s) = 1.5e-4 per |1> shot; Egan 0.71 %/0.22 % with the 0.55, 0.13 and 0.07 % line items; N_q < ln 2/eps = 2390 at 2.9e-4"
+    corrected_form: "Christensen prints the decay exponent with the wrong sign; the arXiv text of Egan carries 0.46(2) % for the single-qubit Z-basis SPAM error and not the 0.71/0.22 % split, which the plan quotes from the published supplement"
+  - id: anchor.m5.doppler_widths
+    symbol: "k v_rms/2 pi"
+    tag: recomputed here
+    section: "8.8 'Doppler broadening from residual motion'"
+    source: "check_readout.py I"
+    equation: "171Yb+ with modes at 3.0, 2.9 and 1.0 MHz all at nbar: 0.266, 0.421, 1.555, 3.443 MHz at nbar = 0.1, 1, 20, 100 against the plan's 0.257, 0.425, 1.57, 3.48 (unstated mode set) and the 19.72 MHz linewidth"
+    corrected_form: "the plan's four numbers do not follow sqrt(2 nbar + 1) exactly among themselves (ratios 1.65 and 13.5 against sqrt(3/1.2) = 1.58 and sqrt(201/1.2) = 12.9), so they were computed with different mode sets or occupations per row; the formula is the plan's and the conclusion (negligible until nbar ~ 100) stands"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

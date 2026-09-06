@@ -17,6 +17,7 @@ from qutip_trap.calibration.entangling import (
     gate_space,
     thermal_robustness,
 )
+from qutip_trap.calibration.readout import DetectionCalibration, calibrate_detection
 from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.composite import CompositePulse, composite_pulse
 from qutip_trap.control.hardware import HardwareChain
@@ -66,9 +67,28 @@ from qutip_trap.noise.decoupling import DecouplingSequence, decoupling_sequence,
 from qutip_trap.noise.model import NoiseModel
 from qutip_trap.noise.sampling import NoiseSample
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum
-from qutip_trap.readout.detection import Detector
-from qutip_trap.readout.discriminate import POVM
-from qutip_trap.readout.fluorescence import DarkStateReport
+from qutip_trap.readout.detection import CameraGeometry, Detector, PhotonRecord, RecordModel
+from qutip_trap.readout.discriminate import (
+    POVM,
+    AdaptiveML,
+    BudgetLine,
+    FirstPhoton,
+    ReadoutBudget,
+    ReadoutOutcome,
+    ThresholdDiscriminator,
+    TimeResolvedML,
+    measure,
+    optimize_threshold,
+    povm_for,
+)
+from qutip_trap.readout.fluorescence import (
+    DarkStateReport,
+    FluorescenceRates,
+    ReadoutScheme,
+    detection_rates_for_ion,
+    scattering_rate,
+)
+from qutip_trap.readout.presets import ApparatusPreset
 from qutip_trap.run.job import prepare, run
 from qutip_trap.run.levels import FidelityLevel, resolve_level
 from qutip_trap.run.results import Diagnostics, Result, RunState
@@ -98,6 +118,24 @@ from qutip_trap.units import Gauss, Hz, RadPerS, Tesla, hz_from_rad_s, rad_s_fro
 
 __all__ = [
     "POVM",
+    "AdaptiveML",
+    "ApparatusPreset",
+    "BudgetLine",
+    "CameraGeometry",
+    "FirstPhoton",
+    "FluorescenceRates",
+    "PhotonRecord",
+    "ReadoutBudget",
+    "ReadoutOutcome",
+    "ReadoutScheme",
+    "RecordModel",
+    "ThresholdDiscriminator",
+    "TimeResolvedML",
+    "detection_rates_for_ion",
+    "measure",
+    "optimize_threshold",
+    "povm_for",
+    "scattering_rate",
     "BlochModel",
     "DetectionRates",
     "ModeSpec",
@@ -184,6 +222,8 @@ __all__ = [
     "Zone",
     "available",
     "calibrate",
+    "calibrate_detection",
+    "DetectionCalibration",
     "calibrate_entangling_angle",
     "compile_to_native",
     "composite_pulse",

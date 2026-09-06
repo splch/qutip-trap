@@ -66,6 +66,43 @@ SOURCES: Final[dict[str, str]] = {
         "strontium ions, J. Phys. Chem. Ref. Data 41, 013102 (2012): A(D5/2) = 2.559(10) s^-1 and the 88Sr II "
         "clock frequency 444 779 044 095 484.6 Hz. PLAN.md 4.5.7."
     ),
+    "Myerson2008": (
+        "A. H. Myerson, D. J. Szwer, S. C. Webster, D. T. C. Allcock, M. J. Curtis, G. Imreh, J. A. Sherman, D. N. Stacey, "
+        "A. M. Steane, D. M. Lucas, High-fidelity readout of trapped-ion qubits, Phys. Rev. Lett. 100, 200502 (2008); "
+        "arXiv:0802.1684. PLAN.md 8.3, 8.4, 9.5 (R_B = 55800 s^-1, R_D = 442 s^-1, tau = 1168(7) ms, n_c = 5.5, "
+        "t_b = 420 us, Eqs. 1-2)."
+    ),
+    "Burrell2010": (
+        "A. H. Burrell, D. J. Szwer, S. C. Webster, D. M. Lucas, Scalable simultaneous multi-qubit readout with 99.99% "
+        "single-shot fidelity, Phys. Rev. A 81, 040302(R) (2010); arXiv:0906.3304. PLAN.md 8.3, 8.5, 9.5 (camera "
+        "likelihoods, 4.0 %/0.9 % PSF cross-talk at 14 um, 400 us exposures, NA 0.25)."
+    ),
+    "Acton2006": (
+        "M. Acton, K.-A. Brickman, P. C. Haljan, P. J. Lee, L. Deslauriers, C. Monroe, Near-perfect simultaneous "
+        "measurement of a qubit register, Quantum Inf. Comput. 6, 465 (2006); arXiv:quant-ph/0511257. PLAN.md 8.1, 8.2, "
+        "8.5, 8.8, 9.5 (Eqs. 5-13, 20-22; 111Cd+ gamma/2pi = 60 MHz, omega_HFP/2pi = 800 MHz)."
+    ),
+    "Noek2013": (
+        "R. Noek, G. Vrijsen, D. Gaultney, E. Mount, T. Kim, P. Maunz, J. Kim, High speed, high fidelity detection of an "
+        "atomic hyperfine qubit, Opt. Lett. 38, 4735 (2013); arXiv:1304.3511. PLAN.md 8.1-8.3, 9.5 (Eqs. 1-6; eps = 2.2 %, "
+        "99.85(1) % at 28.1 us, 99.915(7) % at 99.8 us)."
+    ),
+    "Crain2019": (
+        "S. Crain, C. Cahall, G. Vrijsen, E. E. Wollman, M. D. Shaw, V. B. Verma, S. W. Nam, J. Kim, High-speed "
+        "low-crosstalk detection of a 171Yb+ qubit using superconducting nanowire single photon detectors, Commun. Phys. 2, "
+        "97 (2019); arXiv:1902.04059. PLAN.md 8.1-8.5, 9.5 (Eqs. 1-8; 472(14) kcps, R_d = 341(13) Hz, R_b = 16.4(5) Hz, "
+        "R_bg = 4.2(1) cps, eps_sys = 4.356(6) %, 99.931(6) % at 11 us; alpha = 94 ms at 200 um, 814 ms at 370 um)."
+    ),
+    "Egan2021": (
+        "L. Egan et al., Fault-tolerant control of an error-corrected qubit, Nature 598, 281 (2021); arXiv:2009.11482. "
+        "PLAN.md 6.7, 8.4, 9.5: the single-ion SPAM budget 0.71(4) % / 0.22(2) % with its pumping and background line items "
+        "(quoted from the plan; the arXiv text carries 0.46(2) % for the Z-basis single-qubit SPAM error)."
+    ),
+    "Wineland1998": (
+        "D. J. Wineland, C. Monroe, W. M. Itano, D. Leibfried, B. E. King, D. M. Meekhof, Experimental issues in coherent "
+        "quantum-state manipulation of trapped atomic ions, J. Res. NIST 103, 259 (1998); arXiv:quant-ph/9710025. "
+        "PLAN.md 8.2, 8.5, 9.5 (P_N(0) = (1 - eta_d)^N; readout crosstalk as degraded discrimination)."
+    ),
     "Christensen2020": (
         "J. E. Christensen, D. Hucul, W. C. Campbell, E. R. Hudson, High-fidelity manipulation of a qubit "
         "enabled by a manufactured nucleus, npj Quantum Information 6, 35 (2020). PLAN.md 8.1, 8.4 (133Ba+ "

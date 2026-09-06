@@ -5,7 +5,7 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
-and state preparation) and M4 (two-ion entangling gates).** The
+and state preparation), M4 (two-ion entangling gates) and M5 (readout).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -100,9 +100,50 @@ surrogate 0.785 corrected in two checks to 0.785398 with Bell fidelity 0.99977),
 block Liouvillians, Choi's 11 and 21 segments for five ions with one and two transverse families, Leung's FM robustness and
 Blumel's stabilization, Baldwin's echo diag(1, i, i, 1), the 40Ca+ optical-qubit light-shift ZZ gate from first principles
 (fidelity above 0.99 after calibration), and the native MS(phi_0, phi_1, theta), partial angles, virtual-Z frames and the
-IonQ JSON path through `schedule`. Readout (M5) is not simulated yet; `run.prepare` waits for M6, where the Device carries the
+IonQ JSON path through `schedule`. `run.prepare` waits for M6, where the Device carries the
 preparation recipe; the microwave-gradient drive of Section 4.4.5 exists as closed forms (Srinivas's J_2 factor and the
 IDD ratio 0.6012) but not as a device-level drive.
+
+M5 adds the readout of Section 8 in the four layers the plan keeps separate (`readout/`). The atomic-rate layer
+(`fluorescence.py`) consumes the M3a scattering-rate object: `scattering_rate` builds the multi-level Bloch model of the
+device's detection beams, takes the bright manifold from what the beams drive resonantly and the dark manifold from the
+remaining sublevels, and reads R_o (the photon rate of the conditional bright state), R_d and R_b from the slow-manifold
+analysis with the equal-population ceiling asserted; bright/dark polarity is a property of the `ReadoutScheme`, whose
+shelving transfer is a start distribution per level (Pi_dark is not rank one); epsilon_sys enters once. The closed forms of
+the sources (the (Gamma/18, 2/9) form, Noek's and Crain's saturation parameters, Acton's lambda_0, alpha_1, alpha_2 and
+angular factors, the 4/9 clock-state ceiling, the corrected I_sat and neighbour-intensity ratio, the efficiency chain,
+micromotion J_0^2/J_1^2 factors, Doppler widths, shelf decay and branching) are oracles, and published operating points are
+`presets.py` apparatus data, never species constants. The record layer (`detection.py`) is the bright/dark/shelf
+continuous-time Markov chain: its exact count distribution over a window is one matrix exponential of the augmented
+generator (any number of jumps), the fast path samples the chain exactly with Poisson counts at the piecewise rates (sub-bins,
+arrival times, dead time and afterpulsing on request), the trajectory path runs `mcsolve` on the class space with a
+photon-counting collapse operator, neighbour crosstalk adds a bright neighbour's leaked light to its neighbours' records, and
+a camera model integrates an Airy or Gaussian point-spread function over a pixel grid. The discriminator layer
+(`discriminate.py`) has thresholding with the interior optimum over (n_c, t_b), Myerson's time-resolved maximum likelihood
+(the O(N) recursion in the log domain, plus the exact hidden-Markov forward likelihood), adaptive early termination, Noek's
+two-photon and Crain's first-photon protocols, and Burrell's camera decoders (brightness-ordered pixel likelihoods,
+neighbour-conditioned iterated conditional modes, the register error estimate sum e^-R_k). The POVM of Section 5.7 is the
+product form at zero crosstalk and a register-wide confusion factored by neighbour range otherwise (dense to N = 12);
+`measure` samples the joint internal outcome projectively and then either generates every ion's record (full path) or applies
+the POVM (fast path), never both, with seeds keyed per (sample, trajectory, shot, ion, channel). `calibration/readout.py`
+is Section 7.5 item 5 (histograms, the mean-count fit over long windows, the threshold and window choice) and
+`experiments.detection_histogram` runs it on a device. Acceptance tests (`tests/test_readout_rates.py`,
+`test_photon_records.py`, `test_discriminators.py`, `test_readout_povm.py`, `test_readout_budgets.py`;
+`validation/scripts/check_readout.py`): the Bloch rates within 0.6 % of the closed forms with R_b/R_d = 3/49, Acton's
+M_1 = 2/9 .. 12/49 and 99.9375 %, 1.669 mW/cm^2 and 1.09e-4, Crain's Eq. 1 normalization and the 6.3e-3 against 7.2e-4 bright
+error, the zero-threshold optimum 5.84e-4 near 22 us, the exact chain against the single-jump forms to 1e-13 and against
+Acton's mixtures to 1e-15, Myerson's recursion to 1e-14 with the ideal-Poisson optimum 1.24e-4 at (3.5, 320 us) and 1.37e-4
+at his (5.5, 420 us) against the measured 1.8(1)e-4, the ML asymptote and the adaptive times, Burrell's eps_D floor
+t_exp/(2 tau) = 1.7e-4 and the PSF leakage, the product POVM against the full path at zero crosstalk with the Bell state's
+correlations surviving both and the 0.34 discrepancy at 4 % leakage, Harty's 6.8e-4 and Christensen's 3.4e-4 budgets, the
+Gaussian spectator dephasing as a quasi-static offset, and the calibration recovering (eps R_o, R_d, R_b).
+
+Plan inconsistencies surfaced by M5 (ledger `anchor.m5.*`): the Section 9.5 CPT row's "s_o = 0.815" is Noek's s (s_o = 2.45)
+for R_o = 0.0880 Gamma; Myerson's measured optimum (5.5, 420 us, 1.8e-4) sits above the ideal-Poisson one because his PMT dark
+counts are non-Poissonian; Burrell's 0.9 % next-nearest leakage is a PSF wing neither an Airy pattern nor a Gaussian gives;
+Crain's 11 us is the average detection time of the first-photon protocol, not the window; the plan's four Doppler widths do
+not share one mode set; the mean-count calibration fit is degenerate at bin-time windows and needs Noek's tens of
+milliseconds; and the arXiv text of Egan carries 0.46 % for the single-qubit SPAM error rather than the 0.71 %/0.22 % split.
 
 Plan inconsistencies surfaced by M4 (recorded in the ledger as `conv.motion_phase_default` and `anchor.m4.*`): Section
 4.4.3's sine beat-note convention (tone phases differing by pi, force zero at t = 0) is a convention for the closed forms only:

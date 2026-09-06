@@ -128,3 +128,12 @@ Added on 2026-09-05 by milestone M4:
   Choi's five-ion closure at 11 and 21 segments, Baldwin's echo and the Debye-Waller law with its three thermal references.
   Runs the package (`uv run python validation/scripts/check_two_qubit.py`, under a minute); the fixtures live in
   `tests/m4_fixtures.py` and `tests/test_two_qubit_gates.py`.
+- `check_readout.py` (M5, 2026-09-05): readout, SPAM and results (Sections 8.1-8.5, 8.8, 9.5): the 171Yb+ rate object from
+  the exact Bloch solve against the (Gamma/18, 2/9) form and Noek's prefactors, the two saturation parameters (Noek's s = 0.815
+  is s_o = 2.45), Acton's angular factors, the 111Cd+ 99.9375 % ceiling, the corrected I_sat and neighbour ratio, the
+  Poisson-exponential mixtures against the single-jump quadrature, Crain's Eq. 1 normalization and corrected Eq. 3, the
+  zero-threshold optimum 5.84e-4 at 21.5 us, Myerson's ideal-Poisson optimum (3.5, 320 us) and his (5.5, 420 us) point, the
+  recursion against brute force, Burrell's eps_D floor and PSF leakage, the POVM fast path against the full record path, the
+  budgets, the Gaussian spectator dephasing and the Doppler widths. Runs the package (`uv run python
+  validation/scripts/check_readout.py`, about a minute); lines prefixed `MC:` are Monte Carlo results that the runner records
+  but does not compare (their last digits depend on the platform's libm).

@@ -1,0 +1,83 @@
+
+==============================================================================
+A. 171Yb+ rate object: exact Bloch solve against the closed forms (Sections 8.1, 8.8)
+==============================================================================
+s_o = 0.1, B = 1.0 G: R_o/closed = 0.9948, R_o/Gamma = 0.00541 (ceiling 0.25), R_d/Noek = 1.0053, R_b/Noek = 1.0050, R_b/R_d = 0.0611
+s_o = 2.45, B = 4.7 G: R_o/closed = 0.9969, R_o/Gamma = 0.08785 (ceiling 0.25), R_d/Noek = 1.0241, R_b/Noek = 1.0050, R_b/R_d = 0.0600
+3 (Delta_HFP/(Delta_HFP + Delta_HFS))^2 = 0.06112; 3/49 = 0.06122; measured 16.4/341 = 0.0481
+Noek's s = 0.815 (s_o = 2.445): R_o = 0.0880 Gamma -> x 4.356 % = 472.7 kcps (Crain 472); read as s_o = 0.815: 0.0383 Gamma
+saturation: R_o(s_o -> inf)/Gamma = 0.250000, half maximum at s_o = 4.5: 0.125000
+
+==============================================================================
+B. Acton 2006: angular factors, the 111Cd+ ceiling, I_sat, the neighbour ratio and the mixtures (Sections 8.1, 8.5, 8.8)
+==============================================================================
+I = 0.5: M1 = 0.222222, M2pi = 0.111111, M2- = 0.111111
+I = 1.0: M1 = 0.246914, M2pi = 0.148148, M2- = 0.065844
+I = 1.5: M1 = 0.250000, M2pi = 0.166667, M2- = 0.041667
+I = 2.0: M1 = 0.248889, M2pi = 0.177778, M2- = 0.028444
+I = 2.5: M1 = 0.246914, M2pi = 0.185185, M2- = 0.020576
+I = 3.0: M1 = 0.244898, M2pi = 0.190476, M2- = 0.015549
+111Cd+ F_max = 1 - (4/9)(gamma/2 omega_HFP)^2 = 99.9375 %
+87Rb D2 I_sat = 1.6693 mW/cm^2; 171Yb+ 369.5 nm (partial rate) = 50.830
+Cd+ I_ion/I_sat at 4 um = 1.093e-04 (x 2 pi = printed 6.87e-04); NA 0.6 collects 10.0 %
+mixtures normalize: 1 - sum = 0.0e+00 (dark), 6.7e-16 (bright); max |mixture - quadrature| = 3.3e-16, 1.2e-15
+Wineland P_N(0): (1 - 1e-3)^1e4 = 4.5173e-05 vs e^-10 = 4.5400e-05; e^-100 = 3.7201e-44
+
+==============================================================================
+C. Crain 2019: Eq. 1 normalization, Eq. 3 corrected, the zero-threshold optimum (Sections 8.2, 9.5)
+==============================================================================
+Eq. 1 at 20 us: with the no-jump branch sums to 1.0000000000; as printed 0.006797 = 1 - e^(-R_d t) = 0.006797
+Eq. 3 at 11 us: eps_B = 6.258e-03 corrected against 7.179e-04 printed (ratio 8.72); eps_D = 1.920e-04
+zero-threshold optimum: eps = 5.8439e-04 at t = 21.5 us (measured 6.9e-4 at 11 us average); zero background 5.3929e-04 at 21.5 us (Crain's limit 5.9e-4)
+exact chain at 22 us: P(0|bright) = 7.52326e-04 (closed 7.52537e-04), P(>0|dark) = 4.18157e-04 (closed 4.18367e-04); mean counts 10.3452
+MC: stop-on-first-photon Monte Carlo (2 x 20000): eps_B = 9.5e-04, eps_D = 3.0e-04, average detection time 12.1 us (Crain 11 us)
+
+==============================================================================
+D. Myerson 2008: the 40Ca+ threshold optimum, the recursion, time-resolved and adaptive ML (Sections 8.3, 9.5)
+==============================================================================
+R_B = 55800 s^-1, R_D = 442 s^-1, shelf decay 0.85616 s^-1
+ideal-Poisson optimum: eps = 1.2362e-04 at n_c = 3.5, t_b = 320 us (eps_B 1.76e-05, eps_D 2.296e-04)
+at Myerson's (5.5, 420 us): eps_B = 4.230e-06, eps_D = 2.7039e-04, eps = 1.3731e-04 (measured 1.8(1)e-4, about 20 % of eps_D from cosmic rays)
+recursion vs brute force on a 42-sub-bin record: |d ln p_B| = 3.6e-15, |d ln p_D| = 8.3e-17
+MC: time-resolved ML at t_b = 1 ms (2 x 20000): eps_B = 5.0e-05, eps_D = 1.0e-04 (Myerson eps_D = 1.5(2)e-4, asymptote 0.87(11)e-4)
+MC: adaptive (cutoff 1e-4, worst case 500 us): average time bright 60 us, dark 177 us (Myerson 72 / 219 us, 145 us average)
+MC: mcsolve trajectory path, 300 bright records at 420 us: mean counts 24.0 (chain 23.62)
+
+==============================================================================
+E. Burrell 2010: the eps_D floor, PSF leakage, the neighbour-conditioned decode (Sections 8.3, 8.5)
+==============================================================================
+detected rate 2e+05 s^-1: eps_D at the midpoint threshold = 1.6694e-04 vs t_exp/(2 tau) = 1.7123e-04
+detected rate 1e+06 s^-1: eps_D at the midpoint threshold = 1.7036e-04 vs t_exp/(2 tau) = 1.7123e-04
+detected rate 4e+06 s^-1: eps_D at the midpoint threshold = 1.7100e-04 vs t_exp/(2 tau) = 1.7123e-04
+Airy NA 0.25 at 397 nm, ROI 23 px (one 14 um spacing): nearest 0.202 %, next-nearest 0.020 %; ROI 28 px nearest 0.247 %
+Gaussian sigma 4.1 um, same ROI: nearest 3.90 % (Burrell 4.0), next-nearest 0.0000 % (Burrell 0.9: the aberrated wing a Gaussian lacks)
+MC: neighbour-conditioned decode of (bright, dark, dark, bright): (True, False, False, True), register error estimate sum e^-R_k = 2.2e-42, 2 ICM iterations
+
+==============================================================================
+F. The POVM fast path against the full record path (Section 5.7)
+==============================================================================
+product POVM per ion: P(read 0 | level 1) = 7.5233e-04, P(read 1 | level 0) = 4.1816e-04
+MC: full path, 6000 Bell shots: P(bits equal) = 0.9978, P00 = 0.503, empirical errors 2.0e-03 / 6.6e-04
+MC: fast path, 6000 Bell shots: P(bits equal) = 0.9983, P00 = 0.504, empirical errors 2.0e-03 / 0.0e+00
+4 % leakage: P(dark ion beside a bright one reads bright) = 0.3399 (product form 4.2e-04); max |register - product| = 0.3395
+
+==============================================================================
+G. Budgets (Section 8.4)
+==============================================================================
+Harty total 6.80e-04 (measured 6.8(5)e-4); Christensen total 3.40e-04 (measured 2.9(6)e-4), decay row 1 - exp(-4.5 ms/30 s) = 1.500e-04; usable register at 2.9e-4: 2390 qubits
+Egan: eps_B = 0.0071, eps_D = 0.0022, mean 0.00465, worst case 0.0071
+
+==============================================================================
+H. Spectator dephasing during a neighbour's readout (Section 8.5)
+==============================================================================
+d = 200 um: alpha = 94 ms, quasi-static offset sigma = sqrt(2)/alpha = 2.394 Hz
+d = 300 um: alpha = 390 ms, quasi-static offset sigma = sqrt(2)/alpha = 0.577 Hz
+d = 370 um: alpha = 814 ms, quasi-static offset sigma = sqrt(2)/alpha = 0.277 Hz
+
+==============================================================================
+I. Doppler widths of the 171Yb+ detection line from the modes the beam projects onto (Section 8.8)
+==============================================================================
+nbar = 0.1: v_rms = 0.0983 m/s, k v/2 pi = 0.266 MHz (plan: 0.257, 0.425, 1.57, 3.48 with an unstated mode set) against Gamma/2 pi = 19.72 MHz
+nbar = 1.0: v_rms = 0.1554 m/s, k v/2 pi = 0.421 MHz (plan: 0.257, 0.425, 1.57, 3.48 with an unstated mode set) against Gamma/2 pi = 19.72 MHz
+nbar = 20.0: v_rms = 0.5746 m/s, k v/2 pi = 1.555 MHz (plan: 0.257, 0.425, 1.57, 3.48 with an unstated mode set) against Gamma/2 pi = 19.72 MHz
+nbar = 100.0: v_rms = 1.2723 m/s, k v/2 pi = 3.443 MHz (plan: 0.257, 0.425, 1.57, 3.48 with an unstated mode set) against Gamma/2 pi = 19.72 MHz

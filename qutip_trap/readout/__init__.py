@@ -1,9 +1,110 @@
-"""Readout, SPAM and results (PLAN.md Section 8; milestone M5)."""
+"""Readout, SPAM and results (PLAN.md Section 8; milestone M5).
+
+Four layers the code keeps separate (Section 8): the atomic-rate layer (:mod:`fluorescence`: R_o, R_d, R_b from the M3a
+Bloch model, the detected rate with epsilon_sys applied once, shelving), the photon-record layer (:mod:`detection`: the
+bright/dark/shelf chain, exact count statistics, sampled and quantum-jump records, camera images, neighbour crosstalk), the
+discriminator layer (:mod:`discriminate`: threshold, time-resolved and adaptive maximum likelihood, first-photon protocols,
+camera decoders) and the error-budget layer with the POVM summary (:mod:`discriminate`: :class:`POVM`, :class:`ReadoutBudget`,
+:func:`measure`). :mod:`presets` carries the published apparatus operating points as validation anchors.
+"""
 
 from __future__ import annotations
 
-from qutip_trap.readout.detection import Detector
-from qutip_trap.readout.discriminate import POVM
-from qutip_trap.readout.fluorescence import DarkStateReport
+from qutip_trap.readout.detection import (
+    CameraGeometry,
+    ClassPath,
+    CountDistribution,
+    Detector,
+    PhotonRecord,
+    RecordModel,
+    acton_bright_distribution,
+    acton_dark_distribution,
+    mcsolve_records,
+    sample_camera_image,
+    sample_register_records,
+    single_jump_count_distribution,
+    zero_photon_probability,
+    zero_threshold_errors,
+)
+from qutip_trap.readout.discriminate import (
+    POVM,
+    AdaptiveML,
+    BudgetLine,
+    CameraDecode,
+    Decision,
+    Discriminator,
+    FirstPhoton,
+    ReadoutBudget,
+    ReadoutOutcome,
+    RegisterConfusion,
+    ThresholdDiscriminator,
+    ThresholdOptimum,
+    TimeResolvedML,
+    decode_camera_image,
+    measure,
+    optimize_threshold,
+    povm_for,
+    product_povm,
+    register_confusion,
+)
+from qutip_trap.readout.fluorescence import (
+    DarkStateReport,
+    FluorescenceRates,
+    ReadoutClass,
+    ReadoutScheme,
+    ShelvingBranching,
+    detection_rates_for_ion,
+    rates_from_bloch,
+    rates_from_detected,
+    saturation_ceiling,
+    scattering_rate,
+)
+from qutip_trap.readout.presets import PRESETS, ApparatusPreset
 
-__all__ = ["POVM", "DarkStateReport", "Detector"]
+__all__ = [
+    "POVM",
+    "PRESETS",
+    "AdaptiveML",
+    "ApparatusPreset",
+    "BudgetLine",
+    "CameraDecode",
+    "CameraGeometry",
+    "ClassPath",
+    "CountDistribution",
+    "DarkStateReport",
+    "Decision",
+    "Detector",
+    "Discriminator",
+    "FirstPhoton",
+    "FluorescenceRates",
+    "PhotonRecord",
+    "ReadoutBudget",
+    "ReadoutClass",
+    "ReadoutOutcome",
+    "ReadoutScheme",
+    "RecordModel",
+    "RegisterConfusion",
+    "ShelvingBranching",
+    "ThresholdDiscriminator",
+    "ThresholdOptimum",
+    "TimeResolvedML",
+    "acton_bright_distribution",
+    "acton_dark_distribution",
+    "decode_camera_image",
+    "detection_rates_for_ion",
+    "mcsolve_records",
+    "measure",
+    "optimize_threshold",
+    "povm_for",
+    "product_povm",
+    "rates_from_bloch",
+    "rates_from_detected",
+    "register_confusion",
+    "sample_camera_image",
+    "sample_register_records",
+    "saturation_ceiling",
+    "scattering_rate",
+    "single_jump_count_distribution",
+    "zero_photon_probability",
+    "zero_threshold_errors",
+]
