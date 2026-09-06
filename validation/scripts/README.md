@@ -117,3 +117,14 @@ Added on 2026-09-05 by milestone M3:
   layer built through the M3a builder, and the 171Yb+ optical pump with its recoil heating. Runs the package
   (`uv run python validation/scripts/check_cooling.py`, two to three minutes); the fixtures live in `tests/bloch_fixtures.py`
   and `tests/atomic_fixtures.py`.
+
+Added on 2026-09-05 by milestone M4:
+
+- `check_two_qubit.py`: the two-qubit entangling gates through the package (Sections 4.4.1, 4.4.3, 4.4.4, 4.4.7, 6.2, 9.4,
+  9.16, 9.17): the check_ms_closure.py anchors through `Waveform.symmetric` and the builder with equal tone phases and in
+  Choi's sine beat-note convention (the carrier's mean frame rotation tilts the spin axis by 2 Omega/mu, Roos 2008), the
+  two-mode 171Yb+ gate (the symmetric pulse's open spectator loop against sum |alpha|^2, the five-segment AM closure, the
+  surrogate chi against the exact one and the exact spot-check calibration), Ballance's alpha_K from block Liouvillians,
+  Choi's five-ion closure at 11 and 21 segments, Baldwin's echo and the Debye-Waller law with its three thermal references.
+  Runs the package (`uv run python validation/scripts/check_two_qubit.py`, under a minute); the fixtures live in
+  `tests/m4_fixtures.py` and `tests/test_two_qubit_gates.py`.

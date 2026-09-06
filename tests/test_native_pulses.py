@@ -91,7 +91,7 @@ def test_scheduler_refusals_and_drive_inference() -> None:
     with pytest.raises(ScheduleError, match="uncalibrated"):
         schedule(circ, dev, table_with_rabi({(0, MICROWAVE_BEAM_KEY): RABI_HZ}, status="uncalibrated"))
     table = table_with_rabi({(0, MICROWAVE_BEAM_KEY): RABI_HZ, (1, MICROWAVE_BEAM_KEY): RABI_HZ})
-    with pytest.raises(NotImplementedError, match="M4"):
+    with pytest.raises(ScheduleError, match="no entangling waveform"):
         schedule(Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1)), dev, table)
     with pytest.raises(NotImplementedError, match="M6"):
         schedule(

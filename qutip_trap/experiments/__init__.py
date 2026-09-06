@@ -1,5 +1,11 @@
 """User-facing simulated experiments built on the PulseEngine protocol (PLAN.md Sections 7.5, 7.9; M2 for the single-ion
-Rabi, Ramsey and sideband scans, M8 for the rest).
+Rabi, Ramsey and sideband scans, M4 for the entangling-gate amplitude scan and the parity scan, M8 for the rest).
+
+M4 (Section 7.5 item 4, Section 7.9): ``ms_scan`` plays the pair's waveform at scaled amplitudes and detuning offsets and
+records P_00, P_01 + P_10, P_11 from |00>, fitting the closure amplitude at which P_00 = P_11 (chi = pi/4 has P_11 = sin^2 chi
+= 1/2 with maximal slope); ``parity_scan`` follows the gate with a pi/2 analysis pulse of scanned phase on both ions and fits
+the parity oscillation Pi(phi) = C cos(2 phi + phi_0) + B, whose contrast C bounds the Bell fidelity F = (P_00 + P_11 + C)/2
+(Wright 2019).
 
 Each returns data plus the fitted parameters with uncertainties; ``calibration/`` uses them. The M2 experiments drive one
 ion of the device through the JOINT_EXACT engine with the derived drive of ``light/`` (Raman or single-photon optical
@@ -348,6 +354,34 @@ def micromotion_scan(
     raise NotImplementedError(f"micromotion_scan is {M8}")
 
 
+def _entangling_setup(
+    device: Device, pair: tuple[int, int], kw: dict[str, Any]
+) -> tuple[Any, dict[int, Any], Any, Any, Any]:
+    """(waveform, gate drives, table, modes, space) for the pair from the keyword arguments or the device's defaults."""
+    from qutip_trap.calibration.entangling import gate_space
+    from qutip_trap.control.schedule import default_gate_drives
+    from qutip_trap.control.shaping import gate_modes
+
+    table = kw.get("table")
+    waveform = kw.get("waveform") or (table.waveform_for(pair) if table is not None else None)
+    if waveform is None:
+        raise ValueError(
+            "ms_scan/parity_scan need the pair's waveform (kw waveform=, or a table with an ms entry)"
+        )
+    drives: dict[int, Any] = kw.get("gate_drives") or default_gate_drives(device)
+    beams = drives[pair[0]].beams
+    if len(beams) != 2:
+        raise ValueError("the entangling experiments take a Raman (two-beam) gate drive")
+    nbar: dict[int, float] = {int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()}
+    modes = kw.get("modes") or gate_modes(device, pair, (beams[0], beams[1]), nbar=nbar)
+    space = kw.get("space") or gate_space(modes, device.crystal.n_ions, nbar=nbar, waveform=waveform)
+    if table is None:
+        raise ValueError(
+            "the entangling experiments read the CalibrationTable (Stark and Rabi entries): pass table="
+        )
+    return waveform, drives, table, modes, space
+
+
 def ms_scan(
     device: Device,
     pair: tuple[int, int],
@@ -355,13 +389,141 @@ def ms_scan(
     detunings_hz: Sequence[float],
     **kw: Any,
 ) -> ExperimentResult:
-    raise NotImplementedError(f"ms_scan is {M8}")
+    """Populations after the pair's waveform at amplitude scale factors ``amplitudes`` and detuning offsets ``detunings_hz`` (added to
+    every leg's beat note, red legs moving opposite so the tones stay symmetric); data columns (scale, offset_hz, P00, P01 + P10, P11);
+    fitted: the closure scale where P_00 = P_11 at the smallest |offset| (the chi = pi/4 amplitude, Section 7.5 item 4)."""
+    from qutip_trap.calibration.entangling import exact_gate_check
+    from qutip_trap.control.shaping import scaled
+
+    waveform, drives, table, _modes, space = _entangling_setup(device, pair, kw)
+    rows = []
+    for off in sorted(float(x) for x in detunings_hz):
+        wf_off = _shift_detuning(waveform, off)
+        for s in sorted(float(x) for x in amplitudes):
+            if s <= 0.0:
+                raise ValueError("amplitude scale factors are positive")
+            check, _ = exact_gate_check(
+                device,
+                scaled(wf_off, s),
+                pair,
+                drives,
+                table,
+                space=space,
+                nbar={int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()},
+                options=kw.get("options"),
+                builder_options=kw.get("builder_options"),
+            )
+            rows.append((s, off, check.populations["P00"], check.leakage, check.populations["P11"]))
+    data = np.array(rows)
+    fitted: dict[str, tuple[float, float]] = {}
+    offs = np.unique(data[:, 1])
+    off0 = float(offs[np.argmin(np.abs(offs))])
+    sel = data[:, 1] == off0
+    sc, p00, p11 = data[sel, 0], data[sel, 2], data[sel, 4]
+    diff = p00 - p11
+    crossings = np.flatnonzero(np.diff(np.sign(diff)) != 0)
+    if crossings.size:
+        i = int(crossings[0])
+        x0, x1, y0, y1 = sc[i], sc[i + 1], diff[i], diff[i + 1]
+        root = float(x0 - y0 * (x1 - x0) / (y1 - y0)) if y1 != y0 else float(x0)
+        fitted["closure_scale"] = (root, float(abs(x1 - x0)))
+    return ExperimentResult(
+        data=data, fitted=fitted, model="ms_population_scan", provenance_id="conv.ms_closure"
+    )
+
+
+def _shift_detuning(waveform: Any, offset_hz: float) -> Any:
+    """Every blue leg + offset, every red leg - offset (the symmetric detuning scan of Section 7.5)."""
+    from dataclasses import replace
+
+    from qutip_trap.control.table import Segment
+
+    if offset_hz == 0.0 or waveform.segments is None:
+        return waveform
+
+    def shift(v: Any, sign: float) -> Any:
+        if callable(v):
+            fn = v
+            return lambda tau: float(fn(tau)) + sign * offset_hz
+        return float(v) + sign * offset_hz
+
+    segs = tuple(
+        Segment(
+            s.duration_s,
+            dict(s.amplitude_hz),
+            dict(s.phase_rad),
+            {leg: shift(v, 1.0 if leg == "blue" else -1.0) for leg, v in s.detuning_hz.items()},
+        )
+        for s in waveform.segments
+    )
+    return replace(waveform, segments=segs)
 
 
 def parity_scan(
     device: Device, pair: tuple[int, int], analysis_phases_rad: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    raise NotImplementedError(f"parity_scan is {M8}")
+    """Parity after the gate and a pi/2 analysis pulse of phase phi on both ions (Section 7.9); data columns (phi, parity, P00, P11);
+    fitted: contrast C, phase phi_0 and offset of Pi(phi) = C cos(2 phi + phi_0) + B, and the Bell-fidelity bound (P_00 + P_11 + C)/2
+    with the populations read without the analysis pulse."""
+    from qutip_trap.calibration.entangling import exact_gate_check, parity_after_analysis_pulse
+    from qutip_trap.control.schedule import carrier_rabi_hz
+
+    waveform, drives, table, _modes, space = _entangling_setup(device, pair, kw)
+    rabi = kw.get("analysis_rabi_hz")
+    if rabi is None:
+        rabi = {q: carrier_rabi_hz(table, q, drives[q]) for q in pair}
+    nbar = {int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()}
+    rows = []
+    for phi in sorted(float(x) for x in analysis_phases_rad):
+        par, pops = parity_after_analysis_pulse(
+            device,
+            waveform,
+            pair,
+            drives,
+            table,
+            space=space,
+            analysis_phase_rad=phi,
+            analysis_rabi_hz=rabi,
+            nbar=nbar,
+            options=kw.get("options"),
+            builder_options=kw.get("builder_options"),
+        )
+        rows.append((phi, par, pops["P00"], pops["P11"]))
+    data = np.array(rows)
+    fitted: dict[str, tuple[float, float]] = {}
+    if data.shape[0] >= 4:
+        phis, parity = data[:, 0], data[:, 1]
+
+        def model(p: np.ndarray, x: np.ndarray) -> np.ndarray:
+            return np.asarray(p[0] * np.cos(2.0 * x + p[1]) + p[2])
+
+        x, err = _fit(
+            model, [float(np.max(parity) - np.min(parity)) / 2.0, 0.0, float(np.mean(parity))], phis, parity
+        )
+        contrast = abs(float(x[0]))
+        fitted = {
+            "contrast": (contrast, float(err[0])),
+            "phi0_rad": (float(x[1]) + (math.pi if x[0] < 0 else 0.0), float(err[1])),
+            "offset": (float(x[2]), float(err[2])),
+        }
+        base, _ = exact_gate_check(
+            device,
+            waveform,
+            pair,
+            drives,
+            table,
+            space=space,
+            nbar=nbar,
+            options=kw.get("options"),
+            builder_options=kw.get("builder_options"),
+        )
+        fitted["bell_fidelity_bound"] = (
+            0.5 * (base.populations["P00"] + base.populations["P11"] + contrast),
+            float(err[0]) / 2.0,
+        )
+    return ExperimentResult(
+        data=data, fitted=fitted, model="parity_oscillation", provenance_id="conv.entangling_angle"
+    )
 
 
 def heating_rate(device: Device, mode: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:

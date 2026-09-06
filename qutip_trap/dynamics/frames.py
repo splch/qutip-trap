@@ -96,12 +96,14 @@ def interaction_picture(
     *,
     k_max: int | None = None,
     matrices: Mapping[int, np.ndarray] | None = None,
+    ion_op: qt.Qobj | None = None,
 ) -> InteractionPicture:
     """Decompose sigma_+^ion (x) prod_m D_m(i eta_m) over the RESOLVED modes into sideband operators A_k.
 
     ``matrices`` may supply the per-mode single-mode matrices (default: the space's expm displacement); a mode with
     eta = 0 contributes only k = 0 (the identity). The ENR group is not supported in this picture (Section 5.1.1: an
-    ENR displacement cannot be applied mode by mode).
+    ENR displacement cannot be applied mode by mode). ``ion_op`` (embedded in the joint space) replaces sigma_+^ion,
+    for the level projectors of a light-shift drive (Section 4.4.4).
     """
     if space.enr_group is not None and any(space.mode_class(m) == "enr" for m in etas if etas[m] != 0.0):
         raise NotImplementedError("the interaction picture is defined on product spaces only (Section 5.1.1)")
@@ -124,7 +126,7 @@ def interaction_picture(
         norms.append({k: float(np.linalg.norm(v, 2)) for k, v in parts.items()})
     kept: list[SidebandTerm] = []
     dropped = 0.0
-    sp = space.sigma_plus(ion)
+    sp = space.sigma_plus(ion) if ion_op is None else ion_op
     for combo in itertools.product(*[sorted(p) for p in per_mode]):
         weight = math.prod(norms[i][k] for i, k in enumerate(combo)) if combo else 1.0
         if k_max is not None and any(abs(k) > k_max for k in combo):

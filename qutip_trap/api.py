@@ -9,11 +9,27 @@ later milestone raise ``NotImplementedError`` naming that milestone.
 from __future__ import annotations
 
 from qutip_trap.calibration import calibrate
+from qutip_trap.calibration.entangling import (
+    CalibrationRun,
+    GateCheck,
+    calibrate_entangling_angle,
+    exact_gate_check,
+    gate_space,
+    thermal_robustness,
+)
 from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.composite import CompositePulse, composite_pulse
 from qutip_trap.control.hardware import HardwareChain
-from qutip_trap.control.pulses import Drive, Pulse, Tone
-from qutip_trap.control.schedule import Schedule, ScheduledEvent, schedule
+from qutip_trap.control.pulses import Drive, LightShiftCouplings, Pulse, Tone
+from qutip_trap.control.schedule import GateDrive, Schedule, ScheduledEvent, schedule
+from qutip_trap.control.shaping import (
+    GateModes,
+    ShapedPulse,
+    gate_modes,
+    solve_amplitude_modulation,
+    solve_fourier_amplitude_modulation,
+    solve_frequency_modulation,
+)
 from qutip_trap.control.table import CalEntry, CalibrationTable, Segment, Waveform
 from qutip_trap.device.model import DerivedQuantities, Device, Field
 from qutip_trap.dynamics.channels import CollapseOp
@@ -45,6 +61,7 @@ from qutip_trap.io.openqasm import load_openqasm2
 from qutip_trap.light.beams import Beam, PolarizationModulation, PolGradientBeams
 from qutip_trap.light.bloch import BlochModel, DetectionRates, SteadyStateReport
 from qutip_trap.light.comb import CombSpec
+from qutip_trap.light.raman import derive_light_shift_drive, derive_raman_drive
 from qutip_trap.noise.decoupling import DecouplingSequence, decoupling_sequence, filter_function
 from qutip_trap.noise.model import NoiseModel
 from qutip_trap.noise.sampling import NoiseSample
@@ -92,6 +109,7 @@ __all__ = [
     "Beam",
     "CachedOperators",
     "CalEntry",
+    "CalibrationRun",
     "CalibrationTable",
     "ChannelSummary",
     "ClockPoint",
@@ -115,12 +133,16 @@ __all__ = [
     "FidelityLevel",
     "Field",
     "FilterStage",
+    "GateCheck",
+    "GateDrive",
+    "GateModes",
     "Gauss",
     "HardwareChain",
     "HilbertSpace",
     "Hz",
     "IncompleteSpeciesTable",
     "Level",
+    "LightShiftCouplings",
     "Mains",
     "MathieuParameters",
     "MetastableChannels",
@@ -144,6 +166,7 @@ __all__ = [
     "ScheduledEvent",
     "SeedSpec",
     "Segment",
+    "ShapedPulse",
     "SolverOptions",
     "Species",
     "State",
@@ -161,13 +184,19 @@ __all__ = [
     "Zone",
     "available",
     "calibrate",
+    "calibrate_entangling_angle",
     "compile_to_native",
     "composite_pulse",
     "decoupling_sequence",
+    "derive_light_shift_drive",
+    "derive_raman_drive",
     "design_waveform",
     "detection_histogram",
+    "exact_gate_check",
     "dump_ionq_json",
     "filter_function",
+    "gate_modes",
+    "gate_space",
     "heating_rate",
     "hz_from_rad_s",
     "load_ionq_json",
@@ -184,8 +213,12 @@ __all__ = [
     "run",
     "schedule",
     "sideband_spectroscopy",
+    "solve_amplitude_modulation",
     "solve_crystal",
+    "solve_fourier_amplitude_modulation",
+    "solve_frequency_modulation",
     "species_by_name",
     "split_feasible",
+    "thermal_robustness",
     "transport_budget",
 ]

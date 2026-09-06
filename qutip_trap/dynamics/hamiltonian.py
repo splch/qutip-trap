@@ -14,6 +14,12 @@ Section 5.1, every term switchable and every switch recorded in ``BuiltHamiltoni
   or by e^{i beta cos(Omega_rf t + delta)} (rf-locked, ``micromotion="modulated"``), by the frozen spectators'
   e^{-eta^2/2} L_n(eta^2) for the shot's Fock states n, and by the sample's Rabi scale. C0 is already inside every eta
   that Crystal.lamb_dicke delivers and is never reapplied here (Section 4.1.1).
+- A ``light_shift`` drive (Section 4.4.4, M4) replaces sigma_+^i by the level-weighted projector w_dn P_0 + w_up P_1
+  with (w_dn, w_up) = (Omega_dndn, Omega_upup)/Omega_LS, so the term is Omega_LS cos(mu t - phi + Delta k . x)[sigma_z +
+  (w_up + w_dn)/2] (x) D: Zhu-Monroe-Duan's spin-dependent force plus the spin-independent one; the same beams' ordinary
+  Raman coupling Omega_R = w_flip Omega_LS is kept as sigma_+ (x) D rotating at mu - omega_0 (the beat note sits near a
+  mode, far from the qubit frequency) unless its off-resonant excitation (w_flip Omega_LS/(omega_0 - mu))^2 is below
+  1e-12, in which case it is dropped and the drop recorded.
 - H_Stark,i(t) = (delta_St,i(t)/2) sigma_z^i, proportional to the instantaneous intensity (Section 4.3.2).
 - H_anh = sum over sorted mode tuples of coefficient x X_k X_l X_m, opt-in (Section 4.1.4).
 - Beam-curvature coupling (Cetina 2022, Section 6.2): Omega -> Omega (1 + (Omega''/2 Omega) x_hat^2) with x_hat the
@@ -49,8 +55,9 @@ from qutip_trap.dynamics.multilevel import (  # the multi-level mode of Section 
     assign_frames,
     build_multilevel,
 )
-from qutip_trap.hilbert.operators import debye_waller_factor, qudit_sigma_plus
+from qutip_trap.hilbert.operators import debye_waller_factor, qudit_projector, qudit_sigma_plus
 from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.light.raman import lamb_dicke_parameters, mathieu_or_none
 from qutip_trap.noise.sampling import (
     KEY_RABI_SCALE,
     KEY_RF_PHASE,
@@ -60,7 +67,6 @@ from qutip_trap.noise.sampling import (
     key_qubit_offset_hz,
     quiet_sample,
 )
-from qutip_trap.trap.mathieu import MathieuParameters
 from qutip_trap.units import TWO_PI
 
 M2 = "milestone M2 (dynamics/hamiltonian.py, PLAN.md Section 4.3.1)"
@@ -265,25 +271,6 @@ def _beat_phase_function(
     return theta
 
 
-def mathieu_or_none(device: Device, ion: int) -> MathieuParameters | None:
-    """The trap's Mathieu record for the ion's species, or None when the trap has no rf record (C0 = 1, beta = 0)."""
-    species = device.crystal.species[ion]
-    try:
-        return device.trap.mathieu(species)
-    except ValueError:
-        return None
-
-
-def lamb_dicke_parameters(device: Device, ion: int, delta_k: np.ndarray) -> tuple[dict[int, float], bool]:
-    """eta_{ion, m} for every crystal mode with C0 from the trap's Mathieu record when it exists; (etas, c0_applied)."""
-    params = mathieu_or_none(device, ion)
-    etas = {
-        m: float(device.crystal.lamb_dicke(ion, m, delta_k, micromotion=params))
-        for m in range(len(device.crystal.modes))
-    }
-    return etas, params is not None
-
-
 def micromotion_index(device: Device, ion: int, delta_k: np.ndarray) -> float:
     """beta_total of the ion's excess micromotion along delta_k (Section 4.3.6), 0 without an rf record or a field."""
     if float(np.linalg.norm(delta_k)) == 0.0:
@@ -308,13 +295,20 @@ def _truncated_exponential(space: HilbertSpace, mode: int, eta: float, order: in
 
 
 def _drive_operator(
-    space: HilbertSpace, ion: int, etas: Mapping[int, float], options: BuilderOptions, device: Device
+    space: HilbertSpace,
+    ion: int,
+    etas: Mapping[int, float],
+    options: BuilderOptions,
+    device: Device,
+    ion_op: qt.Qobj | None = None,
 ) -> qt.Qobj:
-    """sigma_+^ion (x) prod_m D_m (exact or expanded) with the optional symmetrized curvature factor."""
+    """sigma_+^ion (or ``ion_op``) (x) prod_m D_m (exact or expanded) with the optional symmetrized curvature factor."""
     if options.lamb_dicke_order is None:
-        op = space.drive_operator(ion, etas)
+        op = space.drive_operator(ion, etas, ion_op=ion_op)
     else:
-        ops: dict[int, qt.Qobj] = {space.ion_factor(ion): qudit_sigma_plus(space.ion_dims[ion])}
+        ops: dict[int, qt.Qobj] = {
+            space.ion_factor(ion): qudit_sigma_plus(space.ion_dims[ion]) if ion_op is None else ion_op
+        }
         for mode, eta in etas.items():
             if eta == 0.0 or space.mode_class(mode) != "resolved":
                 if eta != 0.0 and space.mode_class(mode) == "enr":
@@ -568,22 +562,54 @@ def build_hamiltonian(
                     omega_peak_rad_s=peak * abs(scale),
                 )
             )
-            if opts.frame == "schrodinger":
-                op = _drive_operator(space, ion, active_etas, opts, device)
-                coef = _DriveCoefficient(
-                    pulse.t_start_s,
-                    tone_fns,
-                    complex(scale),
-                    beta if opts.micromotion == "modulated" else 0.0,
-                    rf_omega,
-                    rf_delta,
-                    0.0,
-                    counter,
+            # the ion operators this drive couples through: sigma_+ for a spin-flip drive; the level-weighted projector
+            # (the force) plus the far-off-resonant sigma_+ (the same beams' Raman coupling) for a light-shift drive
+            ion_terms: list[tuple[qt.Qobj | None, complex, float]] = [(None, 1.0 + 0.0j, 0.0)]
+            if drive.kind == "light_shift":
+                ls = drive.light_shift
+                assert ls is not None
+                d_ion = space.ion_dims[ion]
+                w_dn, w_up = ls.level_weights
+                force_op = w_dn * qudit_projector(d_ion, 0) + w_up * qudit_projector(d_ion, 1)
+                ion_terms = [(force_op, 1.0 + 0.0j, 0.0)]
+                omega_0 = TWO_PI * ls.qubit_freq_hz
+                mu_beat = TWO_PI * float(
+                    drive.tones[0].detuning_hz(0.0)
+                    if callable(drive.tones[0].detuning_hz)
+                    else drive.tones[0].detuning_hz
                 )
-                terms.append([op, qt.coefficient(_coef_plain, args={"coef": coef})])
-                terms.append([op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})])
-                n_drive_terms += 2
-            else:
+                excitation = (
+                    abs(ls.spin_flip_weight) * peak * abs(scale) / max(abs(omega_0 - mu_beat), 1e-300)
+                ) ** 2
+                if ls.spin_flip_weight != 0.0 and excitation >= 1e-12 and opts.frame == "schrodinger":
+                    ion_terms.append((None, complex(ls.spin_flip_weight), omega_0))
+                    omega_max = max(omega_max, abs(omega_0 - mu_beat))
+                    approximations.append(
+                        f"ion {ion}: light-shift drive keeps the off-resonant Raman spin flip (w = {abs(ls.spin_flip_weight):.3g}, "
+                        f"excitation {excitation:.2e})"
+                    )
+                elif ls.spin_flip_weight != 0.0:
+                    approximations.append(
+                        f"ion {ion}: light-shift drive drops the off-resonant Raman spin flip (excitation {excitation:.2e})"
+                    )
+            for ion_op, weight, extra_rotation in ion_terms:
+                term_scale = complex(scale) * weight
+                if opts.frame == "schrodinger":
+                    op = _drive_operator(space, ion, active_etas, opts, device, ion_op)
+                    coef = _DriveCoefficient(
+                        pulse.t_start_s,
+                        tone_fns,
+                        term_scale,
+                        beta if opts.micromotion == "modulated" else 0.0,
+                        rf_omega,
+                        rf_delta,
+                        extra_rotation,
+                        counter,
+                    )
+                    terms.append([op, qt.coefficient(_coef_plain, args={"coef": coef})])
+                    terms.append([op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})])
+                    n_drive_terms += 2
+                    continue
                 if opts.curvature.get(ion) is not None:
                     raise NotImplementedError("beam curvature is built in the Schroedinger frame only")
                 mats = None
@@ -593,12 +619,17 @@ def build_hamiltonian(
                         for m, e in active_etas.items()
                         if e != 0.0 and space.mode_class(m) == "resolved"
                     }
-                pic = interaction_picture(space, ion, active_etas, k_max=opts.k_max, matrices=mats)
+                embedded = None if ion_op is None else space.embed(ion_op, space.ion_factor(ion))
+                pic = interaction_picture(
+                    space, ion, active_etas, k_max=opts.k_max, matrices=mats, ion_op=embedded
+                )
                 dropped_total += pic.dropped_weight
                 kept = list(pic.terms)
+                tones_by_term: dict[int, list[_ToneFn]] = {}
                 if opts.rwa:
-                    chosen: set[int] = set()
-                    for tone in drive.tones:
+                    # the textbook model: each tone drives ONLY the sideband combination nearest its resonance, so a kept
+                    # operator carries the coefficients of its resonant tones alone (no counter-rotating cross terms)
+                    for tone, tone_fn in zip(drive.tones, tone_fns):
                         mu = TWO_PI * float(
                             tone.detuning_hz(0.0) if callable(tone.detuning_hz) else tone.detuning_hz
                         )
@@ -608,21 +639,33 @@ def build_hamiltonian(
                                 mu - sum(k * omegas[m] for k, m in zip(kept[idx].k, kept[idx].modes))
                             ),
                         )
-                        chosen.add(best)
-                    dropped_total += sum(term.weight for idx, term in enumerate(kept) if idx not in chosen)
-                    kept = [kept[idx] for idx in sorted(chosen)]
-                    approximations.append(
-                        f"ion {ion}: rwa keeps {len(kept)} sideband term(s) of {len(pic.terms)}"
+                        tones_by_term.setdefault(best, []).append(tone_fn)
+                    dropped_total += sum(
+                        term.weight for idx, term in enumerate(kept) if idx not in tones_by_term
                     )
+                    kept_pairs = [(kept[idx], tones_by_term[idx]) for idx in sorted(tones_by_term)]
+                    approximations.append(
+                        f"ion {ion}: rwa keeps {len(kept_pairs)} sideband term(s) of {len(pic.terms)}, "
+                        "each with its resonant tone(s)"
+                    )
+                else:
+                    kept_pairs = [(term, tone_fns) for term in kept]
                 if opts.k_max is not None:
                     approximations.append(
                         f"ion {ion}: sideband sum truncated at |k| <= {opts.k_max}, dropped weight {pic.dropped_weight:.3e}"
                     )
-                for term in kept:
+                for term, term_tones in kept_pairs:
                     k_dot_w = sum(k * omegas[m] for k, m in zip(term.k, term.modes))
                     omega_max = max(omega_max, abs(k_dot_w))
                     coef = _DriveCoefficient(
-                        pulse.t_start_s, tone_fns, complex(scale), 0.0, 0.0, 0.0, k_dot_w, counter
+                        pulse.t_start_s,
+                        term_tones,
+                        term_scale,
+                        0.0,
+                        0.0,
+                        0.0,
+                        k_dot_w + extra_rotation,
+                        counter,
                     )
                     terms.append([term.op, qt.coefficient(_coef_plain, args={"coef": coef})])
                     terms.append([term.op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})])

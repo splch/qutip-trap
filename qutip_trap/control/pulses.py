@@ -20,7 +20,9 @@ from qutip_trap.light.beams import Beam
 if TYPE_CHECKING:
     from qutip_trap.light.comb import CombSpec
 
-DriveKind = Literal["raman", "optical_E1", "optical_E2", "microwave", "gradient"]
+DriveKind = Literal["raman", "optical_E1", "optical_E2", "microwave", "gradient", "light_shift"]
+"""Appendix E's five kinds plus ``light_shift`` (M4, Section 4.4.4): a Raman beam pair whose beat note sits near a MODE
+frequency and drives the qubit through its state-dependent two-photon light shift instead of a spin flip."""
 
 _BEAMS_PER_KIND: dict[str, int] = {
     "raman": 2,
@@ -28,13 +30,43 @@ _BEAMS_PER_KIND: dict[str, int] = {
     "optical_E2": 1,
     "microwave": 0,
     "gradient": 0,
+    "light_shift": 2,
 }
+
+
+@dataclass(frozen=True)
+class LightShiftCouplings:
+    """The level structure of a light-shift (sigma_z sigma_z) drive relative to its force amplitude (Section 4.4.4).
+
+    With Omega_gg the two-photon self-coupling of qubit level g under the beam pair (light/raman.py) and Omega_LS =
+    (Omega_upup - Omega_dndn)/2 the tone's envelope, ``level_weights`` = (Omega_dndn, Omega_upup)/Omega_LS (they differ by
+    exactly 2), so the drive term on ion i is (1/2) sum_tones Omega_LS(t) e^{-i(mu t - phi)} [w_dn P_dn + w_up P_up] (x) D_i
+    + h.c. = Omega_LS cos(...) [sigma_z + (w_up + w_dn)/2] (x) ...: Zhu-Monroe-Duan's H = hbar Omega_j cos(Delta k . q_j +
+    mu t) sigma_z^j plus the spin-independent force. ``spin_flip_weight`` = Omega_R/Omega_LS is the ordinary Raman coupling
+    the same beams drive, far off resonance because the beat note mu sits near a mode and not near the qubit frequency
+    ``qubit_freq_hz``: in the qubit frame it rotates at mu - omega_0 and the builder keeps it unless its off-resonant
+    excitation is negligible (recorded either way).
+    """
+
+    level_weights: tuple[complex, complex]
+    spin_flip_weight: complex
+    qubit_freq_hz: float
+
+    def __post_init__(self) -> None:
+        w_dn, w_up = self.level_weights
+        if abs((w_up - w_dn) - 2.0) > 1e-9:
+            raise ValueError(
+                "level_weights are (Omega_dndn, Omega_upup)/Omega_LS with Omega_LS = (up - dn)/2: they differ by 2"
+            )
+        if self.qubit_freq_hz <= 0.0:
+            raise ValueError("qubit_freq_hz is the positive transition frequency")
 
 
 @dataclass(frozen=True)
 class Tone:
     detuning_hz: Callable[[float], float] | float
-    """mu(t) from the carrier (ordinary Hz in the public API)."""
+    """mu(t) from the carrier (ordinary Hz in the public API); for a ``light_shift`` drive the BEAT NOTE itself, which sits
+    near a mode frequency and not near the qubit frequency (Section 4.4.4)."""
     phase_rad: Callable[[float], float] | float
     """phi_tone(t) in the ion frame (Section 5.2)."""
     envelope_hz: Callable[[float], float] | np.ndarray | float
@@ -62,6 +94,8 @@ class Drive:
     """Pulse start relative to the trap rf (Section 4.3.6); unlocked = averaged."""
     comb: CombSpec | None = None
     """Set for a mode-locked Raman drive; then ``tones`` comes from comb.tones() and stark_shift_hz from comb.stark4_hz()."""
+    light_shift: LightShiftCouplings | None = None
+    """Required for ``kind == "light_shift"`` and refused otherwise (Section 4.4.4)."""
 
     def __post_init__(self) -> None:
         if not self.ions:
@@ -73,6 +107,8 @@ class Drive:
             raise ValueError("rf_phase_rad is only meaningful for an rf-locked pulse (unlocked = averaged)")
         if self.comb is not None and self.kind != "raman":
             raise ValueError("a frequency comb generates a Raman drive")
+        if (self.kind == "light_shift") != (self.light_shift is not None):
+            raise ValueError("a light_shift drive carries its LightShiftCouplings and no other kind does")
 
     def delta_k(self, beams: Sequence[Beam]) -> np.ndarray:
         """The effective wavevector, DERIVED from the beams' wavelengths and directions, never a free field.
@@ -81,7 +117,7 @@ class Drive:
         single-photon optical: k k_hat; microwave and gradient: 0. Appendix E declares this as a property; it
         takes the device's beam list here because a ``Drive`` stores indices into ``Device.beams``.
         """
-        if self.kind == "raman":
+        if self.kind in ("raman", "light_shift"):
             k1 = beams[self.beams[0]].k_vector()
             k2 = beams[self.beams[1]].k_vector()
             return np.asarray(k1 - k2, dtype=float)
@@ -109,4 +145,4 @@ class Pulse:
         return self.t_end_s - self.t_start_s
 
 
-__all__ = ["Drive", "DriveKind", "Pulse", "Tone"]
+__all__ = ["Drive", "DriveKind", "LightShiftCouplings", "Pulse", "Tone"]

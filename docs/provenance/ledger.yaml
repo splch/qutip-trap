@@ -1030,6 +1030,134 @@ records:
     source: "validation/scripts/check_cooling.py; tests/test_pumping.py"
     equation: "F = 1 -> F' = 1 at s_o = 0.5 and 5 G from the uniform F = 1 mixture: 3.0006 photons, 99.99 percent in |0,0> at 5.25 us, error 2.48e-6 (the steady state), recoil heating 8.55e-3 quanta on a 1 MHz mode along B (eta_em = 0.0925) and 2.85e-3 / 2.95e-3 on the 3.0 / 2.9 MHz modes with the ion's participation and one alpha per emitted polarization; sigma+ light on S1/2 -> P1/2 of a spin-zero ion pumps |-1/2> into |+1/2> with exactly 3.0000 photons (pi branching 1/3) and error 2e-12"
     corrected_form: "the two-tone 9Be+ pump into |2,2> (F = 2 and F = 1 tones on one line) is the periodic-frame case of the builder, not a static solve"
+  # ---- Section 13 conventions the M4 code encodes (two-qubit gates) -------------------------------------------
+  - id: conv.spin_motion_phases
+    symbol: "phi_s, phi_m"
+    tag: verified
+    section: "13 Spin and motion phases; 4.3.4; 4.4.2"
+    source: "Haljan 2005; Lee 2005 (opposite sign, converted at ingest); derivation audit 2026-09-04 (row 4.3-5)"
+    equation: "phi_s = (phi_b + phi_r)/2, phi_m = (phi_b - phi_r)/2 of the two tone phases; the bichromatic force acts about phi_s + pi/2 in the same-Delta-k geometry (i eta(a + a^dag) carries an i), so MS(phi_0, phi_1, theta) sets phi_s,i = phi_i - pi/2 (control/schedule.py)"
+    corrected_form: "Lee writes phi_S = -(half-sum); the second revision's '+phi' axis would have certified a quarter-turn error"
+  - id: conv.motion_phase_default
+    symbol: "phi_m = 0"
+    tag: recomputed here
+    section: "4.4.1; 4.4.3; 9.4 (M4 finding)"
+    source: "check_two_qubit.py; Roos 2008 (psi = (4 Omega_Roos/delta) sin zeta)"
+    equation: "the played waveforms default to equal tone phases (phi_b = phi_r, the force Omega cos(mu t)); the carrier Omega cos(mu t - phi_m) rotates the spin at F(t) = (2 Omega/mu)[sin(mu t - phi_m) + sin phi_m], whose mean tilts the force axis by psi = (2 Omega/mu) sin phi_m"
+    corrected_form: "Section 4.4.3's sine beat-note convention (phi_b - phi_r = pi, force zero at t = 0) is a convention for the closed forms only: played literally on the check_ms_closure.py fixture (Omega/mu = 0.1) it tilts the axis by 0.202 rad and leaks sin^2 psi = 3.8% into |du>, |ud> (concurrence 0.9597 against 0.9999 with equal phases); the kernels carry phi_m explicitly and Choi's sin(mu t) e^{i omega t} is their phi_m = pi/2 case"
+  - id: conv.light_shift_force
+    symbol: "Omega_LS"
+    tag: derived
+    section: "4.4.4; 13 (M4)"
+    source: "Wineland 2003 (two-photon coupling with g' = g); Zhu-Monroe-Duan 2006 Eq. 2; Ballance 2016; Baldwin 2021"
+    equation: "Omega_gg = sum_e conj(Omega^(2)_eg) Omega^(1)_eg/(2 Delta_e) for each qubit level g under the beam pair; the light-shift drive is (1/2) sum_tones Omega_LS e^{-i(mu t - phi)} [w_dn P_0 + w_up P_1] (x) D + h.c. with Omega_LS = (Omega_upup - Omega_dndn)/2 and weights (Omega_dndn, Omega_upup)/Omega_LS (differing by exactly 2): Zhu's hbar Omega_j cos(Delta k . q_j + mu t) sigma_z^j plus the spin-independent force; the same beams' Raman coupling Omega_R rotates at mu - omega_0 and is kept unless its excitation is below 1e-12"
+    corrected_form: "for a force on one level only (weights (-2, 0), the 40Ca+ S1/2-D5/2 qubit under 398 nm light, or Baldwin's |up>) the single-qubit sigma_z phase is four times the two-body angle, which the spin echo of Section 4.4.4 cancels; the sign of a sigma_z force follows the detuning side alone (no phase flip)"
+  - id: conv.zz_wrapper_construction
+    symbol: "ZZ(theta)"
+    tag: background
+    section: "7.6; 12 (inferred); M4 control/schedule.py"
+    source: "Chen 2023 (220 us duration difference); Quantinuum wrapper construction"
+    equation: "ZZ(theta) = exp(-i (theta/2) Z Z) = [GPi2(pi/2) (x) GPi2(pi/2)] XX(theta/2) [GPi2(3 pi/2) (x) GPi2(3 pi/2)] since R_y(pi/2) X R_y(pi/2)^dag = -Z; played as two GPi2 wrappers around the MS(0, 0, theta) waveform with the dead time between"
+    corrected_form: "the ZZ native gate has no published physical model; this construction is inferred and labelled so in the gate ids (zz[k]/wrap_in, /ms, /wrap_out)"
+  - id: conv.entangling_sign
+    symbol: "s"
+    tag: verified
+    section: "4.4.3; 7.6; 13 (M4)"
+    source: "Choi 2014; derivation audit 2026-09-04 (row 13-1); check_two_qubit.py"
+    equation: "a pulse applies exp(+i chi sigma sigma) with chi = sum_m chi_m signed by the detuning side (tones inside the sidebands give chi > 0); XX(chi) = exp(-i chi sigma sigma), so a positive chi is played with a pi on the second ion's tones (GPi(phi + pi) = -GPi(phi)) and a partial angle rescales every amplitude by sqrt((theta/2)/|chi|)"
+    corrected_form: "Waveform.chi_m is SIGNED and, after the exact spot check, carries the measured angle; a solver landing on -pi/4 is not a failure"
+  # ---- Section 9.4 / 9.16 / 9.17 anchors reproduced by M4 -----------------------------------------------------
+  - id: anchor.m4.ms_closure_through_the_builder
+    symbol: "concurrence at eta Omega/eps = 1/2, 1/4"
+    tag: recomputed here
+    section: "9.4 row 2; 9.16 rows 4.4-4, 13-8"
+    source: "check_two_qubit.py; check_ms_closure.py"
+    equation: "eta = 0.05, nu = 1 MHz, eps = 10 kHz, d = 16, one loop from |dd> through Waveform.symmetric and the builder: concurrence 0.9999 with populations (0.5074, 0, 0, 0.4926) at 1/2 and 0.3825 with (0.962, 0, 0, 0.038) at 1/4, the check script's numbers"
+    corrected_form: "the anchor's fixture has one mode, so the synthetic device freezes the rocking mode with its Debye-Waller factor off"
+  - id: anchor.m4.exact_first_order_propagator
+    symbol: "D(alpha S_y) exp[i gamma S_y^2]"
+    tag: verified
+    section: "9.4 row 1; 4.4.1"
+    source: "Kirchmair 2009 Eqs. 3-4, 14; Haljan 2005; tests/test_two_qubit_gates.py"
+    equation: "with the displacement expanded to first order and the resonant sidebands kept the engine's state equals the closed-form propagator at every stored time and the populations follow Kirchmair's envelopes with nbar = 0 and 1 (the first-order force is exact for a thermal mode too)"
+    corrected_form: "the force axis is phi_s + pi/2 = pi/2 (S_y) for equal tone phases at zero; the plan's -(hbar eta Omega/2) sign gives alpha the opposite sign to Kirchmair's, the moduli and the S^2 phase being identical"
+  - id: anchor.m4.debye_waller_references
+    symbol: "(pi^2/4) eta^4 <(n - n_ref)^2>"
+    tag: verified
+    section: "4.4.7 (1); 9.16 row 4.4-7; 9.12 'eta^4 thermal infidelity unified'"
+    source: "tests/test_two_qubit_gates.py; tests/test_gate_calibration.py"
+    equation: "the ENTANGLING-ANGLE error of an n = 0-calibrated gate with the exact Laguerre sidebands, read Fock state by Fock state from P_11/(P_00 + P_11) = sin^2 chi_n, follows chi_n - chi_0 = -(pi/4) 2 eta^2 n within 10% for n = 1, 2, 3 and averages to (pi^2/4) eta^4 nbar (2 nbar + 1); the re-optimized nbar^2 + nbar reference is excluded; |M_n|^2 - |M_{n-1}|^2 = eta^2 [1 - eta^2 (2n + 1)] to 1.0007/1.0020/1.0039 at eta = 0.123"
+    corrected_form: "the thermal robustness curve of M4 is the n0 reference; a device records which reference its calibration used"
+  - id: anchor.m4.thermal_residual_entanglement
+    symbol: "eps(nbar) exact"
+    tag: recomputed here
+    section: "4.4.7 (1); 9.4 'Thermal fidelity' (M4 finding)"
+    source: "tests/test_gate_calibration.py; the Fock-resolved diagnostic of 2026-09-05 (two devices, the rwa and the full builder agree)"
+    equation: "the exact Bell-state infidelity of an n = 0-calibrated square MS gate for a Fock input n is about (pi^2/4) eta^4 n(n + 1): Ballance's angle error (pi^2/4) eta^4 n^2 plus residual spin-motion entanglement from the n-dependent sideband coupling (leakage into |du>, |ud> at the same order in eta^4, linear in n: loss/[(pi^2/4) eta^4 n^2] = 1.96, 1.45, 1.28 at n = 1, 2, 3 for eta = 0.05 and 0.079 alike); thermally averaged the total lies between 1.1 and 1.6 times eps_nbar at nbar <= 2"
+    corrected_form: "none of the three published thermal forms carries the residual-entanglement term; Ballance's eps_nbar is the angle error alone (the plan's Section 4.4.7 (1) reconciliation concerns only that part)"
+  - id: anchor.m4.symmetrized_kernel
+    symbol: "chi_ij = K_ij + K_ji"
+    tag: verified
+    section: "9.16 row 4.4-5; 4.4.3"
+    source: "derivation audit 2026-09-04; tests/test_two_qubit_gates.py, tests/test_shaping.py"
+    equation: "with Omega_1 ~ sin^2(pi t/tau) and Omega_2 ~ (t/tau) sin^2(pi t/tau) the block-diagonal exact phases give chi equal to the symmetrized kernel while the two readings of Choi's printed 2 Omega_i(t) Omega_j(t') differ from it by more than 10% with opposite signs"
+    corrected_form: "the analytic segment kernels (F_k, the triangle T_k and Im(F_l F_k^*)) match scipy quadrature to 1e-9 for both the exact first-order and the rwa form at any phi_m"
+  - id: anchor.m4.residual_displacement_conversions
+    symbol: "eps_ent"
+    tag: verified
+    section: "9.4 'Residual displacement'; 4.4.7 (8)"
+    source: "Landsman 2019; Leung 2018; Zhu 2006; tests/test_two_qubit_gates.py"
+    equation: "an open loop (1.3 loops) with the first-order force: the final mode energy equals sum_j |alpha_j|^2, 1 - F_ent = eps_ent to first order, the average gate infidelity is (4/5) eps_ent, and the |dd> state infidelity equals eps_ent"
+    corrected_form: "Zhu's printed sum beta (|alpha_j|^2 + |alpha_n|^2)/4 is one quarter of what direct integration gives for the |dd> input with Choi's alpha; the plan's 'a factor 1/4 below eps_ent for the same displacements' holds only if Zhu's alpha is twice Choi's (his Eq. 8 is inconsistent with his Eq. 7 by that factor); recorded, not reproduced as a distinct fidelity measure"
+  - id: anchor.m4.spectator_loop_and_am_closure
+    symbol: "sum_j |alpha_jm|^2"
+    tag: recomputed here
+    section: "4.4.7; 9.4 'Multi-mode closure'; M4 exit criterion"
+    source: "check_two_qubit.py"
+    equation: "two 171Yb+ ions (x modes 2.828/3.000 MHz, eta 0.081/0.079): the symmetric COM pulse leaves 7.1e-3 quanta in the rocking mode against the closed form 2 |alpha|^2 = 7.2e-3; the five-segment AM pulse closes both modes (leakage 8.7e-5, residual quanta < 2e-4) and the exact chi is 0.7720 against the surrogate 0.7854; the exact checks correct the amplitude by 0.87% to chi = 0.785398, Bell fidelity 0.99977"
+    corrected_form: "the surrogate over-predicts chi by the Debye-Waller factor of the sideband couplings and the carrier's second-order terms (1.7% here); Section 7.5's spot check is what absorbs it"
+  - id: anchor.m4.ballance_alpha_k
+    symbol: "alpha_K = (8K + 3)/(16 K^2)"
+    tag: recomputed here
+    section: "9.16 row 6-3; 6.2; 4.4.4"
+    source: "check_two_qubit.py"
+    equation: "L = a^dag a sqrt(2/tau) on the K-loop force model, one Liouvillian exponential per sigma_x block pair: (1 - F) tau/t_g = 0.687376, 0.296845, 0.136710 at t_g/tau = 1e-4 for K = 1, 2, 4 against 11/16, 19/64, 35/256"
+    corrected_form: "Ballance's 0.686 is the value at finite t_g/tau = 1e-3, not the coefficient; the |dd> state infidelity and the entanglement infidelity coincide for this channel"
+  - id: anchor.m4.choi_closure_counts
+    symbol: "2N + 1, 4N + 1"
+    tag: recomputed here
+    section: "9.4 'Multi-mode closure'; 9.12 'Segment counting with both transverse families'; 4.4.7 (2)"
+    source: "check_two_qubit.py"
+    equation: "five 171Yb+ ions at 3.045/2.95/0.55 MHz: 11 segments close the five x modes for the pair (1, 3) to |alpha| < 1e-15 with chi = pi/4; a Delta k at 30 degrees in the xy plane couples both families (10 modes), 11 segments raise ClosureError and 21 close every mode"
+    corrected_form: "Choi's 190 us with 9 segments for five ions closes four modes, not five"
+  - id: anchor.m4.baldwin_echo
+    symbol: "diag(1, i, i, 1)"
+    tag: recomputed here
+    section: "9.17 'Baldwin echo'; 4.4.4"
+    source: "check_two_qubit.py; tests/test_light_shift_gate.py"
+    equation: "the printed H = eta Omega sum_j (-1)^j (1 + sigma_z^j)(a e^{i delta t} + h.c.) integrated through R_x(pi) U R_-x(pi) U at 8 pi (eta Omega/delta)^2 = pi/4 gives diag(1, -i, -i, 1) up to a global phase for tones above the mode (the conjugate of the printed diag(1, i, i, 1), whose sign the detuning side sets); off-diagonal elements vanish; Phi_loop = 2 pi (eta Omega/delta)^2 on S^2 per loop"
+    corrected_form: "the printed H fixes only |Phi|; the plan's diag(1, i, i, 1) is the other detuning side"
+  - id: anchor.m4.light_shift_gate_ca40
+    symbol: "ZZ from the atomic layer"
+    tag: derived
+    section: "4.4.4; 9.4 'Light-shift gate' (M4)"
+    source: "tests/test_light_shift_gate.py"
+    equation: "two 40Ca+ ions, counter-propagating 398.5 nm circular beams (3 THz below S-P1/2) with a 729 nm E2 beam for the echo pulses: only the S1/2 level of the optical qubit is shifted (weights (-2, 0), Omega_R = 0), the symmetric light-shift pulse on the x-COM at chi = pi/8 per loop in the spin-echo pair gives ZZ(pi/2) with fidelity 0.98 before and above 0.99 after the exact calibration of the AM-closed pulse; the 'inside' detuning side gives the opposite sign"
+    corrected_form: "the exact per-pulse angle is 11% below the surrogate at eta = 0.145 (larger loops, larger Debye-Waller corrections)"
+  - id: anchor.m4.hughes_gate_angle
+    symbol: "theta_g"
+    tag: contested
+    section: "4.4.6; 9.4 'Smooth gate'"
+    source: "Hughes 2025 Eq. 4 and the theta_g integral as the plan prints them"
+    equation: "for H_g = hbar delta a^dag a + (hbar Omega_g/2) S (a^dag + a) a closed square pulse has theta_g = pi K (Omega_g/delta)^2 = int Omega_g^2/(2 delta) dt, maximal at pi/4 as the plan corrects"
+    corrected_form: "the printed theta_g ~ int (Omega_g^2 + alpha_dot^2)/delta dt is twice the displayed Hamiltonian's angle; one of the two carries a factor-2 convention the plan does not resolve"
+  - id: anchor.m4.fm_and_fourier_robustness
+    symbol: "d alpha/d delta_1"
+    tag: recomputed here
+    section: "9.4 'FM robustness'; 4.4.3"
+    source: "tests/test_shaping.py"
+    equation: "two-mode fixture: Leung's nine-vertex FM schedule closes both modes and the robust cost nulls the time-averaged trajectory, so a common 500 Hz drift costs 4e-6 against 9e-4 for the unconstrained schedule; Blumel's first-order stabilized sixteen-function Fourier pulse nulls d alpha/d omega_m and is far less sensitive to a 1 kHz shift than the unstabilized one"
+    corrected_form: "five and seven vertices leave the robust system underdetermined for two modes (four closure plus four robustness residuals)"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

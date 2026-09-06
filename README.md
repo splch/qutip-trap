@@ -4,8 +4,8 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 [`PLAN.md`](PLAN.md); this repository implements it milestone by milestone (Section 10 of the plan).
 
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
-crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder) and M3 (cooling
-and state preparation).** The
+crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
+and state preparation) and M4 (two-ion entangling gates).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -67,8 +67,57 @@ the force model's 349.5 against 350, Stenholm's 7/12 and 13/20, the Morigi-Walth
 centres and Rasmusson's fixed-pulse prediction, the Turchette ratio to 1e-13, the EIT fixture 0.005102 with its negative controls
 and the RMP tuning 0.00361702, the PGC minima 1/2 and 0.8693 with alpha = 1/3, the 171Yb+ pump's three photons and 8.5e-3 quanta
 of recoil, and the level-C checks of the Doppler limit, the PGC limit (0.756 against 0.75) and the multi-ion participation
-weights. Two-ion entangling gates (M4) and readout (M5) are not simulated yet; `run.prepare` waits for M6, where the Device
-carries the preparation recipe.
+weights.
+
+M4 adds the two-qubit entangling gates of Section 4.4 on the same builder: nothing is a separate gate implementation, an MS
+pulse is one `Drive` per ion carrying the red and blue tones (the coefficient already summed tones), and the exact dynamics
+(carrier, every sideband, Debye-Waller factors, spectator modes) come with it. `control/shaping.py` holds the Section 4.4.3
+integrals with the symmetrized two-body kernel in two forms that are never mixed (the exact first-order Lamb-Dicke kernel
+cos(mu t - phi_m) e^{i omega t}, Choi's sine form being its phi_m = pi/2 case, and the slow-envelope kernel), analytic for
+segmented pulses (F_k, the triangle T_k and Im F_l F_k^*, checked against scipy quadrature to 1e-9) and by Simpson's rule for
+sampled ones, and the three solvers in the plan's pi/4 convention: Zhu/Choi's segmented AM (2N + 1 segments close N modes,
+the power-optimal null-space direction), Leung's vertex-parameterized FM with the time-averaged-trajectory robustness cost,
+and Blumel's Fourier-sine AM with K-th-order frequency-derivative stabilization and the extended-null-space relaxation.
+`Waveform.symmetric` is the square bichromatic pulse (eta Omega/eps = 1/(2 sqrt K) on one mode, spectators included in chi);
+`Waveform.chi_m` is signed; the scheduler plays `ms` and `zz` from the table (MS(phi_0, phi_1, theta) sets the spin phases
+phi_i - pi/2 because the force acts about phi_s + pi/2, a positive kernel sign is a pi on the second ion, partial angles
+rescale by the s^2 law; ZZ on an MS waveform is the inferred GPi2-wrapper construction, on a light-shift waveform the
+spin-echo pair of Section 4.4.4). The `light_shift` drive kind derives Zhu's sigma_z force from the atomic layer (the
+two-photon self-couplings of the two qubit levels, weights differing by exactly 2, the spin-independent force and the
+far-off-resonant Raman coupling kept). `calibration/entangling.py` is Section 7.5's spot check: the closed-form waveform
+played through the JOINT_EXACT engine, chi read from P_11 = sin^2 chi (or in the x basis through the echo pair for a sigma_z
+force), the residual displacement read exactly as the final mode energy (sum_j |alpha_j|^2), the amplitude corrected by
+sqrt(chi_target/chi) until |chi| = pi/4, and the thermal robustness curve; `ms_scan` and `parity_scan` are the laboratory's
+population and parity scans on the engine. Acceptance tests (`tests/test_shaping.py`, `test_two_qubit_gates.py`,
+`test_entangling_schedule.py`, `test_light_shift_gate.py`, `test_gate_calibration.py`; `validation/scripts/check_two_qubit.py`):
+the check_ms_closure.py anchors through the builder (concurrence 0.9999 with populations (0.5074, 0, 0, 0.4926) at eta Omega/eps
+= 1/2, 0.3825 at 1/4), the exact propagator D(alpha S_y) exp[i gamma S_y^2] and Kirchmair's thermal envelopes at first order in
+eta, the Debye-Waller law and the three thermal references (n0 recovered, the re-optimized one excluded), the symmetrized kernel
+against block-diagonal exact integration (the printed factor 2 wrong by tens of percent for non-proportional envelopes), the
+residual-displacement conversions (eps_ent = final mode energy, 1 - F_ent, Landsman's 4/5), the two-mode 171Yb+ gate (the
+symmetric pulse's open rocking-mode loop against sum |alpha|^2, the five-segment AM closure, exact chi 0.772 against the
+surrogate 0.785 corrected in two checks to 0.785398 with Bell fidelity 0.99977), Ballance's alpha_K = 11/16, 19/64, 35/256 from
+block Liouvillians, Choi's 11 and 21 segments for five ions with one and two transverse families, Leung's FM robustness and
+Blumel's stabilization, Baldwin's echo diag(1, i, i, 1), the 40Ca+ optical-qubit light-shift ZZ gate from first principles
+(fidelity above 0.99 after calibration), and the native MS(phi_0, phi_1, theta), partial angles, virtual-Z frames and the
+IonQ JSON path through `schedule`. Readout (M5) is not simulated yet; `run.prepare` waits for M6, where the Device carries the
+preparation recipe; the microwave-gradient drive of Section 4.4.5 exists as closed forms (Srinivas's J_2 factor and the
+IDD ratio 0.6012) but not as a device-level drive.
+
+Plan inconsistencies surfaced by M4 (recorded in the ledger as `conv.motion_phase_default` and `anchor.m4.*`): Section
+4.4.3's sine beat-note convention (tone phases differing by pi, force zero at t = 0) is a convention for the closed forms only:
+played literally, the carrier's frame rotation acquires the mean 2 Omega/mu and tilts the entangling axis by Roos 2008's
+psi = (4 Omega_Roos/delta) sin zeta = 0.202 rad on the check_ms_closure.py fixture, leaking 3.8% into |du>, |ud> (concurrence
+0.9597 against 0.9999 with equal tone phases), so the played waveforms default to equal tone phases; Zhu's printed thermal
+infidelity sum beta (|alpha_j|^2 + |alpha_n|^2)/4 is one quarter of what direct integration gives for the |dd> input with
+Choi's alpha (the plan's "a factor 1/4 below eps_ent for the same displacements" needs Zhu's alpha to be twice Choi's);
+Hughes's printed theta_g ~ int (Omega_g^2 + alpha_dot^2)/delta dt is twice the angle of the displayed Hamiltonian
+(int Omega_g^2/(2 delta) dt = pi K (Omega_g/delta)^2 for the square pulse); Baldwin's diag(1, i, i, 1) is one detuning side
+(the other gives its conjugate); Choi's 190 us / 9 segments for five ions closes four modes, not five; Ballance's 0.686 is
+alpha_1 at t_g/tau = 1e-3, not the coefficient 0.6875; and Ballance's thermal error (pi^2/4) eta^4 nbar (2 nbar + 1) is the
+entangling-angle part only: the exact n-dependent sideband coupling also leaves residual spin-motion entanglement of the same order
+in eta^4 and linear in n (the Fock-state loss is close to (pi^2/4) eta^4 n(n + 1)), so the exact thermal curve of an n = 0-calibrated
+gate lies 1.05 to 1.5 times above the printed form at nbar <= 2, the excess shrinking with nbar.
 
 Plan inconsistencies surfaced by M3 (recorded in the ledger as `anchor.m3.*`): Monroe 1995's 'theoretical 0.484' is the
 semiclassical force model with isotropic emission at Delta = -30 MHz, outside that model's nu << Gamma regime, and one oblique
@@ -115,12 +164,13 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a) |
 | `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a) |
 | `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a) |
-| `qutip_trap/control/` | native gates, the circuit IR, `pulses` (Tone/Drive/Pulse), `schedule` (single-qubit gates as pulses with virtual-RZ tracking, M2 subset), `composite` (Section 4.3.5 library) |
-| `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` on the engine (M2); the rest is M8 |
-| `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, Harty's RB model `harty_rb`) |
+| `qutip_trap/control/` | native gates, the circuit IR, `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library) |
+| `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule; M4); `calibrate()` itself is M8 |
+| `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` (M2), `ms_scan`, `parity_scan` (M4) on the engine; the rest is M8 |
+| `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`) |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
-| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests) |
+| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests) |
 | `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 

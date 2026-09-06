@@ -360,14 +360,19 @@ class HilbertSpace:
 
         return _cached(self, ("D_enr", key), build)
 
-    def drive_operator(self, ion: int, etas: Mapping[int, float]) -> qt.Qobj:
+    def drive_operator(
+        self, ion: int, etas: Mapping[int, float], *, ion_op: qt.Qobj | None = None
+    ) -> qt.Qobj:
         """sigma_+^ion (x) prod_m D_m(i eta_{ion,m}) over the resolved modes, times the ENR group's sum-generator exponential.
 
         Frozen modes are absent here: their Debye-Waller factors multiply the coefficient (Section 5.2). Modes that
         the drive does not couple to (eta = 0) contribute the identity. CSR, with 2^{N-1} prod d_m^2 non-zeros per
-        ion for two-level ions (Section 5.1.1).
+        ion for two-level ions (Section 5.1.1). ``ion_op`` replaces sigma_+ by another operator on the ion's factor
+        (the level projectors of a light-shift drive, Section 4.4.4).
         """
-        ops: dict[int, qt.Qobj] = {self.ion_factor(ion): qudit_sigma_plus(self.ion_dims[ion])}
+        ops: dict[int, qt.Qobj] = {
+            self.ion_factor(ion): qudit_sigma_plus(self.ion_dims[ion]) if ion_op is None else ion_op
+        }
         enr_etas: dict[int, float] = {}
         for mode, eta in etas.items():
             if eta == 0.0:
