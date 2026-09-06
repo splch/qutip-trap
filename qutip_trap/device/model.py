@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from qutip_trap.light.beams import Beam
     from qutip_trap.noise.model import NoiseModel
     from qutip_trap.noise.spectra import NoiseSpectrum
+    from qutip_trap.prep.recipe import PreparationRecipe
     from qutip_trap.readout.detection import Detector
     from qutip_trap.transport.zones import Zone
     from qutip_trap.trap.crystal import Crystal
@@ -71,6 +72,8 @@ class Device:
     hardware: HardwareChain
     zones: tuple[Zone, ...] = ()
     """M12: empty for the single-zone first release."""
+    preparation: PreparationRecipe | None = None
+    """How the device cools and pumps before every shot (Section 4.2.6; M6); None = ``prep.recipe.standard_recipe``."""
 
     def derived(self) -> DerivedQuantities:
         """Every computed number with its provenance id; filled in as milestones M1 to M8 add the modules."""

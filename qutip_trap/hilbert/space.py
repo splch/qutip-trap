@@ -45,7 +45,6 @@ if TYPE_CHECKING:
 M2 = "milestone M2 (hilbert/, PLAN.md Section 5.1)"
 ORACLE_MIN_MARGIN = 4
 """The smallest margin the Section 5.1.1 table covers (its d = 8 row); below it the oracle is reported, not asserted."""
-M9A = "milestone M9a (PLAN.md Sections 5.4, 11.3)"
 
 ModeClass = Literal["resolved", "enr", "frozen"]
 
@@ -611,9 +610,23 @@ class HilbertSpace:
         return HilbertSpace(self.ion_dims, res, self.enr_group, self.frozen)
 
     @classmethod
-    def for_(cls, device: Device, schedule: Schedule, options: SolverOptions) -> HilbertSpace:
-        """The resolved-mode selection and truncation policy of Sections 5.5 and 11.3."""
-        raise NotImplementedError(f"HilbertSpace.for_ is {M9A}")
+    def for_(
+        cls,
+        device: Device,
+        schedule: Schedule,
+        options: SolverOptions,
+        *,
+        nbar: Mapping[int, float] | None = None,
+    ) -> HilbertSpace:
+        """The resolved-mode selection and truncation policy of Sections 5.2, 5.5 and 11.3 (``run.space.select_space``): the
+        modes the schedule's entangling gates displace or entangle beyond the freeze tolerances are resolved with caps from
+        their loop radius and occupation, the rest are frozen or dropped. ``nbar`` defaults to the device's prepared
+        occupations (its preparation recipe); the ENR option and the matrix-free kernel are M9a/M9b."""
+        from qutip_trap.prep.recipe import preparation_occupations
+        from qutip_trap.run.space import select_space
+
+        occupations = dict(nbar) if nbar is not None else preparation_occupations(device)
+        return select_space(device, schedule, options, nbar=occupations).space
 
 
 # ---- module-level cache ----------------------------------------------------------------------------------------------------

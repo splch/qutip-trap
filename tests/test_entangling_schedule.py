@@ -215,7 +215,10 @@ def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:  # type: 
     )
     sch = schedule(circ, dev, table)
     wf = table.waveform_for((0, 1))
-    assert wf is not None and sch.duration_s == pytest.approx(wf.duration_s + dev.hardware.dead_time_s)
+    assert wf is not None and sch.pulses_end_s == pytest.approx(wf.duration_s + dev.hardware.dead_time_s)
+    assert sch.measurement is not None and sch.duration_s == pytest.approx(
+        sch.pulses_end_s + dev.detector.window_s
+    ), "the IonQ circuit measures every qubit: the terminal event follows the pulses"
     eng = JointExactEngine()
     tr = eng.run_pulses(
         dev, sch, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), SolverOptions()

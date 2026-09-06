@@ -1265,6 +1265,134 @@ records:
     source: "check_readout.py I"
     equation: "171Yb+ with modes at 3.0, 2.9 and 1.0 MHz all at nbar: 0.266, 0.421, 1.555, 3.443 MHz at nbar = 0.1, 1, 20, 100 against the plan's 0.257, 0.425, 1.57, 3.48 (unstated mode set) and the 19.72 MHz linewidth"
     corrected_form: "the plan's four numbers do not follow sqrt(2 nbar + 1) exactly among themselves (ratios 1.65 and 13.5 against sqrt(3/1.2) = 1.58 and sqrt(201/1.2) = 12.9), so they were computed with different mode sets or occupations per row; the formula is the plan's and the conclusion (negligible until nbar ~ 100) stands"
+  # ---- Section 7.2, 7.3, 7.6, 7.7, 5.2, 5.3 conventions the M6 code encodes ------------------------------
+  - id: conv.compiler_single_qubit_decomposition
+    symbol: "RZ(alpha) GPi2(0) RZ(beta) GPi2(0) RZ(gamma)"
+    tag: recomputed here
+    section: "7.2 item 1; 9.6"
+    source: "PLAN.md Section 7.2; tests/test_compiler.py (20 random SU(2) targets to 1.5e-15)"
+    equation: "GPi2(0) RZ(beta) GPi2(0) = RY(-beta) RX(pi) up to a phase, so (alpha, -beta, -gamma) are the ZYZ Euler angles of U X; a pure Z rotation is one virtual rz, a pi or pi/2 equatorial rotation one GPi or GPi2 plus an rz (H = RY(pi/2) Z is one GPi2 after a virtual Z(pi))"
+    corrected_form: "the ZYZ solve reads a = arg V10 - arg V00 and c = arg V11 - arg V10 (each modulo 2 pi); solving the half-sum and half-difference for a and c leaves a pi branch that flips RY(b) to RY(-b), which the first draft of the compiler hit"
+  - id: conv.compiler_frame_absorption
+    symbol: "phi -> phi - theta; RZ_final discarded"
+    tag: verified
+    section: "7.2 item 1; 7.6; 13 Virtual-Z propagation"
+    source: "PLAN.md Sections 7.2 and 7.6"
+    equation: "every rz is absorbed into the phases of the later gpi, gpi2 and ms operations in time order (zz commutes); the compiled circuit carries only gpi, gpi2, ms, zz (the exported native set) and a residual per-qubit frame RZ(theta_q) that the computational-basis measurement cannot see; the whole-circuit check is RZ(frame) U_compiled = e^{i alpha} U_target"
+    corrected_form: "keeping rz in the compiled circuit would break the IonQ JSON export of Section 7.6 (rz is not an exported gate)"
+  - id: conv.cnot_template_sign
+    symbol: "s in XX(s pi/4)"
+    tag: corrected
+    section: "7.7 CNOT; 4.4.2"
+    source: "Maslov 2017 Fig. 1; PLAN.md Section 7.7; tests/test_compiler.py"
+    equation: "RY(v pi/2)_c, XX(s pi/4), RX(-s pi/2)_c RX(-v s pi/2)_t, RY(-v pi/2)_c = e^{i pi v s/4} CNOT for all four (s, v); XX(-pi/4) is exported as MS(0, pi, pi/2) (GPi(pi) = -X), so the angle stays in IonQ's [0, 0.25] turns"
+    corrected_form: "the plan makes s the pair's physical sign 'from the simulator's own mode structure and detuning'; here the scheduler realizes either sign of the native MS from the waveform's signed chi by a pi on the second ion's tones (M4, Section 4.4.2), so the compiler's s is a free convention (default +1) and the physical sign never reaches the compiler"
+  - id: conv.cp_template_exact
+    symbol: "CP(theta) = [RZ(theta/2) (x) RZ(theta/2)] ZZ(-theta/2)"
+    tag: recomputed here
+    section: "7.7 Controlled phase; 9.6"
+    source: "PLAN.md Section 7.7; tests/test_compiler.py"
+    equation: "exact up to a global phase for every theta, with ZZ(theta) = exp(-i theta/2 Z Z) the native zz or the wrapper W XX(theta/2) W_in (W = GPi2(pi/2)^(x2), W_in = GPi2(3 pi/2)^(x2), the M4 identity); Debnath's Fig. 2b template with the fixed RZ(sgn(theta) pi/2) pair is CP(theta) times RZ((sgn(theta) pi - theta)/2) on both qubits, overlap |Tr|/4 = cos^2((sgn(theta) pi - theta)/4) = 0.854 at pi/2 and 0.691 at pi/4, and appending RZ((theta - sgn(theta) pi)/2) on both fixes it"
+    corrected_form: "the plan's 0.854 and 0.691 belong to the fixed-rotation template; a bare ZZ(-theta/2) has the different defect RZ(-theta/2)^(x2), overlap cos^2(theta/4) (0.854 at pi/2 by coincidence, 0.5 at pi)"
+  - id: conv.stark_scaling_with_amplitude
+    symbol: "delta_St(Omega) = delta_cal (Omega/Omega_cal)^p"
+    tag: corrected
+    section: "4.3.2; 7.3"
+    source: "Wineland 2003 Eq. 2.10 (shift proportional to intensity); PLAN.md Section 4.3.2"
+    equation: "p = 1 for a two-photon (Raman or light-shift) drive, whose Rabi frequency and differential Stark shift are both proportional to the intensity; p = 2 for a single-photon optical drive (Omega proportional to the field) and a microwave drive (the ac Zeeman shift proportional to B_1^2)"
+    corrected_form: "the M4 scheduler scaled every Stark entry as (Omega/Omega_cal)^2; on a Raman waveform played at 550 times the derived carrier Rabi frequency of a weak beam pair that turned a -0.1 Hz shift into -70 kHz and tripped the boundary monitor (M6 finding, never exercised by the M4 tests, whose tables had no Stark entries)"
+  - id: conv.mode_classes_and_tolerances
+    symbol: "dropped / frozen / resolved"
+    tag: corrected
+    section: "5.2; 11.3 item 2; 5.5"
+    source: "PLAN.md Section 5.2 [corrected: critique, 2026-09-04]; qutip_trap/run/space.py"
+    equation: "per mode, from the Section 4.4.3 integrals of every played waveform with the prepared occupations: dropped when |alpha|^2 (2 nbar + 1) < 1e-6 and |chi| < 1e-4; frozen when |alpha|^2 (2 nbar + 1) < SolverOptions.freeze_alpha_max (1e-4) and |chi| < freeze_chi_max_rad (0.05); resolved otherwise, with the cap from the loop radius eta Omega/epsilon, the occupation and the Section 5.1.1 margin; a frozen mode's chi is absorbed by the exact spot check on the reduced space (the frozen run is calibrated to the same angle) and reported; modes only carrier pulses touch are frozen"
+    corrected_form: "the plan names 'the residual-displacement tolerance' for freezing without a value; 1e-4 is the M6 default, an approximation of the truncation kind reported per run [background]"
+  - id: conv.fock_sum_branches
+    symbol: "rho(0) = sum_b w_b |b><b|"
+    tag: background
+    section: "5.3; 5.7 Initial state; 3.4"
+    source: "qutip_trap/run/job.py; PLAN.md Section 5.3 (mesolve is a reference path below dimension ~100)"
+    equation: "the prepared state is diagonal in the computational and Fock bases (pumped populations per ion, thermal weights per carried mode, the frozen modes' Fock states included), so its branches are evolved as pure states with sesolve and recombined with their weights, exact up to the branches below SolverOptions.branch_weight_min (1e-6) whose total weight is reported and renormalized; Diagnostics.trajectories counts the branches"
+    corrected_form: "a joint-space mesolve at dimension 400 would need a Liouvillian of 1.6e5 x 1.6e5 with about 6e7 non-zeros per drive operator; the trajectory path for Lindblad channels is M7/M9b"
+  - id: conv.terminal_measurement_event
+    symbol: "ScheduledEvent('measure', ions, t_end, t_end + window)"
+    tag: verified
+    section: "7.2 item 4; 3.4; 8.5"
+    source: "PLAN.md Section 7.2 item 4 [corrected: critique, 2026-09-04]"
+    equation: "the terminal measure (the circuit's targets plus trailing measure operations) is the schedule's one event, after the last pulse and dead time, of the calibration table's detection window (the detector's when the table has none); a measure, reset or recool before a later gate is refused with a ScheduleError naming Section 8.5; the engine integrates to the end of the pulses, never through the detection window"
+    corrected_form: "the M2 scheduler dropped the terminal measure and raised NotImplementedError for mid-circuit operations"
+  - id: conv.preparation_recipe
+    symbol: "Device.preparation: PreparationRecipe"
+    tag: background
+    section: "3.3; 3.4; 4.2.6"
+    source: "qutip_trap/prep/recipe.py; PLAN.md Section 4.2.6"
+    equation: "the cooling beams at their detunings, the pulsed sideband schedule (beams, modes, pulses per order) and the pump beams are procedural device parameters carried on the Device; standard_recipe builds the 171Yb+ laboratory's recipe from the device's detection and global Raman beams (detection light shifted by -Gamma/2 then optimized over the gate modes' participation weights, pulsed Raman sideband cooling of the coupled modes with 10 second-order then 30 first-order pulses, the pump on F = I + 1/2 -> F' = I + 1/2 at 0.5 I_sat) and records every choice; run_preparation evaluates it with the M3 stages, the pumps' recoil heating added to the cooled occupations"
+    corrected_form: "Appendix E's Device has no such field; it is an additive field with default None (the API-freeze test allows additions), needed because the plan's prepare() stage has no other source for the laboratory's procedure"
+  - id: conv.beam_roles
+    symbol: "resonant vs far-detuned beams"
+    tag: background
+    section: "3.3; 7.3; 8.1"
+    source: "qutip_trap/light/roles.py"
+    equation: "a beam within 2e-3 of the vacuum wavelength of a tabulated E1 line is resonant light (cooling, detection, repumping) and never a gate drive; the scheduler's drive inference and the readout's detection-beam selection both read this rule, so one device list carries every beam"
+    corrected_form: "the M2 inference counted every beam and refused a device with a detection beam beside its Raman pair"
+  - id: conv.openqasm2_subset
+    symbol: "load_openqasm2"
+    tag: verified
+    section: "1.4; 7.6"
+    source: "OpenQASM 2.0 specification (Cross et al. 2017); qelib1.inc; PLAN.md Section 7.6"
+    equation: "header, include (ignored, qelib1.inc gates built in), qreg/creg (flattened in declaration order), gate declarations expanded by inlining (the client SDKs' gpi/gpi2/ms/zz declarations import through their own u, rz, rxx, rzz bodies), register broadcasting, barrier ignored, trailing measure -> Circuit.measure, mid-circuit measure/reset kept as operations, expressions over pi with + - * / ^ and sin cos tan exp ln sqrt; undeclared gpi/gpi2/ms/zz take radians (the IR convention); if and opaque refused"
+    corrected_form: "u1(lambda) = e^{i lambda/2} RZ(lambda): imported as rz, the global phase dropped"
+  - id: conv.beat_phase_at_gate_start
+    symbol: "phi_leg -> phi_leg + 2 pi mu_leg t_g"
+    tag: corrected
+    section: "7.10 Phase coherence between pulses; 4.4.1 Corrections beyond the leading order; 7.3"
+    source: "Roos 2008 (psi = (4 Omega/delta) sin zeta); PLAN.md Section 7.10; qutip_trap/control/schedule.py"
+    equation: "with HardwareChain.phase_continuous = False every leg of an entangling waveform carries the phase offset 2 pi mu_leg t_g (red and blue opposite, the spin phase unchanged, the virtual-Z frame intact), so the beat note starts at zero phase at the gate start as it did in the t = 0 calibration; with phase-continuous tones the start phase zeta = 2 pi mu t_g is part of the gate and the tilt sin^2[(4 Omega-bar/mu) sin zeta] is reported in the intrinsic budget"
+    corrected_form: "the builder's per-pulse phase_mode='reset' resets at every SEGMENT of a multi-segment waveform (0.2-cycle jumps at the segment edges of the fixture's AM pulse open the loops: leakage 0.31); the M6 finding on the two-ion fixture: the same calibrated gate has fidelity 0.99995 at zeta = 0 or pi and 0.98903 at zeta = +-pi/2 (1.1 % leakage), so a gate started 21.27 beat cycles into a circuit under continuous tones is not the gate that was calibrated"
+  # ---- Section 9.6 anchors reproduced by M6 ---------------------------------------------------------------------
+  - id: anchor.m6.am_beat_note_midpoint_sensitivity
+    symbol: "residual displacement of the 2N + 1 segment AM solution against mu"
+    tag: recomputed here
+    section: "4.4.3; 7.5; 7.8"
+    source: "M6 scan on the two-ion 171Yb+ fixture (modes 2.8284 and 3.0000 MHz, 100 us, 5 segments), exact JOINT_EXACT checks"
+    equation: "at the exact mode midpoint the closure null space is one-dimensional and its power-optimal direction flips within +-20 Hz: leakage 1.1e-2 and 3.3e-3 residual quanta on the COM at the midpoint, 8.7e-5 and 1.8e-4 at 213.6 Hz below it (the M4 fixture's mu = 2.914 MHz), 1.3e-2 at 20 Hz below; above the COM (mu = omega_top + 0.35 gap = 3.060 MHz) leakage 3.6e-5, residual 1.9e-4, fidelity 0.99969"
+    corrected_form: "the surrogate places the beat note 0.35 of the smallest mode gap above the highest coupled mode (Landsman's and Chen's placement above the spectrum) and never at a midpoint; the first-order closed forms close every loop in all cases, the differences are second order and appear only in the exact check"
+  - id: anchor.m6.compiler_templates
+    symbol: "ZXZXZ residual; e^{i pi v s/4}; 0.854 / 0.691"
+    tag: recomputed here
+    section: "7.2 item 1; 7.7; 9.6 rows 'Compiled CNOT and CP', 'Native-gate identities'"
+    source: "check_circuits.py 1; tests/test_compiler.py"
+    equation: "20 random SU(2) targets decompose to two GPi2 pulses plus virtual rz with max residual 1.5e-15; Maslov's CNOT equals CNOT up to e^{i pi v s/4} for all four (s, v) (+0.25 pi, -0.25 pi, -0.25 pi, +0.25 pi); CP(theta) = RZ(theta/2)^x2 ZZ(-theta/2) is exact for every theta, Debnath's fixed-RZ(pi/2) template has |Tr|/4 = 0.8536 at pi/2 and 0.6913 at pi/4; the whole compiled Bell circuit reproduces its target up to the residual frame to 5e-16 with 6 pulses (one entangling)"
+    corrected_form: "the Section 9.6 virtual-Z pin (RZ(0.1) then GPi2(0) equals GPi2(-0.1) followed by RZ(0.1)) is the frame-propagation rule of the compiler, tested as matrices and through the pipeline"
+  - id: anchor.m6.beat_phase_tilt
+    symbol: "MS(pi, 0) from |10> against the gate's start phase"
+    tag: recomputed here
+    section: "7.10; 4.4.1 (Roos); 9.6"
+    source: "check_circuits.py 2b on the two-ion fixture (calibrated 5-segment AM waveform, mu = 3.0601 MHz)"
+    equation: "phase_continuous = False (the beat note reset per gate through the leg phases): fidelity 0.99995 at gate starts of 0, 21.25 and 21.5 beat cycles; phase_continuous = True: 0.99995 at 0 and 21.5 cycles, 0.98886 at 21.25 cycles (zeta = pi/2, Roos's psi = (4 Omega-bar/mu) sin zeta)"
+    corrected_form: "the exact spot check at t = 0 cannot see the tilt, so a run under continuous tones would report a gate the calibration never measured; the intrinsic budget carries sin^2 psi for that hardware"
+  - id: anchor.m6.bell_state
+    symbol: "two-ion Bell circuit through run() (Section 9.6 row 1)"
+    tag: recomputed here
+    section: "9.6; 3.4; 8.6"
+    source: "check_circuits.py 2 on the two-ion 171Yb+ fixture (global 355 nm pair at 100.93 kHz, 2.5 um addressing pairs with eps = 0.0220, oblique 369.5 nm cooling/detection beam, Crain SNSPD)"
+    equation: "4000-shot histogram 00: 0.5015, 11: 0.4965, 01: 0.0013, 10: 0.0008 against the ideal 0.5/0.5 (error bar on P00 0.0079); register 1 - F = 2.353e-3 against the compiled circuit's state inside the intrinsic budget 8.2e-3 (carrier scale 6.6e-3, five gpi2 crosstalk terms of 3.0e-4, Debye-Waller 4.1e-6); detection threshold 0.5 at a 20 us window with (eps_B, eps_D) = (6.05e-4, 4.18e-4) from the record model, SPAM per qubit (6.1e-4, 3.5e-4) at zero crosstalk, preparation error 2.48e-6; Doppler nbar 3.5 to 11.6 falls to 0.0185/0.0154 on the gate modes after 40 sideband pulses; six branches carry all but 3.4e-5; parity contrast 0.99699, Bell bound (P00 + P11 + C)/2 = 0.99763"
+    corrected_form: "the row asks for agreement with the ideal statevector within the readout errors: |P00 - 0.5| = 1.5e-3 at a 7.9e-3 error bar; the exact spot check of the gate leaves 1.3e-4 while the (Omega/nu)^2 carrier scale bounds it at 6.6e-3"
+  - id: anchor.m6.ghz_fixtures
+    symbol: "three- and four-ion Molmer-Sorensen GHZ fixtures (Section 9.6 row 2)"
+    tag: recomputed here
+    section: "9.6; 5.2; 5.1.1"
+    source: "check_circuits.py 3, 3b and 5 on the three- and four-ion fixtures (x modes 2.569/2.8284/3.0 MHz and 2.2013/2.5681/2.8284/3.0 MHz; 2.0 um addressing waist, eps = 0.0128)"
+    equation: "three ions, global symmetric pulse (Omega/2pi = 151.67 kHz, 50 us) at t = pi/(8 chi): pairwise closed-form chi 0.7854/0.8801/0.7854; exact fidelity 0.98230 against the pairwise target and 0.97346 against the ideal exp(-i pi/4 sum XX) with the top two modes resolved at d_m = 12 (dimension 1152), P(000) = 0.2371, boundary 2.9e-9, frozen zigzag |alpha|^2 (2n+1) = 1.1e-3 and chi = 0.0196 rad; four ions (dimension 2304): 0.96718 / 0.93734, P(0000) = 0.4654, P(1111) = 0.4720, boundary 8.2e-10; H, CNOT(0,1), CNOT(1,2) through run(): space [2, 2, 2, 10, 10] with the tilt frozen, adjacent-pair spot checks 0.99530 with 4.4e-3 leakage, register 1 - F = 1.483e-2 inside the budget, 2000-shot histogram 000: 0.5155, 111: 0.4775; a displaced |alpha| = 1 state at d_m = 12, 8, 6 holds 1.1e-7, 5.9e-4, 1.9e-2 in its top two levels"
+    corrected_form: "the plan's 'two resolved modes at d_m = 12' holds only with the zigzag frozen and its residual reported (the symmetric pulse closes the COM loop only); the outer pair (0, 2) couples three modes (|chi| = 0.39 on the tilt, dimension 8000 > 4096) and waits for GATE_LOCAL (M9a); the seven-segment adjacent-pair gate's 4.4e-3 leakage sits inside its (Omega/nu_min)^2 carrier scale"
+  - id: anchor.m6.bv_crosstalk
+    symbol: "Bernstein-Vazirani with the secret 01 under addressing crosstalk (Section 9.6 row 6; Wright's minimal model)"
+    tag: recomputed here
+    section: "9.6; 3.3; 6.6"
+    source: "check_circuits.py 4 on the three-ion fixture (data ions 0 and 2, the middle ion the ancilla, eps = 0.0128 onto nearest neighbours)"
+    equation: "exact register data-string populations 00: 1.81e-3, 01: 0.998, 10: 6.9e-7, 11: 3.87e-4; declared through the POVM 00: 2.41e-3, 11: 7.32e-4, so the 1 -> 0 flip of the secret exceeds the 0 -> 1 flip by 3.30 with per-ion eps_B = 6.11e-4 against eps_D = 3.47e-4; the coherent-only matrix model (compiled circuit, eps theta rotations on the neighbours, ideal MS) gives 00: 2.22e-3 and 11: 4.11e-4, a ratio 5.39 before any readout; register 1 - F = 4.344e-3 inside the budget; 4000-shot histogram 011: 0.9942, 001: 0.0035, 010: 0.0013"
+    corrected_form: "the 1 -> 0 dominance the row predicts emerges, and mostly from the coherent circuit: the oracle CNOT maps the ancilla's crosstalk rotations (from the data ions' Hadamard pulses) onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct rotations, and the readout asymmetry (eps_B > eps_D) then lowers the ratio from 5.4 to 3.3; the magnitude (3.1e-3 total flip weight at eps = 0.0128) is that of this fixture, not Wright's 3 % applied twice, which the plan's 'stated magnitude' cannot fix without his beam profile"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

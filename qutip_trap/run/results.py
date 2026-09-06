@@ -8,8 +8,10 @@ key "5". PennyLane reverses to big-endian on its side; Qiskit does not (Section 
 
 from __future__ import annotations
 
+import math
 from collections import Counter
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -21,8 +23,6 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.sampling import NoiseSample
-
-M6 = "milestone M6 (run/, PLAN.md Section 3.4)"
 
 
 def bitstring_key(bits: np.ndarray) -> str:
@@ -67,11 +67,19 @@ class RunState:
     events: tuple[tuple[int, str], ...]
     """(shot index, event) log."""
 
-    def recrystallize(self) -> RunState:
-        raise NotImplementedError(f"RunState.recrystallize is {M6}")
+    def recrystallize(self, shot: int = -1) -> RunState:
+        """Bookkeeping of a recrystallization after a melt (Section 6.7): the order and the dark/lost flags persist (a reorder
+        is not undone and a dark ion stays dark until repumped or reloaded); the event is logged."""
+        return RunState(self.order, self.dark, self.lost, self.events + ((int(shot), "recrystallize"),))
 
-    def reload(self, device: Device) -> RunState:
-        raise NotImplementedError(f"RunState.reload is {M6}")
+    def reload(self, device: Device, shot: int = -1) -> RunState:
+        """A reload restores the device's nominal crystal: identity order, no dark or lost ions, the event logged."""
+        n = device.crystal.n_ions
+        return RunState(tuple(range(n)), frozenset(), frozenset(), self.events + ((int(shot), "reload"),))
+
+    @classmethod
+    def nominal(cls, n_ions: int) -> RunState:
+        return cls(tuple(range(n_ions)), frozenset(), frozenset(), ())
 
 
 @dataclass(frozen=True)
@@ -97,6 +105,19 @@ class Diagnostics:
     root_seed: int
     calibration: CalibrationTable
     approximations: tuple[str, ...]
+    intrinsic_budget: dict[str, float] = field(default_factory=dict)
+    """Per played gate, the closed-form error scales of Section 9.6 reported beside the result (M6): residual displacement
+    eps_ent = sum |alpha|^2 (2 nbar + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale (Omega/nu)^2,
+    the frozen spectators' chi loss; and 'total' their sum."""
+    dropped_branch_weight: float = 0.0
+    """Weight of the initial-mixture branches below SolverOptions.branch_weight_min that were not evolved (M6)."""
+
+
+def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:
+    """sqrt(p (1 - p)/n_eff) per key: the histogram error bars from the effective sample size (Section 3.4)."""
+    if n_eff <= 0.0:
+        return {k: float("nan") for k in probabilities}
+    return {k: math.sqrt(max(p * (1.0 - p), 0.0) / n_eff) for k, p in probabilities.items()}
 
 
 @dataclass(frozen=True)
@@ -117,6 +138,9 @@ class Result:
     spam: dict[str, tuple[float, float]]
     """Per qubit (eps_B, eps_D) with the definition used (Section 13, "Readout figure of merit")."""
     final_state: Qobj | None
+    """The recombined register density matrix in QuTiP's tensor order (ion 0 the FIRST factor, the most-significant index bit);
+    ``bitstrings``, ``counts`` and ``probabilities`` use the Section 13 order (qubit 0 the least-significant bit), and
+    ``run.job.to_register_order`` converts a compiler-order ket to this one."""
     diagnostics: Diagnostics
 
     def __post_init__(self) -> None:
@@ -161,6 +185,7 @@ __all__ = [
     "Result",
     "RunState",
     "aggregate",
+    "binomial_error_bars",
     "bits_from_decimal",
     "bitstring_key",
     "decimal_key",

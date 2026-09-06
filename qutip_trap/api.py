@@ -18,11 +18,20 @@ from qutip_trap.calibration.entangling import (
     thermal_robustness,
 )
 from qutip_trap.calibration.readout import DetectionCalibration, calibrate_detection
-from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
+from qutip_trap.calibration.surrogate import SurrogateReport, surrogate_table
+from qutip_trap.control.compiler import (
+    Circuit,
+    CompileReport,
+    Operation,
+    circuit_unitary,
+    compile_to_native,
+    compile_with_report,
+    ideal_probabilities,
+)
 from qutip_trap.control.composite import CompositePulse, composite_pulse
 from qutip_trap.control.hardware import HardwareChain
 from qutip_trap.control.pulses import Drive, LightShiftCouplings, Pulse, Tone
-from qutip_trap.control.schedule import GateDrive, Schedule, ScheduledEvent, schedule
+from qutip_trap.control.schedule import GateDrive, PlayedGate, Schedule, ScheduledEvent, schedule
 from qutip_trap.control.shaping import (
     GateModes,
     ShapedPulse,
@@ -67,6 +76,13 @@ from qutip_trap.noise.decoupling import DecouplingSequence, decoupling_sequence,
 from qutip_trap.noise.model import NoiseModel
 from qutip_trap.noise.sampling import NoiseSample
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum
+from qutip_trap.prep.recipe import (
+    PreparationRecipe,
+    PreparationRun,
+    SidebandCoolingSpec,
+    run_preparation,
+    standard_recipe,
+)
 from qutip_trap.readout.detection import CameraGeometry, Detector, PhotonRecord, RecordModel
 from qutip_trap.readout.discriminate import (
     POVM,
@@ -89,9 +105,10 @@ from qutip_trap.readout.fluorescence import (
     scattering_rate,
 )
 from qutip_trap.readout.presets import ApparatusPreset
-from qutip_trap.run.job import prepare, run
+from qutip_trap.run.job import RunRecord, last_record, prepare, register_fidelity, run
 from qutip_trap.run.levels import FidelityLevel, resolve_level
 from qutip_trap.run.results import Diagnostics, Result, RunState
+from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import IncompleteSpeciesTable, available
 from qutip_trap.species import species as species_by_name
 from qutip_trap.species.metastable import MetastableChannels
@@ -150,6 +167,23 @@ __all__ = [
     "CalibrationRun",
     "CalibrationTable",
     "ChannelSummary",
+    "CompileReport",
+    "PlayedGate",
+    "PreparationRecipe",
+    "PreparationRun",
+    "RunRecord",
+    "SidebandCoolingSpec",
+    "SpaceSelection",
+    "SurrogateReport",
+    "circuit_unitary",
+    "compile_with_report",
+    "ideal_probabilities",
+    "last_record",
+    "register_fidelity",
+    "run_preparation",
+    "select_space",
+    "standard_recipe",
+    "surrogate_table",
     "ClockPoint",
     "Circuit",
     "CollapseOp",

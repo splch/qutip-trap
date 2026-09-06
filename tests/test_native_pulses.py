@@ -93,13 +93,17 @@ def test_scheduler_refusals_and_drive_inference() -> None:
     table = table_with_rabi({(0, MICROWAVE_BEAM_KEY): RABI_HZ, (1, MICROWAVE_BEAM_KEY): RABI_HZ})
     with pytest.raises(ScheduleError, match="no entangling waveform"):
         schedule(Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1)), dev, table)
-    with pytest.raises(NotImplementedError, match="M6"):
+    # Section 7.2 item 4: a measure before a later gate is refused with a clear error (mid-circuit physics is Section 8.5)
+    with pytest.raises(ScheduleError, match="mid-circuit"):
         schedule(
             Circuit(1, (Operation("measure", (0,), ()), Operation("gpi", (0,), (0.0,))), (0,)), dev, table
         )
+    with pytest.raises(ScheduleError, match="mid-circuit"):
+        schedule(Circuit(1, (Operation("reset", (0,), ()), Operation("gpi", (0,), (0.0,))), (0,)), dev, table)
     with pytest.raises(ScheduleError, match="native"):
         schedule(Circuit(1, (Operation("h", (0,), ()),), (0,)), dev, table)
-    # a terminal measure is not an event; two gates run sequentially with a dead time between them
+    # the terminal measure is the schedule's one event, after the last pulse and dead time, of the detector's window when the
+    # table carries no detection entry (M6); two gates run sequentially with a dead time between them
     sch = schedule(
         Circuit(
             1,
@@ -109,7 +113,13 @@ def test_scheduler_refusals_and_drive_inference() -> None:
         dev,
         table,
     )
-    assert len(sch.pulses) == 2 and sch.events == ()
+    assert len(sch.pulses) == 2 and len(sch.events) == 1
+    meas = sch.measurement
+    assert meas is not None and meas.kind == "measure" and meas.ions == (0,)
+    assert meas.t_start_s == pytest.approx(sch.pulses[1].t_end_s + dev.hardware.dead_time_s)
+    assert meas.t_end_s - meas.t_start_s == pytest.approx(dev.detector.window_s)
+    assert sch.pulses_end_s == pytest.approx(meas.t_start_s) and sch.duration_s == pytest.approx(meas.t_end_s)
+    assert schedule(Circuit(1, (Operation("gpi", (0,), (0.0,)),), ()), dev, table).events == ()
     assert sch.pulses[1].t_start_s == pytest.approx(sch.pulses[0].t_end_s + dev.hardware.dead_time_s)
     assert sch.pulses[0].duration_s == pytest.approx(2 * sch.pulses[1].duration_s)
     pulse = single_qubit_pulse(0, math.pi, 0.2, GateDrive("microwave", ()), RABI_HZ, 1e-3, gate_id="x")

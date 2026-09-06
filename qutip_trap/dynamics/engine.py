@@ -100,10 +100,17 @@ class SolverOptions:
     """Coefficients are module-level functions or arrays, so they pickle."""
     e_ops_for_target_tol: bool = True
     """mcsolve needs e_ops to target a tolerance (Section 5.4)."""
+    freeze_alpha_max: float = 1e-4
+    """|alpha_m|^2 (2 nbar_m + 1) below which a spectator may be frozen rather than resolved (Section 5.2; M6)."""
+    branch_weight_min: float = 1e-6
+    """Weight below which a branch of the initial thermal and preparation mixture is dropped from the exact evolution and
+    reported (the Fock-sum path of Section 5.3, M6; an approximation of the truncation kind like boundary_population_max)."""
 
     def __post_init__(self) -> None:
         if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
             raise ValueError("tolerances and nsteps must be positive")
+        if not 0.0 < self.freeze_alpha_max < 1.0 or not 0.0 < self.branch_weight_min < 1.0:
+            raise ValueError("freeze_alpha_max and branch_weight_min are fractions in (0, 1)")
         if not self.integrators:
             raise ValueError("at least one integrator is required")
         bad = [name for name in self.integrators if name in MULTISTEP_INTEGRATORS]
@@ -328,7 +335,9 @@ class JointExactEngine:
                     frozen_n[m] = int(rng.choice(len(probs), p=probs))
         # segments at every pulse boundary and idle boundary
         t0 = min([p.t_start_s for p in schedule.pulses] + [a for a, _ in schedule.idle] + [0.0])
-        t_end = schedule.duration_s
+        t_end = (
+            schedule.pulses_end_s
+        )  # the measurement event that may follow is the readout stage's, not free evolution
         cuts = {t0, t_end}
         for p in schedule.pulses:
             cuts.update((p.t_start_s, p.t_end_s))

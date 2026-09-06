@@ -1,0 +1,66 @@
+
+== 1. compiler templates (Section 7.7)
+  ZXZXZ on 20 random SU(2) targets: max residual 9.4e-16, pulses per target <= 2
+  CNOT template s = +1, v = +1: global phase +0.2500 pi (e^(i pi v s/4) = +0.2500 pi)
+  CNOT template s = +1, v = -1: global phase -0.2500 pi (e^(i pi v s/4) = -0.2500 pi)
+  CNOT template s = -1, v = +1: global phase -0.2500 pi (e^(i pi v s/4) = -0.2500 pi)
+  CNOT template s = -1, v = -1: global phase +0.2500 pi (e^(i pi v s/4) = +0.2500 pi)
+  CP(0.50 pi): compiler template exact up to a global phase: True; Debnath's as drawn |Tr|/4 = 0.8536 (cos^2((pi - theta)/4) = 0.8536)
+  CP(0.25 pi): compiler template exact up to a global phase: True; Debnath's as drawn |Tr|/4 = 0.6913 (cos^2((pi - theta)/4) = 0.6913)
+  CP(1.00 pi): compiler template exact up to a global phase: True; Debnath's as drawn |Tr|/4 = 1.0000 (cos^2((pi - theta)/4) = 1.0000)
+  Bell circuit: 6 pulses (1 entangling), residual frame {0: 1.0, 1: 0.0} pi, whole-circuit residual 4.7e-16
+
+== 2. two-ion 171Yb+ Bell state with all physics on (Section 9.6 row 1)
+  table: carrier Rabi 100.93 kHz (seed), crosstalk eps_01 = 0.0220 (Section 6.6: Wright's 1-4 %), qubit frequency 12.642820 GHz
+  waveform: 5 AM segments at mu = 3.0601 MHz above the COM, |chi| = 0.78531 exact after 2 spot checks, surrogate error 0.0182
+  spot check: fidelity 0.99987, leakage 4.49e-05, residual quanta {2: '1.3e-06', 3: '2.3e-04'}, space [2, 2, 10, 10]
+  detection: threshold 0.5, window 20.0 us, eps_B 6.05e-04, eps_D 4.18e-04
+  space [2, 2, 10, 10], classes {0: 'dropped', 1: 'dropped', 2: 'resolved', 3: 'resolved', 4: 'dropped', 5: 'dropped'}, branches 6 (dropped weight 3.4e-05), boundary {2: '3.8e-13', 3: '4.3e-07'}, integrators dop853,vern9
+MC: histogram over 4000 shots {'00': 0.5015, '01': 0.0013, '10': 0.0008, '11': 0.4965} against the ideal {'00': 0.5, '11': 0.5}; error bar on P00 0.0079
+  register state: 1 - F = 2.353e-03 against the compiled circuit's state; intrinsic budget {'ms[2].residual_displacement': '1.1e-32', 'ms[2].debye_waller': '4.1e-06', 'ms[2].carrier_scale': '6.6e-03', 'ms[2].frozen_chi_rad': '0.0e+00', 'ms[2].beat_phase_tilt': '0.0e+00', 'gpi2[0].crosstalk': '3.0e-04', 'gpi2[0].sideband_scale': '8.3e-06', 'gpi2[1].crosstalk': '3.0e-04', 'gpi2[1].sideband_scale': '8.3e-06', 'gpi2[3].crosstalk': '3.0e-04', 'gpi2[3].sideband_scale': '8.3e-06', 'gpi2[4].crosstalk': '3.0e-04', 'gpi2[4].sideband_scale': '8.3e-06', 'gpi2[5].crosstalk': '3.0e-04', 'gpi2[5].sideband_scale': '8.3e-06', 'total': '8.2e-03'}
+  SPAM per qubit (eps_B, eps_D) = (0.00061, 0.00035), preparation error 2.48e-06; T_rep 7.221 ms
+  preparation: Doppler nbar {0: 11.624, 1: 6.368, 2: 3.722, 3: 3.493, 4: 3.88, 5: 3.623}; after sideband cooling {2: 0.0185, 3: 0.0154}; pump recoil {0: '8.5e-03', 1: '4.9e-03', 2: '3.0e-03', 3: '2.8e-03', 4: '3.1e-03', 5: '2.9e-03'}
+  parity oscillation under an analysis pi/2 pulse (7 phases, exact populations): contrast 0.99699; Bell fidelity bound (P00 + P11 + C)/2 = 0.99763
+
+== 2b. the beat-note phase at the gate start (Section 7.10; Roos 2008)
+  phase_continuous = False, gate start at  0.00 beat cycles: MS(pi, 0) from |10> fidelity 0.99995
+  phase_continuous = False, gate start at 21.25 beat cycles: MS(pi, 0) from |10> fidelity 0.99995
+  phase_continuous = False, gate start at 21.50 beat cycles: MS(pi, 0) from |10> fidelity 0.99995
+  phase_continuous = True , gate start at  0.00 beat cycles: MS(pi, 0) from |10> fidelity 0.99995
+  phase_continuous = True , gate start at 21.25 beat cycles: MS(pi, 0) from |10> fidelity 0.98886
+  phase_continuous = True , gate start at 21.50 beat cycles: MS(pi, 0) from |10> fidelity 0.99995
+
+== 3. three-ion Molmer-Sorensen GHZ at t = pi/(8 chi) (Section 9.6 row 2)
+  x modes MHz [2.569, 2.8284, 3.0], eta of ions [[0.049, -0.0809, 0.0642], [-0.098, 0.0, 0.0642], [0.049, 0.0809, 0.0642]]
+  global symmetric pulse: Omega/2pi = 151.67 kHz, tau = 50.0 us; closed-form pairwise chi {(0, 1): 0.7854, (0, 2): 0.8801, (1, 2): 0.7854} (COM only would be pi/4 on every pair)
+    mode 3: |alpha|^2 (2n+1) = 1.10e-03, |chi| = 0.0196 rad, loop radius 0.036
+    mode 4: |alpha|^2 (2n+1) = 5.85e-03, |chi| = 0.1535 rad, loop radius 0.081
+    mode 5: |alpha|^2 (2n+1) = 6.10e-30, |chi| = 0.7462 rad, loop radius 0.487
+  resolved [4, 5] at d_m = 12 (joint dimension 1152), frozen (0, 1, 2, 3, 6, 7, 8); frozen zigzag residual |alpha|^2 (2n+1) = 1.1e-03, chi = 0.0196 rad (the symmetric pulse closes the COM loop only)
+  fidelity against the pairwise closed-form target: 0.98230
+  fidelity against the ideal single-mode GHZ exp(-i pi/4 sum XX): 0.97346
+  populations |000>, |111> = 0.2371, 0.0000 (the odd-N Molmer-Sorensen state has P(000) = 1/4, P(111) = 0 before the single-qubit rotation that makes it a GHZ state in the z basis); boundary populations {4: '1.3e-21', 5: '2.9e-09'}
+  closed-form open-loop error of the resolved modes (the symmetric pulse closes only the COM): sum_i,m |alpha_im|^2 = 1.17e-02; carrier scale (Omega/nu_min)^2 = 3.49e-03; exact residual quanta {4: '1.15e-02', 5: '9.55e-05'}
+  pair (0, 1): classes {3: 'resolved', 4: 'frozen', 5: 'resolved'}, frozen chi {4: 0.0}, spot check fidelity 0.99530, leakage 4.4e-03, dims [2, 2, 2, 10, 10]
+  pair (1, 2): classes {3: 'resolved', 4: 'frozen', 5: 'resolved'}, frozen chi {4: -0.0}, spot check fidelity 0.99530, leakage 4.4e-03, dims [2, 2, 2, 10, 10]
+  GHZ circuit through run(): space [2, 2, 2, 10, 10], classes {0: 'dropped', 1: 'dropped', 2: 'dropped', 3: 'resolved', 4: 'frozen', 5: 'resolved', 6: 'dropped', 7: 'dropped', 8: 'dropped'}, branches 4 (dropped 2.8e-03), boundary {3: '8.3e-15', 5: '7.2e-10'}, frozen contribution {4: ('4.4e-33', 0.0)}
+  register 1 - F = 1.483e-02; budget total 3.0e-02
+MC: GHZ histogram over 2000 shots {'000': 0.5155, '111': 0.4775, '110': 0.003, '001': 0.0015, '101': 0.001, '011': 0.0005, '010': 0.0005, '100': 0.0005}
+
+== 3b. four-ion Molmer-Sorensen GHZ from the ground state: COM and tilt resolved at d_m = 12 (dimension 2304)
+  x modes MHz [2.2013, 2.5681, 2.8284, 3.0]; resolved [6, 7] (dimension 2304); frozen x-mode residuals {4: ('1.3e-05', 0.0043), 5: ('5.4e-04', 0.0417)}
+  pairwise closed-form chi {(0, 1): 0.7854, (0, 2): 0.8834, (0, 3): 0.9531, (1, 2): 0.8136, (1, 3): 0.8834, (2, 3): 0.7854}; fidelity against the pairwise target 0.96718, against the ideal GHZ exp(+i pi/4 sum XX) 0.93734; P(0000) = 0.4654, P(1111) = 0.4720; boundary {6: '7.9e-20', 7: '8.2e-10'}
+
+== 4. Wright's minimal crosstalk model: Bernstein-Vazirani with the secret 01 on ions 0 and 2, the middle ion the ancilla (Section 9.6 row 6)
+  crosstalk eps = 0.0128 (nearest neighbours); exact register data-string populations {'00': '1.81e-03', '01': '9.98e-01', '10': '6.87e-07', '11': '3.87e-04'}
+  coherent crosstalk alone (compiled circuit as matrices, ideal MS) {'00': '2.22e-03', '01': '9.97e-01', '10': '9.15e-07', '11': '4.11e-04'}: the 1 -> 0 flip (00) already leads the 0 -> 1 flip (11) by 5.39 because the oracle CNOT maps the ancilla's crosstalk rotations onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct rotations
+  exact DECLARED distribution through the POVM {'00': '2.41e-03', '01': '9.97e-01', '10': '1.76e-06', '11': '7.32e-04'}: the 1 -> 0 flip of the secret (00) 2.41e-03 against the 0 -> 1 flip (11) 7.32e-04, ratio 3.30; per-ion eps_B 6.11e-04 against eps_D 3.47e-04
+  register 1 - F = 4.344e-03; budget total 1.6e-02
+MC: BV histogram over 4000 shots {'011': 0.9942, '001': 0.0035, '010': 0.0013, '111': 0.0008, '000': 0.0003}
+
+== 5. GHZ fixture truncation (Section 5.1.1; check_critique_v3.py)
+  |alpha| = 1 at d_m = 12: top two levels hold 1.1e-07
+  |alpha| = 1 at d_m = 8: top two levels hold 5.9e-04
+  |alpha| = 1 at d_m = 6: top two levels hold 1.9e-02
+
+done

@@ -541,26 +541,14 @@ def detection_histogram(device: Device, ion: int, n_records: int, **kw: Any) -> 
     (rows) and ``fitted`` the threshold, window, eps_B, eps_D and the fitted rates with their uncertainties.
     """
     from qutip_trap.calibration.readout import calibrate_detection
+    from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel
     from qutip_trap.readout.fluorescence import detection_rates_for_ion
-    from qutip_trap.species.model import parse_transition_label
 
     species = device.crystal.species[ion]
     beams = kw.get("detection_beams")
     if beams is None:
-        lower, upper = parse_transition_label(species.cycling)
-        lam = species.transition(species.cycling).wavelength_vac_m
-        near = [b for b in device.beams if abs(b.wavelength_m - lam) < 2e-3 * lam]
-        for rep in species.repumps:
-            if not any(t.label == rep for t in species.transitions):
-                continue  # a repump whose upper level the table does not close (the 171Yb+ 935 nm line, M3a finding)
-            lam_r = species.transition(rep).wavelength_vac_m
-            near.extend(
-                b for b in device.beams if abs(b.wavelength_m - lam_r) < 2e-3 * lam_r and b not in near
-            )
-        if not near:
-            raise ValueError(f"no beam of the device is near the {species.name} cycling line {lower}-{upper}")
-        beams = near
+        beams = [device.beams[k] for k in detection_beams(device, ion)]
     rates, scheme, _model = detection_rates_for_ion(
         species,
         device.field.B_gauss,

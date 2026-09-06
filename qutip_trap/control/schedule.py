@@ -14,6 +14,14 @@ on both: R_y(pi/2) X R_y(pi/2)^dag = -Z), labelled as such in the gate ids; on a
 sigma_z sigma_z force in Ballance's and Baldwin's spin-echo form (two half-angle pulses around a pi pulse on both ions,
 Section 4.4.4), whose sign can only be chosen through the detuning side.
 
+Measurement (Section 7.2 item 4, M6): the terminal ``measure`` (the circuit's ``measure`` targets and any trailing measure
+operations) becomes one ``ScheduledEvent`` after the last pulse and dead time, of the calibration table's detection window
+(the detector's when the table has none); a measure, reset or recool that precedes a later gate is refused with a
+``ScheduleError`` until the mid-circuit physics of Section 8.5 (recoil, neighbour Stark shift, recooling and
+re-preparation of the measured ion) is implemented, which is a stage and not a pipeline change. Every entangling gate the
+scheduler plays is recorded as a ``PlayedGate`` (the pair, the beams and the waveform AS PLAYED, rescaled), which is what the
+resolved-mode selection of Section 5.2 reads (``qutip_trap.run.space``).
+
 Virtual-Z rule (Section 13, "Virtual-Z propagation"): RZ(theta) shifts every later pulse phase phi -> phi - theta
 with gates read in time order; the frame at the end of the schedule is ``phase_frame``. A native GPi(phi) or GPi2(phi)
 is a resonant carrier pulse of area pi or pi/2 at phase phi relative to the ion's frame (Section 4.3.5); its duration
@@ -36,6 +44,7 @@ from qutip_trap.control.compiler import NATIVE_GATES, Circuit
 from qutip_trap.control.pulses import Drive, DriveKind, LightShiftCouplings, Pulse, Tone
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.frames import PhaseFrame
+from qutip_trap.light.roles import gate_beams
 from qutip_trap.transport.budget import Transport
 from qutip_trap.units import TWO_PI
 
@@ -45,7 +54,11 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable, Segment
     from qutip_trap.device.model import Device
 
-M6 = "milestone M6 (control/schedule.py, events and mid-circuit operations, PLAN.md Sections 7.2, 7.3)"
+M6_MID_CIRCUIT = (
+    "mid-circuit measure, reset and recool are refused in the first release (PLAN.md Section 7.2 item 4): the IR and the "
+    "Schedule carry their positions, the physics of Section 8.5 (detection recoil, neighbour Stark shift, depumping, recooling "
+    "and re-preparation of the measured ion) is the stage still to be implemented"
+)
 FORCE_AXIS_OFFSET_RAD = math.pi / 2.0
 """The bichromatic force acts about phi_s + pi/2 in the same-Delta-k geometry (Section 4.3.4): the i of i eta (a + a^dag)."""
 
@@ -72,6 +85,21 @@ class ScheduledEvent:
 
 
 @dataclass(frozen=True)
+class PlayedGate:
+    """One entangling gate as the scheduler played it: what the mode selection of Section 5.2 and the diagnostics read."""
+
+    gate_id: str
+    kind: Literal["ms", "zz"]
+    pair: tuple[int, int]
+    waveform: Waveform
+    """The waveform AS PLAYED (rescaled to the gate's angle), with its signed chi_m and alpha_m per mode."""
+    beams: tuple[int, ...]
+    """The entangling drive's beams (the Raman pair whose Delta k sets the Lamb-Dicke parameters)."""
+    t_start_s: float
+    t_end_s: float
+
+
+@dataclass(frozen=True)
 class Schedule:
     pulses: tuple[Pulse, ...]
     idle: tuple[tuple[float, float], ...]
@@ -81,6 +109,8 @@ class Schedule:
     """Per-qubit virtual-Z frame at the end; the rule is phi -> phi - theta (Section 7.6)."""
     transports: tuple[Transport, ...] = ()
     """M12: interleaved with ``pulses`` by absolute time."""
+    gates: tuple[PlayedGate, ...] = ()
+    """The entangling gates as played (M6), in time order."""
 
     def __post_init__(self) -> None:
         for a, b in self.idle:
@@ -99,6 +129,20 @@ class Schedule:
     def duration_s(self) -> float:
         ends = [p.t_end_s for p in self.pulses] + [e.t_end_s for e in self.events] + [b for _, b in self.idle]
         return max(ends) if ends else 0.0
+
+    @property
+    def pulses_end_s(self) -> float:
+        """The end of the last pulse or idle interval (the measurement event starts here)."""
+        ends = [p.t_end_s for p in self.pulses] + [b for _, b in self.idle]
+        return max(ends) if ends else 0.0
+
+    @property
+    def measurement(self) -> ScheduledEvent | None:
+        """The terminal measurement event, if the circuit measures."""
+        for e in self.events:
+            if e.kind == "measure":
+                return e
+        return None
 
 
 @dataclass(frozen=True)
@@ -125,22 +169,26 @@ class GateDrive:
 def default_gate_drives(device: Device) -> dict[int, GateDrive]:
     """Infer the single-qubit gate drive from the device's beams: none = microwave, one = optical, a pair of equal
     wavelength = Raman; anything else is ambiguous and must be passed explicitly."""
-    beams = device.beams
     n = device.crystal.n_ions
+    idx = gate_beams(
+        device
+    )  # the far-detuned beams; resonant cooling, detection and repump light plays no gate
+    beams = [device.beams[k] for k in idx]
     if len(beams) == 0:
         spec = GateDrive("microwave", ())
     elif len(beams) == 1:
         species = device.crystal.species[0]
         lo, up = (lab.split()[0] for lab in species.qubit)
         e2 = any(t.multipole == "E2" and {t.lower, t.upper} == {lo, up} for t in species.transitions)
-        spec = GateDrive("optical_E2" if e2 else "optical_E1", (0,))
+        spec = GateDrive("optical_E2" if e2 else "optical_E1", (idx[0],))
     elif (
         len(beams) == 2 and abs(beams[0].wavelength_m - beams[1].wavelength_m) <= 1e-3 * beams[0].wavelength_m
     ):
-        spec = GateDrive("raman", (0, 1))
+        spec = GateDrive("raman", (idx[0], idx[1]))
     else:
         raise ScheduleError(
-            "the device's beams do not identify a single-qubit gate drive (need none, one, or one Raman pair); pass gate_drives"
+            "the device's far-detuned beams do not identify a single-qubit gate drive (need none, one, or one Raman pair); "
+            "pass gate_drives"
         )
     return {i: spec for i in range(n)}
 
@@ -198,11 +246,20 @@ def single_qubit_pulse(
 NATIVE_AREAS: dict[str, float] = {"gpi": float(np.pi), "gpi2": float(np.pi / 2.0)}
 
 
+def stark_scaling_power(kind: DriveKind) -> int:
+    """How the differential Stark shift scales with the played Rabi frequency (Section 4.3.2): both a two-photon Rabi frequency
+    and the ac Stark shift are proportional to the intensity, so a Raman or light-shift drive scales its shift LINEARLY with
+    Omega (power 1); a single-photon optical drive (Omega proportional to the field, the shift to the intensity) and a microwave
+    drive (the ac Zeeman shift proportional to B_1^2) scale it as Omega^2 (power 2)."""
+    return 1 if kind in ("raman", "light_shift") else 2
+
+
 def _stark_for_segment(
     table: CalibrationTable, ion: int, gate_drive: GateDrive, segment: Segment
 ) -> float | Callable[[float], float]:
-    """The table's Stark entry scaled with the played intensity: delta_cal sum_legs (Omega_leg/Omega_cal)^2 (Section 4.3.2), or 0
-    when the table has no calibrated Stark or Rabi entry for (ion, beam)."""
+    """The table's Stark entry scaled with the played amplitude: delta_cal sum_legs (Omega_leg/Omega_cal)^p with p = 1 for a
+    two-photon drive and 2 for a single-photon or microwave one (``stark_scaling_power``, Section 4.3.2), or 0 when the table
+    has no calibrated Stark or Rabi entry for (ion, beam)."""
     key = (ion, gate_drive.table_key_beam)
     stark = table.stark.get(key)
     rabi = table.rabi.get(key)
@@ -210,19 +267,30 @@ def _stark_for_segment(
         return 0.0
     if rabi.value <= 0.0:
         return 0.0
+    power = stark_scaling_power(gate_drive.kind)
     amps = [segment.amplitude_hz[(ion, leg)] for leg in segment.legs]
     constants = [a for a in amps if not callable(a)]
     if len(constants) == len(amps):
-        return float(stark.value) * float(sum((float(a) / rabi.value) ** 2 for a in constants))
+        return float(stark.value) * float(sum((float(a) / rabi.value) ** power for a in constants))
 
     def shift(tau: float) -> float:
         total = 0.0
         for a in amps:
             val = float(a(tau)) if callable(a) else float(a)
-            total += (val / rabi.value) ** 2
+            total += (val / rabi.value) ** power
         return float(stark.value) * total
 
     return shift
+
+
+def beat_phase_offset_rad(detuning_hz: float | Callable[[float], float], t_gate_start_s: float) -> float:
+    """The tone phase that resets a continuously running beat note to zero at the GATE start (Section 7.10, ``phase="reset"``
+    per gate): the builder plays e^{-i(2 pi mu t - phi)}, so phi_prog + 2 pi mu t_g makes it e^{-i(2 pi mu (t - t_g) - phi_prog)};
+    the red and blue legs shift oppositely, so the spin phase (their half-sum) is untouched and the virtual-Z frame holds. A
+    frequency-modulated leg (a callable detuning) is integrated from the pulse start by the builder already and needs none."""
+    if callable(detuning_hz):
+        return 0.0
+    return (TWO_PI * float(detuning_hz) * float(t_gate_start_s)) % TWO_PI
 
 
 def entangling_pulses(
@@ -234,9 +302,17 @@ def entangling_pulses(
     table: CalibrationTable,
     gate_id: str,
     crosstalk: dict[int, dict[int, complex]] | None = None,
+    beat_phase_reset: bool = False,
 ) -> list[Pulse]:
     """One Pulse per (segment, ion) from a calibrated Waveform: tones per leg with the segment's phase offsets plus the ion's spin
-    phase (already in its frame), the segment's amplitudes and detunings, the Stark shift scaled with the played intensity."""
+    phase (already in its frame), the segment's amplitudes and detunings, the Stark shift scaled with the played amplitude.
+
+    ``beat_phase_reset`` (hardware that programs each gate's tones from its own start, ``HardwareChain.phase_continuous =
+    False``) offsets every leg's phase by ``beat_phase_offset_rad`` so that the bichromatic beat note starts at zero phase at the
+    gate start, as it did when the waveform was calibrated at t = 0; with phase-continuous tones the beat phase at the start
+    is 2 pi mu t_g and Roos's spin-axis tilt psi = (4 Omega/mu) sin(2 pi mu t_g) is part of the gate (M6 finding: 1.1 %
+    leakage at the worst phase on the two-ion fixture, reported in the intrinsic budget).
+    """
     if waveform.segments is None:
         raise ScheduleError("the scheduler plays segmented waveforms (the solvers emit segments)")
     pulses: list[Pulse] = []
@@ -253,7 +329,9 @@ def entangling_pulses(
             tones = tuple(
                 Tone(
                     detuning_hz=seg.detuning_hz[leg],
-                    phase_rad=float(seg.phase_rad[(ion, leg)]) + float(spin_phases_rad.get(ion, 0.0)),
+                    phase_rad=float(seg.phase_rad[(ion, leg)])
+                    + float(spin_phases_rad.get(ion, 0.0))
+                    + (beat_phase_offset_rad(seg.detuning_hz[leg], t_start_s) if beat_phase_reset else 0.0),
                     envelope_hz=seg.amplitude_hz[(ion, leg)],
                 )
                 for leg in seg.legs
@@ -333,19 +411,29 @@ def schedule(
 
     gpi and gpi2 become carrier pulses of area pi and pi/2 at the frame-shifted phase; rz is a frame update (no pulse,
     no time beyond the dead time the hardware inserts between pulses, Section 7.6); ms and zz play the pair's calibrated
-    Waveform (M4, see the module docstring; ``entangling_drives`` default to ``gate_drives``, the same beam pairs); a
-    terminal ``measure`` is not an event of the schedule (run() performs it); mid-circuit measure/reset/recool are M6.
+    Waveform (M4, see the module docstring; ``entangling_drives`` default to ``gate_drives``, the same beam pairs); the
+    terminal ``measure`` (the circuit's targets plus trailing measure operations) is the schedule's one event, of the table's
+    detection window; a measure, reset or recool before a later gate is refused (Section 7.2 item 4).
     """
     if not circuit.is_native:
         raise ScheduleError("schedule() takes a native circuit; compile_to_native first (Section 7.2)")
     drives = gate_drives or default_gate_drives(device)
     ent_drives = entangling_drives or drives
     dead = float(device.hardware.dead_time_s)
+    reset = not bool(device.hardware.phase_continuous)
     frame = PhaseFrame()
     pulses: list[Pulse] = []
     idle: list[tuple[float, float]] = []
+    gates: list[PlayedGate] = []
     clock: dict[int, float] = {q: t0_s for q in range(circuit.n_qubits)}
     global_clock = t0_s
+    last_unitary = max([k for k, op in enumerate(circuit.ops) if not op.is_non_unitary], default=-1)
+    measured: list[int] = list(circuit.measure)
+    for k, op in enumerate(circuit.ops):
+        if op.is_non_unitary and (op.name != "measure" or k < last_unitary):
+            raise ScheduleError(f"{op.name!r} at position {k}: {M6_MID_CIRCUIT}")
+        if op.name == "measure":
+            measured.extend(q for q in op.qubits if q not in measured)
 
     def advance(qubits: tuple[int, ...], end: float) -> None:
         nonlocal global_clock
@@ -380,9 +468,20 @@ def schedule(
                 spins, chi_abs = ms_spin_phases(wf, (a, b), (phi0, phi1), frame)
                 play = _rescaled(wf, 0.5 * theta, chi_abs)
                 new = entangling_pulses(
-                    play, ent_drives, spin_phases_rad=spins, t_start_s=start, table=table, gate_id=f"ms[{k}]"
+                    play,
+                    ent_drives,
+                    spin_phases_rad=spins,
+                    t_start_s=start,
+                    table=table,
+                    gate_id=f"ms[{k}]",
+                    beat_phase_reset=reset,
                 )
                 pulses.extend(new)
+                gates.append(
+                    PlayedGate(
+                        f"ms[{k}]", "ms", (a, b), play, ent_drives[a].beams, start, start + play.duration_s
+                    )
+                )
                 advance((a, b), start + play.duration_s)
                 continue
             (theta,) = op.params
@@ -418,6 +517,12 @@ def schedule(
                         t_start_s=start,
                         table=table,
                         gate_id=f"zz[{k}]/ms",
+                        beat_phase_reset=reset,
+                    )
+                )
+                gates.append(
+                    PlayedGate(
+                        f"zz[{k}]/ms", "zz", (a, b), play, ent_drives[a].beams, start, start + play.duration_s
                     )
                 )
                 start = start + play.duration_s + dead
@@ -454,6 +559,12 @@ def schedule(
                     t_start_s=start,
                     table=table,
                     gate_id=f"zz[{k}]/loop1",
+                    beat_phase_reset=reset,
+                )
+            )
+            gates.append(
+                PlayedGate(
+                    f"zz[{k}]/loop1", "zz", (a, b), half, ent_drives[a].beams, start, start + half.duration_s
                 )
             )
             start += half.duration_s + dead
@@ -481,6 +592,12 @@ def schedule(
                     t_start_s=start,
                     table=table,
                     gate_id=f"zz[{k}]/loop2",
+                    beat_phase_reset=reset,
+                )
+            )
+            gates.append(
+                PlayedGate(
+                    f"zz[{k}]/loop2", "zz", (a, b), half, ent_drives[a].beams, start, start + half.duration_s
                 )
             )
             start += half.duration_s + dead
@@ -501,9 +618,7 @@ def schedule(
             advance((a, b), max(ends))
             continue
         if op.is_non_unitary:
-            if op.name == "measure" and k == len(circuit.ops) - 1:
-                continue  # the terminal measurement is run()'s readout stage, not a scheduled event
-            raise NotImplementedError(f"mid-circuit {op.name} is {M6} (Section 7.2 item 4)")
+            continue  # a trailing measure: recorded above, scheduled as the terminal event below
         if op.name not in NATIVE_GATES:
             raise ScheduleError(f"unknown native operation {op.name!r}")
         q = op.qubits[0]
@@ -533,7 +648,20 @@ def schedule(
         )
         pulses.append(pulse)
         advance((q,), pulse.t_end_s)
-    return Schedule(tuple(pulses), tuple(idle), (), frame.as_dict(circuit.n_qubits))
+    events: list[ScheduledEvent] = []
+    if measured:
+        window_entry = table.detection.get("window_s")
+        window = (
+            float(window_entry.value)
+            if window_entry is not None and window_entry.status != "uncalibrated" and window_entry.value > 0.0
+            else float(device.detector.window_s)
+        )
+        ends = [p.t_end_s for p in pulses] + [b for _, b in idle]
+        t_meas = max(ends) if ends else t0_s
+        events.append(ScheduledEvent("measure", tuple(sorted(measured)), t_meas, t_meas + window))
+    return Schedule(
+        tuple(pulses), tuple(idle), tuple(events), frame.as_dict(circuit.n_qubits), gates=tuple(gates)
+    )
 
 
 def _rescaled(waveform: Waveform, chi_target_abs: float, chi_abs: float) -> Waveform:
@@ -548,16 +676,20 @@ def _rescaled(waveform: Waveform, chi_target_abs: float, chi_abs: float) -> Wave
 
 __all__ = [
     "FORCE_AXIS_OFFSET_RAD",
+    "M6_MID_CIRCUIT",
     "MICROWAVE_BEAM_KEY",
     "NATIVE_AREAS",
     "GateDrive",
+    "PlayedGate",
     "Schedule",
     "ScheduleError",
     "ScheduledEvent",
+    "beat_phase_offset_rad",
     "carrier_rabi_hz",
     "default_gate_drives",
     "entangling_pulses",
     "ms_spin_phases",
     "schedule",
     "single_qubit_pulse",
+    "stark_scaling_power",
 ]

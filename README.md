@@ -5,7 +5,7 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
-and state preparation), M4 (two-ion entangling gates) and M5 (readout).** The
+and state preparation), M4 (two-ion entangling gates), M5 (readout) and M6 (end-to-end circuits in JOINT_EXACT).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -100,8 +100,8 @@ surrogate 0.785 corrected in two checks to 0.785398 with Bell fidelity 0.99977),
 block Liouvillians, Choi's 11 and 21 segments for five ions with one and two transverse families, Leung's FM robustness and
 Blumel's stabilization, Baldwin's echo diag(1, i, i, 1), the 40Ca+ optical-qubit light-shift ZZ gate from first principles
 (fidelity above 0.99 after calibration), and the native MS(phi_0, phi_1, theta), partial angles, virtual-Z frames and the
-IonQ JSON path through `schedule`. `run.prepare` waits for M6, where the Device carries the
-preparation recipe; the microwave-gradient drive of Section 4.4.5 exists as closed forms (Srinivas's J_2 factor and the
+IonQ JSON path through `schedule`. `run.prepare` arrived with M6 (the Device carries the preparation recipe); the
+microwave-gradient drive of Section 4.4.5 exists as closed forms (Srinivas's J_2 factor and the
 IDD ratio 0.6012) but not as a device-level drive.
 
 M5 adds the readout of Section 8 in the four layers the plan keeps separate (`readout/`). The atomic-rate layer
@@ -137,6 +137,70 @@ at his (5.5, 420 us) against the measured 1.8(1)e-4, the ML asymptote and the ad
 t_exp/(2 tau) = 1.7e-4 and the PSF leakage, the product POVM against the full path at zero crosstalk with the Bell state's
 correlations surviving both and the 0.34 discrepancy at 4 % leakage, Harty's 6.8e-4 and Christensen's 3.4e-4 budgets, the
 Gaussian spectator dephasing as a quasi-static offset, and the calibration recovering (eps R_o, R_d, R_b).
+
+M6 closes the loop of Section 3.4: `run(circuit, device, shots)` compiles, calibrates, schedules, prepares, evolves and reads
+out, and returns the `Result` of Section 8.6. The compiler (`control/compiler.py`) is the one place ideal gate matrices are
+used: single-qubit gates become one virtual rz, one GPi/GPi2 pulse or the ZXZXZ pair (20 random SU(2) targets to 1.5e-15),
+CNOT is Maslov's one-XX template (equal to e^(i pi v s/4) CNOT for all four signs), CP(theta) = RZ(theta/2)^x2 ZZ(-theta/2)
+exactly (Debnath's fixed-rotation template is kept as the plan's defective one, overlaps 0.854 and 0.691), ZZ is the native
+gate or the M4 wrapper, every block and the whole circuit are verified up to a global phase, and the virtual-Z frames are
+absorbed into the later pulse phases so the compiled circuit carries only gpi, gpi2, ms and zz plus the residual frame the
+measurement discards (the IonQ JSON round trip holds). The scheduler makes the terminal measure a `ScheduledEvent` of the
+table's detection window, refuses mid-circuit measure/reset/recool with the Section 8.5 message, records every entangling
+gate as played, scales a two-photon drive's Stark shift linearly with its amplitude (the M4 quadratic rule was the
+single-photon case) and resets the bichromatic beat note at each gate start when the hardware is not phase-continuous.
+`prep/recipe.py` carries the laboratory's procedure on the `Device` (`PreparationRecipe`; `standard_recipe` derives the
+171Yb+ one from the device's detection and Raman beams: Doppler light at the detuning that minimizes the gate modes'
+occupation, pulsed Raman sideband cooling of the coupled modes with the exact transfer matrices and the repump recoil
+kernel, the pump on F=1 -> F'=1) and `run_preparation` evaluates it with the M3 stages. `run/space.py` assigns every mode
+its Section 5.2 class from the Section 4.4.3 integrals of the played waveforms (dropped, frozen with its chi and residual
+reported, resolved with a cap from its loop radius) and is `HilbertSpace.for_`. `calibration/surrogate.py` is the Section
+7.5 default: derived seeds, the AM or symmetric waveform per pair with the beat note above the highest coupled mode, the
+exact spot check on the reduced space when it fits the 4096-dimension guard, the detection threshold and window. The
+initial state (pumped populations x thermal modes, a mixture diagonal in the computational and Fock bases) is evolved as
+weighted pure branches through the JOINT_EXACT engine (the Fock-sum path of Section 5.3, branches below
+`SolverOptions.branch_weight_min` dropped and reported), the recombined register state is measured with the M5 POVM
+(fast) or the photon-record path (full) with the Section 3.4 seed keys, and `Diagnostics` reports the level, space,
+mode classes, boundary populations, branch count, SPAM with its definition and the intrinsic budget of Section 9.6
+(residual displacement, Debye-Waller, the (Omega/nu)^2 carrier scale, the frozen chi, Roos's beat-phase tilt, the
+single-qubit pulses' sideband scale and addressing crosstalk). The
+OpenQASM 2 importer (`io/openqasm.py`) inlines custom gate declarations (the client SDKs' gpi/gpi2/ms/zz), broadcasts
+registers and evaluates parameter expressions. Acceptance (`tests/test_compiler.py`, `test_openqasm.py`,
+`test_run_circuits.py`; `validation/scripts/check_circuits.py`): on the two-ion 171Yb+ fixture with a global 355 nm pair,
+per-ion addressing pairs (2.2 % Rabi crosstalk from the 2.5 um waist) and an oblique cooling/detection beam, the Bell
+circuit's 4000-shot histogram is 00: 0.5015, 11: 0.4965, 01: 0.0013, 10: 0.0008 against the ideal 0.5/0.5, the register
+infidelity 2.4e-3 sits inside the reported budget 8.2e-3 (the carrier scale dominates the bound; the gate's own exact
+check gives 1.3e-4), SPAM (eps_B, eps_D) = (6.1e-4, 3.5e-4) with a 2.5e-6 preparation error, Doppler occupations 3.5 to
+11.6 fall to 0.015 to 0.019 on the gate modes after 40 sideband pulses, the six initial-mixture branches carry all but
+3e-5 of the weight, and the same root seed reproduces every shot.
+On the three-ion fixture (2.0 um addressing waist, 1.3 % crosstalk) the global symmetric Molmer-Sorensen pulse at t =
+pi/(8 chi) reaches 0.9823 against its pairwise closed-form target (0.9735 against the ideal single-mode GHZ unitary)
+with the top two x modes resolved at d_m = 12 and the zigzag frozen with its 1.1e-3 residual reported, the four-ion
+pulse 0.9672 (0.9373) at dimension 2304, and the H, CNOT, CNOT GHZ circuit through `run` gives 000: 0.5155, 111: 0.4775
+over 2000 shots with a register infidelity 1.5e-2 inside its 3.0e-2 budget (the seven-segment adjacent-pair gates check
+at 0.9953 with 4.4e-3 leakage). Bernstein-Vazirani with the secret 01 on the outer ions and the middle ion as the
+ancilla (Section 9.6 row 6) declares the 1 -> 0 flip of the secret 3.3 times as often as the 0 -> 1 flip (2.4e-3 against
+7.3e-4), the dominance of Wright's minimal model; here it comes mostly from the coherent circuit (the matrix model with
+eps theta rotations on the neighbours and an ideal MS gate gives 5.4, because the oracle CNOT maps the ancilla's
+crosstalk rotations onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct
+rotations) and the readout's eps_B > eps_D adds to both flips.
+
+Plan inconsistencies surfaced by M6 (ledger `conv.*` records of the compiler, scheduler and run path, `anchor.m6.*`):
+Section 7.7's CP overlaps 0.854 (pi/2) and 0.691 (pi/4) belong to Debnath's template with fixed RZ(pi/2) rotations,
+while CP(theta) = RZ(theta/2)^x2 ZZ(-theta/2) is exact; the same section's s = sgn(chi) is a free convention here
+because the scheduler realizes either MS sign from the waveform's signed chi; the M4 Stark scaling (Omega/Omega_cal)^2
+is the single-photon rule and turned -0.1 Hz into -70 kHz for a Raman waveform played at 550x a weak pair's derived Rabi
+frequency (a two-photon shift scales linearly); with phase-continuous tones the MS spin axis tilts by Roos's psi = (4
+Omega/mu) sin(zeta), zeta the beat phase at the gate start (fidelity 0.99995 at zeta = 0 and 0.98886 at pi/2), so an
+exact spot check at t = 0 never sees the gate such hardware plays, and the builder's per-segment phase reset is not the
+fix (leakage 0.31; the per-gate reset through the leg phases is); the 2N+1-segment AM solution at the exact mode
+midpoint flips its null-space direction within +-20 Hz and leaves 1e-2 leakage (M4's beat note sat 213 Hz off it), so
+the surrogate places the beat note 0.35 gap above the top mode; the outer pair (0, 2) of a three-ion chain couples three
+modes (dimension 8000 above the 4096 guard) and waits for GATE_LOCAL (M9a); the plan's three-ion GHZ fixture with "two
+resolved modes at d_m = 12" holds only with the zigzag frozen and its 1.1e-3 residual reported; a Raman crosstalk ratio
+is the intensity ratio (a 3 um waist at 3.45 um spacing gives 7 %, 2.5 um 2.2 %, 2.0 um at 2.95 um 1.3 %); and Section
+9.6 row 6's 1 -> 0 dominance emerges from the coherent circuit through the oracle CNOT, with the readout asymmetry
+adding to it rather than producing it.
 
 Plan inconsistencies surfaced by M5 (ledger `anchor.m5.*`): the Section 9.5 CPT row's "s_o = 0.815" is Noek's s (s_o = 2.45)
 for R_o = 0.0880 Gamma; Myerson's measured optimum (5.5, 420 us, 1.8e-4) sits above the ideal-Poisson one because his PMT dark
@@ -203,11 +267,13 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/trap/` | the trap layer of Section 4.1: `mathieu` (monodromy, Floquet function, C0), `pseudopotential` (rf drive, geometry-free maps), `surface` (gapless-plane electrodes), `crystal` (equilibrium, mass-weighted modes, Lamb-Dicke), `micromotion`, `heating`, `anharmonic`; `model.py` is the `Trap` record |
 | `qutip_trap/hilbert/` | the composite space of Section 5.1: `operators` (analytic Laguerre elements, expm displacement, the Section 5.1.1 tolerance and margin fixture, Debye-Waller factors, qubit operators in the computational ordering), `space` (cached operators, marginals with the ENR index sums, state constructors), `truncation` (boundary monitor, cap growth, the tolerance-tightening test) |
 | `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a) |
-| `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a) |
-| `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a) |
-| `qutip_trap/control/` | native gates, the circuit IR, `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library) |
-| `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule; M4); `calibrate()` itself is M8 |
-| `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` (M2), `ms_scan`, `parity_scan` (M4) on the engine; the rest is M8 |
+| `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a), `roles` (which beams are resonant cooling/detection light and which are far-detuned gate light; M6) |
+| `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a), `recipe` (the device's PreparationRecipe, `standard_recipe`, `run_preparation`; M6) |
+| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library) |
+| `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule; M4); `readout` (the detection threshold and window, M5); `surrogate` and `calibrate(surrogate=True)` (the Section 7.5 surrogate table: derived seeds, spot-checked waveforms on the resolved-mode space, detection; M6); the simulated-experiment path `calibrate(surrogate=False)` is M8 |
+| `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` (M2), `ms_scan`, `parity_scan` (M4) on the engine; the rest is M8; `detection_histogram` (M5) |
+| `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`) |
+| `qutip_trap/io/` | `ionq` (IonQ circuit JSON, both ways), `openqasm` (the OpenQASM 2 subset importer with custom-gate inlining; M6) |
 | `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`) |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |

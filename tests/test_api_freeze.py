@@ -8,6 +8,7 @@ import dataclasses
 import inspect
 import re
 
+import numpy as np
 import pytest
 
 from qutip_trap import api
@@ -134,16 +135,25 @@ def test_instances_are_immutable() -> None:
 
 def test_unimplemented_entry_points_name_their_milestone() -> None:
     dev = object()
-    with pytest.raises(NotImplementedError, match=r"milestone M\d"):
-        api.calibrate(dev)  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match=r"milestone M\d"):
-        api.load_openqasm2("OPENQASM 2.0;")
-    with pytest.raises(NotImplementedError, match=r"milestone M\d"):
-        api.compile_to_native(api.Circuit(1, (), (0,)), dev)  # type: ignore[arg-type]
+    # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; the full simulated-experiment
+    # calibration (M8), GATE_LOCAL tomography (M9a), the noise sampler (M7) and Device.derived() still name their milestones
+    with pytest.raises(NotImplementedError, match=r"milestone M8"):
+        api.calibrate(dev, surrogate=False)  # type: ignore[arg-type]
+    assert api.load_openqasm2("OPENQASM 2.0; qreg q[1]; x q[0];").ops[0].name == "x"
+    assert (
+        api.compile_to_native(api.Circuit(1, (api.Operation("x", (0,), ()),), (0,)), dev).ops[0].name == "gpi"
+    )  # type: ignore[arg-type]
     space = api.HilbertSpace((2,), (api.ModeTruncation(0, 4, (0, 1), 0.1),), None, ())
-    # the Hilbert layer of M2 is implemented: operators() no longer raises, the M9a selector still names its milestone
     assert len(space.operators().sigma_plus) == 1
-    with pytest.raises(NotImplementedError, match=r"milestone M\d"):
-        api.HilbertSpace.for_(dev, None, api.SolverOptions())  # type: ignore[arg-type]
+    from qutip_trap.dynamics.engine import JointExactEngine
+
+    with pytest.raises(NotImplementedError, match=r"milestone M9a"):
+        JointExactEngine().process_tomography(dev, None, space, None, None, api.SeedSpec(0))  # type: ignore[arg-type]
+    from tests.fixtures import make_device, make_noise
+
+    with pytest.raises(NotImplementedError, match=r"milestone M7"):
+        make_noise().sample(np.random.default_rng(0))
+    with pytest.raises(NotImplementedError, match=r"M1 to M8"):
+        make_device().derived()
     # the atomic layer of M0a is implemented: this no longer raises
     assert api.species_by_name("171Yb+").zeeman_spectrum("S1/2", 5.0).labels

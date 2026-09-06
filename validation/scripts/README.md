@@ -137,3 +137,19 @@ Added on 2026-09-05 by milestone M4:
   budgets, the Gaussian spectator dephasing and the Doppler widths. Runs the package (`uv run python
   validation/scripts/check_readout.py`, about a minute); lines prefixed `MC:` are Monte Carlo results that the runner records
   but does not compare (their last digits depend on the platform's libm).
+
+Added on 2026-09-05 by milestone M6:
+
+- `check_circuits.py`: end-to-end circuits in JOINT_EXACT (Sections 3.4, 5.2, 5.7, 7.2, 7.6, 7.7, 7.10, 9.6): the
+  compiler's templates (the ZXZXZ residual on random SU(2) targets, Maslov's CNOT for all four signs with the phase e^(i
+  pi v s/4), the exact CP(theta) and Debnath's template with the 0.854 / 0.691 overlaps), the two-ion 171Yb+ Bell state
+  through the whole pipeline (surrogate table, histogram against the ideal distribution, register fidelity against the
+  intrinsic budget, the Section 7.9 parity contrast, SPAM, mode classes, boundary populations, the preparation's
+  occupations), the beat-note phase at the gate start under reset and phase-continuous tones (Roos's tilt), the
+  three-ion Molmer-Sorensen GHZ with the COM and tilt modes resolved at d_m = 12 and the zigzag frozen (boundary
+  population quoted, fidelity against the pairwise closed-form target and the ideal single-mode GHZ) plus the GHZ
+  circuit through `run()`, the four-ion pulse at dimension 2304, Wright's minimal crosstalk model on Bernstein-Vazirani
+  beside the coherent-only matrix model of the compiled circuit, and the Section 5.1.1 truncation numbers of the GHZ
+  fixture. Runs the package (`uv run python validation/scripts/check_circuits.py`, about eleven minutes); the fixtures
+  live in `tests/m6_fixtures.py`; lines prefixed `MC:` are Monte Carlo histograms the runner records but does not
+  compare.

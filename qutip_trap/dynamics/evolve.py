@@ -11,6 +11,7 @@ integrator actually used, the retries and the right-hand-side evaluation count a
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
@@ -65,9 +66,12 @@ def _solve(
     if max_step > 0.0:
         options["max_step"] = max_step
     eops = dict(e_ops) if e_ops else None
-    if not c_ops and state0.isket:
-        return qt.sesolve(H, state0, times, e_ops=eops, options=options)
-    return qt.mesolve(H, state0, times, c_ops=list(c_ops), e_ops=eops, options=options)
+    with warnings.catch_warnings():
+        # scipy's dop853 warns before it raises on a too-small step; the ladder records the failure and escalates
+        warnings.filterwarnings("ignore", message=".*step size becomes too small.*", category=UserWarning)
+        if not c_ops and state0.isket:
+            return qt.sesolve(H, state0, times, e_ops=eops, options=options)
+        return qt.mesolve(H, state0, times, c_ops=list(c_ops), e_ops=eops, options=options)
 
 
 def evolve(

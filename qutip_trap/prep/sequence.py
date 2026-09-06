@@ -148,10 +148,15 @@ def prepare_state(
     qubit_labels: tuple[str, str] | Mapping[int, tuple[str, str]],
     leak: LeakToQubit = "to_upper",
     internal: Mapping[int, qt.Qobj] | None = None,
+    extra_nbar: Mapping[int, float] | None = None,
 ) -> State:
     """The Appendix E ``State`` after the sequence: per-mode thermal states at the final nbar, each ion's internal state from its
-    last pump (or from ``internal`` for ions the sequence never pumped, e.g. an explicitly prepared qubit next to a coolant)."""
+    last pump (or from ``internal`` for ions the sequence never pumped, e.g. an explicitly prepared qubit next to a coolant);
+    ``extra_nbar`` adds quanta per mode on top of the last cooling stage (the pumps' recoil heating of Section 4.2.8, M6)."""
     nbar = sequence.final_nbar()
+    for m, dn in (extra_nbar or {}).items():
+        if int(m) in nbar:
+            nbar[int(m)] = nbar[int(m)] + float(dn)
     missing = [m.mode for m in space.resolved if m.mode not in nbar] + [
         m for m in space.frozen if m not in nbar
     ]
