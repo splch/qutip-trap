@@ -22,13 +22,17 @@ from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.noise.sampling import quiet_sample
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
+    derived_seeds,
     raman_gate_drives,
     table_with_waveform,
     two_ion_device,
     two_ion_modes,
 )
 
-RABI_TABLE = {(0, 0): 100e3, (1, 0): 100e3}
+RABI_TABLE = derived_seeds(two_ion_device(), raman_gate_drives(2))[0]
+"""The derived carrier Rabi frequencies: what a calibrated table of this device holds (the M8 played chain is the identity)."""
+STARK_TABLE = derived_seeds(two_ion_device(), raman_gate_drives(2))[1]
+"""The derived differential Stark shifts, compensated by the scheduler (Section 7.5 item 7; M8)."""
 
 
 @pytest.fixture(scope="module")
@@ -39,19 +43,21 @@ def calibrated():  # type: ignore[no-untyped-def]
     drives = raman_gate_drives(2)
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
     space = gate_space(modes, 2, waveform=am.waveform)
-    table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI_TABLE)
+    table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE)
     run = calibrate_entangling_angle(
         dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4
     )
     assert run.converged
-    table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI_TABLE)
+    table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE)
     return dev, modes, drives, space, table, run
 
 
 def _run_circuit(dev, table, space, ops, internal=(0, 0), **kw):  # type: ignore[no-untyped-def]
     circ = Circuit(2, tuple(ops), (0, 1))
     sch = schedule(circ, dev, table, **kw)
-    eng = JointExactEngine()
+    eng = JointExactEngine(
+        table=table
+    )  # the M8 played chain: requested -> physical through the device (identity here)
     tr = eng.run_pulses(
         dev,
         sch,
@@ -64,9 +70,17 @@ def _run_circuit(dev, table, space, ops, internal=(0, 0), **kw):  # type: ignore
     return tr.final.internal, sch
 
 
-def _fidelity(rho: qt.Qobj, mat: np.ndarray, ket0: np.ndarray) -> float:
+def _fidelity(
+    rho: qt.Qobj, mat: np.ndarray, ket0: np.ndarray, frame: dict[int, float] | None = None
+) -> float:
+    """Overlap with mat |ket0>, the target rotated by the schedule's final virtual-Z frame when given (the compensated light shifts'
+    RZ(2 pi int delta dt) the state carries and the frame absorbs, M8)."""
+    from qutip_trap.calibration.entangling import frame_rotated
+
     target = qt.Qobj(mat @ ket0)
     target.dims = [[2, 2], [1, 1]]
+    if frame:
+        target = frame_rotated(target, frame)
     return float(np.real(qt.expect(rho, target)))
 
 
@@ -80,8 +94,8 @@ def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> Non
     assert budget < 1e-3
     for phi0, phi1 in ((0.0, 0.0), (0.3, 1.1), (-0.7, 2.0)):
         rho, sch = _run_circuit(dev, table, space, [Operation("ms", (0, 1), (phi0, phi1, math.pi / 2))])
-        assert _fidelity(rho, native_ms(phi0, phi1, math.pi / 2), KET00) > 1.0 - 3 * budget
-        assert _fidelity(rho, native_ms(phi0, phi1, -math.pi / 2), KET00) < 0.02
+        assert _fidelity(rho, native_ms(phi0, phi1, math.pi / 2), KET00, sch.phase_frame) > 1.0 - 3 * budget
+        assert _fidelity(rho, native_ms(phi0, phi1, -math.pi / 2), KET00, sch.phase_frame) < 0.02
         assert len(sch.pulses) == 10 and all(p.closes_modes == (2, 3) for p in sch.pulses)
     # a positive kernel sign is played with pi on the second ion (Section 13: exp(+i chi sigma sigma) = XX(-chi))
     wf = table.waveform_for((0, 1))
@@ -106,10 +120,10 @@ def test_partial_angle_rescales_by_the_s_squared_law(calibrated) -> None:  # typ
     assert float(played) == pytest.approx(expected, rel=1e-12)
     p11 = float(np.real(rho.full()[3, 3]))
     assert p11 == pytest.approx(math.sin(theta / 2) ** 2, abs=3e-3)
-    assert _fidelity(rho, native_ms(0.0, 0.0, theta), KET00) > 0.995
+    assert _fidelity(rho, native_ms(0.0, 0.0, theta), KET00, sch.phase_frame) > 0.995
     # a negative angle is a pi on the second phase
-    rho_n, _ = _run_circuit(dev, table, space, [Operation("ms", (0, 1), (0.0, 0.0, -theta))])
-    assert _fidelity(rho_n, native_ms(0.0, 0.0, -theta), KET00) > 0.995
+    rho_n, sch_n = _run_circuit(dev, table, space, [Operation("ms", (0, 1), (0.0, 0.0, -theta))])
+    assert _fidelity(rho_n, native_ms(0.0, 0.0, -theta), KET00, sch_n.phase_frame) > 0.995
 
 
 def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # type: ignore[no-untyped-def]
@@ -135,11 +149,11 @@ def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # typ
     )
     ket = np.asarray(internal.full()).ravel()
     budget = 1.0 - run.checks[-1].fidelity
-    assert _fidelity(rho, native_zz(math.pi / 2), ket) > 1.0 - 3 * budget - 5e-3
-    assert _fidelity(rho, native_zz(-math.pi / 2), ket) < 0.05
+    assert _fidelity(rho, native_zz(math.pi / 2), ket, sch.phase_frame) > 1.0 - 3 * budget - 5e-3
+    assert _fidelity(rho, native_zz(-math.pi / 2), ket, sch.phase_frame) < 0.05
     # the wrappers are 2.5 us GPi2 pulses at the table's 100 kHz with the dead time before and after the MS block
     wrap = [p for p in sch.pulses if "wrap_in" in (p.gate_id or "")]
-    assert all(p.duration_s == pytest.approx(0.25 / 100e3) for p in wrap)
+    assert all(p.duration_s == pytest.approx(0.25 / RABI_TABLE[(0, 0)]) for p in wrap)
     ms_start = min(p.t_start_s for p in sch.pulses if "/ms/" in (p.gate_id or ""))
     assert ms_start == pytest.approx(max(p.t_end_s for p in wrap) + dev.hardware.dead_time_s)
 
@@ -152,12 +166,23 @@ def test_virtual_z_frame_carries_through_ms(calibrated) -> None:  # type: ignore
     rho, sch = _run_circuit(
         dev, table, space, [Operation("rz", (1,), (theta,)), Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2))]
     )
-    assert sch.phase_frame == {0: 0.0, 1: pytest.approx(theta)}
+    # the frame carries the virtual RZ(theta) on ion 1 plus, on both ions, the compensated light shift's 2 pi int delta dt (M8)
+    stark_frame = {0: sch.phase_frame[0], 1: sch.phase_frame[1] - theta}
+    assert sch.phase_frame[1] - sch.phase_frame[0] == pytest.approx(theta) and -0.1 < stark_frame[0] < 0.0
+    assert stark_frame[1] == pytest.approx(stark_frame[0], abs=1e-9)
     budget = 1.0 - run.checks[-1].fidelity
-    assert _fidelity(rho, native_ms(0.0, -theta, math.pi / 2), KET00) > 1.0 - 3 * budget
+    assert _fidelity(rho, native_ms(0.0, -theta, math.pi / 2), KET00, stark_frame) > 1.0 - 3 * budget
     circuit_order = native_ms(0.0, 0.0, math.pi / 2) @ np.kron(np.eye(2), rz(theta))
-    assert _fidelity(rho, np.kron(np.eye(2), rz(theta)).conj().T @ circuit_order, KET00) > 1.0 - 3 * budget
-    assert _fidelity(rho, circuit_order, KET00) == pytest.approx(math.cos(theta / 2) ** 2, abs=3e-3)
+    assert (
+        _fidelity(rho, np.kron(np.eye(2), rz(theta)).conj().T @ circuit_order, KET00, stark_frame)
+        > 1.0 - 3 * budget
+    )
+    # a gate of infidelity eps moves a 0.96 overlap by up to about 2 sqrt(eps (1 - 0.96)): the negative control stays far from one
+    assert _fidelity(rho, circuit_order, KET00, stark_frame) == pytest.approx(
+        math.cos(theta / 2) ** 2, abs=4.0 * math.sqrt(budget)
+    )
+    # the full frame rotates the ideal circuit's state (virtual RZ included) onto the played one
+    assert _fidelity(rho, circuit_order, KET00, sch.phase_frame) > 1.0 - 3 * budget
 
 
 def test_scheduler_refusals_and_table_lookup(calibrated) -> None:  # type: ignore[no-untyped-def]
@@ -172,7 +197,7 @@ def test_scheduler_refusals_and_table_lookup(calibrated) -> None:  # type: ignor
     assert dataclasses.replace(table, ms={(1, 0): table.ms[(0, 1)]}).waveform_for((0, 1)) is not None
     # a light-shift waveform cannot serve an MS gate, and needs a light-shift drive
     ls = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=20e3, kind="light_shift")
-    ls_table = table_with_waveform((0, 1), ls, rabi_hz=RABI_TABLE)
+    ls_table = table_with_waveform((0, 1), ls, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE)
     with pytest.raises(ScheduleError, match="MS .* waveform"):
         schedule(Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1)), dev, ls_table)
     with pytest.raises(ScheduleError, match="light_shift gate drive"):
@@ -219,10 +244,10 @@ def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:  # type: 
     assert sch.measurement is not None and sch.duration_s == pytest.approx(
         sch.pulses_end_s + dev.detector.window_s
     ), "the IonQ circuit measures every qubit: the terminal event follows the pulses"
-    eng = JointExactEngine()
+    eng = JointExactEngine(table=table)
     tr = eng.run_pulses(
         dev, sch, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), SolverOptions()
     )
-    assert _fidelity(tr.final.internal, native_ms(0.0, math.pi / 2, math.pi / 2), KET00) > 1.0 - 3 * (
-        1.0 - run.checks[-1].fidelity
-    )
+    assert _fidelity(
+        tr.final.internal, native_ms(0.0, math.pi / 2, math.pi / 2), KET00, sch.phase_frame
+    ) > 1.0 - 3 * (1.0 - run.checks[-1].fidelity)

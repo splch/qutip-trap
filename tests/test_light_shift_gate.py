@@ -43,7 +43,7 @@ from qutip_trap.validation.two_qubit_closed_forms import (
     srinivas_gradient_rabi_rad_s,
 )
 from tests.fixtures import make_detector, make_hardware, make_noise
-from tests.m4_fixtures import table_with_waveform
+from tests.m4_fixtures import derived_seeds, table_with_waveform
 
 C_M_PER_S = 299792458.0
 
@@ -158,7 +158,10 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignor
     the optical qubit; the sign follows the detuning side; the exact spot check calibrates the pulse angle; the AM solver closes the
     rocking mode for a light-shift force too."""
     dev, ent, sq, modes = ca_device
+    # the fixture's 729 nm E2 Rabi frequency is a supplied value (the quadrupole coupling of this beam geometry derives to 0, so
+    # the played chain plays the request as physical and says so); the E2 drive has no differential light shift
     rabi = {(0, 2): 200e3, (1, 2): 200e3}
+    stark = derived_seeds(dev, sq)[1]
     wf = Waveform.symmetric(
         modes,
         gate_mode=X_COM,
@@ -171,7 +174,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignor
     assert wf.kind == "light_shift" and wf.segments is not None and wf.segments[0].legs == ("blue",)
     assert wf.chi_total_rad < 0.0
     space = gate_space(modes, 2, waveform=wf)
-    table = table_with_waveform((0, 1), wf, rabi_hz=rabi)
+    table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
     check, _ = exact_gate_check(
         dev, wf, (0, 1), ent, table, space=space, chi_target_rad=math.pi / 8, single_qubit_drives=sq
     )
@@ -195,7 +198,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignor
         inside,
         (0, 1),
         ent,
-        table_with_waveform((0, 1), inside, rabi_hz=rabi),
+        table_with_waveform((0, 1), inside, rabi_hz=rabi, stark_hz=stark),
         space=space,
         chi_target_rad=math.pi / 8,
         single_qubit_drives=sq,
@@ -212,7 +215,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignor
         am.waveform,
         (0, 1),
         ent,
-        table_with_waveform((0, 1), am.waveform, rabi_hz=rabi),
+        table_with_waveform((0, 1), am.waveform, rabi_hz=rabi, stark_hz=stark),
         space=space_am,
         chi_target_rad=math.pi / 8,
         single_qubit_drives=sq,

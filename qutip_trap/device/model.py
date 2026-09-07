@@ -53,6 +53,8 @@ class DerivedQuantities:
 
     values: dict[str, float]
     provenance: dict[str, str]
+    notes: tuple[str, ...] = ()
+    """What the device could not derive and why (a microwave drive's Rabi frequency, a species without a detection beam; M8)."""
 
     def __post_init__(self) -> None:
         if set(self.values) != set(self.provenance):
@@ -76,8 +78,15 @@ class Device:
     """How the device cools and pumps before every shot (Section 4.2.6; M6); None = ``prep.recipe.standard_recipe``."""
 
     def derived(self) -> DerivedQuantities:
-        """Every computed number with its provenance id; filled in as milestones M1 to M8 add the modules."""
-        raise NotImplementedError("Device.derived() gathers the derived quantities of milestones M1 to M8")
+        """Every computed number with its provenance id (Section 3.3; the ledger of Section 14.5): the qubit transition
+        frequencies and their Zeeman sensitivities per ion (M0a), the secular frequencies, Mathieu parameters and C0 of the
+        trap (M1), the mode frequencies and heating rates (M1, M7), the carrier Rabi frequencies, Stark shifts, crosstalk ratios
+        and Lamb-Dicke parameters of the inferred single-qubit drives (M2), the detection rates (M5) and the prepared
+        occupations (M6). These are the values the calibration of Section 7.5 starts from as ``seed`` entries (M8); a device
+        whose beams do not identify a single-qubit drive reports what it can and says so in ``provenance``."""
+        from qutip_trap.device.derived import derived_quantities
+
+        return derived_quantities(self)
 
     def hash(self) -> str:
         """The canonical digest of Appendix E: declaration-order fields, 12-digit floats, sorted dicts, Qobj excluded."""

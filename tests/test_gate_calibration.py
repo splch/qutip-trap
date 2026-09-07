@@ -25,13 +25,17 @@ from qutip_trap.validation.two_qubit_closed_forms import (
 )
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
+    derived_seeds,
     raman_gate_drives,
     table_with_waveform,
     two_ion_device,
     two_ion_modes,
 )
 
-RABI = {(0, 0): 100e3, (1, 0): 100e3}
+RABI = derived_seeds(two_ion_device(), raman_gate_drives(2))[0]
+"""The carrier Rabi entries a perfectly calibrated table carries: the derived values (the M8 played chain is then the identity)."""
+STARK = derived_seeds(two_ion_device(), raman_gate_drives(2))[1]
+"""The derived differential Stark shifts the scheduler compensates (Section 7.5 item 7; M8)."""
 
 
 def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
@@ -43,7 +47,7 @@ def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
     sur = surrogate_check(am.waveform, modes)
     assert sur["chi_rad"] == pytest.approx(CHI_MAXIMAL_RAD, rel=1e-9) and sur["residual_error"] < 1e-18
     space = gate_space(modes, 2, waveform=am.waveform)
-    table = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI)
+    table = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(dev, am.waveform, (0, 1), drives, table, space=space, tolerance_rad=1e-4)
     assert run.converged and len(run.checks) <= 3
     assert 0.005 < run.surrogate_error < 0.03
@@ -58,7 +62,7 @@ def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
         run.waveform,
         (0, 1),
         drives,
-        table_with_waveform((0, 1), run.waveform, rabi_hz=RABI),
+        table_with_waveform((0, 1), run.waveform, rabi_hz=RABI, stark_hz=STARK),
         space=space,
     )
     assert again.chi_rad == pytest.approx(CHI_MAXIMAL_RAD, abs=2e-4)
@@ -77,7 +81,7 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
     wf0 = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3, kernel="rwa")
     opts = BuilderOptions(frame="interaction", rwa=True, frozen_debye_waller=False)
     space0 = gate_space(modes, 2, waveform=wf0)
-    table = table_with_waveform((0, 1), wf0, rabi_hz=RABI)
+    table = table_with_waveform((0, 1), wf0, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(
         dev, wf0, (0, 1), drives, table, space=space0, builder_options=opts, tolerance_rad=1e-5
     )
@@ -89,7 +93,7 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
         wf,
         (0, 1),
         drives,
-        table_with_waveform((0, 1), wf, rabi_hz=RABI),
+        table_with_waveform((0, 1), wf, rabi_hz=RABI, stark_hz=STARK),
         modes=modes,
         gate_mode=X_COM_TWO_IONS,
         nbars=(0.0, 0.5, 1.0, 2.0),
@@ -141,7 +145,7 @@ def _fock_check(dev, wf, drives, space, state, opts):  # type: ignore[no-untyped
     from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
     from qutip_trap.noise.sampling import quiet_sample
 
-    sched = ms_schedule(wf, (0, 1), drives, table_with_waveform((0, 1), wf, rabi_hz=RABI))
+    sched = ms_schedule(wf, (0, 1), drives, table_with_waveform((0, 1), wf, rabi_hz=RABI, stark_hz=STARK))
     tr = JointExactEngine(builder_options=opts).run_pulses(
         dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions()
     )
@@ -159,11 +163,11 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     drives = raman_gate_drives(2)
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
     space = gate_space(modes, 2, waveform=am.waveform)
-    table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI)
+    table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(
         dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4
     )
-    table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI)
+    table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI, stark_hz=STARK)
     scan = ms_scan(
         dev, (0, 1), (0.9, 0.97, 1.03, 1.1), (0.0,), table=table, gate_drives=drives, space=space, modes=modes
     )

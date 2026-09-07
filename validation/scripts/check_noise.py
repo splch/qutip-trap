@@ -91,7 +91,7 @@ FAST = SolverOptions(mesolve_dimension_max=4096)
 for loops in (1, 2):
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=loops, epsilon_hz=20e3 * loops, all_modes=False)
     space = HilbertSpace((2, 2), (ModeTruncation(X_COM_TWO_IONS, 12, (0, 4), 0.15),), None, (0, 1, 2, 4, 5))
-    table = table_with_waveform((0, 1), wf)
+    table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
     base, _ = exact_gate_check(dev, wf, (0, 1), raman_gate_drives(2), table, space=space, options=FAST)
     t_g = wf.duration_s
     ndot = 400.0

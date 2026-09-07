@@ -1,0 +1,40 @@
+
+== 1. the sideband excitation lineshape (Section 13; Section 9.17 row)
+  P(0, t = pi/Omega) = 1.000000; weight at delta = Omega: 0.500
+  fitted Omega/2pi: plan form 50000.000 Hz (pi time 10.0000 us), half-Rabi form 25000.000 Hz (negative control: Omega/2)
+  carrier scan of the exact dynamics: fitted Omega 30092.048 Hz against derived 30278.490 x e^(-eta^2/2) = 30092.114 Hz; centre -0.00 Hz
+
+== 2. C0 applied once (Section 9.17 row): sideband-calibrated against carrier-derived eta at q = 0.3
+  q_x = 0.2983, C0 = 1.017910 (series 1 + 3q^2/16 = 1.016689); derived eta with rf record / bare = 1.017910
+  sideband-calibrated eta 0.113091 +- 8.3e-06 against eta C0 = 0.113116; two-body phase ratio (eta_sb/eta_bare)^2 - 1 = 0.0357 against 2(C0 - 1) = 0.0358
+  mode frequency 2999999.97 +- 0.12 Hz against 3000000.00 Hz (blue sideband at scales 1, 0.5: 2999850.2, 2999962.5 Hz; the drive's carrier light shift -149.8 Hz removed by extrapolation to zero power)
+
+== 3. single-ion experiments against the device (Sections 4.1.5, 4.2.7, 7.5)
+  thermometry of a thermal state at nbar = 0.3: 0.300034 (ratio 0.230789 against 0.3/1.3 = 0.230769); ratio spread under a second duration 2.12e-05
+  heating rate (exact populations): 45.5408 quanta/s against Gamma_h = 45.4948; intercept 0.10407 against 0.1
+MC: heating rate with 1500 shots per point: 44.2177 +- 2.15 against 45.4948 (0.59 sigma)
+  field scan from a 5.03 G seed (exact): B = 5.000000 G, d nu/dB = 3108.69 Hz/G
+MC: field scan with 800 shots per point: 5.00018 +- 0.00116 against 5 (0.15 sigma) G
+MC: Stark scan per beam on the two-ion fixture: -42.7482 +- 5.72 against -38.4396 (0.75 sigma) Hz; per beam -17.06, -25.69
+MC: crosstalk scan: eps_01 0.0217407 +- 0.000161 against 0.0220205 (1.74 sigma); axis phase +0.0000 +- 0.0207 rad against 0
+
+== 4. micromotion compensation (Section 7.5; Berkeland 1998)
+  sideband-ratio method: beta before 0.2454; null of the compensation field -30.0000 +- 0.46 V/m against -30; residual |beta| 2.51e-04
+  rf-photon correlation on the 369.5 nm beam at Omega_rf = 2 pi x 30 MHz, retuned to -Gamma/2 (exact signal): null -20.0000 +- 2.8 V/m against -20 (the photon budget of a 1 s acquisition); residual beta -8.62e-12; beta before +0.0454
+MC: rf-photon correlation with photon shot noise over a 10 s acquisition: null -19.2738 +- 0.833 against -20 (0.87 sigma) V/m; residual beta -7.94e-05 +- 4.5e-03
+
+== 5. the full calibration of the two-ion 171Yb+ fixture by simulated experiments (Section 7.5)
+  experiments run: ('crystal_image', 'field_scan', 'micromotion_scan', 'sideband_spectroscopy', 'rabi_scan', 'stark_scan', 'ramsey_frequency', 'crosstalk_scan', 'ms_scan', 'parity_scan', 'detection_histogram', 'heating_rate'); refused: {}; uncalibrated entries: ()
+MC: field 4.99997 +- 0.00129 against 5 (0.02 sigma) G
+MC: ion 0: qubit frequency offset -0.0812435 +- 6.75 against 0 (0.01 sigma) Hz; Rabi 100886 +- 55.4 against 100928 (0.77 sigma) Hz; Stark -42.1025 +- 7.38 against -38.4396 (0.50 sigma) Hz; crosstalk 0.0219946 +- 0.000289 against 0.0220205 (0.09 sigma)
+MC: ion 1: qubit frequency offset -0.0812435 +- 5.44 against 0 (0.01 sigma) Hz; Rabi 100966 +- 51.1 against 100928 (0.74 sigma) Hz; Stark -45.8098 +- 7.2 against -38.4396 (1.02 sigma) Hz; crosstalk 0.0218903 +- 0.000284 against 0.0220205 (0.46 sigma)
+MC: mode 2: 2.82848e+06 +- 242 against 2.82843e+06 (0.20 sigma) Hz; nbar 0.0179 +- 0.0068 against 0.0215
+MC: mode 3: 2.99986e+06 +- 213 against 3e+06 (0.64 sigma) Hz; nbar 0.0102 +- 0.0051 against 0.0182
+MC: entangling gate: closure scale 1.00185 +- 0.0084 at offset +222.2 Hz; spin-phase corrections -0.0309 +- 0.039, -0.0142 +- 0.039 rad; parity contrast 0.9863, Bell fidelity bound 0.9932
+MC: surrogate error per entry group: rabi 4.22e-04, modes 4.58e-05, qubit_freq 6.43e-12, stark 1.92e-01, crosstalk 5.91e-03
+MC: Bell circuit from the fitted table: 1 - F = 3.470e-03 (intrinsic budget 9.01e-03); from the surrogate table: 2.333e-03; histograms {'00': 0.486, '01': 0.002, '10': 0.001, '11': 0.511} and {'00': 0.488, '10': 0.001, '11': 0.511}
+
+== 6. the servo of Section 7.5
+MC: servo bandwidth 0.02 Hz on an OU drift of tau = 5 s: residual variance 0.6734 against 1/(1 + 2 pi f_s tau) = 0.6141
+MC: servo bandwidth 0.2 Hz on an OU drift of tau = 5 s: residual variance 0.1450 against 1/(1 + 2 pi f_s tau) = 0.1373
+MC: servo bandwidth 2 Hz on an OU drift of tau = 5 s: residual variance 0.0209 against 1/(1 + 2 pi f_s tau) = 0.0157

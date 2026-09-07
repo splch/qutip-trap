@@ -22,6 +22,17 @@ re-preparation of the measured ion) is implemented, which is a stage and not a p
 scheduler plays is recorded as a ``PlayedGate`` (the pair, the beams and the waveform AS PLAYED, rescaled), which is what the
 resolved-mode selection of Section 5.2 reads (``qutip_trap.run.space``).
 
+Beliefs and truth (Section 7.3; M8): every pulse the scheduler emits carries the TABLE's values, marked ``Drive.programmed``:
+the requested Rabi frequency (the table's carrier entry, or the waveform's amplitude in the table's units), the believed
+differential Stark shift, the believed crosstalk ratios and phases. The believed Stark shift is COMPENSATED the way a
+laboratory does it, by detuning every tone of the pulse by the shift the table predicts for the played amplitude
+(``stark_compensation``), so that a correct belief keeps the pulse resonant with the shifted qubit and a wrong one leaves a
+reproducible detuning error; the z-rotation 2 pi int delta dt the shifted qubit accumulates relative to the frame during the
+pulse is absorbed into the ion's virtual-Z frame afterwards (``frame_after``: the differential light shift 'sets the MS phase',
+Section 7.5 item 7), so the ideal target of a schedule is its ideal gates followed by RZ(phase_frame) per ion. What the ions actually see (the physical Rabi frequency through the rf-power-to-Omega map the Rabi
+scan calibrated, the physical light shift, the physical crosstalk) is restored by ``control.played.physical_schedule`` inside
+the engine from the device's derived values, never by the scheduler.
+
 Virtual-Z rule (Section 13, "Virtual-Z propagation"): RZ(theta) shifts every later pulse phase phi -> phi - theta
 with gates read in time order; the frame at the end of the schedule is ``phase_frame``. A native GPi(phi) or GPi2(phi)
 is a resonant carrier pulse of area pi or pi/2 at phase phi relative to the ion's frame (Section 4.3.5); its duration
@@ -49,7 +60,7 @@ from qutip_trap.transport.budget import Transport
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from qutip_trap.control.table import CalibrationTable, Segment
     from qutip_trap.device.model import Device
@@ -222,8 +233,14 @@ def single_qubit_pulse(
     detuning_hz: float = 0.0,
     gate_id: str | None = None,
     crosstalk: dict[int, complex] | None = None,
+    stark_compensation: bool = True,
+    programmed: bool = True,
 ) -> Pulse:
-    """A square carrier pulse of ``area_rad`` (Omega t = area in the plan's convention) at ``phase_rad`` in the ion's frame."""
+    """A square carrier pulse of ``area_rad`` (Omega t = area in the plan's convention) at ``phase_rad`` in the ion's frame.
+
+    ``stark_shift_hz`` is the differential light shift the table predicts for this pulse; with ``stark_compensation`` the tone is
+    detuned by it so that the pulse stays resonant with the shifted qubit (Section 7.5 item 7). ``programmed`` marks the drive
+    as table-driven for the played chain of ``control.played`` (M8)."""
     if area_rad <= 0.0:
         raise ValueError(
             "a pulse area is positive; a negative nominal area is played at phase + pi (Section 13)"
@@ -231,7 +248,12 @@ def single_qubit_pulse(
     if rabi_hz <= 0.0:
         raise ValueError("rabi_hz must be positive")
     duration = area_rad / (TWO_PI * rabi_hz)
-    tone = Tone(detuning_hz=float(detuning_hz), phase_rad=float(phase_rad), envelope_hz=float(rabi_hz))
+    compensation = float(stark_shift_hz) if stark_compensation else 0.0
+    tone = Tone(
+        detuning_hz=float(detuning_hz) + compensation,
+        phase_rad=float(phase_rad) + compensation_phase_rad(compensation, t_start_s),
+        envelope_hz=float(rabi_hz),
+    )
     drive = Drive(
         kind=gate_drive.kind,
         ions=(ion,),
@@ -239,6 +261,7 @@ def single_qubit_pulse(
         beams=gate_drive.beams,
         stark_shift_hz=float(stark_shift_hz),
         crosstalk=dict(crosstalk or {}),
+        programmed=programmed,
     )
     return Pulse(drive, t_start_s, t_start_s + duration, gate_id, ())
 
@@ -283,6 +306,77 @@ def _stark_for_segment(
     return shift
 
 
+def _compensated_detuning(
+    detuning_hz: float | Callable[[float], float], shift_hz: float | Callable[[float], float]
+) -> float | Callable[[float], float]:
+    """The leg's detuning plus the believed Stark shift, composing callables (an FM leg, a shaped amplitude) when needed."""
+    if not callable(detuning_hz) and not callable(shift_hz):
+        return float(detuning_hz) + float(shift_hz)
+    if not callable(shift_hz) and float(shift_hz) == 0.0:
+        return detuning_hz
+
+    def value(tau: float) -> float:
+        d = float(detuning_hz(tau)) if callable(detuning_hz) else float(detuning_hz)
+        sft = float(shift_hz(tau)) if callable(shift_hz) else float(shift_hz)
+        return d + sft
+
+    return value
+
+
+def crosstalk_beliefs(table: CalibrationTable, ion: int) -> dict[int, complex]:
+    """The table's crosstalk of ``ion`` onto its neighbours as complex ratios: |epsilon_ij| from ``crosstalk`` and arg from
+    ``crosstalk_phase`` (0 when absent); uncalibrated or zero entries are skipped (Section 7.5 item 8)."""
+    xt: dict[int, complex] = {}
+    for (i, j), entry in table.crosstalk.items():
+        if i == ion and entry.status != "uncalibrated" and entry.value != 0.0:
+            phase = table.crosstalk_phase.get((i, j))
+            arg = float(phase.value) if phase is not None and phase.status != "uncalibrated" else 0.0
+            xt[j] = complex(entry.value) * complex(math.cos(arg), math.sin(arg))
+    return xt
+
+
+def stark_phase_rad(pulse: Pulse) -> float:
+    """2 pi int delta_St,believed dt over the pulse: the virtual-Z offset the compensated light shift costs the pulse's ion. The
+    builder applies (2 pi delta/2) sigma_z with sigma_z = |1><1| - |0><0| (the upper level up by delta/2), i.e. the rotation
+    e^{-i (2 pi delta t/2) sigma_z} = RZ(-2 pi delta t) in the native convention RZ(theta) = diag(e^{-i theta/2}, e^{i theta/2}); a
+    physical RZ(-theta) on the state is what a virtual RZ(+theta) leaves behind (Section 7.6), so the frame offset is +2 pi delta t
+    and every later pulse on the ion carries phi - 2 pi delta t (Section 7.5 item 7: 'the differential light shift that sets the
+    MS phase')."""
+    shift = pulse.drive.stark_shift_hz
+    if callable(shift):
+        grid = np.linspace(0.0, pulse.duration_s, 201)
+        integral = float(np.trapezoid([float(shift(x)) for x in grid], grid))
+    else:
+        integral = float(shift) * pulse.duration_s
+    return float(TWO_PI * integral)
+
+
+def frame_after(pulses: Sequence[Pulse], frame: PhaseFrame, *, stark_compensation: bool = True) -> PhaseFrame:
+    """The frame after ``pulses`` with their believed Stark phases absorbed (per ion, the primary ion of each drive)."""
+    if not stark_compensation:
+        return frame
+    for p in pulses:
+        theta = stark_phase_rad(p)
+        if theta != 0.0:
+            frame = frame.rz(p.drive.ions[0], theta)
+    return frame
+
+
+def compensation_phase_rad(shift_hz: float | Callable[[float], float], t_start_s: float) -> float:
+    """The tone phase that references a phase-continuous compensation detuning to the qubit frame at the PULSE start (M8): the
+    builder plays e^{-i(2 pi (mu + delta_s) t - phi)} in absolute time, while the qubit is light-shifted only from t_s on, so a
+    compensated tone leads the qubit's frame by 2 pi delta_s t_s when the pulse starts; phi_prog + 2 pi delta_s(0) t_s makes the
+    axis phi_prog at t_s, after which the shifted qubit co-rotates with the tone and the frame absorbs 2 pi int delta_s dt
+    (``frame_after``). A laboratory's control software does the same bookkeeping for a compensation detuning it programs into a
+    phase-continuous synthesizer; the tone's gate detuning mu is left as ``beat_phase_offset_rad`` and the hardware's
+    ``phase_continuous`` flag decide (Section 7.10). Verified on the two-ion fixture: an uncorrected compensated GPi2 one
+    millisecond into a schedule lost 1.5e-2 in fidelity, (2 pi delta_s t_s)^2/4 for delta_s = -38 Hz."""
+    d0 = float(shift_hz(0.0)) if callable(shift_hz) else float(shift_hz)
+    if d0 == 0.0:
+        return 0.0
+    return (TWO_PI * d0 * float(t_start_s)) % TWO_PI
+
+
 def beat_phase_offset_rad(detuning_hz: float | Callable[[float], float], t_gate_start_s: float) -> float:
     """The tone phase that resets a continuously running beat note to zero at the GATE start (Section 7.10, ``phase="reset"``
     per gate): the builder plays e^{-i(2 pi mu t - phi)}, so phi_prog + 2 pi mu t_g makes it e^{-i(2 pi mu (t - t_g) - phi_prog)};
@@ -322,9 +416,17 @@ def entangling_pulses(
     crosstalk: dict[int, dict[int, complex]] | None = None,
     beat_phase_reset: bool = False,
     response_delay_s: float = 0.0,
+    stark_compensation: bool = True,
 ) -> list[Pulse]:
     """One Pulse per (segment, ion) from a calibrated Waveform: tones per leg with the segment's phase offsets plus the ion's spin
     phase (already in its frame), the segment's amplitudes and detunings, the Stark shift scaled with the played amplitude.
+
+    ``stark_compensation`` detunes BOTH legs of every segment by the table's believed shift for the segment's amplitude (the
+    same shift on both legs moves the beat-note centre with the shifted qubit and leaves the motion phase alone), which is how
+    a laboratory keeps the bichromatic drive centred on the light-shifted transition (Section 7.5 item 7). The spin phase is
+    referenced per segment: ``compensation_phase_rad`` at the segment's own start (phase-continuous tones), minus the frame
+    2 pi int delta_s dt the ion accumulated in the gate's earlier segments (the virtual-Z rule inside the gate; an amplitude-
+    modulated waveform shifts each segment differently), so that every segment's force axis is where the calibration put it.
 
     ``beat_phase_reset`` (hardware that programs each gate's tones from its own start, ``HardwareChain.phase_continuous =
     False``) offsets every leg's phase by ``beat_phase_offset_rad`` so that the bichromatic beat note starts at zero phase at the
@@ -335,6 +437,7 @@ def entangling_pulses(
     if waveform.segments is None:
         raise ScheduleError("the scheduler plays segmented waveforms (the solvers emit segments)")
     pulses: list[Pulse] = []
+    in_gate_frame: dict[int, float] = {}
     t = t_start_s
     for k, seg in enumerate(waveform.segments):
         for ion in seg.ions:
@@ -345,11 +448,15 @@ def entangling_pulses(
                 )
             if waveform.kind == "ms" and spec.kind not in ("raman", "optical_E1", "optical_E2", "microwave"):
                 raise ScheduleError(f"ion {ion}: an MS waveform needs a spin-flip drive, not {spec.kind}")
+            believed_shift = _stark_for_segment(table, ion, spec, seg)
+            compensation = believed_shift if stark_compensation else 0.0
+            spin_reference = compensation_phase_rad(compensation, t) - in_gate_frame.get(ion, 0.0)
             tones = tuple(
                 Tone(
-                    detuning_hz=seg.detuning_hz[leg],
+                    detuning_hz=_compensated_detuning(seg.detuning_hz[leg], compensation),
                     phase_rad=float(seg.phase_rad[(ion, leg)])
                     + float(spin_phases_rad.get(ion, 0.0))
+                    + spin_reference
                     + (beat_phase_offset_rad(seg.detuning_hz[leg], t_start_s) if beat_phase_reset else 0.0)
                     + response_phase_rad(seg.detuning_hz[leg], response_delay_s),
                     envelope_hz=seg.amplitude_hz[(ion, leg)],
@@ -361,9 +468,10 @@ def entangling_pulses(
                 ions=(ion,),
                 tones=tones,
                 beams=spec.beams,
-                stark_shift_hz=_stark_for_segment(table, ion, spec, seg),
+                stark_shift_hz=believed_shift,
                 crosstalk=dict((crosstalk or {}).get(ion, {})),
                 light_shift=spec.light_shift,
+                programmed=True,
             )
             pulses.append(
                 Pulse(
@@ -374,6 +482,8 @@ def entangling_pulses(
                     tuple(waveform.chi_m),
                 )
             )
+            if stark_compensation:
+                in_gate_frame[ion] = in_gate_frame.get(ion, 0.0) + stark_phase_rad(pulses[-1])
         t += seg.duration_s
     return pulses
 
@@ -403,17 +513,23 @@ def _single_qubit(
     table: CalibrationTable,
     start: float,
     gate_id: str,
+    stark_compensation: bool = True,
 ) -> Pulse:
     spec = drives[q]
     rabi = carrier_rabi_hz(table, q, spec)
     stark_entry = table.stark.get((q, spec.table_key_beam))
     stark = 0.0 if stark_entry is None or stark_entry.status == "uncalibrated" else float(stark_entry.value)
-    xt: dict[int, complex] = {}
-    for (i, j), entry in table.crosstalk.items():
-        if i == q and entry.status != "uncalibrated" and entry.value != 0.0:
-            xt[j] = complex(entry.value)
     return single_qubit_pulse(
-        q, area, phase, spec, rabi, start, stark_shift_hz=stark, gate_id=gate_id, crosstalk=xt
+        q,
+        area,
+        phase,
+        spec,
+        rabi,
+        start,
+        stark_shift_hz=stark,
+        gate_id=gate_id,
+        crosstalk=crosstalk_beliefs(table, q),
+        stark_compensation=stark_compensation,
     )
 
 
@@ -431,8 +547,13 @@ def schedule(
     parallel: bool = False,
     crosstalk_suppression: CrosstalkSuppression = "none",
     response_delay: bool = True,
+    stark_compensation: bool = True,
 ) -> Schedule:
     """Native gates -> pulses with absolute times from the calibration table (Section 7.3).
+
+    ``stark_compensation`` (M8, Section 7.5 item 7): every pulse's tones are detuned by the differential Stark shift the table
+    believes for the played amplitude, the laboratory's compensation of the light shift; the physical shift the ions see is
+    restored by the engine's played chain (``control.played``) from the device.
 
     ``crosstalk_suppression`` (Section 6.6, Fang et al. 2022; M7): every MS gate is split into two half-angle plays with a
     physical echo between them, exact to first order in the leaked drives. ``local``: Y(pi) (a GPi(pi/2) pulse) on both
@@ -511,8 +632,10 @@ def schedule(
                         gate_id=f"ms[{k}]",
                         beat_phase_reset=reset,
                         response_delay_s=delay,
+                        stark_compensation=stark_compensation,
                     )
                     pulses.extend(new)
+                    frame = frame_after(new, frame, stark_compensation=stark_compensation)
                     gates.append(
                         PlayedGate(
                             f"ms[{k}]",
@@ -551,18 +674,20 @@ def schedule(
                     _k: int = k,
                     _ab: tuple[int, int] = (a, b),
                 ) -> float:
-                    pulses.extend(
-                        entangling_pulses(
-                            _half,
-                            ent_drives,
-                            spin_phases_rad=_spins,
-                            t_start_s=t_half,
-                            table=table,
-                            gate_id=f"ms[{_k}]/{tag}",
-                            beat_phase_reset=reset,
-                            response_delay_s=delay,
-                        )
+                    nonlocal frame
+                    new_half = entangling_pulses(
+                        _half,
+                        ent_drives,
+                        spin_phases_rad=_spins,
+                        t_start_s=t_half,
+                        table=table,
+                        gate_id=f"ms[{_k}]/{tag}",
+                        beat_phase_reset=reset,
+                        response_delay_s=delay,
+                        stark_compensation=stark_compensation,
                     )
+                    pulses.extend(new_half)
+                    frame = frame_after(new_half, frame, stark_compensation=stark_compensation)
                     gates.append(
                         PlayedGate(
                             f"ms[{_k}]/{tag}",
@@ -583,8 +708,9 @@ def schedule(
                     _ions: list[int] = echo_ions,
                     _echo: list[tuple[float, float]] = echo_pulses,
                     _k: int = k,
-                    _frame: PhaseFrame = frame,
                 ) -> float:
+                    nonlocal frame
+                    _frame = frame
                     end = t_echo
                     for q in _ions:
                         t_q = t_echo
@@ -597,10 +723,13 @@ def schedule(
                                 table,
                                 t_q,
                                 f"ms[{_k}]/{tag}/ion{q}",
+                                stark_compensation=stark_compensation,
                             )
                             pulses.append(p)
+                            _frame = frame_after([p], _frame, stark_compensation=stark_compensation)
                             t_q = p.t_end_s + dead
                         end = max(end, t_q - dead)
+                    frame = _frame
                     return end
 
                 t = play_half(start, "half1")
@@ -633,8 +762,10 @@ def schedule(
                         table,
                         start,
                         f"zz[{k}]/wrap_in/ion{q}",
+                        stark_compensation=stark_compensation,
                     )
                     pulses.append(p)
+                    frame = frame_after([p], frame, stark_compensation=stark_compensation)
                     start = max(start, p.t_end_s) if not parallel else start
                 if not parallel:
                     start = max(p.t_end_s for p in pulses[-2:]) + dead
@@ -646,18 +777,19 @@ def schedule(
                 play = _rescaled(wf, 0.5 * abs(theta), chi_abs)
                 if theta < 0.0:
                     spins[b] += math.pi
-                pulses.extend(
-                    entangling_pulses(
-                        play,
-                        ent_drives,
-                        spin_phases_rad=spins,
-                        t_start_s=start,
-                        table=table,
-                        gate_id=f"zz[{k}]/ms",
-                        beat_phase_reset=reset,
-                        response_delay_s=delay,
-                    )
+                new_ms = entangling_pulses(
+                    play,
+                    ent_drives,
+                    spin_phases_rad=spins,
+                    t_start_s=start,
+                    table=table,
+                    gate_id=f"zz[{k}]/ms",
+                    beat_phase_reset=reset,
+                    response_delay_s=delay,
+                    stark_compensation=stark_compensation,
                 )
+                pulses.extend(new_ms)
+                frame = frame_after(new_ms, frame, stark_compensation=stark_compensation)
                 gates.append(
                     PlayedGate(
                         f"zz[{k}]/ms", "zz", (a, b), play, ent_drives[a].beams, start, start + play.duration_s
@@ -675,8 +807,10 @@ def schedule(
                         table,
                         start,
                         f"zz[{k}]/wrap_out/ion{q}",
+                        stark_compensation=stark_compensation,
                     )
                     pulses.append(p)
+                    frame = frame_after([p], frame, stark_compensation=stark_compensation)
                     ends.append(p.t_end_s)
                 advance((a, b), max(ends))
                 continue
@@ -689,18 +823,19 @@ def schedule(
                 )
             half = _rescaled(wf, 0.25 * abs(theta), abs(chi))
             spins = {a: 0.0, b: 0.0}
-            pulses.extend(
-                entangling_pulses(
-                    half,
-                    ent_drives,
-                    spin_phases_rad=spins,
-                    t_start_s=start,
-                    table=table,
-                    gate_id=f"zz[{k}]/loop1",
-                    beat_phase_reset=reset,
-                    response_delay_s=delay,
-                )
+            new_loop1 = entangling_pulses(
+                half,
+                ent_drives,
+                spin_phases_rad=spins,
+                t_start_s=start,
+                table=table,
+                gate_id=f"zz[{k}]/loop1",
+                beat_phase_reset=reset,
+                response_delay_s=delay,
+                stark_compensation=stark_compensation,
             )
+            pulses.extend(new_loop1)
+            frame = frame_after(new_loop1, frame, stark_compensation=stark_compensation)
             gates.append(
                 PlayedGate(
                     f"zz[{k}]/loop1", "zz", (a, b), half, ent_drives[a].beams, start, start + half.duration_s
@@ -718,23 +853,26 @@ def schedule(
                     table,
                     start,
                     f"zz[{k}]/echo/ion{q}",
+                    stark_compensation=stark_compensation,
                 )
                 pulses.append(p)
+                frame = frame_after([p], frame, stark_compensation=stark_compensation)
                 ends.append(p.t_end_s)
             start = max(ends) + dead
             idle.append((start - dead, start))
-            pulses.extend(
-                entangling_pulses(
-                    half,
-                    ent_drives,
-                    spin_phases_rad=spins,
-                    t_start_s=start,
-                    table=table,
-                    gate_id=f"zz[{k}]/loop2",
-                    beat_phase_reset=reset,
-                    response_delay_s=delay,
-                )
+            new_loop2 = entangling_pulses(
+                half,
+                ent_drives,
+                spin_phases_rad=spins,
+                t_start_s=start,
+                table=table,
+                gate_id=f"zz[{k}]/loop2",
+                beat_phase_reset=reset,
+                response_delay_s=delay,
+                stark_compensation=stark_compensation,
             )
+            pulses.extend(new_loop2)
+            frame = frame_after(new_loop2, frame, stark_compensation=stark_compensation)
             gates.append(
                 PlayedGate(
                     f"zz[{k}]/loop2", "zz", (a, b), half, ent_drives[a].beams, start, start + half.duration_s
@@ -752,8 +890,10 @@ def schedule(
                     table,
                     start,
                     f"zz[{k}]/unecho/ion{q}",
+                    stark_compensation=stark_compensation,
                 )
                 pulses.append(p)
+                frame = frame_after([p], frame, stark_compensation=stark_compensation)
                 ends.append(p.t_end_s)
             advance((a, b), max(ends))
             continue
@@ -768,13 +908,7 @@ def schedule(
         stark = (
             0.0 if stark_entry is None or stark_entry.status == "uncalibrated" else float(stark_entry.value)
         )
-        xt: dict[int, complex] = {}
-        for (i, j), entry in table.crosstalk.items():
-            if i == q and entry.status != "uncalibrated" and entry.value != 0.0:
-                xt[j] = complex(entry.value)
         start = clock[q] if parallel else global_clock
-        if pulses and start > t0_s:
-            pass
         pulse = single_qubit_pulse(
             q,
             NATIVE_AREAS[op.name],
@@ -784,9 +918,11 @@ def schedule(
             start,
             stark_shift_hz=stark,
             gate_id=f"{op.name}[{k}]",
-            crosstalk=xt,
+            crosstalk=crosstalk_beliefs(table, q),
+            stark_compensation=stark_compensation,
         )
         pulses.append(pulse)
+        frame = frame_after([pulse], frame, stark_compensation=stark_compensation)
         advance((q,), pulse.t_end_s)
     events: list[ScheduledEvent] = []
     if measured:
@@ -826,12 +962,16 @@ __all__ = [
     "ScheduleError",
     "ScheduledEvent",
     "beat_phase_offset_rad",
+    "compensation_phase_rad",
     "carrier_rabi_hz",
+    "crosstalk_beliefs",
     "default_gate_drives",
     "entangling_pulses",
+    "frame_after",
     "ms_spin_phases",
     "response_phase_rad",
     "schedule",
     "single_qubit_pulse",
+    "stark_phase_rad",
     "stark_scaling_power",
 ]

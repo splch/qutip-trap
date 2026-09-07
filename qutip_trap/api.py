@@ -8,12 +8,21 @@ later milestone raise ``NotImplementedError`` naming that milestone.
 
 from __future__ import annotations
 
-from qutip_trap.calibration import calibrate
+from qutip_trap.calibration import (
+    CalibrationCache,
+    CalibrationError,
+    CalibrationReport,
+    CalibrationScans,
+    calibrate,
+    calibrate_with_report,
+    full_calibration,
+)
 from qutip_trap.calibration.entangling import (
     CalibrationRun,
     GateCheck,
     calibrate_entangling_angle,
     exact_gate_check,
+    frame_rotated,
     gate_space,
     thermal_robustness,
 )
@@ -30,6 +39,7 @@ from qutip_trap.control.compiler import (
 )
 from qutip_trap.control.composite import CompositePulse, composite_pulse
 from qutip_trap.control.hardware import HardwareChain, apply_hardware_chain
+from qutip_trap.control.played import physical_schedule
 from qutip_trap.control.pulses import Drive, LightShiftCouplings, Pulse, Tone
 from qutip_trap.control.schedule import GateDrive, PlayedGate, Schedule, ScheduledEvent, schedule
 from qutip_trap.control.shaping import (
@@ -55,15 +65,25 @@ from qutip_trap.dynamics.engine import (  # noqa: I001
 from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions
 from qutip_trap.experiments import (
     ExperimentResult,
+    Observation,
+    ReadoutErrors,
+    crosstalk_scan,
+    crystal_image,
     detection_histogram,
+    field_scan,
     heating_rate,
     micromotion_scan,
+    mode_spectroscopy,
+    ms_phase_scan,
     ms_scan,
     parity_scan,
     rabi_scan,
     ramsey,
     ramsey_frequency,
+    sideband_lineshape,
     sideband_spectroscopy,
+    stark_scan,
+    thermometry,
 )
 from qutip_trap.hilbert.space import CachedOperators, HilbertSpace, ModeTruncation
 from qutip_trap.io.ionq import dump_ionq_json, load_ionq_json
@@ -160,6 +180,24 @@ from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import Gauss, Hz, RadPerS, Tesla, hz_from_rad_s, rad_s_from_hz
 
 __all__ = [
+    "CalibrationCache",
+    "CalibrationError",
+    "CalibrationReport",
+    "CalibrationScans",
+    "Observation",
+    "ReadoutErrors",
+    "calibrate_with_report",
+    "crosstalk_scan",
+    "crystal_image",
+    "field_scan",
+    "frame_rotated",
+    "full_calibration",
+    "mode_spectroscopy",
+    "ms_phase_scan",
+    "physical_schedule",
+    "sideband_lineshape",
+    "stark_scan",
+    "thermometry",
     "CollisionEvent",
     "ControlSegment",
     "InternalLevels",

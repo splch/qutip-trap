@@ -33,8 +33,10 @@ def ms_trap(omega_hz: tuple[float, float, float] = (3.0e6, 2.9e6, 1.0e6)) -> Tra
     )
 
 
-def global_pair_along_x(power_w: float = 10e-3, waist_m: float = 200e-6) -> tuple[Beam, Beam]:
-    """Counter-propagating 355 nm beams along +-x pointed at the chain centre; |Delta k| = 2k along x."""
+def global_pair_along_x(power_w: float = 0.3, waist_m: float = 60e-6) -> tuple[Beam, Beam]:
+    """Counter-propagating 355 nm beams along +-x pointed at the chain centre; |Delta k| = 2k along x. At 0.3 W in a 60 um waist
+    the derived carrier Rabi frequency is 100.8 kHz (the 10 mW, 200 um pair of the first M4 fixtures gave 303 Hz while its tables
+    claimed 100 kHz; since M8 plays the physical Rabi frequency of a requested one, the beams must deliver what the table says)."""
     b1 = Beam(355e-9, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), waist_m, power_w, (0.0, 0.0, 0.0))
     b2 = Beam(355e-9, (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), waist_m, power_w, (0.0, 0.0, 0.0))
     return b1, b2
@@ -72,15 +74,51 @@ def two_ion_modes(device: Device, nbar: dict[int, float] | None = None) -> GateM
     return gate_modes(device, (0, 1), (0, 1), nbar=nbar)
 
 
+def derived_seeds(
+    device: Device, drives: dict[int, GateDrive]
+) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], float]]:
+    """(carrier Rabi frequency, differential Stark shift) per (ion, table key beam) the device derives for ``drives``: the
+    seeds a surrogate table carries, so that the played chain of M8 (requested -> physical) is the identity."""
+    from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive
+
+    rabi: dict[tuple[int, int], float] = {}
+    stark: dict[tuple[int, int], float] = {}
+    for ion, spec in drives.items():
+        if spec.kind == "raman":
+            dd = derive_raman_drive(device, ion, (spec.beams[0], spec.beams[1]), scattering=False)
+        elif spec.kind in ("optical_E1", "optical_E2"):
+            dd = derive_optical_drive(device, ion, spec.beams[0], scattering=False)
+        else:
+            continue
+        rabi[(ion, spec.table_key_beam)] = float(dd.carrier_rabi_hz)
+        stark[(ion, spec.table_key_beam)] = float(dd.stark_shift_hz)
+    return rabi, stark
+
+
 def table_with_waveform(
-    pair: tuple[int, int], waveform: Waveform, rabi_hz: dict[tuple[int, int], float] | None = None
+    pair: tuple[int, int],
+    waveform: Waveform,
+    rabi_hz: dict[tuple[int, int], float] | None = None,
+    *,
+    device: Device | None = None,
+    drives: dict[int, GateDrive] | None = None,
+    stark_hz: dict[tuple[int, int], float] | None = None,
 ) -> CalibrationTable:
+    """A table carrying ``waveform`` for ``pair`` and carrier Rabi entries: ``rabi_hz`` explicitly, or the derived values of
+    ``drives`` on ``device`` (with the derived Stark shifts) when both are given."""
     table = make_calibration_table()
+    if rabi_hz is None and device is not None and drives is not None:
+        rabi_hz, derived_stark = derived_seeds(device, drives)
+        stark_hz = derived_stark if stark_hz is None else stark_hz
     rabi = {
         k: CalEntry(v, 1.0, "calibrated", "rabi_scan", "conv.rabi_frequency", 0.0, 0)
         for k, v in (rabi_hz or {}).items()
     }
-    return dataclasses.replace(table, ms={pair: waveform}, rabi=rabi)
+    stark = {
+        k: CalEntry(v, 0.1, "calibrated", "stark_scan", "conv.two_photon_rabi", 0.0, 0)
+        for k, v in (stark_hz or {}).items()
+    }
+    return dataclasses.replace(table, ms={pair: waveform}, rabi=rabi, stark=stark)
 
 
 def bell_state_fidelity(rho, chi_rad: float = math.pi / 4.0) -> float:  # type: ignore[no-untyped-def]

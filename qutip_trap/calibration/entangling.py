@@ -30,6 +30,7 @@ from qutip_trap.control.schedule import (
     GateDrive,
     Schedule,
     entangling_pulses,
+    frame_after,
     ms_spin_phases,
     single_qubit_pulse,
 )
@@ -122,7 +123,8 @@ def ms_schedule(
         gate_id=gate_id,
         response_delay_s=response_delay_s,
     )
-    return Schedule(tuple(pulses), (), (), {q: 0.0 for q in range(n)})
+    frame = frame_after(pulses, PhaseFrame())
+    return Schedule(tuple(pulses), (), (), frame.as_dict(n))
 
 
 def light_shift_echo_schedule(
@@ -200,7 +202,7 @@ def light_shift_echo_schedule(
             gate_id=f"{gate_id}/unecho/ion{q}",
         )
         pulses.append(p)
-    return Schedule(tuple(pulses), tuple(idle), (), {q: 0.0 for q in range(n)})
+    return Schedule(tuple(pulses), tuple(idle), (), frame_after(pulses, PhaseFrame()).as_dict(n))
 
 
 @dataclass(frozen=True)
@@ -313,6 +315,7 @@ def exact_gate_check(
         store_per_segment=2,
         channels=tuple(channels),  # type: ignore[arg-type]
         qubit_shifts_hz=dict(qubit_shifts_hz or {}),
+        table=table,
     )
     traces = engine.run_pulses(
         device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
@@ -331,11 +334,30 @@ def exact_gate_check(
             pops[f"P{sa}{sb}"] = float(np.real(qt.expect(_internal_projector(n_ions, a, sa, b, sb), read)))
     p11 = min(max(pops["P11"], 0.0), 1.0)
     chi = float(math.asin(math.sqrt(p11))) / (2.0 if x_basis else 1.0)
-    target = _ideal_target(waveform.kind, chi_target_rad, phases_rad, n_ions, pair, internal)
+    target = frame_rotated(
+        _ideal_target(waveform.kind, chi_target_rad, phases_rad, n_ions, pair, internal), sched.phase_frame
+    )
     fid = float(np.real(qt.expect(rho, target))) if rho.isoper else float(abs(target.overlap(rho)) ** 2)
     residual = {m: float(traces.final.motional.nbar[m] - n0[m]) for m in n0}
     check = GateCheck(pops, chi, pops["P01"] + pops["P10"], residual, fid, rho, engine.last_report)
     return check, traces
+
+
+def frame_rotated(target: qt.Qobj, phase_frame: Mapping[int, float]) -> qt.Qobj:
+    """The ideal ``target`` (a register ket, ion 0 the first factor) as the physical state carries it after the scheduler absorbed a
+    frame offset theta_q per ion: a virtual RZ(theta) leaves the state as RZ(-theta) times the ideal one (Section 7.6: the M6 pin
+    GPi2(0) RZ(0.1) = RZ(0.1) GPi2(-0.1)), so the compensated light shifts' rotation e^{-i (2 pi delta t/2) sigma_z} with the
+    builder's sigma_z = |1><1| - |0><0|, i.e. RZ(-2 pi delta t) in the native convention, is absorbed as the offset +2 pi delta t
+    and reproduced here as RZ(-theta_q)."""
+    dims = [int(d) for d in target.dims[0]]
+    ops = []
+    for q, d in enumerate(dims):
+        theta = -float(phase_frame.get(q, 0.0))
+        op = np.eye(d, dtype=complex)
+        if theta != 0.0:
+            op[0, 0], op[1, 1] = np.exp(-0.5j * theta), np.exp(0.5j * theta)
+        ops.append(qt.Qobj(op))
+    return qt.tensor(*ops) * target
 
 
 def _internal_projector(n_ions: int, a: int, sa: int, b: int, sb: int) -> qt.Qobj:
@@ -489,33 +511,44 @@ def parity_after_analysis_pulse(
     nbar: Mapping[int, float] | None = None,
     options: SolverOptions | None = None,
     builder_options: BuilderOptions | None = None,
+    sample: NoiseSample | None = None,
+    analysis_drives: Mapping[int, GateDrive] | None = None,
+    spin_phases_rad: tuple[float, float] = (0.0, 0.0),
+    internal: Sequence[int] | None = None,
+    analysis_stark_hz: Mapping[int, float] | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Parity P_00 + P_11 - P_01 - P_10 after the gate and a pi/2 analysis pulse of phase ``analysis_phase_rad`` on both ions
-    (Section 7.9); the analysis pulses use the gate drives' beams at the given carrier Rabi frequencies."""
+    (Section 7.9); the analysis pulses use ``analysis_drives`` (default the gate drives' beams) at the given carrier Rabi
+    frequencies, with the believed Stark shifts ``analysis_stark_hz`` compensated. ``spin_phases_rad`` are the MS gate's
+    (phi_0, phi_1) and ``internal`` the register's initial levels (default |0...0>), for the phase scans of Section 7.5 (M8)."""
     n_ions = space.n_ions
-    sched_ms = ms_schedule(waveform, pair, gate_drives, table)
+    sched_ms = ms_schedule(waveform, pair, gate_drives, table, phases_rad=spin_phases_rad)
     dead = float(device.hardware.dead_time_s)
     t = sched_ms.duration_s + dead
     pulses = list(sched_ms.pulses)
+    sq = dict(analysis_drives) if analysis_drives is not None else dict(gate_drives)
+    frame = PhaseFrame(dict(sched_ms.phase_frame))
     for q in pair:
         pulses.append(
             single_qubit_pulse(
                 q,
                 math.pi / 2.0,
-                analysis_phase_rad,
-                gate_drives[q],
+                frame.pulse_phase(q, analysis_phase_rad),
+                sq[q],
                 float(analysis_rabi_hz[q]),
                 t,
+                stark_shift_hz=float((analysis_stark_hz or {}).get(q, 0.0)),
                 gate_id=f"analysis/ion{q}",
             )
         )
     sched = Schedule(
         tuple(pulses), ((sched_ms.duration_s, t),) if dead > 0 else (), (), {q: 0.0 for q in range(n_ions)}
     )
-    state = space.initial_state([0] * n_ions, thermal=dict(nbar or {}))
-    engine = JointExactEngine(builder_options=builder_options)
+    levels = [0] * n_ions if internal is None else [int(x) for x in internal]
+    state = space.initial_state(levels, thermal=dict(nbar or {}))
+    engine = JointExactEngine(builder_options=builder_options, table=table)
     traces = engine.run_pulses(
-        device, sched, state, space, quiet_sample(), SeedSpec(0), options or SolverOptions()
+        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
     )
     rho = traces.final.internal
     a, b = pair
@@ -537,6 +570,7 @@ __all__ = [
     "Reference",
     "calibrate_entangling_angle",
     "exact_gate_check",
+    "frame_rotated",
     "gate_space",
     "light_shift_echo_schedule",
     "ms_schedule",

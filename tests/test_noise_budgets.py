@@ -65,7 +65,7 @@ def _gate(loops: int, epsilon_hz: float):  # type: ignore[no-untyped-def]
         modes, gate_mode=X_COM_TWO_IONS, loops=loops, epsilon_hz=epsilon_hz, all_modes=False
     )
     space = HilbertSpace((2, 2), (ModeTruncation(X_COM_TWO_IONS, 12, (0, 4), 0.15),), None, (0, 1, 2, 4, 5))
-    table = table_with_waveform((0, 1), wf)
+    table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
     return dev, wf, space, table
 
 

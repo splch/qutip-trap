@@ -216,5 +216,10 @@ def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:
     assert len(echo_neigh) == 2 and {p.drive.ions[0] for p in echo_neigh} == {2}, (
         "the spectator gets X(pi) then Y(pi) = Z(pi)"
     )
-    assert neigh.phase_frame[2] == pytest.approx(math.pi) and local.phase_frame[2] == 0.0
+    # Z(pi) plus the virtual-Z frame the two compensated echo pulses leave behind (2 pi delta_St t_pi each, M8 Section 7.5 item 7)
+    from qutip_trap.control.schedule import stark_phase_rad
+
+    stark_frame = sum(stark_phase_rad(p) for p in echo_neigh)
+    assert stark_frame != 0.0 and abs(stark_frame) < 0.01
+    assert neigh.phase_frame[2] == pytest.approx(math.pi + stark_frame) and local.phase_frame[2] == 0.0
     assert local.duration_s > plain.duration_s and neigh.duration_s > plain.duration_s

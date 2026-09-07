@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -656,6 +656,24 @@ def scaled(waveform: Waveform, factor: float) -> Waveform:
     )
 
 
+def phase_shifted(waveform: Waveform, offsets_rad: Mapping[int, float]) -> Waveform:
+    """Every segment's tone phases of ion i shifted by ``offsets_rad[i]`` on BOTH legs: the ion's spin phase (the half-sum)
+    moves by the offset, the motion phase (the half-difference) and every angle stay (Section 4.3.4); what the MS phase
+    scan of Section 7.5 step 3 stores (M8)."""
+    if waveform.segments is None:
+        raise ValueError("phase-shifting a Fourier-parameterized waveform is not supported")
+    segs = tuple(
+        Segment(
+            s.duration_s,
+            dict(s.amplitude_hz),
+            {k: float(v) + float(offsets_rad.get(k[0], 0.0)) for k, v in s.phase_rad.items()},
+            dict(s.detuning_hz),
+        )
+        for s in waveform.segments
+    )
+    return replace(waveform, segments=segs)
+
+
 def total_chi(waveform: Waveform) -> float:
     """The signed two-body angle of a waveform, the sum of its per-mode angles (exp(+i chi sigma sigma))."""
     return float(sum(waveform.chi_m.values()))
@@ -1141,6 +1159,7 @@ __all__ = [
     "integrals",
     "integrals_sampled",
     "integrals_segmented",
+    "phase_shifted",
     "scaled",
     "segment_count",
     "solve_amplitude_modulation",

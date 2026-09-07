@@ -450,6 +450,7 @@ def run(
     noise: bool = True,
     internal_levels: int = 2,
     crosstalk_suppression: CrosstalkSuppression = "none",
+    stark_compensation: bool = True,
 ) -> Result:
     """Compile -> calibrate -> schedule -> prepare -> evolve -> readout -> Result (Section 3.4).
 
@@ -461,7 +462,10 @@ def run(
     process; ``noise=False`` runs the quiet nominal sample without channels (the M6 behaviour). ``channels`` are extra
     explicit collapse operators. ``internal_levels`` > 2 gives every ion a register factor with leakage levels
     (``noise/levels.py``) so that scattering out of the qubit pair is simulated and read out by the manifold's class.
-    ``crosstalk_suppression`` selects Section 6.6's echo schemes for the MS gates.
+    ``crosstalk_suppression`` selects Section 6.6's echo schemes for the MS gates. ``stark_compensation`` (M8) lets the
+    scheduler detune every pulse by the table's believed light shift; the pulses the ions see are the scheduler's requests
+    converted through the device's derived values by the engine's played chain (``control.played``), so a table fitted by
+    simulated experiments (``calibrate(surrogate=False)``) drives the machine with its own errors (Sections 7.3, 7.5).
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
@@ -472,13 +476,13 @@ def run(
     # 1. compile
     report = compile_with_report(circuit, device, entangler=entangler)
     compiled = report.circuit
-    # 2. calibrate (surrogate) when no table is given
+    # 2. calibrate (surrogate, cached per device and seed, Section 7.5) when no table is given
     if table is None:
-        from qutip_trap.calibration.surrogate import surrogate_table
+        from qutip_trap.calibration.cache import cached_surrogate
 
         kw = dict(calibrate_kwargs or {})
         kw.setdefault("pairs", compiled.entangling_pairs())
-        sur = surrogate_table(
+        sur = cached_surrogate(
             device,
             seed=seed,
             t0_s=t0_s,
@@ -491,6 +495,11 @@ def run(
         )
         table = sur.table
         notes.extend(sur.notes)
+    elif not table.is_current_for(device.hash()):
+        notes.append(
+            "calibration table fitted for another device configuration (hash mismatch): played as given, never regenerated "
+            "silently (Section 7.5)"
+        )
     # 3. schedule
     sched = schedule(
         compiled,
@@ -501,6 +510,7 @@ def run(
         t0_s=0.0,
         parallel=parallel,
         crosstalk_suppression=crosstalk_suppression,
+        stark_compensation=stark_compensation,
     )
     # 4. preparation (the physics of the recipe) and the space
     cooling_pair = _raman_pair_hint(ent_drives)
@@ -615,6 +625,7 @@ def run(
         device_channels=bool(noise),
         levels_by_ion=levels or None,
         hardware_chain=True,
+        table=table,
     )
     dims_int = [list(joint_space.ion_dims), list(joint_space.ion_dims)]
     d_int = int(np.prod(joint_space.ion_dims))
@@ -661,6 +672,9 @@ def run(
                 for a in rep.approximations:
                     if a not in approximations:
                         approximations.append(a)
+                for n in rep.notes:
+                    if n not in notes:
+                        notes.append(n)
                 if rep.method not in methods:
                     methods.append(rep.method)
                 n_traj_max = max(n_traj_max, rep.trajectories)
@@ -796,8 +810,9 @@ def run(
         )
     if run_state.dark or run_state.lost:
         approximations.append(
-            "collisions: after a dark-ion or loss event the remaining ions' dynamics stay on the nominal crystal (the reduced "
-            "crystal is milestone M8's recalibration); the flagged ions read dark"
+            "collisions: after a dark-ion or loss event the remaining ions' dynamics stay on the nominal crystal; the flagged "
+            "ions read dark, and the crystal_image experiment of Section 6.7 detects the event for a recalibration on the "
+            "reduced device (a Device with N - 1 ions is a different device and gets its own table, Section 7.5)"
         )
     approximations.append(
         "SPAM definition: readout (eps_B, eps_D) of the threshold discriminator at zero crosstalk (Section 13 row "
@@ -873,19 +888,36 @@ def to_register_order(vec: np.ndarray, n_qubits: int) -> np.ndarray:
 
 def ideal_register_state(result_or_circuit: Result | Circuit) -> np.ndarray:
     """The ideal register ket the run's state is compared with: U_compiled |0...0> of the COMPILED circuit, whose residual
-    virtual-Z frame is absorbed (the frame the measurement discards, Section 7.6), for a Result; U |0...0> of the circuit
+    virtual-Z frame is absorbed (the frame the measurement discards, Section 7.6), rotated by the SCHEDULER's final frame (the
+    virtual-Z updates it made for the compensated light shifts and the echo schemes, M8), for a Result; U |0...0> of the circuit
     itself for a Circuit. Returned in the REGISTER order of ``Result.final_state`` (ion 0 the first tensor factor), converted
     from the compiler's qubit-0-least-significant order by ``to_register_order``."""
     from qutip_trap.control.compiler import Circuit as _Circuit
     from qutip_trap.control.compiler import circuit_unitary
+    from qutip_trap.control.native import rz
 
-    circuit = (
-        result_or_circuit
-        if isinstance(result_or_circuit, _Circuit)
-        else last_record(result_or_circuit).compile.circuit
-    )
+    if isinstance(result_or_circuit, _Circuit):
+        circuit = result_or_circuit
+        frame: dict[int, float] = {}
+    else:
+        rec = last_record(result_or_circuit)
+        circuit = rec.compile.circuit
+        frame = dict(rec.schedule.phase_frame)
     u = circuit_unitary(circuit)
-    return to_register_order(np.asarray(u[:, 0], dtype=complex), circuit.n_qubits)
+    ket = np.asarray(u[:, 0], dtype=complex)
+    # the scheduler's own frame (the compensated light shifts' RZ(2 pi int delta dt), an echo scheme's Z(pi)): the physical state
+    # carries these rotations and the frame absorbs them (Section 7.6), so the ideal state is rotated by them too; qubit q is
+    # the q-th bit (least significant first) of the compiler's index
+    n = circuit.n_qubits
+    for q, theta in frame.items():
+        if theta == 0.0:
+            continue
+        op = rz(
+            -theta
+        )  # a frame offset theta leaves the state as RZ(-theta) times the ideal one (Section 7.6)
+        for idx in range(2**n):
+            ket[idx] *= op[(idx >> q) & 1, (idx >> q) & 1]
+    return to_register_order(ket, n)
 
 
 def register_fidelity(result: Result, target: np.ndarray | qt.Qobj | None = None) -> float:

@@ -96,6 +96,11 @@ class Drive:
     """Set for a mode-locked Raman drive; then ``tones`` comes from comb.tones() and stark_shift_hz from comb.stark4_hz()."""
     light_shift: LightShiftCouplings | None = None
     """Required for ``kind == "light_shift"`` and refused otherwise (Section 4.4.4)."""
+    programmed: bool = False
+    """True for a drive the scheduler built from the CalibrationTable (Section 7.3): its envelopes are REQUESTED Rabi
+    frequencies in the table's units, its Stark shift and crosstalk the table's beliefs, and the played chain of
+    ``control.played`` converts them into what the ions see through the device's derived values (M8). False for a drive built
+    from a derived ``DerivedDrive`` (the experiments), whose values are already physical."""
 
     def __post_init__(self) -> None:
         if not self.ions:

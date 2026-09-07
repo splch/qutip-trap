@@ -16,6 +16,12 @@ advanced segment by segment with its own keyed seed (sample, trajectory, 0, 0, "
 trajectory is identical under the same seed whatever the worker count; the jump records are returned in
 ``Traces.jumps``. Before segmentation the schedule passes through the control hardware chain of Section 7.10
 (``control/hardware.py``): quantized tone words, low-pass-filtered envelopes with their tails, jittered train starts.
+
+Two exact shortcuts (M8) replace ODE solves where none is needed, both pinned against the ODE path in
+``tests/test_engine_numerics.py``: a segment whose Hamiltonian is constant (an idle interval, a zero-envelope pulse) is
+propagated by its diagonal phases, or in the frame rotating with H_mot when eigenoperator collapse operators are present
+(``closed_form_constant``); a density-matrix input without collapse operators is evolved as the weighted pure branches of its
+eigen-decomposition through ``sesolve`` (``pure_branches``, the Fock-sum path of Section 5.3), never as a D^2 Liouvillian.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ if TYPE_CHECKING:
 
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.control.schedule import Schedule
+    from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.levels import InternalLevels
@@ -313,6 +320,26 @@ class JointExactEngine:
     device_channels: bool = False
     levels_by_ion: dict[int, InternalLevels] | None = None
     hardware_chain: bool = True
+    table: CalibrationTable | None = None
+    """The CalibrationTable the schedule's programmed drives were built from (M8): when given, ``control.played`` converts every
+    requested Rabi frequency, believed Stark shift and believed crosstalk into what the ions see through the device's derived
+    values before the hardware chain; None plays the schedule's values as physical (the M2 to M7 behaviour, exact for a
+    surrogate table whose seeds are the derived values)."""
+    pure_branches: bool = True
+    """Evolve a density-matrix input without collapse operators (no explicit ``channels``, ``device_channels`` False) as the
+    weighted pure branches of its eigen-decomposition, each through ``sesolve`` (the Fock-sum path of Section 5.3: a thermal
+    motional state is a mixture of Fock states), rather than through ``mesolve`` on the D^2 Liouvillian, which costs D
+    times more per step (Section 5.3; 58 ms against 68 us per right-hand side at D = 400). Branches below
+    ``SolverOptions.branch_weight_min`` are dropped, the weights renormalized and the dropped weight reported in the notes,
+    exactly as ``run()`` does for the initial mixture. False keeps the density-matrix reference path."""
+    closed_form_constant: bool = True
+    """Propagate a segment whose Hamiltonian is constant (an idle interval, a zero-envelope pulse) by its exact propagator
+    instead of the ODE ladder: e^{-iHt} by the diagonal phases (H_mot + H_int are diagonal in the Fock x computational basis)
+    or by one Hermitian eigendecomposition, and with the device's collapse operators present, the master equation in the
+    frame rotating with H, where every collapse operator that is an eigenoperator of ad_H (the heating ladder operators,
+    sigma_z, a^dag a) keeps its dissipator unchanged and the Liouvillian loses its fast oscillation (``_closed_form_segment``).
+    The result is the same state to the solver tolerance; the segment reports integrator ``exact``. False forces the ODE
+    ladder on every segment (the Section 5.3 step-density measurements)."""
     last_report: EngineReport | None = None
 
     def process_tomography(
@@ -427,12 +454,18 @@ class JointExactEngine:
         if joint.shape[0] != space.dimension:
             raise ValueError("the state does not live on the given space")
         notes: list[str] = []
-        # the hardware chain of Section 7.10 (M7)
+        # the played chain of Section 7.3 (M8): requested -> physical through the device's derived values
         sched = schedule
         hw_notes: tuple[str, ...] = ()
+        if self.table is not None:
+            from qutip_trap.control.played import physical_schedule
+
+            sched, played_notes = physical_schedule(device, sched, self.table)
+            notes.extend(played_notes)
+        # the hardware chain of Section 7.10 (M7)
         if self.hardware_chain and options.hardware_chain:
             rng_jitter = np.random.default_rng(seeds.child(sample.sample_id, 0, 0, 0, "timing_jitter"))
-            sched, hw_notes = apply_hardware_chain(schedule, device.hardware, rng=rng_jitter)
+            sched, hw_notes = apply_hardware_chain(sched, device.hardware, rng=rng_jitter)
         # frozen spectators: the shot's Fock states (Section 5.2), from the sample or drawn from the keyed seeds
         frozen_n: dict[int, int] = {}
         for m in space.frozen:
@@ -481,10 +514,25 @@ class JointExactEngine:
         records: list[object] = []
         jumps: list[tuple[float, str]] = []
         worst_boundary: dict[int, float] = {m: 0.0 for m in carried}
-        # the state: a list of trajectory kets, or one density matrix
+        # the state: a list of weighted kets (pure branches, or equal-weight trajectories), or one density matrix
         kets: list[qt.Qobj] | None = [joint] if joint.isket else None
+        weights: list[float] = [1.0] if joint.isket else []
         rho: qt.Qobj | None = None if joint.isket else joint
-        method_used = "sesolve" if joint.isket else "mesolve"
+        if (
+            rho is not None
+            and self.pure_branches
+            and not self.channels
+            and not self.device_channels
+            and rho.shape[0] <= EIGH_DIMENSION_MAX
+        ):
+            kets, weights, dropped = _pure_branches(rho, options.branch_weight_min)
+            rho = None
+            if dropped > 0.0:
+                notes.append(
+                    f"initial mixture evolved as {len(kets)} pure branches (Section 5.3): branches below branch_weight_min = "
+                    f"{options.branch_weight_min:g} dropped, total weight {dropped:.3e} (renormalized)"
+                )
+        method_used = "sesolve" if kets is not None else "mesolve"
         n_store = max(int(self.store_per_segment), 2)
         first = True
         largest_mode = max([m.d for m in space.resolved], default=0)
@@ -514,12 +562,46 @@ class JointExactEngine:
             rhs_evals: int | None = None
             retries_seg: tuple[str, ...] = ()
             # ---- integrate ----------------------------------------------------------------------------------------
-            if not c_ops:
+            closed: _ClosedForm | None = None
+            if (
+                self.closed_form_constant
+                and built.H.isconstant
+                and all(isinstance(c, qt.Qobj) for c in c_ops)
+            ):
+                lindblad = options.lindblad_method
+                if lindblad == "auto":
+                    lindblad = "mesolve" if space.dimension <= options.mesolve_dimension_max else "mcsolve"
+                closed = _closed_form_segment(
+                    built.H(a),
+                    c_ops,
+                    kets,
+                    weights,
+                    rho,
+                    times,
+                    space,
+                    e_keys,
+                    e_list,
+                    options,
+                    lindblad,
+                    largest_mode,
+                )
+            if closed is not None:
+                # the exact propagator of a constant Hamiltonian (Section 5.3: no ODE where none is needed)
+                kets, rho = closed.kets, closed.rho
+                for k in e_keys:
+                    expect_all[k].append(closed.expect[k][sel])
+                reduced.extend(closed.reduced[sel])
+                seg_method = closed.method
+                integrator = closed.integrator
+                atol_used = closed.atol
+                rhs_evals = None
+                retries_seg = closed.retries
+            elif not c_ops:
                 if kets is not None:
                     new_kets: list[qt.Qobj] = []
                     exp_acc = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
                     red_acc: list[np.ndarray] = []
-                    for psi in kets:
+                    for psi, w_k in zip(kets, weights):
                         ev = evolve(
                             built.H,
                             psi,
@@ -534,10 +616,10 @@ class JointExactEngine:
                         )
                         new_kets.append(ev.final)
                         for k in e_keys:
-                            exp_acc[k] += np.asarray(ev.expect[k]) / len(kets)
+                            exp_acc[k] += w_k * np.asarray(ev.expect[k])
                         assert ev.states is not None
                         red_acc.append(
-                            np.array([space.internal_marginal(st).full() for st in ev.states[sel]])
+                            w_k * np.array([space.internal_marginal(st).full() for st in ev.states[sel]])
                         )
                         integrator, atol_used, rhs_evals, retries_seg = (
                             ev.integrator,
@@ -549,7 +631,7 @@ class JointExactEngine:
                     for k in e_keys:
                         expect_all[k].append(exp_acc[k][sel])
                     dims_int = [list(space.ion_dims), list(space.ion_dims)]
-                    for arr in np.mean(np.stack(red_acc), axis=0):
+                    for arr in np.sum(np.stack(red_acc), axis=0):
                         reduced.append(qt.Qobj(arr, dims=dims_int))
                     seg_method = "sesolve"
                 else:
@@ -585,11 +667,7 @@ class JointExactEngine:
                     method = "mesolve" if space.dimension <= options.mesolve_dimension_max else "mcsolve"
                 if method == "mesolve":
                     if kets is not None:
-                        rho = (
-                            kets[0].proj()
-                            if len(kets) == 1
-                            else sum((k.proj() for k in kets), 0.0 * kets[0].proj()) / len(kets)
-                        )
+                        rho = _mixture(kets, weights)
                         kets = None
                     assert rho is not None
                     ev = evolve(
@@ -626,6 +704,7 @@ class JointExactEngine:
                         )
                     if len(kets) == 1 and options.ntraj > 1:
                         kets = [kets[0]] * options.ntraj
+                        weights = [1.0 / options.ntraj] * options.ntraj
                     mc_opts = {
                         "method": options.integrators[0],
                         "atol": atol_mc,
@@ -644,15 +723,15 @@ class JointExactEngine:
                     new_kets = []
                     exp_acc = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
                     red_acc = []
-                    for k_traj, psi in enumerate(kets):
+                    for k_traj, (psi, w_k) in enumerate(zip(kets, weights)):
                         seed = seeds.child(sample.sample_id, k_traj, 0, 0, f"mcsolve[{seg_index}]")
                         res = solver.run(psi, times, ntraj=1, e_ops=e_list, seeds=[seed])
                         traj = res.trajectories[0]
                         new_kets.append(traj.final_state)
                         for idx, k in enumerate(e_keys):
-                            exp_acc[k] += np.asarray(traj.expect[idx]) / len(kets)
+                            exp_acc[k] += w_k * np.asarray(traj.expect[idx])
                         red_acc.append(
-                            np.array([space.internal_marginal(st).full() for st in traj.states[sel]])
+                            w_k * np.array([space.internal_marginal(st).full() for st in traj.states[sel]])
                         )
                         for t_c, which in zip(res.col_times[0], res.col_which[0]):
                             jumps.append((float(t_c), f"traj{k_traj}:{seg_ops[int(which)].channel}"))
@@ -660,7 +739,7 @@ class JointExactEngine:
                     for k in e_keys:
                         expect_all[k].append(exp_acc[k][sel])
                     dims_int = [list(space.ion_dims), list(space.ion_dims)]
-                    for arr in np.mean(np.stack(red_acc), axis=0):
+                    for arr in np.sum(np.stack(red_acc), axis=0):
                         reduced.append(qt.Qobj(arr, dims=dims_int))
                     integrator, atol_used = options.integrators[0], atol_mc
                     rhs_evals = built.rhs_evaluations
@@ -673,9 +752,9 @@ class JointExactEngine:
             # ---- boundary populations and the report ---------------------------------------------------------
             if kets is not None:
                 bpop: dict[int, float] = {}
-                for psi in kets:
+                for psi, w_k in zip(kets, weights):
                     for m, v in boundary_populations(psi, space).items():
-                        bpop[m] = bpop.get(m, 0.0) + float(v) / len(kets)
+                        bpop[m] = bpop.get(m, 0.0) + w_k * float(v)
             else:
                 assert rho is not None
                 bpop = boundary_populations(rho, space)
@@ -716,22 +795,24 @@ class JointExactEngine:
             if len(kets) == 1:
                 final_joint = kets[0]
             elif space.dimension <= 1024:
-                final_joint = sum((k.proj() for k in kets), 0.0 * kets[0].proj()) / len(kets)
+                final_joint = _mixture(kets, weights)
             else:
                 final_joint = None
                 notes.append(
-                    f"trajectory ensemble of {len(kets)} at dimension {space.dimension} not averaged into a joint density matrix; "
+                    f"ensemble of {len(kets)} kets at dimension {space.dimension} not averaged into a joint density matrix; "
                     "the reduced states are the averages"
                 )
             internal = sum(
-                (space.internal_marginal(k) for k in kets), 0.0 * space.internal_marginal(kets[0])
-            ) / len(kets)
+                (w_k * space.internal_marginal(k) for k, w_k in zip(kets, weights)),
+                0.0 * space.internal_marginal(kets[0]),
+            )
             motional_reduced: dict[int, qt.Qobj] = {}
             nbar: dict[int, float] = {}
             for m in carried:
                 rho_m = sum(
-                    (space.mode_marginal(k, m) for k in kets), 0.0 * space.mode_marginal(kets[0], m)
-                ) / len(kets)
+                    (w_k * space.mode_marginal(k, m) for k, w_k in zip(kets, weights)),
+                    0.0 * space.mode_marginal(kets[0], m),
+                )
                 motional_reduced[m] = rho_m
                 nbar[m] = float(np.real(qt.expect(qt.num(rho_m.shape[0]), rho_m)))
             n_traj = len(kets)
@@ -780,6 +861,205 @@ class JointExactEngine:
             final=final,
             boundary_population=worst_boundary,
         )
+
+
+EIGH_DIMENSION_MAX = 4096
+"""Above this joint dimension a constant but non-diagonal Hamiltonian goes through the ODE ladder rather than a dense eigh."""
+
+
+@dataclass(frozen=True)
+class _ClosedForm:
+    """What the exact propagation of one constant-Hamiltonian segment produced (all stored times of the segment)."""
+
+    kets: list[qt.Qobj] | None
+    rho: qt.Qobj | None
+    expect: dict[str, np.ndarray]
+    reduced: list[qt.Qobj]
+    method: str
+    integrator: str
+    atol: float
+    retries: tuple[str, ...]
+
+
+def _mixture(kets: list[qt.Qobj], weights: list[float]) -> qt.Qobj:
+    """sum_k w_k |psi_k><psi_k| of weighted kets (a single ket's projector when there is one)."""
+    if len(kets) == 1:
+        return kets[0].proj()
+    return sum((w * k.proj() for k, w in zip(kets, weights)), 0.0 * kets[0].proj())
+
+
+def _pure_branches(rho: qt.Qobj, weight_min: float) -> tuple[list[qt.Qobj], list[float], float]:
+    """The eigen-decomposition of a density matrix into pure branches: (kets, weights >= ``weight_min`` renormalized, dropped
+    weight), heaviest first. A product of thermal states is a mixture of Fock states, so this is the Fock sum of Section 5.3
+    (``run()`` enumerates the same branches from the occupations before it builds any state)."""
+    mat = np.asarray(rho.full())
+    mat = 0.5 * (mat + mat.conj().T)
+    w, v = np.linalg.eigh(mat)
+    trace = float(np.sum(w))
+    order = [int(k) for k in np.argsort(-w)]
+    keep = [k for k in order if w[k] >= weight_min * trace]
+    if not keep:
+        keep = [order[0]]
+    total = float(np.sum(w[keep]))
+    dims = [list(rho.dims[0]), [1] * len(rho.dims[0])]
+    kets = [qt.Qobj(v[:, k].reshape(-1, 1), dims=dims) for k in keep]
+    return kets, [float(w[k]) / total for k in keep], float(max(trace - total, 0.0))
+
+
+def _diagonal_energies(h: qt.Qobj) -> np.ndarray | None:
+    """The diagonal of a constant Hamiltonian (rad/s) when it is diagonal in the joint Fock x computational basis, else None."""
+    coo = h.to("CSR").data.as_scipy().tocoo()
+    if coo.nnz and bool(np.any(coo.row != coo.col)):
+        return None
+    return np.real(np.asarray(h.diag(), dtype=complex))
+
+
+def _eigen_frequency(op: qt.Qobj, energies: np.ndarray) -> float | None:
+    """lambda with [H, op] = lambda op for the diagonal H of ``energies``: E_row - E_col equal on every non-zero element (the
+    heating operators a and a^dag, sigma_z, a^dag a); None when ``op`` is not an eigenoperator of ad_H."""
+    coo = op.to("CSR").data.as_scipy().tocoo()
+    if coo.nnz == 0:
+        return 0.0
+    lam = energies[coo.row] - energies[coo.col]
+    tol = 1e-9 * max(float(np.max(np.abs(energies))), 1.0)
+    if float(np.ptp(lam)) > tol:
+        return None
+    return float(lam[0])
+
+
+def _closed_form_segment(
+    h: qt.Qobj,
+    c_ops: list[qt.Qobj],
+    kets: list[qt.Qobj] | None,
+    weights: list[float],
+    rho: qt.Qobj | None,
+    times: np.ndarray,
+    space: HilbertSpace,
+    e_keys: list[str],
+    e_list: list[qt.Qobj],
+    options: SolverOptions,
+    lindblad: str,
+    largest_mode_dimension: int,
+) -> _ClosedForm | None:
+    """Propagate a segment with the constant Hamiltonian ``h`` over ``times`` without an ODE solve of the oscillatory part.
+
+    Without collapse operators the propagator is e^{-i h tau}: the diagonal phases when ``h`` is diagonal (idle intervals:
+    H_mot + H_int + a constant Stark shift), else one Hermitian eigendecomposition (a constant anharmonic or curvature term).
+    With collapse operators the master equation is integrated in the frame rotating with the diagonal ``h``, where H vanishes
+    and every collapse operator that is an eigenoperator of ad_H picks up only a phase, which its dissipator does not see; the
+    stored states are rotated back, so expectations and marginals are in the Schroedinger picture. Returns None when the
+    closed form does not apply (a non-diagonal H with collapse operators, an operator that is not an eigenoperator, the
+    trajectory path); the caller then integrates as before. Nothing here is an approximation: the frame change is unitary
+    and the phases are exact.
+    """
+    energies = _diagonal_energies(h)
+    taus = np.asarray(times, dtype=float) - float(times[0])
+    dims_int = [list(space.ion_dims), list(space.ion_dims)]
+    if not c_ops:
+        if energies is not None:
+            phases = np.exp(-1j * np.outer(taus, energies))
+
+            def propagate_ket(psi: qt.Qobj) -> list[qt.Qobj]:
+                v = np.asarray(psi.full()).reshape(-1)
+                return [qt.Qobj((ph * v).reshape(-1, 1), dims=psi.dims) for ph in phases]
+
+            def propagate_dm(r: qt.Qobj) -> list[qt.Qobj]:
+                m = np.asarray(r.full())
+                return [qt.Qobj((ph[:, None] * m) * np.conj(ph)[None, :], dims=r.dims) for ph in phases]
+
+        else:
+            if h.shape[0] > EIGH_DIMENSION_MAX:
+                return None
+            w, vecs = np.linalg.eigh(np.asarray(h.full()))
+            vecs_h = vecs.conj().T
+
+            def propagate_ket(psi: qt.Qobj) -> list[qt.Qobj]:
+                c = vecs_h @ np.asarray(psi.full()).reshape(-1)
+                return [
+                    qt.Qobj((vecs @ (np.exp(-1j * tau * w) * c)).reshape(-1, 1), dims=psi.dims)
+                    for tau in taus
+                ]
+
+            def propagate_dm(r: qt.Qobj) -> list[qt.Qobj]:
+                m = vecs_h @ np.asarray(r.full()) @ vecs
+                out = []
+                for tau in taus:
+                    ph = np.exp(-1j * tau * w)
+                    out.append(
+                        qt.Qobj(vecs @ ((ph[:, None] * m) * np.conj(ph)[None, :]) @ vecs_h, dims=r.dims)
+                    )
+                return out
+
+        if kets is not None:
+            expect = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
+            red_acc: np.ndarray | None = None
+            new_kets: list[qt.Qobj] = []
+            for psi, w_k in zip(kets, weights):
+                states = propagate_ket(psi)
+                new_kets.append(states[-1])
+                for k, op in zip(e_keys, e_list):
+                    expect[k] += w_k * np.array([qt.expect(op, s) for s in states], dtype=complex)
+                marg = w_k * np.array([space.internal_marginal(s).full() for s in states])
+                red_acc = marg if red_acc is None else red_acc + marg
+            assert red_acc is not None
+            reduced = [qt.Qobj(arr, dims=dims_int) for arr in red_acc]
+            return _ClosedForm(new_kets, None, expect, reduced, "sesolve", "exact", options.atol, ())
+        assert rho is not None
+        states = propagate_dm(rho)
+        expect = {
+            k: np.array([qt.expect(op, s) for s in states], dtype=complex) for k, op in zip(e_keys, e_list)
+        }
+        return _ClosedForm(
+            None,
+            states[-1],
+            expect,
+            [space.internal_marginal(s) for s in states],
+            "mesolve",
+            "exact",
+            options.atol,
+            (),
+        )
+    # dissipative segment: the master equation in the frame rotating with the diagonal H (mesolve path only)
+    if energies is None or lindblad != "mesolve":
+        return None
+    if any(_eigen_frequency(c, energies) is None for c in c_ops):
+        return None
+    from qutip_trap.dynamics.evolve import evolve
+
+    if kets is not None:
+        rho0 = _mixture(kets, weights)
+    else:
+        assert rho is not None
+        rho0 = rho
+    zero = qt.Qobj(np.zeros(h.shape, dtype=complex), dims=h.dims).to("CSR")
+    ev = evolve(
+        zero,
+        rho0,
+        times,
+        c_ops=c_ops,
+        e_ops=None,
+        options=options,
+        store_states=True,
+        omega_max_rad_s=None,
+        largest_mode_dimension=largest_mode_dimension,
+    )
+    assert ev.states is not None
+    phases = np.exp(-1j * np.outer(taus, energies))
+    states = [
+        qt.Qobj((ph[:, None] * np.asarray(s.full())) * np.conj(ph)[None, :], dims=rho0.dims)
+        for ph, s in zip(phases, ev.states)
+    ]
+    expect = {k: np.array([qt.expect(op, s) for s in states], dtype=complex) for k, op in zip(e_keys, e_list)}
+    return _ClosedForm(
+        None,
+        states[-1],
+        expect,
+        [space.internal_marginal(s) for s in states],
+        "mesolve",
+        f"{ev.integrator}[rotating frame]",
+        ev.atol,
+        ev.retries,
+    )
 
 
 def _merge_cuts(times: list[float], tolerance_s: float = 1e-12) -> list[float]:

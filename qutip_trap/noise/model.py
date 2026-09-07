@@ -252,7 +252,12 @@ class NoiseModel:
     ) -> tuple[NoiseSample, ...]:
         """Dynamical samples at the shot-clock times ``times_s`` (Section 7.5): every Drift is an Ornstein-Uhlenbeck chain
         over the times with its correlation time (samples far apart in time are independent, close ones correlated), its ramp
-        rate x (t - t0) added; the trajectories of the sampled bands are drawn independently per sample."""
+        rate x (t - t0) added; the trajectories of the sampled bands are drawn independently per sample.
+
+        A Drift with ``servo_bandwidth_hz`` is high-passed into its residual band (Section 7.5, "Age, drift and cost"; M8): the
+        machine re-locks the parameter by tracking it with a first-order loop of that bandwidth over the shot clock, so the
+        offset a sample carries is the parameter minus the servo's last estimate (``servo_residual``), zero at the first sample
+        (the calibration measured it there) and bounded by the drift the loop cannot follow afterwards."""
         times = np.asarray(times_s, dtype=float)
         if times.ndim != 1 or times.size == 0:
             raise ValueError("times_s is a non-empty sequence of shot-clock times")
@@ -280,15 +285,22 @@ class NoiseModel:
             )
             k += 1
         gen_mains, gen_traj = gen[k], gen[k + 1]
+        # the offsets: rms x draw + ramp, high-passed by the servo when the Drift declares one
+        offsets: dict[str, np.ndarray] = {}
+        for name, drift in self.drifts.items():
+            raw = drift.rms * draws[name] + drift.rate_per_s * (times - t0)[:, None]
+            offsets[name] = (
+                servo_residual(raw, times, drift.servo_bandwidth_hz)
+                if drift.servo_bandwidth_hz is not None and drift.servo_bandwidth_hz > 0.0 and not drift.quiet
+                else raw
+            )
         out: list[NoiseSample] = []
         for s_idx, t in enumerate(times):
             values: dict[str, float] = {}
             grids: dict[str, np.ndarray] = {}
-            dt = float(t - t0)
 
-            def amp(name: str, j: int = 0, _s: int = s_idx, _dt: float = dt) -> float:  # noqa: B023
-                d = self.drifts[name]
-                return float(d.rms * draws[name][_s, j] + d.rate_per_s * _dt)
+            def amp(name: str, j: int = 0, _s: int = s_idx) -> float:  # noqa: B023
+                return float(offsets[name][_s, j])
 
             if not self.rabi_drift.quiet:
                 values[KEY_RABI_SCALE] = 1.0 + amp("rabi_drift")
@@ -398,4 +410,26 @@ class NoiseModel:
             ).as_grid()
 
 
-__all__ = ["GAUSS_PER_TESLA", "RF_DERIVED_FAMILIES", "NoiseModel"]
+def servo_residual(values: np.ndarray, times_s: np.ndarray, bandwidth_hz: float) -> np.ndarray:
+    """The part of a slowly drifting parameter a first-order servo of ``bandwidth_hz`` does not remove (Section 7.5, M8).
+
+    ``values[k]`` is the parameter at shot-clock time ``times_s[k]``; the loop's estimate x_hat is re-locked at every sample,
+    x_hat_k = x_hat_{k-1} + (1 - e^{-2 pi f_s dt_k})(x_k - x_hat_{k-1}), starting from x_hat_0 = x_0 (the calibration measured
+    the parameter at the first time), and the sample carries the tracking error x_k - x_hat_{k-1}. For an OU drift of
+    correlation time tau the residual variance is sigma^2/(1 + 2 pi f_s tau) in the continuous limit (the high-passed
+    spectrum), the frequency-feedforward mechanism behind the 50 Hz residual of Section 6.2.
+    """
+    x = np.asarray(values, dtype=float)
+    t = np.asarray(times_s, dtype=float)
+    if bandwidth_hz <= 0.0:
+        return x
+    out = np.zeros_like(x)
+    estimate = x[0].copy()
+    for k in range(1, x.shape[0]):
+        alpha = 1.0 - math.exp(-TWO_PI * bandwidth_hz * abs(float(t[k] - t[k - 1])))
+        out[k] = x[k] - estimate
+        estimate = estimate + alpha * (x[k] - estimate)
+    return out
+
+
+__all__ = ["GAUSS_PER_TESLA", "RF_DERIVED_FAMILIES", "NoiseModel", "servo_residual"]

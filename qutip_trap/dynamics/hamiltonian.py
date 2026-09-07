@@ -29,11 +29,15 @@ Time conventions: the coefficient's beat-note phase is mu t in ABSOLUTE time for
 nominal qubit frequency (Section 7.10, the mode the virtual-Z rule was pinned in) and mu (t - t_start) under
 ``phase_mode="reset"``; envelopes, phase schedules and detuning schedules are callables of the time since the pulse
 START; a constant is a square pulse; an array is uniformly sampled over the pulse and cubic-spline interpolated
-(Section 5.5). Coefficients are Python functions with the QuTiP 5.3 signature f(t, **kwargs) (never strings, Section 5.2).
+(Section 5.5). Coefficients are Python functions with the QuTiP 5.3 signature f(t, **kwargs) (never strings, Section 5.2);
+the plain and conjugate terms of a drive, and every sideband term of the interaction picture, share one tone-sum evaluation
+per time through a one-entry memo (the integrator evaluates every element at the same t), square tones are evaluated from
+their three constants, and a drive whose tones are identically zero contributes no operator term (its Stark shift stays).
 """
 
 from __future__ import annotations
 
+import cmath
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -159,11 +163,20 @@ class _ToneFn:
     """phi(tau) in rad."""
     beat_phase: Callable[[float, float], float]
     """Theta(t, tau) = the accumulated beat-note phase mu t (continuous) or the pulse-local integral (reset/FM)."""
+    constants: tuple[float, float, float] | None = None
+    """(Omega in rad/s, phi in rad, mu in rad/s) of a square tone with constant detuning: the same three numbers the callables
+    return, evaluated without the calls (the coefficient is called 10^4 to 10^6 times per pulse, Section 11.2)."""
+    continuous: bool = True
+    """The beat phase is mu t (phase_mode continuous) rather than mu tau (reset)."""
 
 
-@dataclass
+@dataclass(eq=False)
 class _DriveCoefficient:
-    """The scalar c(t) multiplying sigma_+^i (x) D_i: (1/2) sum_tones Omega(tau) e^{-i(Theta - phi)} times the scalar factors."""
+    """The scalar c(t) multiplying sigma_+^i (x) D_i: (1/2) sum_tones Omega(tau) e^{-i(Theta - phi)} times the scalar factors.
+
+    Compared by identity (``eq=False``): ``QobjEvo`` merges elements whose coefficients compare equal, and two drives are
+    two terms of H whatever their parameters happen to be.
+    """
 
     t_start: float
     tones: list[_ToneFn]
@@ -179,31 +192,57 @@ class _DriveCoefficient:
     amplitude_trajectory: Callable[[float], float] | None = None
     """dI/I(t) of the light; the envelope is multiplied by (1 + dI/I)^amplitude_power (Section 6.4)."""
     amplitude_power: float = 1.0
+    _t_last: float = field(default=math.nan, init=False, repr=False)
+    _c_last: complex = field(default=0j, init=False, repr=False)
+    """The last (t, c(t)): the integrator evaluates every element of the QobjEvo at the same t, so the plain term, its
+    conjugate and, in the interaction picture, every sideband term of the same drive share one tone-sum evaluation."""
 
     def __call__(self, t: float) -> complex:
         self.counter.calls += 1
+        if t == self._t_last:
+            return self._c_last
         tau = t - self.t_start
         extra_phase = 0.0 if self.phase_trajectory is None else float(self.phase_trajectory(t))
-        total = 0.0 + 0.0j
+        total = 0j
         for tone in self.tones:
-            total += (
-                0.5
-                * tone.envelope(tau)
-                * np.exp(-1j * (tone.beat_phase(t, tau) - tone.phase(tau) - extra_phase))
-            )
+            k = tone.constants
+            if k is not None:
+                omega, phi, mu = k
+                theta = mu * t if tone.continuous else mu * tau
+                total += 0.5 * omega * cmath.exp(-1j * (theta - phi - extra_phase))
+            else:
+                total += (
+                    0.5
+                    * tone.envelope(tau)
+                    * cmath.exp(-1j * (tone.beat_phase(t, tau) - tone.phase(tau) - extra_phase))
+                )
         c = total * self.scale
         if self.amplitude_trajectory is not None:
             c = c * (1.0 + float(self.amplitude_trajectory(t))) ** self.amplitude_power
         if self.modulation_beta != 0.0:
-            c = c * np.exp(
+            c = c * cmath.exp(
                 1j * self.modulation_beta * math.cos(self.modulation_omega * t + self.modulation_delta)
             )
         if self.k_dot_omega != 0.0:
-            c = c * np.exp(1j * self.k_dot_omega * t)
-        return complex(c)
+            c = c * cmath.exp(1j * self.k_dot_omega * t)
+        self._t_last = t
+        self._c_last = complex(c)
+        return self._c_last
 
 
-@dataclass
+@dataclass(eq=False)
+class _RotatedCoefficient:
+    """c(t) e^{i k . omega t}: one sideband term of the interaction picture, sharing the drive's tone sum ``base``."""
+
+    base: _DriveCoefficient
+    rotation: float
+
+    def __call__(self, t: float) -> complex:
+        c = self.base(t)
+        return c if self.rotation == 0.0 else c * cmath.exp(1j * self.rotation * t)
+
+
+@dataclass(eq=False)
 class _ScalarCoefficient:
     fn: Callable[[float], float]
     t_start: float
@@ -214,7 +253,9 @@ class _ScalarCoefficient:
         return float(self.fn(t - self.t_start))
 
 
-def _coef_plain(t: float, coef: _DriveCoefficient | _ScalarCoefficient, **_: object) -> complex:
+def _coef_plain(
+    t: float, coef: _DriveCoefficient | _RotatedCoefficient | _ScalarCoefficient, **_: object
+) -> complex:
     return complex(coef(t))
 
 
@@ -223,8 +264,8 @@ def _traj_coef(t: float, traj: Callable[[float], float], scale: float, **_: obje
     return float(scale * traj(t))
 
 
-def _coef_conj(t: float, coef: _DriveCoefficient, **_: object) -> complex:
-    return complex(np.conj(coef(t)))
+def _coef_conj(t: float, coef: _DriveCoefficient | _RotatedCoefficient, **_: object) -> complex:
+    return complex(coef(t)).conjugate()
 
 
 @dataclass(frozen=True)
@@ -414,13 +455,15 @@ def build_hamiltonian(
     n_modes = len(crystal.modes)
 
     if pulses:
+        # the segment is the interval every pulse covers (the engine cuts the schedule at every pulse boundary, so the
+        # pulses it passes all span the segment; simultaneous pulses of different lengths, two pi/2 pulses at two ions'
+        # fitted Rabi frequencies, overlap without coinciding); every pulse's own clock (tau, its duration) is its own
         t_start = max(p.t_start_s for p in pulses)
         t_end = min(p.t_end_s for p in pulses)
-        starts = {p.t_start_s for p in pulses}
-        ends = {p.t_end_s for p in pulses}
-        if len(starts) > 1 or len(ends) > 1:
+        if t_end <= t_start:
             raise ValueError(
-                "build_hamiltonian takes the pulses active on ONE segment; split the schedule at pulse boundaries"
+                "build_hamiltonian takes the pulses active on ONE segment (a common interval); split the schedule at pulse "
+                "boundaries"
             )
     else:
         t_start, t_end = 0.0, 0.0
@@ -528,11 +571,11 @@ def build_hamiltonian(
     rabi_scale = smp.get(KEY_RABI_SCALE, 1.0)
     dropped_total = 0.0
     n_drive_terms = 0
-    duration = t_end - t_start
     drive_parts: dict[str, list[Any]] = {}
 
     for pulse in pulses:
         drive: Drive = pulse.drive
+        duration = pulse.duration_s
         delta_k = drive.delta_k(device.beams)
         part_key = pulse.gate_id or f"pulse@{pulse.t_start_s:.9g}"
         part = drive_parts.setdefault(part_key, [])
@@ -593,8 +636,26 @@ def build_hamiltonian(
             approximations.append(f"crosstalk of pulse {pulse.gate_id!r} switched off")
         primary = drive.ions[0]
         x_primary = np.asarray(crystal.positions_m[primary], dtype=float)
+        # a drive whose every tone is the constant 0 (one beam of a pair on: a light shift with no two-photon coupling, the
+        # Stark scan of Section 7.5 item 7) has an identically zero drive term; it is left out of H (exactly, its coefficient
+        # is 0 at every t) so that the segment's Hamiltonian is the constant H_mot + H_int + H_Stark; the Stark term is kept
+        silent = all(
+            not callable(tone.envelope_hz)
+            and not isinstance(tone.envelope_hz, np.ndarray)
+            and float(tone.envelope_hz) == 0.0
+            for tone in drive.tones
+        )
         tone_fns: list[_ToneFn] = []
         for tone in drive.tones:
+            constants: tuple[float, float, float] | None = None
+            if not any(
+                callable(v) or isinstance(v, np.ndarray) for v in (tone.envelope_hz, tone.phase_rad)
+            ) and (not callable(tone.detuning_hz)):
+                constants = (
+                    TWO_PI * float(tone.envelope_hz),  # type: ignore[arg-type]
+                    float(tone.phase_rad),  # type: ignore[arg-type]
+                    TWO_PI * float(tone.detuning_hz),
+                )
             tone_fns.append(
                 _ToneFn(
                     envelope=_as_time_function(tone.envelope_hz, duration, scale=TWO_PI),
@@ -602,6 +663,8 @@ def build_hamiltonian(
                     beat_phase=_beat_phase_function(
                         tone.detuning_hz, pulse.t_start_s, duration, opts.phase_mode
                     ),
+                    constants=constants,
+                    continuous=opts.phase_mode == "continuous",
                 )
             )
             mu0 = abs(
@@ -698,6 +761,8 @@ def build_hamiltonian(
                         f"ion {ion}: light-shift drive drops the off-resonant Raman spin flip (excitation {excitation:.2e})"
                     )
             for ion_op, weight, extra_rotation in ion_terms:
+                if silent:
+                    continue
                 term_scale = complex(scale) * weight
                 if opts.frame == "schrodinger":
                     op = _drive_operator(space, ion, active_etas, opts, device, ion_op)
@@ -764,24 +829,29 @@ def build_hamiltonian(
                     approximations.append(
                         f"ion {ion}: sideband sum truncated at |k| <= {opts.k_max}, dropped weight {pic.dropped_weight:.3e}"
                     )
+                shared: dict[int, _DriveCoefficient] = {}
                 for term, term_tones in kept_pairs:
                     k_dot_w = sum(k * omegas[m] for k, m in zip(term.k, term.modes))
                     omega_max = max(omega_max, abs(k_dot_w))
-                    coef = _DriveCoefficient(
-                        pulse.t_start_s,
-                        term_tones,
-                        term_scale,
-                        0.0,
-                        0.0,
-                        0.0,
-                        k_dot_w + extra_rotation + laser_rotation,
-                        counter,
-                        phase_traj,
-                        amp_traj,
-                        amp_power,
-                    )
-                    t_plain = [term.op, qt.coefficient(_coef_plain, args={"coef": coef})]
-                    t_conj = [term.op.dag(), qt.coefficient(_coef_conj, args={"coef": coef})]
+                    tone_sum = shared.get(id(term_tones))
+                    if tone_sum is None:
+                        tone_sum = _DriveCoefficient(
+                            pulse.t_start_s,
+                            term_tones,
+                            term_scale,
+                            0.0,
+                            0.0,
+                            0.0,
+                            extra_rotation + laser_rotation,
+                            counter,
+                            phase_traj,
+                            amp_traj,
+                            amp_power,
+                        )
+                        shared[id(term_tones)] = tone_sum
+                    rotated = _RotatedCoefficient(tone_sum, k_dot_w)
+                    t_plain = [term.op, qt.coefficient(_coef_plain, args={"coef": rotated})]
+                    t_conj = [term.op.dag(), qt.coefficient(_coef_conj, args={"coef": rotated})]
                     terms.extend([t_plain, t_conj])
                     part.extend([t_plain, t_conj])
                     n_drive_terms += 2

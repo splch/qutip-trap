@@ -65,8 +65,16 @@ def test_surrogate_table_carries_seeds_spot_checked_waveform_and_detection(two_i
     fx, sur = two_ion
     t = sur.table
     assert t.surrogate and t.device_hash == fx.device.hash()
-    assert all(e.status == "seed" for e in t.rabi.values()) and set(t.rabi) == {(0, 2), (1, 4)}
+    assert all(e.status == "seed" for e in t.rabi.values()) and set(t.rabi) == {
+        (0, 2),
+        (1, 4),
+        (0, 0),
+        (1, 0),
+    }, (
+        "the addressing pairs' and the global pair's carrier Rabi frequencies (the MS gate's light shift is compensated from it)"
+    )
     assert all(abs(e.value - 100.9e3) < 2e3 for e in t.rabi.values())
+    assert t.stark[(0, 0)].status == "seed" and abs(t.stark[(0, 0)].value) < 100.0
     assert all(e.status == "seed" for e in t.qubit_freq.values()) and len(t.qubit_freq) == 2
     assert 0.01 < t.crosstalk[(0, 1)].value < 0.04, "Wright's 1-4% addressing crosstalk from the 2.5 um waist"
     assert t.crosstalk[(0, 1)].value == pytest.approx(t.crosstalk[(1, 0)].value)

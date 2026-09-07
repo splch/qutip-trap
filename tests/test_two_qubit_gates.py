@@ -133,7 +133,9 @@ ONE_MODE_OPTIONS = BuilderOptions(frozen_debye_waller=False)
 def _run(
     dev: Device, wf: Waveform, space: HilbertSpace, opts: BuilderOptions, internal=(0, 0), nbar=None, store=2
 ):  # type: ignore[no-untyped-def]
-    table = table_with_waveform((0, 1), wf)
+    # the closed forms these anchors reproduce carry no light shift: a table with the derived Rabi entries and no Stark belief, played
+    # without the M8 truth chain (the engine without the table), is the idealization of a device whose beams shift nothing
+    table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2), stark_hz={})
     sched = ms_schedule(wf, (0, 1), raman_gate_drives(2), table)
     eng = JointExactEngine(builder_options=opts, store_per_segment=store)
     tr = eng.run_pulses(
@@ -402,7 +404,7 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
     drives = raman_gate_drives(2)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
     space = gate_space(modes, 2, waveform=wf)
-    table = table_with_waveform((0, 1), wf)
+    table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
     check, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space)
     rock = 2
     closed_form = sum(
@@ -425,7 +427,7 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
     assert check.leakage > 5e-3 and check.fidelity < 0.995
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
     space_am = gate_space(modes, 2, waveform=am.waveform)
-    table_am = table_with_waveform((0, 1), am.waveform)
+    table_am = table_with_waveform((0, 1), am.waveform, device=dev, drives=raman_gate_drives(2))
     check_am, tr = exact_gate_check(dev, am.waveform, (0, 1), drives, table_am, space=space_am)
     assert check_am.leakage < 2e-4
     assert all(v < 5e-4 for v in check_am.residual_quanta.values())
@@ -479,7 +481,7 @@ def test_ms_gate_from_the_scheduler_matches_the_native_matrix_up_to_the_open_spe
     drives = raman_gate_drives(2)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
     space = gate_space(modes, 2, waveform=wf)
-    table = table_with_waveform((0, 1), wf)
+    table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
     base, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space)
     for phases in ((0.3, 1.1), (-0.7, 2.0)):
         check, _ = exact_gate_check(

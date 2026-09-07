@@ -158,8 +158,9 @@ class Drift:
     The unit of ``rms`` and ``rate_per_s`` is the unit of the NoiseModel field that carries the record (documented on
     each field). Successive dynamical samples at times t and t' are correlated as exp(-|t - t'|/tau_s) (an
     Ornstein-Uhlenbeck stationary process sampled at the shot clock, ``NoiseModel.sample_sequence``); ``rate_per_s`` adds a
-    deterministic ramp rate x (t - t0) across a run (Section 9.17 row "Shot clock"). ``servo_bandwidth_hz`` is recorded
-    for milestone M8's calibration loop and is not applied in M7.
+    deterministic ramp rate x (t - t0) across a run (Section 9.17 row "Shot clock"). ``servo_bandwidth_hz`` (M8) high-passes
+    the drift into its residual band: the machine re-locks the parameter with a first-order loop of that bandwidth over the
+    shot clock (``NoiseModel.sample_sequence``, ``servo_residual``), the frequency-feedforward mechanism of Section 7.5.
     """
 
     rms: float

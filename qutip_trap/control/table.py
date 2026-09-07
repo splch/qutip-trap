@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -36,6 +37,16 @@ class CalEntry:
     def __post_init__(self) -> None:
         if self.uncertainty < 0.0:
             raise ValueError("uncertainty must be non-negative")
+
+    @property
+    def usable(self) -> bool:
+        """A ``seed`` or ``calibrated`` entry may be scheduled from; an ``uncalibrated`` one refuses (Section 7.3)."""
+        return self.status != "uncalibrated"
+
+
+def usable(entry: CalEntry | None) -> bool:
+    """True for a present ``seed`` or ``calibrated`` entry (what the scheduler and a downstream fit may read)."""
+    return entry is not None and entry.usable
 
 
 @dataclass(frozen=True)
@@ -182,11 +193,50 @@ class CalibrationTable:
     """Shim voltages and residual beta per beam direction."""
     detection: dict[str, CalEntry]
     heating: dict[int, CalEntry]
+    crosstalk_phase: dict[tuple[int, int], CalEntry] = dc_field(default_factory=dict)
+    """arg(epsilon_ij) per (ion, neighbour) from the crosstalk scan's phase measurement (Section 7.5 item 8; M8); absent = 0."""
+    lamb_dicke: dict[tuple[int, int], CalEntry] = dc_field(default_factory=dict)
+    """|eta_{i,m}| per (ion, mode) extracted from the sideband Rabi frequency (Section 7.9; M8), what the pulse solvers may
+    read in place of the derived value; C0 is inside a sideband-calibrated eta and outside a carrier-derived one (Section 9.17)."""
+    fitted_at_s: float = 0.0
+    """The laboratory time the table was assembled at (the age of its youngest entry is ``fitted_at_s`` too; Section 7.5)."""
 
     def waveform_for(self, pair: Sequence[int]) -> Waveform | None:
         """The pair's entangling waveform under either key order, None when uncalibrated."""
         a, b = int(pair[0]), int(pair[1])
         return self.ms.get((a, b)) or self.ms.get((b, a))
 
+    def is_current_for(self, device_hash: str) -> bool:
+        """Whether the table was fitted for the device with this canonical hash (Section 7.5: a table is invalidated, never
+        silently regenerated, when a device parameter changes)."""
+        return self.device_hash == device_hash
 
-__all__ = ["CalEntry", "CalibrationTable", "Leg", "Segment", "Waveform", "WaveformKind"]
+    def entries(self) -> dict[str, CalEntry]:
+        """Every CalEntry of the table under a flat key (``rabi[(0, 2)]``, ``modes[3]``, ``field``, ...), waveform phases included."""
+        out: dict[str, CalEntry] = {"field": self.field}
+        for name in (
+            "qubit_freq",
+            "rabi",
+            "stark",
+            "crosstalk",
+            "crosstalk_phase",
+            "modes",
+            "nbar",
+            "micromotion",
+            "detection",
+            "heating",
+            "lamb_dicke",
+        ):
+            for key, entry in getattr(self, name).items():
+                out[f"{name}[{key!r}]"] = entry
+        for pair, wf in self.ms.items():
+            out[f"ms[{pair!r}].phi_s"] = wf.phi_s
+            out[f"ms[{pair!r}].phi_m"] = wf.phi_m
+        return out
+
+    def uncalibrated(self) -> tuple[str, ...]:
+        """The flat keys of every entry a fit could not establish (what the scheduler refuses to use)."""
+        return tuple(k for k, e in self.entries().items() if e.status == "uncalibrated")
+
+
+__all__ = ["CalEntry", "CalibrationTable", "Leg", "Segment", "Waveform", "WaveformKind", "usable"]

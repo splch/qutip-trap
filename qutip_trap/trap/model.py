@@ -241,14 +241,11 @@ class Trap:
             omega[i] = TWO_PI * np.asarray(cache[s.mass_u].secular_hz, dtype=float)
         return omega, cache[ref.mass_u].principal_axes, field
 
-    def micromotion_beta(self, species: Species, delta_k: np.ndarray) -> MicromotionIndex:
-        """Residual beta = delta_k . u_1 for the FULL wavevector, as (in_phase, out_of_phase), peak convention (Section 4.1.1).
-
-        in_phase: the stray-field part, delta_k . (1/2) Q u_0 with u_0 the static displacement against the pseudopotential
-        spring m (Omega/2)^2 (a + q^2/2) (Berkeland's per-axis (1/2) q_i u_0i when the dc and rf axes coincide), nullable by shims;
-        out_of_phase: Berkeland's (1/4) q_x R alpha phi_ac along x', from ``RfDrive.phase_imbalance_rad`` and the rod
-        geometry factors, not nullable. The two never collapse into one number.
-        """
+    def micromotion_amplitude_m(self, species: Species) -> np.ndarray:
+        """The SIGNED in-phase excess-micromotion amplitude vector u_1 in the laboratory frame, peak convention (Section 4.1.1):
+        (1/2) Q u_0 with u_0 the static displacement of the residual field against the pseudopotential spring; beta along a
+        wavevector k is k . u_1 (``micromotion_beta`` reports its magnitude), and its sign is what an rf-photon-correlation
+        signal crosses through at the compensated shim voltage (M8)."""
         params = self.mathieu(species)
         mass = species.mass_u * ATOMIC_MASS_KG
         axes = params.principal_axes
@@ -263,7 +260,19 @@ class Trap:
             idx = np.ix_(confined, confined)
             u0[confined] = np.linalg.solve(mass * spring[idx], E_C * e_res[confined])
         amp = 0.5 * np.asarray(params.q, dtype=float) @ u0
-        amp_lab = axes @ amp
+        return np.asarray(axes @ amp, dtype=float)
+
+    def micromotion_beta(self, species: Species, delta_k: np.ndarray) -> MicromotionIndex:
+        """Residual beta = delta_k . u_1 for the FULL wavevector, as (in_phase, out_of_phase), peak convention (Section 4.1.1).
+
+        in_phase: the stray-field part, delta_k . (1/2) Q u_0 with u_0 the static displacement against the pseudopotential
+        spring m (Omega/2)^2 (a + q^2/2) (Berkeland's per-axis (1/2) q_i u_0i when the dc and rf axes coincide), nullable by shims;
+        out_of_phase: Berkeland's (1/4) q_x R alpha phi_ac along x', from ``RfDrive.phase_imbalance_rad`` and the rod
+        geometry factors, not nullable. The two never collapse into one number.
+        """
+        params = self.mathieu(species)
+        axes = params.principal_axes
+        amp_lab = self.micromotion_amplitude_m(species)
         q_axes = np.array(params.q_effective)
         dk = np.asarray(delta_k, dtype=float)
         in_phase = modulation_index(dk, amp_lab)

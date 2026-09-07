@@ -1377,22 +1377,22 @@ records:
     tag: recomputed here
     section: "9.6; 3.4; 8.6"
     source: "check_circuits.py 2 on the two-ion 171Yb+ fixture (global 355 nm pair at 100.93 kHz, 2.5 um addressing pairs with eps = 0.0220, oblique 369.5 nm cooling/detection beam, Crain SNSPD)"
-    equation: "4000-shot histogram 00: 0.5015, 11: 0.4965, 01: 0.0013, 10: 0.0008 against the ideal 0.5/0.5 (error bar on P00 0.0079); register 1 - F = 2.353e-3 against the compiled circuit's state inside the intrinsic budget 8.2e-3 (carrier scale 6.6e-3, five gpi2 crosstalk terms of 3.0e-4, Debye-Waller 4.1e-6); detection threshold 0.5 at a 20 us window with (eps_B, eps_D) = (6.05e-4, 4.18e-4) from the record model, SPAM per qubit (6.1e-4, 3.5e-4) at zero crosstalk, preparation error 2.48e-6; Doppler nbar 3.5 to 11.6 falls to 0.0185/0.0154 on the gate modes after 40 sideband pulses; six branches carry all but 3.4e-5; parity contrast 0.99699, Bell bound (P00 + P11 + C)/2 = 0.99763"
+    equation: "4000-shot histogram 00: 0.5015, 11: 0.4965, 01: 0.0013, 10: 0.0008 against the ideal 0.5/0.5 (error bar on P00 0.0079); register 1 - F = 2.336e-3 (2.353e-3 in M6, before the compensated light shift and its frame, M8) against the compiled circuit's state inside the intrinsic budget 8.2e-3 (carrier scale 6.6e-3, five gpi2 crosstalk terms of 3.0e-4, Debye-Waller 4.1e-6); detection threshold 0.5 at a 20 us window with (eps_B, eps_D) = (6.05e-4, 4.18e-4) from the record model, SPAM per qubit (6.1e-4, 3.5e-4) at zero crosstalk, preparation error 2.48e-6; Doppler nbar 3.5 to 11.6 falls to 0.0185/0.0154 on the gate modes after 40 sideband pulses; six branches carry all but 3.4e-5; parity contrast 0.99712, Bell bound (P00 + P11 + C)/2 = 0.99768 (0.99699 / 0.99763 in M6)"
     corrected_form: "the row asks for agreement with the ideal statevector within the readout errors: |P00 - 0.5| = 1.5e-3 at a 7.9e-3 error bar; the exact spot check of the gate leaves 1.3e-4 while the (Omega/nu)^2 carrier scale bounds it at 6.6e-3"
   - id: anchor.m6.ghz_fixtures
     symbol: "three- and four-ion Molmer-Sorensen GHZ fixtures (Section 9.6 row 2)"
     tag: recomputed here
     section: "9.6; 5.2; 5.1.1"
     source: "check_circuits.py 3, 3b and 5 on the three- and four-ion fixtures (x modes 2.569/2.8284/3.0 MHz and 2.2013/2.5681/2.8284/3.0 MHz; 2.0 um addressing waist, eps = 0.0128)"
-    equation: "three ions, global symmetric pulse (Omega/2pi = 151.67 kHz, 50 us) at t = pi/(8 chi): pairwise closed-form chi 0.7854/0.8801/0.7854; exact fidelity 0.98230 against the pairwise target and 0.97346 against the ideal exp(-i pi/4 sum XX) with the top two modes resolved at d_m = 12 (dimension 1152), P(000) = 0.2371, boundary 2.9e-9, frozen zigzag |alpha|^2 (2n+1) = 1.1e-3 and chi = 0.0196 rad; four ions (dimension 2304): 0.96718 / 0.93734, P(0000) = 0.4654, P(1111) = 0.4720, boundary 8.2e-10; H, CNOT(0,1), CNOT(1,2) through run(): space [2, 2, 2, 10, 10] with the tilt frozen, adjacent-pair spot checks 0.99530 with 4.4e-3 leakage, register 1 - F = 1.483e-2 inside the budget, 2000-shot histogram 000: 0.5155, 111: 0.4775; a displaced |alpha| = 1 state at d_m = 12, 8, 6 holds 1.1e-7, 5.9e-4, 1.9e-2 in its top two levels"
+    equation: "three ions, global symmetric pulse (Omega/2pi = 151.67 kHz, 50 us) at t = pi/(8 chi): pairwise closed-form chi 0.7854/0.8801/0.7854; exact fidelity 0.98230 against the pairwise target and 0.97346 against the ideal exp(-i pi/4 sum XX) with the top two modes resolved at d_m = 12 (dimension 1152), P(000) = 0.2371, boundary 2.9e-9, frozen zigzag |alpha|^2 (2n+1) = 1.1e-3 and chi = 0.0196 rad; four ions (dimension 2304): 0.96718 / 0.93734, P(0000) = 0.4654, P(1111) = 0.4720, boundary 8.2e-10; H, CNOT(0,1), CNOT(1,2) through run(): space [2, 2, 2, 10, 10] with the tilt frozen, adjacent-pair spot checks 0.99530 with 4.4e-3 leakage, register 1 - F = 1.480e-2 (1.483e-2 in M6) inside the budget, 2000-shot histogram 000: 0.5155, 111: 0.4775; a displaced |alpha| = 1 state at d_m = 12, 8, 6 holds 1.1e-7, 5.9e-4, 1.9e-2 in its top two levels"
     corrected_form: "the plan's 'two resolved modes at d_m = 12' holds only with the zigzag frozen and its residual reported (the symmetric pulse closes the COM loop only); the outer pair (0, 2) couples three modes (|chi| = 0.39 on the tilt, dimension 8000 > 4096) and waits for GATE_LOCAL (M9a); the seven-segment adjacent-pair gate's 4.4e-3 leakage sits inside its (Omega/nu_min)^2 carrier scale"
   - id: anchor.m6.bv_crosstalk
     symbol: "Bernstein-Vazirani with the secret 01 under addressing crosstalk (Section 9.6 row 6; Wright's minimal model)"
     tag: recomputed here
     section: "9.6; 3.3; 6.6"
     source: "check_circuits.py 4 on the three-ion fixture (data ions 0 and 2, the middle ion the ancilla, eps = 0.0128 onto nearest neighbours)"
-    equation: "exact register data-string populations 00: 1.81e-3, 01: 0.998, 10: 6.9e-7, 11: 3.87e-4; declared through the POVM 00: 2.41e-3, 11: 7.32e-4, so the 1 -> 0 flip of the secret exceeds the 0 -> 1 flip by 3.30 with per-ion eps_B = 6.11e-4 against eps_D = 3.47e-4; the coherent-only matrix model (compiled circuit, eps theta rotations on the neighbours, ideal MS) gives 00: 2.22e-3 and 11: 4.11e-4, a ratio 5.39 before any readout; register 1 - F = 4.344e-3 inside the budget; 4000-shot histogram 011: 0.9942, 001: 0.0035, 010: 0.0013"
-    corrected_form: "the 1 -> 0 dominance the row predicts emerges, and mostly from the coherent circuit: the oracle CNOT maps the ancilla's crosstalk rotations (from the data ions' Hadamard pulses) onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct rotations, and the readout asymmetry (eps_B > eps_D) then lowers the ratio from 5.4 to 3.3; the magnitude (3.1e-3 total flip weight at eps = 0.0128) is that of this fixture, not Wright's 3 % applied twice, which the plan's 'stated magnitude' cannot fix without his beam profile"
+    equation: "exact register data-string populations 00: 1.82e-3, 01: 0.998, 10: 7.2e-7, 11: 4.02e-4; declared through the POVM 00: 2.43e-3, 11: 7.48e-4, so the 1 -> 0 flip of the secret exceeds the 0 -> 1 flip by 3.25 (M6 without the light-shift physics: 1.81e-3 / 3.87e-4, 2.41e-3 / 7.32e-4, ratio 3.30) with per-ion eps_B = 6.11e-4 against eps_D = 3.47e-4; the coherent-only matrix model (compiled circuit, eps theta rotations on the neighbours, ideal MS) gives 00: 2.22e-3 and 11: 4.11e-4, a ratio 5.39 before any readout; register 1 - F = 4.413e-3 (4.344e-3 in M6) inside the budget; 4000-shot histogram 011: 0.9942, 001: 0.0035, 010: 0.0013"
+    corrected_form: "the 1 -> 0 dominance the row predicts emerges, and mostly from the coherent circuit: the oracle CNOT maps the ancilla's crosstalk rotations (from the data ions' Hadamard pulses) onto its control, the secret's 1 bit, while the 0 bit sees only the ancilla pulses' direct rotations, and the readout asymmetry (eps_B > eps_D) then lowers the ratio from 5.4 to 3.3 (3.25 with the compensated light shift, M8); the magnitude (3.1e-3 total flip weight at eps = 0.0128) is that of this fixture, not Wright's 3 % applied twice, which the plan's 'stated magnitude' cannot fix without his beam profile"
   # ---- milestone M7: noise and error channels (PLAN.md Section 6; Sections 9.7, 9.16, 9.17) ------------------------------------
   - id: conv.noise_routing
     symbol: "route (b) Lindblad / (c) quasi-static / (d) sampled / (e) events"
@@ -1478,6 +1478,105 @@ records:
     source: "check_noise.py 6 (sigma^2 = 0.02, tau_c = 0.05, omega = 1, e = m = hbar = 1)"
     equation: "e^2 S_E^(1)/(4 m hbar omega) = 9.97506e-4 reproduced; the exact double integral <n>(200)/200 gives 0.99975 of it (the row's 0.99991 belongs to an estimator the audit did not specify); a symplectic Monte Carlo of 4000 classical trajectories agrees within its error"
     corrected_form: "rival prefactors excluded: (1/2) S^(1) gives 2.0, (1/4) S^(2) gives 0.4997"
+  # ---- milestone M8: calibration emulation (PLAN.md Section 7.5; Sections 7.3, 7.10, 9.17) ----------------------------------------
+  - id: conv.sideband_lineshape
+    symbol: "P(delta) = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2))"
+    tag: corrected
+    section: "13 Sideband excitation lineshape; 7.5; 9.17"
+    source: "PLAN.md Section 7.5 [corrected: critique, 2026-09-04]; experiments/fitting.py"
+    equation: "the calibration fit function: a carrier pi pulse at Omega t = pi, half depth (the Lorentzian weight 1/2) at delta = Omega; fitted with weighted least squares to the fine scan of every line"
+    corrected_form: "Wineland's and Bluemel's Omega^2/(Omega^2 + delta^2/4) sin^2(t sqrt(Omega^2 + delta^2/4)) is the same curve at half the Omega: fitting it returns Omega/2 (the negative control the test suite keeps), never the fit function"
+  - id: conv.calibration_graph
+    symbol: "crystal_image -> field -> micromotion -> modes -> rabi, stark, qubit frequency -> crosstalk -> entangling scans -> detection, heating"
+    tag: corrected
+    section: "7.5; Appendix E calibrate(); 9.17 Calibration dependency graph"
+    source: "PLAN.md Section 7.5 [corrected: critique, 2026-09-04]; calibration/experiments.py ORDER, UPSTREAM"
+    equation: "calibrate(surrogate=False) runs the experiments in this order and never reorders; a downstream fit refuses to run while an entry group it reads is uncalibrated and its own entries become uncalibrated with the reason; seed entries (the derived values) are legitimate upstream inputs (the bootstrap)"
+    corrected_form: "the second revision's unordered experiment list and its stark, crosstalk and field entries without an experiment"
+  - id: conv.played_chain
+    symbol: "Omega_phys = Omega_req x Omega_derived/Omega_table"
+    tag: background
+    section: "7.3; 7.10 Modulator response; 7.5"
+    source: "PLAN.md Section 7.10 ('the rf-power-to-Omega map is calibrated by the Rabi scan of Section 7.5 exactly as in the laboratory'); control/played.py"
+    equation: "every pulse the scheduler emits carries the table's beliefs (Drive.programmed); the engine converts a requested Rabi frequency through the device's derived map divided by the calibrated one, the light shift to the derived shift at the played intensity (delta_derived sum_tones (Omega_phys/Omega_derived)^p), the crosstalk to the derived ratios of the listed neighbours; the identity for a surrogate table (seeds = derived values), so M2 to M7 are unchanged"
+    corrected_form: "M2 to M7 played the table's Rabi frequency, Stark shift and crosstalk as the physics, which made a miscalibrated entry error-free by construction"
+  - id: conv.stark_compensation
+    symbol: "mu_tone -> mu_tone + delta_St,believed"
+    tag: background
+    section: "7.5 item 7; 4.3.2"
+    source: "control/schedule.py single_qubit_pulse, entangling_pulses (stark_compensation=True)"
+    equation: "every tone of a scheduled pulse is detuned by the table's differential light shift for the played amplitude; both legs of a bichromatic segment move together (the motion phase is untouched); a correct belief keeps the pulse resonant with the shifted qubit, a wrong one leaves a reproducible detuning. The tones are phase-continuous in absolute time (the builder plays e^{-i(2 pi mu t - phi)}), so every compensated tone also carries the phase 2 pi delta_s(0) t_start (compensation_phase_rad) that references the compensation detuning to the qubit frame at the pulse start, minus, inside a multi-segment gate, the frame 2 pi int delta_s dt the earlier segments accumulated; the frame update after the pulse is 2 pi int delta_s dt (stark_phase_rad, frame_after)"
+    corrected_form: "an uncompensated -38 Hz light shift over the 100 us fixture gate costs about 1e-3 of fidelity (an uncompensated 0.024 rad sigma_z rotation per ion); the M6 surrogate carried no Rabi or Stark entry for the entangling drive's beams, so its gate had no light-shift physics at all; M8 seeds them. Without the phase reference the compensated axis rotates by 2 pi delta_s t_start: a compensated GPi2 one millisecond into a schedule lost 1.5e-2 = (2 pi 38 Hz 1 ms)^2/4 on the two-ion fixture while the same pulse at t = 0 was exact, and the Bell circuit through run() read 4.2e-3 against M6's 2.35e-3 (anchor.m8.compensation_phase_reference)"
+  - id: conv.servo_residual
+    symbol: "x_k - x_hat_{k-1}, x_hat_k = x_hat_{k-1} + (1 - e^{-2 pi f_s dt})(x_k - x_hat_{k-1}), x_hat_0 = x_0"
+    tag: background
+    section: "7.5 Age, drift and cost; 6.2"
+    source: "noise/model.py servo_residual; Drift.servo_bandwidth_hz"
+    equation: "a Drift with a servo bandwidth is high-passed into its residual band over the shot clock: the residual variance of an OU drift of correlation time tau is sigma^2/(1 + 2 pi f_s tau) in the continuous limit and the drift's increment sigma^2 (2 dt/tau) for a lock re-armed every sample; the first sample carries no offset (the calibration measured it)"
+    corrected_form: "the first version sampled raw quasi-static drift against a once-computed table, double-counting the slow band a laboratory servos away"
+  - id: conv.calibration_cache
+    symbol: "key = (Device.hash(), seed, surrogate, experiments, t0, digest(kwargs))"
+    tag: background
+    section: "7.5; Appendix E Device.hash"
+    source: "calibration/cache.py"
+    equation: "tables are cached per device configuration and noise seed; a table whose device_hash differs from the device it is asked for is never returned, so a changed parameter invalidates the old configuration's tables and the new one has none until calibrate runs (run(table=None) builds the surrogate)"
+    corrected_form: ""
+  - id: conv.observation_model
+    symbol: "P_declared = P_bright (1 - eps_B) + (1 - P_bright) eps_D; k ~ Binomial(shots, P_declared)"
+    tag: background
+    section: "7.5 Every fit reports an uncertainty; 8.4"
+    source: "experiments/fitting.py Observation, weighted_fit"
+    equation: "every experiment reads its populations as shots declared through the readout's (eps_B, eps_D), keyed by (sample, trajectory, shot, ion, channel); the fits are weighted least squares whose covariance is scaled by max(1, chi^2/dof), so an under-fitting model widens its own error bars; shots=None returns the exact populations (the M2 to M7 behaviour)"
+    corrected_form: "the first M8 build keyed the draws by (sample, point index, ion, outcome) only, so a calibration running the same experiment twice, or an experiment repeating a scan, replayed identical noise: the Stark scan read -12.67 Hz for BOTH beams of the fixture drive, exactly, and summed their uncertainties as if independent (3.3 sigma from the truth for a single 2.3 sigma draw counted twice); every experiment of a calibration and every sub-run now carries a stream label appended to the outcome key (Observation.stream, sub_stream)"
+  - id: anchor.m8.sideband_light_shift
+    symbol: "delta_sb = Omega^2/(2 omega_m)"
+    tag: recomputed here
+    section: "7.5 item 2; 4.3.2"
+    source: "check_calibration.py 5; experiments/motion.py mode_spectroscopy"
+    equation: "a resonant sideband pulse light-shifts the qubit through its own off-resonant CARRIER coupling by Omega^2/(2 omega_m) (1.70 kHz at Omega/2pi = 100.9 kHz, omega_m/2pi = 3 MHz), pulling both the blue and the red sideband resonance toward the carrier, so blue - carrier and (blue - red)/2 both read the mode frequency low by it; the scan fits the blue centre at two rf amplitudes and extrapolates to zero power (the shift scales as the intensity), which recovers the mode frequency within its uncertainty"
+    corrected_form: "Section 7.5's fine scan of a single resonance at full power would have written the mode frequency low by 1.5 kHz into the table, above the FM solvers' sub-kilohertz need"
+  - id: anchor.m8.stark_scan_per_beam
+    symbol: "delta_St = sum_beams delta_St,b"
+    tag: recomputed here
+    section: "7.5 item 7"
+    source: "check_calibration.py 3; experiments/light.py stark_scan"
+    equation: "with one beam of the Raman pair on during the Ramsey delay there is no two-photon coupling and the fringe shift is that beam's differential light shift; the drive's shift is their sum (-19.2 - 19.2 = -38.4 Hz on the two-ion fixture, recovered within its uncertainty)"
+    corrected_form: "the both-beams-on measurement with the beat note detuned by Delta carries the odd coupling shift Omega^2/(2 Delta) (1.27 kHz at Delta = 4 MHz), whose fringe at probe minus shift aliases with the plan's Ramsey delays (Nyquist 2.5 kHz for six points over 1 ms); kept as mode='beat_note' with that caveat"
+  - id: anchor.m8.crosstalk_phase_protocol
+    symbol: "pi/2 - pi(crosstalk) - pi/2(phi): phi_0 = 2 theta_x + const"
+    tag: recomputed here
+    section: "7.5 item 8"
+    source: "check_calibration.py 3; experiments/light.py crosstalk_scan"
+    equation: "a pi rotation about the crosstalk axis reflects the neighbour's equatorial Bloch vector across the axis, so the analysis fringe phase carries twice the axis angle with full contrast; the two-ion fixture's axis is at 0.00 +- 0.02 rad relative to the neighbour's frame (the addressing beams' Delta k is perpendicular to the chain, so the geometric phase is zero)"
+    corrected_form: "a pi/2 crosstalk rotation (the first draft) about an axis parallel to the preparation pulse's maps the equatorial state onto the pole and gives no fringe at all"
+  - id: anchor.m8.carrier_debye_waller_every_mode
+    symbol: "Omega_fit = Omega prod_p <e^{-eta_p^2/2} L_n(eta_p^2)>"
+    tag: recomputed here
+    section: "7.5 item 1; 4.2.7 iii"
+    source: "check_calibration.py 5; experiments/fitting.py multimode_rabi_model"
+    equation: "the carrier Rabi curve's Debye-Waller reduction is the product over EVERY mode the drive couples to (Wineland 1998 Eqs. 122-124), spectators included: with the fit carrying the driven mode only, the two-ion fixture's fitted Omega came out 400 Hz (0.4 %, nine standard errors) below the derived 100.93 kHz, the frozen COM mode's e^{-eta^2/2} = 0.9969; with both modes at the thermometry's occupations it agrees within 1.7 standard errors"
+    corrected_form: ""
+  - id: anchor.m8.micromotion_nulls
+    symbol: "shim null, residual beta"
+    tag: recomputed here
+    section: "7.5; 4.1.1; 4.3.6"
+    source: "check_calibration.py 4"
+    equation: "a 30 V/m stray field on a single 171Yb+ ion at Omega_rf = 2 pi x 30 MHz gives beta = 0.245 along the Raman Delta k; the sideband-ratio scan through the exact e^{i beta cos Omega t} modulation nulls it at -30.00 +- 0.46 V/m with a residual |beta| of 2.5e-4, and the rf-photon-correlation periodic steady state of the 369.5 nm detection beam, retuned to -Gamma/2 and projected on the atom's response phase (odd in the signed index, linear to 15 % at beta = 0.2), nulls a 20 V/m field at -20.0000 +- 2.8 V/m from the exact signal (the photon budget of a 1 s acquisition at 3.8e5 photons/s and 4.4 % detection efficiency) and at -19.27 +- 0.83 V/m (0.87 sigma) with photon shot noise drawn over 10 s, residual beta -7.9e-5 +- 4.5e-3, on the two-ion fixture"
+    corrected_form: "the first M8 build correlated the photon rate at the fixture's detection frequency (on resonance) and kept only the sin projection: there the first-order response vanishes (the rate is even in the detuning) and the first harmonic was |S_1| = 3.2e-5 at beta = 0.045 against 3.4e-2 half a linewidth to the red, so the null was found exactly but its declared photon-budget uncertainty was 3.3e3 V/m; the response lags the rf by 141 degrees at Omega_rf = 1.5 Gamma, and a fixed sin projection kept 63 % of the amplitude"
+  - id: anchor.m8.compensation_phase_reference
+    symbol: "1 - F of a compensated GPi2 at t_start = 0, 1 ms, 2 ms"
+    tag: recomputed here
+    section: "7.5 item 7; 7.10"
+    source: "tests/test_calibration_layer.py (phase reference); scratch probe on the two-ion 171Yb+ circuit fixture, JOINT_EXACT"
+    equation: "with the tone phase referenced to t = 0: 2.9e-5, 1.45e-2, 5.7e-2 for delta_s = -38.4 Hz, i.e. sin^2(pi delta_s t_start) / 2 = (2 pi delta_s t_start)^2/4 for small angles (0.24 and 0.48 rad); with compensation_phase_rad: 2.9e-5 at every start. A five-segment MS gate 500 us into a schedule with the per-gate beat reset the fixture's hardware uses: 1.3e-4 as at t = 0 (4.8e-4 with the beat note left running, Roos's tilt, Section 7.10)"
+    corrected_form: "the first M8 build carried the compensation detuning without the phase reference; the Bell circuit through run() read 4.196e-3 (2.353e-3 in M6, 2.333e-3 with the reference) and the check_circuits three-ion GHZ 5.25e-2 (1.48e-2 in M6)"
+  - id: anchor.m8.full_calibration_two_ion
+    symbol: "calibrate(surrogate=False) on the two-ion 171Yb+ fixture"
+    tag: recomputed here
+    section: "7.5; 10 M8 exit criteria"
+    source: "check_calibration.py 5 (reduced scans: 400 shots per point)"
+    equation: "every entry the experiments fit (field, qubit frequencies, mode frequencies, occupations, Rabi frequencies, light shifts, crosstalk ratios and phases, the entangling waveform's closure and phase alignment, detection) agrees with the device's derived truth within its reported uncertainty, and a Bell circuit run from the fitted table reaches the same register fidelity as the surrogate-table run within statistics and inside the intrinsic budget (numbers in outputs/check_calibration.out)"
+    corrected_form: ""
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

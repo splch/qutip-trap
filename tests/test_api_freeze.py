@@ -135,10 +135,10 @@ def test_instances_are_immutable() -> None:
 
 def test_unimplemented_entry_points_name_their_milestone() -> None:
     dev = object()
-    # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; the full simulated-experiment
-    # calibration (M8), GATE_LOCAL tomography (M9a) and Device.derived() still name their milestones
-    with pytest.raises(NotImplementedError, match=r"milestone M8"):
-        api.calibrate(dev, surrogate=False)  # type: ignore[arg-type]
+    # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; M8 the full simulated-experiment
+    # calibration and Device.derived(); GATE_LOCAL tomography (M9a) still names its milestone
+    with pytest.raises(ValueError, match=r"unknown calibration experiments"):
+        api.calibrate(dev, surrogate=False, experiments=("not_an_experiment",))  # type: ignore[arg-type]
     assert api.load_openqasm2("OPENQASM 2.0; qreg q[1]; x q[0];").ops[0].name == "x"
     assert (
         api.compile_to_native(api.Circuit(1, (api.Operation("x", (0,), ()),), (0,)), dev).ops[0].name == "gpi"
@@ -153,7 +153,12 @@ def test_unimplemented_entry_points_name_their_milestone() -> None:
 
     # the noise sampler of M7 is implemented: a quiet model returns a quiet sample
     assert make_noise().sample(np.random.default_rng(0), t_s=0.0, duration_s=1e-3, sample_id=0).is_quiet
-    with pytest.raises(NotImplementedError, match=r"M1 to M8"):
-        make_device().derived()
+    # M8: Device.derived() gathers the derived quantities with their ledger ids (the calibration's seeds)
+    derived = make_device().derived()
+    assert (
+        derived.values["qubit_freq_hz[0]"] > 1e9
+        and derived.provenance["qubit_freq_hz[0]"] == "conv.frequencies"
+    )
+    assert set(derived.values) == set(derived.provenance)
     # the atomic layer of M0a is implemented: this no longer raises
     assert api.species_by_name("171Yb+").zeeman_spectrum("S1/2", 5.0).labels

@@ -161,3 +161,17 @@ Added on 2026-09-05 by milestone M6:
   quanta on the single-ion fixture, the Ornstein-Uhlenbeck field-heating slope with a classical Monte Carlo (MC: line),
   the hardware chain's beat-phase reference on the calibrated gate, the filter-function machinery against
   `check_composite.py`, the Langevin rates and the Section 6.8 summaries. Runs the package (about four minutes).
+
+Added on 2026-09-06 by milestone M8 (calibration emulation):
+
+- `check_calibration.py`: the plan's sideband excitation lineshape as the fit function (pi time, half depth, the half-Rabi
+  form's Omega/2 as the negative control, the carrier scan of the exact dynamics), the C0 row (a sideband-calibrated eta at
+  q = 0.3 against the carrier-derived one), thermometry, the heating-rate scan against the noise model, the field scan
+  inverted through nu(B), the Stark scan per beam, the crosstalk scan's ratio and axis phase, the micromotion compensation
+  scan by the exact modulated builder and by the rf-photon-correlation periodic steady state (the beam retuned to -Gamma/2,
+  the first harmonic projected on the response phase), the full calibration of the
+  two-ion 171Yb+ fixture by simulated experiments (every entry against its derived truth in units of its uncertainty, the
+  surrogate's error, the closure and phase alignment of the entangling waveform, a Bell circuit run from the fitted table
+  against the surrogate-table run) and the servo of Section 7.5 (Sections 7.3, 7.5, 7.10, 9.17). Runs the package (about
+  thirty minutes: seventeen of them the two heating-rate scans, whose probes at the hottest delay are density matrices of
+  about 70 Fock levels, twelve the full calibration); lines prefixed `MC:` carry shot noise.

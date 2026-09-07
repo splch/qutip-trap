@@ -211,6 +211,16 @@ def surrogate_table(
             notes.append(
                 f"ion {i}: a {spec.kind} drive has no derivable carrier Rabi frequency; entry left absent"
             )
+    # the entangling drives' own carrier Rabi frequencies and Stark shifts (the global pair), keyed by their table beam, so that
+    # the scheduler compensates the MS gate's light shift and the played chain of M8 has a belief to convert against
+    for i in range(n):
+        spec = ent[i]
+        key = (i, spec.table_key_beam)
+        if key in rabi or spec.kind != "raman" or len(spec.beams) != 2:
+            continue
+        dd = derive_raman_drive(device, i, (spec.beams[0], spec.beams[1]), scattering=False)
+        rabi[key] = _seed(dd.carrier_rabi_hz, "conv.two_photon_rabi", "derived_raman_drive", t0_s)
+        stark[key] = _seed(dd.stark_shift_hz, "conv.two_photon_rabi", "derived_raman_drive", t0_s)
     # modes, occupations, heating (seed)
     modes_entries = {
         m: _seed(mode.omega_hz, "conv.mode_index", "derived_crystal_modes", t0_s)
@@ -245,6 +255,7 @@ def surrogate_table(
         micromotion={},
         detection={},
         heating=heating,
+        fitted_at_s=float(t0_s),
     )
     # entangling waveforms per pair: closed-form solution, mode classes, exact spot check on the resolved space
     ms: dict[tuple[int, int], Waveform] = {}
@@ -359,6 +370,7 @@ def surrogate_table(
         micromotion={},
         detection=detection,
         heating=heating,
+        fitted_at_s=float(t0_s),
     )
     return SurrogateReport(
         table=table,

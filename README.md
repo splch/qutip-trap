@@ -5,8 +5,8 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
-and state preparation), M4 (two-ion entangling gates), M5 (readout), M6 (end-to-end circuits in JOINT_EXACT) and M7 (noise
-and error channels).** The
+and state preparation), M4 (two-ion entangling gates), M5 (readout), M6 (end-to-end circuits in JOINT_EXACT), M7 (noise
+and error channels) and M8 (calibration emulation).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -239,6 +239,96 @@ prefactors excluded; the Langevin rates of `check_collisions.py`; and the two-io
 model reproducing M6 (register infidelity 2.35e-3 to 2.36e-3 with the branch threshold, M6's 2.353e-3) and with heating, a
 field drift and a Rabi drift on the trajectory path.
 
+M8 makes the machine act on what it believes and the ions on what they are (Sections 7.3, 7.5). Every pulse the scheduler emits
+now carries the CalibrationTable's beliefs and is marked `Drive.programmed`; the engine's played chain (`control/played.py`)
+converts a requested Rabi frequency through the device's derived rf-power-to-Omega map divided by the calibrated one
+(Omega_phys = Omega_req Omega_derived/Omega_table, Section 7.10), the light shift to the derived shift at the played intensity and
+the crosstalk to the derived ratios of the listed neighbours, so that a miscalibrated entry is the over-rotation, detuning or
+crosstalk error a laboratory's would be while a surrogate table (seeds = derived values) leaves M2 to M7 unchanged. The
+scheduler compensates the believed differential light shift the way a laboratory does, by detuning every tone of a pulse by it
+(both legs of a bichromatic segment together, per segment amplitude), and absorbs the z-rotation 2 pi int delta dt the shifted qubit
+accumulates during the pulse into the ion's virtual-Z frame (Section 7.5 item 7, "the light shift that sets the MS phase"): at the
+two-ion fixture's gate amplitude (two legs at 195 kHz) the shift is -149 Hz and the 100 us gate accumulates 0.094 rad per ion, which
+uncompensated costs 8e-3 of Bell fidelity and which M6's tables never carried, because the surrogate seeded no entry for the
+entangling drive's beams; it now seeds every drive, and `register_fidelity`, `exact_gate_check` and the M4 schedule tests rotate
+their targets by the schedule's final frame (`frame_rotated`). The tones are phase-continuous in absolute time, so a compensation
+detuning also needs a phase reference: every compensated tone carries 2 pi delta_s t_start (`compensation_phase_rad`), minus the
+frame the earlier segments of the same gate accumulated; without it the axis of a compensated GPi2 one millisecond into a schedule
+was off by 0.24 rad (1.5e-2 of fidelity, exact at t = 0), the Bell circuit through `run` read 4.2e-3 against M6's 2.35e-3 and the
+three-ion GHZ 5.3e-2 against 1.5e-2; with it both return to M6's numbers. The experiments package holds the simulated experiments of Section 7.5
+on the JOINT_EXACT engine, every one reading its populations through an observation model (`shots` declared through the readout's
+(eps_B, eps_D), keyed by the Section 3.4 seeds with one stream per experiment and per sub-scan) and fitting by weighted least squares so that every parameter carries the
+uncertainty a laboratory would quote: `field_scan` (the Ramsey-frequency experiment inverted through the exact nu(B) of the atomic
+layer, 3.1 kHz/G on the clock transition at 5 G), `micromotion_scan` (Berkeland's three methods from the physics itself: the exact
+e^{i beta cos Omega_rf t} modulation of an rf-locked drive for the sideband ratio, and the periodic steady state of the detection
+beam's Bloch model under the Doppler-modulated detuning for the rf-photon correlation and the Doppler nulling; the shims scanned,
+the null fitted, shims and residual beta stored), `mode_spectroscopy` (the coarse scan, fine scans fitted with the plan's lineshape
+P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)) rather than the half-Rabi form, the mode frequency as blue
+centre minus a weak long carrier's centre, |eta| from the sideband Rabi frequency with C0 inside, nbar from the sideband ratio),
+`thermometry` (Turchette's exact ratio with the thermality check), `rabi_scan` with nbar fixed from the thermometry and the
+Debye-Waller factor of EVERY coupled mode, `stark_scan` per beam (one beam on during the Ramsey delay), `crosstalk_scan` (the
+neighbours' Rabi rates and the crosstalk axis from a pi/2 - pi - pi/2(phi) sequence), `ms_scan` with the closure detuning from the
+leakage parabola and the entangling amplitude from cos(2 chi_1 s^2), `ms_phase_scan` (Section 7.5 step 3: the entangling axis
+against the single-qubit frame from |00> and |01>, giving both ions' corrections), `parity_scan`, `heating_rate` (the delay scan of
+the sideband asymmetry with the device's heating channels active, in the interaction frame) and `crystal_image` (dark, lost and,
+for mixed species, reordered ions). `calibrate(surrogate=False)` (`calibration/experiments.py`) runs them in the dependency order
+field -> micromotion -> modes -> rabi, stark, qubit frequency -> crosstalk -> entangling scans -> detection, heating, refuses a
+downstream fit whose upstream entry group is `uncalibrated` and marks a fit that fails or lands at its scan edge `uncalibrated`,
+fits under one dynamical sample of the noise model whose id every entry carries, stores the surrogate's error beside every entry it
+replaces, and is cached per device hash and seed (`calibration/cache.py`: a changed device parameter invalidates, never regenerates
+silently). `Drift.servo_bandwidth_hz` is applied: a drift with a servo is high-passed into its residual band over the shot clock
+(`servo_residual`). `Device.derived()` gathers the derived quantities with their ledger ids. Acceptance (`tests/test_calibration_layer.py`,
+`test_calibration_experiments.py`, `test_full_calibration.py`; `validation/scripts/check_calibration.py`): the Section 9.17 lineshape
+row (the fitted pi time pi/Omega, the half depth at delta = Omega, the half-Rabi form returning Omega/2), the C0 row (the
+sideband-calibrated eta of a single ion at q = 0.3 carries C0 = 1.018 and a gate built from the carrier-derived one misses 2(C0 - 1)
+of two-body phase), thermometry exact to 2e-3 with the thermality flag, the heating rate recovered to 3 % from the engine's own
+channels, the field to 1 mG from a 20 mG-wrong seed, the two-ion fixture's light shift (-42 +- 11 Hz against -38.4), crosstalk
+(0.02218 +- 0.00017 against 0.02202) and crosstalk axis (0.00 +- 0.02 rad), the mode frequency to 275 Hz after the extrapolation of
+the sideband's own 1.5 kHz carrier light shift to zero power, the micromotion nulls at -30.00 +- 0.46 V/m (sideband ratio, residual |beta| 2.5e-4) and
+-19.3 +- 0.8 V/m against -20 (rf-photon correlation with the beam retuned to -Gamma/2, Berkeland's working point, and the first
+harmonic projected on the atom's response phase; 10 s of photon shot noise), and the full calibration of the two-ion fixture by simulated experiments (`check_calibration.py` section 5, reduced scans, 400 shots per point): no refusal and no uncalibrated entry; the field 4.99997 +- 0.00129 G against 5; the qubit frequencies within 7 Hz of the truth; the carrier Rabi frequencies 100886 +- 55 and 100966 +- 51 Hz against 100928 (0.8 sigma); the light shifts -42.1 +- 7.4 and -45.8 +- 7.2 Hz against -38.4; the crosstalk ratios 0.02199 +- 0.00029 and 0.02189 +- 0.00028 against 0.02202; the modes 2.82848 +- 0.00024 and 2.99986 +- 0.00021 MHz against 2.82843 and 3.00000; the entangling closure at scale 1.0019 +- 0.0084 with spin-phase corrections -0.031 +- 0.039 and -0.014 +- 0.039 rad, parity contrast 0.9863 and a Bell fidelity bound 0.9932; the surrogate's error 4e-4 (Rabi), 5e-5 (modes), 6e-12 (qubit frequencies), 0.19 (Stark) and 6e-3 (crosstalk); and the Bell circuit run from the fitted table at 1 - F = 3.5e-3 against 2.3e-3 from the surrogate table and an intrinsic budget of 9.0e-3.
+
+The M8 test suite exposed where the engine's wall time went, and three numerics changes (none an approximation beyond the
+declared branch threshold) bring the calibration from hours to minutes (`tests/test_engine_numerics.py` pins each against the path
+it replaces). (i) A segment whose Hamiltonian is constant, an idle interval or a zero-envelope pulse carrying only its light shift,
+is propagated by its exact phases (H_mot + H_int + H_Stark are diagonal in the Fock x computational basis) instead of the ODE
+ladder, which spent 10^6 right-hand sides resolving the 3 MHz rotation of a 2 ms Ramsey delay; with the device's collapse operators
+present the idle is integrated in the frame rotating with H_mot, where the heating, motional-dephasing and qubit-dephasing operators
+are eigenoperators of ad_H and their dissipators unchanged; the segment reports integrator `exact` (`JointExactEngine.closed_form_constant`).
+The Ramsey-type scans of Section 7.5 (field, Stark, qubit frequency) fell from 33, 271 and 73 s to 0.6, 1.3 and 1.0 s on the two-ion
+fixture. (ii) A density matrix evolved without collapse operators is decomposed into the weighted pure branches of its
+eigen-decomposition and each goes through `sesolve` (the Fock-sum path of Section 5.3, branches below `branch_weight_min` dropped
+and reported): the entangling scans start from the thermal motional state, which the first M8 build integrated as a 400^2
+Liouvillian at 58 ms per right-hand side, about two hours per gate check and thirty checks per calibration
+(`JointExactEngine.pure_branches`); the entangling experiments take `branch_weight_min` (default 1e-3, the single-ion experiments'
+default) so a gate check is three branches at 7 s each. (iii) The plain and conjugate drive terms, and every sideband term of the
+interaction picture, share one memoized tone-sum evaluation per time, square tones skip their callables, and a drive whose tones are
+identically zero adds no operator term. The heating-rate scan sizes its truncation per delay rather than for the hottest delay of the
+scan. The same run surfaced an M8 bug the surrogate tables had hidden: two simultaneous pulses of different lengths (the parity
+scan's analysis pulses at two ions' FITTED Rabi frequencies, whose pi/2 times differ) made the builder refuse the segment, because it
+demanded coinciding pulses where the engine's contract only asks that every pulse span the segment; the builder now takes the common
+interval and gives every pulse its own clock. What remains is the gate segments themselves: a 100 us Mølmer-Sørensen pulse at
+dimension 400 costs 7 s per branch (29 000 right-hand sides per 20 us segment at 68 us each, four CSR drive terms of 20 000
+non-zeros), and the merged dense operator of Section 11.1 does not pay in this QuTiP build (two dense elements in a `QobjEvo`
+cost 42 us against 33 us for the four CSR terms at this size), so the mode-factorized kernel and the branch and scan-point
+parallelism of M9b are the next factor.
+
+Plan inconsistencies surfaced by M8 (ledger `conv.*` records of the calibration layer, `anchor.m8.*`): a resonant sideband
+pulse light-shifts the qubit through its own off-resonant carrier coupling by Omega^2/(2 omega_m) (1.70 kHz at Omega/2pi =
+100.9 kHz, omega_m/2pi = 3 MHz), pulling both sideband resonances toward the carrier, so Section 7.5's single fine scan at full
+power would write the mode frequency 1.5 kHz low into the table, above the FM solvers' sub-kilohertz need (the scan fits the
+blue centre at two rf amplitudes and extrapolates to zero power); the both-beams-on Stark measurement of item 7 carries the odd
+coupling shift Omega^2/(2 Delta) (1.27 kHz at Delta = 4 MHz), whose fringe aliases with the plan's Ramsey delays, so the shift is
+measured per beam with the other blocked; a pi/2 crosstalk rotation about an axis parallel to the preparation pulse's gives no
+fringe (the axis is measured with a pi rotation, the fringe phase twice the axis angle); the carrier Rabi fit must carry the
+Debye-Waller factor of every coupled mode (the frozen COM mode's e^{-eta^2/2} = 0.9969 alone biases the two-ion fixture's Omega by
+400 Hz, nine standard errors); the differential light shift at a gate's amplitude is the pair's shift times sum_legs
+Omega_leg/Omega_cal (3.9 x on the fixture), and its accumulated phase is a virtual-Z the plan's item 7 names but no section
+schedules; M4's two-ion fixture drove 100 kHz tables with 10 mW, 200 um beams that physically give 303 Hz, which a machine playing
+the physical Rabi frequency cannot (the fixture now carries 0.3 W in 60 um); and the 40Ca+ light-shift fixture's 729 nm E2
+Rabi frequency is not derived for its beam geometry (0), so its table entry is a supplied value the chain plays as physical
+and says so.
+
 Plan inconsistencies surfaced by M7 (ledger `conv.*` records of the noise layer, `anchor.m7.*`): the control hardware
 chain reintroduces Roos's spin-axis tilt after the per-gate beat-note reset, because the modulator's first-order response
 delays the envelope while the beat note advances 2 pi mu tau_r = 0.96 rad on the two-ion fixture (fidelity 0.99700, leakage
@@ -343,15 +433,16 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a), `roles` (which beams are resonant cooling/detection light and which are far-detuned gate light; M6) |
 | `qutip_trap/noise/` | the noise layer of Section 6 (M7): `spectra` (two-sided spectra with a declared white level, Drift, Mains, Collisions), `processes` (fixed-grid Gaussian and OU trajectories, mains), `sampling` (the NoiseSample keys), `model` (`NoiseModel.channels` and `sample_sequence`), `scattering` (Raman, Rayleigh, leakage and recoil operators per pulse), `levels` (register level maps with the SINK), `collisions` (Langevin events), `decoupling` (the Section 6.9 filter-function machinery and sequences), `summary` (Section 6.8 reporting) |
 | `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a), `recipe` (the device's PreparationRecipe, `standard_recipe`, `run_preparation`; M6) |
-| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library), `hardware` (the Section 7.10 chain and `apply_hardware_chain`; the beat-phase reference `response_phase_rad` and the `crosstalk_suppression` echoes in `schedule`, M7) |
-| `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule; M4); `readout` (the detection threshold and window, M5); `surrogate` and `calibrate(surrogate=True)` (the Section 7.5 surrogate table: derived seeds, spot-checked waveforms on the resolved-mode space, detection; M6); the simulated-experiment path `calibrate(surrogate=False)` is M8 |
-| `qutip_trap/experiments/` | `rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy` (M2), `ms_scan`, `parity_scan` (M4) on the engine; the rest is M8; `detection_histogram` (M5) |
+| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library), `hardware` (the Section 7.10 chain and `apply_hardware_chain`; the beat-phase reference `response_phase_rad` and the `crosstalk_suppression` echoes in `schedule`, M7); `played` (the requested -> physical chain of Section 7.3 the engine applies to programmed drives, M8); the Stark compensation and its frame update (`stark_phase_rad`, `frame_after`) in `schedule`, M8 |
+| `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule, `frame_rotated`; M4, M8); `readout` (the detection threshold and window, M5); `surrogate` and `calibrate(surrogate=True)` (the Section 7.5 surrogate table: derived seeds for every drive, spot-checked waveforms on the resolved-mode space, detection; M6, M8); `experiments` (`full_calibration`: the simulated-experiment path `calibrate(surrogate=False)` on the dependency graph, `CalibrationScans`, `CalibrationReport` with the surrogate's error; M8); `cache` (tables per device hash and seed; M8) |
+| `qutip_trap/experiments/` | the simulated experiments of Section 7.5 on the engine: `single_ion` (`rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy`; M2, extended), `motion` (`thermometry`, `mode_spectroscopy`, `heating_rate`), `light` (`stark_scan`, `crosstalk_scan`, `field_scan`), `entangling` (`ms_scan`, `parity_scan`, `ms_phase_scan`; M4, extended), `micromotion` (`micromotion_scan` by three of Berkeland's methods), `imaging` (`crystal_image`), `readout` (`detection_histogram`; M5), `fitting` (the plan's lineshapes, weighted fits, the observation model of shots and readout errors); M8 |
 | `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`); samples at the shot clock, the effective sample size, collisions and heralds, leakage levels (M7) |
+| `qutip_trap/device/` | `model` (`Device`, `Field`, `DerivedQuantities`), `derived` (`Device.derived()`: every computed number with its ledger id, the calibration's seeds; M8) |
 | `qutip_trap/io/` | `ionq` (IonQ circuit JSON, both ways), `openqasm` (the OpenQASM 2 subset importer with custom-gate inlining; M6) |
 | `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`); the Fang, Landsman and OU-heating forms of M7 |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
-| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests) |
+| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests, the M8 calibration-layer, experiment and end-to-end calibration tests) |
 | `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 
