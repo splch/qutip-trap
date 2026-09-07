@@ -416,6 +416,37 @@ class HilbertSpace:
             ops[self.enr_factor] = self.enr_displacement(enr_etas)
         return self.embed_many(ops)
 
+    def drive_operator_factorized(
+        self, ion: int, etas: Mapping[int, float], *, ion_op: qt.Qobj | None = None
+    ) -> qt.Qobj:
+        """The drive operator of :meth:`drive_operator` as a :class:`~qutip_trap.dynamics.kernels.FactorizedOperator` (Section
+        11.3 item 4; M9b): sigma_+^ion (or ``ion_op``) on the ion's factor and the oracle-checked per-mode exponentials
+        D_m(i eta_m) on the resolved modes it couples to, held as factors and applied mode by mode. Product spaces only: a
+        drive that couples to an ENR group is never factorized (the sum-generator exponential is not a product of per-mode
+        factors, Section 5.1.1) and raises ``NotImplementedError``; the caller falls back to the assembled operator.
+        """
+        from qutip_trap.dynamics.kernels import factorized_qobj
+
+        f_ion = self.ion_factor(ion)
+        factors: dict[int, np.ndarray] = {
+            f_ion: (qudit_sigma_plus(self.ion_dims[f_ion]) if ion_op is None else ion_op).full()
+        }
+        for mode, eta in etas.items():
+            if eta == 0.0:
+                continue
+            cls = self.mode_class(mode)
+            if cls == "resolved":
+                factors[self.mode_factor(mode)] = self.displacement_factor(mode, eta).full()
+            elif cls == "enr":
+                raise NotImplementedError(
+                    "a drive coupling to an ENR group is applied through its sum-generator exponential, which is not a "
+                    "product of per-mode factors (Section 5.1.1): the factorized kernel does not apply"
+                )
+        if ion_op is None:
+            key = ("D_fact", f_ion, tuple(sorted((m, _eta_key(e)) for m, e in etas.items() if e != 0.0)))
+            return _cached(self, key, lambda: factorized_qobj(self.dims, factors))
+        return factorized_qobj(self.dims, factors)
+
     def operators(self, etas: Mapping[tuple[int, int], float] | None = None) -> CachedOperators:
         """sigma_i, a_m and, for the given {(ion, mode): eta}, the embedded D_m(i eta) by expm with the oracle checks."""
         modes = [m.mode for m in self.resolved]

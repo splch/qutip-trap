@@ -126,6 +126,14 @@ class Diagnostics:
     """The GATE_LOCAL walk's report (Section 5.4; M9a): per step the local space, the tomography, the channel summary, the
     residual displacement and the motional bookkeeping; None for a JOINT_EXACT run. ``space`` is then the joint space the run
     would have needed (the one above the guards), whose mode classes ``mode_class`` reports."""
+    kernel: str = "none"
+    """How the drive operators were held (Section 11.3 item 4; M9b): ``factorized`` (the matrix-free kernel on some segment),
+    ``assembled`` (CSR everywhere), ``mixed``, or ``none`` (no drive term integrated in this process: GATE_LOCAL's runs report
+    theirs in ``gate_local``)."""
+    workers: int = 1
+    """Processes the parallel maps of Section 11.3 item 9 used (1 = everything in-process)."""
+    propagator_cache_hits: int = 0
+    """Segments served from the engines' propagator caches (Section 11.3 item 5; M9b)."""
 
 
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:

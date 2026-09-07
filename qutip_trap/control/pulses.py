@@ -150,4 +150,139 @@ class Pulse:
         return self.t_end_s - self.t_start_s
 
 
-__all__ = ["Drive", "DriveKind", "LightShiftCouplings", "Pulse", "Tone"]
+# ---- picklable time functions (PLAN.md Section 11.3 item 9; M9b) -----------------------------------------------------------------
+# The parallel maps of Section 11.3 pickle every QobjEvo coefficient, so nothing on the pulse path may be a lambda or a closure:
+# the envelopes, phases and detunings a pulse carries, the hardware chain's shaped and filtered envelopes, the played chain's
+# rescaled ones and the scattering channel's intensity scale are all instances of the classes below (or arrays and constants).
+
+
+@dataclass(frozen=True)
+class ConstantFn:
+    """tau -> value."""
+
+    value: float
+
+    def __call__(self, tau: float) -> float:
+        return self.value
+
+
+@dataclass(frozen=True, eq=False)
+class ScaledFn:
+    """tau -> factor x fn(tau) (as a float); picklable when ``fn`` is."""
+
+    fn: Callable[[float], float]
+    factor: float = 1.0
+
+    def __call__(self, tau: float) -> float:
+        return self.factor * float(self.fn(tau))
+
+
+class SplineFn:
+    """A uniformly sampled array over [0, duration] as a clamped cubic spline (Section 5.5: programmed envelopes are sampled
+    at 20 times their bandwidth and interpolated with the default cubic spline), times ``scale``."""
+
+    __slots__ = ("_spline", "duration_s", "samples", "scale")
+
+    def __init__(self, samples: np.ndarray, duration_s: float, scale: float = 1.0) -> None:
+        from scipy.interpolate import CubicSpline
+
+        arr = np.asarray(samples, dtype=float)
+        if arr.ndim != 1 or arr.size < 2:
+            raise ValueError("a sampled envelope needs at least two samples")
+        self.samples = arr
+        self.duration_s = float(duration_s)
+        self.scale = float(scale)
+        self._spline = CubicSpline(
+            np.linspace(0.0, self.duration_s, arr.size), self.scale * arr, extrapolate=True
+        )
+
+    def __call__(self, tau: float) -> float:
+        return float(self._spline(min(max(tau, 0.0), self.duration_s)))
+
+    def __reduce__(self) -> tuple[object, ...]:
+        return (SplineFn, (self.samples, self.duration_s, self.scale))
+
+
+class InterpFn:
+    """A uniformly sampled array over [0, duration] interpolated linearly (the scattering channel's intensity scale)."""
+
+    __slots__ = ("duration_s", "grid", "samples")
+
+    def __init__(self, samples: np.ndarray, duration_s: float) -> None:
+        arr = np.asarray(samples, dtype=float)
+        if arr.ndim != 1 or arr.size < 2:
+            raise ValueError("a sampled envelope needs at least two samples")
+        self.samples = arr
+        self.duration_s = float(duration_s)
+        self.grid = np.linspace(0.0, self.duration_s, arr.size)
+
+    def __call__(self, tau: float) -> float:
+        return float(np.interp(tau, self.grid, self.samples))
+
+    def __reduce__(self) -> tuple[object, ...]:
+        return (InterpFn, (self.samples, self.duration_s))
+
+
+def as_time_function(
+    value: Callable[[float], float] | np.ndarray | float, duration_s: float, *, scale: float = 1.0
+) -> Callable[[float], float]:
+    """A pulse-local callable of tau from a constant, a callable or a uniformly sampled array over [0, duration], times
+    ``scale``: the one conversion the builder, the hardware chain and the scattering channel share; picklable when its input is."""
+    if callable(value):
+        return ScaledFn(value, scale)
+    if isinstance(value, np.ndarray):
+        return SplineFn(value, duration_s, scale)
+    return ConstantFn(scale * float(value))
+
+
+def fingerprint_pulse(pulse: Pulse, n_samples: int = 33) -> tuple[object, ...]:
+    """A value fingerprint of a pulse (the GATE_LOCAL extraction cache, the engine's propagator cache): kind, ions, beams,
+    absolute times, every tone sampled over the pulse (a callable envelope or detuning differs by its VALUES, never by the source
+    text a closure shares), the Stark shift, the crosstalk and the light-shift couplings."""
+    grid = np.linspace(0.0, pulse.duration_s, n_samples)
+
+    def sampled(v: object) -> object:
+        if callable(v):
+            return np.array([float(v(x)) for x in grid])
+        if isinstance(v, np.ndarray):
+            return np.asarray(v, dtype=float)
+        return float(v)  # type: ignore[arg-type]
+
+    d = pulse.drive
+    tones = tuple(
+        (sampled(t.detuning_hz), sampled(t.phase_rad), sampled(t.envelope_hz), t.theta_bessel_rad)
+        for t in d.tones
+    )
+    ls = None
+    if d.light_shift is not None:
+        ls = (d.light_shift.level_weights, d.light_shift.spin_flip_weight, d.light_shift.qubit_freq_hz)
+    return (
+        d.kind,
+        d.ions,
+        d.beams,
+        pulse.t_start_s,
+        pulse.t_end_s,
+        pulse.gate_id,
+        tones,
+        sampled(d.stark_shift_hz),
+        tuple(sorted((int(j), complex(e)) for j, e in d.crosstalk.items())),
+        d.rf_locked,
+        d.rf_phase_rad,
+        d.programmed,
+        ls,
+    )
+
+
+__all__ = [
+    "ConstantFn",
+    "Drive",
+    "DriveKind",
+    "InterpFn",
+    "LightShiftCouplings",
+    "Pulse",
+    "ScaledFn",
+    "SplineFn",
+    "Tone",
+    "as_time_function",
+    "fingerprint_pulse",
+]

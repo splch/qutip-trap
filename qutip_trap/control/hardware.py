@@ -39,7 +39,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.interpolate import CubicSpline
+
+from qutip_trap.control.pulses import ConstantFn, as_time_function
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Pulse
@@ -158,12 +159,7 @@ class HardwareChain:
 
 def _held(fn: Callable[[float], float], at: float) -> Callable[[float], float]:
     """A schedule frozen at its final value (the tail after a pulse)."""
-    value = float(fn(at))
-
-    def held(tau: float) -> float:
-        return value
-
-    return held
+    return ConstantFn(float(fn(at)))
 
 
 def _round_to(value: float, step: float) -> float:
@@ -185,28 +181,39 @@ def _sample_envelope(value: Envelope, duration: float, n: int) -> np.ndarray:
     return np.full(n, float(value))
 
 
+def _shape_array(x: np.ndarray, amp_step: float, saturation: float | None) -> np.ndarray:
+    """The amplitude word (rounding to ``amp_step``) and the amplifier's static nonlinearity (a tanh saturation)."""
+    y = np.round(x / amp_step) * amp_step if amp_step > 0.0 else x
+    if saturation is not None:
+        y = saturation * np.tanh(y / saturation)
+    return np.asarray(y, dtype=float)
+
+
+@dataclass(frozen=True, eq=False)
+class ShapedFn:
+    """A programmed callable envelope through the amplitude word and the amplifier saturation, sample by sample (picklable when
+    the programmed callable is; Section 11.3 item 9)."""
+
+    fn: Callable[[float], float]
+    amp_step: float
+    saturation: float | None
+
+    def __call__(self, tau: float) -> float:
+        return float(
+            _shape_array(np.asarray(float(self.fn(tau)), dtype=float), self.amp_step, self.saturation)
+        )
+
+
 def _shaped(value: Envelope, amp_step: float, saturation: float | None) -> Envelope:
     """The amplitude word and the amplifier's static nonlinearity applied to a programmed envelope without resampling it: a
     constant stays a constant, a sampled array keeps its grid, a callable is wrapped."""
     if amp_step <= 0.0 and saturation is None:
         return value
-
-    def shape(x: np.ndarray) -> np.ndarray:
-        y = np.round(x / amp_step) * amp_step if amp_step > 0.0 else x
-        if saturation is not None:
-            y = saturation * np.tanh(y / saturation)
-        return np.asarray(y, dtype=float)
-
     if callable(value):
-        fn = value
-
-        def wrapped(tau: float) -> float:
-            return float(shape(np.asarray(float(fn(tau)), dtype=float)))
-
-        return wrapped
+        return ShapedFn(value, amp_step, saturation)
     if isinstance(value, np.ndarray):
-        return shape(np.asarray(value, dtype=float))
-    return float(shape(np.asarray(float(value), dtype=float)))
+        return _shape_array(np.asarray(value, dtype=float), amp_step, saturation)
+    return float(_shape_array(np.asarray(float(value), dtype=float), amp_step, saturation))
 
 
 def _constant(value: Envelope) -> float | None:
@@ -218,15 +225,7 @@ def _constant(value: Envelope) -> float | None:
 
 def _as_function(value: Envelope, duration: float) -> Callable[[float], float]:
     """A callable of the pulse-local time from an envelope, splining a sampled array as the builder does (Section 5.5)."""
-    if callable(value):
-        fn = value
-        return lambda tau: float(fn(tau))
-    if isinstance(value, np.ndarray):
-        arr = np.asarray(value, dtype=float)
-        spline = CubicSpline(np.linspace(0.0, duration, arr.size), arr, extrapolate=True)
-        return lambda tau: float(spline(min(max(tau, 0.0), duration)))
-    const = float(value)
-    return lambda tau: const
+    return as_time_function(value, duration)
 
 
 def _stark_reference(pulse: Pulse, power: int) -> tuple[float, tuple[float, ...]]:
@@ -240,6 +239,21 @@ def _stark_reference(pulse: Pulse, power: int) -> tuple[float, tuple[float, ...]
     st = pulse.drive.stark_shift_hz
     st_ref = float(st(float(grid[k]))) if callable(st) else float(st)
     return st_ref, tuple(float(arr[k]) for arr in sampled)
+
+
+@dataclass(frozen=True, eq=False)
+class PlayedStarkFn:
+    """delta_ref x mean_tones (|Omega_played(tau)|/Omega_ref)^p: the Stark shift that follows the played light (picklable)."""
+
+    st_ref: float
+    fns: tuple[Callable[[float], float], ...]
+    refs: tuple[float, ...]
+    power: int
+
+    def __call__(self, tau: float) -> float:
+        return self.st_ref * float(
+            np.mean([(abs(fn(tau)) / ref) ** self.power for fn, ref in zip(self.fns, self.refs)])
+        )
 
 
 def _stark_played(
@@ -264,11 +278,7 @@ def _stark_played(
         )
     fns = [_as_function(env, duration) for env, _ in pairs]
     scales = [ref for _, ref in pairs]
-
-    def shift(tau: float) -> float:
-        return st_ref * float(np.mean([(abs(fn(tau)) / ref) ** power for fn, ref in zip(fns, scales)]))
-
-    return shift
+    return PlayedStarkFn(st_ref, tuple(fns), tuple(scales), int(power))
 
 
 def _low_pass(samples: np.ndarray, dt: float, tau: float, y0: float) -> np.ndarray:

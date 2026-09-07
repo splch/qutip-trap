@@ -1626,6 +1626,42 @@ records:
     source: "check_scaling.py 6; tests/test_gate_local.py"
     equation: "register populations (00, 01, 10, 11) JOINT_EXACT (0.508139, 0.000489, 0.001267, 0.490104) against GATE_LOCAL (0.508170, 0.000484, 0.001241, 0.490105), max difference 3.0e-5 against the reported bound 2.5e-4 (residual displacement 9.3e-5, the carrier steps' frozen-mode excitation 1.6e-4); register 1 - F 2.333e-3 against 2.287e-3; the MS step on the 572-dimensional gate-local space [2, 2, 11, 13]: average gate infidelity 1.14e-4, depolarizing rate 1.42e-4, twirl p_II 0.99986, residual |alpha| per spin eigenstate 2.7e-3 (rocking) and 9.1e-3 (COM), purity deficit of the reduced motional state 4.0e-2 and 3.4e-2, tracked nbar 0.02027 and 0.01726 against the joint run's branch-weighted reduced state; 344 engine runs (16 inputs x 3 branches per gate step)"
     corrected_form: "the first M9a build compared the tracked occupation with the joint run's FIRST branch (the vacuum Fock branch, nbar 4e-5 after the gate) instead of the branch-weighted reduced state; the Section 9.8 row is a comparison of reduced states, so the weights of the initial mixture belong on the joint side"
+  # ---- Section 11 / 9.9 anchors reproduced by M9b (scaling II) ----------------------------------------------
+  - id: anchor.m9b.factorized_kernel_exactness
+    symbol: "sigma_+ (x) prod_m D_m as factors"
+    tag: recomputed here
+    section: "11.3 item 4; 5.1.1; 5.2"
+    source: "dynamics/kernels.py; hilbert/space.py drive_operator_factorized; check_kernel.py 1; tests/test_kernel.py"
+    equation: "the drive operator held as its tensor factors (sigma_+ on the ion's factor, the oracle-checked per-mode exponentials D_m(i eta_m) on the resolved modes) and applied axis by axis (the ion factor a slice of the source level into the target level, every mode factor one batched matrix product) is the assembled operator to round-off: |F psi - A psi| = 2.4e-16 on the Bell space [2, 2, 10, 11] and 5.0e-16 at dimension 2048, max|F - A| = 0 element by element, the adjoint, the factor-wise F^dag F (9e-15) and the trace exact; registered as a QuTiP data-layer type so that QobjEvo, sesolve, mcsolve and the dop853/vern9 ladder run unchanged on it; the 20 us single-loop pulse through the engine with the kernel forced each way gives |psi_assembled - psi_factorized| = 2.2e-13 with identical populations (0.491426, 0.0252973, 0.0252973, 0.4579794)"
+    corrected_form: "an ENR group's sum-generator exponential is not a product of per-mode factors (Section 5.1.1), so a drive coupling to an ENR mode is assembled whatever the option says; a sum of two factorized operators has no factorized form and converts to Dense (the reason QobjEvo.compress must never merge the drive terms: every term carries its own coefficient object), and every mesolve segment builds the assembled CSR operator because the Liouvillian is formed from the matrix (Section 5.3)"
+  - id: anchor.m9b.cost_model_constants
+    symbol: "cost per drive term (Section 11.2)"
+    tag: recomputed here
+    section: "11.1; 11.2; 11.3 item 4"
+    source: "bench_ms_timing_v5.py part 1; dynamics/kernels.py kernel_costs_us; check_kernel.py 2"
+    equation: "one right-hand side through QobjEvo.matmul (dispatch included), least-squares fit over eleven spaces from dimension 48 to 8192: a factorized term costs about 2.9 us per factor step plus 0.58 ns per complex multiply-add on the D/d_ion amplitudes of the source level, an assembled CSR term 0.57 ns per non-zero (2^{N-1} prod_m d_m^2 for two-level ions); the kernel carries 2.0 us + 2.5 us per step + 0.6 ns per multiply-add against 0.5 us + 0.57 ns per non-zero, which reproduces the measured choice on every space: assembled at dimensions 48 (0.7 against 4.7 us) and 256 (5.2 against 8.2), factorized from the 440-dimensional Bell space (14.3 against 9.8) upward, 299 against 24 us at 2048 and 1196 against 69 us at 8192 (four ions, three modes at d_m = 8)"
+    corrected_form: "Section 11.3's '24 against 512 amplitudes' counts multiply-adds; the measured gain is smaller and set by the fixed cost of each NumPy call (about 3 us per factor), so the auto rule is a measured crossover and not the amplitude ratio, and the assembled operator stays the right choice below dimension 440"
+  - id: anchor.m9b.propagator_cache
+    symbol: "U(t, t_0) on internal-state-only spaces"
+    tag: recomputed here
+    section: "5.3; 11.3 item 5"
+    source: "dynamics/engine.py _segment_propagator; check_kernel.py 5; tests/test_parallel.py"
+    equation: "on a space with every mode frozen the segment propagator is integrated once as a D x D operator through the Section 5.3 ladder (an operator-valued state under sesolve) and applied to every initial state, cached per engine on the built Hamiltonian's value fingerprint (space, frequencies, the pulses' sampled tones, the sample's offsets and trajectories, the shifts); four inputs through one GPi2 segment cost one integration and three matrix products with |psi_cache - psi_ode| = 0; the tomography of a carrier step (3 frozen-mode Fock branches x 16 inputs) costs 3 integrations and 45 cache hits, one integration per distinct Debye-Waller factor"
+    corrected_form: "the plan's 'propagator with piecewise_t' route (a piecewise-constant generator with a reported segmentation error) is not needed: QuTiP 5 integrates the time-dependent propagator exactly, so no segmentation approximation is declared; the sample key branch_weight is left out of the fingerprint because it steers the margin check and no term of H"
+  - id: anchor.m9b.workers_reproducibility
+    symbol: "1 against N workers"
+    tag: recomputed here
+    section: "3.4; 9.9; 9.17 'Seeds and reproducibility'; 11.3 item 9"
+    source: "dynamics/engine.py (MCSolver.run over the ensemble); dynamics/parallel.py; check_kernel.py 4; tests/test_parallel.py"
+    equation: "the trajectories of a segment run as one MCSolver.run over the ensemble of their kets (mixed initial conditions, one trajectory per ket, the keyed seed list of Section 3.4) through QuTiP's map, matched back to their kets by seed: six keyed trajectories of the 20 us single-loop pulse on the Bell space heated at 2.4e4 quanta/s (ten jumps among them) over 1 and 6 workers give |rho_serial - rho_parallel| = 0, per-trajectory |psi_s - psi_p| = 0 and identical jump records (36 s in-process against 11 s over six workers); the serial and the parallel run() of the GPi2 and Bell circuits agree shot by shot and to 1e-12 in the register"
+    corrected_form: "the plan's 4.4e-16 completion-order discrepancy of MultiTrajResult does not arise because the engine averages the trajectories itself in keyed order; SolverOptions.map defaulted to 'parallel' since M0 while the engine ran every trajectory serially until M9b; a cap the truncation monitor grows on one branch is reported and no longer carried into the later branches, so the result is independent of the worker count; the coefficient counter cannot see the workers' calls, so a segment integrated over workers reports no right-hand-side count"
+  - id: anchor.m9b.section_11_1_kernel_rows
+    symbol: "Section 11.1 table, factorized column"
+    tag: recomputed here
+    section: "11.1; 11.3 item 4; 10 (M9b acceptance)"
+    source: "bench_ms_timing_v5.py part 2; tests/test_kernel.py (slow)"
+    equation: "the 20 us pulse of the Section 11.1 fixture with one coefficient per drive term, dop853 at atol 1e-10, rtol 1e-8: factorized 0.25 / 0.45 / 1.11 / 3.15 s against CSR 0.04 / 0.35 / 4.76 / 42.49 s, unmerged dense 0.09 / 0.34 / 11.61 / 109.50 s and the merged dense operator of the plan's table 0.03 / 0.12 / 1.01 / 23.52 s at dimensions 48 / 256 / 864 / 2048 (vern9 within 25 %); every construction's final state agrees with the CSR one to 4e-13 under dop853 and to 6e-7 between the integrators; per right-hand side the factorized terms cost 13, 22, 45 and 90 us against 2, 17, 195 and 1208 us CSR"
+    corrected_form: "the plan's column for Sections 11.2 to 11.4 was the merged dense operator, which a shared coefficient function produces and the real builder cannot (every drive term carries its own scale factors); against it the kernel is 7x faster at dimension 2048 and slower below 864, so the 'twentyfold' amplitude ratio of Section 11.3 is a measured 14x against CSR at 2048 and a loss at 48 and 256 that the auto rule avoids"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

@@ -17,6 +17,17 @@ trajectory is identical under the same seed whatever the worker count; the jump 
 ``Traces.jumps``. Before segmentation the schedule passes through the control hardware chain of Section 7.10
 (``control/hardware.py``): quantized tone words, low-pass-filtered envelopes with their tails, jittered train starts.
 
+Milestone M9b adds the scaling machinery of Section 11.3 items 4, 5 and 9. The drive operators are held factorized (the
+matrix-free kernel of ``dynamics/kernels.py``) whenever ``BuilderOptions.kernel`` allows it and the segment is integrated as
+kets (``sesolve`` or ``mcsolve``); every ``mesolve`` segment builds the assembled CSR operator, because there the Liouvillian is
+formed from the matrix (Section 5.3). The trajectories of a segment run as ONE ``MCSolver.run`` over the ensemble of their
+kets (mixed initial conditions, one trajectory per ket, the keyed seed list of Section 3.4) through QuTiP's serial or parallel
+map (``SolverOptions.map``, ``SolverOptions.workers``); the per-trajectory results are matched back by seed, so the ensemble is
+identical whatever the worker count and the per-trajectory final states are reported for the Section 9.9 test. On an
+internal-state-only space (every mode frozen: a carrier pulse of a GATE_LOCAL step, an idle with a Stark shift) the segment
+propagator U(t, t_0) is integrated once as a D x D operator and applied to every initial state, cached per engine on the built
+Hamiltonian's fingerprint (``SolverOptions.propagator_cache``), never on a joint space (Section 11.3 item 5).
+
 Two exact shortcuts (M8) replace ODE solves where none is needed, both pinned against the ODE path in
 ``tests/test_engine_numerics.py``: a segment whose Hamiltonian is constant (an idle interval, a zero-envelope pulse) is
 propagated by its diagonal phases, or in the frame rotating with H_mot when eigenoperator collapse operators are present
@@ -36,6 +47,7 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.dynamics.channels import CollapseOp
+from qutip_trap.dynamics.parallel import worker_count
 from qutip_trap.hilbert.operators import required_margin
 
 if TYPE_CHECKING:
@@ -159,10 +171,21 @@ class SolverOptions:
     beyond (Section 5.4), the extracted map applied by Kraus sampling."""
     register_ensemble: int = 64
     """Members of the pure-state ensemble of a GATE_LOCAL register above ``register_dm_max_qubits`` qubits."""
+    workers: int | None = None
+    """Processes for the parallel maps of Section 11.3 item 9 (M9b): the trajectories of a segment in the engine, the
+    initial-mixture branches and dynamical samples of ``run()``, the tomography inputs of GATE_LOCAL. None = every CPU QuTiP sees
+    (``qutip.settings.available_cpu_count``), 1 = in-process; ``map="serial"`` runs everything in-process whatever this says.
+    A task that already runs in a worker runs its own trajectories in-process (never a nested pool)."""
+    propagator_cache: bool = True
+    """Internal-state-only spaces (every mode frozen; Section 11.3 item 5, M9b): the segment propagator is integrated once as a
+    D x D operator through the same ladder and applied to every initial state, cached per engine on the built Hamiltonian's
+    fingerprint; False integrates every state through the ODE ladder (the reference)."""
 
     def __post_init__(self) -> None:
         if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
             raise ValueError("tolerances and nsteps must be positive")
+        if self.workers is not None and self.workers < 1:
+            raise ValueError("workers is a positive process count or None (every CPU)")
         if not 0.0 < self.map_accuracy < 1.0 or not 0.0 <= self.crosstalk_threshold <= 1.0:
             raise ValueError(
                 "map_accuracy is a fraction in (0, 1) and crosstalk_threshold a Rabi ratio in [0, 1]"
@@ -277,6 +300,9 @@ class SegmentReport:
     n_collapse_ops: int = 0
     channels: tuple[str, ...] = ()
     """The channel names active on the segment (deduplicated by kind)."""
+    kernel: str = "none"
+    """How the segment's drive operators were held (Section 11.3 item 4; M9b): ``factorized``, ``assembled``, ``mixed`` or
+    ``none`` (no drive term)."""
 
 
 @dataclass(frozen=True)
@@ -297,6 +323,23 @@ class EngineReport:
     """Per resolved mode, the highest Fock index populated above the boundary threshold during any pulse (Section 5.5; M9a)."""
     margin_reached: dict[int, int] = field(default_factory=dict)
     """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during the pulses (Section 5.1.1)."""
+    kernel: str = "none"
+    """``factorized`` when any segment held its drive operators factorized (Section 11.3 item 4; M9b), ``assembled`` when every
+    segment with drive terms assembled them, ``none`` without drive terms."""
+    map: str = "serial"
+    """The map the trajectories ran through (Section 11.3 item 9): ``serial``, ``parallel`` or ``loky``."""
+    workers: int = 1
+    """Processes the trajectory map used (1 in-process)."""
+    propagator_solves: int = 0
+    """Segment propagators integrated on internal-state-only spaces (Section 11.3 item 5)."""
+    propagator_cache_hits: int = 0
+    """Segments served from the engine's propagator cache."""
+    trajectory_finals: tuple[Qobj, ...] = ()
+    """On the trajectory path, the final ket of every trajectory after the last segment, in the keyed order (the per-trajectory
+    identity of Section 9.9)."""
+    trajectory_seeds: tuple[tuple[int, ...], ...] = ()
+    """The spawn keys of the trajectories' seeds on the last trajectory segment, in the same order (every segment keys its own
+    seeds by (sample, trajectory, 0, 0, "mcsolve[segment]"))."""
 
     @property
     def approximations(self) -> tuple[str, ...]:
@@ -368,6 +411,20 @@ class JointExactEngine:
     The result is the same state to the solver tolerance; the segment reports integrator ``exact``. False forces the ODE
     ladder on every segment (the Section 5.3 step-density measurements)."""
     last_report: EngineReport | None = None
+    _propagators: dict[tuple[object, ...], _Propagator] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    """The propagator cache of Section 11.3 item 5 (M9b), keyed by the built Hamiltonian's fingerprint and the stored times."""
+
+    def __getstate__(self) -> dict[str, object]:
+        # an engine shipped to a worker (the parallel tomography and run() maps) carries neither its report nor its cache
+        state = dict(self.__dict__)
+        state["last_report"] = None
+        state["_propagators"] = {}
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        self.__dict__.update(state)
 
     def process_tomography(
         self,
@@ -455,6 +512,52 @@ class JointExactEngine:
                 current_space = new_space
 
     # ---- internals ---------------------------------------------------------------------------------------------------
+
+    def _segment_propagator(
+        self, built: object, times: np.ndarray, options: SolverOptions, largest_mode: int
+    ) -> tuple[_Propagator, bool]:
+        """U(t_k, t_0) at every stored time of a segment on an internal-state-only space, from the cache or by one integration of
+        the identity through the Section 5.3 ladder (Section 11.3 item 5; M9b). Returns (propagator, cache hit)."""
+        from qutip_trap.dynamics.evolve import evolve
+
+        h = built.H  # type: ignore[attr-defined]
+        key = (
+            built.fingerprint,  # type: ignore[attr-defined]
+            tuple(float(x) for x in np.round(times, 15)),
+            options.atol,
+            options.rtol,
+            options.integrators,
+            largest_mode,
+        )
+        cached = self._propagators.get(key)
+        if cached is not None:
+            return cached, True
+        dims = [int(d) for d in h.dims[0]]
+        identity = qt.Qobj(np.eye(h.shape[0], dtype=complex), dims=[dims, dims])
+        ev = evolve(
+            h,
+            identity,
+            times,
+            options=options,
+            store_states=True,
+            omega_max_rad_s=built.omega_max_rad_s or None,  # type: ignore[attr-defined]
+            largest_mode_dimension=largest_mode,
+            counter_calls=built.counter.count,  # type: ignore[attr-defined]
+            calls_per_rhs=built.n_drive_terms,  # type: ignore[attr-defined]
+            propagator=True,
+        )
+        assert ev.states is not None
+        prop = _Propagator(
+            unitaries=tuple(np.asarray(st.full()) for st in ev.states),
+            integrator=ev.integrator,
+            atol=ev.atol,
+            rhs_evaluations=ev.rhs_evaluations,
+            retries=ev.retries,
+        )
+        if len(self._propagators) >= PROPAGATOR_CACHE_MAX:
+            self._propagators.clear()
+        self._propagators[key] = prop
+        return prop, False
 
     def _segment_channels(
         self,
@@ -551,6 +654,23 @@ class JointExactEngine:
         static_ops: list[CollapseOp] = list(self.channels)
         if self.device_channels:
             static_ops.extend(device.noise.channels(device, space))
+        # the Lindblad method the dissipative segments will take, and whether a segment CAN carry collapse operators built from
+        # its pulses: decided before the build so that the drive operators are assembled exactly where a Liouvillian is formed
+        # (Section 5.3) and held factorized everywhere else (Section 11.3 item 4; M9b)
+        lindblad_resolved: str = options.lindblad_method
+        if lindblad_resolved == "auto":
+            lindblad_resolved = "mesolve" if space.dimension <= options.mesolve_dimension_max else "mcsolve"
+        pulse_channels_possible = bool(self.device_channels) and (
+            bool(options.scattering_channels)
+            or (bool(options.intensity_noise_channels) and device.noise.intensity_white_density() > 0.0)
+        )
+        map_kind = options.map
+        n_workers = worker_count(options)
+        workers_used = 1
+        propagator_solves = 0
+        propagator_hits = 0
+        trajectory_finals: list[qt.Qobj] = []
+        trajectory_seeds: list[tuple[int, ...]] = []
         # segments at every pulse boundary and idle boundary; the state is given at the schedule's declared start
         # (``Schedule.t0_s``, a GATE_LOCAL step's start) or at min(0, the first cut) as M2 to M8 did
         starts = [p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle]
@@ -613,12 +733,17 @@ class JointExactEngine:
             if b <= a:
                 continue
             active = [p for p in sched.pulses if p.t_start_s <= a + 1e-15 and p.t_end_s >= b - 1e-15]
+            dissipative_seg = bool(static_ops) or (bool(active) and pulse_channels_possible)
+            mesolve_seg = kets is None or (dissipative_seg and lindblad_resolved == "mesolve")
+            bopts_seg = (
+                replace(bopts, kernel="assembled") if (mesolve_seg and bopts.kernel != "assembled") else bopts
+            )
             built = build_hamiltonian(
                 device,
                 active,
                 space,
                 sample=sample,
-                options=bopts,
+                options=bopts_seg,
                 qubit_shifts_hz=self.qubit_shifts_hz,
                 frozen_n=frozen_n,
             )
@@ -669,7 +794,40 @@ class JointExactEngine:
                 rhs_evals = None
                 retries_seg = closed.retries
             elif not c_ops:
-                if kets is not None:
+                if (
+                    kets is not None
+                    and options.propagator_cache
+                    and not space.resolved
+                    and space.enr_group is None
+                ):
+                    # an internal-state-only space (Section 11.3 item 5): one propagator serves every initial state
+                    prop, hit = self._segment_propagator(built, times, options, largest_mode)
+                    propagator_hits += int(hit)
+                    propagator_solves += int(not hit)
+                    kets_p: list[qt.Qobj] = []
+                    exp_p = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
+                    red_p: list[np.ndarray] = []
+                    for psi, w_k in zip(kets, weights):
+                        vec = np.asarray(psi.full()).reshape(-1)
+                        states_k = [qt.Qobj((u @ vec).reshape(-1, 1), dims=psi.dims) for u in prop.unitaries]
+                        kets_p.append(states_k[-1])
+                        for k, op in zip(e_keys, e_list):
+                            exp_p[k] += w_k * np.array([qt.expect(op, st) for st in states_k], dtype=complex)
+                        red_p.append(
+                            w_k * np.array([space.internal_marginal(st).full() for st in states_k[sel]])
+                        )
+                    kets = kets_p
+                    for k in e_keys:
+                        expect_all[k].append(exp_p[k][sel])
+                    dims_int = [list(space.ion_dims), list(space.ion_dims)]
+                    for arr in np.sum(np.stack(red_p), axis=0):
+                        reduced.append(qt.Qobj(arr, dims=dims_int))
+                    integrator = "propagator[cached]" if hit else f"{prop.integrator}[propagator]"
+                    atol_used = prop.atol
+                    rhs_evals = None if hit else prop.rhs_evaluations
+                    retries_seg = prop.retries
+                    seg_method = "sesolve"
+                elif kets is not None:
                     new_kets: list[qt.Qobj] = []
                     exp_acc = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
                     red_acc: list[np.ndarray] = []
@@ -777,6 +935,9 @@ class JointExactEngine:
                     if len(kets) == 1 and options.ntraj > 1:
                         kets = [kets[0]] * options.ntraj
                         weights = [1.0 / options.ntraj] * options.ntraj
+                    seg_map = map_kind if len(kets) > 1 else "serial"
+                    seg_workers = min(n_workers, len(kets)) if seg_map != "serial" else 1
+                    workers_used = max(workers_used, seg_workers)
                     mc_opts = {
                         "method": options.integrators[0],
                         "atol": atol_mc,
@@ -789,23 +950,44 @@ class JointExactEngine:
                         "norm_tol": 1e-6,
                         "norm_steps": 50,
                         "progress_bar": "",
-                        "map": "serial",
+                        "map": seg_map,
+                        "num_cpus": seg_workers,
                     }
                     solver = qt.MCSolver(built.H, c_ops, options=mc_opts)
+                    # one trajectory per ket of the ensemble, each with its keyed seed (Section 3.4), through QuTiP's map:
+                    # mixed initial conditions with an explicit per-state trajectory count; the results come back in completion
+                    # order and are matched to their kets by seed (Section 11.3 item 9; M9b)
+                    seeds_k = [
+                        seeds.child(sample.sample_id, k_traj, 0, 0, f"mcsolve[{seg_index}]")
+                        for k_traj in range(len(kets))
+                    ]
+                    if len(kets) == 1:
+                        res = solver.run(kets[0], times, ntraj=1, e_ops=e_list, seeds=seeds_k)
+                    else:
+                        res = solver.run(
+                            [(psi, 1.0 / len(kets)) for psi in kets],
+                            times,
+                            ntraj=[1] * len(kets),
+                            e_ops=e_list,
+                            seeds=seeds_k,
+                        )
+                    by_seed = {tuple(int(x) for x in sd.spawn_key): j for j, sd in enumerate(res.seeds)}
                     new_kets = []
                     exp_acc = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
                     red_acc = []
-                    for k_traj, (psi, w_k) in enumerate(zip(kets, weights)):
-                        seed = seeds.child(sample.sample_id, k_traj, 0, 0, f"mcsolve[{seg_index}]")
-                        res = solver.run(psi, times, ntraj=1, e_ops=e_list, seeds=[seed])
-                        traj = res.trajectories[0]
+                    trajectory_seeds = []
+                    for k_traj, w_k in enumerate(weights):
+                        key_k = tuple(int(x) for x in seeds_k[k_traj].spawn_key)
+                        j = by_seed[key_k]
+                        traj = res.trajectories[j]
                         new_kets.append(traj.final_state)
+                        trajectory_seeds.append(key_k)
                         for idx, k in enumerate(e_keys):
                             exp_acc[k] += w_k * np.asarray(traj.expect[idx])
                         red_acc.append(
                             w_k * np.array([space.internal_marginal(st).full() for st in traj.states[sel]])
                         )
-                        for t_c, which in zip(res.col_times[0], res.col_which[0]):
+                        for t_c, which in zip(res.col_times[j], res.col_which[j]):
                             jumps.append((float(t_c), f"traj{k_traj}:{seg_ops[int(which)].channel}"))
                     kets = new_kets
                     for k in e_keys:
@@ -814,7 +996,8 @@ class JointExactEngine:
                     for arr in np.sum(np.stack(red_acc), axis=0):
                         reduced.append(qt.Qobj(arr, dims=dims_int))
                     integrator, atol_used = options.integrators[0], atol_mc
-                    rhs_evals = built.rhs_evaluations
+                    # the coefficient counter lives in this process: under a parallel map the workers' calls are not seen
+                    rhs_evals = built.rhs_evaluations if seg_map == "serial" else None
                     seg_method = "mcsolve"
                     method_used = "mcsolve"
             if seg_method == "mesolve":
@@ -853,6 +1036,7 @@ class JointExactEngine:
                     method=seg_method,
                     n_collapse_ops=len(seg_ops),
                     channels=kinds,
+                    kernel=built.kernel,
                 )
             )
             if active:
@@ -881,6 +1065,9 @@ class JointExactEngine:
                         need = required_margin(eta_seg[m])
                         if margin < need:
                             raise _BoundaryTrip(m, bpop.get(m, 0.0), add=need - margin, reason="margin")
+        if method_used == "mcsolve" and kets is not None:
+            # the trajectories' final kets after EVERY segment, in the keyed order (Section 9.9's per-trajectory identity)
+            trajectory_finals = list(kets)
         times_arr = np.concatenate(times_all) if times_all else np.array([t0])
         expect = {k: np.concatenate(v) if v else np.array([]) for k, v in expect_all.items()}
         # ---- the final state ----------------------------------------------------------------------------------
@@ -942,6 +1129,13 @@ class JointExactEngine:
             notes=tuple(notes),
             populated_n_max=populated_max,
             margin_reached=margin_reached,
+            kernel=_kernel_summary(segments),
+            map=map_kind if method_used == "mcsolve" else "serial",
+            workers=workers_used,
+            propagator_solves=propagator_solves,
+            propagator_cache_hits=propagator_hits,
+            trajectory_finals=tuple(trajectory_finals),
+            trajectory_seeds=tuple(trajectory_seeds),
         )
         return Traces(
             times_s=times_arr,
@@ -961,6 +1155,31 @@ class JointExactEngine:
 
 EIGH_DIMENSION_MAX = 4096
 """Above this joint dimension a constant but non-diagonal Hamiltonian goes through the ODE ladder rather than a dense eigh."""
+
+PROPAGATOR_CACHE_MAX = 256
+"""Segment propagators an engine keeps (Section 11.3 item 5); the cache is cleared when full."""
+
+
+@dataclass(frozen=True)
+class _Propagator:
+    """U(t_k, t_0) at the stored times of one segment on an internal-state-only space, with how it was integrated."""
+
+    unitaries: tuple[np.ndarray, ...]
+    integrator: str
+    atol: float
+    rhs_evaluations: int | None
+    retries: tuple[str, ...]
+
+
+def _kernel_summary(segments: Sequence[SegmentReport]) -> str:
+    kinds = {seg.kernel for seg in segments if seg.kernel != "none"}
+    if not kinds:
+        return "none"
+    if kinds == {"assembled"}:
+        return "assembled"
+    if kinds == {"factorized"}:
+        return "factorized"
+    return "mixed"
 
 
 @dataclass(frozen=True)

@@ -6,8 +6,9 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
 and state preparation), M4 (two-ion entangling gates), M5 (readout), M6 (end-to-end circuits in JOINT_EXACT), M7 (noise
-and error channels), M8 (calibration emulation) and M9a (scaling I: resolved-mode selection, frozen spectators, the ENR
-option, GATE_LOCAL).** The
+and error channels), M8 (calibration emulation), M9a (scaling I: resolved-mode selection, frozen spectators, the ENR
+option, GATE_LOCAL) and M9b (scaling II: the matrix-free drive kernel, trajectory, branch and sample parallelism, the
+propagator cache).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -377,6 +378,65 @@ the entanglement infidelity, Section 6.8), the Choi matrices are trace preservin
 gate reproduce the joint run's branch-weighted reduced state; the walk costs 344 engine runs, 48 of them on the 572-dimensional
 gate-local space of the entangling step (16 inputs times the three motional branches above the 1e-3 weight cutoff), which is the
 16 x n_traj price Section 11.2 charges and the reason the matrix-free kernel of M9b is next.
+
+M9b is the second scaling milestone (Section 10): the matrix-free kernel of Section 11.3 item 4, the parallelism of item 9 and
+the propagator cache of item 5, none of them an approximation. The drive operator sigma_+^i (x) prod_m D_m(i eta_im) of Section
+5.2 is a tensor product, and `dynamics/kernels.py` holds it as one (`FactorizedOperator`: the space's dims, a small dense matrix
+per factor the term acts on, a scalar) and applies it axis by axis: the ion factor with its single non-zero element (sigma_+,
+sigma_-) is a slice of the source level's block into the target level, a diagonal ion factor (a light-shift projector) a
+broadcast, every mode factor one batched matrix product along its axis, with no transpose and no assembled matrix anywhere. The
+type is a QuTiP data-layer type registered with the dispatchers (`matmul` on a Dense state, the factor-wise `matmul` of two
+factorized operators so that c^dag c of a factorized collapse operator stays factorized, scalar `mul` and `neg`, `adjoint`,
+`conj`, `transpose`, `trace`, `iszero`, `isherm`, `isequal`, `expect`, conversions to Dense and CSR), so the one builder, `sesolve`,
+`mcsolve` and the dop853 -> vern9 ladder run unchanged on it (`HilbertSpace.drive_operator_factorized`, `BuilderOptions.kernel`,
+`BuiltHamiltonian.kernel`, `SegmentReport.kernel`, `Diagnostics.kernel`). The factors ARE the oracle-checked per-mode exponentials of
+Section 5.1.1, so the two constructions are the same operator to round-off (|F psi - A psi| = 2.4e-16 on the Bell space, 5e-16 at
+dimension 2048, |psi_assembled - psi_factorized| = 2.2e-13 after a 20 us entangling pulse); an ENR-coupled drive is never factorized
+(its sum-generator exponential is not a product of factors), every `mesolve` segment assembles (the Liouvillian is formed from the
+matrix, Section 5.3), and a sum of two factorized operators converts to Dense, which is why the builder gives every drive term its
+own coefficient object: `QobjEvo.compress` merges terms with equal coefficients through `Qobj.__eq__`, and that merge would
+assemble. The `auto` choice is the Section 11.2 cost model with constants measured through `QobjEvo.matmul` on eleven spaces
+(`bench_ms_timing_v5.py`): a factorized term costs about 2.9 us per factor step plus 0.58 ns per multiply-add, a CSR term 0.57 ns per
+non-zero, so the crossover sits between the 256- and 440-dimensional spaces (assembled 0.7 against 4.7 us per term at dimension 48,
+5.2 against 8.2 at 256, 14.3 against 9.8 at 440, 299 against 24 at 2048, 1196 against 69 at 8192 for four ions with three modes).
+The Section 11.1 table is the acceptance test (`tests/test_kernel.py`, `outputs/bench_ms_timing_v5.out`): with one coefficient per
+term, the structure the real builder produces, the 20 us pulse at dimension 2048 integrates in 3.2 s factorized against 42.5 s CSR
+and 110 s dense (the plan's merged dense operator, one shared coefficient, 23.5 s), 1.1 against 4.8 s at 864 (where the merged
+dense operator's 1.0 s is still the fastest), and at 48 and 256 the assembled operators win, as the cost model says; the final
+states of every construction agree to 4e-13 under dop853 and to the plan's 6e-7 between the two integrators. What the plan's '24
+against 512 amplitudes' does not capture is that each NumPy call costs a few microseconds whatever the dimension, so the kernel is
+an auto choice with a measured crossover, not a replacement, and the gain grows with the space (14x against CSR per right-hand
+side at dimension 2048, 19x at 8192).
+
+Parallelism (Section 11.3 item 9; `dynamics/parallel.py`) goes through QuTiP's own maps, one level at a time. The trajectories
+of a segment run as ONE `MCSolver.run` over the ensemble of their kets (mixed initial conditions, one trajectory per ket, the keyed
+seed list of Section 3.4) with `SolverOptions.map` and `SolverOptions.workers` (None = every CPU QuTiP sees); the results come back
+in completion order and are matched to their kets by seed, so the ensemble is identical whatever the worker count, and the
+per-trajectory final states are reported (`EngineReport.trajectory_finals`, `trajectory_seeds`) for the Section 9.9 test: six
+keyed trajectories of a pulse heated at 2.4e4 quanta/s (ten jumps among them) over 1 and 18 workers give the same reduced
+register (difference 0, against the plan's 1e-12 tolerance), the same jump records and per-trajectory final states identical to
+the last bit, 36 s in-process against 11 s over six workers (`tests/test_parallel.py`, `check_kernel.py` 4). The (sample, branch) engine runs of `run()` and the input x branch runs of a GATE_LOCAL step with resolved
+modes are spread over the same workers (`Diagnostics.workers`), a task that runs in a worker running its own trajectories
+in-process; the serial and the parallel `run()` of the Bell and GPi2 circuits agree shot by shot and to 1e-12 in the register, which
+required one behavioural change: a cap the truncation monitor grows on one branch is reported (`cap_growth`) and no longer carried
+into the later branches, so every branch starts from the selected space. Everything crossing a process boundary pickles: the
+plan's rule that the builder never emits closures is now true of the whole pulse path (`control/pulses.py`: `ConstantFn`,
+`ScaledFn`, `SplineFn`, `InterpFn`, `as_time_function`, and the picklable beat-phase, Fourier-sine, cosine-vertex, shaped and
+played-Stark callables that replaced the lambdas of the builder, the hardware chain, the played chain, the shaping solvers and the
+scattering channel), and the CI test of item 9 runs `mcsolve` with `map="parallel"` on a `QobjEvo` the real builder emitted with
+the realistic hardware chain, a sampled intensity trajectory and the factorized kernel. The coefficient counter lives in the parent
+process, so a segment integrated over workers reports no right-hand-side count. The propagator cache (Section 11.3 item 5) applies
+to internal-state-only spaces only: the segment propagator U(t, t_0) is integrated once as a D x D operator (an operator-valued
+state under `sesolve`, the same ladder) and applied to every initial state, cached per engine on the built Hamiltonian's value
+fingerprint (`BuiltHamiltonian.fingerprint`: the space, the frequencies, the pulses' sampled tones, the sample's offsets and
+trajectories, the shifts, never the branch weight); four inputs through one GPi2 segment cost one integration and three matrix
+products with |psi_cache - psi_ode| = 0, and the tomography of a carrier step (three frozen-mode Fock branches x sixteen inputs)
+costs 3 integrations and 45 cache hits (`SegmentReport.integrator` reads `dop853[propagator]` or `propagator[cached]`,
+`Diagnostics.propagator_cache_hits`). QuTiP 5 integrates the time-dependent propagator exactly, so the plan's `piecewise_t` route
+with its segmentation error is not used. Two more plan facts corrected by measurement: `SolverOptions.map` defaulted to
+`"parallel"` since M0 but the engine ran every trajectory serially until now, and the plan's 4.4e-16 completion-order discrepancy
+does not arise because the engine averages the trajectories itself in keyed order (`MultiTrajResult`'s own running sums are not
+used).
 
 Plan inconsistencies surfaced by M8 (ledger `conv.*` records of the calibration layer, `anchor.m8.*`): a resonant sideband
 pulse light-shifts the qubit through its own off-resonant carrier coupling by Omega^2/(2 omega_m) (1.70 kHz at Omega/2pi =

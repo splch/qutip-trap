@@ -52,6 +52,7 @@ def _solve(
     nsteps: int,
     max_step: float,
     store_states: bool,
+    propagator: bool = False,
 ) -> qt.solver.Result:
     options: dict[str, object] = {
         "method": method,
@@ -69,7 +70,8 @@ def _solve(
     with warnings.catch_warnings():
         # scipy's dop853 warns before it raises on a too-small step; the ladder records the failure and escalates
         warnings.filterwarnings("ignore", message=".*step size becomes too small.*", category=UserWarning)
-        if not c_ops and state0.isket:
+        if not c_ops and (state0.isket or propagator):
+            # an operator-valued "state" under sesolve integrates the propagator U(t) itself (Section 11.3 item 5)
             return qt.sesolve(H, state0, times, e_ops=eops, options=options)
         return qt.mesolve(H, state0, times, c_ops=list(c_ops), e_ops=eops, options=options)
 
@@ -87,8 +89,12 @@ def evolve(
     largest_mode_dimension: int | None = None,
     counter_calls: Callable[[], int] | None = None,
     calls_per_rhs: int = 1,
+    propagator: bool = False,
 ) -> Evolution:
-    """Integrate from ``times_s[0]`` to ``times_s[-1]`` through the ladder of Section 5.3, storing at every time."""
+    """Integrate from ``times_s[0]`` to ``times_s[-1]`` through the ladder of Section 5.3, storing at every time.
+
+    ``propagator=True`` integrates an operator-valued ``state0`` (the identity) under ``sesolve``, so that the stored states
+    are the propagators U(t, t_0) of an internal-state-only space (Section 11.3 item 5; M9b)."""
     opts = options or SolverOptions()
     times = np.asarray(times_s, dtype=float)
     if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
@@ -107,7 +113,18 @@ def evolve(
     for method, a, ms in ladder:
         try:
             result = _solve(
-                H, state0, times, c_ops, e_ops, method, a, opts.rtol, opts.nsteps, ms, store_states
+                H,
+                state0,
+                times,
+                c_ops,
+                e_ops,
+                method,
+                a,
+                opts.rtol,
+                opts.nsteps,
+                ms,
+                store_states,
+                propagator,
             )
             used = (method, a, ms)
             break

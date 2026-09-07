@@ -1,0 +1,276 @@
+"""Trajectory, branch and sample parallelism and the propagator cache (PLAN.md Sections 3.4, 5.3, 9.9, 11.3 items 5 and 9;
+Section 9.17 row "Seeds and reproducibility"; milestone M9b).
+
+Section 9.9: the same run over 1 and N workers agrees to 1e-12 with per-trajectory identity under the same seed (a bitwise
+assertion on the ensemble average fails at 4.4e-16 on 5.3.1 because trajectory sums accumulate in completion order). Section
+11.3 item 5: pulse propagators are reused only on internal-state-only spaces, where one propagator serves many initial states.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import math
+
+import numpy as np
+import pytest
+from qutip.settings import available_cpu_count
+
+from qutip_trap.api import (
+    Circuit,
+    HilbertSpace,
+    ModeTruncation,
+    Operation,
+    SeedSpec,
+    SolverOptions,
+    last_record,
+    run,
+    white_spectrum,
+)
+from qutip_trap.calibration.entangling import ms_schedule
+from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.schedule import Schedule, single_qubit_pulse
+from qutip_trap.control.table import Waveform
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
+from qutip_trap.dynamics.parallel import map_tasks, worker_count
+from qutip_trap.noise.sampling import quiet_sample
+from tests.m4_fixtures import (
+    X_COM_TWO_IONS,
+    chain_device,
+    derived_seeds,
+    raman_gate_drives,
+    table_with_waveform,
+    two_ion_modes,
+)
+from tests.m6_fixtures import circuit_fixture
+
+N_WORKERS = max(2, int(available_cpu_count()))
+"""Every CPU QuTiP sees (18 on the plan's machine, Section 11.1)."""
+
+
+def _square(x: int) -> int:
+    return x * x
+
+
+def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_threshold() -> None:
+    items = list(range(7))
+    assert map_tasks(_square, items, map_kind="parallel", workers=4) == [x * x for x in items]
+    assert map_tasks(_square, items, map_kind="serial", workers=4) == [x * x for x in items]
+    assert map_tasks(_square, items, map_kind="parallel", workers=1) == [x * x for x in items]
+    assert map_tasks(_square, [3], map_kind="parallel", workers=4) == [9]
+    assert map_tasks(_square, [], map_kind="parallel", workers=4) == []
+    assert worker_count(SolverOptions(map="serial", workers=5)) == 1
+    assert worker_count(SolverOptions(map="parallel", workers=5)) == 5
+    assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
+    with pytest.raises(ValueError):
+        SolverOptions(workers=0)
+
+
+@pytest.fixture(scope="module")
+def heating_fixture():  # type: ignore[no-untyped-def]
+    """The two-ion fixture with white electric-field noise (heating channels on the resolved x modes at 2.4e4 quanta/s, about six
+    jumps over six 20 us trajectories), a 20 us single-loop pulse on the x-COM, the Bell caps (dimension 440, where the auto rule
+    factorizes)."""
+    dev = chain_device(2)
+    noisy = dataclasses.replace(
+        dev,
+        noise=dataclasses.replace(
+            dev.noise, S_E=white_spectrum(1e-9, "(V/m)^2/(rad/s)"), correlation_length_m=0.0
+        ),
+    )
+    drives = raman_gate_drives(2)
+    rabi, stark = derived_seeds(noisy, drives)
+    modes = two_ion_modes(noisy)
+    wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=50e3, all_modes=True)
+    table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
+    sched = ms_schedule(wf, (0, 1), drives, table)
+    space = HilbertSpace(
+        (2, 2), (ModeTruncation(2, 10, (0, 3), 0.13), ModeTruncation(3, 11, (0, 4), 0.13)), None, (0, 1, 4, 5)
+    )
+    return noisy, drives, sched, space, table
+
+
+def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identity(heating_fixture) -> None:  # type: ignore[no-untyped-def]
+    """Section 9.9: six keyed trajectories of a dissipative entangling pulse in-process and over every CPU: the reduced register
+    agrees to 1e-12, every trajectory's final state and jump record are identical under its seed, and the report names the map."""
+    dev, _drives, sched, space, _table = heating_fixture
+    state = space.initial_state([0, 0])
+    out = {}
+    for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
+        eng = JointExactEngine(device_channels=True)
+        opts = SolverOptions(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers)  # type: ignore[arg-type]
+        tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(11), opts)
+        rep = eng.last_report
+        assert (
+            rep is not None
+            and rep.method == "mcsolve"
+            and rep.trajectories == 6
+            and rep.kernel == "factorized"
+        )
+        assert rep.map == mp and rep.workers == (1 if mp == "serial" else min(N_WORKERS, 6))
+        out[mp] = (tr, rep)
+    tr_s, rep_s = out["serial"]
+    tr_p, rep_p = out["parallel"]
+    assert (tr_s.final.internal - tr_p.final.internal).norm() < 1e-12
+    assert np.max(np.abs(tr_s.expectations["P1[0]"] - tr_p.expectations["P1[0]"])) < 1e-12
+    assert rep_s.trajectory_seeds == rep_p.trajectory_seeds and len(rep_s.trajectory_seeds) == 6
+    for a, b in zip(rep_s.trajectory_finals, rep_p.trajectory_finals):
+        assert (a - b).norm() < 1e-14, "per-trajectory identity under the same seed"
+    assert tr_s.jumps == tr_p.jumps and len(tr_s.jumps) >= 1, (
+        "the same jump records, and some jumps to compare"
+    )
+    assert len({s for s in rep_s.trajectory_seeds}) == 6, "distinct keyed seeds per trajectory"
+    # the coefficient counter cannot see the workers' calls: the parallel segment reports no evaluation count
+    assert all(s.rhs_evaluations is not None for s in rep_s.segments if s.pulses)
+    assert all(s.rhs_evaluations is None for s in rep_p.segments if s.pulses)
+
+
+def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> None:  # type: ignore[no-untyped-def]
+    """The sixteen inputs of a two-ion step spread over the workers reproduce the in-process Choi matrix to 1e-10."""
+    dev, _drives, sched, space, _table = heating_fixture
+    model = MotionalModel(reduced={}, nbar={m: 0.0 for m in range(6)}, frozen=(0, 1, 4, 5))
+    recs = {}
+    for mp in ("serial", "parallel"):
+        eng = JointExactEngine()
+        opts = SolverOptions(map=mp, workers=min(N_WORKERS, 8))  # type: ignore[arg-type]
+        recs[mp] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
+    assert recs["serial"].engine_runs == recs["parallel"].engine_runs == 16
+    assert np.max(np.abs(recs["serial"].choi - recs["parallel"].choi)) < 1e-10
+    assert recs["serial"].tp_residual < 1e-10 and recs["parallel"].tp_residual < 1e-10
+
+
+# ---- the propagator cache (Section 11.3 item 5) ------------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def carrier_fixture():  # type: ignore[no-untyped-def]
+    dev = chain_device(2)
+    drives = raman_gate_drives(2)
+    rabi, _stark = derived_seeds(dev, drives)
+    pulse = single_qubit_pulse(
+        0, math.pi / 2.0, 0.3, drives[0], rabi[(0, 0)], 0.0, gate_id="gpi2", programmed=False
+    )
+    sched = Schedule((pulse,), (), (), {0: 0.0, 1: 0.0})
+    space = HilbertSpace((2, 2), (), None, (0, 1, 2, 3, 4, 5))
+    return dev, sched, space
+
+
+def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
+    """An internal-state-only space: the segment propagator is integrated once, every later state of the same segment is a
+    matrix product (a cache hit), the result equals the per-state ODE path to the solver tolerance, and the labels say so."""
+    dev, sched, space = carrier_fixture
+    eng = JointExactEngine()
+    states = [space.initial_state([0, 0]), space.initial_state([1, 0]), space.initial_state([0, 1])]
+    finals = []
+    for k, st in enumerate(states):
+        tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions())
+        rep = eng.last_report
+        assert rep is not None
+        finals.append(tr.final.joint)
+        seg = [s for s in rep.segments if s.pulses][0]
+        if k == 0:
+            assert rep.propagator_solves == 1 and rep.propagator_cache_hits == 0
+            assert seg.integrator.startswith("dop853[propagator]") and seg.rhs_evaluations
+        else:
+            assert rep.propagator_solves == 0 and rep.propagator_cache_hits == 1
+            assert seg.integrator == "propagator[cached]" and seg.rhs_evaluations is None
+        assert seg.kernel == "assembled", "a carrier on an all-frozen space keeps the tiny CSR operator"
+    ref_engine = JointExactEngine()
+    for st, final in zip(states, finals):
+        tr = ref_engine.run_pulses(
+            dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions(propagator_cache=False)
+        )
+        rep = ref_engine.last_report
+        assert rep is not None and rep.propagator_solves == 0 and rep.propagator_cache_hits == 0
+        assert (tr.final.joint - final).norm() < 1e-9
+    # the pi/2 pulse: P1 of ion 0 near one half, reduced by the frozen modes' Debye-Waller factors
+    p1 = float(np.real(np.diag(finals[0].proj().ptrace(0).full())[1]))
+    assert abs(p1 - 0.5) < 0.02
+
+
+def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
+    """Sixteen inputs times the frozen modes' Fock branches: the engine integrates one propagator per branch (the Debye-Waller
+    factors differ between branches, so H differs) and serves the fifteen other inputs of each branch from the cache."""
+    dev, sched, space = carrier_fixture
+    eng = JointExactEngine()
+    model = MotionalModel(
+        reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.05, 3: 0.05, 4: 0.0, 5: 0.0}, frozen=tuple(range(6))
+    )
+    rec = eng.tomography(
+        dev, sched.pulses[0], space, model, quiet_sample(), SeedSpec(0), SolverOptions(branch_weight_min=0.02)
+    )
+    assert rec.branches >= 2 and rec.engine_runs == 16 * rec.branches
+    solves = sum(r.propagator_solves for r in rec.reports)
+    hits = sum(r.propagator_cache_hits for r in rec.reports)
+    assert solves == rec.branches and hits == 16 * rec.branches - rec.branches
+    assert rec.tp_residual < 1e-10 and rec.cp_residual < 1e-10
+
+
+# ---- run() over workers ---------------------------------------------------------------------------------------------------------------
+
+GPI2 = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
+BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
+WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
+
+
+@pytest.fixture(scope="module")
+def two_ion():  # type: ignore[no-untyped-def]
+    fx = circuit_fixture(2)
+    sur = surrogate_table(
+        fx.device,
+        pairs=[(0, 1)],
+        gate_drives=fx.gate_drives,
+        entangling_drives=fx.entangling_drives,
+        detection_records=1000,
+        detection_windows_s=WINDOWS,
+    )
+    return fx, sur
+
+
+def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
+    out = {}
+    for mp, workers in (("serial", 1), ("parallel", min(N_WORKERS, 6))):
+        opts = SolverOptions(map=mp, workers=workers, **kw)  # type: ignore[arg-type]
+        out[mp] = run(
+            circuit,
+            fx.device,
+            shots,
+            table=sur.table,
+            gate_drives=fx.gate_drives,
+            entangling_drives=fx.entangling_drives,
+            keep_final_state=True,
+            level="JOINT_EXACT",
+            options=opts,
+        )
+    return out["serial"], out["parallel"]
+
+
+def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
+    """The GPi2 circuit's initial-mixture branches spread over the workers: identical bitstrings and register state to 1e-12, the
+    diagnostics naming the worker count and the propagator cache hits of the in-process run."""
+    fx, sur = two_ion
+    a, b = _run_both(GPI2, fx, sur, 200, branch_weight_min=1e-9)
+    assert np.array_equal(a.bitstrings, b.bitstrings)
+    assert a.final_state is not None and b.final_state is not None
+    assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-12
+    assert a.diagnostics.workers == 1 and b.diagnostics.workers == min(N_WORKERS, 6)
+    assert a.diagnostics.trajectories == b.diagnostics.trajectories >= 2
+    # one propagator per distinct Fock tuple of the coupled frozen modes (their Debye-Waller factors change H); every internal
+    # branch sharing that tuple is a cache hit
+    rec = last_record(a)
+    distinct = len({tuple(sorted(br.fock.items())) for br in rec.branches})
+    assert a.diagnostics.propagator_cache_hits == len(rec.branches) - distinct >= 1
+    assert a.diagnostics.kernel == b.diagnostics.kernel == "assembled"
+
+
+@pytest.mark.slow
+def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
+    """Section 9.9 on the two-ion Bell circuit (twelve branches on the 572-dimensional joint space, the factorized kernel): the
+    serial and the parallel run agree to 1e-12 in the register state and shot by shot."""
+    fx, sur = two_ion
+    a, b = _run_both(BELL, fx, sur, 300, branch_weight_min=1e-3)
+    assert np.array_equal(a.bitstrings, b.bitstrings)
+    assert a.final_state is not None and b.final_state is not None
+    assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-12
+    assert a.diagnostics.kernel == "factorized" and b.diagnostics.kernel == "factorized"
+    assert b.diagnostics.workers > 1
+    assert a.probabilities["00"] + a.probabilities["11"] > 0.97

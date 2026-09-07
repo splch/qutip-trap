@@ -22,6 +22,11 @@ trace-preserving map, from the pulse's exact evolution on its own joint space (S
   register representations of Section 5.4;
 - ``expansion_coefficients``: the register's local marginal expanded in the input basis, so that the motional outputs of the
   tomography runs (linear in the input) give the reduced motional state the register actually leaves (item (b)).
+
+M9b: the prod_i d_i^2 x branches engine runs of a step with resolved modes are independent and are spread over the workers of
+``SolverOptions.workers`` through QuTiP's map (Section 11.3 item 9), each worker running its own trajectories in-process; a step
+on an internal-state-only space runs in-process, where the engine's propagator cache serves every input from one integration of
+the segment propagator (Section 11.3 item 5).
 """
 
 from __future__ import annotations
@@ -35,7 +40,16 @@ from typing import TYPE_CHECKING
 import numpy as np
 import qutip as qt
 
-from qutip_trap.dynamics.engine import ChannelSummary, EngineReport, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.control.pulses import fingerprint_pulse
+from qutip_trap.dynamics.engine import (
+    ChannelSummary,
+    EngineReport,
+    MotionalModel,
+    SeedSpec,
+    SolverOptions,
+    Traces,
+)
+from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n
 from qutip_trap.noise.summary import (
@@ -496,6 +510,53 @@ def coupled_frozen_modes(device: Device, space: HilbertSpace, pulses: Sequence[P
     return sorted(out)
 
 
+@dataclass(frozen=True)
+class _TomographyTask:
+    input_index: int
+    branch_index: int
+    state: object
+    """The initial ``State`` on the gate-local space."""
+    sample: NoiseSample
+
+
+def _engine_run(
+    payload: tuple[
+        JointExactEngine, Device, Schedule, object, HilbertSpace, NoiseSample, SeedSpec, SolverOptions
+    ],
+) -> tuple[Traces, EngineReport]:
+    """One engine run as a map task (module-level so that it pickles under ``map="parallel"``; Section 11.3 item 9)."""
+    engine, device, sched, state, space, smp, seeds, opts = payload
+    traces = engine.run_pulses(device, sched, state, space, smp, seeds, opts)  # type: ignore[arg-type]
+    rep = engine.last_report
+    assert rep is not None
+    return traces, rep
+
+
+def _run_tasks(
+    engine: JointExactEngine,
+    device: Device,
+    sched: Schedule,
+    space: HilbertSpace,
+    payloads: Sequence[_TomographyTask],
+    seeds: SeedSpec,
+    opts: SolverOptions,
+) -> list[tuple[Traces, EngineReport]]:
+    """The tomography's engine runs: in-process on the shared engine (its propagator cache serves an internal-state-only space
+    from one integration), or spread over the workers when the space has resolved modes and a parallel map is configured."""
+    workers = worker_count(opts)
+    if opts.map == "serial" or workers <= 1 or len(payloads) < 2 or not space.resolved:
+        out: list[tuple[Traces, EngineReport]] = []
+        for task in payloads:
+            traces = engine.run_pulses(device, sched, task.state, space, task.sample, seeds, opts)  # type: ignore[arg-type]
+            rep = engine.last_report
+            assert rep is not None
+            out.append((traces, rep))
+        return out
+    inner = replace(opts, map="serial")  # a worker runs its trajectories in-process: no nested pool
+    items = [(engine, device, sched, task.state, space, task.sample, seeds, inner) for task in payloads]
+    return map_tasks(_engine_run, items, map_kind=opts.map, workers=workers)
+
+
 def tomography(
     engine: JointExactEngine,
     device: Device,
@@ -546,50 +607,55 @@ def tomography(
         method = "sesolve"
         grown: HilbertSpace | None = None
         runs = 0
-        for _lab, ket in labels_kets:
+        # every (input, branch) run is independent: prepare them all, run them through the map, then accumulate in order
+        payloads: list[_TomographyTask] = []
+        for lab_idx, (_lab, ket) in enumerate(labels_kets):
             internal = qt.Qobj(ket.reshape(-1, 1), dims=dims_int)
-            rho_acc = np.zeros((d_int, d_int), dtype=complex)
-            mot_acc = {
-                m: np.zeros((current.truncation(m).d, current.truncation(m).d), dtype=complex)
-                for m in mot_out
-            }
-            alpha_acc = {m: 0j for m in mot_out}
-            for br in branches:
+            for br_idx, br in enumerate(branches):
                 state = current.initial_state(internal, states=br.kets, thermal=thermal_frozen)
                 values = dict(sample.values)
                 values.update({key_frozen_n(m): float(n) for m, n in br.frozen_n.items()})
                 values[KEY_BRANCH_WEIGHT] = float(br.weight)
                 smp = NoiseSample(sample.sample_id, values, dict(sample.ou_grids), sample.t_s)
-                traces = engine.run_pulses(device, sched, state, current, smp, seeds, opts)
-                runs += 1
-                rep = engine.last_report
-                assert rep is not None
-                reports.append(rep)
-                if rep.space != current:
-                    grown = rep.space
-                    break
-                rho_acc += br.weight * np.asarray(traces.final.internal.full())
+                payloads.append(_TomographyTask(lab_idx, br_idx, state, smp))
+        results = _run_tasks(engine, device, sched, current, payloads, seeds, opts)
+        runs = len(results)
+        for rep in (r for _t, r in results):
+            reports.append(rep)
+            if rep.space != current and (grown is None or rep.space.dimension > grown.dimension):
+                grown = rep.space
+        if grown is None:
+            for lab_idx in range(len(labels_kets)):
+                rho_acc = np.zeros((d_int, d_int), dtype=complex)
+                mot_acc = {
+                    m: np.zeros((current.truncation(m).d, current.truncation(m).d), dtype=complex)
+                    for m in mot_out
+                }
+                alpha_acc = {m: 0j for m in mot_out}
+                for task, (traces, rep) in zip(payloads, results):
+                    if task.input_index != lab_idx:
+                        continue
+                    br = branches[task.branch_index]
+                    rho_acc += br.weight * np.asarray(traces.final.internal.full())
+                    for m in mot_out:
+                        mot_acc[m] += br.weight * np.asarray(traces.final.motional.reduced[m].full())
+                        alpha_acc[m] += br.weight * complex(traces.alpha_m[m][-1])
+                    for m, v in traces.boundary_population.items():
+                        boundary[m] = max(boundary.get(m, 0.0), float(v))
+                    for m, v in rep.populated_n_max.items():
+                        populated[m] = max(populated.get(m, 0), int(v))
+                    for m, v in rep.margin_reached.items():
+                        margins[m] = min(margins.get(m, int(v)), int(v))
+                    n_traj = max(n_traj, rep.trajectories if rep.method == "mcsolve" else 1)
+                    if rep.method != "sesolve":
+                        method = rep.method
+                outputs.append(rho_acc)
                 for m in mot_out:
-                    mot_acc[m] += br.weight * np.asarray(traces.final.motional.reduced[m].full())
-                    alpha_acc[m] += br.weight * complex(traces.alpha_m[m][-1])
-                for m, v in traces.boundary_population.items():
-                    boundary[m] = max(boundary.get(m, 0.0), float(v))
-                for m, v in rep.populated_n_max.items():
-                    populated[m] = max(populated.get(m, 0), int(v))
-                for m, v in rep.margin_reached.items():
-                    margins[m] = min(margins.get(m, int(v)), int(v))
-                n_traj = max(n_traj, rep.trajectories if rep.method == "mcsolve" else 1)
-                if rep.method != "sesolve":
-                    method = rep.method
-            if grown is not None:
-                break
-            outputs.append(rho_acc)
-            for m in mot_out:
-                mot_out[m].append(mot_acc[m])
-                alpha_out[m].append(alpha_acc[m])
-                nbar_out[m].append(
-                    float(np.real(np.trace(np.diag(np.arange(mot_acc[m].shape[0])) @ mot_acc[m])))
-                )
+                    mot_out[m].append(mot_acc[m])
+                    alpha_out[m].append(alpha_acc[m])
+                    nbar_out[m].append(
+                        float(np.real(np.trace(np.diag(np.arange(mot_acc[m].shape[0])) @ mot_acc[m])))
+                    )
         if grown is not None:
             current = grown
             continue
@@ -681,44 +747,6 @@ def local_ideal(
     for t in sorted(gate_targets, key=lambda g: (g.t_start_s, g.gate_id)):
         pairs.append((tuple(t.ions), t.unitary()))
     return ideal_unitary_on(pairs, space_ions, ion_dims)
-
-
-def fingerprint_pulse(pulse: Pulse, n_samples: int = 33) -> tuple[object, ...]:
-    """A value fingerprint of a pulse for the GATE_LOCAL cache: kind, ions, beams, absolute times, every tone sampled over the
-    pulse (a callable envelope or detuning differs by its VALUES, never by the source text a closure shares), the Stark shift,
-    the crosstalk and the light-shift couplings."""
-    grid = np.linspace(0.0, pulse.duration_s, n_samples)
-
-    def sampled(v: object) -> object:
-        if callable(v):
-            return np.array([float(v(x)) for x in grid])
-        if isinstance(v, np.ndarray):
-            return np.asarray(v, dtype=float)
-        return float(v)  # type: ignore[arg-type]
-
-    d = pulse.drive
-    tones = tuple(
-        (sampled(t.detuning_hz), sampled(t.phase_rad), sampled(t.envelope_hz), t.theta_bessel_rad)
-        for t in d.tones
-    )
-    ls = None
-    if d.light_shift is not None:
-        ls = (d.light_shift.level_weights, d.light_shift.spin_flip_weight, d.light_shift.qubit_freq_hz)
-    return (
-        d.kind,
-        d.ions,
-        d.beams,
-        pulse.t_start_s,
-        pulse.t_end_s,
-        pulse.gate_id,
-        tones,
-        sampled(d.stark_shift_hz),
-        tuple(sorted((int(j), complex(e)) for j, e in d.crosstalk.items())),
-        d.rf_locked,
-        d.rf_phase_rad,
-        d.programmed,
-        ls,
-    )
 
 
 def fingerprint_model(model: MotionalModel, modes: Iterable[int], *, digits: int = 9) -> tuple[object, ...]:

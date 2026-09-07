@@ -1,0 +1,75 @@
+== Part 1: one right-hand side (QobjEvo.matmul, dispatch included) per construction, microseconds
+dims=(2, 2, 12)                 D=   48 terms=4 factorized     13.5 us  csr      3.4 us  per term: f    3.4 c     0.8  model f    4.7 c     0.7  nnz/term      288 macs/term     288  |Hf - Hc| psi = 2.1e-16
+dims=(2, 2, 8, 8)               D=  256 terms=4 factorized     21.0 us  csr     17.7 us  per term: f    5.2 c     4.4  model f    8.2 c     5.2  nnz/term     8192 macs/term    2048  |Hf - Hc| psi = 4.3e-16
+dims=(2, 2, 10, 11)             D=  440 terms=4 factorized     26.0 us  csr     49.9 us  per term: f    6.5 c    12.5  model f    9.8 c    14.3  nnz/term    24200 macs/term    4620  |Hf - Hc| psi = 5.2e-16
+dims=(2, 2, 11, 13)             D=  572 terms=4 factorized     28.3 us  csr     82.2 us  per term: f    7.1 c    20.6  model f   11.1 c    23.8  nnz/term    40898 macs/term    6864  |Hf - Hc| psi = 5.5e-16
+dims=(2, 2, 12, 12)             D=  576 terms=4 factorized     27.9 us  csr     83.7 us  per term: f    7.0 c    20.9  model f   11.1 c    24.1  nnz/term    41472 macs/term    6912  |Hf - Hc| psi = 5.4e-16
+dims=(2, 2, 6, 6, 6)            D=  864 terms=4 factorized     41.9 us  csr    196.2 us  per term: f   10.5 c    49.0  model f   14.2 c    53.7  nnz/term    93312 macs/term    7776  |Hf - Hc| psi = 6.9e-16
+dims=(2, 2, 8, 8, 8)            D= 2048 terms=4 factorized     87.2 us  csr   1209.7 us  per term: f   21.8 c   302.4  model f   24.2 c   299.3  nnz/term   524288 macs/term   24576  |Hf - Hc| psi = 1.0e-15
+dims=(2, 2, 2, 12, 12)          D= 1152 terms=6 factorized     62.1 us  csr    246.3 us  per term: f   10.4 c    41.0  model f   15.3 c    47.8  nnz/term    82944 macs/term   13824  |Hf - Hc| psi = 7.2e-16
+dims=(2, 2, 2, 8, 8, 8)         D= 4096 terms=6 factorized    220.6 us  csr   3621.6 us  per term: f   36.8 c   603.6  model f   39.0 c   598.2  nnz/term  1048576 macs/term   49152  |Hf - Hc| psi = 1.3e-15
+dims=(2, 2, 2, 2, 12, 12)       D= 2304 terms=8 factorized    137.6 us  csr    655.2 us  per term: f   17.2 c    81.9  model f   23.6 c    95.1  nnz/term   165888 macs/term   27648  |Hf - Hc| psi = 8.4e-16
+dims=(2, 2, 2, 2, 8, 8, 8)      D= 8192 terms=8 factorized    501.4 us  csr   9611.6 us  per term: f   62.7 c  1201.4  model f   68.5 c  1195.9  nnz/term  2097152 macs/term   98304  |Hf - Hc| psi = 1.5e-15
+fit (no intercept): factorized per term ~ 1.94 us per factor step + 0.583 ns per multiply-add
+fit (no intercept): csr per term ~ 0.573 ns per non-zero
+constants carried by qutip_trap.dynamics.kernels: term 2.0 us, step 2.5 us, 0.6 ns/MAC; csr 0.5 us + 0.57 ns/nnz
+
+== Part 2: the Section 11.1 rows, T = 20 us (scale x5 for 100 us), atol 1e-10 rtol 1e-8, closure eta Omega/eps = 1/2
+modes=1 nmax=12 dim=   48 factorized n_el=5 dop853  wall=   0.25s evals= 19283 us/eval=    13.2
+modes=1 nmax=12 dim=   48 factorized n_el=5 vern9   wall=   0.36s evals= 29180 us/eval=    12.4
+modes=1 nmax=12 dim=   48 csr        n_el=5 dop853  wall=   0.04s evals= 19283 us/eval=     1.9
+modes=1 nmax=12 dim=   48 csr        n_el=5 vern9   wall=   0.05s evals= 29180 us/eval=     1.6
+modes=1 nmax=12 dim=   48 dense      n_el=5 dop853  wall=   0.09s evals= 19283 us/eval=     4.5
+modes=1 nmax=12 dim=   48 dense      n_el=5 vern9   wall=   0.12s evals= 29180 us/eval=     4.3
+modes=1 nmax=12 dim=   48 merged     n_el=2 dop853  wall=   0.03s evals= 19283 us/eval=     1.7
+modes=1 nmax=12 dim=   48 merged     n_el=2 vern9   wall=   0.04s evals= 29180 us/eval=     1.4
+    final-state check ('factorized', 'dop853'): ||psi - psi_ref|| = 4.26e-13
+    final-state check ('factorized', 'vern9'): ||psi - psi_ref|| = 1.32e-07
+    final-state check ('csr', 'vern9'): ||psi - psi_ref|| = 1.32e-07
+    final-state check ('dense', 'dop853'): ||psi - psi_ref|| = 1.37e-13
+    final-state check ('dense', 'vern9'): ||psi - psi_ref|| = 1.32e-07
+    final-state check ('merged', 'dop853'): ||psi - psi_ref|| = 1.09e-13
+    final-state check ('merged', 'vern9'): ||psi - psi_ref|| = 1.32e-07
+modes=2 nmax=8 dim=  256 factorized n_el=5 dop853  wall=   0.45s evals= 21067 us/eval=    21.5
+modes=2 nmax=8 dim=  256 factorized n_el=5 vern9   wall=   0.63s evals= 29868 us/eval=    21.0
+modes=2 nmax=8 dim=  256 csr        n_el=5 dop853  wall=   0.35s evals= 21067 us/eval=    16.7
+modes=2 nmax=8 dim=  256 csr        n_el=5 vern9   wall=   0.49s evals= 29868 us/eval=    16.5
+modes=2 nmax=8 dim=  256 dense      n_el=5 dop853  wall=   0.34s evals= 21067 us/eval=    16.4
+modes=2 nmax=8 dim=  256 dense      n_el=5 vern9   wall=   0.45s evals= 29868 us/eval=    15.0
+modes=2 nmax=8 dim=  256 merged     n_el=2 dop853  wall=   0.12s evals= 21067 us/eval=     5.6
+modes=2 nmax=8 dim=  256 merged     n_el=2 vern9   wall=   0.14s evals= 29868 us/eval=     4.8
+    final-state check ('factorized', 'dop853'): ||psi - psi_ref|| = 2.93e-13
+    final-state check ('factorized', 'vern9'): ||psi - psi_ref|| = 2.91e-07
+    final-state check ('csr', 'vern9'): ||psi - psi_ref|| = 2.91e-07
+    final-state check ('dense', 'dop853'): ||psi - psi_ref|| = 1.33e-13
+    final-state check ('dense', 'vern9'): ||psi - psi_ref|| = 2.91e-07
+    final-state check ('merged', 'dop853'): ||psi - psi_ref|| = 1.72e-14
+    final-state check ('merged', 'vern9'): ||psi - psi_ref|| = 2.91e-07
+modes=3 nmax=6 dim=  864 factorized n_el=5 dop853  wall=   1.11s evals= 24366 us/eval=    45.4
+modes=3 nmax=6 dim=  864 factorized n_el=5 vern9   wall=   1.53s evals= 30316 us/eval=    50.6
+modes=3 nmax=6 dim=  864 csr        n_el=5 dop853  wall=   4.76s evals= 24366 us/eval=   195.2
+modes=3 nmax=6 dim=  864 csr        n_el=5 vern9   wall=   6.03s evals= 30316 us/eval=   199.0
+modes=3 nmax=6 dim=  864 dense      n_el=5 dop853  wall=  11.61s evals= 24366 us/eval=   476.3
+modes=3 nmax=6 dim=  864 dense      n_el=5 vern9   wall=  14.09s evals= 30316 us/eval=   464.9
+modes=3 nmax=6 dim=  864 merged     n_el=2 dop853  wall=   1.01s evals= 24366 us/eval=    41.4
+modes=3 nmax=6 dim=  864 merged     n_el=2 vern9   wall=   1.33s evals= 30316 us/eval=    43.9
+    final-state check ('factorized', 'dop853'): ||psi - psi_ref|| = 7.34e-14
+    final-state check ('factorized', 'vern9'): ||psi - psi_ref|| = 4.39e-07
+    final-state check ('csr', 'vern9'): ||psi - psi_ref|| = 4.39e-07
+    final-state check ('dense', 'dop853'): ||psi - psi_ref|| = 8.71e-14
+    final-state check ('dense', 'vern9'): ||psi - psi_ref|| = 4.39e-07
+    final-state check ('merged', 'dop853'): ||psi - psi_ref|| = 4.27e-13
+    final-state check ('merged', 'vern9'): ||psi - psi_ref|| = 4.39e-07
+modes=3 nmax=8 dim= 2048 factorized n_el=5 dop853  wall=   3.15s evals= 35177 us/eval=    89.5
+modes=3 nmax=8 dim= 2048 factorized n_el=5 vern9   wall=   3.95s evals= 42620 us/eval=    92.7
+modes=3 nmax=8 dim= 2048 csr        n_el=5 dop853  wall=  42.49s evals= 35177 us/eval=  1207.9
+modes=3 nmax=8 dim= 2048 csr        n_el=5 vern9   wall=  51.55s evals= 42620 us/eval=  1209.5
+modes=3 nmax=8 dim= 2048 dense      n_el=5 dop853  wall= 109.50s evals= 35177 us/eval=  3112.8
+modes=3 nmax=8 dim= 2048 merged     n_el=2 dop853  wall=  23.52s evals= 35177 us/eval=   668.7
+modes=3 nmax=8 dim= 2048 merged     n_el=2 vern9   wall=  31.43s evals= 42620 us/eval=   737.5
+    final-state check ('factorized', 'dop853'): ||psi - psi_ref|| = 3.52e-13
+    final-state check ('factorized', 'vern9'): ||psi - psi_ref|| = 5.80e-07
+    final-state check ('csr', 'vern9'): ||psi - psi_ref|| = 5.80e-07
+    final-state check ('dense', 'dop853'): ||psi - psi_ref|| = 1.25e-13
+    final-state check ('merged', 'dop853'): ||psi - psi_ref|| = 6.80e-14
+    final-state check ('merged', 'vern9'): ||psi - psi_ref|| = 5.80e-07

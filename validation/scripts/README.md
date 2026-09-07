@@ -186,9 +186,10 @@ Added on 2026-09-07 by milestone M9a:
   displacements inside and at the cap with the marginal-against-ptrace and dims/shape rows of Section 9.17 and the regrid of an
   ENR state to a larger cap, the adaptive cap and margin policy on a carrier pulse, and GATE_LOCAL against JOINT_EXACT on the
   two-ion Bell circuit (the register populations within the reported residual-displacement bound, the tracked occupations
-  against the joint reduced state, the MS step's channel summary). Runs the package (about twelve minutes, most of it the
+  against the joint reduced state, the MS step's channel summary). Runs the package (about twelve minutes at M9a, most of it the
   sixteen-input tomography of the Bell circuit's entangling gate on its exact two-ion, two-mode space, 48 engine runs at
-  dimension 572); lines prefixed `MC:` carry shot noise.
+  dimension 572; about one minute since M9b, whose factorized kernel and parallel tomography inputs take those runs and whose
+  propagator cache takes the carrier steps' 48 runs per step to 3 integrations each); lines prefixed `MC:` carry shot noise.
   The cap rule of `run.space.cap_for` and `calibration.entangling.gate_space` now reads the populated range of the displaced
   thermal mode at the boundary threshold (the definition the engine's Section 5.5 margin check uses), one level above the M6
   rule on the Section 11.1 fixture's COM mode (d = 11 against 10), and sizes the excursion from the pulse's closed-form
@@ -196,3 +197,23 @@ Added on 2026-09-07 by milestone M9a:
   2026-09-07 with the changed caps (`check_two_qubit.out` also picked up the M8 played-chain numbers its committed copy had
   missed: the symmetric pulse's exact chi 0.768077 against the stale 0.768162, reproduced at HEAD before this milestone's
   changes); `check_calibration.out` was re-run and is unchanged to every printed digit.
+
+Added on 2026-09-07 by milestone M9b:
+
+- `bench_ms_timing_v5.py`: the Section 11.1 timing benchmark with the drive operator held FACTORIZED (the matrix-free kernel of
+  Section 11.3 item 4, `qutip_trap.dynamics.kernels`) against the v4 constructions (CSR and Dense with one coefficient per
+  term, and the merged dense operator that a shared coefficient produces). Part 1 times one right-hand side (`QobjEvo.matmul`,
+  dispatch included) per construction over eleven spaces from dimension 48 to 8192 and fits the two per-term cost models of
+  Section 11.2 whose constants the kernel carries (a factorized term about 3 us per factor step plus 0.6 ns per multiply-add, a
+  CSR term 0.57 ns per non-zero, crossover between the 256- and 440-dimensional spaces); part 2 integrates the four Section
+  11.1 rows with dop853 and vern9 and checks every construction's final state against the CSR one. `outputs/bench_ms_timing_v5.out`
+  (timings never compared by `run_checks.py`).
+- `check_kernel.py`: Scaling II (Sections 3.4, 5.1.1, 5.3, 9.9, 11.1, 11.2, 11.3 items 4, 5 and 9): the factorized drive
+  operator against the assembled one on the Bell fixture's space and the Section 11.1 spaces (products on random states to
+  5e-16, adjoint, factor-wise product, trace, equality across representations, Hermiticity, expectation values, pickling), the
+  cost model's choice on eight spaces, the engine with the kernel forced each way on a 20 us single-loop entangling pulse
+  (final states to 2e-13), six keyed trajectories of a heated pulse over 1 and N workers (the reduced register, every
+  trajectory's final state and the jump records identical), and the propagator cache on an internal-state-only space (one
+  integration per distinct segment Hamiltonian, the other inputs matrix products, against the per-state ODE path; the
+  tomography of a carrier step at 48 engine runs, 3 integrations, 45 cache hits). Runs the package (about two minutes); lines
+  prefixed `MC:` carry wall times.

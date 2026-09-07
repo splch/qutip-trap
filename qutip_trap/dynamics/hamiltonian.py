@@ -40,7 +40,7 @@ from __future__ import annotations
 import cmath
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import numpy as np
@@ -49,9 +49,10 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import CubicSpline
 from scipy.special import eval_genlaguerre, jv
 
-from qutip_trap.control.pulses import Drive, Pulse
+from qutip_trap.control.pulses import Drive, Pulse, as_time_function, fingerprint_pulse
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.frames import interaction_picture
+from qutip_trap.dynamics.kernels import KernelChoice, prefer_factorized
 from qutip_trap.dynamics.multilevel import (  # the multi-level mode of Section 4.2.8 (M3a): one builder module
     ModeSpec,
     MultiLevelBuild,
@@ -59,10 +60,12 @@ from qutip_trap.dynamics.multilevel import (  # the multi-level mode of Section 
     assign_frames,
     build_multilevel,
 )
+from qutip_trap.hashing import canonical_digest
 from qutip_trap.hilbert.operators import debye_waller_factor, qudit_projector, qudit_sigma_plus
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.light.raman import lamb_dicke_parameters, mathieu_or_none
 from qutip_trap.noise.sampling import (
+    KEY_BRANCH_WEIGHT,
     KEY_INTENSITY_TRAJECTORY,
     KEY_LASER_OFFSET_HZ,
     KEY_LASER_PHASE_TRAJECTORY,
@@ -114,6 +117,13 @@ class BuilderOptions:
     frozen_debye_waller: bool = True
     curvature: Mapping[int, CurvatureSpec] = field(default_factory=dict)
     """Per ion: the Cetina beam-curvature coupling (Section 6.2); empty = off."""
+    kernel: KernelChoice = "auto"
+    """How the drive operators sigma_+^i (x) prod_m D_m are held and applied (Section 11.3 item 4; M9b): ``assembled`` builds
+    the CSR matrix (M2 to M9a), ``factorized`` holds the per-mode factors and applies them mode by mode as a matrix-free
+    right-hand side, ``auto`` chooses by the Section 11.2 cost model per space (``dynamics.kernels.prefer_factorized``). Neither
+    is an approximation: the two are the same operator to round-off. The factorized form needs a product space in the Schroedinger
+    frame with exact displacements (no ``lamb_dicke_order``, no curvature factor, no coupling to an ENR group); the engine forces
+    ``assembled`` on every ``mesolve`` path, where the Liouvillian is built from the matrix (Section 5.3)."""
 
     def __post_init__(self) -> None:
         if self.lamb_dicke_order is not None and self.lamb_dicke_order < 0:
@@ -289,6 +299,13 @@ class BuiltHamiltonian:
     drive_parts: dict[str, qt.QobjEvo] = field(default_factory=dict)
     """Per pulse (gate_id), the QobjEvo of that pulse's drive terms alone: what the white intensity-noise channel
     sqrt(D) H_drive(t) of Section 6.4 multiplies (M7)."""
+    kernel: Literal["assembled", "factorized", "mixed", "none"] = "none"
+    """How the drive operators are held (Section 11.3 item 4; M9b): ``factorized`` (the matrix-free kernel on every drive term),
+    ``assembled`` (CSR), ``mixed`` (a segment whose terms differ, e.g. an ENR-coupled drive beside a product-space one), ``none``
+    (no drive term: an idle or a silent pulse)."""
+    fingerprint: str = ""
+    """A value digest of everything that determined H(t) (space, frequencies, the pulses' sampled tones, the sample's offsets
+    and trajectories, the shifts, the options): the key of the engine's propagator cache (Section 11.3 item 5; M9b)."""
 
     @property
     def rhs_evaluations(self) -> int:
@@ -303,19 +320,40 @@ class BuiltHamiltonian:
 def _as_time_function(
     value: Callable[[float], float] | np.ndarray | float, duration_s: float, *, scale: float
 ) -> Callable[[float], float]:
-    """A pulse-local callable of tau from a constant, a callable or a uniformly sampled array over [0, duration]."""
-    if callable(value):
-        fn = value
-        return lambda tau: scale * float(fn(tau))
-    if isinstance(value, np.ndarray):
-        arr = np.asarray(value, dtype=float)
-        if arr.ndim != 1 or arr.size < 2:
-            raise ValueError("a sampled envelope needs at least two samples")
-        grid = np.linspace(0.0, duration_s, arr.size)
-        spline = CubicSpline(grid, scale * arr, extrapolate=True)
-        return lambda tau: float(spline(min(max(tau, 0.0), duration_s)))
-    const = scale * float(value)
-    return lambda tau: const
+    """A pulse-local callable of tau from a constant, a callable or a uniformly sampled array over [0, duration] (the shared
+    picklable conversion of ``control.pulses``; Section 11.3 item 9)."""
+    return as_time_function(value, duration_s, scale=scale)
+
+
+@dataclass(frozen=True)
+class _LinearBeat:
+    """Theta(t, tau) = mu t (phase_mode continuous) or mu tau (reset) for a constant detuning."""
+
+    mu: float
+    continuous: bool
+
+    def __call__(self, t: float, tau: float) -> float:
+        return self.mu * t if self.continuous else self.mu * tau
+
+
+class _IntegratedBeat:
+    """Theta(t, tau) = int_0^tau mu(tau') dtau' (+ mu(0) t_start under phase_mode continuous) for an FM detuning schedule,
+    the integral splined over 4097 points of the pulse (picklable through its samples)."""
+
+    __slots__ = ("_spline", "duration_s", "integral", "offset")
+
+    def __init__(self, integral: np.ndarray, duration_s: float, offset: float) -> None:
+        self.integral = np.asarray(integral, dtype=float)
+        self.duration_s = float(duration_s)
+        self.offset = float(offset)
+        grid = np.linspace(0.0, self.duration_s, self.integral.size)
+        self._spline = CubicSpline(grid, self.integral, extrapolate=True)
+
+    def __call__(self, t: float, tau: float) -> float:
+        return float(self._spline(min(max(tau, 0.0), self.duration_s))) + self.offset
+
+    def __reduce__(self) -> tuple[object, ...]:
+        return (_IntegratedBeat, (self.integral, self.duration_s, self.offset))
 
 
 def _beat_phase_function(
@@ -323,21 +361,13 @@ def _beat_phase_function(
 ) -> Callable[[float, float], float]:
     """Theta(t, tau): mu t (continuous, constant mu), mu tau (reset), or the FM integral int_0^tau mu dtau' (+ mu(0) t_start)."""
     if not callable(detuning):
-        mu = TWO_PI * float(detuning)
-        if mode == "continuous":
-            return lambda t, tau: mu * t
-        return lambda t, tau: mu * tau
+        return _LinearBeat(TWO_PI * float(detuning), mode == "continuous")
     mu_fn = detuning
     grid = np.linspace(0.0, duration_s, 4097)
     mu_samples = np.array([TWO_PI * float(mu_fn(x)) for x in grid])
     integral = cumulative_trapezoid(mu_samples, grid, initial=0.0)
-    spline = CubicSpline(grid, integral, extrapolate=True)
     offset = mu_samples[0] * t_start_s if mode == "continuous" else 0.0
-
-    def theta(t: float, tau: float) -> float:
-        return float(spline(min(max(tau, 0.0), duration_s))) + offset
-
-    return theta
+    return _IntegratedBeat(np.asarray(integral), duration_s, float(offset))
 
 
 def micromotion_index(device: Device, ion: int, delta_k: np.ndarray) -> float:
@@ -363,6 +393,26 @@ def _truncated_exponential(space: HilbertSpace, mode: int, eta: float, order: in
     return total
 
 
+def _use_kernel(space: HilbertSpace, ion: int, etas: Mapping[int, float], options: BuilderOptions) -> bool:
+    """Whether this drive term is held factorized (Section 11.3 item 4): the option, the structural conditions (exact
+    displacements, no curvature factor, no ENR coupling, at least one resolved mode) and, under ``auto``, the cost model."""
+    if (
+        options.kernel == "assembled"
+        or options.lamb_dicke_order is not None
+        or options.curvature.get(ion) is not None
+    ):
+        return False
+    coupled = [m for m, e in etas.items() if e != 0.0]
+    if any(space.mode_class(m) == "enr" for m in coupled):
+        return False
+    mode_factors = [space.mode_factor(m) for m in coupled if space.mode_class(m) == "resolved"]
+    if not mode_factors:
+        return False  # a carrier on an all-frozen space: the assembled operator is a tiny CSR matrix
+    if options.kernel == "factorized":
+        return True
+    return prefer_factorized(space.dims, space.ion_factor(ion), mode_factors)
+
+
 def _drive_operator(
     space: HilbertSpace,
     ion: int,
@@ -370,9 +420,12 @@ def _drive_operator(
     options: BuilderOptions,
     device: Device,
     ion_op: qt.Qobj | None = None,
-) -> qt.Qobj:
-    """sigma_+^ion (or ``ion_op``) (x) prod_m D_m (exact or expanded) with the optional symmetrized curvature factor."""
+) -> tuple[qt.Qobj, bool]:
+    """sigma_+^ion (or ``ion_op``) (x) prod_m D_m (exact or expanded) with the optional symmetrized curvature factor, and whether
+    it is held factorized (the matrix-free kernel of Section 11.3 item 4) or assembled (CSR)."""
     if options.lamb_dicke_order is None:
+        if _use_kernel(space, ion, etas, options):
+            return space.drive_operator_factorized(ion, etas, ion_op=ion_op), True
         op = space.drive_operator(ion, etas, ion_op=ion_op)
     else:
         ops: dict[int, qt.Qobj] = {
@@ -390,7 +443,7 @@ def _drive_operator(
         x_op = _curvature_position_operator(space, device, ion, spec)
         factor = space.identity() + 0.5 * spec.kappa_per_m2 * x_op * x_op
         op = 0.5 * (op * factor + factor * op)
-    return op.to("CSR")
+    return op.to("CSR"), False
 
 
 def _curvature_position_operator(
@@ -572,6 +625,7 @@ def build_hamiltonian(
     dropped_total = 0.0
     n_drive_terms = 0
     drive_parts: dict[str, list[Any]] = {}
+    kernel_flags: list[bool] = []
 
     for pulse in pulses:
         drive: Drive = pulse.drive
@@ -777,7 +831,8 @@ def build_hamiltonian(
                     continue
                 term_scale = complex(scale) * weight
                 if opts.frame == "schrodinger":
-                    op = _drive_operator(space, ion, active_etas, opts, device, ion_op)
+                    op, factorized = _drive_operator(space, ion, active_etas, opts, device, ion_op)
+                    kernel_flags.append(factorized)
                     coef = _DriveCoefficient(
                         pulse.t_start_s,
                         tone_fns,
@@ -797,6 +852,7 @@ def build_hamiltonian(
                     part.extend([t_plain, t_conj])
                     n_drive_terms += 2
                     continue
+                kernel_flags.append(False)
                 if opts.curvature.get(ion) is not None:
                     raise NotImplementedError("beam curvature is built in the Schroedinger frame only")
                 mats = None
@@ -894,6 +950,42 @@ def build_hamiltonian(
 
     terms[0] = terms[0].to("CSR")
     H = qt.QobjEvo(terms)
+    kernel: Literal["assembled", "factorized", "mixed", "none"]
+    if not kernel_flags:
+        kernel = "none"
+    elif all(kernel_flags):
+        kernel = "factorized"
+    elif not any(kernel_flags):
+        kernel = "assembled"
+    else:
+        kernel = "mixed"
+    if kernel == "mixed":
+        approximations.append(
+            "drive terms held partly factorized and partly assembled (an ENR-coupled or curvature drive beside a product-space one)"
+        )
+    fingerprint = canonical_digest(
+        (
+            "build_hamiltonian",
+            tuple(space.ion_dims),
+            tuple(space.dims),
+            tuple(space.ion_labels),
+            tuple(space.frozen),
+            space.enr_group,
+            tuple(sorted(omegas.items())),
+            float(t_start),
+            float(t_end),
+            tuple(fingerprint_pulse(p) for p in pulses),
+            tuple(sorted(frozen_states.items())),
+            tuple(
+                sorted((k, v) for k, v in smp.values.items() if k != KEY_BRANCH_WEIGHT)
+            ),  # the weight steers no term of H
+            tuple(sorted(smp.ou_grids.items())),
+            float(smp.t_s),
+            tuple(sorted((int(k), float(v)) for k, v in (qubit_shifts_hz or {}).items())),
+            tuple(sorted((int(k), float(v)) for k, v in (mode_frequencies_hz or {}).items())),
+            replace(opts, kernel="auto"),  # the same H(t) whichever way its drive operators are held
+        )
+    )
     return BuiltHamiltonian(
         H=H,
         space=space,
@@ -908,6 +1000,8 @@ def build_hamiltonian(
         mode_frequencies_rad_s=omegas,
         counter=counter,
         drive_parts={k: qt.QobjEvo(v) for k, v in drive_parts.items() if v},
+        kernel=kernel,
+        fingerprint=fingerprint,
     )
 
 

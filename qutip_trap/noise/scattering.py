@@ -45,7 +45,7 @@ from typing import Any, Literal
 import numpy as np
 import qutip as qt
 
-from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.pulses import ConstantFn, InterpFn, Pulse, ScaledFn
 from qutip_trap.control.schedule import stark_scaling_power
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.channels import CollapseOp
@@ -156,15 +156,12 @@ def _scale_coef(t: float, scale: _IntensityScale, **_: object) -> float:
 
 
 def _envelope_fn(value: Any, duration: float) -> Callable[[float], float]:
+    """A picklable callable of tau: the callable itself (as a float), a linear interpolation of a sampled array, a constant."""
     if callable(value):
-        fn = value
-        return lambda tau: float(fn(tau))
+        return ScaledFn(value, 1.0)
     if isinstance(value, np.ndarray):
-        arr = np.asarray(value, dtype=float)
-        grid = np.linspace(0.0, duration, arr.size)
-        return lambda tau: float(np.interp(tau, grid, arr))
-    const = float(value)
-    return lambda tau: const
+        return InterpFn(np.asarray(value, dtype=float), duration)
+    return ConstantFn(float(value))
 
 
 def intensity_scale(device: Device, pulse: Pulse) -> tuple[float | None, _IntensityScale | None, str | None]:

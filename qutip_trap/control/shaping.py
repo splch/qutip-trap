@@ -49,6 +49,7 @@ import numpy as np
 from scipy.integrate import cumulative_simpson, simpson
 from scipy.optimize import least_squares
 
+from qutip_trap.control.pulses import ConstantFn, ScaledFn
 from qutip_trap.control.table import CalEntry, Leg, Segment, Waveform
 from qutip_trap.units import TWO_PI
 
@@ -501,10 +502,10 @@ def waveform_from_callables(
     """A single-segment ``Waveform`` with callable amplitudes (Fourier AM) or a callable beat note (FM), in Hz of tau."""
 
     def hz_of(fn: Callable[[float], float]) -> Callable[[float], float]:
-        return lambda tau: float(fn(tau)) / TWO_PI
+        return ScaledFn(fn, 1.0 / TWO_PI)
 
     def neg_hz_of(fn: Callable[[float], float]) -> Callable[[float], float]:
-        return lambda tau: -float(fn(tau)) / TWO_PI
+        return ScaledFn(fn, -1.0 / TWO_PI)
 
     amp: dict[tuple[int, Leg], float | Callable[[float], float]] = {}
     phase: dict[tuple[int, Leg], float] = {}
@@ -649,8 +650,7 @@ def scaled(waveform: Waveform, factor: float) -> Waveform:
 
     def scale_val(v: float | Callable[[float], float]) -> float | Callable[[float], float]:
         if callable(v):
-            fn = v
-            return lambda tau: factor * float(fn(tau))
+            return ScaledFn(v, factor)
         return factor * float(v)
 
     segs = tuple(
@@ -887,27 +887,47 @@ def symmetric_pulse(
 
 
 def _constant(value: float) -> Callable[[float], float]:
-    def fn(tau: float) -> float:
-        return float(value)
-
-    return fn
+    return ConstantFn(float(value))
 
 
-def _cosine_interpolation(vertices: np.ndarray, duration_s: float) -> Callable[[float], float]:
-    """Leung's vertex parameterization: mu(t) between equally spaced vertices with (1 - cos)/2 interpolation."""
-    v = np.asarray(vertices, dtype=float)
-    n = len(v)
-    if n < 2:
-        return lambda tau: float(v[0])
-    dt = duration_s / (n - 1)
+@dataclass(frozen=True, eq=False)
+class CosineVertexFn:
+    """Leung's vertex parameterization: mu(t) between equally spaced vertices with (1 - cos)/2 interpolation (picklable)."""
 
-    def mu(tau: float) -> float:
-        x = min(max(tau, 0.0), duration_s) / dt
+    vertices: tuple[float, ...]
+    duration_s: float
+
+    def __call__(self, tau: float) -> float:
+        v = self.vertices
+        n = len(v)
+        if n < 2:
+            return float(v[0])
+        dt = self.duration_s / (n - 1)
+        x = min(max(tau, 0.0), self.duration_s) / dt
         k = min(int(math.floor(x)), n - 2)
         s = x - k
         return float(v[k] + (v[k + 1] - v[k]) * 0.5 * (1.0 - math.cos(math.pi * s)))
 
-    return mu
+
+@dataclass(frozen=True, eq=False)
+class FourierSineFn:
+    """Bluemel's Fourier-sine amplitude g(tau) = sum_n c_n sin(2 pi (n + 1) tau/T) in rad/s (picklable)."""
+
+    coefficients: tuple[float, ...]
+    duration_s: float
+
+    def __call__(self, tau: float) -> float:
+        return float(
+            sum(
+                c * math.sin(2.0 * math.pi * (n + 1) * tau / self.duration_s)
+                for n, c in enumerate(self.coefficients)
+            )
+        )
+
+
+def _cosine_interpolation(vertices: np.ndarray, duration_s: float) -> Callable[[float], float]:
+    """Leung's vertex parameterization: mu(t) between equally spaced vertices with (1 - cos)/2 interpolation."""
+    return CosineVertexFn(tuple(float(x) for x in np.asarray(vertices, dtype=float)), float(duration_s))
 
 
 def _sampled_from_callables(
@@ -1109,9 +1129,7 @@ def solve_fourier_amplitude_modulation(
     env = SampledEnvelope(t, {i: g.copy() for i in modes.ions}, theta, phi_m_rad)
     ints = integrals_sampled(env, modes, kernel)
 
-    def g_fn(tau_s: float, c: np.ndarray = coeffs) -> float:
-        return float(sum(c[n] * math.sin(2.0 * math.pi * (n + 1) * tau_s / tau) for n in range(len(c))))
-
+    g_fn = FourierSineFn(tuple(float(c) for c in coeffs), float(tau))
     wf = waveform_from_callables(
         tau,
         modes,

@@ -136,7 +136,7 @@ def test_instances_are_immutable() -> None:
 def test_unimplemented_entry_points_name_their_milestone() -> None:
     dev = object()
     # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; M8 the full simulated-experiment
-    # calibration and Device.derived(); M9a the GATE_LOCAL tomography; the matrix-free kernel (M9b) still names its milestone
+    # calibration and Device.derived(); M9a the GATE_LOCAL tomography; M9b the matrix-free kernel
     with pytest.raises(ValueError, match=r"unknown calibration experiments"):
         api.calibrate(dev, surrogate=False, experiments=("not_an_experiment",))  # type: ignore[arg-type]
     assert api.load_openqasm2("OPENQASM 2.0; qreg q[1]; x q[0];").ops[0].name == "x"
@@ -151,8 +151,11 @@ def test_unimplemented_entry_points_name_their_milestone() -> None:
     assert "Section 5.4" in (JointExactEngine.process_tomography.__doc__ or "")
     with pytest.raises(ValueError, match=r"at least one pulse"):
         JointExactEngine().process_tomography(dev, (), space, None, None, api.SeedSpec(0))  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match=r"milestone M9b"):
-        apply_drive_kernel()
+    # M9b: the kernel applies a factorized drive operator mode by mode (Section 11.3 item 4)
+    fact = space.drive_operator_factorized(0, {0: 0.05})
+    ket = space.initial_state([0], fock={0: 1}).joint
+    assert ket is not None
+    assert (apply_drive_kernel(fact, ket) - space.drive_operator(0, {0: 0.05}) * ket).norm() < 1e-13
     from tests.fixtures import make_device, make_noise
 
     # the noise sampler of M7 is implemented: a quiet model returns a quiet sample

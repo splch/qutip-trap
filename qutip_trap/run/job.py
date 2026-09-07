@@ -25,7 +25,11 @@ Shots are distributed round-robin over dynamical samples (Section 3.4: default s
 has quasi-static or sampled content, 1 when it is quiet): sample k is drawn at the shot clock t0 + k_first T_rep with every
 Drift an Ornstein-Uhlenbeck chain over the sample times (Section 7.5), the shots of one sample are drawn from that sample's
 register state, and the error bars use the effective sample size of the between/within-sample decomposition, since shots of
-one sample are not independent draws from the ensemble. Background-gas collisions (Section 6.7) are Poisson events per shot:
+one sample are not independent draws from the ensemble. The (sample, branch) engine runs of a JOINT_EXACT run are independent
+and are spread over the workers of ``SolverOptions.workers`` through QuTiP's map (Section 11.3 item 9; M9b), every branch
+starting from the selected space (a cap the truncation monitor grows on one branch is reported, never carried into another, so
+the result is the same whatever the worker count); a worker runs its own trajectories in-process. Background-gas collisions
+(Section 6.7) are Poisson events per shot:
 a heating kick during the cooling stages is heralded and kept (the crystal is recooled), any other event is heralded and the
 shot discarded, a reorder permutes the persistent ion order, a loss or dark-ion event flags the ion so that every later shot
 reads it dark; the remaining ions' dynamics stay on the nominal crystal (an approximation the notes record). The seeds are
@@ -37,7 +41,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -51,7 +55,8 @@ from qutip_trap.control.schedule import (
     default_gate_drives,
     schedule,
 )
-from qutip_trap.dynamics.engine import MotionalModel, SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.noise.collisions import collision_rate_per_ion, sample_collisions
@@ -684,11 +689,16 @@ def run(
     register_states: list[list[tuple[float, qt.Qobj]]] = []
     gl_report: GateLocalReport | None = None
     space_initial = joint_space
+    kernel_kinds: set[str] = set()
+    workers_used = 1
+    propagator_hits = 0
     if run_level == "JOINT_EXACT":
         engine = setup.engine()
         total_weight = sum(b.weight for b in branches)
-        for smp in samples_seq:
-            rho_int = np.zeros((d_int, d_int), dtype=complex)
+        # every (sample, branch) run is independent: prepare the initial states on the selected space, run them all through
+        # the map of Section 11.3 item 9, then accumulate in order (M9b)
+        payloads: list[tuple[int, int, State, NoiseSample]] = []
+        for s_idx, smp in enumerate(samples_seq):
             for k, br in enumerate(branches):
                 fock_res = {
                     m: n for m, n in br.fock.items() if joint_space.mode_class(m) in ("resolved", "enr")
@@ -712,34 +722,44 @@ def run(
                 sample_b = NoiseSample(
                     sample_id=smp.sample_id, values=values, ou_grids=dict(smp.ou_grids), t_s=smp.t_s
                 )
-                tr = engine.run_pulses(device, sched, st, joint_space, sample_b, seeds, opts)
+                payloads.append((s_idx, k, st, sample_b))
+        results, workers_used = _run_engine_tasks(engine, device, sched, joint_space, payloads, seeds, opts)
+        grown_space = joint_space
+        for s_idx in range(len(samples_seq)):
+            rho_int = np.zeros((d_int, d_int), dtype=complex)
+            for (p_idx, k, _st, _sb), (tr, rep) in zip(payloads, results):
+                if p_idx != s_idx:
+                    continue
+                br = branches[k]
                 traces_all.append(tr)
                 rho_int += (br.weight / total_weight) * np.asarray(tr.final.internal.full())
                 for m, v in tr.boundary_population.items():
                     boundary[m] = max(boundary.get(m, 0.0), float(v))
-                rep = engine.last_report
-                if rep is not None:
-                    for seg in rep.segments:
-                        if seg.integrator not in integrators:
-                            integrators.append(seg.integrator)
-                    for a in rep.approximations:
-                        if a not in approximations:
-                            approximations.append(a)
-                    for n in rep.notes:
-                        if n not in notes:
-                            notes.append(n)
-                    if rep.method not in methods:
-                        methods.append(rep.method)
-                    n_traj_max = max(n_traj_max, rep.trajectories)
-                    for m, v in rep.margin_reached.items():
-                        margin_reached[m] = min(margin_reached.get(m, int(v)), int(v))
-                    for m, v in rep.populated_n_max.items():
-                        populated_max[m] = max(populated_max.get(m, 0), int(v))
-                    if rep.space != joint_space:
-                        # the truncation monitor grew the caps (Section 5.5): every later branch starts on the grown space
-                        joint_space = rep.space
-                        dims_int = [list(joint_space.ion_dims), list(joint_space.ion_dims)]
+                for seg in rep.segments:
+                    if seg.integrator not in integrators:
+                        integrators.append(seg.integrator)
+                for a in rep.approximations:
+                    if a not in approximations:
+                        approximations.append(a)
+                for n in rep.notes:
+                    if n not in notes:
+                        notes.append(n)
+                if rep.method not in methods:
+                    methods.append(rep.method)
+                n_traj_max = max(n_traj_max, rep.trajectories)
+                for m, v in rep.margin_reached.items():
+                    margin_reached[m] = min(margin_reached.get(m, int(v)), int(v))
+                for m, v in rep.populated_n_max.items():
+                    populated_max[m] = max(populated_max.get(m, 0), int(v))
+                if rep.kernel != "none":
+                    kernel_kinds.add(rep.kernel)
+                propagator_hits += rep.propagator_cache_hits
+                if rep.space != grown_space and rep.space.dimension > grown_space.dimension:
+                    # the truncation monitor grew the caps on this branch (Section 5.5): the diagnostics report the largest space
+                    grown_space = rep.space
             register_states.append([(1.0, qt.Qobj(rho_int, dims=dims_int))])
+        joint_space = grown_space
+        dims_int = [list(joint_space.ion_dims), list(joint_space.ion_dims)]
     else:
         register_states, gl_report, _models = evolve_gate_local(
             device,
@@ -768,6 +788,7 @@ def run(
                 if n not in notes:
                     notes.append(n)
         notes.extend(n for n in gl_report.notes if n not in notes)
+        workers_used = worker_count(opts)
         approximations.append(
             f"GATE_LOCAL: {len([s for s in gl_report.steps if s.kind == 'gate'])} gate steps and "
             f"{len([s for s in gl_report.steps if s.kind == 'idle'])} idle steps through exact gate-local spaces (largest dimension "
@@ -971,6 +992,9 @@ def run(
         populated_n_max=populated_max,
         cap_growth=cap_growth,
         gate_local=gl_report,
+        kernel=_kernel_kind(kernel_kinds),
+        workers=workers_used,
+        propagator_cache_hits=propagator_hits,
     )
     result = Result(
         bitstrings=bits,
@@ -1004,6 +1028,55 @@ def run(
         gate_local=gl_report,
     )
     return result
+
+
+def _kernel_kind(kinds: set[str]) -> str:
+    if not kinds:
+        return "none"
+    if kinds == {"assembled"}:
+        return "assembled"
+    if kinds == {"factorized"}:
+        return "factorized"
+    return "mixed"
+
+
+def _engine_task(
+    payload: tuple[Any, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, SolverOptions],
+) -> tuple[Traces, EngineReport]:
+    """One (sample, branch) engine run as a map task (module-level so that it pickles under ``map="parallel"``)."""
+    engine, device, sched, state, space, smp, seeds, opts = payload
+    traces = engine.run_pulses(device, sched, state, space, smp, seeds, opts)
+    rep = engine.last_report
+    assert rep is not None
+    return traces, rep
+
+
+def _run_engine_tasks(
+    engine: Any,
+    device: Device,
+    sched: Schedule,
+    space: HilbertSpace,
+    payloads: Sequence[tuple[int, int, State, NoiseSample]],
+    seeds: SeedSpec,
+    opts: SolverOptions,
+) -> tuple[list[tuple[Traces, EngineReport]], int]:
+    """The JOINT_EXACT engine runs of ``run()``: in-process on one engine when the map is serial, one worker is available or
+    there is a single run (the engine's trajectory map then takes the workers), else spread over the workers with the
+    trajectories of every run in-process (Section 11.3 item 9; M9b). Returns the (traces, report) pairs in order and the
+    worker count the maps used."""
+    workers = worker_count(opts)
+    if opts.map == "serial" or workers <= 1 or len(payloads) < 2:
+        out: list[tuple[Traces, EngineReport]] = []
+        for _s_idx, _k, st, smp in payloads:
+            traces = engine.run_pulses(device, sched, st, space, smp, seeds, opts)
+            rep = engine.last_report
+            assert rep is not None
+            out.append((traces, rep))
+        used = max((r.workers for _t, r in out), default=1)
+        return out, used
+    inner = replace(opts, map="serial")
+    items = [(engine, device, sched, st, space, smp, seeds, inner) for _s_idx, _k, st, smp in payloads]
+    return map_tasks(_engine_task, items, map_kind=opts.map, workers=workers), min(workers, len(payloads))
 
 
 def _supplied_class(space: HilbertSpace, mode: int) -> Literal["resolved", "frozen", "dropped", "enr"]:

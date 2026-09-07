@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap.control.pulses import Drive, Pulse, Tone
+from qutip_trap.control.pulses import Drive, Pulse, ScaledFn, Tone
 from qutip_trap.control.schedule import MICROWAVE_BEAM_KEY, Schedule, stark_scaling_power
 from qutip_trap.control.table import CalibrationTable, usable
 
@@ -46,8 +46,7 @@ def _scale_envelope(
     if factor == 1.0:
         return env
     if callable(env):
-        fn = env
-        return lambda tau: factor * float(fn(tau))
+        return ScaledFn(env, factor)
     if isinstance(env, np.ndarray):
         return np.asarray(env, dtype=float) * factor
     return float(env) * factor

@@ -396,11 +396,13 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         options=SolverOptions(branch_weight_min=3e-3),
     )
     d = res.diagnostics
-    # two resolved modes at 10 to 11 levels each (the cap rule of Section 5.5 at the 1e-6 tail; M9a)
+    # two resolved modes: the cap rule of Section 5.5 at the 1e-6 tail (M9a) gives 11 levels on the COM (populated to n = 2) and
+    # 13 on the zigzag (populated to n = 4, the larger excursion), each with the Section 5.1.1 margin; the M6 rule's 10 to 12
+    # range this assertion carried until M9b was stale from the M9a rule change (the test failed identically at the M9a commit)
     assert (
         d.space.dims[:3] == [2, 2, 2]
         and len(d.space.dims) == 5
-        and all(10 <= x <= 12 for x in d.space.dims[3:])
+        and all(10 <= x <= 13 for x in d.space.dims[3:])
         and d.mode_class[4] == "frozen"
         and set(d.frozen_contribution) == {4}
     )
