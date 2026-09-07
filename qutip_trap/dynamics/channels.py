@@ -90,8 +90,8 @@ def qubit_dephasing_channels(
     """L = sqrt(gamma_phi/2) sigma_z per ion, gamma_phi = 1/T2 the white dephasing rate (Section 13), gamma in s^-1."""
     out: list[CollapseOp] = []
     for ion, g in gamma_phi_hz.items():
-        if g <= 0.0:
-            continue
+        if g <= 0.0 or not space.has_ion(ion):
+            continue  # a GATE_LOCAL space carries a subset of the ions (Section 5.4)
         out.append(
             CollapseOp(
                 math.sqrt(g / 2.0) * space.sigma_z(ion), float(g / TWO_PI), "qubit_dephasing", ion, None
@@ -124,7 +124,7 @@ def rayleigh_dephasing_channels(
     """(1/2) sqrt(Gamma_el) sigma_z per ion (Uys et al. 2010; Section 13, "Rayleigh dephasing dissipator")."""
     out: list[CollapseOp] = []
     for ion, g in gamma_el_per_s.items():
-        if g <= 0.0:
+        if g <= 0.0 or not space.has_ion(ion):
             continue
         out.append(
             CollapseOp(

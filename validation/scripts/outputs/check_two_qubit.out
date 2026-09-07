@@ -8,11 +8,11 @@
 
 == 2. two 171Yb+ ions, x modes 2.828 and 3.000 MHz, eta 0.081 / 0.079: surrogate against exact
   modes (2, 3), omega/2pi MHz [2.828427, 3.0], eta [[-0.080926, 0.078577], [0.080926, 0.078577]]
-  symmetric COM pulse (50 us, Omega/2pi = 119.142 kHz): surrogate chi = 0.785398 (COM 0.690663, rocking 0.094735), exact chi = 0.768162
-    exact leakage P01 + P10 = 7.0399e-03; residual quanta rocking = 7.1097e-03 against sum |alpha|^2 = 7.2167e-03; COM = 3.01e-05; Bell fidelity 0.99273
+  symmetric COM pulse (50 us, Omega/2pi = 119.142 kHz): surrogate chi = 0.785398 (COM 0.690663, rocking 0.094735), exact chi = 0.768077
+    exact leakage P01 + P10 = 7.1120e-03; residual quanta rocking = 7.1729e-03 against sum |alpha|^2 = 7.2167e-03; COM = 6.42e-05; Bell fidelity 0.99257
   five-segment AM pulse (mu = 2.914 MHz, 100 us): amplitudes/2pi kHz [101.093, 102.071, 213.9, 97.447, 88.753], chi by mode {2: 0.399922, 3: 0.385477}, max |alpha| = 2.4e-17
-    exact chi = 0.772031 (surrogate 0.785398), leakage 8.749e-05, residual quanta {2: '3.94e-06', 3: '1.84e-04'}, fidelity 0.99961, joint space dims [2, 2, 10, 10]
-    calibration converged: True; amplitude factor 1.0087, exact chi 0.78540, fidelity 0.99977, surrogate error 0.0170
+    exact chi = 0.771647 (surrogate 0.785398), leakage 9.264e-05, residual quanta {2: '9.50e-06', 3: '1.86e-04'}, fidelity 0.99842, joint space dims [2, 2, 10, 10]
+    calibration converged: True; amplitude factor 1.0089, exact chi 0.78540, fidelity 0.99855, surrogate error 0.0175
 
 == 3. Ballance's motional-dephasing coefficient alpha_K = (8K + 3)/(16 K^2) from the block Liouvillians
   K = 1: (1 - F) tau/t_g at t_g/tau = 1e-4: 0.687376; (8K + 3)/(16 K^2) = 0.687500

@@ -131,7 +131,12 @@ def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None: 
 def test_bell_diagnostics_report_the_space_classes_branches_and_approximations(bell) -> None:  # type: ignore[no-untyped-def]
     fx, sur, res = bell
     d = res.diagnostics
-    assert d.level == "JOINT_EXACT" and d.space.dims == [2, 2, 10, 10]
+    # the caps follow the pulse's coherent excursion at the 1e-6 tail plus the 6-level margin (Section 5.5; M9a), and the margin
+    # check never trips on them (no cap growth)
+    assert d.level == "JOINT_EXACT" and d.space.dims[:2] == [2, 2] and len(d.space.dims) == 4
+    assert all(10 <= x <= 14 for x in d.space.dims[2:]), d.space.dims
+    assert d.cap_growth == {} and all(v >= 6 for v in d.margin_reached.values())
+    assert d.dropped_contribution == (0.0, 0.0) and d.frozen_excitation_bound == {}
     assert d.mode_class == {
         0: "dropped",
         1: "dropped",
@@ -226,10 +231,10 @@ def test_refusals_and_the_level_guard(two_ion) -> None:  # type: ignore[no-untyp
     mid = Circuit(2, (Operation("measure", (0,), ()), Operation("x", (0,), ())), (0, 1))
     with pytest.raises(ScheduleError, match="mid-circuit"):
         run(mid, fx.device, 10, **kw)  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match="M9a"):
-        run(BELL, fx.device, 10, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match="GATE_LOCAL"):
-        run(BELL, fx.device, 10, options=SolverOptions(joint_dimension_max=64), **kw)  # type: ignore[arg-type]
+    # a joint dimension above the guard routes to GATE_LOCAL (Section 11.5; M9a): the run proceeds and says so
+    small_guard = run(BELL, fx.device, 10, options=SolverOptions(joint_dimension_max=64), **kw)  # type: ignore[arg-type]
+    assert small_guard.diagnostics.level == "GATE_LOCAL" and small_guard.diagnostics.gate_local is not None
+    assert any("GATE_LOCAL" in a for a in small_guard.diagnostics.approximations)
 
 
 def test_branch_enumeration_weights_and_cutoff() -> None:
@@ -391,8 +396,11 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         options=SolverOptions(branch_weight_min=3e-3),
     )
     d = res.diagnostics
+    # two resolved modes at 10 to 11 levels each (the cap rule of Section 5.5 at the 1e-6 tail; M9a)
     assert (
-        d.space.dims == [2, 2, 2, 10, 10]
+        d.space.dims[:3] == [2, 2, 2]
+        and len(d.space.dims) == 5
+        and all(10 <= x <= 12 for x in d.space.dims[3:])
         and d.mode_class[4] == "frozen"
         and set(d.frozen_contribution) == {4}
     )

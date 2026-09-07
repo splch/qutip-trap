@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.sampling import NoiseSample
+    from qutip_trap.run.gate_local import GateLocalReport
 
 
 def bitstring_key(bits: np.ndarray) -> str:
@@ -87,7 +88,7 @@ class Diagnostics:
     level: Literal["JOINT_EXACT", "GATE_LOCAL"]
     """The level actually run."""
     space: HilbertSpace
-    mode_class: dict[int, Literal["resolved", "frozen", "dropped"]]
+    mode_class: dict[int, Literal["resolved", "frozen", "dropped", "enr"]]
     run_state: RunState
     wall_clock_span_s: float
     """t0 to the last shot: shot k is evaluated at t0 + k T_rep (Section 7.5)."""
@@ -111,6 +112,20 @@ class Diagnostics:
     the frozen spectators' chi loss; and 'total' their sum."""
     dropped_branch_weight: float = 0.0
     """Weight of the initial-mixture branches below SolverOptions.branch_weight_min that were not evolved (M6)."""
+    frozen_excitation_bound: dict[int, float] = field(default_factory=dict)
+    """Per frozen mode, the Section 5.2 off-resonant excitation bound summed over the schedule's pulses (M9a)."""
+    dropped_contribution: tuple[float, float] = (0.0, 0.0)
+    """(sum |alpha|^2 (2n + 1), sum |chi|) over the dropped modes: the summed dropped contribution of Section 11.3 item 2 (M9a)."""
+    margin_reached: dict[int, int] = field(default_factory=dict)
+    """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during a pulse (Section 5.5; M9a)."""
+    populated_n_max: dict[int, int] = field(default_factory=dict)
+    """Per resolved mode, the highest Fock index populated above the boundary threshold during a pulse (M9a)."""
+    cap_growth: dict[int, int] = field(default_factory=dict)
+    """Per resolved mode, the levels the truncation monitor added to the cap during the run (Section 5.5; M9a)."""
+    gate_local: GateLocalReport | None = None
+    """The GATE_LOCAL walk's report (Section 5.4; M9a): per step the local space, the tomography, the channel summary, the
+    residual displacement and the motional bookkeeping; None for a JOINT_EXACT run. ``space`` is then the joint space the run
+    would have needed (the one above the guards), whose mode classes ``mode_class`` reports."""
 
 
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:

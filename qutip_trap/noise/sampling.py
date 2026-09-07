@@ -28,6 +28,10 @@ KEY_FIELD_OFFSET_T = "field_offset_t"
 """The quasi-static magnetic-field offset this sample carries (tesla), the source of the qubit offsets below."""
 KEY_RF_FRACTION = "rf_amplitude_fraction"
 """Common-mode fractional rf-amplitude offset dV/V of this sample: every rf-derived (transverse) mode moves by omega_m dV/V."""
+KEY_BRANCH_WEIGHT = "branch_weight"
+"""The weight of the initial-mixture branch this engine call evolves (Section 5.3's Fock-sum path; M9a): the truncation
+monitor's populated range is measured at the boundary threshold divided by it, since the threshold is a fraction of the
+MIXTURE's population and a branch of weight w contributes w times its own (Section 5.5). Absent = 1."""
 
 KEY_LASER_PHASE_TRAJECTORY = "laser_phase_rad"
 """ou_grids: phi_L(t) of the gate laser (rad), added to the phase of every single-photon optical drive (Section 6.3)."""
@@ -99,7 +103,7 @@ class NoiseSample:
     def is_quiet(self) -> bool:
         """No offsets, unit scales and no trajectories: the nominal sample."""
         for k, v in self.values.items():
-            if k.startswith("frozen_n"):
+            if k.startswith("frozen_n") or k == KEY_BRANCH_WEIGHT:
                 continue
             nominal = 1.0 if k == KEY_RABI_SCALE else 0.0
             if v != nominal:
@@ -113,6 +117,7 @@ def quiet_sample(sample_id: int = 0, t_s: float = 0.0) -> NoiseSample:
 
 
 __all__ = [
+    "KEY_BRANCH_WEIGHT",
     "KEY_FIELD_OFFSET_T",
     "KEY_INTENSITY_TRAJECTORY",
     "KEY_LASER_OFFSET_HZ",

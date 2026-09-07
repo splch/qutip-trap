@@ -6,7 +6,8 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 **Status: milestones M0 (scaffolding and public interfaces), M0a (atomic structure layer), M1 (trap and
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
 and state preparation), M4 (two-ion entangling gates), M5 (readout), M6 (end-to-end circuits in JOINT_EXACT), M7 (noise
-and error channels) and M8 (calibration emulation).** The
+and error channels), M8 (calibration emulation) and M9a (scaling I: resolved-mode selection, frozen spectators, the ENR
+option, GATE_LOCAL).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -313,6 +314,70 @@ non-zeros), and the merged dense operator of Section 11.1 does not pay in this Q
 cost 42 us against 33 us for the four CSR terms at this size), so the mode-factorized kernel and the branch and scan-point
 parallelism of M9b are the next factor.
 
+M9a is the first of the two scaling milestones (Section 10): the machinery that lets a run leave the joint-exact range without
+leaving the physics behind. The contribution criterion of Section 11.3 was in place since M6 (a mode is dropped, frozen or
+resolved by the closed-form residual displacement and entangling angle of the played waveform, never by eta alone); M9a adds what
+Sections 5.2 and 11.3 ask it to report and offer. Every frozen spectator carries its off-resonant excitation bound, the sum over
+the pulses' tones, the addressed ions and the nearest sidebands of (eta_m Omega sqrt(nbar_m + 1)/(mu - l omega_m))^2, with the
+detuning guard |mu - l omega_m| > 20 eta_m Omega sqrt(n + 1) kept as the sanity check whose violations are reported and never
+enforced (`run.space.frozen_excitation_bounds`, `Diagnostics.frozen_excitation_bound`); the dropped modes' summed contribution is
+stated (`Diagnostics.dropped_contribution`); and the ENR option carries a group of cold modes as ONE excitation-number-restricted
+factor with the exponential of the sum generator as its displacement (`run(..., enr_group=(modes, N_exc))`, the fourth class
+`enr` of `Diagnostics.mode_class`), whose marginals are built by index sums because `ptrace` raises there, whose dimension is read
+from `shape` because `tensor(sigmap(), D_enr)` reports dims multiplying to 98 where the shape is 56, and whose top shell is the
+boundary the monitor watches and grows (`regrid_state` maps the old Fock tuples into the larger dictionary). The adaptive cap
+and margin policy of Sections 5.1.1 and 5.5 is now exercised inside every pulse: the engine measures the populated range of each
+resolved mode (the smallest n with the population above it below the boundary threshold, taken as a fraction of the
+MIXTURE's population: a Fock branch of weight w that `run()` or the tomography evolves on its own is measured at threshold/w
+through the sample key `branch_weight`) after every segment and, when the cap's margin above it falls below the Section 5.1.1
+margin for the segment's eta, raises the cap by the deficit and repeats the run, reporting the populated range and the margin
+reached (`EngineReport.populated_n_max`, `margin_reached`, `Diagnostics.cap_growth`). The cap rule of `run.space.cap_for` and `calibration.entangling.gate_space` reads the same
+definition, the exact Fock distribution of the thermal mode displaced by the loop radius (`hilbert.operators.populated_range`),
+because the M6 formula sat one level under the margin check on the Section 11.1 fixture's COM mode (d = 11 against 10) and would
+have cost every entangling pulse a cap-raising retry; the three check-script outputs that print those caps were regenerated.
+
+GATE_LOCAL (Section 5.4) is the level above the guards, and `run(level="auto")` routes to it when the joint dimension exceeds
+4096 or the drive operator's non-zero estimate exceeds 2e7 (`run.gate_local`). Its building block is a `HilbertSpace` over a
+SUBSET of the crystal's ions (`HilbertSpace.ions`, the device ion carried by each factor): the one Hamiltonian builder, the
+channels, the scattering operators and the engine address ions by their device index, so the same code that runs the joint
+space runs a gate's local one, and a crosstalk neighbour outside the space is dropped with a note rather than mis-indexed. The
+executor splits the schedule into steps (every pulse of one gate piece as the scheduler recorded it in the new
+`Schedule.targets`, the segments of a Mølmer-Sørensen waveform on both ions together, merged with whatever overlaps it in time;
+the dead-time idles between them) and, per gate step, builds the exact joint space of the addressed ions plus every neighbour
+receiving crosstalk light above `SolverOptions.crosstalk_threshold` and of the modes the contribution criterion resolves at the
+TRACKED occupations, initializes the motional part from the tracked model (the reduced density matrix of every mode an earlier step
+resolved, the thermal state of the others, the frozen modes' Fock populations as weighted Debye-Waller branches), propagates the
+prod_i d_i^2 linearly independent pure inputs of `dynamics.tomography.input_states` through the JOINT_EXACT engine (sixteen for a
+pair; `mesolve` where channels are active and the local dimension allows, else `mcsolve` with n_traj = ceil(1/epsilon_map) per
+input, `SolverOptions.map_accuracy`), reconstructs the Choi matrix by least squares and projects it onto the intersection of the
+completely positive cone and the trace-preserving affine set by Dykstra's alternating projection, reporting both residuals
+(`ChannelSummary.cp_tp_residual`; ||Tr_out(Choi) - 1|| < 1e-10 after the projection, Section 9.17), applies the map to the register
+(Kraus operators on a density matrix up to `register_dm_max_qubits` = 12 qubits, Kraus sampling on each member of a pure-state
+ensemble beyond), and updates the motional model with the register-weighted combination of the tomography's motional outputs (the
+outputs are linear in the input, and the register's local marginal is expanded in the input basis). Idle intervals go through
+the same engine: the one-qubit channel of every ion by tomography of the idle schedule (its offsets, its trajectories, its
+dephasing), the master equation of every tracked mode on its own factor, nbar + ndot t for the modes tracked by their occupation
+alone. Every step reports the residual displacement |alpha_m| per spin eigenstate, the bound sum_m |alpha_m|^2 (2 nbar_m + 1),
+the purity deficit of the reduced motional state, the frozen modes' excitation bound, the crosstalk it dropped and the Section
+6.8 summary against the step's ideal unitary (`GateTarget.unitary`: the native gate at its frame-applied phase followed by
+RZ(-theta) for the Stark frame the scheduler absorbed), and the extraction is cached by (device, step fingerprint, local space,
+motional-model fingerprint, noise sample, solver options). `Diagnostics.gate_local` carries the walk (`GateLocalReport`), and
+`Diagnostics.space` is then the joint space the run would have needed. The surrogate calibration uses the same local spaces:
+a pair whose joint spot-check space exceeds the guards is now checked exactly on the pair's own GATE_LOCAL space instead of being
+stored as a seed. Acceptance (`tests/test_gate_local.py`, `test_scaling_modes.py`, `test_tomography.py`;
+`validation/scripts/check_scaling.py`): the Section 9.8 rows (three- and four-ion circuits against JOINT_EXACT within the reported
+bound, the tracked nbar within 5 % of the joint reduced state, the dropped-mode policy with the eta = 1e-3 mode two kilohertz from
+a tone kept), the Section 9.9 frozen-spectator comparison on a tilted-beam fixture whose y-COM is a genuine frozen spectator
+(|chi_m| = 1.9e-3 rad, |alpha|^2 (2 nbar + 1) = 4e-32 at 6 degrees), the Section 9.17 rows "Size guard", "GATE_LOCAL
+tomography", "Freeze against drop" and "ENR marginal", and the exactness of a local space over a subset of the ions against the
+full marginal. On the two-ion Bell circuit (`check_scaling.py` 6) GATE_LOCAL and JOINT_EXACT registers agree to 3.0e-5 in every
+population against the reported bound of 2.5e-4 (9.3e-5 of residual displacement, 1.6e-4 of the carrier pulses' off-resonant
+excitation of the frozen x modes), the MS step's channel has an average gate infidelity of 1.1e-4 (its depolarizing rate 1.4e-4 is
+the entanglement infidelity, Section 6.8), the Choi matrices are trace preserving to 1e-16, and the tracked occupations after the
+gate reproduce the joint run's branch-weighted reduced state; the walk costs 344 engine runs, 48 of them on the 572-dimensional
+gate-local space of the entangling step (16 inputs times the three motional branches above the 1e-3 weight cutoff), which is the
+16 x n_traj price Section 11.2 charges and the reason the matrix-free kernel of M9b is next.
+
 Plan inconsistencies surfaced by M8 (ledger `conv.*` records of the calibration layer, `anchor.m8.*`): a resonant sideband
 pulse light-shifts the qubit through its own off-resonant carrier coupling by Omega^2/(2 omega_m) (1.70 kHz at Omega/2pi =
 100.9 kHz, omega_m/2pi = 3 MHz), pulling both sideband resonances toward the carrier, so Section 7.5's single fine scan at full
@@ -428,21 +493,21 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/units.py` | CODATA constants and the `Hz` / `RadPerS` and `Gauss` / `Tesla` types (Sections 5.6, 13) |
 | `qutip_trap/species/` | one table of cited constants per isotope, the `Species` builder, and the atomic layer (`wigner`, `zeeman`, `dipole`, `polarization`, `raman`, `quadrupole`; `atomic.py` is the facade) |
 | `qutip_trap/trap/` | the trap layer of Section 4.1: `mathieu` (monodromy, Floquet function, C0), `pseudopotential` (rf drive, geometry-free maps), `surface` (gapless-plane electrodes), `crystal` (equilibrium, mass-weighted modes, Lamb-Dicke), `micromotion`, `heating`, `anharmonic`; `model.py` is the `Trap` record |
-| `qutip_trap/hilbert/` | the composite space of Section 5.1: `operators` (analytic Laguerre elements, expm displacement, the Section 5.1.1 tolerance and margin fixture, Debye-Waller factors, qubit operators in the computational ordering), `space` (cached operators, marginals with the ENR index sums, state constructors), `truncation` (boundary monitor, cap growth, the tolerance-tightening test) |
-| `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a); the engine's mesolve and keyed-trajectory paths, per-segment channels, jump records and the hardware chain (M7); the builder's sampled trajectories, beam phases, pointing factors and drive parts (M7) |
+| `qutip_trap/hilbert/` | the composite space of Section 5.1: `operators` (analytic Laguerre elements, expm displacement, the Section 5.1.1 tolerance and margin fixture, Debye-Waller factors, qubit operators in the computational ordering, the displaced-thermal populated range of the cap rule; M9a), `space` (cached operators, marginals with the ENR index sums, state constructors; the `ions` mapping of a space over a subset of the crystal and the ENR cap growth, M9a), `truncation` (boundary monitor, cap growth, the tolerance-tightening test; ENR regrid, M9a) |
+| `qutip_trap/dynamics/` | the ONE builder `hamiltonian.build_hamiltonian` (H_mot + H_int + drives with exact D + Stark + anharmonic + curvature, frames, micromotion, crosstalk, frozen Debye-Waller), `frames` (virtual-Z `PhaseFrame`, the sideband decomposition), `evolve` (sesolve/mesolve with the dop853 -> vern9 ladder), `engine` (`JointExactEngine`, the Appendix E protocol; the Section 5.5 margin check and `process_tomography`, M9a), `channels` (heating, dephasing, Rayleigh collapse operators), `multilevel` (the multi-level mode of Section 4.2.8: manifold frames with the inconsistency detector, per-polarization collapse operators, recoil kernels, leak policies; M3a), `tomography` (the state-based process tomography of Section 5.4: the input basis, the Choi least squares, the Dykstra CP/TP projection, Kraus operators and their application to a register; M9a); the engine's mesolve and keyed-trajectory paths, per-segment channels, jump records and the hardware chain (M7); the builder's sampled trajectories, beam phases, pointing factors and drive parts (M7); spaces over a subset of the ions (M9a) |
 | `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a), `roles` (which beams are resonant cooling/detection light and which are far-detuned gate light; M6) |
 | `qutip_trap/noise/` | the noise layer of Section 6 (M7): `spectra` (two-sided spectra with a declared white level, Drift, Mains, Collisions), `processes` (fixed-grid Gaussian and OU trajectories, mains), `sampling` (the NoiseSample keys), `model` (`NoiseModel.channels` and `sample_sequence`), `scattering` (Raman, Rayleigh, leakage and recoil operators per pulse), `levels` (register level maps with the SINK), `collisions` (Langevin events), `decoupling` (the Section 6.9 filter-function machinery and sequences), `summary` (Section 6.8 reporting) |
 | `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a), `recipe` (the device's PreparationRecipe, `standard_recipe`, `run_preparation`; M6) |
 | `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library), `hardware` (the Section 7.10 chain and `apply_hardware_chain`; the beat-phase reference `response_phase_rad` and the `crosstalk_suppression` echoes in `schedule`, M7); `played` (the requested -> physical chain of Section 7.3 the engine applies to programmed drives, M8); the Stark compensation and its frame update (`stark_phase_rad`, `frame_after`) in `schedule`, M8 |
 | `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule, `frame_rotated`; M4, M8); `readout` (the detection threshold and window, M5); `surrogate` and `calibrate(surrogate=True)` (the Section 7.5 surrogate table: derived seeds for every drive, spot-checked waveforms on the resolved-mode space, detection; M6, M8); `experiments` (`full_calibration`: the simulated-experiment path `calibrate(surrogate=False)` on the dependency graph, `CalibrationScans`, `CalibrationReport` with the surrogate's error; M8); `cache` (tables per device hash and seed; M8) |
 | `qutip_trap/experiments/` | the simulated experiments of Section 7.5 on the engine: `single_ion` (`rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy`; M2, extended), `motion` (`thermometry`, `mode_spectroscopy`, `heating_rate`), `light` (`stark_scan`, `crosstalk_scan`, `field_scan`), `entangling` (`ms_scan`, `parity_scan`, `ms_phase_scan`; M4, extended), `micromotion` (`micromotion_scan` by three of Berkeland's methods), `imaging` (`crystal_image`), `readout` (`detection_histogram`; M5), `fitting` (the plan's lineshapes, weighted fits, the observation model of shots and readout errors); M8 |
-| `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`); samples at the shot clock, the effective sample size, collisions and heralds, leakage levels (M7) |
+| `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6; the GATE_LOCAL route and the ENR option, M9a), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6; the frozen excitation bound, the dropped contribution, the `enr` class and the exact cap rule, M9a), `gate_local` (the GATE_LOCAL executor of Section 5.4: steps, local spaces, the register as a density matrix or a Kraus-sampled ensemble, the motional model, the report; M9a), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`; the M9a fields); samples at the shot clock, the effective sample size, collisions and heralds, leakage levels (M7) |
 | `qutip_trap/device/` | `model` (`Device`, `Field`, `DerivedQuantities`), `derived` (`Device.derived()`: every computed number with its ledger id, the calibration's seeds; M8) |
 | `qutip_trap/io/` | `ionq` (IonQ circuit JSON, both ways), `openqasm` (the OpenQASM 2 subset importer with custom-gate inlining; M6) |
 | `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`); the Fang, Landsman and OU-heating forms of M7 |
 | `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
-| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests, the M8 calibration-layer, experiment and end-to-end calibration tests) |
+| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests, the M8 calibration-layer, experiment and end-to-end calibration tests, the M9a tomography, GATE_LOCAL and scaling-mode tests) |
 | `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 

@@ -481,6 +481,8 @@ def apply_hardware_chain(
         schedule.phase_frame,
         transports=schedule.transports,
         gates=schedule.gates,
+        targets=schedule.targets,
+        t0_s=schedule.t0_s,
     )
     return new, tuple(notes)
 

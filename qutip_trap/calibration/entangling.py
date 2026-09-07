@@ -34,14 +34,19 @@ from qutip_trap.control.schedule import (
     ms_spin_phases,
     single_qubit_pulse,
 )
-from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, scaled, waveform_integrals
+from qutip_trap.control.shaping import (
+    CHI_MAXIMAL_RAD,
+    GateModes,
+    excursion_by_mode,
+    scaled,
+    waveform_integrals,
+)
 from qutip_trap.control.table import CalEntry, Waveform
 from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, SolverOptions, Traces
 from qutip_trap.dynamics.frames import PhaseFrame
-from qutip_trap.hilbert.operators import required_margin
+from qutip_trap.hilbert.operators import populated_range, required_margin
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import NoiseSample, quiet_sample
-from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
@@ -63,32 +68,23 @@ def gate_space(
     d_max: int = 64,
     extra_levels: int = 0,
 ) -> HilbertSpace:
-    """A joint space resolving every mode of ``modes``: the cap follows the loop radius (the S = +-2 branch moves |alpha| = eta
-    Omega/eps out from the origin, so n up to about (|alpha| + sqrt(nbar))^2 + 3 sqrt(nbar + 1) is populated) plus the Section
-    5.1.1 margin for the mode's eta; every other crystal mode is frozen. ``waveform`` supplies the peak amplitude per mode."""
+    """A joint space resolving every mode of ``modes``: the cap follows the pulse's coherent excursion (the S = +-2 branch moves
+    by sum_i |alpha_im(t)|, whose maximum over the pulse the closed-form trajectories give) through the populated range of the
+    displaced thermal mode at the boundary threshold, plus the Section 5.1.1 margin for the mode's eta (Section 5.5; M9a); every
+    other crystal mode is frozen. ``waveform`` supplies the trajectory."""
     nb = dict(nbar or {})
     resolved: list[ModeTruncation] = []
+    excursion = (
+        excursion_by_mode(waveform, modes) if waveform is not None and waveform.segments is not None else {}
+    )
     for k, m in enumerate(modes.modes):
         eta_max = max(abs(modes.eta[i][k]) for i in modes.ions)
-        radius = 0.0
-        if waveform is not None and waveform.segments is not None:
-            peak = 0.0
-            for seg in waveform.segments:
-                for amp in seg.amplitude_hz.values():
-                    if callable(amp):
-                        grid = np.linspace(0.0, seg.duration_s, 201)
-                        peak = max(peak, float(np.max(np.abs([amp(x) for x in grid]))))
-                    else:
-                        peak = max(peak, abs(float(amp)))
-                mu = seg.detuning_hz["blue"]
-                mu_val = float(mu(0.0)) if callable(mu) else float(mu)
-                eps = abs(modes.omega_rad_s[k] - TWO_PI * abs(mu_val))
-                if eps > 0.0:
-                    radius = max(radius, eta_max * TWO_PI * peak / eps)
+        # the coherent excursion max_t sum_i |alpha_im(t)| of the pulse's trajectory, not the single-loop radius (M9a)
+        radius = float(excursion.get(m, 0.0))
         n_th = nb.get(m, 0.0)
-        n_hi = int(
-            math.ceil((radius + math.sqrt(n_th)) ** 2 + 2.0 * math.sqrt(radius**2 + n_th + 0.25) + 1.0)
-        )
+        # the populated range of the displaced thermal mode at the boundary threshold (Section 5.5; the same definition the
+        # engine's margin check and run.space.cap_for read, M9a)
+        n_hi = populated_range(radius, max(n_th, 0.0))
         d = min(max(n_hi + 1 + required_margin(eta_max) + extra_levels, d_min), d_max)
         resolved.append(ModeTruncation(m, d, (0, min(n_hi, d - 1)), max(eta_max * 1.5, 1e-3)))
     total = n_modes_total if n_modes_total is not None else 3 * n_ions
@@ -235,7 +231,8 @@ def _ideal_target(
     pair: tuple[int, int],
     internal: Sequence[int] | qt.Qobj,
 ) -> qt.Qobj:
-    """The native gate's output for the input ``internal``: MS(phi_0, phi_1, 2 chi) or ZZ(2 chi) on the pair, identity elsewhere."""
+    """The native gate's output for the input ``internal``: MS(phi_0, phi_1, 2 chi) or ZZ(2 chi) on the pair, identity elsewhere.
+    ``pair`` are FACTOR positions in the space's ion order (the device ions themselves on a full space)."""
     a, b = _internal_reference(n_ions, pair)
     if kind == "ms":
         mat = native_ms(phases_rad[0], phases_rad[1], 2.0 * chi_target_rad)
@@ -299,11 +296,14 @@ def exact_gate_check(
         )
     else:
         sched = ms_schedule(waveform, pair, gate_drives, table, phases_rad=phases_rad, response_delay_s=delay)
+    # the pair's FACTOR positions: the device ions on a full space, their positions in ``space.ions`` on a GATE_LOCAL space
+    # over the pair alone (the spot check of a pair whose full space exceeds the guards, Section 5.4; M9a)
+    fa, fb = space.ion_factor(pair[0]), space.ion_factor(pair[1])
     if internal is None:
         # an equatorial force needs a sigma_z eigenstate input, a sigma_z force an equatorial one: |+x +x> on the pair
         if x_basis:
             plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
-            internal = qt.tensor(*[plus if i in pair else qt.basis(2, 0) for i in range(n_ions)])
+            internal = qt.tensor(*[plus if i in (fa, fb) else qt.basis(2, 0) for i in range(n_ions)])
         else:
             internal = [0] * n_ions
     state = space.initial_state(
@@ -321,21 +321,21 @@ def exact_gate_check(
         device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
     )
     rho = traces.final.internal
-    a, b = pair
     # populations in the computational basis (MS) or the x basis (light shift): P_11 = sin^2 chi either way
     read = rho
     if x_basis:
         h = qt.Qobj(np.array([[1.0, 1.0], [1.0, -1.0]]) / math.sqrt(2.0))
-        rot = qt.tensor(*[h if i in pair else qt.qeye(2) for i in range(n_ions)])
+        rot = qt.tensor(*[h if i in (fa, fb) else qt.qeye(2) for i in range(n_ions)])
         read = rot * rho * rot.dag()
     pops: dict[str, float] = {}
     for sa in range(2):
         for sb in range(2):
-            pops[f"P{sa}{sb}"] = float(np.real(qt.expect(_internal_projector(n_ions, a, sa, b, sb), read)))
+            pops[f"P{sa}{sb}"] = float(np.real(qt.expect(_internal_projector(n_ions, fa, sa, fb, sb), read)))
     p11 = min(max(pops["P11"], 0.0), 1.0)
     chi = float(math.asin(math.sqrt(p11))) / (2.0 if x_basis else 1.0)
+    frame_local = {space.ion_factor(q): th for q, th in sched.phase_frame.items() if space.has_ion(q)}
     target = frame_rotated(
-        _ideal_target(waveform.kind, chi_target_rad, phases_rad, n_ions, pair, internal), sched.phase_frame
+        _ideal_target(waveform.kind, chi_target_rad, phases_rad, n_ions, (fa, fb), internal), frame_local
     )
     fid = float(np.real(qt.expect(rho, target))) if rho.isoper else float(abs(target.overlap(rho)) ** 2)
     residual = {m: float(traces.final.motional.nbar[m] - n0[m]) for m in n0}

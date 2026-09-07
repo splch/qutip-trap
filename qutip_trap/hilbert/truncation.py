@@ -119,27 +119,40 @@ def halving_test(
 
 
 def regrid_state(joint: qt.Qobj, old: HilbertSpace, new: HilbertSpace) -> qt.Qobj:
-    """Embed a joint state of ``old`` into ``new``, a copy of it with larger resolved caps (zero-padded Fock factors).
-
-    Product spaces only (the ENR factor cannot be padded mode by mode); the caps may only grow.
+    """Embed a joint state of ``old`` into ``new``, a copy of it with larger caps: zero-padded Fock factors for the resolved
+    modes, and for an ENR group a larger excitation cap, every old Fock tuple mapped to its index in the new group's
+    dictionary (``enr_state_dictionaries``; M9a). The caps may only grow; ions, frozen modes and the ENR modes are unchanged.
     """
-    if old.ion_dims != new.ion_dims or old.frozen != new.frozen or old.enr_group != new.enr_group:
-        raise ValueError("regrid_state changes resolved caps only")
-    if old.enr_group is not None:
-        raise NotImplementedError("regridding an ENR factor is not supported")
+    if old.ion_dims != new.ion_dims or old.frozen != new.frozen or old.ion_labels != new.ion_labels:
+        raise ValueError("regrid_state changes the motional caps only")
+    if [m.mode for m in old.resolved] != [m.mode for m in new.resolved]:
+        raise ValueError("regrid_state keeps the resolved modes and their order")
+    if (old.enr_group is None) != (new.enr_group is None) or (
+        old.enr_group is not None and new.enr_group is not None and old.enr_group[0] != new.enr_group[0]
+    ):
+        raise ValueError("regrid_state keeps the ENR group's modes")
     old_dims, new_dims = old.dims, new.dims
     if any(n < o for o, n in zip(old_dims, new_dims)):
         raise ValueError("caps may only grow")
     if joint.shape[0] != old.dimension:
         raise ValueError("the state does not live on the old space")
+    maps: list[np.ndarray] = [np.arange(d) for d in old_dims]
+    if old.enr_group is not None and new.enr_group is not None:
+        f = old.enr_factor
+        assert f is not None
+        dims_o, n_o = old._enr_dims()
+        dims_n, n_n = new._enr_dims()
+        _n_old, _s2i_old, i2s_old = qt.enr_state_dictionaries(dims_o, n_o)
+        _n_new, s2i_new, _i2s_new = qt.enr_state_dictionaries(dims_n, n_n)
+        maps[f] = np.array([s2i_new[tuple(i2s_old[i])] for i in range(len(i2s_old))], dtype=int)
     if joint.isket:
         arr = np.asarray(joint.full()).reshape(old_dims)
         out = np.zeros(new_dims, dtype=complex)
-        out[tuple(slice(0, d) for d in old_dims)] = arr
+        out[np.ix_(*maps)] = arr
         return qt.Qobj(out.reshape(-1, 1), dims=[new_dims, [1] * len(new_dims)])
     arr = np.asarray(joint.full()).reshape(old_dims + old_dims)
     out = np.zeros(new_dims + new_dims, dtype=complex)
-    out[tuple(slice(0, d) for d in old_dims + old_dims)] = arr
+    out[np.ix_(*(maps + maps))] = arr
     size = int(np.prod(new_dims))
     return qt.Qobj(out.reshape(size, size), dims=[new_dims, new_dims])
 

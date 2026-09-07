@@ -175,3 +175,24 @@ Added on 2026-09-06 by milestone M8 (calibration emulation):
   against the surrogate-table run) and the servo of Section 7.5 (Sections 7.3, 7.5, 7.10, 9.17). Runs the package (about
   thirty minutes: seventeen of them the two heating-rate scans, whose probes at the hottest delay are density matrices of
   about 70 Fock levels, twelve the full calibration); lines prefixed `MC:` carry shot noise.
+
+Added on 2026-09-07 by milestone M9a:
+
+- `check_scaling.py`: Scaling I (Sections 5.1, 5.1.1, 5.2, 5.4, 5.5, 9.8, 9.17, 11.3): the state-based process tomography of
+  Section 5.4 on synthetic channels (a unitary's Choi matrix from its sixteen inputs, the Dykstra projection's residuals against
+  CP and TP on a noisy depolarizing reconstruction, the Kraus operators and the Section 6.8 summary), the contribution
+  criterion's rows (eta = 1e-3 two kilohertz from a tone against eta = 0.05 a megahertz away), the frozen spectators'
+  off-resonant excitation bound and the detuning guard, the ENR sum-generator exponential against the product of per-mode
+  displacements inside and at the cap with the marginal-against-ptrace and dims/shape rows of Section 9.17 and the regrid of an
+  ENR state to a larger cap, the adaptive cap and margin policy on a carrier pulse, and GATE_LOCAL against JOINT_EXACT on the
+  two-ion Bell circuit (the register populations within the reported residual-displacement bound, the tracked occupations
+  against the joint reduced state, the MS step's channel summary). Runs the package (about twelve minutes, most of it the
+  sixteen-input tomography of the Bell circuit's entangling gate on its exact two-ion, two-mode space, 48 engine runs at
+  dimension 572); lines prefixed `MC:` carry shot noise.
+  The cap rule of `run.space.cap_for` and `calibration.entangling.gate_space` now reads the populated range of the displaced
+  thermal mode at the boundary threshold (the definition the engine's Section 5.5 margin check uses), one level above the M6
+  rule on the Section 11.1 fixture's COM mode (d = 11 against 10), and sizes the excursion from the pulse's closed-form
+  trajectory rather than the single-loop radius, so `check_circuits.out` and `check_two_qubit.out` were regenerated on
+  2026-09-07 with the changed caps (`check_two_qubit.out` also picked up the M8 played-chain numbers its committed copy had
+  missed: the symmetric pulse's exact chi 0.768077 against the stale 0.768162, reproduced at HEAD before this milestone's
+  changes); `check_calibration.out` was re-run and is unchanged to every printed digit.

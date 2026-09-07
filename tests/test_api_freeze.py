@@ -136,7 +136,7 @@ def test_instances_are_immutable() -> None:
 def test_unimplemented_entry_points_name_their_milestone() -> None:
     dev = object()
     # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; M8 the full simulated-experiment
-    # calibration and Device.derived(); GATE_LOCAL tomography (M9a) still names its milestone
+    # calibration and Device.derived(); M9a the GATE_LOCAL tomography; the matrix-free kernel (M9b) still names its milestone
     with pytest.raises(ValueError, match=r"unknown calibration experiments"):
         api.calibrate(dev, surrogate=False, experiments=("not_an_experiment",))  # type: ignore[arg-type]
     assert api.load_openqasm2("OPENQASM 2.0; qreg q[1]; x q[0];").ops[0].name == "x"
@@ -146,9 +146,13 @@ def test_unimplemented_entry_points_name_their_milestone() -> None:
     space = api.HilbertSpace((2,), (api.ModeTruncation(0, 4, (0, 1), 0.1),), None, ())
     assert len(space.operators().sigma_plus) == 1
     from qutip_trap.dynamics.engine import JointExactEngine
+    from qutip_trap.dynamics.kernels import apply_drive_kernel
 
-    with pytest.raises(NotImplementedError, match=r"milestone M9a"):
-        JointExactEngine().process_tomography(dev, None, space, None, None, api.SeedSpec(0))  # type: ignore[arg-type]
+    assert "Section 5.4" in (JointExactEngine.process_tomography.__doc__ or "")
+    with pytest.raises(ValueError, match=r"at least one pulse"):
+        JointExactEngine().process_tomography(dev, (), space, None, None, api.SeedSpec(0))  # type: ignore[arg-type]
+    with pytest.raises(NotImplementedError, match=r"milestone M9b"):
+        apply_drive_kernel()
     from tests.fixtures import make_device, make_noise
 
     # the noise sampler of M7 is implemented: a quiet model returns a quiet sample

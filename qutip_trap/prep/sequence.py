@@ -170,8 +170,10 @@ def prepare_state(
             f"no cooling stage addressed modes {sorted(set(missing))}: their occupation is undefined"
         )
     parts: list[qt.Qobj] = []
-    for ion in range(space.n_ions):
-        d = space.ion_dims[ion]
+    for (
+        ion
+    ) in space.ion_labels:  # device ions, in factor order (a space over a subset of the crystal names them)
+        d = space.ion_dim(ion)
         pump = sequence.final_pump(ion)
         if pump is not None:
             labels = qubit_labels[ion] if isinstance(qubit_labels, Mapping) else qubit_labels

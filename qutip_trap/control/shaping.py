@@ -624,6 +624,24 @@ def waveform_integrals(waveform: Waveform, modes: GateModes, kernel: Kernel | No
     return integrals(envelope_of(waveform, modes.ions), modes, kernel)
 
 
+def excursion_by_mode(
+    waveform: Waveform, modes: GateModes, *, n_samples: int = 4001, kernel: Kernel = "choi"
+) -> dict[int, float]:
+    """Per mode, the largest coherent excursion of the pulse's phase-space trajectory: max over time of sum_i |alpha_{i,m}(t)|,
+    the displacement the S = +-N spin branch reaches (every ion's force adds on that branch), from the trajectories of the
+    Section 4.4.3 integrals on a sampled grid (Section 5.5: the populated range a cap must hold is set by this excursion, not by
+    the single-loop radius eta Omega/eps, which a segmented or modulated pulse exceeds by factors; M9a)."""
+    env = envelope_of(waveform, modes.ions, n_samples=n_samples)
+    sampled = env.sampled(n_samples) if isinstance(env, SegmentedEnvelope) else env
+    out: dict[int, float] = {}
+    for m in modes.modes:
+        total = np.zeros(sampled.times_s.size)
+        for ion in modes.ions:
+            total += np.abs(trajectory_sampled(sampled, modes, ion, m, kernel))
+        out[m] = float(np.max(total))
+    return out
+
+
 def scaled(waveform: Waveform, factor: float) -> Waveform:
     """Every amplitude times ``factor``: chi scales as factor^2 and every alpha as factor (the s^2 law of Section 4.4.7 (7))."""
     if waveform.segments is None:
@@ -1154,6 +1172,7 @@ __all__ = [
     "closure_rabi_rad_s",
     "closure_ratio",
     "envelope_of",
+    "excursion_by_mode",
     "frequency_derivative_residuals",
     "gate_modes",
     "integrals",

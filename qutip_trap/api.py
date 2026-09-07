@@ -41,7 +41,7 @@ from qutip_trap.control.composite import CompositePulse, composite_pulse
 from qutip_trap.control.hardware import HardwareChain, apply_hardware_chain
 from qutip_trap.control.played import physical_schedule
 from qutip_trap.control.pulses import Drive, LightShiftCouplings, Pulse, Tone
-from qutip_trap.control.schedule import GateDrive, PlayedGate, Schedule, ScheduledEvent, schedule
+from qutip_trap.control.schedule import GateDrive, GateTarget, PlayedGate, Schedule, ScheduledEvent, schedule
 from qutip_trap.control.shaping import (
     GateModes,
     ShapedPulse,
@@ -63,6 +63,13 @@ from qutip_trap.dynamics.engine import (  # noqa: I001
     Traces,
 )
 from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions
+from qutip_trap.dynamics.tomography import (
+    TomographyRecord,
+    choi_least_squares,
+    input_states,
+    kraus_operators,
+    project_cptp,
+)
 from qutip_trap.experiments import (
     ExperimentResult,
     Observation,
@@ -151,10 +158,11 @@ from qutip_trap.readout.fluorescence import (
     scattering_rate,
 )
 from qutip_trap.readout.presets import ApparatusPreset
+from qutip_trap.run.gate_local import GateLocalReport, GateLocalStep, GateStep, gate_steps, step_space
 from qutip_trap.run.job import RunRecord, last_record, prepare, register_fidelity, run
 from qutip_trap.run.levels import FidelityLevel, resolve_level
 from qutip_trap.run.results import Diagnostics, Result, RunState
-from qutip_trap.run.space import SpaceSelection, select_space
+from qutip_trap.run.space import SpaceSelection, frozen_excitation_bounds, select_space
 from qutip_trap.species import IncompleteSpeciesTable, available
 from qutip_trap.species import species as species_by_name
 from qutip_trap.species.metastable import MetastableChannels
@@ -180,6 +188,18 @@ from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import Gauss, Hz, RadPerS, Tesla, hz_from_rad_s, rad_s_from_hz
 
 __all__ = [
+    "GateLocalReport",
+    "GateLocalStep",
+    "GateStep",
+    "GateTarget",
+    "TomographyRecord",
+    "choi_least_squares",
+    "frozen_excitation_bounds",
+    "gate_steps",
+    "input_states",
+    "kraus_operators",
+    "project_cptp",
+    "step_space",
     "CalibrationCache",
     "CalibrationError",
     "CalibrationReport",

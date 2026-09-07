@@ -7,6 +7,7 @@
       -> space: resolved / frozen / dropped modes with their caps           [run.space]
       -> prepare: Doppler -> sideband -> pump, the initial mixed state      [prep.recipe, prep.sequence]
       -> evolve: every branch of the initial mixture through the pulses     [dynamics.engine]
+         (JOINT_EXACT), or the gate-local walk of Section 5.4               [run.gate_local]
       -> readout: the joint outcome, then the photon records or the POVM    [readout.discriminate]
       -> Result
 
@@ -50,12 +51,12 @@ from qutip_trap.control.schedule import (
     default_gate_drives,
     schedule,
 )
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.engine import MotionalModel, SeedSpec, SolverOptions, State, Traces
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.noise.collisions import collision_rate_per_ion, sample_collisions
 from qutip_trap.noise.levels import InternalLevels, internal_levels
-from qutip_trap.noise.sampling import NoiseSample, key_frozen_n, quiet_sample
+from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n, quiet_sample
 from qutip_trap.noise.scattering import scattering_estimates
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
 from qutip_trap.prep.sequence import prepare_state
@@ -70,6 +71,7 @@ from qutip_trap.readout.discriminate import (
     product_povm,
 )
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, detection_rates_for_ion
+from qutip_trap.run.gate_local import EngineSetup, GateLocalReport, evolve_gate_local
 from qutip_trap.run.levels import FidelityLevel, within_budget
 from qutip_trap.run.results import Diagnostics, Result, RunState, aggregate, binomial_error_bars
 from qutip_trap.run.space import SpaceSelection, select_space
@@ -82,7 +84,6 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.channels import CollapseOp
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
 
-M9A = "milestone M9a (GATE_LOCAL, PLAN.md Section 5.4)"
 ReadoutMode = Literal["fast", "full"]
 
 
@@ -407,12 +408,15 @@ class RunRecord:
     preparation: PreparationRun
     branches: tuple[Branch, ...]
     traces: tuple[Traces, ...]
-    register_state: qt.Qobj
+    register_state: qt.Qobj | None
+    """The recombined register density matrix; None when GATE_LOCAL carried a pure-state ensemble (Section 5.4)."""
     readout: ReadoutStage
     outcome: ReadoutOutcome
     table: CalibrationTable
     qubit_shifts_hz: dict[int, float]
     notes: tuple[str, ...] = field(default_factory=tuple)
+    gate_local: GateLocalReport | None = None
+    """The GATE_LOCAL walk's report (M9a), None for a JOINT_EXACT run."""
 
 
 _LAST_RECORD: dict[int, RunRecord] = {}
@@ -451,6 +455,7 @@ def run(
     internal_levels: int = 2,
     crosstalk_suppression: CrosstalkSuppression = "none",
     stark_compensation: bool = True,
+    enr_group: tuple[Sequence[int], int] | None = None,
 ) -> Result:
     """Compile -> calibrate -> schedule -> prepare -> evolve -> readout -> Result (Section 3.4).
 
@@ -466,6 +471,11 @@ def run(
     scheduler detune every pulse by the table's believed light shift; the pulses the ions see are the scheduler's requests
     converted through the device's derived values by the engine's played chain (``control.played``), so a table fitted by
     simulated experiments (``calibrate(surrogate=False)``) drives the machine with its own errors (Sections 7.3, 7.5).
+    ``level`` (M9a): ``"auto"`` runs JOINT_EXACT inside the Section 11.5 guards and GATE_LOCAL above them (Section 5.4: every
+    gate step on the exact joint space of its ions and resolved modes, the register carried as a density matrix or a pure-state
+    ensemble, the motional model tracked between steps, the residual displacement and the channel summaries reported in
+    ``Diagnostics.gate_local``); either level can be forced. ``enr_group`` = (modes, N_exc) carries a group of cold modes as
+    one excitation-number-restricted factor (Section 11.3 item 1).
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
@@ -519,21 +529,27 @@ def run(
         notes.append("preparation recipe inferred by prep.recipe.standard_recipe (the device carries none)")
     notes.extend(prep_run.notes)
     n_ions = device.crystal.n_ions
+    n_modes = len(device.crystal.modes)
     if internal_levels < 2:
         raise ValueError("internal_levels is at least 2")
     if space is None:
         selection = select_space(
-            device, sched, opts, nbar=prep_run.nbar, caps=caps, ion_dims=[int(internal_levels)] * n_ions
+            device,
+            sched,
+            opts,
+            nbar=prep_run.nbar,
+            caps=caps,
+            ion_dims=[int(internal_levels)] * n_ions,
+            enr=enr_group,
         )
     else:
+        if enr_group is not None:
+            raise ValueError("give the ENR group inside the supplied space or as enr_group, not both")
         selection = SpaceSelection(
             space,
-            {
-                m: ("resolved" if space.mode_class(m) == "resolved" else "frozen")
-                for m in range(len(device.crystal.modes))
-            },
+            {m: _supplied_class(space, m) for m in range(n_modes)},
             {},
-            {m: float(prep_run.nbar.get(m, 0.0)) for m in range(len(device.crystal.modes))},
+            {m: float(prep_run.nbar.get(m, 0.0)) for m in range(n_modes)},
             ("space supplied by the caller",),
         )
     joint_space = selection.space
@@ -545,35 +561,64 @@ def run(
         )
     ok, dim, nnz = within_budget(joint_space, opts)
     resolved_level: FidelityLevel = "JOINT_EXACT" if ok else "GATE_LOCAL"
-    if level == "GATE_LOCAL" or (level == "auto" and resolved_level == "GATE_LOCAL"):
-        raise NotImplementedError(
-            f"joint dimension {dim} and drive non-zeros {nnz} against the guards ({opts.joint_dimension_max}, {opts.nnz_max}): "
-            f"the run routes to GATE_LOCAL, which is {M9A}"
-        )
-    if level == "JOINT_EXACT" and not ok:
+    run_level: FidelityLevel = resolved_level if level == "auto" else level
+    if run_level == "JOINT_EXACT" and not ok:
         notes.append(f"JOINT_EXACT forced above the Section 11.5 guards (dimension {dim}, non-zeros {nnz})")
-    seeds = SeedSpec(int(seed))
-    state0 = prepare(device, joint_space, table, quiet_sample(0), seeds, preparation=prep_run, levels=levels)
-    # 5. the branches of the initial mixture
-    probs_int = internal_probabilities(state0, joint_space)
-    from qutip_trap.light.raman import lamb_dicke_parameters
-
-    coupled_frozen: set[int] = set()
-    for pulse in sched.pulses:
-        dk = pulse.drive.delta_k(device.beams)
-        if float(np.linalg.norm(dk)) == 0.0:
-            continue
-        for ion in pulse.drive.ions:
-            etas, _ = lamb_dicke_parameters(device, ion, dk)
-            coupled_frozen.update(m for m in joint_space.frozen if abs(etas[m]) > 1e-12)
-    mode_nbar = {m.mode: float(state0.motional.nbar.get(m.mode, 0.0)) for m in joint_space.resolved}
-    mode_nbar.update({m: float(state0.motional.nbar.get(m, 0.0)) for m in sorted(coupled_frozen)})
-    branches, dropped_weight = enumerate_branches(probs_int, mode_nbar, opts.branch_weight_min)
-    if dropped_weight > 0.0:
+    if run_level == "GATE_LOCAL":
         notes.append(
-            f"initial-mixture branches below branch_weight_min = {opts.branch_weight_min:g} dropped: total weight "
-            f"{dropped_weight:.3e} (renormalized)"
+            f"GATE_LOCAL (Section 5.4): the joint space would have dimension {dim} and {nnz} drive non-zeros against the "
+            f"guards ({opts.joint_dimension_max}, {opts.nnz_max})"
+            + ("" if not ok else "; requested below the guards")
         )
+        if space is not None:
+            notes.append(
+                "GATE_LOCAL builds its own gate-local spaces; the supplied space sets the mode classes reported"
+            )
+    seeds = SeedSpec(int(seed))
+    # the prepared state: on the joint space for JOINT_EXACT, on the register alone for GATE_LOCAL (whose joint space is the
+    # one that did not fit; the motional model starts from the recipe's occupations, Section 5.4)
+    prep_space = (
+        joint_space
+        if run_level == "JOINT_EXACT"
+        else HilbertSpace(tuple(joint_space.ion_dims), (), None, tuple(range(n_modes)))
+    )
+    state0 = prepare(device, prep_space, table, quiet_sample(0), seeds, preparation=prep_run, levels=levels)
+    # 5. the branches of the initial mixture (JOINT_EXACT: the Fock-sum path of Section 5.3)
+    probs_int = internal_probabilities(state0, prep_space)
+    branches: list[Branch] = []
+    dropped_weight = 0.0
+    if run_level == "JOINT_EXACT":
+        from qutip_trap.light.raman import lamb_dicke_parameters
+
+        coupled_frozen: set[int] = set()
+        for pulse in sched.pulses:
+            dk = pulse.drive.delta_k(device.beams)
+            if float(np.linalg.norm(dk)) == 0.0:
+                continue
+            for ion in pulse.drive.ions:
+                etas, _ = lamb_dicke_parameters(device, ion, dk)
+                coupled_frozen.update(m for m in joint_space.frozen if abs(etas[m]) > 1e-12)
+        mode_nbar = {m.mode: float(state0.motional.nbar.get(m.mode, 0.0)) for m in joint_space.resolved}
+        enr_modes = list(joint_space.enr_group[0]) if joint_space.enr_group is not None else []
+        mode_nbar.update({m: float(state0.motional.nbar.get(m, 0.0)) for m in enr_modes})
+        mode_nbar.update({m: float(state0.motional.nbar.get(m, 0.0)) for m in sorted(coupled_frozen)})
+        branches, dropped_weight = enumerate_branches(probs_int, mode_nbar, opts.branch_weight_min)
+        if joint_space.enr_group is not None:
+            # an ENR Fock tuple lives inside the excitation cap; branches above it are dropped and reported (Section 5.1)
+            n_exc = joint_space.enr_group[1]
+            kept = [b for b in branches if sum(b.fock.get(m, 0) for m in enr_modes) <= n_exc]
+            over = sum(b.weight for b in branches) - sum(b.weight for b in kept)
+            if over > 0.0:
+                notes.append(
+                    f"initial-mixture branches above the ENR cap N_exc = {n_exc} dropped: weight {over:.3e} (renormalized)"
+                )
+                dropped_weight += over
+            branches = kept
+        if dropped_weight > 0.0:
+            notes.append(
+                f"initial-mixture branches below branch_weight_min = {opts.branch_weight_min:g} dropped: total weight "
+                f"{dropped_weight:.3e} (renormalized)"
+            )
     # 6. the qubit-frequency shifts: the true transition minus the table's frame (Section 7.3; M2 hand-off)
     shifts: dict[int, float] = {}
     for i in range(n_ions):
@@ -616,10 +661,9 @@ def run(
         samples_seq = device.noise.sample_sequence(
             rng_noise, sample_times, device=device, duration_s=sched.pulses_end_s, t0_s=t0_s
         )
-    # 8. evolve every branch of every sample
-    engine = JointExactEngine(
+    # 8. evolve every sample: every branch of the initial mixture on the joint space (JOINT_EXACT), or the gate-local walk
+    setup = EngineSetup(
         builder_options=builder_options,
-        store_per_segment=2,
         channels=tuple(channels),
         qubit_shifts_hz=shifts,
         device_channels=bool(noise),
@@ -631,56 +675,122 @@ def run(
     d_int = int(np.prod(joint_space.ion_dims))
     traces_all: list[Traces] = []
     boundary: dict[int, float] = {m.mode: 0.0 for m in joint_space.resolved}
+    margin_reached: dict[int, int] = {}
+    populated_max: dict[int, int] = {}
     integrators: list[str] = []
     approximations: list[str] = []
     methods: list[str] = []
     n_traj_max = 1
-    total_weight = sum(b.weight for b in branches)
-    register_states: list[qt.Qobj] = []
-    for smp in samples_seq:
-        rho_int = np.zeros((d_int, d_int), dtype=complex)
-        for k, br in enumerate(branches):
-            fock_res = {m: n for m, n in br.fock.items() if joint_space.mode_class(m) == "resolved"}
-            thermal_frozen = {m: float(state0.motional.nbar.get(m, 0.0)) for m in joint_space.frozen}
-            st = joint_space.initial_state(
-                list(br.levels),
-                fock=fock_res,
-                thermal={m: v for m, v in thermal_frozen.items()},
-                provenance=tuple(state0.provenance) + (f"m6.branch[{k}]",),
-            )
-            values = dict(smp.values)
-            values.update(
-                {
-                    key_frozen_n(m): float(n)
-                    for m, n in br.fock.items()
-                    if joint_space.mode_class(m) == "frozen"
+    register_states: list[list[tuple[float, qt.Qobj]]] = []
+    gl_report: GateLocalReport | None = None
+    space_initial = joint_space
+    if run_level == "JOINT_EXACT":
+        engine = setup.engine()
+        total_weight = sum(b.weight for b in branches)
+        for smp in samples_seq:
+            rho_int = np.zeros((d_int, d_int), dtype=complex)
+            for k, br in enumerate(branches):
+                fock_res = {
+                    m: n for m, n in br.fock.items() if joint_space.mode_class(m) in ("resolved", "enr")
                 }
-            )
-            sample_b = NoiseSample(
-                sample_id=smp.sample_id, values=values, ou_grids=dict(smp.ou_grids), t_s=smp.t_s
-            )
-            tr = engine.run_pulses(device, sched, st, joint_space, sample_b, seeds, opts)
-            traces_all.append(tr)
-            rho_int += (br.weight / total_weight) * np.asarray(tr.final.internal.full())
-            for m, v in tr.boundary_population.items():
+                thermal_frozen = {m: float(state0.motional.nbar.get(m, 0.0)) for m in joint_space.frozen}
+                st = joint_space.initial_state(
+                    list(br.levels),
+                    fock=fock_res,
+                    thermal={m: v for m, v in thermal_frozen.items()},
+                    provenance=tuple(state0.provenance) + (f"m6.branch[{k}]",),
+                )
+                values = dict(smp.values)
+                values.update(
+                    {
+                        key_frozen_n(m): float(n)
+                        for m, n in br.fock.items()
+                        if joint_space.mode_class(m) == "frozen"
+                    }
+                )
+                values[KEY_BRANCH_WEIGHT] = float(br.weight / total_weight)
+                sample_b = NoiseSample(
+                    sample_id=smp.sample_id, values=values, ou_grids=dict(smp.ou_grids), t_s=smp.t_s
+                )
+                tr = engine.run_pulses(device, sched, st, joint_space, sample_b, seeds, opts)
+                traces_all.append(tr)
+                rho_int += (br.weight / total_weight) * np.asarray(tr.final.internal.full())
+                for m, v in tr.boundary_population.items():
+                    boundary[m] = max(boundary.get(m, 0.0), float(v))
+                rep = engine.last_report
+                if rep is not None:
+                    for seg in rep.segments:
+                        if seg.integrator not in integrators:
+                            integrators.append(seg.integrator)
+                    for a in rep.approximations:
+                        if a not in approximations:
+                            approximations.append(a)
+                    for n in rep.notes:
+                        if n not in notes:
+                            notes.append(n)
+                    if rep.method not in methods:
+                        methods.append(rep.method)
+                    n_traj_max = max(n_traj_max, rep.trajectories)
+                    for m, v in rep.margin_reached.items():
+                        margin_reached[m] = min(margin_reached.get(m, int(v)), int(v))
+                    for m, v in rep.populated_n_max.items():
+                        populated_max[m] = max(populated_max.get(m, 0), int(v))
+                    if rep.space != joint_space:
+                        # the truncation monitor grew the caps (Section 5.5): every later branch starts on the grown space
+                        joint_space = rep.space
+                        dims_int = [list(joint_space.ion_dims), list(joint_space.ion_dims)]
+            register_states.append([(1.0, qt.Qobj(rho_int, dims=dims_int))])
+    else:
+        register_states, gl_report, _models = evolve_gate_local(
+            device,
+            sched,
+            samples_seq,
+            seeds,
+            opts,
+            register0=state0.internal,
+            nbar0=state0.motional.nbar,
+            ion_dims=joint_space.ion_dims,
+            setup=setup,
+            caps=caps,
+        )
+        for step in gl_report.steps:
+            for m, v in step.boundary_population.items():
                 boundary[m] = max(boundary.get(m, 0.0), float(v))
-            rep = engine.last_report
-            if rep is not None:
-                for seg in rep.segments:
-                    if seg.integrator not in integrators:
-                        integrators.append(seg.integrator)
-                for a in rep.approximations:
-                    if a not in approximations:
-                        approximations.append(a)
-                for n in rep.notes:
-                    if n not in notes:
-                        notes.append(n)
-                if rep.method not in methods:
-                    methods.append(rep.method)
-                n_traj_max = max(n_traj_max, rep.trajectories)
-        register_states.append(qt.Qobj(rho_int, dims=dims_int))
-    rho_register = sum((r for r in register_states[1:]), register_states[0]) / len(register_states)
-    # 9. readout per sample on its register state, the collision process per shot (Section 6.7)
+            for m, v in step.margin_reached.items():
+                margin_reached[m] = min(margin_reached.get(m, int(v)), int(v))
+            for integ in step.integrators:
+                if integ not in integrators:
+                    integrators.append(integ)
+            if step.method not in methods:
+                methods.append(step.method)
+            n_traj_max = max(n_traj_max, step.n_traj)
+            for n in step.notes:
+                if n not in notes:
+                    notes.append(n)
+        notes.extend(n for n in gl_report.notes if n not in notes)
+        approximations.append(
+            f"GATE_LOCAL: {len([s for s in gl_report.steps if s.kind == 'gate'])} gate steps and "
+            f"{len([s for s in gl_report.steps if s.kind == 'idle'])} idle steps through exact gate-local spaces (largest dimension "
+            f"{gl_report.largest_local_dimension}); spin-motion and mode-mode correlations traced out between steps, the residual "
+            f"displacement bound {gl_report.residual_bound_total:.2e}, the frozen excitation bound {gl_report.frozen_excitation_total:.2e} "
+            f"and the dropped crosstalk {gl_report.dropped_crosstalk_total:.2e} reported (Section 5.4)"
+        )
+    cap_growth = {
+        t.mode: t.d - space_initial.truncation(t.mode).d
+        for t in joint_space.resolved
+        if t.d != space_initial.truncation(t.mode).d
+    }
+    if cap_growth:
+        notes.append(
+            "the truncation monitor raised the caps (Section 5.5): "
+            + ", ".join(f"mode {m} by {add} level(s)" for m, add in sorted(cap_growth.items()))
+        )
+    dm_states = [[(w, st) for w, st in members if st.isoper] for members in register_states]
+    rho_register: qt.Qobj | None = None
+    if all(len(ms) == len(all_) for ms, all_ in zip(dm_states, register_states)):
+        acc = sum((w * st for members in dm_states for w, st in members), 0.0 * register_states[0][0][1])
+        rho_register = acc / len(register_states)
+    # 9. readout per sample on its register state(s), the collision process per shot (Section 6.7)
     register_space = HilbertSpace(tuple(joint_space.ion_dims), (), None, ())
     run_state = RunState.nominal(n_ions)
     collisions = device.noise.collisions if noise else None
@@ -697,92 +807,100 @@ def run(
     bits_per_sample: list[np.ndarray] = []
     discarded = 0
     prep_duration = prep_run.duration_s
-    for s_idx, (smp, rho_s) in enumerate(zip(samples_seq, register_states)):
+    outcome: ReadoutOutcome | None = None
+    for s_idx, (smp, members) in enumerate(zip(samples_seq, register_states)):
         n_s = counts_per_sample[s_idx]
         if n_s == 0:
             bits_per_sample.append(np.zeros((0, len(measured)), dtype=np.uint8))
             continue
-        reg_state = State(
-            internal=rho_s,
-            motional=MotionalModel(reduced={}, nbar={}, frozen=()),
-            joint=rho_s,
-            provenance=tuple(state0.provenance) + ("m6.register_mixture",),
-        )
-        outcome = measure(
-            register_space,
-            reg_state,
-            stage.schemes,
-            stage.models,
-            stage.discriminator,
-            seeds,
-            shots=n_s,
-            sample=smp.sample_id,
-            trajectory=0,
-            first_shot=first_shots[s_idx],
-            leakage=stage.leakage or None,
-            mode=readout,
-            povm=stage.povm if readout == "fast" else None,
-            keep_records=(readout == "full"),
-        )
         sample_bits: list[np.ndarray] = []
-        for j in range(n_s):
-            shot = first_shots[s_idx] + j
-            herald = 0
-            keep = True
-            if coll_rates:
-                rng_c = np.random.default_rng(seeds.child(smp.sample_id, 0, shot, 0, "collisions"))
-                assert collisions is not None
-                for ev in sample_collisions(rng_c, collisions, coll_rates, t_rep):
-                    herald |= 1
-                    run_state = RunState(
-                        run_state.order,
-                        run_state.dark,
-                        run_state.lost,
-                        run_state.events + ((shot, f"collision:{ev.outcome}:ion{ev.ion}"),),
-                    )
-                    if ev.outcome == "heating_kick":
-                        if ev.time_s >= prep_duration:
-                            keep = False  # the crystal melted during the sequence; the Doppler stage recools only before it
-                    elif ev.outcome == "reorder":
-                        keep = False
-                        order = list(run_state.order)
-                        pos = order.index(ev.ion) if ev.ion in order else 0
-                        other = pos + 1 if pos + 1 < n_ions else pos - 1
-                        if 0 <= other < n_ions and other != pos:
-                            order[pos], order[other] = order[other], order[pos]
-                        run_state = RunState(tuple(order), run_state.dark, run_state.lost, run_state.events)
-                    elif ev.outcome == "loss":
-                        keep = False
-                        run_state = RunState(
-                            run_state.order, run_state.dark, run_state.lost | {ev.ion}, run_state.events
-                        )
-                    else:  # dark_ion
-                        keep = False
-                        run_state = RunState(
-                            run_state.order, run_state.dark | {ev.ion}, run_state.lost, run_state.events
-                        )
-            row = np.asarray(outcome.bits[j, list(measured)], dtype=np.uint8).copy()
-            unusable = run_state.dark | run_state.lost
-            if unusable:
-                herald |= 2
-                for col, q in enumerate(measured):
-                    if q in unusable:
-                        row[col] = stage.schemes[q].bit_of_class("dark")
-            if not keep:
-                discarded += 1
+        shot = first_shots[s_idx]
+        for (_w, rho_s), n_k in zip(members, _allocate(n_s, [w for w, _s in members])):
+            if n_k == 0:
                 continue
-            bits_kept.append(row)
-            sample_bits.append(row)
-            heralds_kept.append(herald)
-            if outcome.posteriors is not None:
-                posteriors_kept.append(np.asarray(outcome.posteriors[j]))
-            if readout == "full" and outcome.records is not None:
-                records_kept.append([rec.total for rec in outcome.records[j]])
+            reg_state = State(
+                internal=rho_s,
+                motional=MotionalModel(reduced={}, nbar={}, frozen=()),
+                joint=rho_s,
+                provenance=tuple(state0.provenance) + ("m6.register_mixture",),
+            )
+            outcome = measure(
+                register_space,
+                reg_state,
+                stage.schemes,
+                stage.models,
+                stage.discriminator,
+                seeds,
+                shots=n_k,
+                sample=smp.sample_id,
+                trajectory=0,
+                first_shot=shot,
+                leakage=stage.leakage or None,
+                mode=readout,
+                povm=stage.povm if readout == "fast" else None,
+                keep_records=(readout == "full"),
+            )
+            for j in range(n_k):
+                herald = 0
+                keep = True
+                if coll_rates:
+                    rng_c = np.random.default_rng(seeds.child(smp.sample_id, 0, shot, 0, "collisions"))
+                    assert collisions is not None
+                    for ev in sample_collisions(rng_c, collisions, coll_rates, t_rep):
+                        herald |= 1
+                        run_state = RunState(
+                            run_state.order,
+                            run_state.dark,
+                            run_state.lost,
+                            run_state.events + ((shot, f"collision:{ev.outcome}:ion{ev.ion}"),),
+                        )
+                        if ev.outcome == "heating_kick":
+                            if ev.time_s >= prep_duration:
+                                keep = False  # the crystal melted during the sequence; the Doppler stage recools only before it
+                        elif ev.outcome == "reorder":
+                            keep = False
+                            order = list(run_state.order)
+                            pos = order.index(ev.ion) if ev.ion in order else 0
+                            other = pos + 1 if pos + 1 < n_ions else pos - 1
+                            if 0 <= other < n_ions and other != pos:
+                                order[pos], order[other] = order[other], order[pos]
+                            run_state = RunState(
+                                tuple(order), run_state.dark, run_state.lost, run_state.events
+                            )
+                        elif ev.outcome == "loss":
+                            keep = False
+                            run_state = RunState(
+                                run_state.order, run_state.dark, run_state.lost | {ev.ion}, run_state.events
+                            )
+                        else:  # dark_ion
+                            keep = False
+                            run_state = RunState(
+                                run_state.order, run_state.dark | {ev.ion}, run_state.lost, run_state.events
+                            )
+                row = np.asarray(outcome.bits[j, list(measured)], dtype=np.uint8).copy()
+                unusable = run_state.dark | run_state.lost
+                if unusable:
+                    herald |= 2
+                    for col, q in enumerate(measured):
+                        if q in unusable:
+                            row[col] = stage.schemes[q].bit_of_class("dark")
+                shot += 1
+                if not keep:
+                    discarded += 1
+                    continue
+                bits_kept.append(row)
+                sample_bits.append(row)
+                heralds_kept.append(herald)
+                if outcome.posteriors is not None:
+                    posteriors_kept.append(np.asarray(outcome.posteriors[j]))
+                if readout == "full" and outcome.records is not None:
+                    records_kept.append([rec.total for rec in outcome.records[j]])
         bits_per_sample.append(
             np.asarray(sample_bits, dtype=np.uint8).reshape(-1, len(measured))
             if sample_bits
             else np.zeros((0, len(measured)), dtype=np.uint8)
         )
+    assert outcome is not None
     bits = np.asarray(bits_kept, dtype=np.uint8).reshape(-1, len(measured))
     counts, probabilities = aggregate(bits)
     n_eff = effective_sample_size(bits_per_sample)
@@ -824,8 +942,10 @@ def run(
             "(Section 5.7)"
         )
     approximations.extend(device.hardware.describe())
+    if selection.guard_violations:
+        notes.extend(v for v in selection.guard_violations if v not in notes)
     diagnostics = Diagnostics(
-        level="JOINT_EXACT",
+        level=run_level,
         space=joint_space,
         mode_class=dict(selection.mode_class),
         run_state=run_state,
@@ -837,7 +957,7 @@ def run(
         integrator=",".join(integrators) if integrators else "none",
         tolerances=(opts.atol, opts.rtol),
         samples=n_samples,
-        trajectories=len(branches) * n_traj_max,
+        trajectories=(len(branches) if branches else 1) * n_traj_max,
         shots_per_sample=int(shots // n_samples),
         effective_sample_size=n_eff,
         root_seed=int(seed),
@@ -845,6 +965,12 @@ def run(
         approximations=tuple(approximations) + tuple(notes) + tuple(selection.notes),
         intrinsic_budget=intrinsic_budget(device, sched, selection),
         dropped_branch_weight=dropped_weight,
+        frozen_excitation_bound=dict(selection.frozen_excitation),
+        dropped_contribution=selection.dropped_contribution,
+        margin_reached=margin_reached,
+        populated_n_max=populated_max,
+        cap_growth=cap_growth,
+        gate_local=gl_report,
     )
     result = Result(
         bitstrings=bits,
@@ -875,8 +1001,33 @@ def run(
         table=table,
         qubit_shifts_hz=shifts,
         notes=tuple(notes),
+        gate_local=gl_report,
     )
     return result
+
+
+def _supplied_class(space: HilbertSpace, mode: int) -> Literal["resolved", "frozen", "dropped", "enr"]:
+    cls = space.mode_class(mode)
+    if cls == "resolved":
+        return "resolved"
+    if cls == "enr":
+        return "enr"
+    return "frozen"
+
+
+def _allocate(total: int, weights: Sequence[float]) -> list[int]:
+    """Largest-remainder allocation of ``total`` shots over members with the given weights (one member takes them all)."""
+    if len(weights) == 1:
+        return [int(total)]
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+    raw = w * total
+    base = np.floor(raw).astype(int)
+    rest = int(total - base.sum())
+    order = np.argsort(-(raw - base))
+    for k in order[:rest]:
+        base[k] += 1
+    return [int(x) for x in base]
 
 
 def to_register_order(vec: np.ndarray, n_qubits: int) -> np.ndarray:

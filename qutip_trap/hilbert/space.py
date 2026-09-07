@@ -117,6 +117,10 @@ class HilbertSpace:
     """(modes, N_exc), optional."""
     frozen: tuple[int, ...]
     """Frozen spectators."""
+    ions: tuple[int, ...] = ()
+    """The DEVICE ion carried by each ion factor, in factor order (M9a, GATE_LOCAL): a space over a subset of the crystal's
+    ions names them here, so that every ``ion`` argument of this class and of the builder is a device index (a position in
+    ``Crystal``), never a factor position; empty = the identity (0, 1, ..., n_ions - 1), the JOINT_EXACT case."""
 
     def __post_init__(self) -> None:
         self.check()
@@ -127,6 +131,11 @@ class HilbertSpace:
         """The Section 5.1 invariants, including shape == prod(dims) on the product factors and the ENR shape rule."""
         if not self.ion_dims or any(d < 2 for d in self.ion_dims):
             raise ValueError("every ion is a qudit of dimension >= 2")
+        if self.ions:
+            if len(self.ions) != len(self.ion_dims):
+                raise ValueError("ions names the device ion of every ion factor (one per factor)")
+            if len(set(self.ions)) != len(self.ions) or any(i < 0 for i in self.ions):
+                raise ValueError("ions are distinct non-negative positions in Crystal")
         resolved = [m.mode for m in self.resolved]
         enr_modes = list(self.enr_group[0]) if self.enr_group is not None else []
         frozen = list(self.frozen)
@@ -149,6 +158,18 @@ class HilbertSpace:
     @property
     def n_ions(self) -> int:
         return len(self.ion_dims)
+
+    @property
+    def ion_labels(self) -> tuple[int, ...]:
+        """The device ion of every ion factor, in factor order (the identity when ``ions`` is empty)."""
+        return self.ions if self.ions else tuple(range(self.n_ions))
+
+    def has_ion(self, ion: int) -> bool:
+        return ion in self.ion_labels
+
+    def ion_dim(self, ion: int) -> int:
+        """The qudit dimension of DEVICE ion ``ion``."""
+        return self.ion_dims[self.ion_factor(ion)]
 
     @property
     def dims(self) -> list[int]:
@@ -193,6 +214,12 @@ class HilbertSpace:
         raise KeyError(f"mode {mode} is not a resolved mode of this space")
 
     def ion_factor(self, ion: int) -> int:
+        """The tensor factor carrying DEVICE ion ``ion`` (its position in ``ions``; the identity without a mapping)."""
+        if self.ions:
+            try:
+                return self.ions.index(ion)
+            except ValueError:
+                raise KeyError(f"ion {ion} is not carried by this space (ions {self.ions})") from None
         if not 0 <= ion < self.n_ions:
             raise IndexError(f"ion {ion} out of range for {self.n_ions} ions")
         return ion
@@ -253,31 +280,32 @@ class HilbertSpace:
         return qt.tensor(*ops).to("CSR")
 
     def sigma_plus(self, ion: int) -> qt.Qobj:
-        """|1><0| on ``ion`` (raising the lower qubit level to the upper), identities elsewhere."""
-        return _cached(
-            self, ("sigma_plus", ion), lambda: self.embed(qudit_sigma_plus(self.ion_dims[ion]), ion)
-        )
+        """|1><0| on DEVICE ion ``ion`` (raising the lower qubit level to the upper), identities elsewhere."""
+        f = self.ion_factor(ion)
+        return _cached(self, ("sigma_plus", f), lambda: self.embed(qudit_sigma_plus(self.ion_dims[f]), f))
 
     def sigma_minus(self, ion: int) -> qt.Qobj:
-        return _cached(
-            self, ("sigma_minus", ion), lambda: self.embed(qudit_sigma_minus(self.ion_dims[ion]), ion)
-        )
+        f = self.ion_factor(ion)
+        return _cached(self, ("sigma_minus", f), lambda: self.embed(qudit_sigma_minus(self.ion_dims[f]), f))
 
     def sigma_z(self, ion: int) -> qt.Qobj:
         """The ENERGY sigma_z = |1><1| - |0><0| on ``ion`` (upper level positive; the negative of the computational Z)."""
-        return _cached(self, ("sigma_z", ion), lambda: self.embed(qudit_sigma_z(self.ion_dims[ion]), ion))
+        f = self.ion_factor(ion)
+        return _cached(self, ("sigma_z", f), lambda: self.embed(qudit_sigma_z(self.ion_dims[f]), f))
 
     def projector(self, ion: int, level: int) -> qt.Qobj:
+        f = self.ion_factor(ion)
         return _cached(
             self,
-            ("projector", ion, level),
-            lambda: self.embed(qudit_projector(self.ion_dims[ion], level), ion),
+            ("projector", f, level),
+            lambda: self.embed(qudit_projector(self.ion_dims[f], level), f),
         )
 
     def transition(self, ion: int, upper: int, lower: int) -> qt.Qobj:
         """|upper><lower| on ``ion`` for d > 2 (the transition operators of Section 5.7)."""
-        d = self.ion_dims[ion]
-        return self.embed(qt.basis(d, upper) * qt.basis(d, lower).dag(), ion)
+        f = self.ion_factor(ion)
+        d = self.ion_dims[f]
+        return self.embed(qt.basis(d, upper) * qt.basis(d, lower).dag(), f)
 
     def annihilation(self, mode: int) -> qt.Qobj:
         """a_m on the joint space (resolved: truncated ladder operator; ENR member: enr_destroy of the group)."""
@@ -369,8 +397,9 @@ class HilbertSpace:
         ion for two-level ions (Section 5.1.1). ``ion_op`` replaces sigma_+ by another operator on the ion's factor
         (the level projectors of a light-shift drive, Section 4.4.4).
         """
+        f_ion = self.ion_factor(ion)
         ops: dict[int, qt.Qobj] = {
-            self.ion_factor(ion): qudit_sigma_plus(self.ion_dims[ion]) if ion_op is None else ion_op
+            f_ion: qudit_sigma_plus(self.ion_dims[f_ion]) if ion_op is None else ion_op
         }
         enr_etas: dict[int, float] = {}
         for mode, eta in etas.items():
@@ -400,9 +429,9 @@ class HilbertSpace:
                 else:
                     disp[(ion, mode)] = self.displacement(ion, mode, eta)
         return CachedOperators(
-            sigma_plus=tuple(self.sigma_plus(i) for i in range(self.n_ions)),
-            sigma_minus=tuple(self.sigma_minus(i) for i in range(self.n_ions)),
-            sigma_z=tuple(self.sigma_z(i) for i in range(self.n_ions)),
+            sigma_plus=tuple(self.sigma_plus(i) for i in self.ion_labels),
+            sigma_minus=tuple(self.sigma_minus(i) for i in self.ion_labels),
+            sigma_z=tuple(self.sigma_z(i) for i in self.ion_labels),
             a=tuple(self.annihilation(m) for m in modes),
             displacement=disp,
         )
@@ -556,6 +585,17 @@ class HilbertSpace:
         keep_sorted = tuple(sorted(set(keep)))
         if any(f < 0 or f >= len(dims) for f in keep_sorted):
             raise IndexError("keep lists factor indices")
+        obj = state if isinstance(state, qt.Qobj) else state.joint
+        if obj is not None and obj.isket and obj.shape[0] == self.dimension:
+            # a ket: rho_keep = V V^dagger with V the amplitudes reshaped to (kept, traced), O(D_keep^2 D) instead of the
+            # O(D^2) outer product (the engine reduces every stored ket of every segment)
+            arr = np.asarray(obj.full()).reshape(dims)
+            traced = [f for f in range(len(dims)) if f not in keep_sorted]
+            v = np.transpose(arr, list(keep_sorted) + traced)
+            kept_dims_k = [dims[f] for f in keep_sorted]
+            size_k = prod(kept_dims_k)
+            mat = v.reshape(size_k, -1)
+            return qt.Qobj(mat @ mat.conj().T, dims=[kept_dims_k, kept_dims_k])
         rho = self._dense_dm(state).reshape(dims + dims)
         traced = [f for f in range(len(dims)) if f not in keep_sorted]
         for f in reversed(traced):
@@ -592,7 +632,28 @@ class HilbertSpace:
         raise KeyError(f"mode {mode} is frozen and has no reduced state")
 
     def fock_populations(self, state: State | qt.Qobj, mode: int) -> np.ndarray:
+        obj = state if isinstance(state, qt.Qobj) else state.joint
+        if (
+            obj is not None
+            and obj.isket
+            and self.mode_class(mode) == "resolved"
+            and obj.shape[0] == self.dimension
+        ):
+            # a ket's Fock populations are |psi|^2 summed over the other factors, O(D) (the boundary monitor per segment)
+            arr = np.abs(np.asarray(obj.full()).reshape(self.dims)) ** 2
+            f = self.mode_factor(mode)
+            return np.asarray(arr.sum(axis=tuple(i for i in range(arr.ndim) if i != f)), dtype=float)
         return np.real(np.diag(np.asarray(self.mode_marginal(state, mode).full())))
+
+    def populated_range(self, state: State | qt.Qobj, mode: int, tail: float = 1e-6) -> int:
+        """The highest Fock index of a resolved mode that the state populates: the smallest n with the population above n
+        below ``tail`` (Section 5.5: the range the Section 5.1.1 margin is measured from)."""
+        p = self.fock_populations(state, mode)
+        above = np.cumsum(p[::-1])[::-1]  # above[n] = sum_{k >= n} p_k
+        for n in range(p.size):
+            if n + 1 >= p.size or above[n + 1] < tail:
+                return n
+        return int(p.size - 1)
 
     # ---- margins -----------------------------------------------------------------------------------------------
 
@@ -605,9 +666,21 @@ class HilbertSpace:
         return out
 
     def grown(self, mode: int, add: int) -> HilbertSpace:
-        """A copy with ``add`` more Fock levels on ``mode`` (Section 5.5 adaptive growth)."""
+        """A copy with ``add`` more Fock levels on ``mode`` (Section 5.5 adaptive growth); for an ENR member the group's
+        excitation cap grows by ``add`` (the top shell is the group's boundary)."""
+        if self.enr_group is not None and mode in self.enr_group[0]:
+            return self.grown_enr(add)
         res = tuple(m.grown(add) if m.mode == mode else m for m in self.resolved)
-        return HilbertSpace(self.ion_dims, res, self.enr_group, self.frozen)
+        return HilbertSpace(self.ion_dims, res, self.enr_group, self.frozen, self.ions)
+
+    def grown_enr(self, add: int) -> HilbertSpace:
+        """A copy with the ENR group's excitation cap N_exc raised by ``add`` (Section 5.5 on the top ENR shell)."""
+        if self.enr_group is None:
+            raise KeyError("this space has no ENR group")
+        if add <= 0:
+            raise ValueError("grow by a positive number of excitations")
+        modes, n_exc = self.enr_group
+        return HilbertSpace(self.ion_dims, self.resolved, (modes, n_exc + add), self.frozen, self.ions)
 
     @classmethod
     def for_(
@@ -617,16 +690,19 @@ class HilbertSpace:
         options: SolverOptions,
         *,
         nbar: Mapping[int, float] | None = None,
+        enr: tuple[Sequence[int], int] | None = None,
     ) -> HilbertSpace:
         """The resolved-mode selection and truncation policy of Sections 5.2, 5.5 and 11.3 (``run.space.select_space``): the
         modes the schedule's entangling gates displace or entangle beyond the freeze tolerances are resolved with caps from
         their loop radius and occupation, the rest are frozen or dropped. ``nbar`` defaults to the device's prepared
-        occupations (its preparation recipe); the ENR option and the matrix-free kernel are M9a/M9b."""
+        occupations (its preparation recipe). ``enr`` = (modes, N_exc) carries a group of cold, undriven modes dynamically
+        as one excitation-number-restricted factor with the sum-generator displacement (Sections 5.1, 11.3 item 1; M9a);
+        the matrix-free kernel is M9b."""
         from qutip_trap.prep.recipe import preparation_occupations
         from qutip_trap.run.space import select_space
 
         occupations = dict(nbar) if nbar is not None else preparation_occupations(device)
-        return select_space(device, schedule, options, nbar=occupations).space
+        return select_space(device, schedule, options, nbar=occupations, enr=enr).space
 
 
 # ---- module-level cache ----------------------------------------------------------------------------------------------------

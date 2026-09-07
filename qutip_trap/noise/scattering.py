@@ -273,6 +273,11 @@ def scattering_channels(
     ions = list(drive.ions)
     if opts.neighbours:
         ions += [j for j in drive.crosstalk if j not in ions]
+    outside = [j for j in ions if not space.has_ion(j)]
+    if outside:
+        # a GATE_LOCAL space carries a subset of the ions (Section 5.4): neighbours outside it scatter in reality, not here
+        notes.append(f"pulse {pulse.gate_id!r}: scattering of ions {outside} outside the space dropped")
+        ions = [j for j in ions if space.has_ion(j)]
     b_hat = (
         float(device.field.direction[0]),
         float(device.field.direction[1]),
@@ -281,7 +286,7 @@ def scattering_channels(
     ops: list[CollapseOp] = []
     dropped_leak: dict[int, float] = {}
     for ion in ions:
-        d = space.ion_dims[ion]
+        d = space.ion_dim(ion)
         species = device.crystal.species[ion]
         lev = (
             levels_by_ion[ion]

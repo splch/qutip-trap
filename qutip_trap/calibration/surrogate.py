@@ -115,8 +115,10 @@ def spot_check_space(
     d_min: int = 6,
     d_max: int = 64,
     caps: Mapping[int, int] | None = None,
+    ions: Sequence[int] | None = None,
 ) -> tuple[HilbertSpace, dict[int, str]]:
-    """The reduced joint space of a pair's spot check: its resolved modes by the Section 5.2 classes, everything else frozen."""
+    """The reduced joint space of a pair's spot check: its resolved modes by the Section 5.2 classes, everything else frozen;
+    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone, the GATE_LOCAL space of the pair (Section 5.4; M9a)."""
     classes: dict[int, str] = {}
     resolved: list[ModeTruncation] = []
     for k, m in enumerate(modes.modes):
@@ -130,6 +132,9 @@ def spot_check_space(
             d = int(caps[m]) if caps is not None and m in caps else tr.d
             resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
     frozen = tuple(m for m in range(n_modes_total) if m not in {t.mode for t in resolved})
+    if ions is not None:
+        local = tuple(sorted(int(i) for i in ions))
+        return HilbertSpace(tuple([2] * len(local)), tuple(resolved), None, frozen, ions=local), classes
     return HilbertSpace(tuple([2] * n_ions), tuple(resolved), None, frozen), classes
 
 
@@ -293,11 +298,29 @@ def surrogate_table(
         }
         inside, dim, nnz = within_budget(space, opts)
         if spot_check and not inside:
-            notes.append(
-                f"pair {(a, b)}: the spot-check space (dims {space.dims}, dimension {dim}, {nnz} drive non-zeros) exceeds the "
-                f"JOINT_EXACT guards ({opts.joint_dimension_max}, {opts.nnz_max}); the closed-form waveform is stored as a "
-                "seed, its exact check needs GATE_LOCAL (milestone M9a)"
+            # the pair's GATE_LOCAL space (Section 5.4; M9a): the two ions and the resolved modes, the rest of the chain absent
+            space, _classes_local = spot_check_space(
+                modes,
+                contributions,
+                n,
+                len(crystal.modes),
+                freeze_alpha_max=opts.freeze_alpha_max,
+                freeze_chi_max_rad=opts.freeze_chi_max_rad,
+                caps=caps,
+                ions=(a, b),
             )
+            inside_local, dim_local, nnz_local = within_budget(space, opts)
+            notes.append(
+                f"pair {(a, b)}: the joint spot-check space (dimension {dim}, {nnz} drive non-zeros) exceeds the JOINT_EXACT "
+                f"guards ({opts.joint_dimension_max}, {opts.nnz_max}); the exact check runs on the pair's GATE_LOCAL space "
+                f"(dims {space.dims}, dimension {dim_local}, {nnz_local} non-zeros; Section 5.4)"
+            )
+            inside = inside_local
+            if not inside:
+                notes.append(
+                    f"pair {(a, b)}: the GATE_LOCAL spot-check space exceeds the guards too; the closed-form waveform is stored "
+                    "as a seed"
+                )
         if spot_check and inside:
             run = calibrate_entangling_angle(
                 device,

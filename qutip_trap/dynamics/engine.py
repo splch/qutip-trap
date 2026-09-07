@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -35,6 +36,7 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.dynamics.channels import CollapseOp
+from qutip_trap.hilbert.operators import required_margin
 
 if TYPE_CHECKING:
     from qutip import Qobj
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
+    from qutip_trap.dynamics.tomography import TomographyRecord
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.levels import InternalLevels
     from qutip_trap.noise.sampling import NoiseSample
@@ -142,10 +145,30 @@ class SolverOptions:
     """The white part of the laser-intensity spectrum as the channel sqrt(D) H_drive(t) (Section 6.4)."""
     hardware_chain: bool = True
     """Pass the schedule through the control hardware chain of Section 7.10 before integrating."""
+    margin_check: bool = True
+    """Section 5.5 (M9a): after every pulse the cap's margin above the POPULATED range of each resolved mode is compared with
+    the Section 5.1.1 margin for the pulse's eta; a deficit raises the cap by it and repeats the run, like the boundary trip."""
+    map_accuracy: float = 1e-3
+    """epsilon_map of the GATE_LOCAL tomography (Section 5.4): on the trajectory path every input state is propagated with
+    n_traj = ceil(1/epsilon_map) trajectories so that the multinomial error of each output's populations sits below it."""
+    crosstalk_threshold: float = 1e-3
+    """GATE_LOCAL (Section 5.4): a neighbour receiving crosstalk light with |epsilon| at or above this joins the gate-local
+    space; below it the leaked light is dropped and its rotation sin^2(eps theta/2) added to the reported bound."""
+    register_dm_max_qubits: int = 12
+    """GATE_LOCAL carries the register as a density matrix up to this many qubits and as a stochastic pure-state ensemble
+    beyond (Section 5.4), the extracted map applied by Kraus sampling."""
+    register_ensemble: int = 64
+    """Members of the pure-state ensemble of a GATE_LOCAL register above ``register_dm_max_qubits`` qubits."""
 
     def __post_init__(self) -> None:
         if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
             raise ValueError("tolerances and nsteps must be positive")
+        if not 0.0 < self.map_accuracy < 1.0 or not 0.0 <= self.crosstalk_threshold <= 1.0:
+            raise ValueError(
+                "map_accuracy is a fraction in (0, 1) and crosstalk_threshold a Rabi ratio in [0, 1]"
+            )
+        if self.register_dm_max_qubits < 1 or self.register_ensemble < 1:
+            raise ValueError("register_dm_max_qubits and register_ensemble are positive")
         if not 0.0 < self.freeze_alpha_max < 1.0 or not 0.0 < self.branch_weight_min < 1.0:
             raise ValueError("freeze_alpha_max and branch_weight_min are fractions in (0, 1)")
         if not self.integrators:
@@ -270,6 +293,10 @@ class EngineReport:
     schedule_played: Schedule | None = None
     """The schedule after the hardware chain (what the ions saw)."""
     notes: tuple[str, ...] = ()
+    populated_n_max: dict[int, int] = field(default_factory=dict)
+    """Per resolved mode, the highest Fock index populated above the boundary threshold during any pulse (Section 5.5; M9a)."""
+    margin_reached: dict[int, int] = field(default_factory=dict)
+    """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during the pulses (Section 5.1.1)."""
 
     @property
     def approximations(self) -> tuple[str, ...]:
@@ -345,13 +372,44 @@ class JointExactEngine:
     def process_tomography(
         self,
         device: Device,
-        pulse: Pulse,
+        pulse: Pulse | Sequence[Pulse] | Schedule,
         space: HilbertSpace,
         motional_model: MotionalModel,
         sample: NoiseSample,
         seeds: SeedSpec,
+        options: SolverOptions | None = None,
+        *,
+        ideal: np.ndarray | None = None,
     ) -> ChannelSummary:
-        raise NotImplementedError("process_tomography is milestone M9a (GATE_LOCAL, PLAN.md Section 5.4)")
+        """State-based process tomography of one pulse, a gate's pulse group or a whole Schedule on ``space`` (Section 5.4; M9a).
+
+        Every one of the prod_i d_i^2 linearly independent pure internal inputs of ``dynamics.tomography.input_states`` is
+        propagated through ``run_pulses`` from the motional state of ``motional_model`` (the tracked reduced density matrices
+        of the resolved modes, their thermal states where none is tracked, the frozen modes' Fock populations as weighted
+        branches), the Choi matrix is reconstructed by least squares and projected onto CP and TP by Dykstra's alternating
+        projection, and the summary of Section 6.8 is computed against ``ideal`` (the gate's ideal unitary on the space's ions
+        in factor order; NaN infidelities without one). The full record, including the motional outputs the GATE_LOCAL model
+        tracks, is :meth:`tomography`.
+        """
+        rec = self.tomography(device, pulse, space, motional_model, sample, seeds, options)
+        return rec.summary(ideal)
+
+    def tomography(
+        self,
+        device: Device,
+        pulse: Pulse | Sequence[Pulse] | Schedule,
+        space: HilbertSpace,
+        motional_model: MotionalModel,
+        sample: NoiseSample,
+        seeds: SeedSpec,
+        options: SolverOptions | None = None,
+    ) -> TomographyRecord:
+        """The process tomography behind :meth:`process_tomography`, with everything GATE_LOCAL tracks (Section 5.4 (b))."""
+        from qutip_trap.dynamics.tomography import tomography as _tomography
+
+        return _tomography(
+            self, device, pulse, space, motional_model, sample, seeds, options or SolverOptions()
+        )
 
     def run_pulses(
         self,
@@ -375,12 +433,20 @@ class JointExactEngine:
                 )
             except _BoundaryTrip as trip:
                 if retries >= self.max_growth_retries:
+                    if trip.reason == "margin":
+                        raise TruncationLimit(
+                            f"the cap of mode {trip.mode} keeps {trip.add} level(s) less margin above the populated range than "
+                            f"Section 5.1.1 requires after {retries} cap-raising retries"
+                        ) from trip
                     raise TruncationLimit(
                         f"boundary population {trip.worst:.3e} on mode {trip.mode} still exceeds "
                         f"{options.boundary_population_max:.1e} after {retries} cap-raising retries"
                     ) from trip
                 retries += 1
-                new_space = current_space.grown(trip.mode, self.growth_levels)
+                # a margin trip knows its deficit exactly and grows by it; a boundary trip grows by the configured step
+                new_space = current_space.grown(
+                    trip.mode, trip.add if trip.reason == "margin" and trip.add > 0 else self.growth_levels
+                )
                 joint = current_state.joint
                 if joint is None:
                     raise
@@ -445,7 +511,7 @@ class JointExactEngine:
         from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
         from qutip_trap.hilbert.operators import thermal_populations
         from qutip_trap.hilbert.truncation import boundary_populations
-        from qutip_trap.noise.sampling import key_frozen_n
+        from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, key_frozen_n
 
         bopts = self.builder_options if isinstance(self.builder_options, BuilderOptions) else BuilderOptions()
         joint = state.joint
@@ -485,11 +551,15 @@ class JointExactEngine:
         static_ops: list[CollapseOp] = list(self.channels)
         if self.device_channels:
             static_ops.extend(device.noise.channels(device, space))
-        # segments at every pulse boundary and idle boundary
-        t0 = min([p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle] + [0.0])
+        # segments at every pulse boundary and idle boundary; the state is given at the schedule's declared start
+        # (``Schedule.t0_s``, a GATE_LOCAL step's start) or at min(0, the first cut) as M2 to M8 did
+        starts = [p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle]
+        t0 = float(sched.t0_s) if sched.t0_s is not None else min(starts + [0.0])
         t_end = (
             sched.pulses_end_s
         )  # the measurement event that may follow is the readout stage's, not free evolution
+        if t_end < t0:
+            t_end = t0
         cuts = {t0, t_end}
         for p in sched.pulses:
             cuts.update((p.t_start_s, p.t_end_s))
@@ -498,7 +568,7 @@ class JointExactEngine:
         edges = _merge_cuts(sorted(t for t in cuts if t0 <= t <= t_end))
         e_keys: list[str] = []
         e_list: list[qt.Qobj] = []
-        for i in range(space.n_ions):
+        for i in space.ion_labels:
             e_keys.append(f"P1[{i}]")
             e_list.append(space.projector(i, 1))
         carried = [m.mode for m in space.resolved] + (list(space.enr_group[0]) if space.enr_group else [])
@@ -514,6 +584,8 @@ class JointExactEngine:
         records: list[object] = []
         jumps: list[tuple[float, str]] = []
         worst_boundary: dict[int, float] = {m: 0.0 for m in carried}
+        populated_max: dict[int, int] = {}
+        margin_reached: dict[int, int] = {}
         # the state: a list of weighted kets (pure branches, or equal-weight trajectories), or one density matrix
         kets: list[qt.Qobj] | None = [joint] if joint.isket else None
         weights: list[float] = [1.0] if joint.isket else []
@@ -785,8 +857,30 @@ class JointExactEngine:
             )
             if active:
                 for m, v in bpop.items():
-                    if v > options.boundary_population_max and space.mode_class(m) == "resolved":
+                    if v > options.boundary_population_max and space.mode_class(m) in ("resolved", "enr"):
                         raise _BoundaryTrip(m, v)
+                if options.margin_check and space.resolved:
+                    # Section 5.5: the cap's margin above the populated range must stay above the Section 5.1.1 margin for
+                    # the segment's eta on every resolved mode the segment drives; a deficit raises the cap by it and repeats.
+                    # The range is measured at the boundary threshold as a fraction of the MIXTURE's population: a branch of
+                    # weight w (run() and the tomography evolve the Fock branches one by one) reads tail/w (M9a)
+                    branch_w = min(max(sample.get(KEY_BRANCH_WEIGHT, 1.0), 1e-300), 1.0)
+                    tail = min(options.boundary_population_max / branch_w, 0.5)
+                    eta_seg: dict[int, float] = {}
+                    for rec in built.records:
+                        for m, e in rec.etas.items():
+                            eta_seg[m] = max(eta_seg.get(m, 0.0), abs(float(e)))
+                    for tr in space.resolved:
+                        m = tr.mode
+                        if eta_seg.get(m, 0.0) == 0.0:
+                            continue
+                        n_pop = _populated_max(space, kets, weights, rho, m, tail)
+                        populated_max[m] = max(populated_max.get(m, 0), n_pop)
+                        margin = tr.d - 1 - n_pop
+                        margin_reached[m] = min(margin_reached.get(m, margin), margin)
+                        need = required_margin(eta_seg[m])
+                        if margin < need:
+                            raise _BoundaryTrip(m, bpop.get(m, 0.0), add=need - margin, reason="margin")
         times_arr = np.concatenate(times_all) if times_all else np.array([t0])
         expect = {k: np.concatenate(v) if v else np.array([]) for k, v in expect_all.items()}
         # ---- the final state ----------------------------------------------------------------------------------
@@ -846,6 +940,8 @@ class JointExactEngine:
             hardware_notes=hw_notes,
             schedule_played=sched,
             notes=tuple(notes),
+            populated_n_max=populated_max,
+            margin_reached=margin_reached,
         )
         return Traces(
             times_s=times_arr,
@@ -1073,11 +1169,40 @@ def _merge_cuts(times: list[float], tolerance_s: float = 1e-12) -> list[float]:
     return out
 
 
+def _populated_max(
+    space: HilbertSpace,
+    kets: list[qt.Qobj] | None,
+    weights: list[float],
+    rho: qt.Qobj | None,
+    mode: int,
+    tail: float,
+) -> int:
+    """The highest Fock index of ``mode`` the (weighted) state populates above ``tail`` (Section 5.5)."""
+    if kets is not None:
+        parts = [w * space.fock_populations(k, mode) for k, w in zip(kets, weights)]
+        p = np.sum(np.stack(parts), axis=0)
+    else:
+        assert rho is not None
+        p = space.fock_populations(rho, mode)
+    above = np.cumsum(p[::-1])[::-1]
+    for n in range(p.size):
+        if n + 1 >= p.size or above[n + 1] < tail:
+            return n
+    return int(p.size - 1)
+
+
 class _BoundaryTrip(Exception):
-    def __init__(self, mode: int, worst: float) -> None:
-        super().__init__(f"boundary population {worst:.3e} on mode {mode}")
+    """The truncation monitor tripped (Section 5.5): the boundary population exceeded the threshold (``reason``
+    "boundary") or the cap's margin above the populated range fell below the Section 5.1.1 requirement ("margin")."""
+
+    def __init__(self, mode: int, worst: float, add: int = 0, reason: str = "boundary") -> None:
+        super().__init__(
+            f"{reason} trip on mode {mode}: boundary population {worst:.3e}, deficit {add} level(s)"
+        )
         self.mode = mode
         self.worst = worst
+        self.add = int(add)
+        self.reason = reason
 
 
 class TruncationLimit(RuntimeError):

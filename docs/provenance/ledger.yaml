@@ -1577,6 +1577,55 @@ records:
     source: "check_calibration.py 5 (reduced scans: 400 shots per point)"
     equation: "every entry the experiments fit (field, qubit frequencies, mode frequencies, occupations, Rabi frequencies, light shifts, crosstalk ratios and phases, the entangling waveform's closure and phase alignment, detection) agrees with the device's derived truth within its reported uncertainty, and a Bell circuit run from the fitted table reaches the same register fidelity as the surrogate-table run within statistics and inside the intrinsic budget (numbers in outputs/check_calibration.out)"
     corrected_form: ""
+  - id: anchor.m9a.cap_rule_populated_range
+    symbol: "n_hi(max_t sum_i |alpha_im(t)|, nbar) at the 1e-6 tail"
+    tag: recomputed here
+    section: "5.1.1; 5.5; 11.3 item 2"
+    source: "hilbert/operators.py populated_range; control/shaping.py excursion_by_mode; check_scaling.py 5; tests/test_run_circuits.py"
+    equation: "the cap of a resolved mode is the highest Fock index its thermal state displaced by the pulse's coherent excursion, max over the pulse of sum_i |alpha_im(t)| from the closed-form trajectories (the S = +-N spin branch), populates above the boundary threshold (sum_k P_th(k) |<n|D(i|alpha|)|k>|^2, the analytic elements) plus the Section 5.1.1 margin; the engine's margin check after every pulse reads the same definition with the threshold taken as a fraction of the MIXTURE's population (a Fock branch of weight w, evolved on its own by run() or the tomography, is measured at tail/w through the sample key branch_weight), so a first attempt does not trip: the two-ion Bell circuit at the default 1e-6 branch cutoff runs its twelve branches on [2, 2, 11, 13] with no growth, populated ranges 3 and 5 and margins of 7 levels"
+    corrected_form: "the M6 rule sized the cap from the single-loop radius eta Omega_peak/eps through ceil((|alpha| + sqrt nbar)^2 + 2 sqrt(|alpha|^2 + nbar + 1/4) + 1): on the two-ion fixture's five-segment AM pulse the joint run populates n = 6 on the COM (n = 4 on the rocking mode) at the 1e-6 tail against the rule's 4 (3), so once the Section 5.5 policy was enforced every entangling pulse tripped, grew both caps by four levels and ran three times slower (80 s against 26 s for the Bell circuit); check_circuits.out and check_two_qubit.out regenerated with the changed caps (check_calibration.out re-run and unchanged to every printed digit)"
+  - id: anchor.m9a.gate_local_steps
+    symbol: "one step per GateTarget"
+    tag: corrected
+    section: "5.4"
+    source: "run/gate_local.py gate_steps; tests/test_gate_local.py"
+    equation: "a GATE_LOCAL step is every pulse of one gate piece as the scheduler recorded it (Schedule.targets), merged with whatever overlaps it in time; the Bell circuit splits into six gate steps and six dead-time idles"
+    corrected_form: "the first M9a build grouped pulses by time overlap alone, which split a five-segment Moelmer-Soerensen waveform into five steps with the motion traced out between them, discarding exactly the spin-motion correlations the gate builds across its segments"
+  - id: anchor.m9a.tomography_projection
+    symbol: "Dykstra onto CP and TP"
+    tag: recomputed here
+    section: "5.4; 6.8; 9.17 'GATE_LOCAL tomography'"
+    source: "dynamics/tomography.py; check_scaling.py 1; tests/test_tomography.py"
+    equation: "the Choi matrix of MS(0.3, -0.7, pi/2) from its sixteen product inputs equals choi_from_unitary to 5e-16 with one Kraus operator; a depolarizing channel (eps = 0.05) reconstructed from outputs carrying 3e-4 of noise violates trace preservation at the noise level and the alternating projection returns ||Tr_out(Choi) - 1|| and the distance to the cone both below 1e-10, the map within 5e-3 of the truth, the twirl p_II = 0.95 and the depolarizing rate equal to the entanglement infidelity (Chen 2023's normalization)"
+    corrected_form: "a positive-semidefinite projection alone leaves Tr_out(Choi) != 1 and a map that changes the register's normalization on every application (the 2026-09-04 numerics critique); the projection ends on the trace-preserving set and reports what is left against the cone"
+  - id: anchor.m9a.register_cutoff
+    symbol: "GATE_LOCAL register against the JOINT_EXACT branches"
+    tag: recomputed here
+    section: "5.3; 5.4; 9.8"
+    source: "tests/test_gate_local.py (single-qubit gate)"
+    equation: "on the two-ion fixture's GPi2 circuit the GATE_LOCAL register (the pumped density matrix carried whole) and the JOINT_EXACT register (the pumped mixture enumerated into branches) agree to 2.6e-9 when every branch is kept (branch_weight_min = 1e-9) and to 3.7e-6 at the default cutoff, the weight of the 2.5e-6 preparation-error branch JOINT_EXACT drops and reports (dropped_branch_weight); the Section 9.8 comparison is held to the reported bound plus that weight"
+    corrected_form: ""
+  - id: anchor.m9a.carrier_frozen_bound
+    symbol: "sum (eta Omega sqrt(n + 1)/(mu - l omega_m))^2"
+    tag: recomputed here
+    section: "5.2"
+    source: "run/space.py frozen_excitation_bounds; tests/test_gate_local.py; tests/test_scaling_modes.py"
+    equation: "a 100.9 kHz carrier pi/2 pulse on the two-ion fixture freezes the x modes (eta 0.078 to 0.081) with an off-resonant excitation bound of 3.1e-5 over the nearest sidebands of both modes, the (eta Omega/omega_m)^2 sideband scale of the intrinsic budget summed over sidebands and modes; the detuning guard |mu - l omega| > 20 eta Omega sqrt(n + 1) is a note, never a refusal; a tone exactly on a sideband reports an unbounded excitation"
+    corrected_form: ""
+  - id: anchor.m9a.tilted_frozen_spectator
+    symbol: "y-COM of the tilted-beam fixture"
+    tag: recomputed here
+    section: "5.2; 9.9; 11.3 item 1"
+    source: "tests/m9_fixtures.py; tests/test_scaling_modes.py"
+    equation: "the two-ion 171Yb+ chain with the global 355 nm pair rotated by 6 degrees in the xy-plane couples the drive to the y modes with eta_y = -/+ 0.0085 against 0.078 to 0.081 on the x modes; a symmetric x-COM pulse (eps = 20 kHz, 50 us, 119.9 kHz per tone) leaves the y-COM (2.900 MHz, 120 kHz below the tone) with |chi_m| = 1.94e-3 rad and |alpha|^2 (2 nbar + 1) = 4e-32 (six closed loops) and the y-rocking mode (2.722 MHz) with 6.3e-4 rad and 1.6e-6: both frozen by the Section 5.2 classes; at eps = 30 kHz the y-COM's 3.1e-4 residual makes it resolved"
+    corrected_form: "the fixture exists because the M4 to M8 fixtures drive along x exactly, where the y and z modes have eta = 0 and are dropped, so no frozen spectator with a measurable chi_m loss occurred anywhere in the earlier suites"
+  - id: anchor.m9a.gate_local_bell
+    symbol: "GATE_LOCAL against JOINT_EXACT, two-ion Bell circuit"
+    tag: recomputed here
+    section: "5.4; 9.8; 6.8"
+    source: "check_scaling.py 6; tests/test_gate_local.py"
+    equation: "register populations (00, 01, 10, 11) JOINT_EXACT (0.508139, 0.000489, 0.001267, 0.490104) against GATE_LOCAL (0.508170, 0.000484, 0.001241, 0.490105), max difference 3.0e-5 against the reported bound 2.5e-4 (residual displacement 9.3e-5, the carrier steps' frozen-mode excitation 1.6e-4); register 1 - F 2.333e-3 against 2.287e-3; the MS step on the 572-dimensional gate-local space [2, 2, 11, 13]: average gate infidelity 1.14e-4, depolarizing rate 1.42e-4, twirl p_II 0.99986, residual |alpha| per spin eigenstate 2.7e-3 (rocking) and 9.1e-3 (COM), purity deficit of the reduced motional state 4.0e-2 and 3.4e-2, tracked nbar 0.02027 and 0.01726 against the joint run's branch-weighted reduced state; 344 engine runs (16 inputs x 3 branches per gate step)"
+    corrected_form: "the first M9a build compared the tracked occupation with the joint run's FIRST branch (the vacuum Fock branch, nbar 4e-5 after the gate) instead of the branch-weighted reduced state; the Section 9.8 row is a comparison of reduced states, so the weights of the initial mixture belong on the joint side"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

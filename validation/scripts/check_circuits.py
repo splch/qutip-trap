@@ -244,7 +244,7 @@ print(
 contrib = waveform_contributions(wf3, modes3, (0, 2))
 for m, c in contrib.items():
     print(
-        f"    mode {m}: |alpha|^2 (2n+1) = {c.alpha2_weighted:.2e}, |chi| = {c.chi_rad:.4f} rad, loop radius {c.radius:.3f}"
+        f"    mode {m}: |alpha|^2 (2n+1) = {c.alpha2_weighted:.2e}, |chi| = {c.chi_rad:.4f} rad, coherent excursion {c.radius:.3f}"
     )
 # the plan's fixture: the two modes with the largest contribution (COM and tilt) resolved at d_m = 12, the zigzag frozen with
 # its residual |alpha|^2 (2 nbar + 1) and chi reported (Section 9.6 row 2)

@@ -111,6 +111,36 @@ class PlayedGate:
 
 
 @dataclass(frozen=True)
+class GateTarget:
+    """The ideal PHYSICAL unitary of one played gate, native or wrapper piece (M9a, Section 5.4): what its pulses are meant to do
+    in the frame they were programmed in, so that a channel extracted from them (GATE_LOCAL tomography, Section 6.8) has a target.
+
+    ``native`` is (operation name, parameters) with every phase already FRAME-APPLIED (phi - theta_frame, what the pulses carry);
+    ``stark_frame_rad`` is the virtual-Z increment the scheduler absorbed for this gate's compensated light shift (Section 7.5
+    item 7), a rotation the physical state carries as RZ(-theta) (Section 7.6, ``frame_rotated``). The unitary is therefore
+    F(stark) G with F = (x)_q RZ(-theta_q) and G the native matrix, on ``ions`` in matrix order (first ion = first factor)."""
+
+    gate_id: str
+    ions: tuple[int, ...]
+    native: tuple[str, tuple[float, ...]]
+    stark_frame_rad: dict[int, float]
+    pulse_ids: tuple[str, ...]
+    t_start_s: float
+    t_end_s: float
+
+    def unitary(self) -> np.ndarray:
+        from qutip_trap.control import native as _native
+        from qutip_trap.control.compiler import Operation, gate_matrix
+
+        name, params = self.native
+        g = gate_matrix(Operation(name, tuple(range(len(self.ions))), tuple(float(p) for p in params)))
+        f = np.array([[1.0 + 0.0j]])
+        for q in self.ions:
+            f = np.kron(f, _native.rz(-float(self.stark_frame_rad.get(q, 0.0))))
+        return np.asarray(f @ g)
+
+
+@dataclass(frozen=True)
 class Schedule:
     pulses: tuple[Pulse, ...]
     idle: tuple[tuple[float, float], ...]
@@ -122,6 +152,11 @@ class Schedule:
     """M12: interleaved with ``pulses`` by absolute time."""
     gates: tuple[PlayedGate, ...] = ()
     """The entangling gates as played (M6), in time order."""
+    targets: tuple[GateTarget, ...] = ()
+    """The ideal physical unitary of every played gate piece (M9a), in time order."""
+    t0_s: float | None = None
+    """The time the state handed to the engine is given at (M9a: a GATE_LOCAL step starts where the register and the motional
+    model stand); None = min(0, the first pulse or idle start), the whole-schedule convention of M2 to M8."""
 
     def __post_init__(self) -> None:
         for a, b in self.idle:
@@ -580,6 +615,45 @@ def schedule(
     pulses: list[Pulse] = []
     idle: list[tuple[float, float]] = []
     gates: list[PlayedGate] = []
+    targets: list[GateTarget] = []
+
+    def record_single(p: Pulse, name: str, phase_played: float) -> None:
+        """The ideal physical unitary of one single-qubit pulse: the native gate at the frame-applied phase it was programmed
+        with, followed by the Stark rotation the frame absorbs for it (M9a)."""
+        q = p.drive.ions[0]
+        gid = p.gate_id or ""
+        targets.append(
+            GateTarget(
+                gid,
+                (q,),
+                (name, (float(phase_played),)),
+                {q: stark_phase_rad(p) if stark_compensation else 0.0},
+                (gid,),
+                p.t_start_s,
+                p.t_end_s,
+            )
+        )
+
+    def record_pair(
+        gate_id: str,
+        pair: tuple[int, int],
+        native_op: tuple[str, tuple[float, ...]],
+        before: PhaseFrame,
+        after: PhaseFrame,
+        new_pulses: Sequence[Pulse],
+    ) -> None:
+        targets.append(
+            GateTarget(
+                gate_id,
+                pair,
+                native_op,
+                {q: after.offset(q) - before.offset(q) for q in pair},
+                tuple(p.gate_id or "" for p in new_pulses),
+                min(p.t_start_s for p in new_pulses),
+                max(p.t_end_s for p in new_pulses),
+            )
+        )
+
     clock: dict[int, float] = {q: t0_s for q in range(circuit.n_qubits)}
     global_clock = t0_s
     last_unitary = max([k for k, op in enumerate(circuit.ops) if not op.is_non_unitary], default=-1)
@@ -612,6 +686,7 @@ def schedule(
                     f"no entangling waveform in the calibration table for ions {(a, b)} (CalibrationTable.ms; Section 7.5)"
                 )
             start = max(clock[a], clock[b]) if parallel else global_clock
+            frame_op = frame
             if op.name == "ms":
                 phi0, phi1, theta = op.params
                 if theta < 0.0:
@@ -621,6 +696,7 @@ def schedule(
                         "MS(phi_0, phi_1, theta) needs an MS (spin-flip) waveform; zz plays a light-shift one"
                     )
                 spins, chi_abs = ms_spin_phases(wf, (a, b), (phi0, phi1), frame)
+                ms_native = ("ms", (frame_op.pulse_phase(a, phi0), frame_op.pulse_phase(b, phi1), theta))
                 if crosstalk_suppression == "none":
                     play = _rescaled(wf, 0.5 * theta, chi_abs)
                     new = entangling_pulses(
@@ -636,6 +712,7 @@ def schedule(
                     )
                     pulses.extend(new)
                     frame = frame_after(new, frame, stark_compensation=stark_compensation)
+                    record_pair(f"ms[{k}]", (a, b), ms_native, frame_op, frame, new)
                     gates.append(
                         PlayedGate(
                             f"ms[{k}]",
@@ -673,8 +750,13 @@ def schedule(
                     _spins: dict[int, float] = spins,
                     _k: int = k,
                     _ab: tuple[int, int] = (a, b),
+                    _native: tuple[str, tuple[float, ...]] = (
+                        "ms",
+                        (ms_native[1][0], ms_native[1][1], 0.5 * theta),
+                    ),
                 ) -> float:
                     nonlocal frame
+                    frame_half = frame
                     new_half = entangling_pulses(
                         _half,
                         ent_drives,
@@ -688,6 +770,7 @@ def schedule(
                     )
                     pulses.extend(new_half)
                     frame = frame_after(new_half, frame, stark_compensation=stark_compensation)
+                    record_pair(f"ms[{_k}]/{tag}", _ab, _native, frame_half, frame, new_half)
                     gates.append(
                         PlayedGate(
                             f"ms[{_k}]/{tag}",
@@ -715,10 +798,11 @@ def schedule(
                     for q in _ions:
                         t_q = t_echo
                         for area, phase in _echo:
+                            ph = _frame.pulse_phase(q, phase)
                             p = _single_qubit(
                                 q,
                                 area,
-                                _frame.pulse_phase(q, phase),
+                                ph,
                                 drives,
                                 table,
                                 t_q,
@@ -726,6 +810,7 @@ def schedule(
                                 stark_compensation=stark_compensation,
                             )
                             pulses.append(p)
+                            record_single(p, "gpi" if area == NATIVE_AREAS["gpi"] else "gpi2", ph)
                             _frame = frame_after([p], _frame, stark_compensation=stark_compensation)
                             t_q = p.t_end_s + dead
                         end = max(end, t_q - dead)
@@ -754,10 +839,11 @@ def schedule(
             if wf.kind == "ms":
                 # inferred construction (Sections 7.6, 12): GPi2(3 pi/2) both, MS(0, 0, theta), GPi2(pi/2) both
                 for q in (a, b):
+                    ph = frame.pulse_phase(q, 1.5 * math.pi)
                     p = _single_qubit(
                         q,
                         NATIVE_AREAS["gpi2"],
-                        frame.pulse_phase(q, 1.5 * math.pi),
+                        ph,
                         drives,
                         table,
                         start,
@@ -765,6 +851,7 @@ def schedule(
                         stark_compensation=stark_compensation,
                     )
                     pulses.append(p)
+                    record_single(p, "gpi2", ph)
                     frame = frame_after([p], frame, stark_compensation=stark_compensation)
                     start = max(start, p.t_end_s) if not parallel else start
                 if not parallel:
@@ -774,6 +861,7 @@ def schedule(
                     start = max(p.t_end_s for p in pulses[-2:]) + dead
                     idle.append((start - dead, start))
                 spins, chi_abs = ms_spin_phases(wf, (a, b), (0.0, 0.0), frame)
+                frame_ms = frame
                 play = _rescaled(wf, 0.5 * abs(theta), chi_abs)
                 if theta < 0.0:
                     spins[b] += math.pi
@@ -790,6 +878,14 @@ def schedule(
                 )
                 pulses.extend(new_ms)
                 frame = frame_after(new_ms, frame, stark_compensation=stark_compensation)
+                record_pair(
+                    f"zz[{k}]/ms",
+                    (a, b),
+                    ("ms", (frame_ms.pulse_phase(a, 0.0), frame_ms.pulse_phase(b, 0.0), theta)),
+                    frame_ms,
+                    frame,
+                    new_ms,
+                )
                 gates.append(
                     PlayedGate(
                         f"zz[{k}]/ms", "zz", (a, b), play, ent_drives[a].beams, start, start + play.duration_s
@@ -799,10 +895,11 @@ def schedule(
                 idle.append((start - dead, start))
                 ends = []
                 for q in (a, b):
+                    ph = frame.pulse_phase(q, 0.5 * math.pi)
                     p = _single_qubit(
                         q,
                         NATIVE_AREAS["gpi2"],
-                        frame.pulse_phase(q, 0.5 * math.pi),
+                        ph,
                         drives,
                         table,
                         start,
@@ -810,6 +907,7 @@ def schedule(
                         stark_compensation=stark_compensation,
                     )
                     pulses.append(p)
+                    record_single(p, "gpi2", ph)
                     frame = frame_after([p], frame, stark_compensation=stark_compensation)
                     ends.append(p.t_end_s)
                 advance((a, b), max(ends))
@@ -823,6 +921,9 @@ def schedule(
                 )
             half = _rescaled(wf, 0.25 * abs(theta), abs(chi))
             spins = {a: 0.0, b: 0.0}
+            # each loop applies exp(+i chi_half sigma_z sigma_z) with chi_half = -sign(theta) |theta|/4 = zz(theta/2) (Section 4.4.4)
+            loop_native: tuple[str, tuple[float, ...]] = ("zz", (0.5 * theta,))
+            frame_loop = frame
             new_loop1 = entangling_pulses(
                 half,
                 ent_drives,
@@ -836,6 +937,7 @@ def schedule(
             )
             pulses.extend(new_loop1)
             frame = frame_after(new_loop1, frame, stark_compensation=stark_compensation)
+            record_pair(f"zz[{k}]/loop1", (a, b), loop_native, frame_loop, frame, new_loop1)
             gates.append(
                 PlayedGate(
                     f"zz[{k}]/loop1", "zz", (a, b), half, ent_drives[a].beams, start, start + half.duration_s
@@ -845,10 +947,11 @@ def schedule(
             idle.append((start - dead, start))
             ends = []
             for q in (a, b):
+                ph = frame.pulse_phase(q, 0.0)
                 p = _single_qubit(
                     q,
                     NATIVE_AREAS["gpi"],
-                    frame.pulse_phase(q, 0.0),
+                    ph,
                     drives,
                     table,
                     start,
@@ -856,10 +959,12 @@ def schedule(
                     stark_compensation=stark_compensation,
                 )
                 pulses.append(p)
+                record_single(p, "gpi", ph)
                 frame = frame_after([p], frame, stark_compensation=stark_compensation)
                 ends.append(p.t_end_s)
             start = max(ends) + dead
             idle.append((start - dead, start))
+            frame_loop = frame
             new_loop2 = entangling_pulses(
                 half,
                 ent_drives,
@@ -873,6 +978,7 @@ def schedule(
             )
             pulses.extend(new_loop2)
             frame = frame_after(new_loop2, frame, stark_compensation=stark_compensation)
+            record_pair(f"zz[{k}]/loop2", (a, b), loop_native, frame_loop, frame, new_loop2)
             gates.append(
                 PlayedGate(
                     f"zz[{k}]/loop2", "zz", (a, b), half, ent_drives[a].beams, start, start + half.duration_s
@@ -882,10 +988,11 @@ def schedule(
             idle.append((start - dead, start))
             ends = []
             for q in (a, b):
+                ph = frame.pulse_phase(q, math.pi)
                 p = _single_qubit(
                     q,
                     NATIVE_AREAS["gpi"],
-                    frame.pulse_phase(q, math.pi),
+                    ph,
                     drives,
                     table,
                     start,
@@ -893,6 +1000,7 @@ def schedule(
                     stark_compensation=stark_compensation,
                 )
                 pulses.append(p)
+                record_single(p, "gpi", ph)
                 frame = frame_after([p], frame, stark_compensation=stark_compensation)
                 ends.append(p.t_end_s)
             advance((a, b), max(ends))
@@ -909,10 +1017,11 @@ def schedule(
             0.0 if stark_entry is None or stark_entry.status == "uncalibrated" else float(stark_entry.value)
         )
         start = clock[q] if parallel else global_clock
+        ph = frame.pulse_phase(q, op.params[0])
         pulse = single_qubit_pulse(
             q,
             NATIVE_AREAS[op.name],
-            frame.pulse_phase(q, op.params[0]),
+            ph,
             spec,
             rabi,
             start,
@@ -922,6 +1031,7 @@ def schedule(
             stark_compensation=stark_compensation,
         )
         pulses.append(pulse)
+        record_single(pulse, op.name, ph)
         frame = frame_after([pulse], frame, stark_compensation=stark_compensation)
         advance((q,), pulse.t_end_s)
     events: list[ScheduledEvent] = []
@@ -936,7 +1046,12 @@ def schedule(
         t_meas = max(ends) if ends else t0_s
         events.append(ScheduledEvent("measure", tuple(sorted(measured)), t_meas, t_meas + window))
     return Schedule(
-        tuple(pulses), tuple(idle), tuple(events), frame.as_dict(circuit.n_qubits), gates=tuple(gates)
+        tuple(pulses),
+        tuple(idle),
+        tuple(events),
+        frame.as_dict(circuit.n_qubits),
+        gates=tuple(gates),
+        targets=tuple(targets),
     )
 
 
@@ -957,6 +1072,7 @@ __all__ = [
     "MICROWAVE_BEAM_KEY",
     "NATIVE_AREAS",
     "GateDrive",
+    "GateTarget",
     "PlayedGate",
     "Schedule",
     "ScheduleError",

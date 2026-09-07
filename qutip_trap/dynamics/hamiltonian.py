@@ -376,7 +376,7 @@ def _drive_operator(
         op = space.drive_operator(ion, etas, ion_op=ion_op)
     else:
         ops: dict[int, qt.Qobj] = {
-            space.ion_factor(ion): qudit_sigma_plus(space.ion_dims[ion]) if ion_op is None else ion_op
+            space.ion_factor(ion): qudit_sigma_plus(space.ion_dim(ion)) if ion_op is None else ion_op
         }
         for mode, eta in etas.items():
             if eta == 0.0 or space.mode_class(mode) != "resolved":
@@ -493,8 +493,8 @@ def build_hamiltonian(
         static = (0.0 * space.identity()).to("CSR")
         approximations.append("frame=interaction: H_0 removed, drives decomposed into sideband operators")
 
-    # H_int
-    for i in range(space.n_ions):
+    # H_int (the ions are DEVICE indices: a GATE_LOCAL space carries a subset of the crystal, Section 5.4)
+    for i in space.ion_labels:
         delta = smp.get(key_qubit_offset_hz(i), 0.0) + (
             0.0 if qubit_shifts_hz is None else float(qubit_shifts_hz.get(i, 0.0))
         )
@@ -503,7 +503,7 @@ def build_hamiltonian(
     # the sampled part of the transition offsets (S_B through the sensitivities plus the mains, Section 6.3): a
     # time-dependent (delta nu_i(t)/2) sigma_z^i on the fixed grid of the sample, whatever the integrator's steps
     trajectory_terms: list[Any] = []
-    for i in range(space.n_ions):
+    for i in space.ion_labels:
         traj = smp.trajectory(key_qubit_trajectory_hz(i))
         if traj is not None:
             trajectory_terms.append(
@@ -627,10 +627,22 @@ def build_hamiltonian(
                     "Section 4.3.6) or supply the sample key rf_phase_rad"
                 )
         targets: list[tuple[int, complex]] = [(i, 1.0 + 0.0j) for i in drive.ions]
+        for ion_addr in drive.ions:
+            if not space.has_ion(ion_addr):
+                raise ValueError(
+                    f"pulse {pulse.gate_id!r} addresses ion {ion_addr}, which the space does not carry (ions {space.ion_labels})"
+                )
         if opts.include_crosstalk:
             for j, eps in drive.crosstalk.items():
                 if j in drive.ions:
                     raise ValueError("crosstalk targets are neighbours, not the addressed ions")
+                if not space.has_ion(j):
+                    # a GATE_LOCAL space carries the addressed ions and the neighbours above the crosstalk threshold
+                    # (Section 5.4); a neighbour outside it receives the light in reality and not here: recorded
+                    approximations.append(
+                        f"pulse {pulse.gate_id!r}: crosstalk |eps| = {abs(complex(eps)):.3g} onto ion {j} outside the space dropped"
+                    )
+                    continue
                 targets.append((j, complex(eps)))
         elif drive.crosstalk:
             approximations.append(f"crosstalk of pulse {pulse.gate_id!r} switched off")
@@ -672,9 +684,9 @@ def build_hamiltonian(
             )
             omega_max = max(omega_max, mu0)
         for ion, eps in targets:
-            if space.ion_dims[ion] > 2:
+            if space.ion_dim(ion) > 2:
                 approximations.append(
-                    f"ion {ion} has d = {space.ion_dims[ion]}: the drive couples levels 0 and 1 only ({M3A})"
+                    f"ion {ion} has d = {space.ion_dim(ion)}: the drive couples levels 0 and 1 only ({M3A})"
                 )
             etas, c0_applied = lamb_dicke_parameters(device, ion, delta_k)
             if not c0_applied and float(np.linalg.norm(delta_k)) > 0.0:
@@ -736,7 +748,7 @@ def build_hamiltonian(
             if drive.kind == "light_shift":
                 ls = drive.light_shift
                 assert ls is not None
-                d_ion = space.ion_dims[ion]
+                d_ion = space.ion_dim(ion)
                 w_dn, w_up = ls.level_weights
                 force_op = w_dn * qudit_projector(d_ion, 0) + w_up * qudit_projector(d_ion, 1)
                 ion_terms = [(force_op, 1.0 + 0.0j, 0.0)]

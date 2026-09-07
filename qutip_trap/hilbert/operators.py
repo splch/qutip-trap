@@ -210,6 +210,33 @@ def thermal_populations(nbar: float, d: int) -> np.ndarray:
     return np.asarray(np.exp(log_p))
 
 
+def displaced_thermal_populations(alpha_abs: float, nbar: float, d: int) -> np.ndarray:
+    """P(n) of a thermal state at ``nbar`` displaced by |alpha|: sum_k P_th(k) |<n|D(alpha)|k>|^2 over ``d`` levels, from the
+    analytic elements (Section 5.1.1 rule iii). The Fock distribution a spin-dependent force of loop radius |alpha| produces on a
+    thermal mode at the far point of its loop, whichever spin branch."""
+    p_th = thermal_populations(nbar, d)
+    p_th = p_th / p_th.sum()
+    mat = np.abs(displacement_matrix_analytic(d, 1j * abs(alpha_abs))) ** 2
+    return np.asarray(mat @ p_th, dtype=float)
+
+
+def populated_range(alpha_abs: float, nbar: float, *, tail: float = 1e-6) -> int:
+    """The highest Fock index a thermal mode displaced by |alpha| populates above ``tail``: the smallest n whose population
+    above it is below ``tail`` (Section 5.5, the range the Section 5.1.1 margin is measured from; the cap rule of
+    ``run.space.cap_for`` and the engine's margin check read the same definition, so a first attempt does not trip)."""
+    if alpha_abs < 0.0 or nbar < 0.0:
+        raise ValueError("|alpha| and nbar are non-negative")
+    if not 0.0 < tail < 1.0:
+        raise ValueError("tail is a population fraction in (0, 1)")
+    d = int(math.ceil(30.0 + 6.0 * (alpha_abs**2 + nbar) + 12.0 * math.sqrt(alpha_abs**2 + nbar)))
+    p = displaced_thermal_populations(alpha_abs, nbar, d)
+    above = np.cumsum(p[::-1])[::-1]
+    for n in range(p.size):
+        if n + 1 >= p.size or above[n + 1] < tail:
+            return int(n)
+    return int(p.size - 1)
+
+
 def thermal_debye_waller_mean(eta: float, nbar: float, *, n_max: int | None = None) -> float:
     """sum_n P_n e^{-eta^2/2} L_n(eta^2), the thermal mean of the carrier Debye-Waller factor (Wineland 1998 Eq. 124)."""
     if n_max is None:
@@ -298,11 +325,13 @@ __all__ = [
     "analytic_norm_loss",
     "debye_waller_factor",
     "debye_waller_rms_fraction",
+    "displaced_thermal_populations",
     "displacement_element_analytic",
     "displacement_matrix_analytic",
     "displacement_operator",
     "interior_tolerance",
     "oracle_check",
+    "populated_range",
     "probability_within",
     "qudit_projector",
     "qudit_sigma_minus",
