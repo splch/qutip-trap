@@ -122,10 +122,18 @@ def test_raman_coupling_reduces_to_ozeris_closed_form(be: AtomicStructure) -> No
         g_b = stretched_g_half(sp, b, field_z())
         g_r = stretched_g_half(sp, r, field_z())
         mine = abs(be.raman_coupling_rad_s(low, high, b, r))
-        closed = 2.0 * abs(ozeri_raman_rabi_half(g_b, g_r, 1.0, 1.0, 1.0, -1.0, delta, omega_f)) / 2.0
-        # lin-perp-lin gives |b_- r_- - b_+ r_+| = 1 with each amplitude 1/sqrt2
-        closed = 2.0 * abs(g_b * g_r / 3.0 * omega_f / (delta * (delta - omega_f)))
+        # lin-perp-lin on a clock line gives b_- = r_- = b_+ = -r_+ = 1/sqrt2 (PLAN.md 683), so
+        # (b_- r_- - b_+ r_+) = 1/2 + 1/2 = 1; the plan's Omega is twice Ozeri's half-convention Omega_R.
+        # The audit of 2026-09-07 (item E14) found this call dead: the line below it overwrote `closed`
+        # with the same expression evaluated at (b_- r_- - b_+ r_+) = 1, so the (b, r) polarization
+        # structure was never exercised. Both forms are now asserted, and the amplitudes are the plan's.
+        h = 1.0 / math.sqrt(2.0)
+        closed = 2.0 * abs(ozeri_raman_rabi_half(g_b, g_r, h, h, h, -h, delta, omega_f))
+        bare = 2.0 * abs(g_b * g_r / 3.0 * omega_f / (delta * (delta - omega_f)))
+        assert closed == pytest.approx(bare, rel=1e-12), "(b_- r_- - b_+ r_+) must be exactly 1 here"
         assert mine == pytest.approx(closed, rel=3e-2)
+        # NEGATIVE CONTROL: same-handed pairs cancel, which is what the signed amplitudes are for
+        assert ozeri_raman_rabi_half(g_b, g_r, h, h, h, h, delta, omega_f) == 0.0
 
 
 def test_raman_coupling_closed_form_tightens_as_the_hyperfine_splitting_shrinks() -> None:
@@ -460,7 +468,16 @@ def test_species_api_end_to_end_on_the_fixture() -> None:
     assert isinstance(d, complex)
     # a pure sigma+ beam drives only m -> m + 1 (Section 4.5.3)
     sig = sigma_plus_along_z(sp, 0.414 * omega_f)
-    for e2, om, _d in st.couplings_from(st.state("S1/2 F=2 mF=1"), sig):
+    couplings = list(st.couplings_from(st.state("S1/2 F=2 mF=1"), sig))
+    # audit item B11: the guard here used to read `abs(om) > 1e-9 * abs(om) + 1e-30 and abs(om) > 0`, which
+    # is self-referential and reduces to `abs(om) > 0`, so it conveyed nothing. The intended threshold is
+    # RELATIVE to the largest coupling in the set.
+    largest = max(abs(om) for _e2, om, _d in couplings)
+    assert largest > 0.0
+    driven = 0
+    for e2, om, _d in couplings:
         mf = st.spectra[e2.level].mF[st.spectra[e2.level].index(e2.label)]
-        if abs(om) > 1e-9 * abs(om) + 1e-30 and abs(om) > 0:
-            assert mf == 2 or abs(om) < 1e-12
+        if abs(om) > 1e-9 * largest:
+            assert mf == 2, f"sigma+ out of mF = 1 must reach mF = 2 only, not {mf}"
+            driven += 1
+    assert driven > 0, "at least one sigma+ coupling must survive the relative threshold"

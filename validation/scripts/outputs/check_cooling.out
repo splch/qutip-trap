@@ -34,9 +34,9 @@ Monroe 1995 9Be+: Gamma/2pi = 19.4 MHz, 313 nm, modes 11.2/18.2/29.8 MHz, Delta 
   one sigma+ beam along (1,1,1)/sqrt3 at s = 2.0: nbar {11.2: 1.281, 18.2: 0.56, 29.8: 0.162}
   -> the theory value 0.484 is the force model with alpha = 1/3; one oblique beam does not reproduce the triple (M3 finding)
 40Ca+ S1/2-P1/2-D3/2 Doppler at -20 MHz (Roos 2000: measured nbar_z = 6.5(1.0) at 3.3 MHz, nbar_y = 16(2) at 1.6 MHz; two-level estimate 3 and 6)
-  s_397 = 0.3, s_866 = 3.0: eight-state nbar_z = 3.43, nbar_y = 7.60; S-P two-level (D renormalized) 3.42, 7.53; W = 7.304e+05
-  s_397 = 1.0, s_866 = 3.0: eight-state nbar_z = 3.74, nbar_y = 8.74; S-P two-level (D renormalized) 3.65, 8.50; W = 1.019e+06
-  s_397 = 3.0, s_866 = 10.0: eight-state nbar_z = 4.92, nbar_y = 12.40; S-P two-level (D renormalized) 4.58, 11.21; W = 2.729e+06
+  s_397 = 0.3, s_866 = 3.0: eight-state nbar_z = 3.66, nbar_y = 8.08; S-P two-level (D renormalized) 3.64, 8.00; W = 8.523e+05
+  s_397 = 1.0, s_866 = 3.0: eight-state nbar_z = 4.02, nbar_y = 9.41; S-P two-level (D renormalized) 3.90, 9.08; W = 1.183e+06
+  s_397 = 3.0, s_866 = 10.0: eight-state nbar_z = 5.36, nbar_y = 13.57; S-P two-level (D renormalized) 4.91, 11.85; W = 3.097e+06
   -> the level structure changes nbar by < 10 % at these parameters; the measured excess is not reproduced as a level effect (M3 finding)
 
 ==============================================================================
@@ -66,7 +66,7 @@ Lechner 2016 (Omega_sigma = 30, Omega_pi = 6.2 MHz, light shift 2.25 MHz -> Delt
 Lechner 2016 (Omega_sigma = 30, Omega_pi = 6.2 MHz, light shift 2.3 MHz -> Delta = 95.53 MHz): R(3.29)/R(1.13) with eta^2 ∝ 1/nu = 3.829 (measured 17/5 = 3.4; the plan's 9.12 row prints the inverse 2.9)
   nu = 1.13 MHz: A_- - A_+ = 1.1328e+05 s^-1, single-beam eta = 0.1674; eta needed for the measured 19e3 s^-1: 0.4095 (|Delta k|/k = 2.45)
   nu = 3.29 MHz: A_- - A_+ = 1.0526e+06 s^-1, single-beam eta = 0.0981; eta needed for the measured 19e3 s^-1: 0.1344 (|Delta k|/k = 1.37)
-level C, Roos geometry on 40Ca+ S1/2 + P1/2 (sigma+ along B, pi beam along x, Omega_sigma/2pi = 21.41 MHz for delta = nu, Omega_pi/2pi = 3 MHz, mode along Delta k, eta = 0.1990): nbar = 0.01026 (closed form 0.00593, (gamma/4 Delta)^2 = 0.00593), P(0) = 0.9907, W = 7.5505e+04 s^-1 (closed form 1.0322e+05), boundary 1.7e-13
+level C, Roos geometry on 40Ca+ S1/2 + P1/2 (sigma+ along B, pi beam along x, Omega_sigma/2pi = 21.41 MHz for delta = nu, Omega_pi/2pi = 3 MHz, mode along Delta k, eta = 0.1990): nbar = 0.01130 (closed form 0.00593, (gamma/4 Delta)^2 = 0.00593), P(0) = 0.9898, W = 7.4794e+04 s^-1 (closed form 1.0322e+05), boundary 1.9e-13
 
 ==============================================================================
 E. Polarization-gradient cooling (Section 4.2.4): analytic limits and the Lindblad layer through the M3a builder
@@ -75,10 +75,10 @@ fixed phase: <n_0> = xi + 1/(4 xi) - 1/2, minimum 0.5000000000 at xi = 0.5; phas
 Joshi operating point: s for xi = 1.35 at Delta = 2 pi x 210 MHz, omega_z = 2 pi x 1088 kHz: 0.02098 (source 0.021(2))
   W(phi = 0) = 1.987e+05 s^-1, phase-averaged 9.934e+04 (the plan quotes ~6.6e4 from the source); window W < delta = 3.77e+05 < omega = 6.84e+06 rad/s
 171Yb+ three-axis triple (Ejtemaee): eta = (0.05201, 0.05282, 0.09023) (source 0.052, 0.053, 0.090)
-Lindblad layer, 40Ca+ S1/2 + P1/2, omega = 2 pi x 4 MHz, Delta = +500 MHz, xi = 1.0000 (eta = 0.0890, s_Joshi = 0.0240): 9 collapse operators (3 q x 3 recoil classes), sum rule 0.0e+00
-  steady state nbar = 0.7560 vs analytic phi = 0 0.7500; relaxation rate 3.8848e+04 vs analytic W(0) 4.5803e+04 s^-1; at the gradient node phi = pi/4 nbar = 6.048 (analytic: uncooled); boundary 1.5e-07
-Lindblad layer, 40Ca+ S1/2 + P1/2, omega = 2 pi x 4 MHz, Delta = +500 MHz, xi = 0.5000 (eta = 0.0890, s_Joshi = 0.0120): 9 collapse operators (3 q x 3 recoil classes), sum rule 0.0e+00
-  steady state nbar = 0.5468 vs analytic phi = 0 0.5000; relaxation rate 9.8395e+03 vs analytic W(0) 1.1451e+04 s^-1; at the gradient node phi = pi/4 nbar = 7.867 (analytic: uncooled); boundary 1.1e-07
+Lindblad layer, 40Ca+ S1/2 + P1/2, omega = 2 pi x 4 MHz, Delta = +500 MHz, xi = 1.0000 (eta = 0.0890, s_Joshi = 0.0240): 9 collapse operators (3 q x 3 recoil classes), sum rule 2.1e-16
+  steady state nbar = 0.7560 vs analytic phi = 0 0.7500; relaxation rate 4.1511e+04 vs analytic W(0) 4.8952e+04 s^-1; at the gradient node phi = pi/4 nbar = 6.048 (analytic: uncooled); boundary 1.5e-07
+Lindblad layer, 40Ca+ S1/2 + P1/2, omega = 2 pi x 4 MHz, Delta = +500 MHz, xi = 0.5000 (eta = 0.0890, s_Joshi = 0.0120): 9 collapse operators (3 q x 3 recoil classes), sum rule 2.1e-16
+  steady state nbar = 0.5468 vs analytic phi = 0 0.5000; relaxation rate 1.0515e+04 vs analytic W(0) 1.2238e+04 s^-1; at the gradient node phi = pi/4 nbar = 7.867 (analytic: uncooled); boundary 1.1e-07
 
 ==============================================================================
 F. Optical pumping (Section 4.2.6): 171Yb+ into |0,0> with the recoil heating of its photons; Zeeman pumping of a spin-zero ion

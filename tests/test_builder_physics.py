@@ -85,14 +85,25 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     t_pi = math.pi / (om * math.exp(-(eta**2) / 2))
     tr, eng = _run(dev, square_drive(dd, include_stark=False), t_pi, space, n_store=21)
     pred = np.sin(0.5 * om * math.exp(-(eta**2) / 2) * tr.times_s) ** 2
-    assert (
-        np.max(np.abs(tr.expectations["P1[0]"] - pred)) < 3e-6
-    )  # off-resonant sidebands ~ (eta Omega/omega)^2
+    # The residual is the off-resonant sidebands, ~(eta Omega/omega_m)^2. The bound was 3e-6 while 171Yb+
+    # had no P3/2 record: the M0a fix of 2026-09-08 (audit item E4) gave the Raman intermediate sum its
+    # second path, and for this fixture's polarization the two paths ADD (the P3/2 partial sum is +0.4577 of
+    # the P1/2 one, the ratio (w_32/w_12)(Delta_12/Delta_32)^2 with Delta/2pi = +33.19 and -66.65 THz), so
+    # carrier_rabi_hz rose from 30278.49 to 44136.18 Hz and the residual grew as Omega^2, from 1.26e-6 to
+    # 2.67e-6. Bound restated at 5e-6, still an order below the physics it is guarding.
+    residual = float(np.max(np.abs(tr.expectations["P1[0]"] - pred)))
+    assert residual < 5e-6, f"off-resonant sidebands ~ (eta Omega/omega_m)^2, got {residual:.3e}"
+    assert residual == pytest.approx((eta * om / WX) ** 2, rel=0.3), (
+        "the residual IS the off-resonant-sideband scaling, so it must track (eta Omega/omega_m)^2"
+    )
     assert tr.boundary_population[KX] < 1e-12
     rep = eng.last_report
     assert rep is not None and rep.segments[0].integrator == "dop853"
     assert 10 < rep.segments[0].steps_per_period < 60, (
-        "Section 5.3: 14 to 45 steps per mode period (dop853 wrapper measured 27)"
+        "Section 5.3's step-density budget is 14 to 45 steps per period of the highest mode, measured with solve_ivp; "
+        "QuTiP's dop853 wrapper reports about 2x that on the same problem (12 against 27 in the plan's own bench), and "
+        "the count moves with the fixture's Rabi frequency, so the window is widened and the discrepancy is recorded "
+        "in the ledger as anchor.m2.picture_equivalence_and_step_density rather than absorbed into the band"
     )
     # the sample's Rabi scale multiplies the drive
     tr2, _ = _run(
@@ -390,11 +401,21 @@ def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:
     assert tr.expectations["P1[1]"][-1] == pytest.approx(
         math.sin(0.5 * abs(eps) * om * dw1 * t) ** 2, abs=1e-6
     )
-    off, eng_off = (
-        _run(dev, drive, t, space, opts=BuilderOptions(include_crosstalk=False)) if False else (None, None)
-    )
+    # include_crosstalk=False drops the neighbour term and records the drop
     built = build_hamiltonian(dev, [pulse], space, options=BuilderOptions(include_crosstalk=False))
     assert any("crosstalk" in a for a in built.approximations)
+    off = JointExactEngine(builder_options=BuilderOptions(include_crosstalk=False)).run_pulses(
+        dev,
+        Schedule((pulse,), (), (), {0: 0.0, 1: 0.0}),
+        space.initial_state([0, 0]),
+        space,
+        quiet_sample(),
+        SeedSpec(0),
+        SolverOptions(),
+    )
+    assert off.expectations["P1[1]"][-1] == pytest.approx(0.0, abs=1e-12), (
+        "the neighbour is not driven at all"
+    )
 
 
 def test_beam_curvature_cetina_forms() -> None:

@@ -43,7 +43,7 @@ from qutip_trap.prep.sideband import (
     trapping_pulse_areas,
     truncated_tail,
 )
-from qutip_trap.units import TWO_PI
+from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 
 OM0 = TWO_PI * 150e3
 
@@ -152,15 +152,108 @@ def test_rasmusson_independent_durations_reach_a_tenth_of_a_quantum() -> None:
     assert nbar < 0.15 and durations.shape == (50,)
 
 
-def test_home_2009_sequence_second_then_first_sidebands_from_fifteen_quanta() -> None:
-    """Doppler to nbar ~ 15, second-sideband cycles, then first-sideband cycles reach <n> ~ 0.06 (Home 2009; the coolant's participation
-    only rescales the pulse times, so a single-ion Fock engine suffices at level A/B)."""
-    om0 = TWO_PI * 200e3
+# Home 2009's own 24Mg+ Raman geometry on the 9Be+-24Mg+-24Mg+-9Be+ crystal (Section 9.3 row "Sympathetic").
+# Barrett, DeMarco, Schaetz, Leibfried, Britton, Chiaverini, Itano, Jelenkovic, Jost, Langer, Rosenband, Wineland,
+# Phys. Rev. A 68, 042302 (2003) Sec. II.A: "The Raman beams propagate at right angles to each other with R2 parallel
+# to the quantization axis and the difference vector Delta k = k_1 - k_2 parallel to the trap axis", so |Delta k| =
+# sqrt(2) k; lambda = 280.355 nm for the 24Mg+ pair (J. D. Jost, PhD thesis, Univ. of Colorado 2010, p. 30).
+MG24_MASS_U = 23.985042
+MG24_RAMAN_NM = 280.355
+HOME_AXIAL_MODES = ((1.9488e6, 0.6294), (4.0854e6, 0.5315), (5.4862e6, 0.3222), (5.7373e6, 0.4664))
+"""(mode frequency, one 24Mg+ ion's mass-weighted amplitude) of the four axial modes, from tests/test_sympathetic.py's
+reproduction of Jost et al., Nature 459, 683 (2009) Methods."""
+
+
+def _mg24_eta(frequency_hz: float, amplitude: float, *, delta_k: bool = True) -> float:
+    """eta = |Delta k| c x0 for one 24Mg+ ion on an axial mode (``delta_k=False`` gives the single-photon emission eta)."""
+    x0 = math.sqrt(HBAR_J_S / (2.0 * MG24_MASS_U * ATOMIC_MASS_KG * TWO_PI * frequency_hz))
+    k = TWO_PI / (MG24_RAMAN_NM * 1e-9)
+    return (math.sqrt(2.0) if delta_k else 1.0) * k * amplitude * x0
+
+
+def test_the_nist_ninety_degree_raman_geometry_reproduces_the_published_magnesium_lamb_dicke_parameters() -> (
+    None
+):
+    """|Delta k| = sqrt(2) k at 280.355 nm reproduces the published 24Mg+ eta of the two-ion 9Be+-24Mg+ pair: 0.28-0.30
+    on the 2.3 MHz common mode (c_Mg = 0.93) and 0.08 on the 4.9 MHz stretch mode (c_Mg = 0.37) (Barrett et al., PRA 68,
+    042302 (2003) Sec. III: "0.3 for the COM mode and 0.082 for the stretch"; Jost thesis p. 142: 0.28 and 0.08).
+    Counterpropagating beams (|Delta k| = 2 k) would give 0.40 and 0.11, which is the negative control."""
+    assert _mg24_eta(2.3e6, 0.93) == pytest.approx(0.282, abs=0.005)
+    assert _mg24_eta(4.9e6, 0.37) == pytest.approx(0.0769, abs=0.002)
+    assert _mg24_eta(2.3e6, 0.93) / _mg24_eta(2.3e6, 0.93, delta_k=False) == pytest.approx(
+        math.sqrt(2.0), rel=1e-12
+    )
+    counterpropagating = math.sqrt(2.0) * _mg24_eta(2.3e6, 0.93)
+    assert counterpropagating == pytest.approx(0.399, abs=0.005)
+    assert abs(counterpropagating - 0.30) > 3.0 * abs(_mg24_eta(2.3e6, 0.93) - 0.30)
+
+
+def test_home_2009_sympathetic_schedule_reaches_six_hundredths_of_a_quantum_on_every_axial_mode() -> None:
+    """Home et al., Science 325, 1227 (2009): Doppler cooling on the 24Mg+ ions "thermalizes the state with a mean
+    vibrational occupation number nbar ~ 15" (supporting online material, "Sympathetic cooling"), then "cycles of
+    resolved sideband cooling on both the second and first sidebands of each motional mode" cool "each mode to near
+    the quantum ground state (<n> ~ 0.06)" (p. 1229, and a per-mode ground-state fidelity of 0.94 in the SOM, whose
+    thermal reading is (1 - 0.94)/0.94 = 0.064).
+
+    The Lamb-Dicke parameters are Home's own: one 24Mg+ ion's mass-weighted amplitude in each axial mode of the
+    reproduced Be-Mg-Mg-Be crystal times |Delta k| = sqrt(2) k at 280 nm. Home prints only the total cooling time
+    (5.1 ms for all four modes) and no per-mode cycle count, so the schedule here is one uniform 60 second-order plus
+    120 first-order cycles inside the plan's own pulse-time window (0.05 to 4 pi times of the first sideband out of
+    |1>, as ``prep.recipe`` uses): every mode reaches 0.005 to 0.013, comfortably inside the row's 0.06. That window
+    matters - the greedy per-order optimizer chooses each block's duration with the earlier blocks fixed, so a window
+    fixed in absolute seconds rather than in pi times lands in a different local minimum and the result stops being
+    monotone in the pulse count (the M3 finding on this optimizer).
+    """
+    om0 = TWO_PI * 150e3
     p0 = thermal_distribution(15.0, 200)
-    pulses, nbar = optimize_per_order(p0, {2: 40, 1: 40}, 0.2, om0, (1e-7, 100e-6))
-    assert nbar < 0.1
-    second_first = [pl.order for pl in pulses]
-    assert second_first[:40] == [2] * 40 and second_first[40:] == [1] * 40
+    counts = {2: 60, 1: 120}
+    expected = (0.009798, 0.006724, 0.012112, 0.004530)
+    for (frequency, amplitude), want in zip(HOME_AXIAL_MODES, expected):
+        eta = _mg24_eta(frequency, amplitude)
+        t_pi = pi_time_s(om0, eta, 1, 1)
+        pulses, nbar = optimize_per_order(p0, counts, eta, om0, (0.05 * t_pi, 4.0 * t_pi))
+        assert nbar == pytest.approx(want, rel=3e-3)
+        assert nbar < 0.06
+        # higher orders first, and every pulse of one order shares its duration (Section 4.2.8)
+        orders = [pl.order for pl in pulses]
+        assert orders == sorted(orders, reverse=True)
+        assert len(orders) == sum(counts.values())
+    # the Lamb-Dicke parameters themselves, as the regression of the geometry
+    assert [round(_mg24_eta(f, c), 4) for f, c in HOME_AXIAL_MODES] == [0.2074, 0.121, 0.0633, 0.0896]
+
+
+def test_monroe_1995_fifteen_raman_cycles_are_colder_than_the_measured_triple() -> None:
+    """Section 9.3 row "Raman sideband cooling": Monroe et al., PRL 75, 4011 (1995) infer "3D Raman cooling to
+    <n_nu> ~= (0.033, 0.022, 0.029)" from the Doppler values (0.47, 0.30, 0.18) at eta = (0.21, 0.12, 0.09) (their
+    eta_nu = 2 k_nu r_nu, counterpropagating Raman beams).
+
+    Fifteen cycles - five first-order cycles per axis - through the exact pulsed engine reach (0.0067, 0.0020,
+    0.0004) with no repump recoil and (0.0226, 0.0069, 0.0030) with three repump photons per cycle, i.e. the ideal
+    schedule is 1.5 to 60 times COLDER than the measurement and the measured triple is not monotone in eta while the
+    model necessarily is. So the row's triple is NOT a target of the schedule model: the experiment's floor comes
+    from heating during the cooling and the repump's imperfection, neither of which the level-B engine carries
+    (M3 finding, recorded like the other Monroe anchors). The numbers here are the regression.
+    """
+    etas = (0.21, 0.12, 0.09)
+    doppler = (0.47, 0.30, 0.18)
+    om0 = TWO_PI * 476e3  # Omega eta_x tau = pi/2 at tau = 2.5 us (Monroe p. 4013)
+    measured = (0.033, 0.022, 0.029)
+    for photons, want in ((0.0, (0.006741, 0.002025, 0.000448)), (3.0, (0.022561, 0.006901, 0.002965))):
+        got = []
+        for eta, n0 in zip(etas, doppler):
+            p0 = thermal_distribution(n0, 40)
+            kernel = (
+                repump_kernel(40, 0.5 * eta, minimal_quadrature(1.0 / 3.0), photons)
+                if photons > 0.0
+                else None
+            )
+            t_pi = pi_time_s(om0, eta, 1, 1)
+            _pulses, nbar = optimize_per_order(p0, {1: 5}, eta, om0, (0.05 * t_pi, 4.0 * t_pi), repump=kernel)
+            got.append(nbar)
+        assert got == [pytest.approx(w, rel=3e-3) for w in want]
+        assert all(g < m for g, m in zip(got, measured))
+    # non-monotone in eta is what the model cannot produce: z is measured hotter than y
+    assert measured[2] > measured[1]
 
 
 def test_repump_kernel_moves_the_mean_by_the_poisson_photon_count_times_alpha_eta_squared() -> None:
@@ -188,7 +281,7 @@ def test_raman_two_photon_rabi_frequency_and_the_monroe_half_convention() -> Non
 
 def test_quenched_floor_uses_marzolis_half_width_and_the_fast_photons_recoil_weight() -> None:
     """(gamma'/nu)^2 [(eta~/eta)^2 + 1/4] with (eta~/eta)^2 = 1.376 for 40Ca+ cooled at 729 nm and quenched at 854 nm (393 nm recoil photon), bracket 1.62."""
-    eff = effective_two_level(1.0, 0.1, 0.2, -1.0, "Xi")
+    eff = effective_two_level(1.0, 0.1, 0.2, -1.0, "Xi", allow_invalid=True)  # Marzoli's Fig. 3 fixture
     nu = 100.0 * eff.gamma_coherence_rad_s
     floor = quenched_floor(eff, nu, 1.376)
     assert floor == pytest.approx(stenholm_floor_half_width(eff.gamma_coherence_rad_s, nu, 1.376))
@@ -202,12 +295,12 @@ def test_quenched_floor_uses_marzolis_half_width_and_the_fast_photons_recoil_wei
 
 @pytest.mark.parametrize("order", [1, 2])
 def test_sideband_ratio_is_exactly_thermal_for_every_pulse_time_and_eta(order: int) -> None:
-    """P_rsb/P_bsb = [nbar/(nbar + 1)]^k to 1e-13 at eta = 1.5, nbar = 8 for three durations (Turchette 2000; Section 9.12 6e-15);
-    a non-thermal (double-thermal) state shows a duration-dependent ratio."""
+    """P_rsb/P_bsb = [nbar/(nbar + 1)]^k to 1e-14 at eta = 1.5, nbar = 8 for three durations (Turchette 2000; Section 9.12
+    pins 6e-15 and the code delivers 1.6e-15); a non-thermal (double-thermal) state shows a duration-dependent ratio."""
     p = thermal_distribution(8.0, 400)
     for t in (1e-6, 3e-6, 7.7e-6):
         r = sideband_ratio(p, 1.5, OM0, order, t)
-        assert r == pytest.approx(thermal_ratio(8.0, order), abs=1e-13)
+        assert r == pytest.approx(thermal_ratio(8.0, order), abs=1e-14)
         assert nbar_from_ratio(r, order) == pytest.approx(8.0, rel=1e-10)
     mixed = 0.6 * thermal_distribution(0.2, 400) + 0.4 * thermal_distribution(12.0, 400)
     ratios = [sideband_ratio(mixed, 0.3, OM0, order, t) for t in (1e-6, 3e-6, 7.7e-6)]

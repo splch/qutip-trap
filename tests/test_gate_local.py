@@ -161,8 +161,9 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
     # the bound plus the weight of the initial-mixture branches JOINT_EXACT dropped (GATE_LOCAL keeps the full register)
     bound = gl.discrepancy_bound + a.diagnostics.dropped_branch_weight
     assert gl.discrepancy_bound > 0.0
-    assert np.max(np.abs(pa - pb)) < bound + 1e-6, (pa, pb, bound)
-    assert abs(register_fidelity(a) - register_fidelity(b)) < bound + 1e-6
+    # no fudge on top: Section 9.8 row 1 says "disagreement above it fails" (M9a audit E5)
+    assert np.max(np.abs(pa - pb)) < bound, (pa, pb, bound)
+    assert abs(register_fidelity(a) - register_fidelity(b)) < bound
     ms = [s for s in gl.steps if s.kind == "gate" and s.resolved]
     assert len(ms) == 1
     s = ms[0]
@@ -239,7 +240,13 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
     assert len(rec_me.labels) == 4 and rec_me.branches >= 1
     opts = SolverOptions(lindblad_method="mcsolve", map_accuracy=0.25, branch_weight_min=0.05)
     rec_mc = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), opts)
-    assert rec_mc.method == "mcsolve" and rec_mc.n_traj == 4
+    # Section 9.17's rule is ceil(1/eps_map) = 4 STOCHASTIC trajectories per input. Under improved_sampling, which Section 5.3
+    # makes the default and M6 implemented, mcsolve evolves the no-jump trajectory once more as a deterministic member of
+    # weight p_no-jump, so the stored WEIGHTED mixture has five members carrying those four; with the flag off it has four
+    plain = dataclasses.replace(opts, improved_sampling=False)
+    rec_plain = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), plain)
+    assert rec_mc.method == "mcsolve" and rec_plain.method == "mcsolve"
+    assert rec_plain.n_traj == 4 and rec_mc.n_traj == 5
     assert rec_mc.tp_residual < 1e-10 and rec_mc.cp_residual < 1e-8, (
         "the projection restores CPTP on the noisy reconstruction"
     )
@@ -305,10 +312,10 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     pa, pb = _populations(a), _populations(b)
     gl = b.diagnostics.gate_local
     assert gl is not None
-    assert np.max(np.abs(pa - pb)) < gl.discrepancy_bound + 1e-5, (
-        np.max(np.abs(pa - pb)),
-        gl.discrepancy_bound,
-    )
+    # Section 9.8 row 1 licenses no slack beyond the bound GATE_LOCAL reports (M9a audit E5: the +1e-5 that stood here was
+    # never recorded); the initial mixture's dropped branch weight is the one addition, and it is recorded
+    bound = gl.discrepancy_bound + a.diagnostics.dropped_branch_weight
+    assert np.max(np.abs(pa - pb)) < bound, (np.max(np.abs(pa - pb)), gl.discrepancy_bound, bound)
     ms_steps = [s for s in gl.steps if s.kind == "gate" and s.resolved]
     assert len(ms_steps) == 2 and all(s.ions in ((0, 1), (1, 2), (0, 1, 2)) for s in ms_steps)
     rec_a = last_record(a)
@@ -331,7 +338,4 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
                 joint_n,
             )
     assert b.probabilities.get("000", 0.0) + b.probabilities.get("111", 0.0) > 0.9
-    assert (
-        register_fidelity(b) > 0.9
-        and abs(register_fidelity(a) - register_fidelity(b)) < gl.discrepancy_bound + 1e-3
-    )
+    assert register_fidelity(b) > 0.9 and abs(register_fidelity(a) - register_fidelity(b)) < bound

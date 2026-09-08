@@ -51,18 +51,45 @@ def _noisy(device, **fields):  # type: ignore[no-untyped-def]
 
 
 def test_effective_sample_size_between_and_within_samples() -> None:
+    """Var(p_hat) = Var_total(p_s)/S: i.i.d. samples must return the full shot count (adding the within-sample binomial term
+    on top of the total per-sample variance halves n_eff, which the bands below are tight enough to catch)."""
     rng = np.random.default_rng(0)
     same = [rng.integers(0, 2, size=(100, 1)).astype(np.uint8) for _ in range(4)]
     n_same = effective_sample_size(same)
-    assert 150.0 < n_same <= 400.0 + 1e-9
+    assert 0.9 * 400.0 < n_same <= 400.0 + 1e-9
+    # 16 samples concentrate the variance estimate, so the double-counted form lands near 400 and this band excludes it
+    rng = np.random.default_rng(0)
+    many = [rng.integers(0, 2, size=(50, 1)).astype(np.uint8) for _ in range(16)]
+    n_many = effective_sample_size(many)
+    assert 0.9 * 800.0 < n_many <= 800.0 + 1e-9
+    # a deliberate between-sample spread (quasi-static drift): the samples are far from independent shots
+    rng = np.random.default_rng(7)
+    spread = [
+        (rng.random((100, 1)) < p).astype(np.uint8) for p in (0.2, 0.35, 0.5, 0.65, 0.8, 0.45, 0.55, 0.3)
+    ]
+    n_spread = effective_sample_size(spread)
+    assert n_spread < 0.1 * 800.0
+    # sigma_between = 0.19 over the eight means, so Var(p_s)/S = 0.19^2/8 and n_eff ~ p(1-p) 8/0.19^2 ~ 55
+    assert 40.0 < n_spread < 80.0
     biased = [np.zeros((100, 1), np.uint8), np.ones((100, 1), np.uint8)]
     assert effective_sample_size(biased) < 10.0
     assert effective_sample_size([np.zeros((50, 2), np.uint8)]) == 50.0
 
 
+def test_effective_sample_size_weights_unequal_sample_sizes() -> None:
+    """Unequal M_s: the weighted total-variance estimator reduces to var(p_s, ddof=1)/S when the counts are equal and stays
+    an unbiased Var(p_hat) estimate when they are not (a 900/100 split of i.i.d. shots is still 1000 independent shots)."""
+    rng = np.random.default_rng(3)
+    uneven = [
+        rng.integers(0, 2, size=(n, 1)).astype(np.uint8) for n in (900, 100, 500, 500, 250, 250, 250, 250)
+    ]
+    n_uneven = effective_sample_size(uneven)
+    assert 0.5 * 3000.0 < n_uneven <= 3000.0 + 1e-9
+
+
 @pytest.mark.slow
 def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample_size(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """A field drift and a Rabi drift sampled at the shot clock: two samples carry different offsets, the shots split round-robin,
+    """A field drift and a Rabi drift sampled at the shot clock: two samples carry different offsets, the shots split into contiguous blocks at the shot clock (conv.shot_blocks_per_sample),
     the error bars use n_eff <= shots, and the same seed reproduces everything (Section 3.4)."""
     fx, sur = two_ion
     dev = _noisy(fx.device, field_drift=Drift(4e-7, 10.0, None), rabi_drift=Drift(2e-2, 1.0, None))
@@ -117,11 +144,15 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
 @pytest.mark.slow
 def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
+    # internal_levels = 3 turns the scattering channels on automatically (Section 4.5.5; conv.scattering_channels_at_d_gt_2):
+    # 28 register-only leakage, spin-flip and Rayleigh operators per pulse ride along on the trajectory path (dimension
+    # 1287 is above mesolve_dimension_max). Eight keyed trajectories per branch keep the test at about three minutes where
+    # the default 64 made it a 25-minute one; the assertions below are coarse enough for that count (measured F = 0.9976)
     kw = dict(
         table=sur.table,
         gate_drives=fx.gate_drives,
         entangling_drives=fx.entangling_drives,
-        options=SolverOptions(branch_weight_min=1e-2),
+        options=SolverOptions(branch_weight_min=1e-2, ntraj=8),
         keep_final_state=True,
         internal_levels=3,
     )
@@ -129,6 +160,7 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
     d = res.diagnostics
     assert d.space.ion_dims == (3, 3) and res.final_state is not None and res.final_state.dims[0] == [3, 3]
     assert any("leakage levels" in a and "SINK" in a for a in d.approximations)
+    assert any("scattering_channels turned ON with scattering_recoil='off'" in a for a in d.approximations)
     assert register_fidelity(res) > 0.99
     rec = last_record(res)
     assert all(s.n_levels == 3 and s.classes[2] == "dark" for s in rec.readout.schemes)
@@ -137,11 +169,17 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
 
 @pytest.mark.slow
 def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """An absurd pressure makes collisions frequent: heating kicks during the cooling stage are heralded and kept, events during the
-    sequence discard the shot, a loss or dark-ion event flags the ion so that every later shot reads it dark (Section 6.7)."""
+    """An absurd pressure makes collisions frequent: heating kicks during the cooling stage are heralded and kept with their drawn
+    energy reported (Section 6.7's k_B T m_gas/m_ion scale), events during the sequence discard the shot, a reorder permutes
+    RunState.order from the configured permutation distribution, and a loss or dark-ion event flags the ion so that every later shot
+    reads it dark (Section 6.7). All four outcomes are enabled here: the audit found reorder and loss pinned to zero, so neither
+    branch ever executed in CI."""
     fx, sur = two_ion
     col = Collisions(
-        3e-6 * TORR_PA, {"H2": 1.0}, {"heating_kick": 0.7, "reorder": 0.0, "loss": 0.0, "dark_ion": 0.3}
+        3e-6 * TORR_PA,
+        {"H2": 1.0},
+        {"heating_kick": 0.4, "reorder": 0.3, "loss": 0.15, "dark_ion": 0.15},
+        reorder_permutations=((1, 0),),
     )
     dev = _noisy(fx.device, collisions=col)
     kw = dict(
@@ -151,14 +189,36 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
         options=SolverOptions(branch_weight_min=1e-2),
     )
     res = run(BELL, dev, 120, **kw)  # type: ignore[arg-type]
+    d = res.diagnostics
     assert res.discarded_shots > 0 and res.shots + res.discarded_shots == 120
     assert res.heralds.shape == (res.shots,) and int(np.sum(res.heralds & 1)) > 0
-    assert any(e[1].startswith("collision:") for e in res.run_state.events)
-    if res.run_state.dark:
+    labels = [e[1] for e in res.run_state.events]
+    assert any(lab.startswith("collision:") for lab in labels)
+    outcomes = {lab.split(":")[1] for lab in labels if lab.startswith("collision:")}
+    assert len(outcomes) >= 3, f"at this pressure every branch should fire: {sorted(outcomes)}"
+    if "heating_kick" in outcomes:
+        # the drawn kick is reported in quanta of the softest mode: Section 6.7's "tens to thousands"
+        kicks = [float(lab.split("dnbar=")[1]) for lab in labels if "dnbar=" in lab]
+        assert kicks and all(q >= 0.0 for q in kicks) and max(kicks) > 1.0
+        assert any(
+            "heating kick(s) drawn from the Section 6.7 energy distribution" in a for a in d.approximations
+        )
+    if "reorder" in outcomes:
+        # every reorder applies the configured (1, 0) transposition to the PERSISTENT order, so the final order is the
+        # identity exactly when an even number of them fired
+        n_reorder = sum(1 for lab in labels if lab.startswith("collision:reorder"))
+        expected = tuple(range(2)) if n_reorder % 2 == 0 else (1, 0)
+        assert res.run_state.order == expected, (n_reorder, res.run_state.order)
+        assert any("reorder event(s) permuted RunState.order" in a for a in d.approximations)
+        assert any("does not re-derive b_{i,m}" in a for a in d.approximations), (
+            "the declared approximation: a reorder does not change the mode structure of later shots"
+        )
+    if res.run_state.dark or res.run_state.lost:
         assert int(np.sum(res.heralds & 2)) > 0
-        assert any("nominal crystal" in a for a in res.diagnostics.approximations)
+        assert any("nominal crystal" in a for a in d.approximations)
     quiet = run(BELL, fx.device, 120, **kw)  # type: ignore[arg-type]
     assert quiet.discarded_shots == 0 and not quiet.run_state.dark and quiet.heralds.sum() == 0
+    assert quiet.run_state.order == tuple(range(2))
 
 
 def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:

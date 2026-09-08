@@ -41,7 +41,7 @@ import hashlib
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import numpy as np
 import qutip as qt
@@ -132,12 +132,33 @@ class SolverOptions:
     joint_dimension_max: int = 4096
     nnz_max: int = 2 * 10**7
     """The Section 11.5 guards that route to GATE_LOCAL."""
+    mode_dimension_max: int = 64
+    """The ceiling on ONE resolved mode's Fock dimension d_m that the cap rule of Sections 5.1.1 and 5.5 may ask for (M9a
+    audit D1). 64 is what M9a hard-coded; Section 5.3 states that a Doppler-cooled nbar ~ 20 mode needs d_m >~ 150 for a
+    boundary population below 1e-4 and Section 5.2 that long-chain transverse spectators within tens of kHz of the tones
+    "cannot be frozen and must be resolved", so the hot-mode regime raises this. When the rule wants more, the cap is
+    clamped here AND the clamp is reported in ``SpaceSelection.notes`` (naming the mode, the range the rule asked for and
+    the range that survives): the Section 5.1.1 oracle check and the Section 5.5 margin check are then evaluated over a
+    narrower range than the physics, which was silent before."""
     boundary_population_max: float = 1e-6
     freeze_chi_max_rad: float = 0.05
     map: Literal["serial", "parallel", "loky"] = "parallel"
     """Coefficients are module-level functions or arrays, so they pickle."""
     e_ops_for_target_tol: bool = True
-    """mcsolve needs e_ops to target a tolerance (Section 5.4)."""
+    """mcsolve needs e_ops to target a tolerance (Section 5.4): the gate on the two-phase trajectory count of Section 3.4."""
+    trajectory_target_tol: float | None = None
+    """Section 3.4's phase one: the absolute tolerance ``mcsolve``'s ``target_tol`` targets on the population e_ops, which
+    fixes the trajectory count that phase two then replays from a keyed seed list of that length. ``None`` keeps the fixed
+    ``ntraj``, the default, because QuTiP 5.3.1's ``target_tol`` stops on a zero-variance first batch (measured: 26
+    trajectories at tol 0.1 and 604 at 0.02 on a damped two-level system, but 2 at 0.005, where the first two trajectories
+    both jumped and the estimated error was exactly 0) and because its firing point is scheduling dependent (Section 3.4
+    [corrected]). Set it and the estimate runs under a serial map with ``ntraj`` as its cap and
+    ``TARGET_TOL_MIN_TRAJECTORIES`` as its floor."""
+    improved_sampling: bool = True
+    """Section 5.3: ``mcsolve``'s no-jump trajectory as a deterministic member of weight p_no-jump, the stochastic ones
+    carrying the residual weight, so the mixture the shots are drawn from is WEIGHTED (never uniform over the stored
+    trajectories, which biases per-shot observables by p_no-jump). Applied when the run has exactly ONE trajectory segment;
+    a multi-segment schedule keeps uniform trajectories and says so (see ``IMPROVED_SAMPLING_MULTI_SEGMENT``)."""
     freeze_alpha_max: float = 1e-4
     """|alpha_m|^2 (2 nbar_m + 1) below which a spectator may be frozen rather than resolved (Section 5.2; M6)."""
     branch_weight_min: float = 1e-6
@@ -160,6 +181,12 @@ class SolverOptions:
     margin_check: bool = True
     """Section 5.5 (M9a): after every pulse the cap's margin above the POPULATED range of each resolved mode is compared with
     the Section 5.1.1 margin for the pulse's eta; a deficit raises the cap by it and repeats the run, like the boundary trip."""
+    convergence_check: bool = False
+    """Section 5.5's second bullet: ``run()`` repeats its evolution with atol and rtol tightened by ten and reports the change
+    in the register populations as ``Diagnostics.convergence`` (``dynamics.evolve.convergence_check``, M2). Off by default
+    because it triples the cost of a run: the comparison runs the base tolerances twice and the tightened ones once. The other
+    two arms Section 9.9 asks for - loosening by ten for the integrator ladder, and every resolved cap + 2 - are
+    ``hilbert.truncation.convergence_report``, which the ``convergence``-marked tests drive (M9a audit E6)."""
     map_accuracy: float = 1e-3
     """epsilon_map of the GATE_LOCAL tomography (Section 5.4): on the trajectory path every input state is propagated with
     n_traj = ceil(1/epsilon_map) trajectories so that the multinomial error of each output's populations sits below it."""
@@ -204,6 +231,8 @@ class SolverOptions:
             raise ValueError(f"unknown QuTiP integrators: {unknown}")
         if self.joint_dimension_max < 2 or self.nnz_max < 1:
             raise ValueError("the size guards must be positive")
+        if self.mode_dimension_max < 2:
+            raise ValueError("mode_dimension_max is at least two Fock levels per resolved mode")
         if not 0.0 < self.boundary_population_max < 1.0:
             raise ValueError("boundary_population_max is a population fraction in (0, 1)")
         if self.ntraj < 1 or self.mesolve_dimension_max < 1:
@@ -504,6 +533,16 @@ class JointExactEngine:
                 new_space = current_space.grown(
                     trip.mode, trip.add if trip.reason == "margin" and trip.add > 0 else self.growth_levels
                 )
+                if new_space.dimension > options.joint_dimension_max:
+                    # Section 11.5's ceiling holds for a GROWN space too: a cap that keeps growing (a hot mode, or an ENR
+                    # group of Doppler-limited modes whose top shell never empties) must not build past the guard the
+                    # declaration was checked against (2026-09-08: an ENR group at N_exc = 2 grew to 6, dimension 16016)
+                    raise TruncationLimit(
+                        f"raising the cap of mode {trip.mode} after a {trip.reason} trip would take the joint space to "
+                        f"dimension {new_space.dimension}, above joint_dimension_max = {options.joint_dimension_max} "
+                        f"(Section 11.5); the {trip.reason} population was {trip.worst:.3e}. Cool or freeze the mode, raise "
+                        "the guard deliberately, or let level='auto' route the run to GATE_LOCAL"
+                    ) from trip
                 joint = current_state.joint
                 if joint is None:
                     raise
@@ -635,7 +674,11 @@ class JointExactEngine:
         if self.hardware_chain and options.hardware_chain:
             rng_jitter = np.random.default_rng(seeds.child(sample.sample_id, 0, 0, 0, "timing_jitter"))
             sched, hw_notes = apply_hardware_chain(sched, device.hardware, rng=rng_jitter)
-        # frozen spectators: the shot's Fock states (Section 5.2), from the sample or drawn from the keyed seeds
+        # Frozen spectators: this evolution's Fock states (Section 5.2), from the sample where the caller put them there.
+        # Section 5.2's "samples n_m once per shot" is realized by run(), which enumerates the frozen modes' Fock states as
+        # weighted branches (an exact quadrature over the same thermal distribution, better than sampling) and passes each
+        # branch's tuple in sample.values. The draw below is the fallback for a direct run_pulses caller, which has no shot
+        # index at all - one call is one evolution - so it is keyed PER SAMPLE and reported as such (M9b audit B11).
         frozen_n: dict[int, int] = {}
         for m in space.frozen:
             key = key_frozen_n(m)
@@ -650,6 +693,11 @@ class JointExactEngine:
                     probs = thermal_populations(nbar_m, int(60 + 40 * nbar_m))
                     probs = probs / probs.sum()
                     frozen_n[m] = int(rng.choice(len(probs), p=probs))
+                    notes.append(
+                        f"frozen mode {m}: no Fock state given for this evolution, so n = {frozen_n[m]} was drawn from the "
+                        f"thermal distribution at nbar = {nbar_m:.4g}, keyed per SAMPLE (run() enumerates the branches "
+                        "instead, which is the per-shot mechanism of Section 5.2)"
+                    )
         # the state-independent collapse operators
         static_ops: list[CollapseOp] = list(self.channels)
         if self.device_channels:
@@ -729,6 +777,20 @@ class JointExactEngine:
         first = True
         largest_mode = max([m.d for m in space.resolved], default=0)
         atol_mc = options.atol if largest_mode <= LARGE_MODE_DIMENSION else max(options.atol, 1e-8)
+        # Section 5.3: improved_sampling decomposes the WHOLE evolution into its no-jump member and the rest, so it is used
+        # only when the trajectory path is entered exactly once (IMPROVED_SAMPLING_MULTI_SEGMENT says why)
+        n_mc_segments = 0
+        if lindblad_resolved == "mcsolve" and kets is not None:
+            for a_e, b_e in zip(edges[:-1], edges[1:]):
+                if b_e <= a_e:
+                    continue
+                act_e = [p for p in sched.pulses if p.t_start_s <= a_e + 1e-15 and p.t_end_s >= b_e - 1e-15]
+                if bool(static_ops) or (bool(act_e) and pulse_channels_possible):
+                    n_mc_segments += 1
+        improved_run = bool(options.improved_sampling) and n_mc_segments == 1
+        if bool(options.improved_sampling) and n_mc_segments > 1:
+            notes.append(IMPROVED_SAMPLING_MULTI_SEGMENT.format(n=n_mc_segments))
+        target_tol_estimate: int | None = None
         for seg_index, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
             if b <= a:
                 continue
@@ -932,12 +994,11 @@ class JointExactEngine:
                             "the trajectory path (mcsolve) needs pure trajectories: the state is a density matrix; enumerate the "
                             "initial mixture into pure branches (run()) or raise mesolve_dimension_max"
                         )
-                    if len(kets) == 1 and options.ntraj > 1:
-                        kets = [kets[0]] * options.ntraj
-                        weights = [1.0 / options.ntraj] * options.ntraj
-                    seg_map = map_kind if len(kets) > 1 else "serial"
-                    seg_workers = min(n_workers, len(kets)) if seg_map != "serial" else 1
-                    workers_used = max(workers_used, seg_workers)
+                    improved_seg = improved_run and len(kets) == 1
+                    n_traj_seg = options.ntraj
+                    # the map and the worker count are fixed once n_traj_seg is final (phase one may lower it); the
+                    # placeholders here only make mc_opts constructible for the phase-one probe
+                    seg_map, seg_workers = "serial", 1
                     mc_opts = {
                         "method": options.integrators[0],
                         "atol": atol_mc,
@@ -952,16 +1013,64 @@ class JointExactEngine:
                         "progress_bar": "",
                         "map": seg_map,
                         "num_cpus": seg_workers,
+                        "improved_sampling": improved_seg,
                     }
+                    # Section 3.4 phase one: the trajectory count from mcsolve's target_tol on the population e_ops, run
+                    # under a SERIAL map so that its scheduling-dependent firing point is reproducible, capped by ntraj and
+                    # floored by TARGET_TOL_MIN_TRAJECTORIES; phase two below replays a keyed seed list of that length
+                    if (
+                        len(kets) == 1
+                        and options.e_ops_for_target_tol
+                        and options.trajectory_target_tol is not None
+                        and e_list
+                    ):
+                        if target_tol_estimate is None:
+                            probe = qt.MCSolver(
+                                built.H,
+                                c_ops,
+                                options={
+                                    **mc_opts,
+                                    "map": "serial",
+                                    "num_cpus": 1,
+                                    "keep_runs_results": False,
+                                    "store_states": False,
+                                    "improved_sampling": False,
+                                },
+                            ).run(
+                                kets[0],
+                                times,
+                                ntraj=options.ntraj,
+                                e_ops=e_list,
+                                target_tol=float(options.trajectory_target_tol),
+                            )
+                            target_tol_estimate = max(
+                                int(probe.num_trajectories), TARGET_TOL_MIN_TRAJECTORIES
+                            )
+                            notes.append(
+                                f"trajectory count from mcsolve target_tol = {options.trajectory_target_tol:g} on the "
+                                f"population e_ops: {int(probe.num_trajectories)} estimated, "
+                                f"{target_tol_estimate} replayed from the keyed seed list (Section 3.4, two phases)"
+                            )
+                        n_traj_seg = min(target_tol_estimate, options.ntraj)
+                    if len(kets) == 1 and n_traj_seg > 1 and not improved_seg:
+                        kets = [kets[0]] * n_traj_seg
+                        weights = [1.0 / n_traj_seg] * n_traj_seg
+                    n_stoch = n_traj_seg if improved_seg else len(kets)
+                    seg_map = map_kind if n_stoch > 1 else "serial"
+                    seg_workers = min(n_workers, n_stoch) if seg_map != "serial" else 1
+                    mc_opts["map"], mc_opts["num_cpus"] = seg_map, seg_workers
+                    workers_used = max(workers_used, seg_workers)
                     solver = qt.MCSolver(built.H, c_ops, options=mc_opts)
                     # one trajectory per ket of the ensemble, each with its keyed seed (Section 3.4), through QuTiP's map:
                     # mixed initial conditions with an explicit per-state trajectory count; the results come back in completion
                     # order and are matched to their kets by seed (Section 11.3 item 9; M9b)
                     seeds_k = [
                         seeds.child(sample.sample_id, k_traj, 0, 0, f"mcsolve[{seg_index}]")
-                        for k_traj in range(len(kets))
+                        for k_traj in range(n_stoch)
                     ]
-                    if len(kets) == 1:
+                    if improved_seg:
+                        res = solver.run(kets[0], times, ntraj=n_stoch, e_ops=e_list, seeds=seeds_k)
+                    elif len(kets) == 1:
                         res = solver.run(kets[0], times, ntraj=1, e_ops=e_list, seeds=seeds_k)
                     else:
                         res = solver.run(
@@ -973,23 +1082,45 @@ class JointExactEngine:
                         )
                     by_seed = {tuple(int(x) for x in sd.spawn_key): j for j, sd in enumerate(res.seeds)}
                     new_kets = []
+                    new_weights: list[float] = []
                     exp_acc = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
                     red_acc = []
                     trajectory_seeds = []
-                    for k_traj, w_k in enumerate(weights):
-                        key_k = tuple(int(x) for x in seeds_k[k_traj].spawn_key)
-                        j = by_seed[key_k]
-                        traj = res.trajectories[j]
-                        new_kets.append(traj.final_state)
-                        trajectory_seeds.append(key_k)
-                        for idx, k in enumerate(e_keys):
-                            exp_acc[k] += w_k * np.asarray(traj.expect[idx])
-                        red_acc.append(
-                            w_k * np.array([space.internal_marginal(st).full() for st in traj.states[sel]])
+                    # (trajectory, weight, seed key or None for a deterministic member, index into res.col_* or None)
+                    members: list[tuple[Any, float, tuple[int, ...] | None, int | None]] = []
+                    if improved_seg:
+                        # the WEIGHTED mixture of Section 5.3: the deterministic no-jump member carries p_no-jump
+                        # (QuTiP 5.3.1 calls the plan's deterministic_weight_info `deterministic_weights`), the stochastic
+                        # trajectories the residual weight `runs_weights`; drawing uniformly from the stored trajectories
+                        # would bias every per-shot observable by p_no-jump
+                        members.extend(
+                            (traj, float(w), None, None)
+                            for traj, w in zip(res.deterministic_trajectories, res.deterministic_weights)
                         )
-                        for t_c, which in zip(res.col_times[j], res.col_which[j]):
-                            jumps.append((float(t_c), f"traj{k_traj}:{seg_ops[int(which)].channel}"))
+                        for k_traj in range(n_stoch):
+                            key_k = tuple(int(x) for x in seeds_k[k_traj].spawn_key)
+                            j = by_seed[key_k]
+                            members.append((res.trajectories[j], float(res.runs_weights[j]), key_k, j))
+                    else:
+                        for k_traj, w_k in enumerate(weights):
+                            key_k = tuple(int(x) for x in seeds_k[k_traj].spawn_key)
+                            j = by_seed[key_k]
+                            members.append((res.trajectories[j], float(w_k), key_k, j))
+                    for k_traj, (traj_m, w_m, key_m, j_m) in enumerate(members):
+                        new_kets.append(traj_m.final_state)
+                        new_weights.append(w_m)
+                        if key_m is not None:
+                            trajectory_seeds.append(key_m)
+                        for idx, k in enumerate(e_keys):
+                            exp_acc[k] += w_m * np.asarray(traj_m.expect[idx])
+                        red_acc.append(
+                            w_m * np.array([space.internal_marginal(st).full() for st in traj_m.states[sel]])
+                        )
+                        if j_m is not None:
+                            for t_c, which in zip(res.col_times[j_m], res.col_which[j_m]):
+                                jumps.append((float(t_c), f"traj{k_traj}:{seg_ops[int(which)].channel}"))
                     kets = new_kets
+                    weights = new_weights
                     for k in e_keys:
                         expect_all[k].append(exp_acc[k][sel])
                     dims_int = [list(space.ion_dims), list(space.ion_dims)]
@@ -1040,16 +1171,20 @@ class JointExactEngine:
                 )
             )
             if active:
+                # Section 5.5's ONE threshold, "1e-6 of the population the pulse moves": a branch of weight w (run() and the
+                # tomography evolve the initial mixture's Fock branches one by one, each normalized) carries at most w of that
+                # population, so the branch-relative quantities bpop and the populated range are both compared against
+                # boundary_population_max / w. The trip used to read the unscaled threshold while the margin check read the
+                # scaled one, so the two differed by 1/w on a low-weight branch (M9b audit B3); a single state has w = 1 and
+                # neither number moves
+                branch_w = min(max(sample.get(KEY_BRANCH_WEIGHT, 1.0), 1e-300), 1.0)
+                tail = min(options.boundary_population_max / branch_w, 0.5)
                 for m, v in bpop.items():
-                    if v > options.boundary_population_max and space.mode_class(m) in ("resolved", "enr"):
+                    if v > tail and space.mode_class(m) in ("resolved", "enr"):
                         raise _BoundaryTrip(m, v)
                 if options.margin_check and space.resolved:
                     # Section 5.5: the cap's margin above the populated range must stay above the Section 5.1.1 margin for
-                    # the segment's eta on every resolved mode the segment drives; a deficit raises the cap by it and repeats.
-                    # The range is measured at the boundary threshold as a fraction of the MIXTURE's population: a branch of
-                    # weight w (run() and the tomography evolve the Fock branches one by one) reads tail/w (M9a)
-                    branch_w = min(max(sample.get(KEY_BRANCH_WEIGHT, 1.0), 1e-300), 1.0)
-                    tail = min(options.boundary_population_max / branch_w, 0.5)
+                    # the segment's eta on every resolved mode the segment drives; a deficit raises the cap by it and repeats
                     eta_seg: dict[int, float] = {}
                     for rec in built.records:
                         for m, e in rec.etas.items():
@@ -1155,6 +1290,17 @@ class JointExactEngine:
 
 EIGH_DIMENSION_MAX = 4096
 """Above this joint dimension a constant but non-diagonal Hamiltonian goes through the ODE ladder rather than a dense eigh."""
+
+TARGET_TOL_MIN_TRAJECTORIES = 8
+"""The floor on Section 3.4's phase-one estimate: QuTiP 5.3.1's ``target_tol`` accepts a zero-variance first batch and can
+stop at 2 trajectories (measured, see ``SolverOptions.trajectory_target_tol``), so the estimate is never taken below this."""
+
+IMPROVED_SAMPLING_MULTI_SEGMENT = (
+    "mcsolve improved_sampling not used: the no-jump/jump split is a decomposition of the WHOLE evolution, and this schedule "
+    "has {n} trajectory segments; applied per segment it would turn the ensemble into a jump expansion of 2^{n} pure members "
+    "that cannot be merged (pure states) and cannot be pruned without dropping exactly the jump weight the channels are there "
+    "to produce, so the segments run uniform-weight trajectories (Section 5.3; conv.improved_sampling_single_segment)"
+)
 
 PROPAGATOR_CACHE_MAX = 256
 """Segment propagators an engine keeps (Section 11.3 item 5); the cache is cleared when full."""

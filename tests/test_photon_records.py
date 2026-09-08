@@ -18,12 +18,14 @@ from qutip_trap.readout.detection import (
     acton_bright_distribution,
     acton_dark_distribution,
     apply_detector_nonidealities,
+    count_anomaly_band,
     crain_printed_bright_error,
     crain_spectator_alpha_s,
     first_photon_cutoff_s,
     mcsolve_records,
     neighbourhood_model,
     poisson_pmf,
+    psf_leakage_from_geometry,
     sample_camera_image,
     sample_register_records,
     sample_spectator_offset_rad_s,
@@ -84,16 +86,24 @@ def test_exact_chain_reduces_to_the_single_jump_form_when_one_transition_acts() 
 
 def test_acton_distributions_normalize_and_match_the_single_jump_quadrature() -> None:
     """Acton Eqs. 5-6 are the single-jump mixtures with R_2 = 0 (bright) or R_1 = 0 (dark) and no background: they normalize
-    to 1e-12 and agree with the Gauss-Legendre quadrature of Crain's corrected Eq. 1 to 1e-14."""
+    to 1e-12 and agree with the Gauss-Legendre quadrature of Crain's corrected Eq. 1 to the Section 9.5 row's 2e-16.
+
+    The residual is pure double-precision round-off (2e-16 is one ulp at these magnitudes), so it grows slowly with the
+    node count as the quadrature sums more terms: the row's 2e-16 is reached at 64 nodes and a few ulp at the default 96
+    (M5 finding, 2026-09-07; the earlier bound of 1e-14 was 50x looser than the row).
+    """
     lambda0, a1, a2 = 12.0, 0.02, 0.05
     dark = acton_dark_distribution(200, lambda0, a1)
     bright = acton_bright_distribution(200, lambda0, a2)
     assert dark.sum() == pytest.approx(1.0, abs=1e-12) and bright.sum() == pytest.approx(1.0, abs=1e-12)
     t = 1.0  # the mixtures depend only on lambda_0 and alpha/eta: choose unit window, detected rate lambda_0
-    quad_dark = single_jump_count_distribution(200, t, 0.0, lambda0, a1 * lambda0, nodes=160)
-    quad_bright = single_jump_count_distribution(200, t, lambda0, 0.0, a2 * lambda0, nodes=160)
-    assert np.max(np.abs(dark - quad_dark)) < 1e-14
-    assert np.max(np.abs(bright - quad_bright)) < 1e-14
+    quad_dark = single_jump_count_distribution(200, t, 0.0, lambda0, a1 * lambda0, nodes=64)
+    quad_bright = single_jump_count_distribution(200, t, lambda0, 0.0, a2 * lambda0, nodes=64)
+    assert np.max(np.abs(dark - quad_dark)) < 2e-16
+    assert np.max(np.abs(bright - quad_bright)) < 2e-16
+    # at the default node count the same identity holds within a few ulp
+    assert np.max(np.abs(dark - single_jump_count_distribution(200, t, 0.0, lambda0, a1 * lambda0))) < 1e-15
+    assert np.max(np.abs(bright - single_jump_count_distribution(200, t, lambda0, 0.0, a2 * lambda0))) < 1e-15
     assert dark[0] == pytest.approx(
         math.exp(-a1 * lambda0) * (1.0 + a1 / (1.0 - a1) * (1.0 - math.exp(-(1.0 - a1) * lambda0)))
     )
@@ -123,7 +133,7 @@ def test_snspd_zero_threshold_optimum_near_22us_at_5_9e_4() -> None:
     windows = np.linspace(5e-6, 60e-6, 111)
     avg = np.array([0.5 * sum(zero_threshold_errors(t, **_crain_args())) for t in windows])
     k = int(np.argmin(avg))
-    assert 18e-6 < windows[k] < 26e-6
+    assert 20e-6 <= windows[k] <= 25e-6, "the Section 9.5 row's own window; the fine-grid argmin is 21.26 us"
     assert avg[k] == pytest.approx(5.85e-4, abs=0.03e-4)
     assert avg[k] < 6.9e-4
     zero_bg = np.array([0.5 * sum(zero_threshold_errors(t, 472e3, 341.0, 16.4, 0.0)) for t in windows])
@@ -265,6 +275,35 @@ def test_camera_geometry_leakage_from_the_airy_psf_and_an_aberrated_gaussian() -
     assert gauss.leakage_fraction(1, 3, roi_one_spacing) < 0.001
     with pytest.raises(ValueError):
         CameraGeometry((0.0,), 2.6e-6, 10, 10, 397e-9)
+    # Detector.psf_leakage is the ABSOLUTE fraction of the neighbour's total light, not Burrell's ROI-relative ratio: the
+    # two differ by the ion's own ROI collection efficiency, so the conversion happens once (audit 2026-09-07 B6)
+    own = gauss.own_roi_efficiency(1, roi_one_spacing)
+    assert own == pytest.approx(0.757, abs=0.02)
+    absolute = gauss.absolute_leakage_fraction(1, 2, roi_one_spacing)
+    assert absolute == pytest.approx(gauss.leakage_fraction(1, 2, roi_one_spacing) * own, rel=1e-12)
+    assert absolute == pytest.approx(0.0295, abs=0.004), (
+        "feeding 4.0 % straight in overstates the leak by 32 %"
+    )
+    derived = psf_leakage_from_geometry(gauss, roi_one_spacing, max_distance=2)
+    # the derived value averages the pairs at that distance: each ion sits at its own sub-pixel phase on the grid, so the
+    # end pairs (0.0274 / 0.0209) straddle the interior pair's 0.0295 and the mean is 0.0260
+    assert set(derived) == {1, 2} and derived[1] == pytest.approx(0.0260, abs=0.002)
+    assert 0.7 * absolute < derived[1] <= absolute
+    assert derived[2] < 0.1 * derived[1]
+    assert all(0.0 <= v <= 1.0 for v in derived.values())
+    # the derived dict is a valid Detector.psf_leakage without a hand-set free parameter (Section 8.3)
+    det = Detector(
+        kind="camera",
+        efficiency=0.01,
+        background_cps=0.0,
+        psf_leakage=derived,
+        dead_time_s=None,
+        afterpulse_prob=None,
+        window_s=400e-6,
+        numerical_aperture=0.25,
+        pixel_m=2.6e-6,
+    )
+    assert det.has_crosstalk and det.leakage(1) == pytest.approx(derived[1])
 
 
 def test_camera_image_means_follow_the_weights() -> None:
@@ -276,11 +315,45 @@ def test_camera_image_means_follow_the_weights() -> None:
         [sample_camera_image(geo, [rm, rm], paths, 400e-6, rng) for _ in range(300)], dtype=float
     )
     mean = images.mean(axis=0)
+    # the background is the DETECTOR's, spread over the pixels ONCE per exposure: a register of N ions used to collect
+    # N x R_bg (audit 2026-09-07 B12)
     expected = (
-        geo.weights(0) * rm.detected_bright_per_s * 400e-6 + 2 * rm.background_per_s * 400e-6 / geo.n_pixels
+        geo.weights(0) * rm.detected_bright_per_s * 400e-6 + rm.background_per_s * 400e-6 / geo.n_pixels
     )
     assert np.allclose(mean, expected, atol=0.6)
     assert mean.sum() == pytest.approx(expected.sum(), rel=0.05)
+    four = [ClassPath(400e-6, "shelf", (), ())] * 4
+    geo4 = CameraGeometry(tuple(np.arange(4) * 14e-6), 2.6e-6, 30, 6, 397e-9, psf_sigma_m=4e-6)
+    dark_images = np.array(
+        [sample_camera_image(geo4, [rm] * 4, four, 400e-6, rng) for _ in range(300)], dtype=float
+    )
+    assert dark_images.mean(axis=0).sum() == pytest.approx(rm.background_per_s * 400e-6, rel=0.15)
+
+
+def test_count_anomaly_band_brackets_both_hypotheses() -> None:
+    """Section 8.6's "count anomaly" herald: a total outside the [1e-6, 1 - 1e-6] band of BOTH the bright and the dark
+    count distribution is explained by neither hypothesis (a cosmic ray, an afterpulse burst, a stray-light flash), so the
+    run flags it. Before the 2026-09-07 M5 audit ``Result.heralds`` promised the flag and nothing set it (B10)."""
+    rm = crain_record_model(window_s=22e-6)
+    lo, hi = count_anomaly_band(rm, 22e-6)
+    bright = rm.count_distribution("bright", 22e-6)
+    dark = rm.count_distribution("dark", 22e-6)
+    assert lo == 0, "the dark hypothesis explains zero counts"
+    assert hi > bright.mean() > 0.0
+    # the band covers all but 1e-6 of each hypothesis
+    n = np.arange(len(bright.pmf))
+    for dist in (bright, dark):
+        inside = float(np.sum(dist.pmf[(n >= lo) & (n <= hi)]))
+        assert inside > 1.0 - 3e-6, dist.mean()
+    # a shelving scheme's non-bright hypothesis is the shelf, not "dark"
+    my = myerson_record_model()
+    lo_s, hi_s = count_anomaly_band(my, 420e-6, ("bright", "shelf"))
+    assert lo_s == 0 and hi_s > my.mean_counts("bright", 420e-6)
+    # a tighter quantile widens the band, and the quantile is checked
+    wide = count_anomaly_band(rm, 22e-6, quantile=1e-9)
+    assert wide[1] >= hi
+    with pytest.raises(ValueError, match="quantile"):
+        count_anomaly_band(rm, 22e-6, quantile=0.6)
 
 
 def test_spectator_dephasing_is_gaussian_and_sampled_as_a_quasi_static_offset() -> None:

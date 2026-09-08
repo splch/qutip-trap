@@ -1,8 +1,9 @@
 """Closed forms of Section 4.4 used as test oracles for the two-qubit gates (PLAN.md Sections 4.4.1-4.4.7, 6.2, 9.4, 9.16).
 
 All frequencies angular (rad/s), the plan's per-tone (hbar Omega/2) convention and S_alpha = sum_i sigma_alpha^i (Section 13,
-"Spin operator in MS formulas"): the bichromatic force is (hbar eta Omega/2) S_phi (a^dag e^{i eps t} + h.c.) up to sign, the
-loop closes at eps t = 2 pi K, the two-body angle on sigma sigma is pi K (eta Omega/eps)^2 and eta Omega/eps = 1/(2 sqrt K) is
+"Spin operator in MS formulas"): the bichromatic force is -(hbar eta Omega/2) S_phi (a^dag e^{i eps t} + h.c.), the sign
+of Section 13's own row (the builder's is the opposite, from the i of i eta(a + a^dag), and only |alpha| is consumed
+downstream), the loop closes at eps t = 2 pi K, the two-body angle on sigma sigma is pi K (eta Omega/eps)^2 and eta Omega/eps = 1/(2 sqrt K) is
 maximally entangling (chi = pi/4; ``check_ms_closure.py``).
 """
 

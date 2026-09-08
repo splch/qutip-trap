@@ -28,6 +28,11 @@ from qutip_trap.noise.summary import (
     pauli_string,
     pauli_twirl,
 )
+from qutip_trap.validation.noise_closed_forms import (
+    intensity_noise_amplitude_n_ions,
+    intensity_noise_error_n_ions,
+    intensity_noise_intercept_n_ions,
+)
 from qutip_trap.validation.two_qubit_closed_forms import (
     ballance_dephasing_coefficient,
     ballance_dephasing_error,
@@ -167,37 +172,57 @@ def test_dephasing_correlation_local_against_global_at_three_ions() -> None:
 def test_intensity_noise_channel_two_term_budget_and_its_gamma_i_convention() -> None:
     """Section 9.16 row 4.4-8 in the force model: c_op = sqrt(2k) H_int on the K-loop MS force with Gamma_I = k Omega^2 the carrier-contrast
     decay rate (L = sqrt(2k)(Omega/2) sigma_x decays <sigma_z> at exactly k Omega^2). Fitting eps_I = A (2 nbar + 1) + B over nbar = 0, 1/2,
-    1 gives the two-term structure with the Gamma_I-independent ratio B/A = 3(N - 1)/(4K) of the DERIVED form (Bermudez's printed
-    (N - 1)/4 would give 1/2); the absolute scale is A = Gamma_I t_g eta^2, TWICE the plan's Gamma_I t_g eta^2/2 under this
-    convention, so the plan's A corresponds to Gamma_I = half the carrier-contrast rate (M7 finding, reported not tuned)."""
+    1 at all five (N, K) the row asks for gives the two-term structure with the Gamma_I-independent ratio B/A = 3(N - 1)/(4K) of the
+    DERIVED form (Bermudez's printed (N - 1)/4 would give 1/2), and A = **N** Gamma_I t_g eta^2/2: the plan's derived A is exact at
+    N = 1 under the carrier-contrast Gamma_I and its eps_I first term is missing a factor N for an N-ion drive
+    (``anchor.m7.intensity_noise_n_ions``; the retired ``anchor.m7.intensity_noise_factor_two`` read the N = 2 case as a factor 2 and
+    inferred a Gamma_I convention instead). Measured A/plan_A: 1.00002, 2.00035, 3.00622, 2.00003, 1.99998, 3.00038 at
+    (N, K) = (1,1), (2,1), (3,1), (2,2), (2,3), (3,2)."""
     d = 40
-    h, t_g, force, sx, a, n = _force_model(2, 1, d)
     eta = 0.1
-    omega = 2.0 * force / eta  # f = eta Omega/2 is the sideband coupling of the (hbar Omega/2) convention
     k = 2e-6
-    gamma_i = k * omega**2
-    h_int = force * qt.tensor(sx, a + a.dag())
-    c_ops = [math.sqrt(2.0 * k) * h_int]
-    psi = qt.tensor(qt.basis(2, 0), qt.basis(2, 0))
-    losses = []
     nbars = [0.0, 0.5, 1.0]
-    for nb in nbars:
-        rho_m = qt.fock_dm(d, 0) if nb == 0.0 else qt.thermal_dm(d, nb)
-        losses.append(1.0 - _final_spin_fidelity(h, t_g, c_ops, psi, rho_m, d, n))
-    slope, intercept = np.polyfit([2 * nb + 1 for nb in nbars], losses, 1)
-    unit = gamma_i * t_g * eta**2
-    assert slope / unit == pytest.approx(1.0, rel=0.01)
-    assert intercept / slope == pytest.approx(3.0 * (n - 1) / 4.0, rel=0.01), (
-        "the derived ratio, not the printed 1/2"
-    )
-    plan_a = intensity_noise_error_derived(gamma_i, t_g, eta, 0.5, 2, 1) - intensity_noise_error_derived(
-        gamma_i, t_g, eta, 0.0, 2, 1
-    )
-    assert slope == pytest.approx(2.0 * plan_a, rel=0.01), (
-        "twice the plan's A = Gamma_I t_g eta^2/2 under the contrast-rate Gamma_I"
-    )
-    printed_ratio = (intensity_noise_error_printed(gamma_i, t_g, eta, 0.0, 2) - unit / 2.0) / (unit / 2.0)
-    assert printed_ratio == pytest.approx(0.5) and intercept / slope != pytest.approx(0.5, rel=0.1)
+    for n_ions, loops in ((1, 1), (2, 1), (3, 1), (2, 2), (2, 3), (3, 2)):
+        h, t_g, force, sx, a, n = _force_model(n_ions, loops, d)
+        omega = 2.0 * force / eta  # f = eta Omega/2 is the sideband coupling of the (hbar Omega/2) convention
+        gamma_i = k * omega**2
+        h_int = force * qt.tensor(sx, a + a.dag())
+        c_ops = [math.sqrt(2.0 * k) * h_int]
+        psi = qt.tensor(*[qt.basis(2, 0)] * n_ions)
+        losses = []
+        for nb in nbars:
+            rho_m = qt.fock_dm(d, 0) if nb == 0.0 else qt.thermal_dm(d, nb)
+            losses.append(1.0 - _final_spin_fidelity(h, t_g, c_ops, psi, rho_m, d, n))
+        slope, intercept = np.polyfit([2 * nb + 1 for nb in nbars], losses, 1)
+        plan_a = intensity_noise_error_derived(
+            gamma_i, t_g, eta, 0.5, n_ions, loops
+        ) - intensity_noise_error_derived(gamma_i, t_g, eta, 0.0, n_ions, loops)
+        assert slope == pytest.approx(float(n_ions) * plan_a, rel=0.01), (
+            f"A = N x the plan's Gamma_I t_g eta^2/2 at (N, K) = ({n_ions}, {loops})"
+        )
+        assert slope == pytest.approx(intensity_noise_amplitude_n_ions(gamma_i, t_g, eta, n_ions), rel=0.01)
+        if n_ions > 1:
+            assert intercept / slope == pytest.approx(3.0 * (n_ions - 1) / (4.0 * loops), rel=0.01), (
+                "the derived ratio, not the printed (N - 1)/4"
+            )
+            assert intercept == pytest.approx(
+                intensity_noise_intercept_n_ions(gamma_i, t_g, eta, n_ions, loops), rel=0.01
+            )
+            assert intensity_noise_error_n_ions(gamma_i, t_g, eta, 0.5, n_ions, loops) == pytest.approx(
+                slope * 2.0 + intercept, rel=0.01
+            )
+        else:
+            assert abs(intercept / slope) < 0.01, "no inter-ion term at N = 1"
+        if (n_ions, loops) == (2, 1):
+            unit = gamma_i * t_g * eta**2
+            printed_ratio = (intensity_noise_error_printed(gamma_i, t_g, eta, 0.0, 2) - unit / 2.0) / (
+                unit / 2.0
+            )
+            assert printed_ratio == pytest.approx(0.5) and intercept / slope != pytest.approx(0.5, rel=0.1)
+    # the Gamma_I definition itself, on the N = 2 model the loop above left behind
+    _h, _t_g, force, _sx, _a, _n = _force_model(2, 1, d)
+    omega = 2.0 * force / eta
+    gamma_i = k * omega**2
     # the carrier-contrast definition of Gamma_I: d<sigma_z>/dt = -k Omega^2 <sigma_z> under sqrt(2k)(Omega/2) sigma_x
     rho = qt.basis(2, 0).proj()
     lind = qt.lindblad_dissipator(math.sqrt(2.0 * k) * 0.5 * omega * qt.sigmax())
@@ -251,12 +276,76 @@ def test_fang_crosstalk_unitary_closed_forms_and_echo_identities() -> None:
     )
 
 
-def test_landsman_parallel_gate_bound_is_vacuous_when_it_exceeds_one() -> None:
-    bound, vacuous = landsman_parallel_gate_bound([0.1, -0.05, 0.02, 0.01])
-    assert bound == pytest.approx(0.18) and not vacuous
-    _, vac2 = landsman_parallel_gate_bound([0.6, 0.5, 0.1, 0.1])
-    assert vac2, "the bound on (1/2)||E||_diamond above 1 says nothing (||E|| <= 2 always)"
+def _inter_pair_unitary(thetas):  # type: ignore[no-untyped-def]
+    """exp[-i sum_rs Theta_rs Z_r Z_s], the commuting unitary two parallel gates add on top of the two XX(chi) they
+    intend (Section 6.6, Landsman 2019). Pairs (0, 1) and (2, 3), so the four inter-pair terms are (0,2), (0,3), (1,2),
+    (1,3). Built directly as a four-qubit operator, NOT through ``schedule(parallel=True)``, which serializes MS gates."""
+    h = 0
+    for th, (r, s) in zip(thetas, [(0, 2), (0, 3), (1, 2), (1, 3)]):
+        ops = [qt.qeye(2)] * 4
+        ops[r] = qt.sigmaz()
+        ops[s] = qt.sigmaz()
+        h = h + th * qt.tensor(*ops)
+    return (-1j * h).expm()
+
+
+def _diamond_lower_bound(u, n_random: int = 40, seed: int = 0) -> float:  # type: ignore[no-untyped-def]
+    """A LOWER bound on (1/2)||E||_diamond for the unitary error channel E(rho) = U rho U^dag - rho.
+
+    The diamond norm is by definition the supremum of ||(E (x) I)(rho)||_1/2 over states on the DOUBLED space, so any
+    input gives a lower bound; for two pure states (1/2)||psi psi^dag - phi phi^dag||_1 = sqrt(1 - |<psi|phi>|^2).
+    Sampled at the maximally entangled (Choi) input and at random pure states of the eight-qubit doubled space.
+    """
+    mat = np.asarray(u.full())
+    d = mat.shape[0]
+    ext = np.kron(mat, np.eye(d))
+    phi = np.eye(d).reshape(-1) / math.sqrt(d)
+    best = math.sqrt(max(0.0, 1.0 - abs(np.vdot(phi, ext @ phi)) ** 2))
+    rng = np.random.default_rng(seed)
+    for _ in range(n_random):
+        psi = rng.normal(size=d * d) + 1j * rng.normal(size=d * d)
+        psi = psi / np.linalg.norm(psi)
+        best = max(best, math.sqrt(max(0.0, 1.0 - abs(np.vdot(psi, ext @ psi)) ** 2)))
+    return best
+
+
+def test_landsman_parallel_gate_bound_holds_against_the_simulated_channel_and_is_vacuous_above_one() -> None:
+    """Section 9.7 row 'Parallel gates': (1/2)||E||_diamond <= sum_rs |Theta_rs| with the 1/2 load-bearing, and the bound
+    is vacuous above 1 because ||E||_diamond <= 2 always, "so the simulator reports the exact simulated channel rather
+    than the bound whenever the bound exceeds 1" (Section 6.6 **[corrected]**).
+
+    Audit E-15: the test used to check only the right-hand side's arithmetic. The inequality itself is now tested against
+    the EXACT four-qubit commuting channel through the diamond norm's own definition (a sampled lower bound over the
+    doubled space), in the direction that can falsify it. Measured lower-bound-to-bound ratios: 0.6686 at
+    (0.1, -0.05, 0.02, 0.01), 0.5533 at four equal 0.01, 0.5588 at (0.6, 0.5, 0.1, 0.1), 0.2880 at four equal 0.8 - and
+    0.9996 when a SINGLE phase is non-zero, which is where the triangle-inequality sum is saturated."""
+    cases = [
+        [0.1, -0.05, 0.02, 0.01],
+        [0.01, 0.01, 0.01, 0.01],
+        [0.6, 0.5, 0.1, 0.1],
+        [0.3, 0.3, 0.3, 0.3],
+        [0.8, 0.8, 0.8, 0.8],
+        [0.05, 0.0, 0.0, 0.0],
+    ]
+    for thetas in cases:
+        bound, vacuous = landsman_parallel_gate_bound(thetas)
+        assert bound == pytest.approx(sum(abs(t) for t in thetas))
+        assert vacuous == (bound > 1.0)
+        lower = _diamond_lower_bound(_inter_pair_unitary(thetas))
+        assert lower <= bound + 1e-12, (thetas, lower, bound)
+        assert lower <= 1.0 + 1e-12, "||E||_diamond <= 2 always, which is why the bound is vacuous above 1"
+        if vacuous:
+            # the fallback Section 6.6 requires: the exact channel is BELOW 1 where the bound says nothing
+            assert lower < 1.0 and bound > 1.0, (thetas, lower, bound)
+    # the bound is tight exactly when one phase carries everything (the triangle inequality is saturated)
+    single = _diamond_lower_bound(_inter_pair_unitary([0.05, 0.0, 0.0, 0.0]))
+    assert single / 0.05 == pytest.approx(0.9996, abs=2e-3), single
+    spread = _diamond_lower_bound(_inter_pair_unitary([0.0125] * 4))
+    assert spread / 0.05 < 0.6, "four equal phases make the sum a factor two loose"
+    # a vanishing separation is not an excuse: Theta falls as 1/n^3 with the pair separation in sites
     assert inter_pair_phase_scaling(2, 0.08) == pytest.approx(0.01)
+    assert inter_pair_phase_scaling(4, 0.08) == pytest.approx(0.08 / 64.0)
+    assert landsman_parallel_gate_bound([inter_pair_phase_scaling(4, 0.08)] * 4)[1] is False
 
 
 def test_depolarizing_summary_and_over_rotation_twirl() -> None:

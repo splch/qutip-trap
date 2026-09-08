@@ -57,7 +57,7 @@ def test_free_induction_and_hahn_echo_limits_and_biercuk_both_parities() -> None
     assert np.allclose(hahn.biercuk_filter_function(x), 16 * np.sin(x / 4) ** 4, rtol=1e-12)
     expected = {
         1: 0.0396108693597088,
-        2: 0.000505997145284 * 0.9967,
+        2: 5.0437242342e-4,
         3: 0.0004152623861142973,
         4: 3.0236329296287202e-05,
     }
@@ -65,8 +65,7 @@ def test_free_induction_and_hahn_echo_limits_and_biercuk_both_parities() -> None
         s = decoupling_sequence("cpmg", n, TAU, 0.02)
         gated = float(s.filter_function(np.array([0.9]), gated=True)[0])
         assert gated == pytest.approx(float(s.biercuk_filter_function(np.array([0.9]))[0]), rel=1e-12)
-        if n != 2:
-            assert gated == pytest.approx(expected[n], rel=1e-9)
+        assert gated == pytest.approx(expected[n], rel=1e-9)
     s4 = decoupling_sequence("cpmg", 4, TAU, 0.07)
     x_ann = math.pi / 0.07
     assert s4.filter_function(np.array([x_ann]), gated=True)[0] == pytest.approx(0.753020396283, rel=1e-9)

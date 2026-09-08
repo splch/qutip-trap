@@ -32,7 +32,8 @@
   two-pulse full-transfer threshold 2 arccosh(sqrt2)/omega_q = 22.190 ps; qubit period 1/nu_HF = 79.096 ps
   ONE factor, three faces, all equal at tau = 10 ps: sech(omega_q tau/2) = 0.925994
      applied twice -> 0.857465, three times -> 0.794007  (spurious)
-  sech intensity FWHM = 2 arccosh(2)/pi = 0.8384014366 tau; a sech^2 intensity envelope gives 0.5611 tau
+  envelope widths of sech(pi t/(2 tau)), the plan's FIELD convention: field FWHM = (4/pi) arccosh(2) = 1.6768028731 tau; intensity FWHM = (4/pi) arccosh(sqrt2) = 1.1222 tau
+  NEGATIVE CONTROL (retired, PLAN.md:1454): the same widths for sech(pi t/tau), a DIFFERENT envelope whose teeth read sech(pi k nu_rep tau): 0.8384014366 tau and 0.5611 tau -- half the correct pair, and not the answer
 
 == 4. Pulse-train-to-CW map: N = f_rep t, Omega_0 = f_rep theta (APB Eq. 23 defect) 
   worked example: Omega/2pi = 1 MHz at f_rep = 80 MHz, tau = 10 ps
@@ -44,16 +45,16 @@
   1/Delta = 1/Delta_1/2 - 1/Delta_3/2 with +33 and -67 THz  ->  Delta/2pi = 22.1100 THz
      magnitudes-only misreading 1/(1/33 - 1/67) = 65.029 THz, a factor 2.941 in Delta and hence in Omega
   E_pi = pi^2 I_sat w^2 Delta / gamma^2 with I_sat = 1500 W/m^2, w = 10 um, gamma and Delta ANGULAR:
-     Chain II (Omega = g^2/Delta,   as printed ~12 nJ): 13.561 nJ
-     Chain I  (Omega = g^2/2Delta,  the plan's Section 13 row): 27.122 nJ
-     ordinary-frequency gamma and Delta instead: 85.2 nJ  (the angular convention is load-bearing)
-  I_sat conventions: paper-specific D1 value 150 mW/cm^2 against the two-level pi h c gamma/(3 lambda^3) at 369.5 nm = 50.77 mW/cm^2, a ratio 2.9545
+     Chain II (Omega = g^2/Delta,   as printed ~12 nJ): 13.533 nJ
+     Chain I  (Omega = g^2/2Delta,  the plan's Section 13 row): 27.066 nJ
+     ordinary-frequency gamma and Delta instead: 85.0 nJ  (the angular convention is load-bearing)
+  I_sat conventions: paper-specific D1 value 150 mW/cm^2 against the two-level pi h c gamma/(3 lambda^3) at 369.5 nm = 50.82 mW/cm^2, a ratio 2.9515
   Hayes' E_0 is FLUENCE-normalized: int|f|^2 dt = E_0^2 tau exactly while the peak is f(0)/E_0 = sqrt(pi/2) = 1.25331414
      feeding a measured PEAK field or intensity in as E_0 overstates Omega_0 and Ibar by pi/2 = 1.5708
   fine structure omega_F/2pi = 100.109 THz; Delta/2pi at 355 nm = 33.197 THz
   second order at 200 mW / 3 um waist (Ibar = 2 Pbar/(pi w_0^2) = 1.415e+10 W/m^2, g_0/2pi = 73.2 GHz):
-     E^(2)_00/2pi = +104.0 kHz  (a residual of 1/Delta = 4.7943e-15 against 2/(omega_F - Delta) = 4.7571e-15)
-     delta_omega^(2)/2pi = -7.63 kHz   (Lee prints -7.3 kHz, an ORDINARY frequency)
+     E^(2)_00/2pi = +104.1 kHz  (a residual of 1/Delta = 4.7943e-15 against 2/(omega_F - Delta) = 4.7571e-15)
+     delta_omega^(2)/2pi = -7.64 kHz   (Lee prints -7.3 kHz, an ORDINARY frequency)
      with Pbar/(pi w_0^2) instead of the peak on-axis intensity: -3.82 kHz -- a factor-2 diagnostic
   Delta_D1 = Delta_FS/3 is the exact zero of E^(2)_00 alone: lambda = 354.93 nm
      normalized differential shift (delta_0 - delta_1)/Omega_0,1: 1.8944e-04 at Delta_FS/3, 1.7860e-04 at (sqrt2 - 1) Delta_FS (lambda = 351.6 nm), i.e. 5.7% lower -- '355 nm is the minimum' is approximate
@@ -103,9 +104,7 @@
   Hayes q = nu_0/nu_R at nu_R =  26.927 MHz (picked 1-in-3 ): 469.5213
      -> 156.5 (half-integer, no evolution), 313.0 (integer, Rabi flopping), 469.5 (half-integer, none)
   Islam: 157 x 80.6 MHz = 12.65420 GHz  (paper ~12.655 GHz); nu_ab/nu_rep = 156.8588 -> n = 157
-     nu_M1 = n nu_rep - nu_LO = 216.200 MHz (paper ~217 MHz)/Users/churchill/.cache/uv/archive-v0/v6zNgoi5fEtIAa9p/lib/python3.13/site-packages/qutip/__init__.py:24: UserWarning: matplotlib not found: Graphics will not work.
-  warnings.warn("matplotlib not found: Graphics will not work.")
-
+     nu_M1 = n nu_rep - nu_LO = 216.200 MHz (paper ~217 MHz)
      nu_M2 = nu_ab - nu_LO    = 204.819 MHz (paper ~205 MHz, the carrier)
      |Delta nu_M| = 11.381 MHz; nu_sb = nu_LO + nu_M2 = nu_ab exactly (drift-free)
      12.655 GHz / 157 = 80.6051 MHz recovers nu_rep

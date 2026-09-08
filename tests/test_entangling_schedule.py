@@ -94,7 +94,11 @@ def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> Non
     assert budget < 1e-3
     for phi0, phi1 in ((0.0, 0.0), (0.3, 1.1), (-0.7, 2.0)):
         rho, sch = _run_circuit(dev, table, space, [Operation("ms", (0, 1), (phi0, phi1, math.pi / 2))])
-        assert _fidelity(rho, native_ms(phi0, phi1, math.pi / 2), KET00, sch.phase_frame) > 1.0 - 3 * budget
+        # the played gate reproduces the native matrix to the exact spot check's OWN infidelity, not three times it
+        # (measured 2.2731e-04 against the spot check's 2.2725e-04); the closed-form intrinsic_budget total the Section 9.6
+        # row names is 1.91e-02 for this pulse, 84 times looser, so it is a bound and not a test of the identity
+        infidelity = 1.0 - _fidelity(rho, native_ms(phi0, phi1, math.pi / 2), KET00, sch.phase_frame)
+        assert infidelity < 1.1 * budget, (infidelity, budget)
         assert _fidelity(rho, native_ms(phi0, phi1, -math.pi / 2), KET00, sch.phase_frame) < 0.02
         assert len(sch.pulses) == 10 and all(p.closes_modes == (2, 3) for p in sch.pulses)
     # a positive kernel sign is played with pi on the second ion (Section 13: exp(+i chi sigma sigma) = XX(-chi))
@@ -149,7 +153,10 @@ def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # typ
     )
     ket = np.asarray(internal.full()).ravel()
     budget = 1.0 - run.checks[-1].fidelity
-    assert _fidelity(rho, native_zz(math.pi / 2), ket, sch.phase_frame) > 1.0 - 3 * budget - 5e-3
+    # the wrapper construction costs a factor 2.46 over the bare MS (measured 5.599e-04 against the spot check's
+    # 2.2725e-04: four GPi2 pulses and three dead times around the entangling block), which replaces the bare 5e-3 slack
+    infidelity = 1.0 - _fidelity(rho, native_zz(math.pi / 2), ket, sch.phase_frame)
+    assert infidelity < 2.6 * budget, (infidelity, budget)
     assert _fidelity(rho, native_zz(-math.pi / 2), ket, sch.phase_frame) < 0.05
     # the wrappers are 2.5 us GPi2 pulses at the table's 100 kHz with the dead time before and after the MS block
     wrap = [p for p in sch.pulses if "wrap_in" in (p.gate_id or "")]

@@ -15,6 +15,7 @@ delta_eff = delta - delta_ac (Harty 2014: +4.5 Hz - (-1.0 Hz) = +5.5 Hz, Section
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -128,6 +129,131 @@ def derive_microwave_drive(
     )
 
 
+GAUSS_PER_TESLA = 1.0e4
+"""1 T = 10^4 G: the species layer's field sensitivities are per gauss, the gradient record's per tesla."""
+
+
+def field_sensitivity_rad_s_per_t(species: Species, field: Field) -> float:
+    """d omega_0/dB of the qubit transition at the device's field, in rad/s per tesla (Section 4.4.5).
+
+    The species layer returns d f_0/dB in Hz/G from the hyperfine-Zeeman diagonalization (never a hand-entered MHz/G,
+    Section 4.5.1); this is that slope in the units Srinivas et al.'s Omega_g is written in. It VANISHES at a clock
+    point, where a field gradient cannot couple to the spin at first order: a gradient gate needs a field-sensitive
+    qubit, which is why Srinivas et al. drive |F=3, m_F=3> <-> |F=2, m_F=2> of 25Mg+ and not the 212.78 G clock line."""
+    lower, upper = species.qubit
+    slope_hz_per_gauss = species.transition_frequency_hz(lower, upper, field.B_gauss)[1]
+    return float(TWO_PI * slope_hz_per_gauss * GAUSS_PER_TESLA)
+
+
+@dataclass(frozen=True)
+class GradientDrive:
+    """The derived couplings of a near-field microwave-gradient drive on ``ions`` (Section 4.4.5; Srinivas et al. 2021).
+
+    ``microwave_rabi_rad_s`` is Srinivas's Omega_mu = (B_x/2 hbar)<dn|mu_x|up>, HALF the Rabi frequency of the same
+    field in the plan's (hbar Omega/2) convention: each of the two symmetrically detuned tones therefore carries the
+    envelope ``tone_rabi_hz`` = 2 Omega_mu/2pi, and the two together drive 2 hbar Omega_mu cos(delta t) sigma_x, whose
+    dressing weights the sigma_z force by J_2(4 Omega_mu/delta) and its dephasing by J_0(4 Omega_mu/delta).
+
+    ``coupling_rad_s`` is the PHYSICAL force coefficient per (ion, mode): the term
+    sum_{i,m} w_{i,m} sigma_z^i (a_m + a_m^dag) cos(omega_g t + phi_g) of the laboratory-frame Hamiltonian, with
+    w_{i,m} = (1/2)(d omega_0/dB) grad(B) (r_hat . e_hat_m) c_{i,m} sqrt(hbar/(2 m_i omega_m)) built from the mode's
+    mass-weighted displacement pattern exactly as a Lamb-Dicke parameter is. ``gradient_rabi_rad_s`` is the same
+    physics in Srinivas's per-mode form Omega_g = (r_0/4)[grad(B_g . r_hat_q) . r_hat](d omega_0/dB) with r_0 =
+    sqrt(hbar/(2 M_total omega_m)) carrying the TOTAL mass of the addressed ions (Section 13): for two equal-mass ions
+    on a spatially antisymmetric mode w_{i,m} = +-2 Omega_g exactly, which is the (sigma_z1 - sigma_z2) normalization
+    of the plan's Hamiltonian.
+    """
+
+    ions: tuple[int, ...]
+    microwave_rabi_rad_s: float
+    tone_rabi_hz: float
+    ac_zeeman_shift_hz: float
+    field_sensitivity_rad_s_per_t: float
+    coupling_rad_s: dict[tuple[int, int], float]
+    gradient_rabi_rad_s: dict[int, float]
+
+    def bessel_argument(self, detuning_rad_s: float) -> float:
+        """4 Omega_mu/delta, the argument of every Bessel factor of the dressed dynamics."""
+        return 4.0 * self.microwave_rabi_rad_s / detuning_rad_s
+
+
+def derive_gradient_drive(
+    device: Device, ions: Sequence[int], *, drive_hz: float | None = None
+) -> GradientDrive:
+    """Omega_mu, Omega_g and the per-(ion, mode) sigma_z force of ``device.gradient`` on ``ions`` (Section 4.4.5).
+
+    Everything is derived: Omega_mu from the magnetic-dipole matrix element of the configured microwave field amplitude
+    (``coupling_rad_s``), d omega_0/dB from the species' hyperfine-Zeeman diagonalization, and the force coefficients
+    from the crystal's mass-weighted mode patterns and the configured gradient. The simulator's "electronic drive"
+    builds its Hamiltonian from these (Section 4.4.5's closing sentence)."""
+    grad = device.gradient
+    if grad is None:
+        raise ValueError(
+            "a microwave-gradient drive needs Device.gradient (the near-field electrodes' gradient amplitude, "
+            "frequency and microwave field amplitude; Section 4.4.5)"
+        )
+    ions_ = tuple(int(i) for i in ions)
+    if not ions_:
+        raise ValueError("a gradient drive addresses at least one ion")
+    crystal = device.crystal
+    species_0 = crystal.species[ions_[0]]
+    lower, upper = species_0.qubit
+    f0 = species_0.transition_frequency_hz(lower, upper, device.field.B_gauss)[0]
+    f_drive = abs(f0) if drive_hz is None else float(drive_hz)
+    b1 = tuple(complex(x) for x in grad.b1_tesla_lab)
+    omega_rabi = abs(complex(rabi_frequency_hz(species_0, device.field, b1))) * TWO_PI
+    sensitivity = field_sensitivity_rad_s_per_t(species_0, device.field)
+    axis = np.asarray(grad.axis, dtype=float)
+    coupling: dict[tuple[int, int], float] = {}
+    per_mode: dict[int, float] = {}
+    mass_total = float(sum(crystal.masses_kg[i] for i in ions_))
+    for m_index, mode in enumerate(crystal.modes):
+        pattern = mode.displacement_pattern()
+        w = mode.omega_rad_s
+        for ion in ions_:
+            projection = float(np.dot(axis, pattern[ion]))
+            x0 = math.sqrt(HBAR_J_S / (2.0 * float(crystal.masses_kg[ion]) * w))
+            coupling[(ion, m_index)] = 0.5 * sensitivity * grad.gradient_t_per_m * projection * x0
+        r0_total = math.sqrt(HBAR_J_S / (2.0 * mass_total * w))
+        per_mode[m_index] = 0.25 * r0_total * grad.gradient_t_per_m * sensitivity
+    return GradientDrive(
+        ions=ions_,
+        microwave_rabi_rad_s=0.5 * omega_rabi,
+        tone_rabi_hz=omega_rabi / TWO_PI,
+        ac_zeeman_shift_hz=ac_zeeman_shift_hz(species_0, device.field, b1, f_drive),
+        field_sensitivity_rad_s_per_t=sensitivity,
+        coupling_rad_s=coupling,
+        gradient_rabi_rad_s=per_mode,
+    )
+
+
+def gradient_drive(
+    derived: GradientDrive, *, detuning_hz: float, phase_rad: float = 0.0, walsh_sign: int = 1
+) -> Drive:
+    """The two-tone microwave ``Drive`` of a gradient gate: tones at -/+ ``detuning_hz`` from the (ac-Zeeman-shifted)
+    qubit frequency, each carrying ``derived.tone_rabi_hz`` = 2 Omega_mu/2pi (Section 4.4.5).
+
+    The force sign is the relative phase of the gradient and the microwave dressing: the resonant dressed term carries
+    e^{-i(2 phi_d + phi_g)} with phi_d = (phi_blue - phi_red)/2 the tones' half-difference, so ``walsh_sign = -1``
+    (phi_d -> phi_d + pi/2) reverses it, which is how Srinivas et al.'s eight Walsh-modulated segments close the loop."""
+    if walsh_sign not in (1, -1):
+        raise ValueError(
+            "walsh_sign is +1 or -1 (a pi/2 shift of the tones' half-difference reverses the force)"
+        )
+    half = 0.0 if walsh_sign == 1 else 0.5 * math.pi
+    return Drive(
+        kind="gradient",
+        ions=derived.ions,
+        tones=(
+            Tone(-abs(float(detuning_hz)), phase_rad - half, derived.tone_rabi_hz),
+            Tone(abs(float(detuning_hz)), phase_rad + half, derived.tone_rabi_hz),
+        ),
+        beams=(),
+        stark_shift_hz=0.0,
+        crosstalk={},
+    )
+
+
 def square_microwave_drive(
     ion: int, rabi_hz: float, *, detuning_hz: float = 0.0, phase_rad: float = 0.0, stark_shift_hz: float = 0.0
 ) -> Drive:
@@ -144,11 +270,16 @@ def square_microwave_drive(
 
 
 __all__ = [
+    "GAUSS_PER_TESLA",
+    "GradientDrive",
     "MicrowaveDrive",
     "ac_zeeman_shift_hz",
     "coupling_rad_s",
+    "derive_gradient_drive",
     "derive_microwave_drive",
     "effective_detuning_hz",
+    "field_sensitivity_rad_s_per_t",
+    "gradient_drive",
     "magnetic_moment_operators",
     "rabi_frequency_hz",
     "square_microwave_drive",

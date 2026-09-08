@@ -10,11 +10,21 @@ simulated pulse. Three summaries of a channel given as a Choi matrix (or a unita
   (exp(-i alpha XX) twirls to p_II = cos^2 alpha, p_XX = sin^2 alpha: Trout 2018's p_xx = sin^2 alpha, the two-qubit case
   only because XX(chi) carries chi with no 1/2, Section 13);
 - the depolarizing rate epsilon with Lambda_eps(rho) = (1 - eps) rho + eps/(4^n - 1) sum_{P != I} P rho P, whose entanglement
-  infidelity is exactly eps (Chen et al. 2023), so the reported rate IS the entanglement infidelity.
+  infidelity is exactly eps (Chen et al. 2023), so the reported rate IS the entanglement infidelity (Section 13 row
+  "Depolarizing normalization", `conv.depolarizing_normalization`).
+
+The same weights written as Kraus operators are Trout et al. 2018's uniform p/3 (one qubit) and p/15 (two qubits) form, whose
+sum_K K^dag K = I ``depolarizing_kraus`` builds and ``tests/test_m10_conventions.py`` pins; ``qiskit_depolarizing_lambda``
+converts that p to the parameter Qiskit's ``depolarizing_error`` takes, lambda = p 4^n/(4^n - 1) (the mixing weight of the
+maximally mixed state), which turns Chen et al.'s Forte medians 2.0e-4 and 46.4e-4 into 2.67e-4 and 49.5e-4 (Section 9.10 row
+"Depolarizing conversions").
 
 Also the randomized-benchmarking conversions of Section 13: r = (1 - p)(2^n - 1)/2^n is the average error per Clifford that
-RB papers report, and (4^n - 1)(1 - p)/4^n the entanglement infidelity of the depolarizing channel with the same p. Bermudez
-et al. 2017's three-variant mapping of epsilon onto Pauli channels is NOT transcribed in the plan and is not provided here.
+RB papers report, and (4^n - 1)(1 - p)/4^n the entanglement infidelity of the depolarizing channel with the same p.
+
+Section 6.8 also lists Bermudez et al. 2017's three-variant mapping of epsilon onto Pauli channels as a deliverable, but the
+plan transcribes no formulas for it and this release therefore omits it; the omission and its reason are on the record as
+``conv.bermudez_pauli_mapping``.
 """
 
 from __future__ import annotations
@@ -117,13 +127,31 @@ def pauli_twirl(choi: np.ndarray, n_qubits: int) -> dict[str, float]:
     return out
 
 
-def depolarizing_choi(eps: float, n_qubits: int) -> np.ndarray:
-    """The Choi state of Lambda_eps(rho) = (1 - eps) rho + eps/(4^n - 1) sum_{P != I} P rho P (Chen 2023's normalization)."""
+def depolarizing_kraus(eps: float, n_qubits: int) -> list[np.ndarray]:
+    """The Kraus operators of Lambda_eps(rho) = (1 - eps) rho + eps/(4^n - 1) sum_{P != I} P rho P: sqrt(1 - eps) 1 and
+    sqrt(eps/(4^n - 1)) P over the 4^n - 1 non-identity Paulis (Chen et al. 2023's normalization, Section 13; the uniform
+    eps/3 and eps/15 weights of Trout et al. 2018 written out, Section 9.10 row "Depolarizing conversions"). The set is
+    trace-preserving, sum_K K^dag K = 1, for every eps in [0, 1]."""
+    if not 0.0 <= eps <= 1.0:
+        raise ValueError("the depolarizing rate is a probability")
     d = 2**n_qubits
     labels = pauli_labels(n_qubits)
-    kraus = [math.sqrt(1.0 - eps) * np.eye(d, dtype=complex)]
-    kraus += [math.sqrt(eps / (4**n_qubits - 1)) * pauli_string(lab) for lab in labels if set(lab) != {"I"}]
-    return choi_from_kraus(kraus)
+    weight = math.sqrt(eps / (4**n_qubits - 1))
+    return [math.sqrt(1.0 - eps) * np.eye(d, dtype=complex)] + [
+        weight * pauli_string(lab) for lab in labels if set(lab) != {"I"}
+    ]
+
+
+def qiskit_depolarizing_lambda(eps: float, n_qubits: int) -> float:
+    """lambda = eps 4^n/(4^n - 1): the parameter Qiskit's ``depolarizing_error`` takes (the weight of the maximally mixed
+    state in (1 - lambda) rho + lambda 1/2^n) for the channel whose uniform Pauli weight is eps/(4^n - 1) (Section 9.10 row
+    "Depolarizing conversions"; Chen et al. 2023's Forte medians 2.0e-4 and 46.4e-4 map to 2.67e-4 and 49.5e-4)."""
+    return float(eps * 4**n_qubits / (4**n_qubits - 1))
+
+
+def depolarizing_choi(eps: float, n_qubits: int) -> np.ndarray:
+    """The Choi state of Lambda_eps(rho) = (1 - eps) rho + eps/(4^n - 1) sum_{P != I} P rho P (Chen 2023's normalization)."""
+    return choi_from_kraus(depolarizing_kraus(eps, n_qubits))
 
 
 def depolarizing_rate(choi: np.ndarray, choi_ideal: np.ndarray) -> float:
@@ -153,6 +181,7 @@ __all__ = [
     "choi_from_unitary",
     "depolarizing_choi",
     "depolarizing_entanglement_infidelity",
+    "depolarizing_kraus",
     "depolarizing_rate",
     "entanglement_fidelity",
     "entanglement_infidelity",
@@ -161,5 +190,6 @@ __all__ = [
     "pauli_string",
     "pauli_transfer_diagonal",
     "pauli_twirl",
+    "qiskit_depolarizing_lambda",
     "rb_error_per_clifford",
 ]

@@ -12,6 +12,17 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
   interfaces exist (`Transport`, `Zone`, `VoltageWaveform`, the closed-form transport budget of `transport/`), but no dynamics
   through a transport is simulated; a per-transport quanta budget is the only transport input `run` accepts.
 - **No photonic interconnects, no error-correction logic.** A QEC stack is a client of `run`, not part of it.
+- **The provenance ledger travels with the repository, not with the wheel.** Section 14.5 specifies
+  `docs/provenance/ledger.yaml` as "a YAML file kept beside the plan", and the wheel ships only `qutip_trap/**`, so
+  `qutip_trap.provenance.load_ledger()` raises `FileNotFoundError` from an installed wheel (`repository_root()` resolves
+  into site-packages). Nothing in the public API depends on it — `Device.derived()` stores record *ids*, never the records
+  — but a client that wants the records themselves, the milestone-M11 application included, must locate the YAML file
+  itself and pass its path to `load_ledger` (`anchor.m10.release_checks`).
+- **Two of Section 7.9's four randomized-benchmarking variants.** Clifford RB (one qubit, several at once as simultaneous
+  RB, and a pair from the 11520-element group) and the Knill-style variant fitted as B p^L + ½ run through `run()` as
+  protocols; direct RB with random XX layers at probability p_2Q and its two-instance (r_1Q, r_2Q) extraction do not
+  exist, so Section 7.9's corrected direct-RB right-hand side r = (4ⁿ − 1)(1 − p)/4ⁿ is implemented as a conversion
+  (`noise/summary.py`) with no protocol behind it (`anchor.m10.knill_style_rb`).
 - **Compilation is correct, not optimal.** Standard gates compile to the native set through verified templates (Section 7.7;
   an arbitrary SU(4) through the KAK decomposition at three entangling gates); no gate-count optimization beyond the
   standard identities and the merging of adjacent single-qubit unitaries in the benchmark circuits.
@@ -77,13 +88,22 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
   hyperfine-resolved is derived from them and never typed in.
 - **Open conventions** the plan records rather than resolves: the composite-pulse detuning-error normalization (closed by
   the Kabytayev/Cummins identification), the direct-RB error-rate prefactor, the factor 2 between two internally consistent
-  comb Rabi-frequency chains, the Bermudez three-variant Pauli mapping (not transcribed, not provided).
+  comb Rabi-frequency chains.
+- **One deliverable the plan names but never specifies.** Sections 6.8 and 4.4.7 list Bermudez et al.'s three-variant
+  mapping of ε onto Pauli channels as provided, but the plan transcribes no formulas for the three variants (one mention of
+  them in the whole plan, with no equations), so this release omits it and says so (`conv.bermudez_pauli_mapping`);
+  implementing it needs the source, not the plan. What Section 6.8 does specify, `noise/summary.py` provides in full: the
+  entanglement and average gate infidelity of a simulated channel, its Pauli twirl (itself a mapping of a channel onto a
+  Pauli channel), and the depolarizing rate of `conv.depolarizing_normalization` with its p/3 and p/15 Kraus form and the
+  Qiskit λ = p 4ⁿ/(4ⁿ − 1) conversion.
 
 ## Cost and reach
 
 The exact level is bounded by the drive operator: a joint dimension of about 2 × 10³ to 4 × 10³, that is two or three ions
 with two or three dynamically resolved modes, or more ions with one or two resolved modes and frozen spectators (Section
-5.4), with the guards of Section 11.5 routing anything larger to GATE_LOCAL. Measured on the reference machine (Apple
+5.4), with the guards of Section 11.5 routing anything larger to GATE_LOCAL under `level="auto"` and refusing an explicit
+`level="JOINT_EXACT"` above them (raise `joint_dimension_max` or `nnz_max` deliberately to build such a space; a cap that
+would grow past the guard during a run is refused the same way). Measured on the reference machine (Apple
 Accelerate BLAS, 18 CPUs, QuTiP 5.3.1) for a two-ion 100 µs Mølmer-Sørensen pulse:
 
 | joint dimension | one pulse (merged dense, `dop853`) | with the factorized kernel |
@@ -92,6 +112,14 @@ Accelerate BLAS, 18 CPUs, QuTiP 5.3.1) for a two-ion 100 µs Mølmer-Sørensen p
 | 256 (two modes, d_m = 8) | 0.6 s | assembled wins |
 | 864 (three modes, d_m = 6) | 6 s | 5.6 s |
 | 2048 (three modes, d_m = 8) | 2.1 min | 16 s |
+
+Parallel maps fork their workers (QuTiP's `parallel` map uses the `fork` start method), so every worker begins as a
+copy-on-write image of the calling process and can grow toward its size as it touches objects. `SolverOptions.workers = None`
+therefore no longer means every CPU: `dynamics/parallel.worker_count` caps the count so that the workers' worst-case total
+(each as large as the parent's peak resident size) stays inside half of physical memory (a 3 GB parent on a 48 GB machine
+gets 8 workers, a fresh process every CPU), an explicit request is capped the same way, and `Diagnostics.workers` reports the
+count actually used (ledger `conv.worker_memory_cap`). A long session that has built many Hamiltonians is the case this
+guards; two kernel watchdog panics on 2026-09-08 came from 18 workers forked out of multi-gigabyte pytest processes.
 
 and for the two-ion example device of `device/presets.py`: the surrogate calibration 15 s, a Bell circuit with 2000 shots
 about 8 s (five carrier pulses and one entangling gate on the 572-dimensional space [2, 2, 11, 13]), a 384-Clifford

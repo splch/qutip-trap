@@ -16,13 +16,14 @@ Omega follows the plan's convention (carrier pi pulse at t = pi/Omega), twice th
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
+from fractions import Fraction
 
 import numpy as np
 
 from qutip_trap.species.polarization import CVec, Vec, to_atomic_frame
-from qutip_trap.species.wigner import Half, as_half_integer, wigner_3j
-from qutip_trap.units import A_0_M, ALPHA_FS, C_M_PER_S, E_C, HBAR_J_S
+from qutip_trap.species.wigner import Half, as_half_integer, m_values, wigner_3j
+from qutip_trap.units import A_0_M, ALPHA_FS, C_M_PER_S, E_C, HBAR_J_S, TWO_PI
 
 C_ALPHA_M_PER_S: float = C_M_PER_S * ALPHA_FS
 """c alpha = e^2/(4 pi eps0 hbar) = 2.187691e6 m/s (Section 4.5.7)."""
@@ -100,6 +101,107 @@ def lambda_3j(J_lower: Half, m: Half, J_upper: Half, mp: Half) -> float:
     return wigner_3j(jl, 2, ju, -ml, q, mu)
 
 
+def decay_weights(J_lower: Half, J_upper: Half) -> dict[tuple[Fraction, Fraction], float]:
+    """w(m, m') = |Lambda(m, m')|^2 / sum_m |Lambda(m, m')|^2, the E2 decay branching of |D, m'> into |S, m>.
+
+    Section 4.5.7 ("Dissipation, dephasing and crosstalk"): "the collapse operator is sqrt(A w(m, m'))
+    |S, m><D, m'| with the same A that fixed the Rabi frequency, ... with the per-component weights w from the
+    same 3-j squares (sum over m and q at fixed m' equals 1/6)". The raw sum is that 1/6 for every m' (a
+    3-j orthogonality relation, pinned in ``tests/test_quadrupole.py``), so dividing by it is the same as
+    multiplying by 6 and the weights sum to 1 over m at fixed m': sum_m A w(m, m') = A, the level's total rate.
+    """
+    jl, ju = as_half_integer(J_lower), as_half_integer(J_upper)
+    raw: dict[tuple[Fraction, Fraction], float] = {}
+    totals: dict[Fraction, float] = {}
+    for mu in m_values(ju):
+        for ml in m_values(jl):
+            lam = lambda_3j(jl, ml, ju, mu)
+            if lam != 0.0:
+                raw[(ml, mu)] = lam * lam
+                totals[mu] = totals.get(mu, 0.0) + lam * lam
+    return {(ml, mu): sq / totals[mu] for (ml, mu), sq in raw.items()}
+
+
+def quadrupole_collapse_operators(
+    partial_rate_rad_s: float,
+    J_lower: Half,
+    J_upper: Half,
+    lower_index: Callable[[Fraction], int],
+    upper_index: Callable[[Fraction], int],
+    dimension: int,
+) -> list[tuple[tuple[Fraction, Fraction], float, np.ndarray]]:
+    """The Section 4.5.7 E2 collapse operators sqrt(A w(m, m')) |S, m><D, m'| on an internal basis of ``dimension``.
+
+    ``lower_index`` and ``upper_index`` map m and m' to the basis index of |S, m> and |D, m'>, so the caller
+    owns the basis ordering; each entry is ((m, m'), rate = A w(m, m'), the operator matrix), and
+    sum over m of the rates at fixed m' is A. ``partial_rate_rad_s`` is the ANGULAR partial rate of the E2
+    line (``Transition.partial_rate_rad_s``), the same A that fixed the Rabi frequency.
+
+    Not wired into any engine here: the noise layer of Section 4.5.7 decides between this per-component list
+    and the plan's own escape hatch ("a lumped sqrt(A) sigma_- is adequate at A ~ 0.86 s^-1 for microsecond
+    gates"), which is what ``readout/presets.py``'s ``shelf_lifetime_s`` uses today.
+    """
+    if partial_rate_rad_s < 0.0:
+        raise ValueError("an E2 partial rate is non-negative")
+    if dimension <= 0:
+        raise ValueError("the internal basis must be non-empty")
+    out: list[tuple[tuple[Fraction, Fraction], float, np.ndarray]] = []
+    for (ml, mu), w in sorted(decay_weights(J_lower, J_upper).items()):
+        i, j = lower_index(ml), upper_index(mu)
+        if not (0 <= i < dimension and 0 <= j < dimension):
+            raise IndexError(f"basis index out of range for (m, m') = ({ml}, {mu})")
+        op = np.zeros((dimension, dimension), dtype=complex)
+        op[i, j] = math.sqrt(partial_rate_rad_s * w)
+        out.append(((ml, mu), partial_rate_rad_s * w, op))
+    return out
+
+
+def e2_stark_shift_rad_s(
+    couplings_rad_s: Mapping[tuple[Fraction, Fraction], float],
+    lower_energies_hz: Mapping[Fraction, float],
+    upper_energies_hz: Mapping[Fraction, float],
+    m_driven: Half,
+    mp_driven: Half,
+) -> float:
+    """delta_St of the driven |S, m>-|D, m'> component, second order in the OTHER components' couplings.
+
+    Section 4.5.7: "the ac Stark shift of a driven component by the nine off-resonant components inside the
+    30 MHz Zeeman span is computed by second-order perturbation from the same Omega(m, m') table". With the
+    laser on resonance with (m0, m0'), the detuning of component (m, m') is
+
+        Delta(m, m') = 2 pi [(E_D(m0') - E_S(m0)) - (E_D(m') - E_S(m))],
+
+    a pure Zeeman offset. In the (hbar Omega/2) convention a component shifts its LOWER level by
+    +|Omega|^2/(4 Delta) and its UPPER level by -|Omega|^2/(4 Delta) (the same sign rule as
+    ``AtomicStructure.light_shift_rad_s``: red light lowers the lower level), so the transition shift is
+
+        delta_St = -sum_{m != m0} |Omega(m, m0')|^2/(4 Delta(m, m0'))
+                   -sum_{m' != m0'} |Omega(m0, m')|^2/(4 Delta(m0, m')),
+
+    the driven component itself excluded because the Rabi dynamics treats it exactly. There is no i gamma/2
+    in these denominators (Section 4.5.6), so a component degenerate with the driven one raises rather than
+    returning an infinity. Tagged UNVALIDATED in the ledger, as Section 12 tags the E2 dissipation block.
+    """
+    m0, mp0 = as_half_integer(m_driven), as_half_integer(mp_driven)
+    if (m0, mp0) not in couplings_rad_s:
+        raise KeyError(f"the driven component ({m0}, {mp0}) is not in the coupling table")
+    resonance = upper_energies_hz[mp0] - lower_energies_hz[m0]
+    total = 0.0
+    for (ml, mu), omega in couplings_rad_s.items():
+        if (ml, mu) == (m0, mp0) or omega == 0.0:
+            continue
+        if ml != m0 and mu != mp0:  # shares neither level with the driven pair: no second-order shift of it
+            continue
+        delta = TWO_PI * (resonance - (upper_energies_hz[mu] - lower_energies_hz[ml]))
+        if delta == 0.0:
+            raise ZeroDivisionError(
+                f"E2 component ({ml}, {mu}) is degenerate with the driven ({m0}, {mp0}); the second-order sum "
+                "of Section 4.5.6 has no i gamma/2 and is valid only away from degeneracy"
+            )
+        total -= abs(omega) ** 2 / (4.0 * delta)
+    return total
+
+
 def reduced_element_from_lifetime_m2(
     wavelength_vac_m: float, partial_rate_rad_s: float, J_upper: Half
 ) -> float:
@@ -160,11 +262,14 @@ __all__ = [
     "B_TENSORS",
     "C_ALPHA_M_PER_S",
     "C_TENSORS",
+    "decay_weights",
     "e2_over_e1_amplitude_ratio",
+    "e2_stark_shift_rad_s",
     "geometric_factor",
     "geometric_factor_closed_form",
     "geometric_factors",
     "lambda_3j",
+    "quadrupole_collapse_operators",
     "rabi_frequency_e2_rad_s",
     "racah_c2",
     "reduced_element_a0_squared",

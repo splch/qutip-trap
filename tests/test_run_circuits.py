@@ -73,7 +73,10 @@ def test_surrogate_table_carries_seeds_spot_checked_waveform_and_detection(two_i
     }, (
         "the addressing pairs' and the global pair's carrier Rabi frequencies (the MS gate's light shift is compensated from it)"
     )
-    assert all(abs(e.value - 100.9e3) < 2e3 for e in t.rabi.values())
+    # 100.9 kHz until the M0a fix of 2026-09-08 (audit item E4) gave the 171Yb+ Raman intermediate sum its
+    # P3/2 path: for this fixture's polarization the two paths ADD (the P3/2 partial sum is +0.4577 of the
+    # P1/2 one), so every carrier Rabi seed rose by the same factor 1.4577 -> 146.88 and 147.12 kHz.
+    assert all(abs(e.value - 147.0e3) < 2e3 for e in t.rabi.values())
     assert t.stark[(0, 0)].status == "seed" and abs(t.stark[(0, 0)].value) < 100.0
     assert all(e.status == "seed" for e in t.qubit_freq.values()) and len(t.qubit_freq) == 2
     assert 0.01 < t.crosstalk[(0, 1)].value < 0.04, "Wright's 1-4% addressing crosstalk from the 2.5 um waist"
@@ -193,7 +196,11 @@ def test_seeds_reproduce_shot_by_shot_and_readout_full_path_generates_records(tw
     assert full.photon_records is not None and full.photon_records.shape == (300, 2)
     assert full.photon_records.max() > 3, "bright ions scatter tens of photons in the window"
     assert abs(full.probabilities.get("00", 0.0) - a.probabilities.get("00", 0.0)) < 0.1
-    assert any("photon record" in s or "full" in s for s in ()) or full.diagnostics.approximations
+    # the diagnostics say WHICH readout path ran (the `for s in ()` of the first version made this vacuous, M5 audit B13)
+    assert any("readout full path" in s for s in full.diagnostics.approximations)
+    assert any("photon record per ion per shot" in s for s in full.diagnostics.approximations)
+    assert any("readout fast path" in s for s in a.diagnostics.approximations)
+    assert not any("readout fast path" in s for s in full.diagnostics.approximations)
 
 
 def test_single_qubit_gate_identity_on_the_pipeline(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -343,9 +350,10 @@ def _declared_probabilities(res, ions):  # type: ignore[no-untyped-def]
         levels = [
             (idx >> (n - 1 - i)) & 1 for i in range(n)
         ]  # register order: ion 0 the most-significant index bit
-        true_bright = [schemes[i].classes[levels[i]] == "bright" for i in range(n)]
+        # the POVM takes the ions' true INTERNAL LEVELS, not their start classes (M5): identical for a two-level
+        # ReadoutScheme.direct(1) whose bright level is 1, and wrong for any scheme whose bright level is 0
         for declared in itertools.product((True, False), repeat=n):
-            q = povm.declared_bright_probability(true_bright, list(declared))
+            q = povm.declared_bright_probability(levels, list(declared))
             if q <= 0.0:
                 continue
             bits = [schemes[i].bit_of_class("bright" if declared[i] else "dark") for i in range(n)]
@@ -370,6 +378,11 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
     )
     assert 0.01 < sur.table.crosstalk[(1, 0)].value < 0.04
     for pair in ((0, 1), (1, 2)):
+        # Section 5.2 with the M9 third drop condition: the tilt's LOOP pair (|alpha|^2 (2n+1) = 3.5e-33, chi = 0) sits below
+        # (1e-6, 1e-4) because the AM pulse closes its loop exactly, but its eta = 0.0809 at the prepared nbar = 0.0214
+        # carries a Debye-Waller spread eta^2 sqrt(nbar(nbar+1)) = 9.69e-4 rad, 3.2x above DW_SPREAD_DROP_MAX = 3e-4, so it is
+        # FROZEN and the per-shot draw of Section 5.2 carries the spread the calibration cannot absorb
+        # (conv.drop_test_debye_waller_spread; before that condition it was dropped and the factor left the dynamics)
         assert sur.mode_classes[pair][4] == "frozen" and sur.mode_classes[pair][5] == "resolved"
         check = sur.entangling[pair].checks[-1]
         wf = sur.table.waveform_for(pair)
@@ -406,6 +419,13 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         and d.mode_class[4] == "frozen"
         and set(d.frozen_contribution) == {4}
     )
+    # the tilt is frozen by the Debye-Waller-spread condition (see the comment above), so its chi_m loss and its off-resonant
+    # excitation are reported and the factor stays in the dynamics; nothing is DROPPED among the modes an entangling gate
+    # touches on this fixture, and the modes that are dropped (the y and z families, eta = 0 for a Delta k along x) have no
+    # contribution to report, so Section 11.3 item 2's summed dropped contribution is legitimately zero here
+    assert 4 not in d.dropped_modes and d.dropped_contribution == (0.0, 0.0)
+    assert d.frozen_contribution[4][0] < 1e-6 and d.frozen_contribution[4][1] < 1e-4
+    assert d.frozen_excitation_bound.get(4, 0.0) > 0.0
     assert all(v < 1e-6 for v in d.boundary_population.values())
     p = res.probabilities
     assert p.get("000", 0.0) + p.get("111", 0.0) > 0.95

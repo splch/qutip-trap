@@ -177,47 +177,60 @@ def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_no
 
 @pytest.mark.slow
 def test_calibrated_gate_survives_the_modulator_response_with_the_phase_reference() -> None:
-    """The surrogate's exact spot check with the hardware chain on: the beat-phase reference restores the ideal-modulator fidelity
-    (0.99992 against 0.99987 without a chain; 0.99700 uncompensated on the two-ion fixture)."""
+    """The M7 headline finding, on a device that actually has a modulator: with ``make_hardware(realistic=True)``'s 50 ns
+    rise time the chain plus the Roos beat-phase reference reaches 0.999923 (leakage 3.32e-5) against 0.999868 (4.49e-5)
+    for an ideal modulator - the plan's 0.99992 against 0.99987.
+
+    Audit E-24: this test used to run ``circuit_fixture(2)``, whose hardware is ``make_hardware()`` with
+    ``aom_rise_s = 0.0``, so ``response_phase_rad`` returned 0 and NO modulator response was applied - it exercised DDS
+    word rounding only, and the 50 ns chain on an entangling gate lived solely in ``check_noise.py`` section 7."""
+    import dataclasses
+
     from qutip_trap.calibration.entangling import exact_gate_check, gate_space
     from qutip_trap.calibration.surrogate import surrogate_table
     from qutip_trap.control.shaping import gate_modes
+    from tests.fixtures import make_hardware
     from tests.m6_fixtures import circuit_fixture
 
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=(20e-6,),
+
+    def check(hardware, chain: bool):  # type: ignore[no-untyped-def]
+        dev = dataclasses.replace(fx.device, hardware=hardware)
+        sur = surrogate_table(
+            dev,
+            pairs=[(0, 1)],
+            gate_drives=fx.gate_drives,
+            entangling_drives=fx.entangling_drives,
+            detection_records=200,
+            detection_windows_s=(20e-6,),
+        )
+        wf = sur.table.waveform_for((0, 1))
+        assert wf is not None
+        nb = {m: e.value for m, e in sur.table.nbar.items()}
+        modes = gate_modes(dev, (0, 1), (0, 1), nbar=nb)
+        space = gate_space(modes, 2, waveform=wf, nbar=nb)
+        out, _ = exact_gate_check(
+            dev,
+            wf,
+            (0, 1),
+            fx.entangling_drives,
+            sur.table,
+            space=space,
+            options=SolverOptions(hardware_chain=chain),
+        )
+        return out
+
+    realistic = check(make_hardware(realistic=True), True)
+    ideal = check(make_hardware(), True)
+    assert realistic.fidelity == pytest.approx(0.999923, abs=5e-6), realistic.fidelity
+    assert ideal.fidelity == pytest.approx(0.999868, abs=5e-6), ideal.fidelity
+    assert realistic.leakage == pytest.approx(3.315e-5, rel=5e-3), realistic.leakage
+    assert ideal.leakage == pytest.approx(4.485e-5, rel=5e-3), ideal.leakage
+    assert realistic.fidelity > ideal.fidelity, (
+        "the arctan reference over-compensates the ideal modulator's (absent) delay slightly in the ion's favour"
     )
-    wf = sur.table.waveform_for((0, 1))
-    assert wf is not None
-    nb = {m: e.value for m, e in sur.table.nbar.items()}
-    modes = gate_modes(fx.device, (0, 1), (0, 1), nbar=nb)
-    space = gate_space(modes, 2, waveform=wf, nbar=nb)
-    with_chain, _ = exact_gate_check(
-        fx.device,
-        wf,
-        (0, 1),
-        fx.entangling_drives,
-        sur.table,
-        space=space,
-        options=SolverOptions(hardware_chain=True),
-    )
-    without, _ = exact_gate_check(
-        fx.device,
-        wf,
-        (0, 1),
-        fx.entangling_drives,
-        sur.table,
-        space=space,
-        options=SolverOptions(hardware_chain=False),
-    )
-    assert with_chain.fidelity > 0.9998 and abs(with_chain.fidelity - without.fidelity) < 2e-4
-    assert with_chain.leakage < 1e-4
+    # an ideal modulator's response is the identity, so the chain switch cannot matter there
+    assert check(make_hardware(), False).fidelity == pytest.approx(ideal.fidelity, abs=1e-9)
 
 
 def test_stark_shift_follows_the_played_light_into_the_tail() -> None:

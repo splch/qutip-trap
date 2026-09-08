@@ -5,14 +5,15 @@
   Section 6.8 summary of the projected map: depolarizing rate (entanglement infidelity) 0.0500, twirl p_II = 0.9500, mean p_P (P != I) = 0.00333 against 0.05/15 = 0.00333
 
 == 2. the contribution criterion (Section 11.3 item 2; Section 9.8 row 3; Section 9.17 'Freeze against drop')
-  eta = 1e-3, 2 kHz from the tone: |alpha|^2 (2n+1) = 3.72e-04, |chi| = 7.85e-05 rad, loop radius 0.0386 -> resolved (a mode no pulse couples to would be resolved)
-  eta = 0.05, 1 MHz from the tone: |alpha|^2 (2n+1) = 2.03e-31, |chi| = 6.99e-03 rad, loop radius 0.0143 -> frozen (a mode no pulse couples to would be frozen)
-  eta = 1e-3, 1 MHz from the tone: |alpha|^2 (2n+1) = 8.12e-35, |chi| = 2.80e-06 rad, loop radius 0.0003 -> frozen (a mode no pulse couples to would be dropped)
+  eta = 1e-3, 2 kHz from the tone: |alpha|^2 (2n+1) = 3.72e-04, |chi| = 7.85e-05 rad, loop radius 0.0386 -> resolved (drop pair 1e-6 / 1e-4, freeze pair 0.0001 / 0.05)
+  eta = 0.05, 1 MHz from the tone: |alpha|^2 (2n+1) = 2.03e-31, |chi| = 6.99e-03 rad, loop radius 0.0143 -> frozen (drop pair 1e-6 / 1e-4, freeze pair 0.0001 / 0.05)
+  eta = 1e-3, 1 MHz from the tone: |alpha|^2 (2n+1) = 8.12e-35, |chi| = 2.80e-06 rad, loop radius 0.0003 -> dropped (drop pair 1e-6 / 1e-4, freeze pair 0.0001 / 0.05)
+  a mode with no entangling contribution at all: frozen when some drive couples to it (its Debye-Waller factor is what the carrier sees), dropped when none does
   tone at 2.980000 MHz for the x-COM at 3.0 MHz (inside detuning, eps = 20 kHz); amplitude 124.791 kHz
 
 == 3. the frozen spectators' off-resonant excitation bound and the detuning guard (Section 5.2)
-  tone at 3.020 MHz, Omega/2pi = 100.76 kHz, nbar = 0.5: bound on the rocking mode (2.828 MHz) 2.720e-03, on the COM (3.0 MHz) 2.351e-01; guard violations 2
-  tone at 3.100 MHz, Omega/2pi = 100.76 kHz, nbar = 0.5: bound on the rocking mode (2.828 MHz) 1.355e-03, on the COM (3.0 MHz) 9.406e-03; guard violations 1
+  tone at 3.020 MHz, Omega/2pi = 146.88 kHz, nbar = 0.5: bound on the rocking mode (2.828 MHz) 5.781e-03, on the COM (3.0 MHz) 4.995e-01; guard violations 2
+  tone at 3.100 MHz, Omega/2pi = 146.88 kHz, nbar = 0.5: bound on the rocking mode (2.828 MHz) 2.879e-03, on the COM (3.0 MHz) 1.999e-02; guard violations 2
 
 == 4. the ENR option: sum-generator exponential, marginals, shape rule, regrid (Sections 5.1, 5.1.1; Section 9.17)
   two modes at N_exc = 10, eta = (0.1, 0.05): unitarity defect 0.0e+00; |expm(sum) - product| inside n1 + n2 <= 5: 1.4e-15, at the cap: 5.42e-02
@@ -21,18 +22,18 @@
   regrid of an ENR state from N_exc = 4 to 6: dims [2, 5, 15] -> [2, 5, 28], norm 1.000000000000, P(n_1 = 1) = 1.000000000000, P(n_2 = 2) = 1.000000000000
 
 == 5. the adaptive cap and margin policy (Section 5.5) on a carrier pulse
-  eta_COM = 0.0786 needs a margin of 6 levels; cap d = 5 above |0>: 1 cap-raising retry, final dims [2, 2, 8], populated n_max {3: 1}, margin reached {3: 6}, P1 = 0.495020
-  margin_check=False keeps dims [2, 2, 5]: P1 = 0.495020 (the carrier barely moves the mode; the policy guards the cases where it does)
+  eta_COM = 0.0786 needs a margin of 6 levels; cap d = 5 above |0>: 1 cap-raising retry, final dims [2, 2, 8], populated n_max {3: 1}, margin reached {3: 6}, P1 = 0.495008
+  margin_check=False keeps dims [2, 2, 5]: P1 = 0.495008 (the carrier barely moves the mode; the policy guards the cases where it does)
 
 == 6. GATE_LOCAL against JOINT_EXACT on the two-ion Bell circuit (Sections 5.4, 9.8)
-  register populations (00, 01, 10, 11): JOINT_EXACT [0.508139, 0.000489, 0.001267, 0.490104], GATE_LOCAL [0.50817, 0.000484, 0.001241, 0.490105]; max difference 3.04e-05 against the reported bound 2.49e-04 (residual displacement 9.28e-05, frozen excitation 1.56e-04, dropped crosstalk 0.00e+00)
-  register 1 - F against the compiled circuit: JOINT_EXACT 2.333e-03, GATE_LOCAL 2.287e-03; |rho_JE - rho_GL| = 3.27e-05
-  step gpi2[0]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 1.4e-13/1.3e-16, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
-  step gpi2[1]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 1.3e-13/1.1e-16, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
-  step ms[2]: ions (0, 1), dims [2, 2, 11, 13], resolved (2, 3), frozen coupled (), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/1.2e-16, average gate infidelity 1.137e-04, depolarizing rate 1.421e-04, twirl p_II 0.99986; residual |alpha| per spin eigenstate {2: '2.66e-03', 3: '9.09e-03'}, bound 9.28e-05, purity deficit {2: '4.0e-02', 3: '3.4e-02'}; tracked nbar after {2: '0.02027', 3: '0.01726'} against the joint run's branch-weighted final {2: '0.02030', 3: '0.01728'}
-  step gpi2[3]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 1.3e-13/7.9e-17, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
-  step gpi2[4]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 1.3e-13/2.1e-17, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
-  step gpi2[5]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 1.3e-13/2.3e-16, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
+  register populations (00, 01, 10, 11): JOINT_EXACT [0.508184, 0.000527, 0.001244, 0.490045], GATE_LOCAL [0.50817, 0.000484, 0.001241, 0.490105]; max difference 6.03e-05 against the reported bound 4.25e-04 (residual displacement 9.30e-05, frozen excitation 3.32e-04, dropped crosstalk 0.00e+00)
+  register 1 - F against the compiled circuit: JOINT_EXACT 2.378e-03, GATE_LOCAL 2.287e-03; |rho_JE - rho_GL| = 6.84e-05
+  step gpi2[0]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/8.4e-17, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
+  step gpi2[1]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/3.8e-17, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
+  step ms[2]: ions (0, 1), dims [2, 2, 11, 13], resolved (2, 3), frozen coupled (), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/1.1e-16, average gate infidelity 1.137e-04, depolarizing rate 1.421e-04, twirl p_II 0.99986; residual |alpha| per spin eigenstate {2: '2.66e-03', 3: '9.09e-03'}, bound 9.30e-05, purity deficit {2: '4.0e-02', 3: '3.4e-02'}; tracked nbar after {2: '0.02027', 3: '0.01726'} against the joint run's branch-weighted final {2: '0.02034', 3: '0.01729'}
+  step gpi2[3]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/1.8e-17, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
+  step gpi2[4]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/2.6e-17, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
+  step gpi2[5]: ions (0, 1), dims [2, 2], resolved (), frozen coupled (2, 3), 16 inputs x 3 branches (48 engine runs, sesolve), cp/tp residual 0.0e+00/3.7e-18, average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, twirl p_II 0.99968
   engine runs 344, cache hits 0, largest gate-local dimension 572, register density_matrix
 MC: histograms over 2000 shots: JOINT_EXACT {'00': 0.497, '01': 0.001, '10': 0.0005, '11': 0.5015}, GATE_LOCAL {'00': 0.497, '01': 0.001, '10': 0.0005, '11': 0.5015}
 

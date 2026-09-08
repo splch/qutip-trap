@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import qutip as qt
 
+from qutip_trap.noise.spectra import NoiseSpectrum
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import build_crystal, solve_crystal
 from qutip_trap.trap.heating import (
@@ -45,7 +46,9 @@ def test_heating_round_trip_of_section_9_15_and_sidedness() -> None:
     assert heating_rate_quanta_per_s(2 * 1.1125e-13, m, w) == pytest.approx(
         2 * heating_rate_quanta_per_s(1.1125e-13, m, w)
     )
-    s_e = single_sided_from_spectrum(np.array([0.0, 1e8]), np.array([1e-13, 1e-13]))
+    s_e = single_sided_from_spectrum(
+        NoiseSpectrum(np.array([0.0, 1e8]), np.array([1e-13, 1e-13]), "(V/m)^2/(rad/s)")
+    )
     assert s_e(w) == pytest.approx(2e-13) and s_e(-w) == s_e(w)
     with pytest.raises(ValueError):
         heating_rate_quanta_per_s(1e-13, m, 0.0)
@@ -182,6 +185,10 @@ def test_micromotion_sideband_sum_matches_turchette_at_lowest_order_and_never_ad
     assert micromotion_sideband_heating_rate(s_e, m, 0.01, 0.0, omega_rf) == pytest.approx(
         heating_rate_quanta_per_s(s_e(0.1 * omega_rf / 2), m, 0.1 * omega_rf / 2)
     )
+    # the q = 0 fast path has no monodromy to refuse an unstable axis: it used to return nan through sqrt(a < 0)
+    for a in (0.0, -0.01):
+        with pytest.raises(ValueError, match="not a confined axis"):
+            micromotion_sideband_heating_rate(s_e, m, a, 0.0, omega_rf)
 
 
 def test_empirical_models_and_exponent_bookkeeping() -> None:

@@ -23,7 +23,12 @@ Section 13 the conventions, Appendix E the public API). These pages are the rele
 - The examples are executed in order by `tests/test_docs.py` (a slow test, about three minutes), so a signature change
   that breaks a documented call fails the build.
 - Every number quoted in the prose of these pages comes from a committed check script under `validation/scripts/`
-  (`check_benchmarks.py` for the benchmark numbers, `check_circuits.py` for the Bell and GHZ circuits, the timing benchmarks
-  for the cost table), whose outputs CI re-runs and compares.
+  (`check_benchmarks.py` for the benchmark numbers, `check_circuits.py` for the Bell and GHZ circuits, the timing
+  benchmarks for the cost table), whose outputs CI re-runs. What CI *compares* is every numeric token of every line
+  except the ones a script prefixes `MC:`, which `run_checks.py` skips because their last digits depend on the platform's
+  libm: a Monte-Carlo number — a fitted p or r, a GHZ bound, a heavy-output probability — is therefore reproduced but not
+  compared digit for digit. Each headline Monte-Carlo number of `check_benchmarks.py` also gets a compared `pinned` line
+  that states only the band the number must stay inside; the verdict word is part of that line, so a number leaving its
+  band no longer matches the committed output and CI fails.
 - The README at the repository root carries the milestone-by-milestone account of what was built and what each milestone's
   tests established, including the plan inconsistencies each milestone surfaced.

@@ -21,8 +21,9 @@ class ApparatusPreset:
     name: str
     species: str
     source: str
-    detected_bright_per_s: float
-    """The measured detected count rate of a bright ion (R_B, eps_sys R_o)."""
+    detected_bright_per_s: float | None
+    """The measured detected count rate of a bright ion (R_B, eps_sys R_o); None when the source does not quote one, in
+    which case :meth:`rates` refuses rather than inventing a zero-scattering bright state."""
     efficiency: float
     """The quoted system detection efficiency epsilon_sys."""
     background_per_s: float
@@ -36,8 +37,19 @@ class ApparatusPreset:
     """The state-averaged error the source quotes for its threshold or protocol at the window."""
     notes: str = ""
 
+    @property
+    def has_detected_rate(self) -> bool:
+        """Whether the source quotes a detected bright rate at all (three of the seven presets do not)."""
+        return self.detected_bright_per_s is not None
+
     def rates(self) -> FluorescenceRates:
         """The Section 8.1 rate object with the efficiency divided out once (the record layer applies it once again)."""
+        if self.detected_bright_per_s is None:
+            raise ValueError(
+                f"{self.source} does not quote a detected bright rate ({self.notes.split(';')[-1].strip()}), so this "
+                "preset has no rate object: use its efficiency, background and budget entries, or supply a rate from the "
+                "Bloch solve of the apparatus's own intensity (Section 8.8)"
+            )
         return rates_from_detected(
             self.detected_bright_per_s,
             self.efficiency,
@@ -87,7 +99,7 @@ NOEK_YB171_PMT = ApparatusPreset(
     name="Noek 2013, 171Yb+ hyperfine qubit, 0.6 NA + PMT",
     species="171Yb+",
     source="Noek2013",
-    detected_bright_per_s=0.0,
+    detected_bright_per_s=None,
     efficiency=0.022,
     background_per_s=6.5,
     notes=(
@@ -112,7 +124,9 @@ CRAIN_YB171_SNSPD = ApparatusPreset(
     quoted_error=6.9e-4,
     notes=(
         "eps_sys R_o = 472(14) kcps at 56.2 mW/cm^2, R_d = 341(13) Hz, R_b = 16.4(5) Hz, R_bg = 4.2(1) cps "
-        "(0.075 cps cm^2/mW), eps_sys = 4.356(6) % = 10 % x 81.8 % x 73.1 % x 79 %; stop-on-first-photon: 99.931(6) % at "
+        "(0.075 cps cm^2/mW), eps_sys = 4.356(6) % quoted, against 4.724 % for the printed chain "
+        "10 % x 81.8 % x 73.1 % x 79 % (the residual 8 % is the apparatus discrepancy Section 8.8 anticipates: an "
+        "intensity or transmission factor the paper rounds, not a missing physical factor); stop-on-first-photon: 99.931(6) % at "
         "11 us average, record window 500 us; zero-background limit 99.941 %; spectator coherence alpha = 1716 ms baseline, "
         "94(5) ms at 200 um, 814(77) ms at 370 um (Gaussian fringe decay exp(-tau^2/alpha^2))"
     ),
@@ -142,7 +156,7 @@ BURRELL_CA40_CAMERA = ApparatusPreset(
     name="Burrell 2010, 40Ca+ optical qubit, EMCCD",
     species="40Ca+",
     source="Burrell2010",
-    detected_bright_per_s=0.0,
+    detected_bright_per_s=None,
     efficiency=0.010,
     background_per_s=0.0,
     shelf_lifetime_s=1.168,
@@ -161,7 +175,7 @@ EGAN_YB171 = ApparatusPreset(
     name="Egan 2021, 171Yb+ hyperfine qubits, 100 us window",
     species="171Yb+",
     source="Egan2021",
-    detected_bright_per_s=0.0,
+    detected_bright_per_s=None,
     efficiency=0.01,
     background_per_s=7.0,
     window_s=100e-6,

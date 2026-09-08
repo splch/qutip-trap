@@ -23,8 +23,8 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.dynamics.multilevel import SINK
-from qutip_trap.light.bloch import BlochModel, PumpingTrace
-from qutip_trap.light.recoil import angular_factor, emission_lamb_dicke
+from qutip_trap.light.bloch import BlochModel, PumpingTrace, operator_angular_factor
+from qutip_trap.light.recoil import emission_lamb_dicke
 from qutip_trap.trap.crystal import Crystal
 
 LeakToQubit = Literal["to_upper", "renormalize", "full"]
@@ -181,14 +181,15 @@ def pump_recoil_heating(
             eta_em = emission_lamb_dicke(crystal, ion, ch.wavenumber_rad_per_m, m)
             start, stop = ch.operator_slice
             for k in range(start, stop):
-                q = ch.operator_qs[k - start]
-                total += float(photons[k]) * angular_factor(None if q == 9 else q, cos_chi) * eta_em**2
+                total += float(photons[k]) * operator_angular_factor(ch, k - start, cos_chi) * eta_em**2
         out[m] = total
     return out
 
 
-def pumping_time_scale_s(model: BlochModel, target: Sequence[str]) -> float:
-    """1/(slowest nonzero Liouvillian rate) of the pump: the exponential time scale of the approach to the target."""
+def pumping_time_scale_s(model: BlochModel) -> float:
+    """1/(slowest nonzero Liouvillian rate) of the pump: the exponential time scale of the approach to the target.
+
+    A property of the Liouvillian alone, so it takes no target state (the dead ``target`` argument is dropped)."""
     b = model.build
     L = np.asarray(b.liouvillian().full())
     vals = np.linalg.eigvals(L)

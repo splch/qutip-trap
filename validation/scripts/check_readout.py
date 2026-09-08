@@ -25,6 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import qutip as qt
+from scipy.special import j0, j1
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -56,12 +57,15 @@ from qutip_trap.readout.discriminate import (  # noqa: E402
     average_detection_time_s,
     confusion_from_outcomes,
     decode_camera_image,
+    max_confusion_discrepancy,
     measure,
     myerson_brute_force,
     myerson_log_likelihoods,
     optimize_threshold,
+    per_ion_confusion,
     povm_confusion_over_levels,
     povm_for,
+    product_povm,
 )
 from qutip_trap.readout.fluorescence import (  # noqa: E402
     ReadoutScheme,
@@ -70,6 +74,7 @@ from qutip_trap.readout.fluorescence import (  # noqa: E402
     doppler_width_hz,
     geometric_efficiency,
     neighbour_intensity_ratio,
+    neighbour_pumping_rates,
     rates_from_bloch,
     rates_from_detected,
     rms_velocity_m_per_s,
@@ -213,9 +218,31 @@ print(
 ad = AdaptiveML(10e-6, 500e-6, 1e-4, dark_class="shelf")
 dec_b = [ad.decide(rm_m.sample_record("bright", 500e-6, rng, sub_bin_s=10e-6), rm_m) for _ in range(4000)]
 dec_d = [ad.decide(rm_m.sample_record("shelf", 500e-6, rng, sub_bin_s=10e-6), rm_m) for _ in range(4000)]
+t_b, t_d = average_detection_time_s(dec_b), average_detection_time_s(dec_d)
+eps_ad = 0.5 * (sum(not d.bright for d in dec_b) / len(dec_b) + sum(d.bright for d in dec_d) / len(dec_d))
 print(
-    f"MC: adaptive (cutoff 1e-4, worst case 500 us): average time bright {average_detection_time_s(dec_b) * 1e6:.0f} us, dark {average_detection_time_s(dec_d) * 1e6:.0f} us (Myerson 72 / 219 us, 145 us average)"
+    f"MC: adaptive (cutoff 1e-4, worst case 500 us): average time bright {t_b * 1e6:.0f} us, dark {t_d * 1e6:.0f} us, "
+    f"mean {0.5 * (t_b + t_d) * 1e6:.0f} us (Myerson 72 / 219 us, 145 us average); eps = {eps_ad:.1e} (Myerson 1.0(1)e-4)"
 )
+# Noek's first-photon protocol (Section 8.3): 0 counts dark, >= 2 bright, a lone photon bright iff before tau_c; the
+# 99.85(1) % at 28.1 us average lived only in the preset note before the 2026-09-07 M5 audit
+det_noek = Detector("pmt", 0.022, 6.5, {}, None, None, 100e-6)
+for s_o, label in ((2.45, "Crain's operating point"),):
+    r_o = yb171_bright_rate_closed(s_o, G_S)
+    rd_n, rb_n = yb171_leakage_rates_closed(s_o, G_S, D_HFP, D_HFS)
+    rm_n = RecordModel.from_rates(
+        rates_from_detected(0.022 * r_o, 0.022, dark_pumping_per_s=rd_n, bright_pumping_per_s=rb_n), det_noek
+    )
+    fp = FirstPhoton(100e-6, cutoff_s=math.log(max(rd_n, 1.0) / 6.5) / (0.022 * r_o))
+    d_b = [fp.decide(rm_n.sample_record("bright", 100e-6, rng, arrivals=True), rm_n) for _ in range(4000)]
+    d_d = [fp.decide(rm_n.sample_record("dark", 100e-6, rng, arrivals=True), rm_n) for _ in range(4000)]
+    e_b = sum(not d.bright for d in d_b) / len(d_b)
+    e_d = sum(d.bright for d in d_d) / len(d_d)
+    print(
+        f"MC: Noek two-photon at s_o = {s_o} ({label}, eps_sys = 2.2 %, R_dc = 6.5 Hz): F = {1 - 0.5 * (e_b + e_d):.5f} "
+        f"(eps_B = {e_b:.1e}, eps_D = {e_d:.1e}) at {0.5 * (average_detection_time_s(d_b) + average_detection_time_s(d_d)) * 1e6:.1f} us "
+        f"average (Noek 99.85(1) % at 28.1 us; tau_c = {fp.cutoff_s * 1e6:.2f} us)"
+    )
 recs = mcsolve_records(rm_m, "bright", 420e-6, 300, seed=3)
 print(
     f"MC: mcsolve trajectory path, 300 bright records at 420 us: mean counts {np.mean([r.total for r in recs]):.1f} (chain {rm_m.mean_counts('bright', 420e-6):.2f})"
@@ -274,8 +301,51 @@ for name, out in (("full", full), ("fast", fast)):
     )
 reg = povm_for([rm_c, rm_c], [sch, sch], th, {1: 0.04})
 assert reg.confusion is not None
+dense_product = np.array(
+    [
+        [
+            pov.declared_bright_probability(
+                [(a >> i) & 1 for i in range(2)], [bool(b >> i & 1) for i in range(2)]
+            )
+            for b in range(4)
+        ]
+        for a in range(4)
+    ]
+)
 print(
-    f"4 % leakage: P(dark ion beside a bright one reads bright) = {reg.declared_bright_probability([True, False], [True, True]):.4f} (product form {pov.declared_bright_probability([True, False], [True, True]):.1e}); max |register - product| = {np.max(np.abs(reg.confusion - np.array([[pov.declared_bright_probability([bool(a >> i & 1) for i in range(2)], [bool(b >> i & 1) for i in range(2)]) for b in range(4)] for a in range(4)]))):.4f}"
+    f"4 % leakage: P(dark ion beside a bright one reads bright) = {reg.declared_bright_probability([1, 0], [True, True]):.4f} "
+    f"(product form {pov.declared_bright_probability([1, 0], [True, True]):.1e}); max |register - product| = "
+    f"{np.max(np.abs(reg.confusion - dense_product)):.4f}, reported by max_confusion_discrepancy as {max_confusion_discrepancy(reg, pov):.4f}"
+)
+# the POVM's rows are indexed by LEVEL, the transfer channel folded in once: on an imperfect-transfer scheme the fast path
+# used to sample the class as well and applied the channel twice (audit 2026-09-07 B1)
+imperfect = ReadoutScheme.shelving(1, transfer_probability=0.9)
+rows, _ = per_ion_confusion(rm_m, imperfect, ThresholdDiscriminator(5.5, 420e-6))
+pov_i = product_povm([rm_m], [imperfect], ThresholdDiscriminator(5.5, 420e-6))
+space1 = HilbertSpace((2,), (), None, ())
+st1 = space1.initial_state(qt.basis(2, 1))
+mc = {
+    mode: float(
+        np.mean(
+            measure(
+                space1,
+                st1,
+                [imperfect],
+                [rm_m],
+                ThresholdDiscriminator(5.5, 420e-6),
+                SeedSpec(7),
+                shots=20000,
+                mode=mode,  # type: ignore[arg-type]
+                povm=pov_i if mode == "fast" else None,
+            ).bits[:, 0]
+            == imperfect.bit_of_class("bright")
+        )
+    )
+    for mode in ("full", "fast")
+}
+print(
+    f"imperfect shelving transfer 0.9: POVM row P(bright | level 1) = {rows[1, 0]:.5f}; MC full = {mc['full']:.5f}, "
+    f"fast = {mc['fast']:.5f} (the pre-fix fast path gave 0.1925, the channel applied twice)"
 )
 
 head("G. Budgets (Section 8.4)")
@@ -334,3 +404,40 @@ for nbar in (0.1, 1.0, 20.0, 100.0):
     print(
         f"nbar = {nbar}: v_rms = {v:.4f} m/s, k v/2 pi = {doppler_width_hz(v, 369.5e-9) / 1e6:.3f} MHz (plan: 0.257, 0.425, 1.57, 3.48 with an unstated mode set) against Gamma/2 pi = 19.72 MHz"
     )
+
+head(
+    "J. The 2026-09-07 M5 fixes: detected line, micromotion, the depumping half of crosstalk, the CPT control"
+)
+g_d_ca = species("40Ca+").transition("D3/2-P1/2").partial_rate_rad_s
+g_s_ca = species("40Ca+").transition("S1/2-P1/2").partial_rate_rad_s
+print(
+    f"40Ca+ 397 + 866 nm: summing every decay line inflates R_o by 1 + Gamma(D3/2<-P1/2)/Gamma(S1/2<-P1/2) = "
+    f"{1 + g_d_ca / g_s_ca:.4f} ({100 * g_d_ca / g_s_ca:.1f} %), because eps_sys carries one eps_filter and the "
+    f"filter passes one wavelength"
+)
+beta_mm, omega_rf = 0.4, TWO_PI * 30e6
+mm_model = detection_model(0.5, 5.0)
+r_carrier = rates_from_bloch(mm_model, BRIGHT, DARK, line="S1/2<-P1/2").R_bright_per_s
+r_side = [
+    rates_from_bloch(mm_model.shifted(0, off), BRIGHT, DARK, line="S1/2<-P1/2").R_bright_per_s
+    for off in (-omega_rf, omega_rf)
+]
+mm = float(j0(beta_mm)) ** 2 * r_carrier + float(j1(beta_mm)) ** 2 * sum(r_side)
+print(
+    f"micromotion beta = {beta_mm} at Omega_rf/2pi = 30 MHz: J_0^2 = {float(j0(beta_mm)) ** 2:.5f}, J_1^2 = "
+    f"{float(j1(beta_mm)) ** 2:.5f}; R_o(beta)/R_o(0) = {mm / r_carrier:.4f} (the sidebands give back "
+    f"{float(j1(beta_mm)) ** 2 * sum(r_side) / r_carrier:.4f})"
+)
+s_nb = neighbour_intensity_ratio(369.5e-9, 14e-6)
+dd, db = neighbour_pumping_rates(CRAIN_YB171_SNSPD.rates(), 2.45, 369.5e-9, 14e-6)
+print(
+    f"depumping half of Wineland's crosstalk at 14 um: I_ion/I_sat = {s_nb:.3e} (bound 3 lambda^2/(8 pi^2 x^2)), so one "
+    f"bright neighbour adds dR_d = {dd:.4f} Hz and dR_b = {db:.5f} Hz to Crain's 341 / 16.4 Hz"
+)
+r_o_crain = yb171_bright_rate_closed(2.45, G_S)
+print(
+    f"CPT negative control: the Bloch-solve rate gives eps_sys R_o = {0.04356 * r_o_crain / 1e3:.1f} kcps against "
+    f"{0.04356 / 3 * r_o_crain / 1e3:.1f} kcps for the lumped F_CPT(eta) = F_no-CPT(eta/3) model, a factor "
+    f"{(0.04356 * r_o_crain) / (0.04356 / 3 * r_o_crain):.1f} below; the ceiling asserted is this manifold's 1/4, never the "
+    "Lambda cycle's 1/3 (Olmschenk 2007)"
+)

@@ -14,10 +14,12 @@ Two paths lead from a ``Trap`` to Mathieu parameters (Section 3.3):
 
 The stray field and the shims exist because compensation is something a laboratory measures and re-nulls
 (2026-09-04 experimentalist critique); the residual field is stray + shim response, where the shim response is the
-field of the named electrodes at the null on the geometry path and undefined on the explicit path (non-zero shim
-voltages there are refused). The scheduler never sees ``stray_field_v_per_m`` (Section 7.3). The residual field
+field of the named electrodes at the null on the SURFACE path and undefined on the explicit and rod/blade paths
+(non-zero shim voltages on either is refused, not dropped: Berkeland's rod map carries no shim -> field response, and
+PLAN 4.1.1 states that no source gives the geometry factors kappa, R', Z0 or Phi'' for any electrode design). The scheduler never sees ``stray_field_v_per_m`` (Section 7.3). The residual field
 displaces the ion to u_0 = Q E/(m omega^2) per axis and the in-phase micromotion index of a drive is
-delta_k . sum_i (q_i/2) u_0i e_i (peak); the out-of-phase index comes from Berkeland's (1/4) q_x R alpha phi_ac term
+-delta_k . sum_i (q_i/2) u_0i e_i (peak, signed; the minus sign is the adopted rf phase origin of Section 13, under which
+the in-phase micromotion is a contraction); the out-of-phase index comes from Berkeland's (1/4) q_x R alpha phi_ac term
 and needs the rod geometry factors (Section 4.1.1).
 """
 
@@ -94,9 +96,16 @@ class Trap:
             raise ValueError("secular frequencies must be positive (ordinary Hz)")
         if len(self.stray_field_v_per_m) != 3:
             raise ValueError("stray_field_v_per_m is a laboratory-frame 3-vector")
-        if explicit and not geometry and any(v != 0.0 for v in self.shim_voltages_v.values()):
+        # Only the SURFACE path has an electrode field model at the null. The explicit path has no electrodes, and the
+        # rod/blade map is Berkeland's (kappa, R', Z0) quadrupole map with no shim -> field response: PLAN 4.1.1, "No
+        # source gives the geometry factors kappa, R', Z0 or Phi'' for any electrode design". A non-zero shim there
+        # contributed nothing to residual_field_v_per_m and, when named like the endcap, silently changed a_z instead of
+        # producing a field, so it is refused rather than dropped (audit item E.4).
+        surface = geometry and self.geometry is not None and self.geometry.is_surface
+        if not surface and any(v != 0.0 for v in self.shim_voltages_v.values()):
+            which = "the explicit-frequency path" if explicit and not geometry else "a rod or blade trap"
             raise ValueError(
-                "the explicit-frequency path has no electrode model to convert shim voltages into fields; "
+                f"{which} has no electrode model to convert shim voltages into fields; "
                 "fold the compensation into stray_field_v_per_m or give the geometry"
             )
 
@@ -128,7 +137,10 @@ class Trap:
         return np.zeros(3)
 
     def residual_field_v_per_m(self) -> np.ndarray:
-        """stray + the dc and shim electrodes' field at the rf null (geometry path); stray alone on the explicit path."""
+        """stray + the dc and shim electrodes' field at the rf null (SURFACE path); stray alone otherwise.
+
+        The explicit and rod/blade paths carry no shim -> field response (``__post_init__`` refuses non-zero shims there),
+        so nothing is silently dropped here."""
         e = np.asarray(self.stray_field_v_per_m, dtype=float)
         if self.path == "surface":
             model = self.surface_model()
@@ -243,8 +255,10 @@ class Trap:
 
     def micromotion_amplitude_m(self, species: Species) -> np.ndarray:
         """The SIGNED in-phase excess-micromotion amplitude vector u_1 in the laboratory frame, peak convention (Section 4.1.1):
-        (1/2) Q u_0 with u_0 the static displacement of the residual field against the pseudopotential spring; beta along a
-        wavevector k is k . u_1 (``micromotion_beta`` reports its magnitude), and its sign is what an rf-photon-correlation
+        -(1/2) Q u_0 with u_0 the static displacement of the residual field against the pseudopotential spring. The minus
+        sign is the adopted Mathieu origin a - 2q cos 2xi (Section 13, "Floquet function and rf phase origin"), under which
+        the in-phase micromotion at the rf phase origin is a contraction, x_mu(t) = -(q_x/2) x_sec(t) cos(omega_rf t); beta
+        along a wavevector k is the signed k . u_1 (``micromotion_beta``), and that sign is what an rf-photon-correlation
         signal crosses through at the compensated shim voltage (M8)."""
         params = self.mathieu(species)
         mass = species.mass_u * ATOMIC_MASS_KG
@@ -252,21 +266,22 @@ class Trap:
         e_res = axes.T @ self.residual_field_v_per_m()
         # a static force is balanced by the PSEUDOPOTENTIAL spring m (Omega/2)^2 (a + q^2/2) + O(q^4), the period average of
         # the driven Mathieu equation's particular solution, not by the exact exponent beta^2 (they differ by 0.39 q^2);
-        # Berkeland's per-axis (1/2) q_i u_0i is the matrix form (1/2) Q u_0 when the dc axes are rotated against the rf Hessian
+        # Berkeland's per-axis -(1/2) q_i u_0i is the matrix form -(1/2) Q u_0 when the dc axes are rotated against the rf Hessian
         spring = params.pseudopotential_spring()
         confined = np.diag(spring) > 0.0
         u0 = np.zeros(3)
         if np.any(confined):
             idx = np.ix_(confined, confined)
             u0[confined] = np.linalg.solve(mass * spring[idx], E_C * e_res[confined])
-        amp = 0.5 * np.asarray(params.q, dtype=float) @ u0
+        amp = -0.5 * np.asarray(params.q, dtype=float) @ u0
         return np.asarray(axes @ amp, dtype=float)
 
     def micromotion_beta(self, species: Species, delta_k: np.ndarray) -> MicromotionIndex:
-        """Residual beta = delta_k . u_1 for the FULL wavevector, as (in_phase, out_of_phase), peak convention (Section 4.1.1).
+        """Residual beta = delta_k . u_1 for the FULL wavevector, as (SIGNED in_phase, out_of_phase), peak convention (Section 4.1.1).
 
-        in_phase: the stray-field part, delta_k . (1/2) Q u_0 with u_0 the static displacement against the pseudopotential
-        spring m (Omega/2)^2 (a + q^2/2) (Berkeland's per-axis (1/2) q_i u_0i when the dc and rf axes coincide), nullable by shims;
+        in_phase: the stray-field part, -delta_k . (1/2) Q u_0 with u_0 the static displacement against the pseudopotential
+        spring m (Omega/2)^2 (a + q^2/2) (Berkeland's per-axis -(1/2) q_i u_0i when the dc and rf axes coincide), nullable by shims
+        and SIGNED, so that it steps by pi across the compensated shim (Section 9.17);
         out_of_phase: Berkeland's (1/4) q_x R alpha phi_ac along x', from ``RfDrive.phase_imbalance_rad`` and the rod
         geometry factors, not nullable. The two never collapse into one number.
         """

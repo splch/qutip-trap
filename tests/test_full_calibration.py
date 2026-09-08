@@ -61,6 +61,21 @@ def calibrated():  # type: ignore[no-untyped-def]
     return fx, report
 
 
+SIGMA = 2.0
+"""The tolerance PLAN 7.5's 'within the uncertainty the fits report' is enforced at, in units of the entry's own reported
+sigma. The fixture's seeds are fixed, so the realized deviations are reproducible and are printed in the committed
+``validation/scripts/outputs/check_calibration.out`` section 5: the field, the qubit frequencies, the modes, the
+occupations, the Rabi frequencies and the crosstalk ratios all land at or below 0.77 sigma, so 2 sigma is a real bound and
+not the 4 sigma the first M8 build asserted (M8 audit P1-6; ``anchor.m8.full_calibration_two_ion`` states it)."""
+
+SIGMA_STARK = 2.5
+"""The light shift is the one entry group this fixture's seeds do not put inside 2 sigma: ion 0 realizes 2.00 sigma
+(-44.306 +- 4.92 Hz against the derived -54.1445) and ion 1 0.74 sigma, with opposite signs, so it is scatter and not a
+bias - the stand-alone scan of section 3 reads 0.41 sigma on the same device. Two draws put P(max > 2 sigma) near 10 %,
+which is what happened at seed 11; the bound is the one the committed fixture allows, stated rather than hidden in a
+blanket 4 sigma."""
+
+
 @pytest.mark.slow
 def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncertainty(calibrated) -> None:  # type: ignore[no-untyped-def]
     """Section 7.5: 'calibrated parameters agree with the device's true derived parameters within the uncertainty the fits report'."""
@@ -71,21 +86,24 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
     assert t.uncalibrated() == (), t.uncalibrated()
     # the field and the qubit frequencies
     assert (
-        t.field.status == "calibrated" and abs(t.field.value - dev.field.B_gauss) < 4.0 * t.field.uncertainty
+        t.field.status == "calibrated"
+        and abs(t.field.value - dev.field.B_gauss) < SIGMA * t.field.uncertainty
     )
     for i in range(2):
         sp = dev.crystal.species[i]
         f_true = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], dev.field.B_gauss)[0]
         e = t.qubit_freq[i]
         assert e.status == "calibrated" and e.experiment == "ramsey_frequency"
-        assert abs(e.value - f_true) < 4.0 * e.uncertainty and e.uncertainty < 20.0
+        assert abs(e.value - f_true) < SIGMA * e.uncertainty and e.uncertainty < 20.0
     # the modes, occupations and Lamb-Dicke parameters the drives couple to
     for m in (2, 3):
         e = t.modes[m]
-        assert e.status == "calibrated" and abs(e.value - dev.crystal.modes[m].omega_hz) < 4.0 * e.uncertainty
+        assert (
+            e.status == "calibrated" and abs(e.value - dev.crystal.modes[m].omega_hz) < SIGMA * e.uncertainty
+        )
         assert e.uncertainty < 1e3, "the FM solvers' sub-kilohertz need (Section 7.5)"
         nb = t.nbar[m]
-        assert nb.status == "calibrated" and abs(nb.value - report.surrogate.nbar[m]) < 4.0 * max(
+        assert nb.status == "calibrated" and abs(nb.value - report.surrogate.nbar[m]) < SIGMA * max(
             nb.uncertainty, 2e-3
         )
     # carrier Rabi frequencies, Stark shifts, crosstalk against the derived values
@@ -94,23 +112,23 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
         dd = derive_raman_drive(dev, i, spec.beams, scattering=False)
         key = (i, spec.table_key_beam)
         r = t.rabi[key]
-        assert r.status == "calibrated" and abs(r.value - dd.carrier_rabi_hz) < 4.0 * r.uncertainty
+        assert r.status == "calibrated" and abs(r.value - dd.carrier_rabi_hz) < SIGMA * r.uncertainty
         assert r.uncertainty < 2e-3 * dd.carrier_rabi_hz
         s = t.stark[key]
         assert (
             s.status == "calibrated"
-            and abs(s.value - dd.stark_shift_hz) < 4.0 * s.uncertainty
+            and abs(s.value - dd.stark_shift_hz) < SIGMA_STARK * s.uncertainty
             and s.uncertainty < 10.0
         )
         j = 1 - i
         x = t.crosstalk[(i, j)]
         assert (
             x.status == "calibrated"
-            and abs(x.value - abs(crosstalk_ratios(dev, i, spec.beams)[j])) < 4.0 * x.uncertainty
+            and abs(x.value - abs(crosstalk_ratios(dev, i, spec.beams)[j])) < SIGMA * x.uncertainty
         )
-        assert (i, j) in t.crosstalk_phase and abs(t.crosstalk_phase[(i, j)].value) < 4.0 * t.crosstalk_phase[
-            (i, j)
-        ].uncertainty
+        assert (i, j) in t.crosstalk_phase and abs(
+            t.crosstalk_phase[(i, j)].value
+        ) < SIGMA * t.crosstalk_phase[(i, j)].uncertainty
     # the Lamb-Dicke parameters: one entry per coupled mode, on the mode's probe ion, all calibrated by the sideband Rabi
     # frequency (Section 7.9); the first M8 build looked both ions up here and raised on the one that probed nothing
     assert {m for (_ion, m) in t.lamb_dicke} == {2, 3}
@@ -122,19 +140,26 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
     assert wf is not None and wf.phi_s.status == "calibrated" and wf.phi_s.experiment == "ms_phase_scan"
     assert abs(abs(wf.chi_total_rad) - math.pi / 4.0) < 1e-9
     ms = report.results["ms_scan[(0, 1)]"]
-    assert ms.converged and abs(ms.fitted["closure_scale"][0] - 1.0) < 0.03
+    # the waveform the scan starts from is re-solved at the CALIBRATED mode frequencies (Section 7.5 item 4), which are a
+    # few hundred hertz from the crystal's, so its predicted angle at the true modes is further from pi/4 than the
+    # surrogate's spot-checked one was and the scan's correction is larger: 1.02649 +- 0.0074 against the earlier 1.00185
+    # (committed check_calibration.out section 5). The +-30 % amplitude span is what bounds the scan.
+    assert ms.converged and abs(ms.fitted["closure_scale"][0] - 1.0) < 0.05
     par = report.results["parity_scan[(0, 1)]"]
     assert par.fitted["contrast"][0] > 0.97 and par.fitted["bell_fidelity_bound"][0] > 0.97
     ph = report.results["ms_phase_scan[(0, 1)]"]
     for q in (0, 1):
         assert abs(ph.fitted[f"correction_rad[{q}]"][0]) < 4.0 * ph.fitted[f"correction_rad[{q}]"][1] + 0.05
-    # detection and heating (a quiet device: zero heating, calibrated as such)
+    # detection and heating
     for key in ("threshold", "window_s", "eps_B", "eps_D"):
         assert t.detection[key].status == "calibrated" and t.detection[key].sample_id == 0
-    coupled = {m for (_ion, m) in t.lamb_dicke}
     for m, e in t.heating.items():
-        # the modes a drive couples to are measured (zero on the quiet device); the others cannot be probed and stay seeds
-        assert e.value == 0.0 and e.status == ("calibrated" if m in coupled else "seed"), (m, e)
+        # a quiet device: the delay scan spans 10/ndot and does not exist at ndot = 0, so EVERY heating entry stays the
+        # surrogate's derived seed. The first M8 build wrote a "calibrated" 0 +- 0 under the name of an experiment that
+        # never ran for the coupled modes (M8 audit B8); the heating experiment itself is exercised on a device with a
+        # non-zero S_E in tests/test_calibration_experiments.py and tests/test_m8_calibration_fixes.py.
+        assert e.value == 0.0 and e.status == "seed" and e.experiment == "derived_heating_rate", (m, e)
+    assert any("the derived rate is zero" in n for n in report.notes)
     # the audit trail the plan asks the full path for: the surrogate's error per entry
     err = report.surrogate_error()
     assert all(v < 0.02 for k, v in err.items() if k.startswith(("rabi", "modes", "qubit_freq")))
@@ -165,7 +190,14 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
         r = t.rabi[(i, fx.gate_drives[i].table_key_beam)]
         cal += 5 * (0.5 * math.pi * r.uncertainty / r.value) ** 2
         cal += (2.0 * math.pi * t.qubit_freq[i].uncertainty * 200e-6) ** 2
-    assert 1.0 - fid < budget + 3.0 * cal + 2e-3, (fid, budget, cal)
+    # the upper bound the plan asks for, at the calibration's own contribution with no slack factor: 1 - F must lie inside
+    # the intrinsic budget the noise model predicts plus the fits' own uncertainty (the first M8 build multiplied cal by 3
+    # and added 2e-3, which would have passed with a substantially worse calibration; M8 audit P1-6)
+    assert 1.0 - fid < budget + cal, (fid, budget, cal)
+    # and the LOWER bound, so that the assertion also fails if the calibration errors silently disappear (a table played as
+    # the physics, the played chain switched off, or the frame taken at the true transition): the fitted table is strictly
+    # worse than the surrogate one, whose seeds ARE the derived values
+    assert 1.0 - fid > 1.0 - fid_ref, (fid, fid_ref)
     assert abs(fid - fid_ref) < 5e-3, (fid, fid_ref)
     p = res.probabilities
     assert p["00"] + p["11"] > 0.98 and abs(p["00"] - p["11"]) < 5.0 * res.error_bars["00"]

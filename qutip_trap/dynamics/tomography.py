@@ -413,6 +413,9 @@ class TomographyRecord:
     approximations: tuple[str, ...]
     integrators: tuple[str, ...]
     reports: tuple[EngineReport, ...]
+    workers: int = 1
+    """Processes the runs actually used: the inputs spread over a parallel map, or the trajectories inside one engine run
+    (M9b audit B10). 1 = everything in-process, which is every carrier step, whose local space has no resolved mode."""
 
     @property
     def dimension(self) -> int:
@@ -540,9 +543,12 @@ def _run_tasks(
     payloads: Sequence[_TomographyTask],
     seeds: SeedSpec,
     opts: SolverOptions,
-) -> list[tuple[Traces, EngineReport]]:
-    """The tomography's engine runs: in-process on the shared engine (its propagator cache serves an internal-state-only space
-    from one integration), or spread over the workers when the space has resolved modes and a parallel map is configured."""
+) -> tuple[list[tuple[Traces, EngineReport]], int]:
+    """The tomography's engine runs and the number of PROCESSES they actually used (M9b audit B10: ``Diagnostics.workers``
+    reported ``worker_count(options)`` for a GATE_LOCAL run whether or not anything ran in parallel).
+
+    In-process on the shared engine (its propagator cache serves an internal-state-only space from one integration), or spread
+    over the workers when the space has resolved modes and a parallel map is configured."""
     workers = worker_count(opts)
     if opts.map == "serial" or workers <= 1 or len(payloads) < 2 or not space.resolved:
         out: list[tuple[Traces, EngineReport]] = []
@@ -551,10 +557,11 @@ def _run_tasks(
             rep = engine.last_report
             assert rep is not None
             out.append((traces, rep))
-        return out
+        return out, 1
     inner = replace(opts, map="serial")  # a worker runs its trajectories in-process: no nested pool
     items = [(engine, device, sched, task.state, space, task.sample, seeds, inner) for task in payloads]
-    return map_tasks(_engine_run, items, map_kind=opts.map, workers=workers)
+    used = min(workers, len(payloads))
+    return map_tasks(_engine_run, items, map_kind=opts.map, workers=workers), used
 
 
 def tomography(
@@ -618,7 +625,7 @@ def tomography(
                 values[KEY_BRANCH_WEIGHT] = float(br.weight)
                 smp = NoiseSample(sample.sample_id, values, dict(sample.ou_grids), sample.t_s)
                 payloads.append(_TomographyTask(lab_idx, br_idx, state, smp))
-        results = _run_tasks(engine, device, sched, current, payloads, seeds, opts)
+        results, map_workers = _run_tasks(engine, device, sched, current, payloads, seeds, opts)
         runs = len(results)
         for rep in (r for _t, r in results):
             reports.append(rep)
@@ -705,6 +712,7 @@ def tomography(
             approximations=tuple(approximations),
             integrators=tuple(integrators),
             reports=tuple(reports),
+            workers=max([map_workers] + [rep.workers for rep in reports]),
         )
     raise RuntimeError("the gate-local space kept growing beyond the engine's retry budget")
 
@@ -780,6 +788,11 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "lindblad_method": options.lindblad_method,
         "mesolve_dimension_max": options.mesolve_dimension_max,
         "ntraj": options.ntraj,
+        # the trajectory ENSEMBLE differs with these two, so an extraction cached under one must not serve the other:
+        # improved_sampling adds the deterministic no-jump member and reweights the rest (Section 5.3), and
+        # trajectory_target_tol changes how many trajectories phase two replays (Section 3.4)
+        "improved_sampling": options.improved_sampling,
+        "trajectory_target_tol": options.trajectory_target_tol,
         "map_accuracy": options.map_accuracy,
         "scattering_channels": options.scattering_channels,
         "scattering_recoil": options.scattering_recoil,

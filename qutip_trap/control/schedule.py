@@ -12,7 +12,8 @@ second ion's tones (GPi(phi + pi) = -GPi(phi)), and a partial angle rescales eve
 waveform is the inferred wrapper construction of Sections 7.6 and 12 (GPi2(3 pi/2) on both ions, MS(0, 0, theta), GPi2(pi/2)
 on both: R_y(pi/2) X R_y(pi/2)^dag = -Z), labelled as such in the gate ids; on a light-shift waveform it is the direct
 sigma_z sigma_z force in Ballance's and Baldwin's spin-echo form (two half-angle pulses around a pi pulse on both ions,
-Section 4.4.4), whose sign can only be chosen through the detuning side.
+Section 4.4.4), whose sign can only be chosen through the detuning side; a ``gradient`` waveform (the two microwave tones
+at -/+ delta of a near-field magnetic-gradient drive, Section 4.4.5) plays through that same sigma_z echo path.
 
 Measurement (Section 7.2 item 4, M6): the terminal ``measure`` (the circuit's ``measure`` targets and any trailing measure
 operations) becomes one ``ScheduledEvent`` after the last pulse and dead time, of the calibration table's detection window
@@ -477,9 +478,10 @@ def entangling_pulses(
     for k, seg in enumerate(waveform.segments):
         for ion in seg.ions:
             spec = gate_drives[ion]
-            if waveform.kind == "light_shift" and spec.kind != "light_shift":
+            if waveform.kind in ("light_shift", "gradient") and spec.kind != waveform.kind:
                 raise ScheduleError(
-                    f"ion {ion}: a light-shift waveform needs a light_shift gate drive (Section 4.4.4)"
+                    f"ion {ion}: a {waveform.kind} waveform needs a {waveform.kind} gate drive "
+                    "(Sections 4.4.4, 4.4.5)"
                 )
             if waveform.kind == "ms" and spec.kind not in ("raman", "optical_E1", "optical_E2", "microwave"):
                 raise ScheduleError(f"ion {ion}: an MS waveform needs a spin-flip drive, not {spec.kind}")
@@ -579,7 +581,7 @@ def schedule(
     gate_drives: dict[int, GateDrive] | None = None,
     entangling_drives: dict[int, GateDrive] | None = None,
     t0_s: float = 0.0,
-    parallel: bool = False,
+    parallel: bool | None = None,
     crosstalk_suppression: CrosstalkSuppression = "none",
     response_delay: bool = True,
     stark_compensation: bool = True,
@@ -601,9 +603,21 @@ def schedule(
     Waveform (M4, see the module docstring; ``entangling_drives`` default to ``gate_drives``, the same beam pairs); the
     terminal ``measure`` (the circuit's targets plus trailing measure operations) is the schedule's one event, of the table's
     detection window; a measure, reset or recool before a later gate is refused (Section 7.2 item 4).
+
+    ``parallel`` (Section 7.3: single-qubit gates run "in parallel if the device model allows parallel addressing") defaults
+    to the device's ``HardwareChain.parallel_addressing``; ``parallel=True`` on a chain that declares no parallel addressing
+    is refused. Entangling gates are serialized one at a time per crystal either way (they share the global beam pair).
     """
     if not circuit.is_native:
         raise ScheduleError("schedule() takes a native circuit; compile_to_native first (Section 7.2)")
+    allows_parallel = bool(device.hardware.parallel_addressing)
+    if parallel is None:
+        parallel = allows_parallel
+    elif parallel and not allows_parallel:
+        raise ScheduleError(
+            "parallel=True needs HardwareChain.parallel_addressing = True: Section 7.3 parallelizes single-qubit gates only "
+            "if the device model allows parallel addressing"
+        )
     if crosstalk_suppression != "none" and parallel:
         raise ScheduleError("crosstalk suppression is scheduled on the serial path (Section 6.6)")
     drives = gate_drives or default_gate_drives(device)
@@ -664,13 +678,21 @@ def schedule(
         if op.name == "measure":
             measured.extend(q for q in op.qubits if q not in measured)
 
-    def advance(qubits: tuple[int, ...], end: float) -> None:
+    def advance(qubits: tuple[int, ...], end: float, *, serialized: bool = False) -> None:
+        """Move the clocks past a gate that ended at ``end``, leaving the hardware's dead time idle.
+
+        ``global_clock`` is the crystal-wide clock every gate waits on when ``parallel`` is false. Under ``parallel`` the
+        per-ion clocks carry single-qubit gates, and an entangling gate (``serialized=True``) advances BOTH its ions' clocks
+        and ``global_clock``: Section 7.3 serializes MS gates one at a time per crystal in the first release, so the next
+        entangling gate waits on the previous one even on a disjoint pair (both would draw on the same global beam pair)."""
         nonlocal global_clock
         if dead > 0.0:
             idle.append((end, end + dead))
         if parallel:
             for q in qubits:
                 clock[q] = end + dead
+            if serialized:
+                global_clock = end + dead
         else:
             global_clock = end + dead
 
@@ -685,7 +707,9 @@ def schedule(
                 raise ScheduleError(
                     f"no entangling waveform in the calibration table for ions {(a, b)} (CalibrationTable.ms; Section 7.5)"
                 )
-            start = max(clock[a], clock[b]) if parallel else global_clock
+            # Section 7.3: MS gates are serialized one at a time per crystal, so an entangling gate waits on global_clock even
+            # under parallel addressing (which only parallelizes the single-qubit beams)
+            start = max(global_clock, clock[a], clock[b]) if parallel else global_clock
             frame_op = frame
             if op.name == "ms":
                 phi0, phi1, theta = op.params
@@ -693,7 +717,8 @@ def schedule(
                     phi1, theta = phi1 + math.pi, -theta
                 if wf.kind != "ms":
                     raise ScheduleError(
-                        "MS(phi_0, phi_1, theta) needs an MS (spin-flip) waveform; zz plays a light-shift one"
+                        "MS(phi_0, phi_1, theta) needs an MS (spin-flip) waveform; zz plays a light-shift or "
+                        "microwave-gradient one"
                     )
                 spins, chi_abs = ms_spin_phases(wf, (a, b), (phi0, phi1), frame)
                 ms_native = ("ms", (frame_op.pulse_phase(a, phi0), frame_op.pulse_phase(b, phi1), theta))
@@ -724,7 +749,7 @@ def schedule(
                             start + play.duration_s,
                         )
                     )
-                    advance((a, b), start + play.duration_s)
+                    advance((a, b), start + play.duration_s, serialized=True)
                     continue
                 # Section 6.6 echo schemes: two half-angle plays around a physical echo (M7)
                 half = _rescaled(wf, 0.25 * theta, chi_abs)
@@ -833,7 +858,7 @@ def schedule(
                     # a physical Z(pi) is a frame operation on every later pulse of the spectator: absorb it (Section 7.6)
                     for j in echo_ions:
                         frame = frame.rz(j, math.pi)
-                advance((a, b), t)
+                advance((a, b), t, serialized=True)
                 continue
             (theta,) = op.params
             if wf.kind == "ms":
@@ -854,12 +879,10 @@ def schedule(
                     record_single(p, "gpi2", ph)
                     frame = frame_after([p], frame, stark_compensation=stark_compensation)
                     start = max(start, p.t_end_s) if not parallel else start
-                if not parallel:
-                    start = max(p.t_end_s for p in pulses[-2:]) + dead
-                    idle.append((start - dead, start))
-                else:
-                    start = max(p.t_end_s for p in pulses[-2:]) + dead
-                    idle.append((start - dead, start))
+                # the wrapper pulses on both ions play together either way (distinct ions, distinct beams); the MS that
+                # follows them waits for both
+                start = max(p.t_end_s for p in pulses[-2:]) + dead
+                idle.append((start - dead, start))
                 spins, chi_abs = ms_spin_phases(wf, (a, b), (0.0, 0.0), frame)
                 frame_ms = frame
                 play = _rescaled(wf, 0.5 * abs(theta), chi_abs)
@@ -910,9 +933,11 @@ def schedule(
                     record_single(p, "gpi2", ph)
                     frame = frame_after([p], frame, stark_compensation=stark_compensation)
                     ends.append(p.t_end_s)
-                advance((a, b), max(ends))
+                advance((a, b), max(ends), serialized=True)
                 continue
-            # light-shift sigma_z sigma_z gate in the spin-echo form of Section 4.4.4: two half-angle loops around a pi on both ions
+            # sigma_z sigma_z gate in the spin-echo form of Section 4.4.4 (a light-shift waveform) or 4.4.5 (a
+            # near-field microwave-gradient waveform, whose dressed force is the same sigma_z force with the
+            # J_2(4 Omega_mu/delta) weight): two half-angle loops around a pi on both ions
             chi = wf.chi_total_rad
             if chi * theta > 0.0:
                 raise ScheduleError(
@@ -1003,7 +1028,7 @@ def schedule(
                 record_single(p, "gpi", ph)
                 frame = frame_after([p], frame, stark_compensation=stark_compensation)
                 ends.append(p.t_end_s)
-            advance((a, b), max(ends))
+            advance((a, b), max(ends), serialized=True)
             continue
         if op.is_non_unitary:
             continue  # a trailing measure: recorded above, scheduled as the terminal event below

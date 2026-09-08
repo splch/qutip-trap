@@ -18,8 +18,9 @@ ANGLE theta_t (the table's phi_t is a typo), with the target pulse first in time
 
 from __future__ import annotations
 
+import cmath
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -28,7 +29,6 @@ from scipy.optimize import brentq
 from scipy.special import binom
 
 M2 = "milestone M2 (control/composite.py, PLAN.md Section 4.3.5)"
-M7 = "milestone M7 (control/composite.py filter functions, PLAN.md Section 6.9)"
 
 Family = Literal[
     "primitive",
@@ -51,6 +51,7 @@ Family = Literal[
     "ToPn",
     "BBn",
 ]
+# typing.Literal exposes its members as __args__ at runtime; mypy does not model that attribute on a Literal alias
 FAMILIES: tuple[str, ...] = Family.__args__  # type: ignore[attr-defined]
 Channel = Literal["amplitude", "pulse_length", "addressing", "detuning"]
 
@@ -59,6 +60,8 @@ _SX = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
 _SY = np.array([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
 _SZ = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
 _I2 = np.eye(2, dtype=complex)
+SUZUKI_PHASE_TOLERANCE = 1e-9
+"""How far the root-found ladder phase may sit from the closed form arccos(-theta/(2 pi f_j)) before it is a defect."""
 
 # Mount et al. 2015 Table I: PD6 phases phi_{PD6:1..6} for the target ANGLE theta_t (printed as phi_t, a typo)
 MOUNT_PD6_PHASES: dict[float, tuple[float, ...]] = {
@@ -119,8 +122,24 @@ def fidelity_avg(u: np.ndarray, v: np.ndarray) -> float:
 
 
 def operator_distance(u: np.ndarray, v: np.ndarray) -> float:
-    """The spectral-norm distance ||U - V||_2 (the score below 1 - F ~ 1e-8, converted as E^2/2)."""
+    """The spectral-norm distance ||U - V||_2, global phase INCLUDED: the operator-identity measure (1e-12 rule)."""
     return float(np.linalg.norm(u - v, 2))
+
+
+def operator_distance_up_to_phase(u: np.ndarray, v: np.ndarray) -> float:
+    """min_g ||U - e^{ig} V||_2: the same distance with the global phase quotiented out.
+
+    A winding folds a composite propagator to -R(theta, phi) - short-CORPSE's n = (0, 1, 0) is the one family in the
+    Section 4.3.5 library that does - and a global phase is not an error: F_K, F_C and F_avg all quotient it, so the
+    distance that stands in for them below the float64 infidelity floor must quotient it too. Writing
+    ||U - e^{ig}V||_2 = ||V^dag U - e^{ig} 1||_2 = max_k |e^{i a_k} - e^{ig}| over the eigenphases a_k of V^dag U, the
+    minimizer is the bisector of the two phases, g = arg Tr(V^dag U) (2x2); Tr = 0 is the antipodal case, where every
+    g gives sqrt(2) and the unquotiented value is already correct.
+    """
+    m = v.conj().T @ u
+    tr = complex(np.trace(m))
+    g = cmath.phase(tr) if abs(tr) > 1e-300 else 0.0
+    return float(np.linalg.norm(u - cmath.exp(1j * g) * v, 2))
 
 
 def infidelity_from_distance(distance: float) -> float:
@@ -136,19 +155,37 @@ def infidelity_from_distance(distance: float) -> float:
 # ---- the verified library (Section 4.3.5 table), TIME order, target azimuth added to every entry -----------------------
 
 
+SINC_FIRST_MINIMUM = -0.217233628211222
+"""min_x sin(x)/x = sinc(4.493409), the floor of the SECOND branch: the least value arcsinc could ever invert."""
+
+
 def arcsinc(y: float) -> float:
-    """Inverse of sin(x)/x on the branch (0, pi], arcsinc(0) = pi (SCROFULOUS)."""
+    """Inverse of sin(x)/x on the branch (0, pi], where sin(x)/x falls monotonically from 1 to 0; arcsinc(0) = pi.
+
+    The branch fixes the domain at [0, 1]. A NEGATIVE y has its root on the second branch, x in (pi, 4.493409], which
+    this module does not implement: SCROFULOUS calls arcsinc(2 cos(theta/2)/pi), so y < 0 means theta > pi, and the
+    previous check admitted y down to the sinc minimum -0.2172 and then handed brentq a bracket with no sign change,
+    which surfaced as "f(a) and f(b) must have different signs" instead of a domain error (M2 audit E19).
+    """
     if y == 0.0:
         return PI
-    if not -0.2172 <= y <= 1.0:
-        raise ValueError("arcsinc argument outside the branch (0, pi]")
     if y >= 1.0:
-        return 0.0
+        return 0.0 if y == 1.0 else _out_of_branch(y)
+    if y < 0.0:
+        raise ValueError(
+            f"arcsinc({y:.6g}): a negative argument's root lies on the second branch x in (pi, 4.493409], where "
+            f"sin(x)/x reaches {SINC_FIRST_MINIMUM:.9g}; only the branch (0, pi] is implemented (SCROFULOUS at "
+            "theta_t > pi lands here)"
+        )
 
     def f(x: float) -> float:
         return math.sin(x) / x - y
 
     return float(brentq(f, 1e-12, PI))
+
+
+def _out_of_branch(y: float) -> float:
+    raise ValueError(f"arcsinc({y:.6g}): sin(x)/x never exceeds 1, so there is no root")
 
 
 def _acos_checked(x: float, what: str) -> float:
@@ -300,22 +337,86 @@ def _t2j(j: int, k: float, phi: float, family: str) -> list[tuple[float, float]]
     return out
 
 
-def suzuki_factor(j: int, f1: float) -> float:
-    """f_j = (2^{2j-1} - 2) f_{j-1}: 4, 24, 720, 90720 (P) and 2, 12, 360, 45360 (N, B); the printed -1 breaks first order."""
+def suzuki_factor(j: int, f1: float, *, printed: bool = False) -> float:
+    """f_j = (2^{2j-1} - 2) f_{j-1}: 4, 24, 720, 90720 (P) and 2, 12, 360, 45360 (N, B).
+
+    ``printed=True`` returns the source's defective recursion (2^{2j-1} - 1) f_{j-1}, i.e. f_2 = 28 (P) and 14 (N, B),
+    which breaks first order: the 9.15 negative control, now constructible from the package rather than only from
+    ``check_composite.py`` (M2 audit E11).
+    """
     f = float(f1)
     for m in range(2, j + 1):
-        f *= 2 ** (2 * m - 1) - 2
+        f *= 2 ** (2 * m - 1) - (1 if printed else 2)
     return f
 
 
-def seq_ladder(j: int, theta: float, family: str, phi_t: float = 0.0) -> list[tuple[float, float]]:
-    """P2j (family P), N2j (N) or B2j (B): the target then T_2j(1, phi) with phi = arccos(-theta/(2 pi f_j))."""
+def _first_order_coefficient(segments: Sequence[tuple[float, float]], family: str) -> float:
+    """The leading eps coefficient the ladder phase must null, as ONE signed scalar in the phase.
+
+    P and B correct the AMPLITUDE channel, whose first-order generator is the toggling-frame sum sum_l theta_l
+    rho~^(l) (``dc_polygon``); N corrects the ADDRESSING channel, where every segment is itself O(eps_N) so there is no
+    toggling and the generator is the bare sum sum_l theta_l rho(phi_l). Both lie along the target axis for the
+    palindromic ladder, so the x component is a scalar with a sign change at the root (measured).
+    """
+    total = np.zeros(3)
+    if family == "N":
+        for theta, phi in segments:
+            total += theta * _axis3(phi)
+        return float(total[0])
+    u = _I2.copy()
+    for theta, phi in segments:
+        lam = _adjoint(u)
+        total += theta * (lam.T @ _axis3(phi))
+        u = primitive(theta, phi) @ u
+    return float(total[0])
+
+
+def _axis3(phi: float) -> np.ndarray:
+    return np.array([math.cos(phi), math.sin(phi), 0.0])
+
+
+def suzuki_phase(j: int, theta: float, family: str, *, printed: bool = False) -> tuple[float, float]:
+    """(phi, |closed form - root|): the ladder phase ROOT-FOUND on the leading eps coefficient.
+
+    PLAN.md:493 requires this by name - "the module root-finds every Trotter-Suzuki phase on the leading eps
+    coefficient rather than hard-coding f_j" - because the root-find is what catches a transcription defect instead of
+    trusting it. The closed form arccos(-theta/(2 pi f_j)) is the initial guess and the bracket is a small interval
+    around it; the returned residual is asserted against zero by the caller, so a wrong f_j shows up as a large
+    residual rather than as a silently wrong phase. ``printed=True`` uses the defective f_j as the guess, and then the
+    residual is LARGE, which is the point of the negative control.
+    """
     if j < 1:
         raise ValueError("j >= 1")
     f1 = 4.0 if family == "P" else 2.0
-    fj = suzuki_factor(j, f1)
-    phi = _acos_checked(-theta / (2.0 * PI * fj), f"{family}{2 * j} phase")
-    return [(theta, phi_t)] + [(a, phi_t + p) for a, p in _t2j(j, 1.0, phi, family)]
+    fj = suzuki_factor(j, f1, printed=printed)
+    guess = _acos_checked(-theta / (2.0 * PI * fj), f"{family}{2 * j} phase")
+
+    def objective(phi: float) -> float:
+        return _first_order_coefficient([(theta, 0.0)] + _t2j(j, 1.0, phi, family), family)
+
+    lo, hi = guess - 0.2, guess + 0.2
+    if objective(lo) * objective(hi) >= 0.0:
+        raise ValueError(
+            f"{family}{2 * j}: the leading eps coefficient does not change sign around the closed-form phase "
+            f"{guess:.9f}; the recursion f_j = {fj:g} is not the one that nulls it"
+        )
+    root = float(brentq(objective, lo, hi, xtol=1e-14, rtol=8.9e-16))
+    return root, abs(root - guess)
+
+
+def seq_ladder(j: int, theta: float, family: str, phi_t: float = 0.0) -> list[tuple[float, float]]:
+    """P2j (family P), N2j (N) or B2j (B): the target then T_2j(1, phi) with phi ROOT-FOUND (``suzuki_phase``).
+
+    The root is used, not the closed form, and the two are asserted to agree to ``SUZUKI_PHASE_TOLERANCE``: agreement
+    is what certifies the transcribed recursion, and a disagreement is a defect report rather than a silent phase.
+    """
+    root, residual = suzuki_phase(j, theta, family)
+    if residual > SUZUKI_PHASE_TOLERANCE:
+        raise ValueError(
+            f"{family}{2 * j} at theta = {theta:.9g}: the root-found phase {root:.12f} disagrees with the closed form "
+            f"arccos(-theta/(2 pi f_j)) by {residual:.3g}, above {SUZUKI_PHASE_TOLERANCE:g} (PLAN.md:493)"
+        )
+    return [(theta, phi_t)] + [(a, phi_t + p) for a, p in _t2j(j, 1.0, root, family)]
 
 
 # ---- PDn / APn (Low-Yoder-Chuang 2014) and Mount's PD6 ---------------------------------------------------------------------
@@ -482,6 +583,8 @@ class CompositePulse:
     segments: tuple[tuple[float, float], ...]
     """(area_rad, phase_rad) in TIME order, areas > 0."""
     n_rep: int = 1
+    """Repetitions of the corrector block, ALREADY folded into ``segments`` (Appendix E; see ``repeat_corrector``): a
+    record of how the sequence was built, never a multiplier a consumer applies a second time."""
     provenance_id: str = ""
 
     def __post_init__(self) -> None:
@@ -528,7 +631,13 @@ class CompositePulse:
         raise ValueError("measure is F_K, F_C or F_avg")
 
     def distance(self, eps_a: float = 0.0, eps_d: float = 0.0) -> float:
-        return operator_distance(self.propagator(eps_a, eps_d), self.target())
+        """min_g ||U(eps) - e^{ig} R(theta, phi)||_2: the error size with the global phase quotiented out.
+
+        The quotient is load-bearing, not cosmetic: short-CORPSE's (0, 1, 0) winding returns -R exactly
+        (``corpse_angles``), so the unquotiented norm is the constant 2.0 at every eps and the ``order_slope`` fallback
+        below the float64 infidelity floor collapsed to 0 instead of the plan's 4.000 (M2 audit E3).
+        """
+        return operator_distance_up_to_phase(self.propagator(eps_a, eps_d), self.target())
 
     def order_slope(
         self,
@@ -595,10 +704,43 @@ class CompositePulse:
         return certificate(phases, gamma, len(corrector), rtol)
 
     def filter_function_amplitude(self, omega_rad_s: np.ndarray, omega_rabi_rad_s: float) -> np.ndarray:
-        raise NotImplementedError(f"CompositePulse.filter_function_amplitude is {M7}")
+        """F_a(omega) = (1/4){|sum_l A_l rho~^(l)|^2 + |sum_l B_l rho~^(l)|^2} at constant Rabi frequency (Section 6.9).
 
-    def dc_floor(self, moments: dict[str, float], omega_rabi_rad_s: float) -> float:
-        raise NotImplementedError(f"CompositePulse.dc_floor is {M7}")
+        The exact A_l/B_l segment sum, no quadrature: this pulse's segments timed at ``omega_rabi_rad_s`` and handed to
+        ``noise.decoupling.amplitude_filter_function``. Imported inside the call because ``noise.decoupling`` imports
+        this module (the control layer must not import the noise layer at module scope).
+        """
+        from qutip_trap.noise.decoupling import amplitude_filter_function, composite_segments
+
+        return amplitude_filter_function(
+            composite_segments(self, omega_rabi_rad_s), np.asarray(omega_rad_s, dtype=float)
+        )
+
+    def dc_floor(self, moments: Mapping[str, float], omega_rabi_rad_s: float) -> float:
+        """sum_channels c-hat_{m+1} (2m + 1)!! (<beta^2>/Omega^2)^{m+1}: the frozen-noise floor (Section 6.9).
+
+        ``moments`` maps a channel ("amplitude" and/or "detuning") to its <beta^2> in (rad/s)^2; ``m`` is this pulse's
+        order FOR THAT CHANNEL, so a family that does not correct the channel contributes at m = 0. c-hat_{m+1} is the
+        leading coefficient of 1 - F_K in eps^{2(m+1)}, fitted numerically (``fitted_leading_coefficient``) and cached
+        per (family, theta, order, channel); the fit reproduces the Section 4.3.5 values to better than 1e-5 relative
+        (measured: SK1 22.8302557111 to 4.1e-10, BB1 9.388566343 to 1.5e-7, CORPSE 0.006500751892 to 1.6e-7).
+        """
+        from qutip_trap.noise.decoupling import dc_floor as _dc_floor
+
+        if omega_rabi_rad_s <= 0.0:
+            raise ValueError("the Rabi frequency must be positive")
+        total = 0.0
+        for channel, variance in moments.items():
+            if channel not in ("amplitude", "detuning"):
+                raise ValueError(
+                    f"the dc floor is defined for the amplitude and detuning channels; got {channel!r}"
+                )
+            if variance < 0.0:
+                raise ValueError("<beta^2> is a variance")
+            m = self.order if channel in self.corrects else 0
+            c_hat = fitted_leading_coefficient(self, channel, 2 * (m + 1))
+            total += _dc_floor(c_hat, m, variance, omega_rabi_rad_s)
+        return total
 
 
 def _adjoint(u: np.ndarray) -> np.ndarray:
@@ -625,6 +767,40 @@ _BUILDERS: dict[str, Callable[[float, float], list[tuple[float, float]]]] = {
 }
 
 
+def suzuki_block_power(j: int) -> int:
+    """2^{2j-2}: how many times the cached T_{2j-2} block appears in EACH outer run of T_{2j} (Merrill-Brown Eq. 47).
+
+    This is Appendix E's ``n_rep``, "P2j/N2j/B2j: repetitions of the cached T_{2j-2} block" (PLAN.md:2800), and it is
+    1 at j = 1, which is the field's declared default. It is a RECORD of how ``segments`` was built - the block is
+    already expanded there - and never a multiplier a consumer applies again. The two alternative readings are both
+    refuted: repeating the whole pulse contradicts ``target()``/``propagator()``, which fold the target once, and
+    repeating the corrector alone destroys the compensation (measured: P2 at theta = pi/2 falls from an amplitude
+    infidelity slope of 6.000 to 1.999 at n_rep = 2, because the corrector cancels the TARGET pulse's error and a
+    second copy has none to cancel) - M2 audit E12.
+    """
+    if j < 1:
+        raise ValueError("j >= 1")
+    return int(2 ** (2 * j - 2))
+
+
+def _check_n_rep(family: str, n_rep: int, derived: int) -> int:
+    """``n_rep`` is DERIVED from the family and order (``suzuki_block_power``); an explicit value only asserts it."""
+    if n_rep < 1:
+        raise ValueError("n_rep >= 1")
+    if n_rep not in (1, derived):
+        if family in ("P2j", "N2j", "B2j"):
+            what = f"{family}'s Trotter-Suzuki block power 2^(2j-2) = {derived} at this order"
+        else:
+            what = f"1, the only value for {family} (Appendix E scopes n_rep to P2j/N2j/B2j)"
+        raise ValueError(
+            f"n_rep = {n_rep} is not {what}: n_rep counts repetitions of the CACHED T_{{2j-2}} block, which "
+            "``segments`` already carries, and is not a free repetition count (neither repeating the whole pulse, "
+            "which would multiply the target angle, nor repeating the corrector, which drops P2's amplitude "
+            "infidelity slope from 6.000 to 1.999, is order preserving)"
+        )
+    return derived
+
+
 def composite_pulse(
     family: str, theta_rad: float, phi_rad: float = 0.0, *, order: int = 1, n_rep: int = 1
 ) -> CompositePulse:
@@ -639,8 +815,11 @@ def composite_pulse(
         raise ValueError(
             "theta_rad is a positive target angle; a negative angle is the same area at phase + pi"
         )
+    # ``family`` was validated against FAMILIES above, which IS the Literal's member tuple, so the narrowing is sound;
+    # mypy cannot derive it from a runtime membership test against a tuple
     fam: Family = family  # type: ignore[assignment]
     if family in _BUILDERS:
+        _check_n_rep(family, n_rep, 1)
         segs = _BUILDERS[family](theta_rad, phi_rad)
         return CompositePulse(
             fam,
@@ -654,11 +833,13 @@ def composite_pulse(
         )
     if family in ("P2j", "N2j", "B2j"):
         j = max(order, 1)
+        n_rep = _check_n_rep(family, n_rep, suzuki_block_power(j))
         segs = seq_ladder(j, theta_rad, family[0], phi_rad)
         return CompositePulse(
             fam, theta_rad, phi_rad, 2 * j, _CORRECTS[family], tuple(segs), n_rep, _PROVENANCE[family]
         )
     if family == "PDn":
+        _check_n_rep(family, n_rep, 1)
         if order == 2:
             segs = seq_pd2(theta_rad, phi_rad)
         elif order == 6:
@@ -675,6 +856,7 @@ def composite_pulse(
             raise NotImplementedError(
                 "APn is implemented at n = 1 (SK1); AP2/AP3 closed forms were not transcribed (Section 12)"
             )
+        _check_n_rep(family, n_rep, 1)
         segs = [(theta_rad, phi_rad)] + [(2.0 * PI, phi_rad + p) for p in ap1_phases(theta_rad / (2.0 * PI))]
         return CompositePulse(
             fam, theta_rad, phi_rad, 1, _CORRECTS[family], tuple(segs), n_rep, _PROVENANCE[family]
@@ -682,6 +864,7 @@ def composite_pulse(
     if family == "BBn":
         if order != 2:
             raise NotImplementedError("BBn is implemented at n = 2 (the toggled PD2 = BB1 at theta = pi)")
+        _check_n_rep(family, n_rep, 1)
         segs = seq_bb_toggled(theta_rad, phi_rad)
         return CompositePulse(
             fam, theta_rad, phi_rad, 2, _CORRECTS[family], tuple(segs), n_rep, _PROVENANCE[family]
@@ -692,6 +875,51 @@ def composite_pulse(
             "numerical continuation, B2CORPSE is Cummins' nesting); CinSK and CinBB are the verified concatenations"
         )
     raise NotImplementedError(f"{family} is {M2}")
+
+
+_C_HAT_CACHE: dict[tuple[str, float, int, str, int], float] = {}
+"""Fitted c-hat_{m+1} per (family, theta, order, channel, power): the fit is a few hundred 2x2 folds."""
+
+
+def fitted_leading_coefficient(
+    pulse: CompositePulse, channel: str, power: int, *, terms: int = 3, distance_floor: float = 1e-10
+) -> float:
+    """c-hat = lim_{eps -> 0} (1 - F_K)/eps^power, fitted rather than read off at one eps (Section 6.9's dc floor).
+
+    ``leading_coefficient`` at a single eps carries two errors that pull in opposite directions: a truncation error in
+    even powers of eps from the next term of the series, and a round-off error that grows as eps falls, because
+    1 - F_K is a subtraction of numbers near 1. The fit takes the eps ladder whose operator distance is still above
+    ``distance_floor`` (below which the squared-distance fallback of ``order_slope`` is itself round-off) and
+    least-squares a polynomial c-hat + a eps^2 + b eps^4 in eps^2, returning the constant. Measured against the
+    Section 4.3.5 values at theta = pi: SK1 4.1e-10, SCROFULOUS 9.2e-8, BB1 1.5e-7, CORPSE 1.6e-7, PB1 1.9e-7,
+    CinSK 4.2e-7, CinBB 2.1e-6 relative.
+    """
+    key = (pulse.family, round(pulse.theta_rad, 12), pulse.order, channel, power)
+    hit = _C_HAT_CACHE.get(key)
+    if hit is not None:
+        return hit
+    eps_grid = np.geomspace(3e-2, 1e-7, 40)
+    xs: list[float] = []
+    ys: list[float] = []
+    for e in eps_grid:
+        c = leading_coefficient(pulse, channel, power, float(e))
+        if math.sqrt(max(c, 0.0) * float(e) ** power) < distance_floor:
+            continue  # the measure itself is round-off at this eps
+        xs.append(float(e))
+        ys.append(c)
+    if not xs:
+        raise ValueError(
+            f"the {channel} infidelity of {pulse.family} never rises above the float64 floor on the eps ladder: "
+            "c-hat cannot be fitted"
+        )
+    x = np.asarray(xs)
+    y = np.asarray(ys)
+    k = max(1, min(terms, x.size - 1))
+    design = np.vstack([x ** (2 * i) for i in range(k)]).T
+    coeffs, *_ = np.linalg.lstsq(design, y, rcond=None)
+    out = float(coeffs[0])
+    _C_HAT_CACHE[key] = out
+    return out
 
 
 def leading_coefficient(pulse: CompositePulse, channel: str, power: int, eps: float = 1e-3) -> float:
@@ -710,6 +938,7 @@ __all__ = [
     "CompositePulse",
     "Family",
     "ap1_phases",
+    "SINC_FIRST_MINIMUM",
     "arcsinc",
     "certificate",
     "certificate_phi",
@@ -720,9 +949,11 @@ __all__ = [
     "fidelity_c",
     "fidelity_k",
     "fold",
+    "fitted_leading_coefficient",
     "fold_addressing",
     "leading_coefficient",
     "operator_distance",
+    "operator_distance_up_to_phase",
     "pd2_phases",
     "phi_sk1",
     "primitive",
@@ -740,6 +971,9 @@ __all__ = [
     "seq_short_corpse",
     "seq_sk1",
     "seq_sk1_printed",
+    "SUZUKI_PHASE_TOLERANCE",
+    "suzuki_block_power",
     "suzuki_factor",
+    "suzuki_phase",
     "toggled_phases",
 ]

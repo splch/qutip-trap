@@ -199,12 +199,10 @@ def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_fra
     # the Section 9.6 concrete sequence as matrices: RZ(0.1) then GPi2(0) on |0> equals GPi2(-0.1) followed by RZ(0.1)
     ket0 = np.array([1.0, 0.0], dtype=complex)
     assert np.allclose(native.gpi2(0.0) @ native.rz(0.1) @ ket0, native.rz(0.1) @ native.gpi2(-0.1) @ ket0)
+    # the sign is sharp: GPi2(+0.1) differs from GPi2(-0.1) by e^{-0.2i} on the lower component, so the two states are not
+    # equal even up to a global phase (the magnitudes DO agree, which is why the comparison has to be the phase test)
     assert (
-        not np.allclose(
-            np.abs(native.gpi2(0.0) @ native.rz(0.1) @ ket0),
-            np.abs(native.gpi2(+0.1) @ native.rz(0.1) @ ket0),
-        )
-        or _phase(
+        _phase(
             (native.gpi2(0.0) @ native.rz(0.1) @ ket0).reshape(2, 1),
             (native.rz(0.1) @ native.gpi2(+0.1) @ ket0).reshape(2, 1),
         )

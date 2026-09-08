@@ -5,6 +5,10 @@ xy-plane, so that Delta k = 2k (cos theta, sin theta, 0) couples the drive weakl
 tan theta, about 0.008 at 6 degrees against 0.08 on the x modes. A symmetric single-mode pulse on the x-COM then leaves the
 y-COM (2.9 MHz, 120 kHz below the tone) as a genuine frozen spectator of Section 5.2, |alpha|^2 (2 nbar + 1) ~ 1e-4 and
 |chi| ~ 1e-3 rad, the case the frozen-against-joint comparison of Section 9.9 and the ENR option of Section 11.3 need.
+
+Both purposes are now exercised: the frozen-spectator comparison in ``tests/test_scaling_modes.py`` and the ENR option end to
+end (``run(..., enr_group=(Y_MODES_TWO_IONS, N_exc))``) in ``tests/test_m9_scaling.py``. M9a shipped the ENR half unused,
+which is why nothing caught the branch enumeration above the cap or the ENR boundary trip (M9a audit D5).
 """
 
 from __future__ import annotations

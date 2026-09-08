@@ -266,7 +266,21 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
     assert (
         "sideband_spectroscopy" in report.refused and "micromotion" in report.refused["sideband_spectroscopy"]
     )
-    assert report.results == {} and report.table.modes == sur.table.modes
+    assert report.results == {}
+    # Section 7.3: what the refused fit could not establish is uncalibrated, NOT the derived seed it started from. The
+    # first M8 build left the mode frequencies as schedulable seeds and this row pinned that (`report.table.modes ==
+    # sur.table.modes`), which is exactly the fallback 7.3 forbids (M8 audit B2).
+    t = report.table
+    assert all(
+        e.status == "uncalibrated" and e.experiment == "sideband_spectroscopy" for e in t.modes.values()
+    )
+    assert all(e.status == "uncalibrated" for e in t.nbar.values())
+    assert {k for k in t.uncalibrated() if k.startswith("modes")} == {
+        f"modes[{m!r}]" for m in sur.table.modes
+    }
+    assert all(e.value == sur.table.modes[m].value for m, e in t.modes.items()), (
+        "the value is kept for the record; only the status refuses"
+    )
     for name in ("stark_scan", "crosstalk_scan", "field_scan", "crystal_image"):
         assert name in UPSTREAM
 

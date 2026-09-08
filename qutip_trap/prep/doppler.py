@@ -10,6 +10,13 @@ common frequency to minimize the participation-weighted mean of the per-mode nba
 modes the schedule uses next, uniform when none is given) and every mode's residual nbar is reported, never optimized
 mode by mode. The two-level closed forms (k_B T_D = hbar Gamma/2 with its 1.43 fork, nbar ~ Gamma/(2 nu)) are
 oracles in ``prep.closed_forms``, never the producer (Section 13, "Doppler limit" [corrected]).
+
+Section 4.2.1 states the objective over three beam parameters, "Delta, s and k_hat are beam parameters chosen to
+minimize the participation-weighted mean of the per-mode steady-state nbar"; only Delta is optimized here and s and
+k_hat are inputs (``conv.doppler_optimizes_detuning_only``). The steady state is nearly s independent at the Doppler
+limit, so the objective barely moves, but the RATE - which sets the stage duration - does depend on s and is not
+optimized, and a genuine three-beam geometry choice is Itano and Wineland's apportionment
+``closed_forms.three_beam_optimum`` rather than a search over k_hat.
 """
 
 from __future__ import annotations
@@ -23,7 +30,17 @@ from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import BlochModel, shifted_beam
 from qutip_trap.prep.closed_forms import doppler_force_nbar
-from qutip_trap.prep.rates import PROJECTION_THRESHOLD, Method, ModeRates, StageRates, stage_rates
+from qutip_trap.prep.rates import (
+    PARTICIPATION_THRESHOLD,
+    PROJECTION_THRESHOLD,
+    Method,
+    ModeRates,
+    StageRates,
+    illuminated_ions,
+    models_per_ion,
+    stage_rates,
+)
+from qutip_trap.prep.validity import assert_doppler_recoil_limit
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import Crystal
 
@@ -75,7 +92,7 @@ def _force_model(model: BlochModel, ion: int, rates: ModeRates, cooling_beams: S
 
 
 def doppler_cooling(
-    structure: AtomicStructure,
+    structure: AtomicStructure | Mapping[int, AtomicStructure],
     beams: Sequence[Beam],
     crystal: Crystal,
     *,
@@ -88,21 +105,43 @@ def doppler_cooling(
     options: MultiLevelOptions | None = None,
     method: Method = "spectrum",
     projection_threshold: float = PROJECTION_THRESHOLD,
+    participation_threshold: float = PARTICIPATION_THRESHOLD,
+    min_rate_per_s: float | None = None,
     allow_saturation: bool = False,
+    allow_strong_coupling: bool = False,
+    allow_fast_cooling: bool = False,
+    allow_recoil_limited: bool = False,
 ) -> DopplerResult:
     """nbar_D and the cooling rate of every mode of ``crystal`` under ``beams`` (all of them cooling beams by default).
 
     ``beams`` are all the beams the ions see, repumpers included (they shape W); ``cooling_beams`` restricts the projection
     guard and the force-model cross-check to the beams meant to cool. ``weights`` (mode -> weight) is the objective's
-    participation weighting, uniform when None; ``modes`` restricts the stage to a subset (default: every mode). Raises
-    UncooledModeError for a mode no cooling beam addresses.
+    participation weighting, uniform when None; ``modes`` restricts the stage to a subset (default: every mode).
+    ``structure`` may be a per-ion mapping for a mixed crystal (Section 4.2.5). Raises UncooledModeError for a mode no
+    cooling beam addresses or the illuminated ions barely participate in, and ValidityError when a cooling beam's line
+    fails Section 4.2.8 (vii)'s Gamma > omega_R.
     """
+    cooling = list(cooling_beams) if cooling_beams is not None else list(range(len(beams)))
+    ions = tuple(illuminated) if illuminated is not None else illuminated_ions(beams, crystal)
+    if not ions:
+        raise ValueError("no ion is illuminated by the beams")
+    # Gamma > omega_R is a property of the line and the mass alone, so it is asserted BEFORE any rate is computed:
+    # a recoil-limited line has no Doppler limit to report (Section 4.2.8 vii)
+    _assert_doppler_regime(
+        models_per_ion(structure, beams, crystal, ions[:1], levels=levels, states=states, options=options)[
+            ions[0]
+        ],
+        crystal,
+        ions[0],
+        cooling,
+        allow_recoil_limited=allow_recoil_limited,
+    )
     stage, models = stage_rates(
         structure,
         beams,
         crystal,
         cooling_beams=cooling_beams,
-        illuminated=illuminated,
+        illuminated=ions,
         weights=weights,
         modes=modes,
         levels=levels,
@@ -110,9 +149,12 @@ def doppler_cooling(
         options=options,
         method=method,
         projection_threshold=projection_threshold,
+        participation_threshold=participation_threshold,
+        min_rate_per_s=min_rate_per_s,
         allow_saturation=allow_saturation,
+        allow_strong_coupling=allow_strong_coupling,
+        allow_fast_cooling=allow_fast_cooling,
     )
-    cooling = list(cooling_beams) if cooling_beams is not None else list(range(len(beams)))
     first_ion = stage.illuminated[0]
     force: dict[int, float] = {}
     for r in stage.modes:
@@ -128,6 +170,31 @@ def doppler_cooling(
         approximations=stage.approximations,
         force_model_nbar=force,
     )
+
+
+def _assert_doppler_regime(
+    model: BlochModel,
+    crystal: Crystal,
+    ion: int,
+    cooling_beams: Sequence[int],
+    *,
+    allow_recoil_limited: bool,
+) -> None:
+    """Gamma > omega_R on every cooling beam's resonant line (Section 4.2.8 vii): below it the single-photon recoil
+    exceeds the linewidth and the Doppler limit is replaced by the recoil limit."""
+    b = model.build
+    mass = float(crystal.masses_kg[ion])
+    for beam in cooling_beams:
+        couplings = [c for c in b.couplings if c.beam == beam]
+        if not couplings:
+            continue
+        resonant = min(couplings, key=lambda c: abs(c.detuning_rad_s))
+        gamma = b.level_rates_rad_s.get(b.level_of(resonant.upper), 0.0)
+        if gamma <= 0.0:
+            continue
+        assert_doppler_recoil_limit(
+            gamma, model.beams[beam].k_rad_per_m, mass, allow_recoil_limited=allow_recoil_limited
+        )
 
 
 def with_detuning_offset(

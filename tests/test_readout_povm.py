@@ -17,6 +17,7 @@ from qutip_trap.readout.discriminate import (
     TimeResolvedML,
     confusion_from_outcomes,
     joint_level_probabilities,
+    max_confusion_discrepancy,
     measure,
     per_ion_confusion,
     povm_confusion_over_levels,
@@ -115,11 +116,12 @@ def test_register_confusion_at_configured_crosstalk_is_bounded_and_reported() ->
     )
     assert register.confusion.shape == (4, 4) and np.allclose(register.confusion.sum(axis=1), 1.0)
     # true (ion0 bright, ion1 dark) = index 0b01 = 1; declared both bright = 0b11 = 3
-    leaked = register.declared_bright_probability([True, False], [True, True])
+    leaked = register.declared_bright_probability([1, 0], [True, True])
     assert leaked == pytest.approx(1.0 - math.exp(-(4.2 + 0.04 * 472e3) * 22e-6) - 0.0, abs=0.02)
-    assert product.declared_bright_probability([True, False], [True, True]) < 1e-3
+    assert product.declared_bright_probability([1, 0], [True, True]) < 1e-3
     discrepancy = float(np.max(np.abs(register.confusion - _dense_product(product))))
     assert 0.3 < discrepancy < 0.4
+    assert max_confusion_discrepancy(register, product) == pytest.approx(discrepancy, abs=0.02)
     # the full path on |01> (ion 0 in |0> = dark, ion 1 in |1> = bright) reproduces the register form, not the product
     space = register_space(2)
     state = space.initial_state(product_state(space, (0, 1)))
@@ -144,10 +146,10 @@ def _dense_product(povm: POVM) -> np.ndarray:
     n = povm.n_ions
     out = np.zeros((2**n, 2**n))
     for a in range(2**n):
-        true = [bool((a >> i) & 1) for i in range(n)]
+        levels = [(a >> i) & 1 for i in range(n)]
         for b in range(2**n):
             declared = [bool((b >> i) & 1) for i in range(n)]
-            out[a, b] = povm.declared_bright_probability(true, declared)
+            out[a, b] = povm.declared_bright_probability(levels, declared)
     return out
 
 
@@ -159,8 +161,8 @@ def test_register_confusion_factors_by_neighbour_range_and_guards_the_dense_tens
     assert pov.factored.neighbourhood(0) == (0, 1) and pov.factored.neighbourhood(6) == (5, 6, 7)
     with pytest.raises(ValueError):
         pov.factored.dense()
-    true = [True] * n
-    p = pov.declared_bright_probability(true, true)
+    true = [1] * n
+    p = pov.declared_bright_probability(true, [True] * n)
     assert 0.98 < p < 1.0
     rng = np.random.default_rng(0)
     sampled = pov.sample(true, rng)
@@ -169,8 +171,7 @@ def test_register_confusion_factors_by_neighbour_range_and_guards_the_dense_tens
     assert small.confusion is not None and small.confusion.shape == (8, 8)
     assert small.factored is not None and small.factored.neighbour_range == 2
     total = sum(
-        small.declared_bright_probability([True, False, True], [bool(b >> i & 1) for i in range(3)])
-        for b in range(8)
+        small.declared_bright_probability([1, 0, 1], [bool(b >> i & 1) for i in range(3)]) for b in range(8)
     )
     assert total == pytest.approx(1.0, abs=1e-12)
 
@@ -180,15 +181,23 @@ def test_povm_invariants() -> None:
     with pytest.raises(ValueError):
         POVM(None, None, "zero")
     with pytest.raises(ValueError):
-        POVM((m,), np.eye(2), "configured")
+        POVM((m,), np.eye(2), "configured", bright_levels=(0,))
     with pytest.raises(ValueError):
         POVM(None, np.eye(4), "zero")
     with pytest.raises(ValueError):
-        POVM((np.array([[0.9, 0.2], [0.0, 1.0]]),), None, "zero")
-    ok = POVM((m,), None, "zero")
+        POVM((np.array([[0.9, 0.2], [0.0, 1.0]]),), None, "zero", bright_levels=(0,))
+    with pytest.raises(ValueError, match="one bright level"):
+        POVM((m,), None, "zero")
+    # a product form can never carry configured crosstalk: Section 8.5 makes the records neighbour-coupled
+    with pytest.raises(ValueError, match="product form cannot carry configured crosstalk"):
+        POVM((m,), None, "configured", bright_levels=(0,))
+    ok = POVM((m,), None, "zero", bright_levels=(0,))
     assert ok.n_ions == 1 and ok.per_ion_errors() == ((0.001, 0.002),)
-    factored = RegisterConfusion(2, 0, (np.array([[0.999, 0.001], [0.002, 0.998]]),) * 2)
-    assert factored.probability([True, False], [True, False]) == pytest.approx(0.999 * 0.998)
+    # the same table with the OTHER polarity names the two errors the other way round
+    flipped = POVM((m,), None, "zero", bright_levels=(1,))
+    assert flipped.per_ion_errors() == ((0.998, 0.999),)
+    factored = RegisterConfusion(2, 0, (m,) * 2, (np.array([1.0, 0.0]),) * 2)
+    assert factored.probability([0, 1], [True, False]) == pytest.approx(0.999 * 0.998)
 
 
 def test_two_shots_on_one_sample_and_trajectory_draw_different_records() -> None:

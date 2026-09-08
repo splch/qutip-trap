@@ -155,6 +155,99 @@ def _fock_check(dev, wf, drives, space, state, opts):  # type: ignore[no-untyped
     return GateCheck(pops, chi, pops["P01"] + pops["P10"], {}, 0.0, tr.final.internal, None)
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("family", ["fm", "fourier", "pm"])
+def test_the_fm_fourier_and_pm_solutions_are_verified_by_exact_integration(family: str) -> None:
+    """Section 4.4.3's closing requirement: the module "verifies every solution by exact integration of the full
+    Hamiltonian through the injected PulseEngine protocol". Until now only ``symmetric_pulse`` and the segmented AM
+    solver were ever played; the FM, Fourier-AM and PM solutions were checked against their own closed forms alone.
+
+    Measured on the two-ion fixture (dims [2, 2, 11, 10] / [2, 2, 10, 10] / [2, 2, 11, 12]): exact chi/surrogate = 0.9847
+    (FM), 0.9831 (Fourier AM) and 0.9528 (PM), leakage 4.7e-4, 4.7e-7 and 1.8e-2, boundary population below 1e-15
+    throughout. The PM family's larger leakage is Roos's spin-axis tilt psi = (2 Omega/mu) sin phi_m: a phase-modulated
+    pulse cannot use the tilt-free phi_m = 0 convention, because the motion phase IS its modulation parameter (M4
+    finding, ledger conv.pm_solver)."""
+    from qutip_trap.control.shaping import (
+        solve_fourier_amplitude_modulation,
+        solve_frequency_modulation,
+        solve_phase_modulation,
+    )
+
+    dev = two_ion_device()
+    modes = two_ion_modes(dev)
+    drives = raman_gate_drives(2)
+    if family == "fm":
+        sp = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=9, mu0_hz=2.914e6)
+        ratio, leak = 0.9847, 1e-3
+    elif family == "fourier":
+        sp = solve_fourier_amplitude_modulation(
+            modes, mu_hz=2.914e6, duration_s=100e-6, n_basis=16, stabilization_order=1
+        )
+        ratio, leak = 0.9831, 1e-5
+    else:
+        sp = solve_phase_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
+        ratio, leak = 0.9528, 3e-2
+    space = gate_space(modes, 2, waveform=sp.waveform)
+    check, tr = exact_gate_check(
+        dev,
+        sp.waveform,
+        (0, 1),
+        drives,
+        table_with_waveform((0, 1), sp.waveform, rabi_hz=RABI, stark_hz=STARK),
+        space=space,
+    )
+    assert check.chi_rad / sp.chi_rad == pytest.approx(ratio, rel=0.01), (family, check.chi_rad)
+    assert check.leakage < leak, (family, check.leakage)
+    assert max(tr.boundary_population.values()) < 1e-10, (family, tr.boundary_population)
+    assert check.fidelity > 1.0 - 3.0 * leak - 0.05
+
+
+def test_kirchmair_forty_calcium_consistency_anchors() -> None:
+    """Section 9.4 'Thermal populations': Kirchmair et al. 2009's own 40Ca+ numbers, nu/2pi = 1.232 MHz and eta = 0.044,
+    as CONSISTENCY anchors (Section 9's rule: they report against the published uncertainty or 20 %, they do not fail).
+
+    The closure algebra fixes the apparatus: t_g = 50 us is eps/2pi = 20 kHz at K = 1 and needs Omega/2pi = 227.3 kHz,
+    t_g = 25 us is eps/2pi = 40 kHz (not the 10 kHz an earlier reading of the row supposed) and needs 454.5 kHz - which
+    is Omega/nu = 0.37, deep into Roos's carrier saturation and why the 25 us point loses an order of magnitude.
+
+    The paper's measured F = 0.993(1) at 50 us and 0.971(2) at 25 us are NOT reproduced from eta and nu: the intrinsic
+    residual-displacement and Debye-Waller terms at nbar = 0 are below 1e-5, three orders under the measurement, so
+    those two numbers are dominated by the technical terms Section 4.4.7 lists for this paper (2e-3 from incoherent
+    carrier excitation by laser frequency noise, heating Gamma_h t_g/2, and delta Omega/Omega = 1.4e-2). The one number
+    that IS a closed-form prediction is the nbar = 20(2) parity contrast: the Debye-Waller angle spread gives 0.9923
+    against the paper's 0.964, agreeing to 2.9 % (inside the plan's 20 % default)."""
+    import numpy as np
+
+    from qutip_trap.control.shaping import closure_duration_s, closure_rabi_rad_s
+    from qutip_trap.units import TWO_PI
+    from qutip_trap.validation.two_qubit_closed_forms import kirchmair_heating_error
+
+    eta, nu = 0.044, TWO_PI * 1.232e6
+    for t_g, eps_hz, omega_khz in ((50e-6, 20e3, 227.3), (25e-6, 40e3, 454.5)):
+        eps = TWO_PI * eps_hz
+        assert closure_duration_s(eps, 1) == pytest.approx(t_g, rel=1e-12)
+        assert closure_rabi_rad_s(eta, eps, 1) / TWO_PI == pytest.approx(omega_khz * 1e3, rel=1e-3)
+    assert closure_rabi_rad_s(eta, TWO_PI * 40e3, 1) / nu == pytest.approx(0.369, rel=1e-2)
+    # the Debye-Waller parity contrast of a thermal state: |sum_n P_n e^{-i 4 chi_0 eta^2 n}|
+    angle = 4.0 * (math.pi / 4.0) * eta**2
+    for nbar, low in ((18.0, 0.99), (20.0, 0.99), (22.0, 0.99)):
+        n = np.arange(2000)
+        weights = np.exp(n * math.log(nbar / (1.0 + nbar))) / (1.0 + nbar)
+        contrast = float(abs(np.sum(weights * np.exp(-1j * angle * n))))
+        assert contrast > low
+        assert contrast == pytest.approx(0.964, rel=0.2), (nbar, contrast)
+    # the intrinsic terms at nbar = 0 are orders below the measured infidelities: those are technical, and tracked
+    assert ballance_thermal_error(eta, 0.0) == 0.0
+    assert thermal_debye_waller_infidelity(eta, 0.0, "minus_half") < 1e-5
+    amplitude_term = math.sin(2.0 * (math.pi / 4.0) * 1.4e-2) ** 2
+    assert amplitude_term == pytest.approx(4.8e-4, rel=0.02), (
+        "delta Omega/Omega = 1.4e-2 (Kirchmair's budget)"
+    )
+    assert 2e-3 + amplitude_term + kirchmair_heating_error(1.0, 50e-6) < 1.0 - 0.993 + 1e-3, (
+        "the named technical terms fit inside the paper's 1 - F = 7e-3 at 50 us"
+    )
+
+
 def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> None:
     """Section 7.5 item 4 and 7.9: the population crossing P_00 = P_11 sits at the calibrated amplitude; the parity oscillates at 2 phi
     with a contrast near one, and F = (P_00 + P_11 + C)/2 bounds the Bell fidelity."""

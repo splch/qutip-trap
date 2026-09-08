@@ -359,29 +359,48 @@ def _apply_any(matrix: Data, v: np.ndarray) -> np.ndarray:
     return np.asarray(_data.matmul(matrix, Dense(v, copy=False)).to_array())
 
 
+def _scalar_ratio(x: np.ndarray, y: np.ndarray, atol: float, rtol: float) -> complex | None:
+    """The c with ``x == c y`` elementwise, or None when ``x`` is not a scalar multiple of ``y``."""
+    big = float(np.max(np.abs(y))) if y.size else 0.0
+    if big == 0.0:
+        return None
+    i = np.unravel_index(int(np.argmax(np.abs(y))), y.shape)
+    c = complex(x[i] / y[i])
+    return c if np.allclose(x, c * y, atol=atol, rtol=rtol) else None
+
+
 def _isequal(a: Data, b: Data, atol: float = -1, rtol: float = -1) -> bool:
-    """Equality within tolerance: exact factor by factor when both operators share their factor structure, else a probe test
-    with two fixed vectors (equal operators always pass; a difference above the tolerance on the probes fails), never an
-    assembly of either operator."""
+    """Equality within tolerance, never assembling either operator.
+
+    Two factorized operators are compared EXACTLY and structurally: over the union of their factor indices (a factor either
+    one omits is the identity there), each pair must be a scalar multiple of the other, and the collected ratios must carry
+    one scale into the other, since scale_a (x)_f A_f = scale_b (x)_f B_f holds iff A_f = c_f B_f for every f with
+    scale_a prod_f c_f = scale_b. So a "no" here is a proof, not a guess. The old test compared ``a.scale * A_f`` with
+    ``b.scale * B_f`` factor by factor, which multiplies the scale in once per factor: 2 (X (x) Y) and 1 ((2X) (x) (2Y))
+    differ by two but passed it (M9b audit B9, and a false "equal" merges two distinct drive terms in ``QobjEvo.compress``).
+
+    A factorized operator against another data type still falls back to a probe test with two fixed vectors (equal operators
+    always pass; a difference above the tolerance on the probes fails), because the exact answer there would need one of the
+    two assembled.
+    """
     if atol < 0:
         atol = float(qt.settings.core["atol"])
     if rtol < 0:
         rtol = float(qt.settings.core["rtol"])
     if a.shape != b.shape:
         return False
-    if (
-        isinstance(a, FactorizedOperator)
-        and isinstance(b, FactorizedOperator)
-        and a.dims == b.dims
-        and set(a.factors) == set(b.factors)
-    ):
-        same = True
-        for f, x in a.factors.items():
-            if not np.allclose(a.scale * x, b.scale * b.factors[f], atol=atol, rtol=rtol):
-                same = False
-                break
-        if same:
-            return True
+    if isinstance(a, FactorizedOperator) and isinstance(b, FactorizedOperator) and a.dims == b.dims:
+        zero_a, zero_b = _iszero(a, atol), _iszero(b, atol)
+        if zero_a or zero_b:
+            return zero_a and zero_b
+        ratio = complex(1.0)
+        for f in sorted(set(a.factors) | set(b.factors)):
+            ident = np.eye(a.dims[f], dtype=complex)
+            c = _scalar_ratio(a.factors.get(f, ident), b.factors.get(f, ident), atol, rtol)
+            if c is None:
+                return False
+            ratio *= c
+        return bool(abs(a.scale * ratio - b.scale) <= atol + rtol * abs(b.scale))
     dimension = a.shape[0]
     for k in range(2):
         v = _probe(dimension, k)

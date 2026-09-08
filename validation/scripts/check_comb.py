@@ -40,7 +40,8 @@ NU_HF_0 = 12.642812118466e9  # zero-field 2S_1/2 clock splitting, Hz
 NU_HF_LEE = 12.642821e9  # as printed by Lee 2016 (its comb-order arithmetic)
 LAMBDA_355 = 355e-9
 K_355 = 2 * np.pi / LAMBDA_355
-GAMMA_P12 = 2 * np.pi * 19.6e6  # 2P_1/2 linewidth, ANGULAR
+GAMMA_P12 = 2 * np.pi * 19.62e6  # 2P_1/2 -> 2S_1/2 PARTIAL rate, ANGULAR (the rate in the gamma -> I_sat formula,
+# PLAN.md 9.13; the 19.6 MHz reading is retired: total 19.72 MHz, partial 19.62 MHz, yb171.P12.lifetime_s)
 I_SAT_APB = 1500.0  # 0.15 W/cm^2, the paper-specific D1 convention, W/m^2
 
 
@@ -88,14 +89,10 @@ gk = np.sqrt(np.pi * NU_REP_LEE * TAU_LEE) * sech(a_lee * kk)  # g_k / g_0
 print(
     f"  nu_rep = {NU_REP_LEE / 1e6:.0f} MHz, tau = {TAU_LEE * 1e12:.0f} ps, nu_rep*tau = {NU_REP_LEE * TAU_LEE:.3e}"
 )
-print(
-    f"  sum rule   sum_k g_k^2 / g_0^2 = {np.sum(gk**2):.12f}   (asymptotic in nu_rep*tau, not algebraic)"
-)
+print(f"  sum rule   sum_k g_k^2 / g_0^2 = {np.sum(gk**2):.12f}   (asymptotic in nu_rep*tau, not algebraic)")
 for x in (0.1, 1.0, 5.0):
     kx = np.arange(-4000, 4001)
-    print(
-        f"     at nu_rep*tau = {x:>4}: sum = {np.sum(np.pi * x * sech(2 * np.pi * x * kx) ** 2):.7f}"
-    )
+    print(f"     at nu_rep*tau = {x:>4}: sum = {np.sum(np.pi * x * sech(2 * np.pi * x * kx) ** 2):.7f}")
 
 print(
     "  tooth-pair overlap  sum_k g_k g_{k+l} / g_0^2   vs   sech(pi l nu_rep tau)"
@@ -105,9 +102,7 @@ for l in (0, 10, 105):
     exact = np.sum(gk[: len(gk) - l] * gk[l:]) if l else np.sum(gk**2)
     right = sech(np.pi * l * NU_REP_LEE * TAU_LEE)
     wrong = sech(2 * np.pi * l * NU_REP_LEE * TAU_LEE)
-    print(
-        f"     l = {l:4d}:  exact {exact:.6f}   sech(pi l..) {right:.6f}   sech(2pi l..) {wrong:.6f}"
-    )
+    print(f"     l = {l:4d}:  exact {exact:.6f}   sech(pi l..) {right:.6f}   sech(2pi l..) {wrong:.6f}")
 print(
     "  -> at l = 105 the wrong argument gives 0.595 for 0.864, a 27% error;"
     " the closed form is itself ~5% high against the exact convolution"
@@ -121,29 +116,21 @@ a_apb = 2 * np.pi * NU_REP_APB * TAU_APB
 gk_apb = np.sqrt(np.pi * NU_REP_APB * TAU_APB) * sech(a_apb * kk)
 pair = np.sum(gk_apb[: len(gk_apb) - n_apb] * gk_apb[n_apb:])
 x = omega_q * TAU_APB
-print(
-    f"  APB point (nu_rep = 80 MHz, tau = 10 ps, n = {n_apb}, omega_q tau = {x:.6f}):"
-)
+print(f"  APB point (nu_rep = 80 MHz, tau = 10 ps, n = {n_apb}, omega_q tau = {x:.6f}):")
 print(f"     tooth-pair sum          = {pair:.6f}")
 print(f"     (omega_q tau)/sinh(..)  = {x / np.sinh(x):.6f}   [1 - x^2/6]")
-print(
-    f"     sech(omega_q tau/2)     = {sech(x / 2):.6f}   [1 - x^2/8]  <- APB Eq. 22, the form to implement"
-)
+print(f"     sech(omega_q tau/2)     = {sech(x / 2):.6f}   [1 - x^2/8]  <- APB Eq. 22, the form to implement")
 print(
     f"     Hayes field-sech form (omega_q tau/2)/sinh(omega_q tau/2) at tau = 1 ps: "
     f"{(omega_q * 1e-12 / 2) / np.sinh(omega_q * 1e-12 / 2):.6f}   [1 - x^2/24]"
 )
-print(
-    f"     gap between the first two: {100 * (sech(x / 2) / pair - 1):.2f}%  -- record, do not harmonize"
-)
+print(f"     gap between the first two: {100 * (sech(x / 2) / pair - 1):.2f}%  -- record, do not harmonize")
 
 # ================================================= 3. Rosen-Zener ceilings, one-sech identity
 head(3, "Rosen-Zener single-pulse ceiling and the ONE sech(omega_q tau/2) factor")
 
 for T in (14.8e-12, 14e-12, 7.6e-12):
-    print(
-        f"  sech^2(pi nu_HF T) at T = {T * 1e12:4.1f} ps: {sech(np.pi * NU_HF_0 * T) ** 2:.6f}"
-    )
+    print(f"  sech^2(pi nu_HF T) at T = {T * 1e12:4.1f} ps: {sech(np.pi * NU_HF_0 * T) ** 2:.6f}")
 print(
     f"  unit discriminator: nu_HF read as ANGULAR at 14.8 ps -> "
     f"{sech(np.pi * 2 * np.pi * NU_HF_0 * 14.8e-12) ** 2:.6f}  (against the measured 72%)"
@@ -162,8 +149,14 @@ print(
     f"{sech(omega_q * 10e-12 / 2) ** 3:.6f}  (spurious)"
 )
 print(
-    f"  sech intensity FWHM = 2 arccosh(2)/pi = {2 * np.arccosh(2) / np.pi:.10f} tau;"
-    f" a sech^2 intensity envelope gives {2 * np.arccosh(np.sqrt(2)) / np.pi:.4f} tau"
+    f"  envelope widths of sech(pi t/(2 tau)), the plan's FIELD convention: field FWHM"
+    f" = (4/pi) arccosh(2) = {4 * np.arccosh(2) / np.pi:.10f} tau;"
+    f" intensity FWHM = (4/pi) arccosh(sqrt2) = {4 * np.arccosh(np.sqrt(2)) / np.pi:.4f} tau"
+)
+print(
+    f"  NEGATIVE CONTROL (retired, PLAN.md:1454): the same widths for sech(pi t/tau), a DIFFERENT envelope whose"
+    f" teeth read sech(pi k nu_rep tau): {2 * np.arccosh(2) / np.pi:.10f} tau and"
+    f" {2 * np.arccosh(np.sqrt(2)) / np.pi:.4f} tau -- half the correct pair, and not the answer"
 )
 
 # ===================================================== 4. pulse-train-to-CW map, (2 pi)^2
@@ -173,9 +166,7 @@ Om_target = 2 * np.pi * 1e6  # the paper's worked Omega/2pi = 1 MHz
 Om0 = Om_target / sech(omega_q * TAU_APB / 2)
 theta = Om0 / NU_REP_APB
 print(f"  worked example: Omega/2pi = 1 MHz at f_rep = 80 MHz, tau = 10 ps")
-print(
-    f"     Omega_0/2pi = {Om0 / 2 / np.pi / 1e6:.5f} MHz, theta = Omega_0/f_rep = {theta:.5f} rad"
-)
+print(f"     Omega_0/2pi = {Om0 / 2 / np.pi / 1e6:.5f} MHz, theta = Omega_0/f_rep = {theta:.5f} rad")
 print(
     f"     per-pulse Bloch angle varphi = theta sech(..) = {theta * sech(omega_q * TAU_APB / 2):.5f} rad"
     f"  -> pi pulse in {np.pi / (theta * sech(omega_q * TAU_APB / 2)):.1f} pulses"
@@ -210,10 +201,8 @@ print(
     f" gamma and Delta ANGULAR:"
 )
 print(f"     Chain II (Omega = g^2/Delta,   as printed ~12 nJ): {E_pi_II * 1e9:.3f} nJ")
-print(
-    f"     Chain I  (Omega = g^2/2Delta,  the plan's Section 13 row): {2 * E_pi_II * 1e9:.3f} nJ"
-)
-E_pi_ord = np.pi**2 * I_SAT_APB * w**2 * Deff / (19.6e6) ** 2
+print(f"     Chain I  (Omega = g^2/2Delta,  the plan's Section 13 row): {2 * E_pi_II * 1e9:.3f} nJ")
+E_pi_ord = np.pi**2 * I_SAT_APB * w**2 * Deff / (GAMMA_P12 / (2 * np.pi)) ** 2
 print(
     f"     ordinary-frequency gamma and Delta instead: {E_pi_ord * 1e9:.1f} nJ  (the angular convention is load-bearing)"
 )
@@ -295,13 +284,9 @@ jj = jj[jj != 0]
 S27 = np.sum(sech((jj + n_apb) * 2 * np.pi * NU_REP_APB * TAU_APB / 2) ** 2 / jj)
 d4_exact = -(Om0_1MHz**2 / (2 * 2 * np.pi * NU_REP_APB)) * S27
 d4_closed = float(closed) * Om0_1MHz**2 * omega_q * TAU_APB / (2 * np.pi * NU_REP_APB)
-print(
-    f"  single comb at Omega_0/2pi = 1 MHz, tau = 10 ps, nu_rep = 80 MHz, n = {n_apb}:"
-)
+print(f"  single comb at Omega_0/2pi = 1 MHz, tau = 10 ps, nu_rep = 80 MHz, n = {n_apb}:")
 print(f"     Eq. 27 exact symmetrized sum: delta_4/2pi = {d4_exact / 2 / np.pi:.1f} Hz")
-print(
-    f"     Eq. 28 closed form:           delta_4/2pi = {d4_closed / 2 / np.pi:.1f} Hz   (printed +8.5 kHz)"
-)
+print(f"     Eq. 28 closed form:           delta_4/2pi = {d4_closed / 2 / np.pi:.1f} Hz   (printed +8.5 kHz)")
 print(
     f"     effective coefficient of the exact sum = {float(closed) * d4_exact / d4_closed:.4f} against 0.85256"
     f"  (omega_q tau/2 = {omega_q * TAU_APB / 2:.3f} is not small)"
@@ -365,17 +350,13 @@ print(
     f"  k = 0 term alone = sech^2(j pi nu_rep tau) ="
     f" {sech(j_c * np.pi * NU_REP_LEE * TAU_LEE) ** 2:.6f}  (C is NOT normalized to 1)"
 )
-print(
-    "  CONVERGENCE REGRESSION for C_00,10 -- assert the whole sweep, not successive agreement:"
-)
+print("  CONVERGENCE REGRESSION for C_00,10 -- assert the whole sweep, not successive agreement:")
 for kmax in (0, 5, 10, 100, 500, 1000, 5000, 20000):
     _, _, C = comb_factor_from(nu_a_clock, NU_REP_LEE, TAU_LEE, kmax)
     print(f"     |k| <= {kmax:6d}:  C_00,10 = {C:.6f}")
 _, _, C0010 = comb_factor_from(nu_a_clock, NU_REP_LEE, TAU_LEE, 20000)
 _, _, C0010_10 = comb_factor_from(nu_a_clock, NU_REP_LEE, TAU_LEE, 10)
-print(
-    f"     the |k| ~ 5-10 plateau is a factor {C0010 / C0010_10:.3f} LOW against the converged value"
-)
+print(f"     the |k| ~ 5-10 plateau is a factor {C0010 / C0010_10:.3f} LOW against the converged value")
 
 NU_ZEE = 7.000e6  # the source's rounded ~7 MHz at ~5 G
 print(
@@ -415,18 +396,14 @@ print(
 )
 
 # ================================================== 7. beat-note and lock arithmetic
-head(
-    7, "Beat-note arithmetic: Hayes q, Islam lock, Inlek MS orders and PLL frequencies"
-)
+head(7, "Beat-note arithmetic: Hayes q, Islam lock, Inlek MS orders and PLL frequencies")
 
 for nu_R, label in (
     (80.78e6, "free-running"),
     (40.39e6, "picked 1-in-2"),
     (26.927e6, "picked 1-in-3"),
 ):
-    print(
-        f"  Hayes q = nu_0/nu_R at nu_R = {nu_R / 1e6:7.3f} MHz ({label:14s}): {12.6428e9 / nu_R:.4f}"
-    )
+    print(f"  Hayes q = nu_0/nu_R at nu_R = {nu_R / 1e6:7.3f} MHz ({label:14s}): {12.6428e9 / nu_R:.4f}")
 print(
     "     -> 156.5 (half-integer, no evolution), 313.0 (integer, Rabi flopping), 469.5 (half-integer, none)"
 )
@@ -436,12 +413,8 @@ print(
     f"  Islam: {n_islam} x {nu_rep_islam / 1e6:.1f} MHz = {n_islam * nu_rep_islam / 1e9:.5f} GHz"
     f"  (paper ~12.655 GHz); nu_ab/nu_rep = {12.642819e9 / nu_rep_islam:.4f} -> n = 157"
 )
-print(
-    f"     nu_M1 = n nu_rep - nu_LO = {(n_islam * nu_rep_islam - nu_LO) / 1e6:.3f} MHz (paper ~217 MHz)"
-)
-print(
-    f"     nu_M2 = nu_ab - nu_LO    = {(12.642819e9 - nu_LO) / 1e6:.3f} MHz (paper ~205 MHz, the carrier)"
-)
+print(f"     nu_M1 = n nu_rep - nu_LO = {(n_islam * nu_rep_islam - nu_LO) / 1e6:.3f} MHz (paper ~217 MHz)")
+print(f"     nu_M2 = nu_ab - nu_LO    = {(12.642819e9 - nu_LO) / 1e6:.3f} MHz (paper ~205 MHz, the carrier)")
 print(
     f"     |Delta nu_M| = {(n_islam * nu_rep_islam - 12.642819e9) / 1e6:.3f} MHz;"
     f" nu_sb = nu_LO + nu_M2 = nu_ab exactly (drift-free)"
@@ -454,9 +427,7 @@ red_lhs, blue_lhs = nu_0 - nu_alpha + dlt, nu_0 + nu_alpha - dlt
 nu_Br = n_red * nu_r - nu_A - red_lhs
 nu_Bb = blue_lhs - m_blue * nu_r - nu_A
 print(f"  Inlek Eq. 2 with n = {n_red} on the RED leg and m = {m_blue} on the BLUE:")
-print(
-    f"     nu_B,r = {nu_Br / 1e6:.3f} MHz (paper ~173.4), nu_B,b = {nu_Bb / 1e6:.3f} MHz (paper ~160.0)"
-)
+print(f"     nu_B,r = {nu_Br / 1e6:.3f} MHz (paper ~173.4), nu_B,b = {nu_Bb / 1e6:.3f} MHz (paper ~160.0)")
 print(
     f"     swapping n and m misses each condition by"
     f" {abs((m_blue * nu_r - nu_A - nu_Br) - red_lhs) / 1e6:.2f} MHz -- a hard regression test"
@@ -465,12 +436,8 @@ nu_MO = 12.606e9
 print(f"  Inlek Eq. A.1 at nu_MO = {nu_MO / 1e9:.3f} GHz:")
 print(f"     nu_PLL1 = {n_red} nu_r - nu_MO = {(n_red * nu_r - nu_MO) / 1e6:.2f} MHz")
 print(f"     nu_PLL2 = nu_MO - {m_blue} nu_r = {(nu_MO - m_blue * nu_r) / 1e6:.2f} MHz")
-print(
-    f"     carrier PLL3 = {p_car} nu_r - nu_MO = {(p_car * nu_r - nu_MO) / 1e6:.2f} MHz"
-)
-print(
-    f"     single-PLL variant at 12.566 GHz: {(p_car * nu_r - 12.566e9) / 1e6:.2f} MHz"
-)
+print(f"     carrier PLL3 = {p_car} nu_r - nu_MO = {(p_car * nu_r - nu_MO) / 1e6:.2f} MHz")
+print(f"     single-PLL variant at 12.566 GHz: {(p_car * nu_r - 12.566e9) / 1e6:.2f} MHz")
 awg_r = -nu_MO + nu_A + nu_0 - nu_alpha + dlt
 awg_b = +nu_MO + nu_A - nu_0 - nu_alpha + dlt
 print(
@@ -494,10 +461,7 @@ print(
     f" (omega_hf + omega_A) T = 2 pi x 5.5 = {2 * np.pi * 5.5:.3f} rad exactly"
 )
 lam_p = LAMBDA_355 / np.sqrt(2)
-print(
-    f"  effective two-photon wavelength at a 90 deg crossing: lambda/sqrt2 ="
-    f" {lam_p * 1e9:.1f} nm"
-)
+print(f"  effective two-photon wavelength at a 90 deg crossing: lambda/sqrt2 = {lam_p * 1e9:.1f} nm")
 for th_deg in (0.02, 0.05, 0.0133):
     th = np.deg2rad(th_deg)
     print(
@@ -554,9 +518,7 @@ for nu_t, dk, lbl in (
 ):
     e, x0 = eta_of(M_YB171, nu_t, dk)
     print(f"  {lbl:36s}: x_0 = {x0 * 1e9:.3f} nm, eta = {e:.4f}")
-print(
-    "  -> Hayes' quoted eta = 0.1 closes only with Delta_k = sqrt2 k, so its 'k' IS the two-photon Delta_k"
-)
+print("  -> Hayes' quoted eta = 0.1 closes only with Delta_k = sqrt2 k, so its 'k' IS the two-photon Delta_k")
 e500, _ = eta_of(M_YB171, 500e3, 2 * K_355)
 print(
     f"  Lamb-Dicke guard at Campbell's nbar = 40: eta sqrt(nbar+1) = {e500 * np.sqrt(41):.3f} > 1"
@@ -609,9 +571,7 @@ print(
     f"     exact 1% boundary: alpha = {a_1pct:.2f} dB/Hz, so the quoted -115 dB/Hz carries"
     f" {a_1pct - (-115):.2f} dB of margin"
 )
-print(
-    f"  rep-rate sensitivity of the fourth-order shift (a deliberately off-resonant Stark drive):"
-)
+print(f"  rep-rate sensitivity of the fourth-order shift (a deliberately off-resonant Stark drive):")
 base = comb_factor_from(nu_a_clock, NU_REP_LEE, TAU_LEE, 20000)
 for frac in (1e-6, 1e-5, 1e-4):
     nr = NU_REP_LEE * (1 + frac)
@@ -628,9 +588,7 @@ print(
 )
 
 # ================================================ 10. spin-dependent kick operators
-head(
-    10, "Spin-dependent kick: Jacobi-Anger, U_SDK algebra, the blue-sideband sqrt(n+1)"
-)
+head(10, "Spin-dependent kick: Jacobi-Anger, U_SDK algebra, the blue-sideband sqrt(n+1)")
 
 try:
     from qutip import destroy, qeye, displace, sigmax, sigmap, sigmam, tensor
@@ -640,30 +598,23 @@ try:
     # exact single exponential exp(i z sin(Delta_k x + phi) sigma_x)
     z = 1.17
     sinop = (
-        np.exp(1j * phi0) * displace(Nf, 1j * eta_sdk)
-        - np.exp(-1j * phi0) * displace(Nf, -1j * eta_sdk)
+        np.exp(1j * phi0) * displace(Nf, 1j * eta_sdk) - np.exp(-1j * phi0) * displace(Nf, -1j * eta_sdk)
     ) / (2j)
     Hfull = tensor(sinop, sigmax())
     U_exact = (1j * z * Hfull).expm()
     U_sum = 0 * U_exact
     for n in range(-30, 31):
         sx_n = qeye(2) if n % 2 == 0 else sigmax()
-        U_sum = U_sum + np.exp(1j * n * phi0) * jv(n, z) * tensor(
-            displace(Nf, 1j * n * eta_sdk), sx_n
-        )
+        U_sum = U_sum + np.exp(1j * n * phi0) * jv(n, z) * tensor(displace(Nf, 1j * n * eta_sdk), sx_n)
     P = np.arange(60)  # compare on a low-n block
-    da = np.abs(
-        (U_exact - U_sum).full()[np.ix_(np.r_[P, Nf + P], np.r_[P, Nf + P])]
-    ).max()
+    da = np.abs((U_exact - U_sum).full()[np.ix_(np.r_[P, Nf + P], np.r_[P, Nf + P])]).max()
     U_sum_half = 0 * U_exact
     for n in range(-30, 31):
         sx_n = qeye(2) if n % 2 == 0 else sigmax()
         U_sum_half = U_sum_half + np.exp(1j * n * phi0) * jv(n, z / 2) * tensor(
             displace(Nf, 1j * n * eta_sdk), sx_n
         )
-    db = np.abs(
-        (U_exact - U_sum_half).full()[np.ix_(np.r_[P, Nf + P], np.r_[P, Nf + P])]
-    ).max()
+    db = np.abs((U_exact - U_sum_half).full()[np.ix_(np.r_[P, Nf + P], np.r_[P, Nf + P])]).max()
     print(
         f"  Jacobi-Anger, exponent coefficient z = {z}:  residual with J_n(z) = {da:.2e},"
         f" with J_n(z/2) = {db:.2e}"
@@ -680,9 +631,7 @@ try:
     Dp, Dm = displace(Nf, 1j * eta_sdk), displace(Nf, -1j * eta_sdk)
     pp = 0.7
     for sgn, lbl in ((-1, "minus"), (+1, "plus ")):
-        U = np.exp(1j * pp) * tensor(Dp, sigmam()) + sgn * np.exp(-1j * pp) * tensor(
-            Dm, sigmap()
-        )
+        U = np.exp(1j * pp) * tensor(Dp, sigmam()) + sgn * np.exp(-1j * pp) * tensor(Dm, sigmap())
         uni = np.abs((U.dag() * U - tensor(qeye(Nf), qeye(2))).full()).max()
         print(f"  U_SDK with the {lbl} relative sign: |U^dag U - 1| = {uni:.2e}")
     U = np.exp(1j * pp) * tensor(Dp, sigmam()) - np.exp(-1j * pp) * tensor(Dm, sigmap())
@@ -699,9 +648,7 @@ try:
     # blue-sideband generator
     Nb = 8
     ab = destroy(Nb)
-    Mgen = 1j * np.exp(1j * 0.0) * tensor(ab.dag(), sigmap()) - 1j * np.exp(
-        -1j * 0.0
-    ) * tensor(ab, sigmam())
+    Mgen = 1j * np.exp(1j * 0.0) * tensor(ab.dag(), sigmap()) - 1j * np.exp(-1j * 0.0) * tensor(ab, sigmam())
     herm = np.abs((Mgen - Mgen.dag()).full()).max()
     diag = np.real(np.diag((Mgen * Mgen).full()))
     print(

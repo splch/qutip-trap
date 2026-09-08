@@ -2,8 +2,10 @@
 
 S1: gapless-plane potential of a rectangular electrode (solid-angle form): Laplace equation,
     boundary values, and the infinite-strip limit.
-S2: symmetric five-wire trap: rf null height h = sqrt(a (a + b)) for centre half-width a and
-    rf strip width b, from the strip potential; pseudopotential curvature there.
+S2: symmetric five-wire trap: rf null height h = sqrt(a (a + 2b))/2 for FULL centre width a and
+    FULL rf rail width b, from the strip potential; pseudopotential curvature there. (The retired form
+    sqrt(a(a+b)) is the same number written with a as an unstated HALF-width, the ambiguity the
+    2026-09-04 critique flagged; the library and its tests use the full-width form only.)
 M1: mixed-species two-ion axial modes from the mass-weighted Hessian against the closed form
     w^2/wz1^2 = 1 + 1/mu +- sqrt(1 - 1/mu + 1/mu^2); eigenvector normalization and eta.
 """
@@ -57,10 +59,11 @@ def S1():
 
 def S2():
     print("\n=== S2: symmetric five-wire trap rf null height ===")
-    a, b = (
-        0.5,
+    a_full, b = (
+        1.0,
         1.2,
-    )  # centre electrode half-width a, rf strips from a to a+b on both sides
+    )  # FULL centre width a, FULL rf rail width b: rails from a/2 to a/2 + b on both sides
+    a = a_full / 2.0  # the half-width the strip edges are written with
 
     def Ez_axis(z):
         # E_z = -d/dz of the strip potentials at unit voltage on both rf strips
@@ -72,7 +75,8 @@ def S2():
 
     h_num = brentq(Ez_axis, 1e-3, 10)
     print(
-        f"  a={a}, b={b}: numerical null height {h_num:.6f}, sqrt(a(a+b)) = {np.sqrt(a * (a + b)):.6f}"
+        f"  a={a_full} (full centre width), b={b} (full rail width): numerical null height {h_num:.6f}, "
+        f"sqrt(a(a+2b))/2 = {np.sqrt(a_full * (a_full + 2 * b)) / 2:.6f}"
     )
 
     # pseudopotential curvature at the null: Psi = Q^2 |E|^2/(4 m Omega^2); compute |E|^2 Hessian numerically (unit V)

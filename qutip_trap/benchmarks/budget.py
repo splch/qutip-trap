@@ -23,7 +23,7 @@ Every prediction states its composition rule in ``predicted`` and ``notes``; non
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -60,19 +60,39 @@ def kinds_of_schedule(schedule: Schedule) -> dict[str, str]:
     return {t.gate_id: kind_of(t.native[0], t.ions) for t in schedule.targets}
 
 
+def gate_piece_of(key: str, gate_ids: Iterable[str]) -> str | None:
+    """The schedule ``gate_id`` an ``intrinsic_budget`` key belongs to: the LONGEST gate id that prefixes the key at a
+    separator. Splitting on the first ``/`` or ``.`` instead would lose every gate whose own id contains a slash -- the ZZ
+    wrapper's ``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/loop2`` (``control/schedule.py``) -- whose scales would then be dropped
+    from the per-kind budget and survive only inside ``intrinsic['total']``."""
+    best: str | None = None
+    for gid in gate_ids:
+        if key == gid or (key.startswith(gid) and key[len(gid)] in "./"):
+            if best is None or len(gid) > len(best):
+                best = gid
+    return best
+
+
 def intrinsic_by_kind(diagnostics: Diagnostics, kinds: Mapping[str, str]) -> dict[str, float]:
     """The Section 9.6 closed-form scales of one run summed per kind (the accounting of ``run.job.intrinsic_budget``: every
-    non-scattering entry, and of the scattering estimates the Raman, leakage and Rayleigh-dephasing probabilities)."""
+    non-scattering entry, and of the scattering estimates the Raman, leakage and Rayleigh-dephasing probabilities).
+
+    Every entry is summed over the kind's WHOLE schedule entry, the crosstalk it inflicts on ions outside the benchmarked
+    set included (``gpi2[0].crosstalk`` is the rotation error on the neighbour), so the total bounds a LARGER error than the
+    channel infidelities of :meth:`StepChannel.infidelity_on`, which are reduced to the benchmarked qubits.
+    """
     out: dict[str, float] = {}
     for key, val in diagnostics.intrinsic_budget.items():
         if key == "total":
             continue
-        # "ms[2].residual_displacement", "gpi2[0].crosstalk", "gpi2[0].ion0.P_raman", "ms[2]/seg0/ion0.ion0.P_raman"
-        piece = key.split("/")[0].split(".")[0]
-        if piece not in kinds:
+        # "ms[2].residual_displacement", "gpi2[0].crosstalk", "gpi2[0].ion0.P_raman", "ms[2]/seg0/ion0.ion0.P_raman",
+        # "zz[2]/loop1.residual_displacement"
+        piece = gate_piece_of(key, kinds)
+        if piece is None:
             continue
-        scale = "/" not in key and key.count(".") == 1
-        scattering = key.endswith((".P_raman", ".P_leak", ".rayleigh_dephasing"))
+        rest = key[len(piece) :]
+        scale = "/" not in rest and rest.count(".") == 1
+        scattering = rest.endswith((".P_raman", ".P_leak", ".rayleigh_dephasing"))
         if not (scale or scattering):
             continue
         kind = kinds[piece]
@@ -146,7 +166,12 @@ class StepChannel:
 
     def infidelity_on(self, qubits: Sequence[int]) -> float:
         """The average gate infidelity of the channel reduced to the benchmarked ``qubits`` among the step's ions (the other
-        ions traced out in |0>), against the ideal reduced the same way."""
+        ions prepared in |0> and traced out), against the ideal's own factor on those qubits.
+
+        When the step's gate addresses an ion OUTSIDE ``qubits`` -- a neighbour's carrier pulse, which simultaneous RB
+        charges to the qubit it rotates by crosstalk -- that factor is the identity, and the number returned is the
+        crosstalk error per neighbour pulse in one-qubit units.
+        """
         keep = [k for k, q in enumerate(self.ions) if q in set(int(x) for x in qubits)]
         if not keep:
             return 0.0
@@ -156,21 +181,43 @@ class StepChannel:
             ideal = self.ideal
         else:
             choi = reduced_choi(self.summary.choi, n, keep)
-            ideal = _reduced_ideal(self.ideal, n, keep)
+            ideal = reduced_ideal(self.ideal, n, keep)
         eps = entanglement_infidelity(choi, choi_from_unitary(ideal))
         return float(average_gate_infidelity(max(eps, 0.0), 2 ** len(keep)))
 
 
-def _reduced_ideal(u: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.ndarray:
-    """The block <0_rest| U |0_rest> of an ideal that is a product of a unitary on ``keep`` and the identity on the rest."""
-    rest = [k for k in range(n_factors) if k not in keep]
-    arr = u.reshape([2] * (2 * n_factors))
-    for k in sorted(rest, reverse=True):
-        arr = np.take(np.take(arr, 0, axis=k + arr.ndim // 2), 0, axis=k)
-    d_k = 2 ** len(keep)
-    out = np.asarray(arr.reshape(d_k, d_k))
+def reduced_ideal(u: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.ndarray:
+    """The tensor factor of the ideal ``u`` on the qubit factors ``keep``, normalized to a unitary.
+
+    A step's ideal is the product over the step's ions of that ion's own target unitary -- the native gate on the addressed
+    ion, the identity on the crosstalk neighbours (``dynamics.tomography.local_ideal``) -- so it factors as
+    U_keep (x) U_rest, and the channel of :func:`reduced_choi` is to be compared with U_keep. The factorization is the
+    rank-one reshaping ``kron_factor`` uses, generalized to an arbitrary subset: U[(i, k), (j, l)] = U_keep[i, j]
+    U_rest[k, l] reshaped to R[(i, j), (k, l)] has rank one, and its leading left singular vector is U_keep up to a
+    scalar, which is normalized away (a global phase leaves ``choi_from_unitary`` unchanged).
+
+    Taking the <0_rest| U |0_rest> block instead -- which this did until the 2026-09-07 audit's simultaneous-RB fix --
+    is U_keep scaled by prod_rest <0|U_rest|0>, correct only when the traced-out ions' ideal is the identity: for a GPi2
+    on the other ion it scales U_keep by 1/sqrt 2 and for a GPi it gives exactly zero.
+    """
+    keep_list = [int(k) for k in keep]
+    rest = [k for k in range(n_factors) if k not in keep_list]
+    if not rest:
+        return np.asarray(u, dtype=complex)
+    d_k, d_r = 2 ** len(keep_list), 2 ** len(rest)
+    arr = np.asarray(u, dtype=complex).reshape([2] * (2 * n_factors))
+    order = keep_list + [k + n_factors for k in keep_list] + rest + [k + n_factors for k in rest]
+    r = arr.transpose(order).reshape(d_k * d_k, d_r * d_r)
+    left, sv, _vh = np.linalg.svd(r)
+    if sv[0] <= 0.0 or (len(sv) > 1 and sv[1] > 1e-8 * sv[0]):
+        raise ValueError("the step's ideal unitary does not factor over the benchmarked qubits")
+    out = np.asarray(left[:, 0].reshape(d_k, d_k))
+    scale = math.sqrt(float(np.real(np.trace(out.conj().T @ out))) / d_k)
+    if scale <= 0.0:
+        raise ValueError("the step's ideal unitary has no factor on the benchmarked qubits")
+    out = out / scale
     if np.max(np.abs(out.conj().T @ out - np.eye(d_k))) > 1e-8:
-        raise ValueError("the step's ideal unitary is not the identity on the traced-out ions")
+        raise ValueError("the step's ideal unitary does not factor into unitaries on the benchmarked qubits")
     return out
 
 
@@ -231,6 +278,9 @@ def gate_channel(device: Device, kind: str, **run_kwargs: Any) -> GateChannel:
         None if opts is None else tuple(sorted((k, repr(v)) for k, v in vars(opts).items())),
         bool(run_kwargs.get("noise", True)),
         str(run_kwargs.get("crosstalk_suppression", "none")),
+        # the entangler decides how a standard two-qubit gate expands, so a cached channel keyed without it could be
+        # handed to a benchmark run with the other wrapper
+        str(run_kwargs.get("entangler", "ms")),
     )
     if key in _CHANNEL_CACHE:
         return _CHANNEL_CACHE[key]
@@ -362,11 +412,13 @@ __all__ = [
     "channels_for",
     "clear_budget_cache",
     "gate_channel",
+    "gate_piece_of",
     "gather_counts_and_intrinsic",
     "intrinsic_by_kind",
     "kind_of",
     "kinds_of_schedule",
     "one_gate_circuit",
     "reduced_choi",
+    "reduced_ideal",
     "spam_of",
 ]

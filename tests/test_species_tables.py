@@ -15,14 +15,94 @@ from qutip_trap.species import MODULES, IncompleteSpeciesTable, available, speci
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.sources import SOURCES
 from qutip_trap.species.table import a_hfs_from_two_manifold_splitting
+from qutip_trap.species.zeeman import MU_B_OVER_H_HZ_PER_G, g_I_steck
 from qutip_trap.units import C_M_PER_S, H_J_S, TWO_PI
 
 LEDGER = load_ledger()
 HYPERFINE_RESOLVED = re.compile(r"(mF|F=\d|zeeman_energy|dipole_element|rabi|raman_coupling|clebsch)", re.I)
 
 
-def test_the_first_two_species_and_sr_build() -> None:
-    assert available() == ("171Yb+", "40Ca+", "88Sr+")
+def test_the_species_that_build_and_the_ones_that_cannot() -> None:
+    """171Yb+, 40Ca+ and 88Sr+ built before the M0a fix pass of 2026-09-08; 43Ca+ and 9Be+ were added by it
+    (their excited-level hyperfine constants and P lifetimes came from the primary literature, PLAN.md
+    supplying none), which is what makes the Section 9.13 clock-point anchors runnable against a real
+    ``Species`` rather than against raw ``TABLE`` constants.
+
+    137Ba+ was added by the species-gaps pass of the same day, which found the measured
+    g_J(6s 2S1/2) = 2.00249192(3) of Marx et al. 1998 that its single remaining gap wanted.
+
+    The two that still raise do so for reasons no transcription can fix. 25Mg+ has no measured g_J and no
+    measured 3p hyperfine constants: the g_J gap is now closed BY SEARCH (no measurement of any Mg+ isotope
+    and no calculation either, ``mg25.py`` ``_CONSULT``). 133Ba+ lacks A(6p 2P3/2) and A(5d 2D5/2), which NO
+    source prints -- only the 623(30) and 83(30) MHz splittings are published. Every gap is DERIVED from the
+    table (``required_constants_missing``), so filling one makes the species build, which is exactly what
+    happened to 137Ba+ and is why this test is the tripwire for it.
+    """
+    assert available() == ("171Yb+", "40Ca+", "43Ca+", "137Ba+", "9Be+", "88Sr+")
+    assert set(MODULES) - set(available()) == {"25Mg+", "133Ba+"}
+    # 133Ba+ refuses for EXACTLY the two constants no paper prints, and for no other reason
+    with pytest.raises(IncompleteSpeciesTable) as info:
+        species("133Ba+")
+    assert {m.quantity.rsplit("(", 1)[-1].rstrip(")") for m in info.value.missing} == {
+        "ba133.P32.A_hfs_hz",
+        "ba133.D52.A_hfs_hz",
+    }
+    assert all("NO SOURCE PRINTS THIS CONSTANT" in m.consult for m in info.value.missing), (
+        "the gap notes must record the negative search so the next reader does not repeat it"
+    )
+
+
+def test_ba137_builds_and_its_clock_and_zeeman_quantities_are_finite() -> None:
+    """137Ba+ builds from the table alone once Marx et al. 1998's g_J is in it.
+
+    PLAN.md prints NO Section 9.13 anchor for 137Ba+ -- it names the isotope as a preset (line 139) and
+    carries Ozeri's f^-1 = 3 for it (line 457) and nothing else -- so there is no published number to pin.
+    What is pinned instead is the closed form the plan does state for this quantity (Section 9.13's
+    ``taylor_c2 = (g_J - g_I)^2 mu_B^2/(2 h^2 nu_0)``, the identity it applies to 171Yb+ and 87Rb), which
+    the diagonalization must reproduce to 1e-9 relative, plus the five Ba+ line wavelengths and finiteness
+    of every derived Zeeman quantity. Ledger: anchor.species.ba_g_factors.
+    """
+    ba = species("137Ba+")
+    assert ba.nuclear_spin == 1.5 and ba.mu_I_nuclear_magnetons == 0.937365
+    assert ba.mass_u == pytest.approx(136.905278, abs=1e-6), "the ION mass (one electron removed)"
+    # the five Ba+ lines, all derived from the level energies, none typed in
+    for label, nm in (
+        ("S1/2-P1/2", 493.545),
+        ("D3/2-P1/2", 649.869),
+        ("S1/2-P3/2", 455.531),
+        ("D5/2-P3/2", 614.341),
+        ("D3/2-P3/2", 585.530),
+    ):
+        assert ba.transition(label).wavelength_vac_m * 1e9 == pytest.approx(nm, abs=1e-3), label
+    # A(6s) > 0, so F = 1 lies BELOW F = 2 and the qubit tuple must list it first
+    sp = ba.zeeman_spectrum("S1/2", 0.0)
+    assert sp.energy_hz("F=2 mF=0") > sp.energy_hz("F=1 mF=0"), "mu_I > 0 gives a NORMAL multiplet"
+    assert ba.qubit == ("S1/2 F=1 mF=0", "S1/2 F=2 mF=0")
+    t = MODULES["137Ba+"].TABLE
+    nu0, d1, d2 = ba.transition_frequency_hz(*ba.qubit, 0.0)
+    # the identity the diagonalization must satisfy: Delta E = A (I + 1/2) = 2A at I = 3/2, J = 1/2
+    assert nu0 == pytest.approx(2.0 * t["ba137.S12.A_hfs_hz"].value, rel=1e-12)
+    # ...which reproduces Blatt and Werth's published splitting to 10 mHz. The residual is NOT physics: the
+    # stored A = 4018.87083385 MHz is the printed derived constant, whose last digit rounds up from the
+    # exact half of the splitting (4 018 870 833.845 Hz), 0.28 sigma of A's own 0.18 mHz bar. So the pair
+    # (A, hfs_splitting_hz) is self-consistent only to that rounding, and this is where it is recorded.
+    assert nu0 == pytest.approx(t["ba137.S12.hfs_splitting_hz"].value, abs=0.011)
+    assert nu0 - t["ba137.S12.hfs_splitting_hz"].value == pytest.approx(0.010, abs=1e-4)
+    assert abs(d1) < 1e-9, "no linear Zeeman term on the mF = 0 <-> mF = 0 line"
+    # the closed form of Section 9.13, to 1e-9 relative: this is the identity, not a laboratory number
+    g_i = g_I_steck(ba.mu_I_nuclear_magnetons, ba.nuclear_spin)
+    closed = ((ba.level("S1/2").g_J - g_i) * MU_B_OVER_H_HZ_PER_G) ** 2 / (2.0 * nu0)
+    assert closed == pytest.approx(488.81912, abs=1e-5)
+    assert d2 / 2.0 == pytest.approx(closed, rel=1e-9), "taylor_c2 = (1/2) d2nu/dB2 (Section 13)"
+    for B in (1.0, 5.0):
+        nu, _, _ = ba.transition_frequency_hz(*ba.qubit, B)
+        assert (nu - nu0) / B**2 == pytest.approx(closed, rel=1e-5)
+    # every derived Zeeman quantity of every level is finite, D levels (I >= 1, B_hfs != 0) included
+    for lv in ba.levels:
+        s = ba.zeeman_spectrum(lv.name, 4.0)
+        assert all(math.isfinite(x) for x in s.energies_hz), lv.name
+        assert all(math.isfinite(x) for x in s.dE_dB_hz_per_g), lv.name
+        assert all(math.isfinite(x) for x in s.d2E_dB2_hz_per_g2), lv.name
 
 
 @pytest.mark.parametrize("name", sorted(MODULES))
@@ -36,6 +116,49 @@ def test_every_constant_is_cited_and_in_the_ledger(name: str) -> None:
         assert ledger_id in LEDGER, f"{ledger_id} missing from docs/provenance/ledger.yaml"
         assert LEDGER[ledger_id].source == c.source
         assert LEDGER[ledger_id].tag == c.tag
+
+
+SELF_REFERENTIAL_SOURCES = ("PLAN_4_5_1", "PLAN_8_1", "PLAN_9_13", "PLAN_background", "PLAN_check_atomic")
+"""Source keys that point at THIS repository or at PLAN.md rather than at a primary reference.
+
+``sources.py`` says so itself: "the plan itself, where it carries a value without naming the primary
+source". A constant may legitimately carry one of these -- the plan is where several of them come from -- but
+it may not simultaneously claim to be ``verified``.
+"""
+
+
+@pytest.mark.parametrize("name", sorted(MODULES))
+def test_no_constant_is_verified_against_a_source_with_no_locator(name: str) -> None:
+    """Audit item E25: separate "cited" from "cited to a primary source".
+
+    ``Pinnington_via_Olmschenk2007`` was a bare author name with no year, journal or DOI, and it carried
+    171Yb+'s ``P12.lifetime_s`` tagged ``verified`` -- the constant that sets Gamma, the partial rate and
+    I_sat for the plan's headline species. It is now ``Pinnington1997`` with the full locator
+    (Phys. Rev. A 56, 2421), and ``Arbes1994_via_Harty2014`` is now ``Arbes1994`` (Z. Phys. D 31, 27).
+    """
+    table = MODULES[name].TABLE
+    for ledger_id, c in table.items():
+        if c.tag != "verified":
+            continue
+        assert c.source not in SELF_REFERENTIAL_SOURCES, (
+            f"{ledger_id} is tagged verified against {c.source}, which is this repository or PLAN.md"
+        )
+        assert "_via_" not in c.source, (
+            f"{ledger_id} is tagged verified against {c.source}, a locator-less relay"
+        )
+
+
+LOCATOR = re.compile(r"\((?:19|20)\d\d\)|arXiv:\d{4}\.\d{4,5}|doi:10\.")
+"""A citable locator: a parenthesised year, an arXiv id, or a DOI."""
+
+
+def test_every_source_key_carries_a_locator() -> None:
+    """Every non-``PLAN_*``, non-database source string must carry a locator, so a bare author name cannot
+    stand in for a citation (the shape of defect B18)."""
+    for key, text in SOURCES.items():
+        if key.startswith(("PLAN_", "NIST_", "CODATA", "Steck")):
+            continue
+        assert LOCATOR.search(text), f"{key} names no locator: {text[:100]}"
 
 
 @pytest.mark.parametrize("name", sorted(MODULES))
@@ -52,18 +175,109 @@ def test_incomplete_tables_say_what_is_missing(name: str) -> None:
     assert all(m.consult for m in info.value.missing)
 
 
-def test_retired_constants_are_absent_from_the_code() -> None:
-    """Section 10 M0a: a CI check greps the tree for the retired readings (310.85 Hz/G^2, 50.77 mW/cm^2 and the
-    uncited 171Yb+ g_J values 2.00254 and 2.00292)."""
-    retired = {310.85, 50.77, 2.00254, 2.00292}
-    root = Path(__file__).resolve().parents[1] / "qutip_trap"
-    offenders: list[str] = []
-    for path in root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, float) and node.value in retired:
-                offenders.append(f"{path.relative_to(root)}:{node.lineno} {node.value}")
-    assert not offenders, offenders
+RETIRED_READINGS: dict[str, str] = {
+    "310.85": "the 171Yb+ clock quadratic shift at the retired g_J = 2.00254",
+    "310.76": "the same coefficient at 43Ca+'s g_J = 2.00225664, which is not a 171Yb+ value",
+    "310.97": "the same coefficient at the retired g_J = 2.00292",
+    "50.77": "I_sat of the 171Yb+ 369.5 nm line from the retired 19.6 MHz linewidth (adopted: 50.83)",
+    "2.00254": "an uncited 171Yb+ g_J the plan's second revision carried",
+    "2.00292": "an uncited 171Yb+ g_J the plan's second revision carried",
+}
+"""Retired numerical readings of PLAN.md Section 10 M0a's "a CI check greps the tree" bullet.
+
+Each key is matched BOTH as a float/int literal (through the AST) and as a substring of a string literal or of
+a committed check output, so that a retired value cannot survive as text either -- which is how the retired
+310.85 survived in ``validation/scripts/outputs/check_atomic.out`` and was CI-pinned there until 2026-09-07.
+2.00225664 is deliberately NOT here: PLAN.md:633 cites it as 43Ca+'s g_J, so it is a live constant of
+``ca43.py`` and of two check scripts; what is retired is its use for 171Yb+.
+"""
+
+RETIRED_ALLOWED: dict[str, str] = {
+    "validation/scripts/check_critique_v3.py": "the labelled 'one row, uncited' negative controls that "
+    "compute the 0.03% spread PLAN.md:633 quotes (audit: this use is legitimate)",
+    "validation/scripts/outputs/check_critique_v3.out": "the committed output of those negative controls",
+    "qutip_trap/species/yb171.py": "the S12.g_J provenance note, which names the three superseded values",
+    "tests/test_species_tables.py": "this table of retired readings",
+}
+"""Files where a retired reading is a DOCUMENTED negative control or provenance note, not a live input.
+
+Keyed by repository-relative path rather than by file:line (the audit asked for file:line) because several
+agents edit these files concurrently and line numbers drift; the reason string is what makes each entry
+explicit, and the ratchet below is what keeps the list from becoming a hole.
+"""
+
+RETIRED_KNOWN_DEBTS: dict[str, str] = {}
+"""Occurrences that ARE live retired readings and are not yet fixed, each naming the owning milestone.
+
+This is a ratchet, not an allow-list: the test asserts the found set equals this set exactly, so a NEW
+occurrence fails and so does a FIXED one (which must then be deleted from here).
+"""
+
+_NUMBER_TOKEN = re.compile(r"(?<![\d.])(?:310\.85|310\.76|310\.97|50\.77|2\.00254|2\.00292)(?![\d])")
+
+
+def _repo_python_and_output_files() -> list[Path]:
+    root = Path(__file__).resolve().parents[1]
+    files: list[Path] = []
+    for sub in ("qutip_trap", "tests", "tools", "validation/scripts"):
+        files += sorted((root / sub).rglob("*.py"))
+    files += sorted((root / "validation/scripts/outputs").glob("*.out"))
+    # validation/report/ is gitignored (the CI artifact), plan_sources/ and PLAN.md are the SOURCE of the
+    # retired readings and are never edited by this repository
+    return [p for p in files if "validation/report" not in p.as_posix()]
+
+
+def test_retired_constants_are_absent_from_the_whole_tree() -> None:
+    """Section 10 M0a: "a CI check greps the tree for retired constants".
+
+    Widened on 2026-09-07 (audit item E5) from ``qutip_trap/*.py`` float literals only -- which missed
+    ``validation/scripts/check_atomic.py``'s live g_J = 2.00254 and the 310.85 its committed output
+    CI-pinned at rtol 1e-9 -- to every .py file under qutip_trap, tests, tools and validation/scripts plus
+    every committed check output, matching string and int literals as well as floats.
+    """
+    root = Path(__file__).resolve().parents[1]
+    offenders: dict[str, list[str]] = {}
+    for path in _repo_python_and_output_files():
+        rel = path.relative_to(root).as_posix()
+        if rel in RETIRED_ALLOWED:
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits: list[str] = []
+        if path.suffix == ".py":
+            for node in ast.walk(ast.parse(text)):
+                if not isinstance(node, ast.Constant):
+                    continue
+                if isinstance(node.value, float | int) and not isinstance(node.value, bool):
+                    if f"{node.value!r}" in RETIRED_READINGS:
+                        hits.append(f"{rel}:{node.lineno} literal {node.value!r}")
+                elif isinstance(node.value, str):
+                    hits += [
+                        f"{rel}:{node.lineno} in a string: {m.group(0)}"
+                        for m in _NUMBER_TOKEN.finditer(node.value)
+                    ]
+        else:
+            for n, line in enumerate(text.splitlines(), start=1):
+                hits += [f"{rel}:{n} in output text: {m.group(0)}" for m in _NUMBER_TOKEN.finditer(line)]
+        if hits:
+            offenders[rel] = hits
+    unexpected = {k: v for k, v in offenders.items() if k not in RETIRED_KNOWN_DEBTS}
+    assert not unexpected, f"retired readings in the tree: {unexpected}"
+    fixed = sorted(set(RETIRED_KNOWN_DEBTS) - set(offenders))
+    assert not fixed, f"these known retired readings are gone; delete them from RETIRED_KNOWN_DEBTS: {fixed}"
+
+
+def test_the_retired_reading_of_the_yb171_quadratic_shift_is_not_what_the_package_computes() -> None:
+    """The positive half of the grep: the adopted g_J = 2.002615 gives 310.87 Hz/G^2, and none of the three
+    retired g_J values does (PLAN.md 9.13's row is 310.87 +- 0.02, and 310.85 sits exactly on its boundary)."""
+    from qutip_trap.species.zeeman import hyperfine_zeeman
+
+    yb = species("171Yb+")
+    hz = hyperfine_zeeman(yb.level("S1/2"), yb.nuclear_spin, yb.mu_I_nuclear_magnetons)
+    from qutip_trap.species.zeeman import transition_sensitivity
+
+    s = transition_sensitivity(hz, "F=0 mF=0", hz, "F=1 mF=0", 1.0)
+    assert s.taylor_c2_hz_per_g2 == pytest.approx(310.869, abs=1e-3)
+    assert abs(s.taylor_c2_hz_per_g2 - 310.85) > 0.015, "310.85 is the retired g_J = 2.00254 reading"
 
 
 # ---- 171Yb+ ----------------------------------------------------------------------------------------------
@@ -156,23 +370,113 @@ def test_ca40_lande_factors_and_spin_zero() -> None:
     assert ca.level("P1/2").g_J == pytest.approx(2.0 / 3.0, abs=1e-3)
 
 
-def test_ca40_i_sat_anchor_reproduces_under_the_plans_stated_reading() -> None:
-    """Section 9.13: 40Ca+ 397 nm with the quoted 21.57 MHz read as a PARTIAL rate gives 45.11 mW/cm^2.
+def test_ca40_397_nm_i_sat_anchor_now_comes_out_of_the_table() -> None:
+    """Section 9.13's 2.045 e a0 and 45.11 mW/cm^2 are the PARTIAL-rate closed forms of the 397 nm line at
+    its quoted 21.57 MHz, and since the reading was flipped on 2026-09-08 the TABLE reproduces them.
 
-    That row was computed (check_atomic.py) at lambda = 396.85 nm, which is the AIR wavelength of the line;
-    with the NIST vacuum value 396.959 nm the same reading gives 45.07 mW/cm^2, 0.1% lower. The table stores
-    the vacuum wavelength (Section 13) and reads the quoted linewidth as the TOTAL rate, so the anchor is
-    reproduced here only with the plan's own inputs; the discrepancy is recorded, not hidden.
+    The chain is all measured: Hettrich et al. 2015's tau(P1/2) = 6.904(26) ns gives a TOTAL 23.0526 MHz,
+    and Ramm et al. 2013's branching 0.06435(7) leaves 21.5691 MHz into S1/2 -- Hettrich's own printed
+    gamma_PS = 2 pi x 21.57(8) MHz to 4.0e-5, i.e. 0.02 of its uncertainty. The residual D3/2 partial rate
+    1.4834 MHz reproduces his gamma_PD = 2 pi x 1.482(8) MHz inside the same bar.
+
+    Two pins moved with the flip (the table used to read 21.57 MHz as the TOTAL rate and pair it with
+    Section 8.1's 0.06 branching): the reduced element 1.9832 -> 2.0455 e a0 and I_sat 42.37 -> 45.07
+    mW/cm^2, both at the vacuum wavelength the table stores. PLAN.md's 45.11 is its own AIR 396.85 nm, so
+    both wavelengths are pinned. Ledger anchor.ca40.i_sat_chain, conv.ca40_linewidth_reading.
     """
+    from qutip_trap.species.dipole import reduced_element_from_partial_rate
+    from qutip_trap.units import A_0_M, E_C
+
     ca = species("40Ca+")
     tr = ca.transition("S1/2-P1/2")
-    gamma_partial_reading = TWO_PI * 21.57e6
-    plan_inputs = math.pi * H_J_S * C_M_PER_S * gamma_partial_reading / (3.0 * (396.85e-9) ** 3)
-    assert plan_inputs * 0.1 == pytest.approx(45.11, abs=0.01)
-    vacuum = math.pi * H_J_S * C_M_PER_S * gamma_partial_reading / (3.0 * tr.wavelength_vac_m**3)
-    assert vacuum * 0.1 == pytest.approx(45.07, abs=0.01)
+    table = MODULES["40Ca+"].TABLE
     assert tr.wavelength_vac_m == pytest.approx(396.959e-9, abs=0.001e-9)
-    assert MODULES["40Ca+"].TABLE["ca40.P12.linewidth_quoted_hz"].tag == "contested"
+    # the total rate is the measured lifetime's, NOT the quoted linewidth (which would be 7.379 ns)
+    assert ca.level("P1/2").lifetime_s == 6.904e-9
+    assert tr.gamma_hz == pytest.approx(23.05257e6, rel=1e-6)
+    assert tr.gamma_hz / 21.57e6 == pytest.approx(1.0688, rel=1e-3), "the total is 6.9 % above the quoted"
+    # THE IDENTITY the flip exists for: the table's partial rate IS Hettrich's printed gamma_PS
+    assert tr.partial_rate_rad_s / TWO_PI == pytest.approx(21.57e6, rel=1e-3), (
+        "Hettrich et al. 2015: gamma_PS = 2 pi x 21.57(8) MHz, the PARTIAL P1/2 -> S1/2 rate"
+    )
+    assert tr.partial_rate_rad_s / TWO_PI == pytest.approx(21.569137e6, rel=1e-6)
+    assert table["ca40.P12.partial_rate_to_S12_hz"].value == 21.57e6
+    d32 = ca.transition("D3/2-P1/2")
+    assert d32.partial_rate_rad_s / TWO_PI == pytest.approx(1.482e6, abs=0.008e6), (
+        "Hettrich's gamma_PD = 2 pi x 1.482(8) MHz, the other half of his total"
+    )
+    # the plan's own printed pair, now derived rather than assumed: 2.045 e a0 and 45.11 mW/cm^2 at its air
+    # wavelength, 2.0455 and 45.07 at the vacuum one
+    for lam, element, i_sat in ((396.85e-9, 2.0446, 45.106), (tr.wavelength_vac_m, 2.0455, 45.069)):
+        omega = TWO_PI * C_M_PER_S / lam
+        d = reduced_element_from_partial_rate(tr.partial_rate_rad_s, omega, Fraction(1, 2), Fraction(1, 2))
+        assert d / (E_C * A_0_M) == pytest.approx(element, abs=5e-4)
+        assert math.pi * H_J_S * C_M_PER_S * tr.partial_rate_rad_s / (3.0 * lam**3) * 0.1 == pytest.approx(
+            i_sat, abs=0.01
+        )
+    assert tr.i_sat_w_m2 * 0.1 == pytest.approx(45.069, abs=0.01)
+    # the quoted linewidth survives only as the contested cross-check nothing is built from
+    assert table["ca40.P12.linewidth_quoted_hz"].tag == "contested"
+    assert tr.gamma_hz != table["ca40.P12.linewidth_quoted_hz"].value
+
+
+def test_ca40_393_nm_partial_rate_disagrees_with_the_plans_quoted_23_4_mhz() -> None:
+    """The table's 393 nm partial rate is 22.4071 MHz and PLAN.md 9.13's quoted 23.4 MHz matches nothing.
+
+    Meir et al., Phys. Rev. A 101, 012509 (2020) measure tau(P3/2) = 6.639(42) ns, a TOTAL of 23.9727 MHz,
+    of which Gerritsma et al. 2008's S1/2 share 1 - 0.0587 - 0.00661 = 0.93469 leaves 22.4071 MHz. Jin and
+    Church 1993's 6.924(19) ns would give 22.9860 total and 21.4848 partial. The plan's 23.4 MHz is 4.4 %
+    above the table's partial rate, 2.4 % below Meir's total, and has no named source.
+
+    So Section 9.13's printed 2.972 e a0 / 50.25 mW/cm^2 are NOT the table's numbers: they are the closed
+    forms at a partial rate of exactly 23.4 MHz and the plan's own AIR 393.37 nm, and they are pinned below
+    as exactly that and labelled as the plan's, never as the table's. The table gives 2.9085 e a0 /
+    48.113 mW/cm^2 at the same air wavelength and 2.9097 / 48.074 at the vacuum 393.478 nm it stores (up
+    from 2.8747 / 46.93 when the total was read off the quoted 23.4 MHz). Ledger
+    anchor.ca40.p32_linewidth_readings, anchor.ca40.i_sat_chain.
+    """
+    from qutip_trap.species.dipole import reduced_element_from_partial_rate
+    from qutip_trap.units import A_0_M, E_C
+
+    ca = species("40Ca+")
+    tr = ca.transition("S1/2-P3/2")
+    table = MODULES["40Ca+"].TABLE
+    assert tr.wavelength_vac_m == pytest.approx(393.478e-9, abs=0.001e-9)
+    assert ca.level("P3/2").lifetime_s == 6.639e-9
+    assert tr.gamma_hz == pytest.approx(23.972728e6, rel=1e-6)
+    assert tr.branching == pytest.approx(0.93469, abs=1e-9)
+    assert tr.partial_rate_rad_s / TWO_PI == pytest.approx(22.407069e6, rel=1e-6)
+    # PLAN.md 9.13's printed pair, as a CLOSED FORM at the plan's own quoted 23.4 MHz partial rate and air
+    # wavelength -- not the table's value, which is the row below it
+    plan_partial = TWO_PI * 23.4e6
+    for lam, element, i_sat in ((393.37e-9, 2.9722, 50.246), (tr.wavelength_vac_m, 2.9734, 50.204)):
+        omega = TWO_PI * C_M_PER_S / lam
+        d = reduced_element_from_partial_rate(plan_partial, omega, Fraction(1, 2), Fraction(3, 2))
+        assert d / (E_C * A_0_M) == pytest.approx(element, abs=1e-3), (
+            "PLAN.md 9.13 prints 2.972 e a0 and 50.25 mW/cm^2 for the 393 nm line"
+        )
+        assert math.pi * H_J_S * C_M_PER_S * plan_partial / (3.0 * lam**3) * 0.1 == pytest.approx(
+            i_sat, abs=0.02
+        )
+    # what the TABLE gives at the same two wavelengths
+    for lam, element, i_sat in ((393.37e-9, 2.9085, 48.113), (tr.wavelength_vac_m, 2.9097, 48.074)):
+        omega = TWO_PI * C_M_PER_S / lam
+        d = reduced_element_from_partial_rate(tr.partial_rate_rad_s, omega, Fraction(1, 2), Fraction(3, 2))
+        assert d / (E_C * A_0_M) == pytest.approx(element, abs=1e-3), (
+            "PLAN.md 9.13 prints 2.972 e a0; the table's measured chain gives 2.9085 at the same wavelength"
+        )
+        assert math.pi * H_J_S * C_M_PER_S * tr.partial_rate_rad_s / (3.0 * lam**3) * 0.1 == pytest.approx(
+            i_sat, abs=0.02
+        )
+    assert tr.i_sat_w_m2 * 0.1 == pytest.approx(48.074, abs=0.02), (
+        "PLAN.md 9.13 prints 50.25 mW/cm^2; the table gives 48.074 at the vacuum wavelength"
+    )
+    # Jin and Church 1993's lifetime, the only other measurement, does not rescue the quoted 23.4 either
+    jin_total = 1.0 / (TWO_PI * 6.924e-9)
+    assert jin_total == pytest.approx(22.985983e6, rel=1e-6)
+    assert jin_total * tr.branching == pytest.approx(21.484768e6, rel=1e-6)
+    assert table["ca40.P32.linewidth_quoted_hz"].tag == "contested"
+    assert tr.gamma_hz != table["ca40.P32.linewidth_quoted_hz"].value
 
 
 # ---- 88Sr+ ------------------------------------------------------------------------------------------------

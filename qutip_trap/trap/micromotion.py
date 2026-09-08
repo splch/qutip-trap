@@ -28,7 +28,8 @@ class MicromotionIndex:
 
     ``in_phase`` is the stray-field part (nullable by shims) and ``out_of_phase`` the rf-quadrature part
     (Berkeland's phi_ac term, not nullable); they never collapse into one number (Section 4.1.1). The
-    peak/rms tag is declared, never inferred (Section 13).
+    peak/rms tag is declared, never inferred (Section 13). ``in_phase`` is SIGNED: under the adopted Mathieu
+    origin it is -delta_k . (1/2) Q u_0, and its sign flips as a shim crosses the compensated value (Section 9.17).
     """
 
     in_phase: float
@@ -49,6 +50,15 @@ class MicromotionIndex:
             return self
         return MicromotionIndex(self.in_phase * np.sqrt(2.0), self.out_of_phase * np.sqrt(2.0), "peak")
 
+    def as_modulation(self) -> tuple[float, float]:
+        """(beta, phase offset) such that beta cos(Omega t + delta + offset) = in_phase cos(Omega t + delta) + out_of_phase sin(Omega t + delta).
+
+        beta = hypot(in_phase, out_of_phase) >= 0 and offset = -atan2(out_of_phase, in_phase); the drive builder adds the
+        offset to the rf phase so that e^{i beta cos(Omega_rf t + delta)} carries BOTH quadratures, and the pi step of a
+        negative in-phase index at compensation (Section 9.17) reaches the modulated coefficient.
+        """
+        return self.total, -float(np.arctan2(self.out_of_phase, self.in_phase))
+
 
 def displacement_m(
     field_v_per_m: np.ndarray | float, mass_kg: float, omega_rad_s: np.ndarray | float, *, charge: int = 1
@@ -62,11 +72,17 @@ def displacement_m(
 
 
 def excess_amplitude_m(displacement_m_: np.ndarray | float, q: np.ndarray | float) -> np.ndarray:
-    """Peak excess-micromotion amplitude (1/2) u_0 q per axis (Berkeland Eq. 17)."""
+    """SIGNED peak excess-micromotion amplitude u_1 = -(1/2) q u_0 per axis (Berkeland Eq. 17 under the adopted sign).
+
+    The minus sign is the adopted Mathieu origin ``a - 2q cos 2xi`` (Section 13, row "Floquet function and rf phase
+    origin"): the in-phase micromotion at the rf phase origin is a CONTRACTION, x_mu(t) = -(q_x/2) x_sec(t) cos(omega_rf t),
+    and every micromotion-sideband phase follows from that one statement (Section 4.1.1). ``q``'s own sign is kept, so
+    the x/y antiphase of a linear trap (q_y = -q_x) survives; the magnitude is Berkeland's (1/2)|q| u_0.
+    """
     return np.asarray(
-        0.5
+        -0.5
         * np.atleast_1d(np.asarray(displacement_m_, dtype=float))
-        * np.abs(np.atleast_1d(np.asarray(q, dtype=float)))
+        * np.atleast_1d(np.asarray(q, dtype=float))
     )
 
 
@@ -76,10 +92,13 @@ def out_of_phase_amplitude_m(q_x: float, r_m: float, alpha: float, phi_ac_rad: f
 
 
 def modulation_index(delta_k_rad_per_m: np.ndarray, amplitude_m: np.ndarray) -> float:
-    """beta = |delta_k . u_1| for the FULL wavevector (single-photon k or Raman Delta k): scales with |delta_k|, not k_hat alone."""
-    return float(
-        abs(np.dot(np.asarray(delta_k_rad_per_m, dtype=float), np.asarray(amplitude_m, dtype=float)))
-    )
+    """SIGNED beta = delta_k . u_1 for the FULL wavevector (single-photon k or Raman Delta k): scales with |delta_k|, not k_hat alone.
+
+    Appendix E declares beta = delta_k . u_1, not its modulus: the sign is what the 9.17 row "Mathieu sign of the Floquet
+    function" requires to survive, a phase step of pi in the rf-photon correlation signal as a shim crosses the
+    compensated value. J_0 is even, so the carrier suppression does not see it; the first micromotion sideband does.
+    """
+    return float(np.dot(np.asarray(delta_k_rad_per_m, dtype=float), np.asarray(amplitude_m, dtype=float)))
 
 
 def carrier_factor(beta: float) -> float:

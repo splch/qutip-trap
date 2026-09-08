@@ -51,8 +51,9 @@ def test_a_weak_mode_two_kilohertz_from_a_tone_is_kept() -> None:
     wf0 = Waveform.symmetric(probe, gate_mode=0, epsilon_hz=20e3, duration_s=100e-6, all_modes=False)
     assert wf0.segments is not None
     mu_tone = abs(float(wf0.segments[0].detuning_hz["blue"]))  # type: ignore[arg-type]
-    # a coupled mode is never dropped outright (its Debye-Waller factor is exact and free): below the drop pair it is frozen
-    for gap_hz, expected in ((2e3, "resolved"), (1.0e6, "frozen")):
+    # Section 5.2 line 822: the contribution pair decides alone, so a coupled mode below (1e-6, 1e-4) is DROPPED, not frozen
+    # (|alpha|^2 (2n+1) = 8.1e-35 and |chi| = 2.8e-6 a megahertz away: nothing for a Debye-Waller factor to absorb)
+    for gap_hz, expected in ((2e3, "resolved"), (1.0e6, "dropped")):
         modes = GateModes(
             ions=(0, 1),
             modes=(0, 1),
@@ -109,8 +110,9 @@ def test_freeze_against_drop_rows_of_section_9_17() -> None:
         coupled=True, freeze_alpha_max=OPTS.freeze_alpha_max, freeze_chi_max_rad=OPTS.freeze_chi_max_rad
     )
     assert classify(ModeContribution(0, 1e-5, 0.03, 0.01, 0.05), **kw) == "frozen"
-    # below the drop pair: dropped, unless a pulse couples to the mode at all, in which case its exact Debye-Waller factor is
-    # kept (frozen) rather than dropped (the M6 selection is stricter than the plan's rule, never looser)
+    # below the drop pair: dropped whatever couples to the mode (Section 5.2's criterion is the contribution pair alone;
+    # intersecting the drop test with `coupled` made the dropped class unreachable, since a contribution only ever exists
+    # for a coupled mode, and left `dropped_contribution` identically zero)
     assert (
         classify(
             ModeContribution(0, 1e-7, 1e-5, 0.01, 0.05),
@@ -120,7 +122,7 @@ def test_freeze_against_drop_rows_of_section_9_17() -> None:
         )
         == "dropped"
     )
-    assert classify(ModeContribution(0, 1e-7, 1e-5, 0.01, 0.05), **kw) == "frozen"
+    assert classify(ModeContribution(0, 1e-7, 1e-5, 0.01, 0.05), **kw) == "dropped"
     assert classify(ModeContribution(0, 1e-5, 0.06, 0.01, 0.05), **kw) == "resolved"
     assert classify(ModeContribution(0, 2e-4, 0.001, 0.01, 0.05), **kw) == "resolved"
     assert classify(None, coupled=True, freeze_alpha_max=1e-4, freeze_chi_max_rad=0.05) == "frozen"
@@ -235,7 +237,9 @@ def test_enr_displacement_is_the_sum_generator_exponential_and_agrees_with_the_p
                 worst_inside = max(worst_inside, diff)
             if n1 + n2 == n_exc or m1 + m2 == n_exc:
                 worst_cap = max(worst_cap, diff)
-    assert worst_inside < 1e-9, worst_inside
+    # PLAN.md 5.1.1's table gives 6e-16 for N_exc = 10 at eta = 0.1 and check_scaling.out prints 1.4e-15 here: the
+    # operator-identity bar of 1e-12, not the 1e-9 M9a first asserted (M9a audit P1-8)
+    assert worst_inside < 1e-12, worst_inside
     assert worst_cap > 1e-6, (
         "near the cap the sum-generator exponential is a different operator from the product"
     )

@@ -202,7 +202,7 @@ def stranded_population(p: np.ndarray, order: int, eta: float) -> float:
     return float(np.sum(p[stranded_index(order, eta) :]))
 
 
-def accumulation_centre(p: np.ndarray, order: int, eta: float, *, n_min: float = 0.5) -> float | None:
+def accumulation_centre(p: np.ndarray, order: int, eta: float) -> float | None:
     """Population-weighted mean Fock index above the node's lower shoulder (from the first zero's degree), None if empty."""
     lo = int(math.floor(laguerre_first_zero(order, eta)))
     tail = p[lo:]

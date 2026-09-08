@@ -17,40 +17,73 @@
   ideal heavy-output probability of 200 random width-2 depth-2 circuits: mean 0.7960, std 0.0916 (the large-width asymptote (1 + ln 2)/2 = 0.8466)
 
 == 3. single-qubit randomized benchmarking on the two-ion example device (Sections 7.9, 9.12, 13)
-MC: surrogate table in 12.7 s
-MC: wall 77.5 s for 12 runs of 4000 shots
-MC: mean survival per length {1: 0.99967, 128: 0.9975, 512: 0.987, 2048: 0.96358} +- [0.00029, 0.00092, 0.00406, 0.01421]
-MC: fit A p^m + B: A 0.49971 +- 0.00028, p 0.999960 +- 0.000009, B 0.50000 +- 0.00000, chi2/dof 0.298; F(L) = 0.4997 x 0.99996^L + 0.5000
-MC: error per Clifford r = (1 - p)/2 = 2.00e-05 +- 4.5e-06; depolarizing entanglement infidelity (3/4)(1 - p) = 2.99e-05 (Section 13: not the RB error rate)
+MC: surrogate table in 15.7 s
+MC: wall 332.0 s for 12 runs of 4000 shots
+MC: mean survival per length {1: 0.99967, 128: 0.9975, 512: 0.987, 2048: 0.96358} +- [0.00022, 0.0008, 0.00393, 0.01411]
+MC: fit A p^m + B: A 0.49970 +- 0.00022, p 0.999961 +- 0.000008, B 0.50000 +- 0.00000, chi2/dof 0.335; F(L) = 0.4997 x 0.99996^L + 0.5000
+MC: error per Clifford r = (1 - p)/2 = 1.97e-05 +- 4.2e-06; depolarizing entanglement infidelity (3/4)(1 - p) = 2.96e-05 (Section 13: not the RB error rate)
   pulses per Clifford 0.829; native pieces per Clifford {'gpi2[0]': 0.66, 'gpi[0]': 0.169}
   Section 6.8 channels reduced to qubit 0: {'gpi2[0]': '1.840e-05', 'gpi[0]': '7.358e-05'}
     gpi2[0]: step ions (0, 1), full-step average gate infidelity 2.582e-04, depolarizing rate 3.227e-04, 48 engine runs on dimension 4
     gpi[0]: step ions (0, 1), full-step average gate infidelity 1.032e-03, depolarizing rate 1.291e-03, 48 engine runs on dimension 4
-  predicted r_channel 2.455e-05 (first-order composition), r_intrinsic 4.068e-04 (Section 9.6 scales), F(0) from SPAM 0.99965; SPAM {'q0': (0.000608, 0.000349), 'q0.state_preparation': (2e-06, 0.0)}
-MC: simultaneous single-qubit RB on both ions (survival = P(00)), wall 25.0 s: mean survival {1: 0.9975, 128: 0.91425, 512: 0.75225}, p 0.999080 +- 0.000100, r = (3/4)(1 - p) 6.90e-04 +- 7.5e-05 (two Cliffords per unit)
-  simultaneous RB budget on the pair: channels {'gpi2[0]': '2.582e-04', 'gpi2[1]': '2.582e-04', 'gpi[0]': '1.032e-03', 'gpi[1]': '1.032e-03'}; predicted r_channel 3.426e-04 (the neighbour's crosstalk rotation now counts, Section 6.6) against 1.7e-04 per Clifford; single-ion RB above saw 2.5e-05
+  predicted r_channel 2.455e-05 (first-order composition), r_intrinsic 4.148e-04 (Section 9.6 scales, summed over each kind's whole schedule entry and so over a larger error than r_channel), F(0) from SPAM 0.99965; SPAM {'q0': (0.000608, 0.000349), 'q0.state_preparation': (2e-06, 0.0)}
+  pinned single-qubit RB r per Clifford: inside the band [1e-05, 4e-05]
+  pinned single-qubit RB r_channel: inside the band [1.5e-05, 4e-05]
+  pinned single-qubit RB r/r_channel: inside the band [0.5, 1.2]
+  pinned single-qubit RB F(0) minus the SPAM prediction: inside the band [-0.0003, 0.0003]
+  pinned single-qubit RB r_intrinsic/r_channel: inside the band [8, 40]
+MC: simultaneous single-qubit RB on both ions, wall 115.6 s: per-qubit MARGINAL survival [[0.9995, 0.9495, 0.938], [0.998, 0.96375, 0.79925]] at m = [1, 128, 512], marginal p [0.999738, 0.999227], marginal r_q = (1 - p_q)/2 ['1.31e-04', '3.87e-04'] against 1.97e-05 for the ion benchmarked alone (Gambetta et al. 2012); r = mean_q r_q = 2.59e-04 +- 9.4e-05
+MC: the same run's JOINT survival P(00) {1: 0.9975, 128: 0.91425, 512: 0.75225}, p 0.999078 +- 0.000086, (1 - p)(2^n - 1)/2^n = 6.91e-04 +- 6.5e-05 per LAYER of two Cliffords (the correlation diagnostic, sum_q r_q to first order)
+  simultaneous RB budget: channels on the pair {'gpi2[0]': '2.582e-04', 'gpi2[1]': '2.582e-04', 'gpi[0]': '1.032e-03', 'gpi[1]': '1.032e-03'}; predicted per-qubit r_channel {'q0': '2.853e-04', 'q1': '2.858e-04'} (each kind's channel reduced to that ONE qubit, so the neighbour's crosstalk rotation counts, Section 6.6), mean 2.855e-04 against the measured 2.588e-04; r_channel_joint_layer 6.853e-04 against the measured joint 6.915e-04; single-ion RB above saw 2.5e-05
+  pinned simultaneous RB marginal r_q: inside the band [0.00015, 0.0006]
+  pinned simultaneous RB marginal r_q / r_channel: inside the band [0.5, 2]
+  pinned simultaneous RB joint r per layer: inside the band [0.0004, 0.0012]
+  pinned simultaneous RB joint r / r_channel_joint_layer: inside the band [0.5, 2]
+  pinned simultaneous RB marginal r_q / the isolated r: inside the band [5, 40]
+MC: Knill-style RB on ion 0 (Section 7.9; a random Pauli then a random Clifford per computational gate, one final pi/2), wall 104.3 s: survival of the sequence's own target {1: 0.9995, 128: 0.9985, 512: 0.985}, F(L) = 0.4995 x 0.99998^L + 0.5000, p 0.999983 +- 0.000009, r = (1 - p)/2 = 8.50e-06 +- 4.4e-06 per computational gate, 1.561 pulses per gate
+  Wright et al. 2019's operating point (p ~ 0.995, B + 1/2 ~ 0.993) is a hundred times this device's error and cannot be configured from his paper (anchor.m10.knill_style_rb): here p = 0.999983 and B + 1/2 = 0.9995
+  pinned Knill-style RB r per computational gate: inside the band [5e-06, 0.0005]
+  pinned Knill-style RB pulses per computational gate: inside the band [1.3, 1.8]
 
 == 4. two-qubit randomized benchmarking on the pair (Section 7.9; Section 13)
-MC: wall 495.3 s for 6 runs
-MC: mean survival per length {1: 0.9963, 6: 0.9825, 16: 0.9563} +- [0.0045, 0.0053, 0.0178]
-MC: fit A 0.7490 +- 0.0049, p 0.99631 +- 0.00136, B 0.2500 +- 0.0000; r = (3/4)(1 - p) = 2.77e-03 +- 1.0e-03; entanglement infidelity (15/16)(1 - p) = 3.46e-03
+MC: wall 573.7 s for 6 runs
+MC: mean survival per length {1: 0.9963, 6: 0.98, 16: 0.9563} +- [0.0037, 0.0025, 0.0163]
+MC: fit A 0.7488 +- 0.0042, p 0.99586 +- 0.00104, B 0.2500 +- 0.0000; r = (3/4)(1 - p) = 3.11e-03 +- 7.8e-04; entanglement infidelity (15/16)(1 - p) = 3.88e-03
   pulses per Clifford 7.000, entangling per Clifford 1.442; pieces {'gpi2[0]': 2.827, 'gpi2[1]': 2.058, 'gpi[0]': 0.404, 'gpi[1]': 0.269, 'ms[0,1]': 1.385, 'ms[1,0]': 0.058}
   channels on the pair: {'gpi2[0]': '2.582e-04', 'gpi2[1]': '2.582e-04', 'gpi[0]': '1.032e-03', 'gpi[1]': '1.032e-03', 'ms[0,1]': '1.137e-04', 'ms[1,0]': '1.137e-04'}
   ms[0,1] step: dimension 572, 48 engine runs, average gate infidelity 1.137e-04, depolarizing rate 1.421e-04, twirl p_II 0.99986
-  predicted r_channel 2.120e-03, r_intrinsic 1.225e-02, F(0) from SPAM 0.99930
+  predicted r_channel 2.120e-03, r_intrinsic 1.284e-02, F(0) from SPAM 0.99930
+  pinned two-qubit RB r per Clifford: inside the band [0.001, 0.006]
+  pinned two-qubit RB r/r_channel: inside the band [0.5, 2.5]
+  pinned two-qubit RB entangling gates per Clifford: inside the band [1, 2]
+  pinned ms[0,1] average gate infidelity: inside the band [5e-05, 0.0003]
 
 == 5. GHZ fidelity (Section 7.9 'Entangling gate'; Section 9.6 rows 1 and 2)
-MC: two ions, wall 73.5 s: P00 0.5420 +- 0.0158, P11 0.4540 +- 0.0157, parity contrast 0.9981 +- 0.0019 (chi2/dof 0.19), fidelity bound (P0 + P1 + C)/2 = 0.9970 +- 0.0112
-  exact register fidelity 0.99767; predicted from the channels: F_gates 0.99860, bound 0.99716; intrinsic scales 8.42e-03
+MC: two ions, wall 91.6 s: P00 0.5430 +- 0.0158, P11 0.4540 +- 0.0157, parity contrast 0.9981 +- 0.0019 (chi2/dof 0.19), fidelity bound (P0 + P1 + C)/2 = 0.9975 +- 0.0112
+  exact fidelities: max_theta <GHZ_theta| rho |GHZ_theta> 0.99808 (what the bound estimates) and the fixed-phase <GHZ| rho |GHZ> 0.99762 (which the bound therefore exceeds); predicted from the channels: F_gates 0.99860, bound 0.99716; intrinsic scales 8.85e-03
 MC: parity points (phase/pi, parity): [(0.0, -1.0), (0.125, -0.756), (0.25, -0.034), (0.375, 0.676), (0.5, 0.994), (0.625, 0.736), (0.75, 0.036), (0.875, -0.682)]
-MC: three ions (dimension 1144), wall 193.3 s with the surrogate: P000 0.5450 +- 0.0249, P111 0.4475 +- 0.0249, contrast 0.9945 +- 0.0116, bound 0.9935 +- 0.0185
-  exact register fidelity 0.98520; intrinsic budget total 3.02e-02; mode classes {0: 'dropped', 1: 'dropped', 2: 'dropped', 3: 'resolved', 4: 'frozen', 5: 'resolved', 6: 'dropped', 7: 'dropped', 8: 'dropped'}
+MC: three ions (dimension 1144), wall 247.5 s with the surrogate: P000 0.5450 +- 0.0249, P111 0.4475 +- 0.0249, contrast 0.9952 +- 0.0116, bound 0.9939 +- 0.0185
+  exact fidelities: max_theta 0.99227, fixed-phase 0.98508; intrinsic budget total 3.23e-02; mode classes {0: 'dropped', 1: 'dropped', 2: 'dropped', 3: 'resolved', 4: 'frozen', 5: 'resolved', 6: 'dropped', 7: 'dropped', 8: 'dropped'}
+  pinned two-ion GHZ bound (P0 + P1 + C)/2: inside the band [0.97, 1.01]
+  pinned two-ion GHZ exact max-phase fidelity: inside the band [0.97, 1]
+  pinned two-ion GHZ bound minus the exact max-phase fidelity (three sigma of the bound): inside the band [0, 1]
+  pinned two-ion GHZ bound minus the fixed-phase fidelity (the bound is above it): inside the band [-0.005, 0.05]
+  pinned three-ion GHZ bound (P0 + P1 + C)/2: inside the band [0.97, 1.01]
+  pinned three-ion GHZ exact max-phase fidelity: inside the band [0.97, 1]
+  pinned three-ion GHZ bound minus the exact max-phase fidelity (three sigma of the bound): inside the band [0, 1]
+  pinned three-ion GHZ bound minus the fixed-phase fidelity (the bound is above it): inside the band [-0.005, 0.05]
 
 == 6. quantum-volume style run at width two (Cross et al. 2019)
-MC: wall 180.4 s for 4 circuits of depth 2 (6.0 entangling gates and 26.0 pulses per circuit)
+MC: wall 277.9 s for 4 circuits of depth 2 (6.0 entangling gates and 26.0 pulses per circuit)
 MC: heavy-output probabilities [0.795, 0.6475, 0.82, 0.6025] +- [0.0202, 0.0239, 0.0192, 0.0245] against the ideal [0.7429, 0.6176, 0.8657, 0.5858]
-MC: mean 0.7163 +- 0.0548; mean - 2 sigma > 2/3: False (protocol circuit count met: False)
-  exact register fidelities [0.99026, 0.9963, 0.99488, 0.9907]
-  predicted: eps_gates 5.830e-03, eps_readout 9.573e-04, heavy-output probability 0.7016 against the ideal mean 0.7030; intrinsic scales per circuit 2.78e-02
+MC: mean 0.7163; Cross et al. Eq. (32) sigma = sqrt(h(1 - h)/n_c) = 0.2254 so mean - 2 sigma = 0.2654 and threshold_cleared = False; the standard error of the mean over circuits 0.0537 (a diagnostic, 4.20 times smaller, never the criterion); protocol circuit count met False, passed False, log2 quantum volume None
+  exact register fidelities [0.99017, 0.99614, 0.99504, 0.99111]
+  predicted: eps_gates 5.830e-03, eps_readout 9.573e-04, heavy-output probability 0.7016 against the ideal mean 0.7030; intrinsic scales per circuit 2.89e-02
+  pinned quantum-volume mean heavy-output probability: inside the band [0.62, 0.82]
+  pinned quantum-volume Eq. (32) sigma: inside the band [0.18, 0.26]
+  pinned quantum-volume mean - 2 sigma (below 2/3: no pass at four circuits): inside the band [0, 0.6666]
+  pinned quantum-volume Eq. (32) sigma / the standard error of the mean: inside the band [2.5, 7]
+  pinned quantum-volume measured mean minus the depolarizing prediction: inside the band [-0.05, 0.05]
+  pinned quantum-volume worst exact register fidelity: inside the band [0.98, 1]
 
 done

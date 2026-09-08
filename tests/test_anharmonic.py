@@ -81,6 +81,14 @@ def test_marquet_selection_rules(n: int) -> None:
         d = marquet_d_coefficients(marquet_c_tensor(u), b)
         assert d[1, 1, 1] == pytest.approx(-1.1225, abs=6e-5)
         assert d[1, 1, 1] == pytest.approx((1 - 3) / (2 * np.linalg.norm(u)), rel=1e-12)
+    if n == 6:
+        # Section 9.12 row "Re-verified items": the verifier reproduced Marquet's own N = 6 example from scratch,
+        # mu_5 = 13.513882, mu_6 = 18.265709, D_655 = 4.2527958 (1-based labels; the paper's rounded mu_5 = 13.51 is
+        # what turns its 7.35510 into 7.3556). alpha_res = 0.09150975 needs Marquet's Eq. 4.10, which is not implemented.
+        d = marquet_d_coefficients(marquet_c_tensor(u), b)
+        assert mu[4] == pytest.approx(13.513882, abs=5e-7)
+        assert mu[5] == pytest.approx(18.265709, abs=5e-7)
+        assert d[5, 4, 4] == pytest.approx(4.2527958, abs=5e-8)
 
 
 def test_cubic_energy_sign_along_the_stretch_mode_fixes_the_convention() -> None:
@@ -134,11 +142,20 @@ def test_cartesian_route_reproduces_marquet_for_equal_masses_and_com_decouples()
 
 
 def test_nonlinearity_epsilon_and_coupling_anchors() -> None:
-    """eps = 1.06e-3 (9Be+, 5 MHz), 7.09e-4 (40Ca+, 2 MHz), 3.79e-4 (171Yb+, 0.2 MHz); g/2pi = 1419 Hz and 76 Hz (Section 4.1.4)."""
+    """Section 9.12 "Cubic anharmonicity gate", every species of the row: (171Yb+, 0.2 MHz, 3.793e-4, 76 Hz),
+    (40Ca+, 2 MHz, 7.093e-4, 1419 Hz), (9Be+, 5 MHz, 1.059e-3, 5295 Hz), (112Cd+, 2.8 MHz, 6.319e-4, 1769 Hz)."""
     ca, yb = species("40Ca+"), species("171Yb+")
     assert nonlinearity_epsilon(9.0121822 * ATOMIC_MASS_KG, TWO_PI * 5.0e6) == pytest.approx(
         1.06e-3, rel=2e-3
     )
+    # the two rows the plan prints that no test asserted: 9Be+ at 5 MHz and 112Cd+ at 2.8 MHz. Both are quoted from the
+    # mass NUMBER in the ion's own label, which is all the row supplies; eps varies by 1.4e-4 relative between 112 u and
+    # the 111.902757 u isotope mass, well inside the row's printed digits
+    assert coupling_g_rad_s(9.0121822 * ATOMIC_MASS_KG, TWO_PI * 5.0e6) / TWO_PI == pytest.approx(
+        5295.0, abs=1.0
+    )
+    assert nonlinearity_epsilon(112.0 * ATOMIC_MASS_KG, TWO_PI * 2.8e6) == pytest.approx(6.319e-4, rel=2e-3)
+    assert coupling_g_rad_s(112.0 * ATOMIC_MASS_KG, TWO_PI * 2.8e6) / TWO_PI == pytest.approx(1769.0, abs=1.0)
     assert nonlinearity_epsilon(ca.mass_u * ATOMIC_MASS_KG, TWO_PI * 2.0e6) == pytest.approx(
         7.09e-4, rel=2e-3
     )

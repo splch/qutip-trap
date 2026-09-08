@@ -139,7 +139,13 @@ def test_berkeland_excess_micromotion_numbers_of_section_9_12() -> None:
         assert u0 * 1e9 == pytest.approx(u0_nm, rel=3e-3)
         amp = excess_amplitude_m(u0, 0.28)[0]
         beta = modulation_index(np.array([k, 0.0, 0.0]), np.array([amp, 0.0, 0.0]))
-        assert beta == pytest.approx(beta_exp, rel=1.5e-2)
+        # both are SIGNED under the adopted origin a - 2q cos 2xi: u_1 = -(1/2) q u_0 and beta = delta_k . u_1, so a
+        # positive q and a positive field give a NEGATIVE index (Section 4.1.1; Section 13 "Floquet function and rf
+        # phase origin"). The plan's printed magnitudes are Berkeland's (1/2)|q| u_0
+        assert amp < 0.0 and beta == pytest.approx(-beta_exp, rel=1.5e-2)
+        assert excess_amplitude_m(u0, -0.28)[0] == pytest.approx(-amp, rel=1e-12), (
+            "q_y = -q_x puts the two radial micromotions in antiphase"
+        )
         # the plan's J0 values are rounded at 1e-3 and evaluated at its own (rounded) beta: J0(3.40) = -0.3643, J0(3.404) = -0.3650
         assert carrier_amplitude(beta) == pytest.approx(j0, abs=1.5e-3)
         assert carrier_factor(beta) == pytest.approx(j0 * j0, abs=1.5e-3)
@@ -191,9 +197,14 @@ def test_trap_micromotion_beta_scales_with_stray_field_and_wavevector() -> None:
     omega_ps2 = (TWO_PI * 10.1e6 / 2) ** 2 * (
         p.a[0, 0] + p.q[0, 0] ** 2 / 2
     )  # the static spring is the pseudopotential curvature
-    expected = k * 0.5 * p.q[0, 0] * E_C / (yb.mass_u * ATOMIC_MASS_KG * omega_ps2)
-    assert b1.in_phase == pytest.approx(expected, rel=1e-9)
-    assert b1.in_phase == pytest.approx(0.034, rel=0.1)
+    expected = -k * 0.5 * p.q[0, 0] * E_C / (yb.mass_u * ATOMIC_MASS_KG * omega_ps2)
+    # SIGNED: u_1 = -(1/2) Q u_0 under the adopted origin a - 2q cos 2xi (Section 13, "Floquet function and rf phase
+    # origin"), so sign(beta_ip) = -sign(q_x E_x); the plan's printed 0.034 is the magnitude
+    assert b1.in_phase == pytest.approx(expected, rel=1e-9) and expected < 0.0
+    assert abs(b1.in_phase) == pytest.approx(0.034, rel=0.1)
+    assert trap(-1.0).micromotion_beta(yb, np.array([k, 0.0, 0.0])).in_phase == pytest.approx(
+        -b1.in_phase, rel=1e-12
+    ), "the index steps by pi as the residual field crosses zero"
     # compensation: a shim field that cancels the stray field nulls the in-phase index (explicit path folds shims into the stray field)
     assert trap(0.0).residual_field_v_per_m() == pytest.approx(np.zeros(3))
 
@@ -237,6 +248,42 @@ def test_rod_trap_path_follows_berkeland_and_the_phase_imbalance_term() -> None:
     )
     with pytest.raises(ValueError, match="alpha"):
         bare.micromotion_beta(yb, np.array([k, 0.0, 0.0]))
+
+
+def test_a_rod_or_blade_trap_refuses_shim_voltages_it_cannot_turn_into_a_field() -> None:
+    """PLAN 4.1.1: no source gives kappa, R', Z0 or Phi'' for any electrode design, so Berkeland's rod map has no
+    shim -> field response. A non-zero shim there used to be dropped from ``residual_field_v_per_m`` and, if it happened
+    to be named like the endcap, to change a_z instead of producing a field; it is now refused, as on the explicit path."""
+    geometry = Electrodes("rod_quadrupole", {"R_m": 1.0e-3, "Z0_m": 2.0e-3, "kappa": 0.3})
+
+    def rod(shims: dict[str, float]) -> Trap:
+        return Trap(
+            omega_hz=None,
+            axis_angle_rad=0.0,
+            rf=RfDrive(300.0, 20e6),
+            dc=DcElectrodes({"endcaps": 8.0}),
+            geometry=geometry,
+            stray_field_v_per_m=(5.0, 0.0, 0.0),
+            shim_voltages_v=shims,
+        )
+
+    for shims in ({"shim_x": 3.0}, {"endcaps": 1.0}, {"shim_x": -1e-9}):
+        with pytest.raises(ValueError, match="no electrode model to convert shim voltages into fields"):
+            rod(shims)
+    # explicitly zero shims are a record of "nothing applied" and stay legal, as does the bare stray field
+    assert rod({}).residual_field_v_per_m() == pytest.approx(np.array([5.0, 0.0, 0.0]))
+    assert rod({"shim_x": 0.0}).residual_field_v_per_m() == pytest.approx(np.array([5.0, 0.0, 0.0]))
+    # the explicit path keeps its own message
+    with pytest.raises(ValueError, match="the explicit-frequency path has no electrode model"):
+        Trap(
+            omega_hz=(1e6, 1e6, 0.2e6),
+            axis_angle_rad=0.0,
+            rf=None,
+            dc=None,
+            geometry=None,
+            stray_field_v_per_m=(0.0, 0.0, 0.0),
+            shim_voltages_v={"shim_x": 1.0},
+        )
 
 
 def test_surface_trap_path_end_to_end_with_88sr() -> None:
@@ -293,7 +340,9 @@ def test_surface_trap_path_end_to_end_with_88sr() -> None:
     assert abs(field[0]) > 0.0
     k = TWO_PI / 422e-9
     idx = shimmed.micromotion_beta(sr, np.array([k, 0.0, 0.0]))
-    assert idx.in_phase > 0.0 and idx.convention == "peak"
+    # signed: sign(beta_ip) = -sign(q_x E_x) under the adopted rf phase origin (Section 13)
+    assert idx.in_phase != 0.0 and idx.convention == "peak"
+    assert math.copysign(1.0, idx.in_phase) == -math.copysign(1.0, p.q[0, 0] * field[0])
     compensated = Trap(
         omega_hz=None,
         axis_angle_rad=0.0,

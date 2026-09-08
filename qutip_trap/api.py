@@ -79,7 +79,7 @@ from qutip_trap.control.two_qubit import (
     kak_decomposition,
 )
 from qutip_trap.device.model import DerivedQuantities, Device, Field
-from qutip_trap.device.presets import DevicePreset, yb171_chain
+from qutip_trap.device.presets import DevicePreset, ca40_optical, ca40_optical_recipe, yb171_chain
 from qutip_trap.dynamics.channels import CollapseOp
 from qutip_trap.dynamics.engine import (  # noqa: I001
     ChannelSummary,
@@ -240,6 +240,8 @@ __all__ = [
     "random_square_circuit",
     "random_two_qubit_clifford",
     "randomized_benchmarking",
+    "ca40_optical",
+    "ca40_optical_recipe",
     "yb171_chain",
     "GateLocalReport",
     "GateLocalStep",
@@ -315,7 +317,6 @@ __all__ = [
     "ModeSpec",
     "MultiLevelOptions",
     "SteadyStateReport",
-    "BlochModel",
     "AnharmonicTerms",
     "AtomicStructure",
     "Beam",

@@ -113,16 +113,34 @@ print(rb.fidelity_form(), "| r per Clifford:", f"{rb.error_per_clifford[0]:.1e} 
 budget = rb.budget
 print("channel infidelity per native kind (reduced to qubit 0):", {k: f"{v:.1e}" for k, v in budget.channel_infidelity.items()})
 print("predicted r from the channels:", f"{budget.predicted['r_channel']:.1e}",
-      "| Section 9.6 scales per Clifford:", f"{budget.predicted['r_intrinsic']:.1e}",
+      "| Section 9.6 scales per Clifford (a bound over a wider scope):", f"{budget.predicted['r_intrinsic']:.1e}",
       "| F(0) from SPAM:", f"{budget.predicted['F0_spam']:.4f}")
+
+sim = randomized_benchmarking(device, (0, 1), (1, 64), n_sequences=1, shots=400, pair=False, fix_offset=True,
+                              budget=False, table=table, options=options, **preset.run_kwargs())
+print("simultaneous RB, per-ion marginal r_q:", [f"{v:.1e}" for v, _ in sim.marginal_error_per_clifford],
+      "| mean:", f"{sim.error_per_clifford[0]:.1e}",
+      "| the joint decay per layer of two Cliffords:", f"{sim.joint_error_per_layer[0]:.1e}")
+knill = randomized_benchmarking(device, (0,), (1, 64), n_sequences=1, shots=400, variant="knill",
+                                budget=False, table=table, options=options, **preset.run_kwargs())
+print("Knill-style RB (Section 7.9):", knill.fidelity_form(),
+      "| r per computational gate:", f"{knill.error_per_clifford[0]:.1e}")
 ```
 
 On the example device the survival falls from 0.9997 at one Clifford to about 0.96 at 2048, an error per Clifford near
 2 × 10⁻⁵ against 2.5 × 10⁻⁵ predicted by composing the gpi2 and gpi channels (coherent errors within a Clifford partly
-cancel, which the first-order composition does not know). Simultaneous RB on both ions (`qubits=(0, 1), pair=False`)
-exposes the addressing crosstalk that single-ion RB cannot see: the joint survival decays thirty times faster. Two-qubit RB
-(`qubits=(0, 1)`) draws from the 11520-element group at 1.5 entangling gates per Clifford. GHZ fidelity and a
-quantum-volume style run follow the same pattern:
+cancel, which the first-order composition does not know). Simultaneous RB on several ions at once (`pair=False`) exposes
+the addressing crosstalk that single-ion RB cannot see. Each ion's own marginal survival is fitted (Gambetta et al. 2012):
+on the two-ion device the marginals give r_q = 1.3 × 10⁻⁴ and 3.9 × 10⁻⁴, a mean thirteen times the 2 × 10⁻⁵ the same ion
+measures alone, and the composition of each gate kind's channel *reduced to that one qubit* predicts that mean to 9 %
+(2.86 × 10⁻⁴ against 2.59 × 10⁻⁴). `error_per_clifford` is the mean of the marginals, in the same unit as the budget's
+`r_channel`; `joint_error_per_layer` carries the joint P(0…0) decay — 6.9 × 10⁻⁴ per layer of one Clifford per ion,
+thirty-five times the isolated r, and within 1 % of `r_channel_joint_layer` — as the correlation diagnostic. Two-qubit RB
+(`qubits=(0, 1)`) draws from the 11520-element group at 1.5 entangling gates per Clifford, and `variant="knill"` runs
+Section 7.9's Knill-style sequences instead (π/2 pulses with an interleaved π Pauli or an identity and one final π/2,
+fitted as B p^L + ½; the Pauli randomization twirls the coherent errors, so its r per computational gate, 8.5 × 10⁻⁶, sits
+below the Clifford r despite costing 1.56 pulses per gate against 0.83). GHZ fidelity and a quantum-volume style run
+follow the same pattern:
 
 ```python
 from qutip_trap.api import ghz_fidelity, quantum_volume
@@ -132,17 +150,25 @@ ghz = ghz_fidelity(device, (0, 1), shots=400, analysis_phases_rad=np.linspace(0.
 print("P00, P11:", {k: round(v[0], 4) for k, v in ghz.populations.items()},
       "| parity contrast:", f"{ghz.fit['contrast'][0]:.4f}",
       "| bound (P0 + P1 + C)/2:", f"{ghz.fidelity_bound[0]:.4f} +- {ghz.fidelity_bound[1]:.4f}",
-      "| exact:", f"{ghz.register_fidelity:.5f}")
+      "| exact max-phase (what the bound estimates):", f"{ghz.register_fidelity_max_phase:.5f}",
+      "| exact fixed-phase (which it exceeds):", f"{ghz.register_fidelity:.5f}")
+assert ghz.register_fidelity_max_phase >= ghz.register_fidelity - 1e-12
 qv = quantum_volume(device, (0, 1), n_circuits=1, shots=200, table=table, options=options, **preset.run_kwargs())
 print("heavy-output probability:", qv.heavy_output_probability.round(3), "ideal:", qv.ideal_heavy_probability.round(3),
-      "| exact register fidelity:", qv.register_fidelity.round(4), "| passes 2/3:", qv.passed)
+      "| exact register fidelity:", qv.register_fidelity.round(4),
+      "| Eq. (32) sigma:", f"{qv.sigma:.3f}", "| clears 2/3 by two sigma:", qv.threshold_cleared,
+      "| passes the protocol:", qv.passed)
 print(qv.notes[0])
 ```
 
-A two-ion GHZ run (populations plus a parity scan, five runs) takes about 40 s and returns a bound consistent with one
-within its shot noise (0.997 ± 0.011 at 1000 shots in the check script) beside an exact register fidelity of 0.9977; one
-quantum-volume circuit (two Haar-random SU(4) layers, six entangling gates) about 45 s with a heavy-output probability within
-shot noise of its ideal value and an exact register fidelity of 0.99.
+A two-ion GHZ run (populations plus a parity scan, five runs) takes about 40 s and returns a bound of 0.9975 ± 0.0112 at
+1000 shots in the check script. That number is exactly max_θ ⟨GHZ_θ|ρ|GHZ_θ⟩, which the simulator reads off the same
+register state as 0.99808 — they agree to 0.0006 — and it therefore sits *above* the fixed-phase ⟨GHZ|ρ|GHZ⟩ of 0.99762
+rather than below it; on three ions the gap is larger (bound 0.9939 against max_θ 0.99227 and fixed-phase 0.98508). One
+quantum-volume circuit (two Haar-random SU(4) layers, six entangling gates) takes about 45 s, with a heavy-output
+probability within shot noise of its ideal value and an exact register fidelity of 0.99; four circuits give mean 0.7163
+and Eq. (32)'s σ = 0.2254, so `threshold_cleared` is False, and even a run that cleared it would report `passed = False`
+below the protocol's hundred circuits.
 
 ## The error budget's channels
 
@@ -160,3 +186,26 @@ print("step ions:", step.ions, "| full-step average infidelity:", f"{step.summar
 
 The full step's infidelity counts the crosstalk rotation of the neighbour (about 3 × 10⁻⁴ from a 2.2 % Rabi ratio on a
 π/2 pulse); reduced to the addressed ion it drops to the off-resonant sideband scale of a few 10⁻⁵.
+
+## A second species: the 40Ca+ optical qubit
+
+`ca40_optical` drives the 729 nm S1/2-D5/2 quadrupole line, so the qubit is optical, the preparation is
+`ca40_optical_recipe` (397 nm Doppler cooling with the 866 nm repumper, then optical pumping) and the readout is shelving
+detection through Myerson's PMT chain. It carries no entangling drive, so single-qubit circuits run and a two-qubit gate is
+refused by the scheduler.
+
+```python
+from qutip_trap.api import ca40_optical
+
+ca = ca40_optical(1)
+ca_derived = ca.device.derived()
+print("729 nm carrier Rabi frequency (Hz):",
+      {k: round(ca_derived.values[k]) for k in sorted(ca_derived.values) if k.startswith("rabi_hz[")})
+ca_result = run(Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)), ca.device, 200, **ca.run_kwargs())
+print("one GPi2 on the optical qubit:", {k: round(v, 3) for k, v in sorted(ca_result.probabilities.items())})
+```
+
+The derived 729 nm Rabi frequency is 34.7 kHz at 5 mW in a 200 um waist with B = 5 G along x (a beam along y with x
+polarization would derive exactly zero E2 coupling, which `control/played.py` refuses rather than plays), and the GPi2 on
+`|S1/2, mJ = -1/2>` lands near 1/2 with the 40Ca+ P1/2 rate read as Hettrich's partial-rate convention
+(`conv.ca40_linewidth_reading`).

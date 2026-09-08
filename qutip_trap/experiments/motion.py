@@ -292,10 +292,17 @@ def mode_spectroscopy(device: Device, ion: int, mode: int, **kw: Any) -> Experim
             f"blue - carrier gives {mode_hz:.3f} Hz, (blue - red)/2 at full power gives {mode_from_pair:.3f} Hz"
         )
     # |eta| from the sideband and carrier Rabi frequencies (n = 0 element; the thermal correction sqrt(nbar + 1) for a hot mode)
-    ratio_omega = omega_bsb / max(rabi_belief * math.sqrt(1.0 + max(nbar, 0.0)), 1e-300)
+    denom = max(rabi_belief * math.sqrt(1.0 + max(nbar, 0.0)), 1e-300)
+    ratio_omega = omega_bsb / denom
     eta_fit = _solve_eta(ratio_omega)
     g_prime = math.exp(-0.5 * eta_fit**2) * (1.0 - eta_fit**2)
-    s_eta = (s_omega / max(rabi_belief, 1e-300)) / max(abs(g_prime), 1e-6)
+    # eta solves g(eta) = eta e^{-eta^2/2} = Omega_bsb/(Omega sqrt(nbar + 1)), so d eta = d ratio / g'(eta) with
+    # d ratio/d Omega_bsb = 1/(Omega sqrt(nbar + 1)) - the sqrt(nbar + 1) the VALUE divides by was missing from the
+    # uncertainty, which left s_eta high by that factor (1 % at nbar = 0.02, 22 % at nbar = 0.5) - and
+    # d ratio/d nbar = -ratio/(2 (nbar + 1)), the thermometry's own uncertainty, which was ignored entirely. The two
+    # terms are added in quadrature although both come from the same sideband probes, so the pair is mildly correlated.
+    s_ratio_omega = math.hypot(s_omega / denom, ratio_omega * s_nbar / (2.0 * (1.0 + max(nbar, 0.0))))
+    s_eta = s_ratio_omega / max(abs(g_prime), 1e-6)
     unc_max = float(kw.get("uncertainty_max_hz", 1e3))
     converged = (
         fit_b.converged

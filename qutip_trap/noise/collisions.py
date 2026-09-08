@@ -16,13 +16,14 @@ persists for every later shot (Appendix E ``RunState``).
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 
 from qutip_trap.noise.spectra import Collisions
-from qutip_trap.units import ATOMIC_MASS_KG, E_C, EPSILON_0_F_PER_M, K_B_J_PER_K
+from qutip_trap.units import ATOMIC_MASS_KG, E_C, EPSILON_0_F_PER_M, HBAR_J_S, K_B_J_PER_K
 
 Outcome = Literal["heating_kick", "reorder", "loss", "dark_ion"]
 
@@ -81,6 +82,66 @@ def collision_rate_per_ion(collisions: Collisions, ion_mass_kg: float) -> float:
     return total
 
 
+def mean_kick_energy_j(collisions: Collisions, ion_mass_kg: float) -> float:
+    """<E_kick> = k_B T (m_gas/m_ion) x multiplier, Section 6.7's "the neutral's thermal energy times the mass ratio".
+
+    The gas mixture's mass is its partial-pressure-weighted mean. The mass ratio is the fraction of the neutral's kinetic
+    energy an elastic head-on collision transfers to a much heavier ion in the small-mass-ratio limit (4 m_g m_i/(m_g +
+    m_i)^2 -> 4 m_g/m_i, whose orientation average over impact parameters is of order m_g/m_i); the plan states the scale,
+    not the O(1) coefficient, so the coefficient is 1 and ``kick_scale_multiplier`` is the device's handle on it.
+    """
+    if ion_mass_kg <= 0.0:
+        raise ValueError("the ion mass is positive")
+    if not collisions.gas:
+        return 0.0
+    m_gas = sum(f * GAS_MASS_U[g] for g, f in collisions.gas.items() if g in GAS_MASS_U) * ATOMIC_MASS_KG
+    return K_B_J_PER_K * collisions.temperature_k * (m_gas / ion_mass_kg) * collisions.kick_scale_multiplier
+
+
+def mean_kick_quanta(collisions: Collisions, ion_mass_kg: float, mode_omega_rad_s: float) -> float:
+    """<delta nbar> = <E_kick>/(hbar omega_m): the mean number of quanta a kick adds to a mode of that frequency.
+
+    Section 6.7's "tens to thousands of quanta": H2 at 300 K on 171Yb+ gives k_B T (2.016/171) = 4.9e-23 J, which is
+    2.3e3 quanta of a 3 MHz mode (``tests/test_m7_collisions_physics.py``).
+    """
+    if mode_omega_rad_s <= 0.0:
+        raise ValueError("the mode frequency is positive")
+    return mean_kick_energy_j(collisions, ion_mass_kg) / (HBAR_J_S * mode_omega_rad_s)
+
+
+def sample_kick_quanta(
+    rng: np.random.Generator, collisions: Collisions, ion_mass_kg: float, mode_omega_rad_s: float
+) -> float:
+    """One draw of the kick's added nbar on a mode, from the configured ``kick_distribution`` at the Section 6.7 scale."""
+    mean = mean_kick_quanta(collisions, ion_mass_kg, mode_omega_rad_s)
+    if mean <= 0.0:
+        return 0.0
+    if collisions.kick_distribution == "exponential":
+        return float(rng.exponential(mean))
+    # Maxwell (chi^2 with 3 dof) of the same mean: E = (mean/3) x chi^2_3
+    return float(mean / 3.0 * rng.chisquare(3))
+
+
+def sample_reorder(
+    rng: np.random.Generator, collisions: Collisions, order: Sequence[int], ion: int
+) -> tuple[int, ...]:
+    """The permuted ion order after a reorder event (Section 6.7).
+
+    With ``reorder_permutations`` configured, one is drawn uniformly and applied as ``new[k] = order[perm[k]]``; without
+    one, the adjacent transposition at the struck ion is used, which is the single swap a marginal Langevin kick makes.
+    """
+    current = list(order)
+    perms = [p for p in collisions.reorder_permutations if len(p) == len(current)]
+    if perms:
+        perm = perms[int(rng.integers(len(perms)))]
+        return tuple(current[p] for p in perm)
+    pos = current.index(ion) if ion in current else 0
+    other = pos + 1 if pos + 1 < len(current) else pos - 1
+    if 0 <= other < len(current) and other != pos:
+        current[pos], current[other] = current[other], current[pos]
+    return tuple(current)
+
+
 @dataclass(frozen=True)
 class CollisionEvent:
     time_s: float
@@ -118,6 +179,10 @@ __all__ = [
     "Outcome",
     "collision_rate_per_ion",
     "langevin_rate_coefficient_m3_s",
+    "mean_kick_energy_j",
+    "mean_kick_quanta",
     "number_density_per_m3",
     "sample_collisions",
+    "sample_kick_quanta",
+    "sample_reorder",
 ]

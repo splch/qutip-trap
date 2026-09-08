@@ -253,6 +253,29 @@ def hyperfine_zeeman(level: Level, nuclear_spin: float, mu_I_nuclear_magnetons: 
     return HyperfineZeeman(level, nuclear_spin, mu_I_nuclear_magnetons)
 
 
+def lande_g_f(F: Half, J: Half, nuclear_spin: Half, g_J: float, g_I: float = 0.0) -> float:
+    """g_F = g_J [F(F+1) - I(I+1) + J(J+1)]/(2F(F+1)) + g_I [F(F+1) + I(I+1) - J(J+1)]/(2F(F+1)) (PLAN.md 4.5.1).
+
+    The DIMENSIONLESS hyperfine g-factor, valid in the weak-field (linear-Zeeman) regime only; the field
+    derivatives the package actually uses come from the diagonalization, and this closed form is the
+    Section 4.5.6 "derived" entry that names it. Section 13's own warning applies: g_F is dimensionless and
+    g_F mu_B/h is a frequency per field (1.4012 MHz/G for 171Yb+ F = 1), and coding the latter as the former
+    is a 40% error in the quantity that gates the CPT window.
+
+    ``g_I`` defaults to 0 because the nuclear term is 1e-4 of the electronic one; pass ``g_I_steck(mu_I, I)``
+    for the full expression. For I = J = 1/2 the F = 1 value reduces to g_J/2 + g_I/2.
+    """
+    f = as_half_integer(F)
+    j = as_half_integer(J)
+    i = as_half_integer(nuclear_spin)
+    if f == 0:
+        raise ValueError("g_F is undefined for F = 0 (the state has no linear Zeeman shift)")
+    ff = float(f * (f + 1))
+    jj = float(j * (j + 1))
+    ii = float(i * (i + 1))
+    return g_J * (ff - ii + jj) / (2.0 * ff) + g_I * (ff + ii - jj) / (2.0 * ff)
+
+
 # ---- transitions and clock points -------------------------------------------------------------------------
 
 
@@ -372,6 +395,7 @@ __all__ = [
     "format_half",
     "g_I_steck",
     "hyperfine_zeeman",
+    "lande_g_f",
     "parse_quantum_numbers",
     "transition_sensitivity",
 ]

@@ -32,6 +32,7 @@ from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import BlochModel, CoolingError, RateCoefficients
 from qutip_trap.light.recoil import RecoilMode
+from qutip_trap.prep.validity import assert_weak_drive
 from qutip_trap.species.raman import AtomicStructure
 
 
@@ -71,11 +72,28 @@ def two_photon_lamb_dicke(eta_1: float, cos_1: float, eta_2: float, cos_2: float
 
 
 def eit_rate_coefficients(
-    omega_g_rad_s: float, omega_r_rad_s: float, nu_rad_s: float, delta_rad_s: float, gamma_rad_s: float
+    omega_g_rad_s: float,
+    omega_r_rad_s: float,
+    nu_rad_s: float,
+    delta_rad_s: float,
+    gamma_rad_s: float,
+    *,
+    allow_saturation: bool = False,
 ) -> RateCoefficients:
-    """The bare A_+- of Section 4.2.3 in s^-1 (eta^2 outside), carrier weight zero (no scattering at the dark resonance)."""
+    """The bare A_+- of Section 4.2.3 in s^-1 (eta^2 outside), carrier weight zero (no scattering at the dark resonance).
+
+    The perturbative form needs a weak probe, Omega_g << gamma (Section 4.2.8 vii; ``EitClosedForm.weak_probe``), and
+    refuses a saturated one unless ``allow_saturation`` - which is how the plan's own Morigi fixture, Omega_g = 17 MHz
+    against gamma = 20 MHz, is evaluated (the recorded M3a finding on that fixture).
+    """
     if nu_rad_s <= 0.0 or gamma_rad_s <= 0.0:
         raise ValueError("nu and gamma are positive")
+    assert_weak_drive(
+        omega_g_rad_s,
+        gamma_rad_s,
+        allow_saturation=allow_saturation,
+        what="the EIT bare A_+- (Omega_g << gamma)",
+    )
 
     def a(sign: float) -> float:
         bracket = omega_r_rad_s**2 / 4.0 - nu_rad_s * (nu_rad_s - sign * delta_rad_s)
@@ -125,9 +143,18 @@ def eit_cooling_rate_per_s(
     nu_rad_s: float,
     delta_rad_s: float,
     gamma_rad_s: float,
+    *,
+    allow_saturation: bool = False,
 ) -> float:
     """W = eta^2 (A_- - A_+): the exponential relaxation rate of <n> (Lechner's 19e3 s^-1 is this quantity)."""
-    rc = eit_rate_coefficients(omega_g_rad_s, omega_r_rad_s, nu_rad_s, delta_rad_s, gamma_rad_s)
+    rc = eit_rate_coefficients(
+        omega_g_rad_s,
+        omega_r_rad_s,
+        nu_rad_s,
+        delta_rad_s,
+        gamma_rad_s,
+        allow_saturation=allow_saturation,
+    )
     return rc.cooling_rate_per_s(eta)
 
 
@@ -144,8 +171,15 @@ class EitClosedForm:
 
     @property
     def coefficients(self) -> RateCoefficients:
+        """The bare A_+-; a fixture outside the weak-probe regime (``weak_probe`` False) is evaluated anyway, since the
+        record already reports the violation."""
         return eit_rate_coefficients(
-            self.omega_g_rad_s, self.omega_r_rad_s, self.nu_rad_s, self.delta_rad_s, self.gamma_rad_s
+            self.omega_g_rad_s,
+            self.omega_r_rad_s,
+            self.nu_rad_s,
+            self.delta_rad_s,
+            self.gamma_rad_s,
+            allow_saturation=not self.weak_probe(),
         )
 
     @property

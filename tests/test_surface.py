@@ -60,6 +60,139 @@ def test_rectangle_potential_laplace_boundary_and_strip_limit() -> None:
     )
 
 
+def _half_space_green(
+    x: float, y: float, z: float, x1: float, x2: float, z1: float, z2: float, n: int = 120
+) -> float:
+    """phi(r) = (y/2pi) int_patch dS'/|r - r'|^3: the Dirichlet Green's function of the grounded half-space y > 0 with
+    the patch held at unit voltage, integrated by a tensor-product Gauss-Legendre rule (the kernel is analytic for y > 0)."""
+    u, wu = np.polynomial.legendre.leggauss(n)
+    xp, wx = 0.5 * (x2 - x1) * u + 0.5 * (x1 + x2), 0.5 * (x2 - x1) * wu
+    zp, wz = 0.5 * (z2 - z1) * u + 0.5 * (z1 + z2), 0.5 * (z2 - z1) * wu
+    kernel = ((x - xp)[:, None] ** 2 + y * y + (z - zp)[None, :] ** 2) ** -1.5
+    return y / (2.0 * math.pi) * float(wx @ kernel @ wz)
+
+
+def test_rectangle_equals_the_half_space_green_function_and_converges_as_one_over_l_squared() -> None:
+    """Section 9.13 "Gapless-plane basis-function guards", the two clauses not previously asserted: House's four-arctan
+    rectangle IS the half-space Green's-function integral (to 1e-15; the residual at the first point is the round-off of
+    the 120^2-term quadrature, 20 ulp of the value), and the approach to the infinite-strip limit is 1/L^2 as a RATE,
+    not merely at one large L."""
+    for pt in ((0.2, 0.7, 0.1), (1.5, 0.4, 0.3), (0.0, 2.0, 0.0)):
+        assert _rect(*pt) == pytest.approx(_half_space_green(*pt, -1.0, 1.0, -0.5, 0.5), abs=5e-15)
+    x, y = 0.3, 0.8
+    strip = strip_potential(x, y, -1.0, 1.0)
+    dev = {
+        length: abs(rectangle_potential(x, y, 0.0, -1.0, 1.0, -length, length) - strip)
+        for length in (10.0, 20.0, 40.0, 80.0, 160.0)
+    }
+    for hi, lo in ((10.0, 20.0), (20.0, 40.0), (40.0, 80.0), (80.0, 160.0)):
+        assert dev[hi] / dev[lo] == pytest.approx(4.0, rel=6e-3), (
+            "doubling the rail length quarters the deviation"
+        )
+    assert dev[160.0] < 1e-5
+
+
+def test_segmented_rf_rails_report_an_escape_point_and_a_depth() -> None:
+    """PLAN 4.1.6 requires h and the trap depth with every device that uses the module; ``escape_point`` used to raise
+    ``NotImplementedError`` for a rectangle rf electrode, so a segmented surface trap could not report its depth.
+    The numerical saddle is cross-checked against the strip closed form, which a 6 mm rail approximates."""
+    a, b, length = 100e-6, 120e-6, 6e-3
+    rects = {
+        "rf": ((-b, 0.0, -length, length), (a, a + b, -length, length)),
+        "centre": ((0.0, a, -length, length),),
+    }
+    trap = GaplessPlaneTrap(Electrodes("surface_general", {}, rectangles=rects))
+    null = trap.rf_null()  # no guess: the bounded seed finds the null of a segmented layout on its own
+    assert null[1] == pytest.approx(five_wire_null_height_m(a, b), rel=1e-3)
+    assert null[0] == pytest.approx(a / 2, abs=1e-12)
+    esc = trap.escape_point()
+    assert esc[1] == pytest.approx(five_wire_escape_height_m(a, b), rel=1e-3)
+    assert esc[0] == pytest.approx(a / 2, abs=1e-9), (
+        "the mirror-symmetric layout keeps the saddle on the axis"
+    )
+    # it IS a critical point of Psi ~ |E_rf|^2, and a saddle: one negative curvature (up the escape channel)
+    field = trap.rf_field_unit(esc)
+    grad_psi = -2.0 * (trap.rf_hessian_unit(esc) @ field)  # grad |E|^2 = -2 H E
+    assert float(np.max(np.abs(grad_psi))) < 1e-6 * float(np.dot(field, field)) / esc[1]
+    depth = trap.depth_j(300.0, 1.46e-25, HOUSE["omega"])
+    assert depth == pytest.approx(five_wire_depth_j(a, b, 300.0, 1.46e-25, HOUSE["omega"]), rel=5e-3)
+    assert depth > 0.0
+    # a short rail sits lower and its escape Psi (~1/h^2 at unit voltage) is correspondingly larger: the numerical
+    # route follows the actual finite geometry and is not the strip closed form in disguise
+    short = {
+        "rf": ((-b, 0.0, -300e-6, 300e-6), (a, a + b, -300e-6, 300e-6)),
+        "centre": ((0.0, a, -300e-6, 300e-6),),
+    }
+    stubby = GaplessPlaneTrap(Electrodes("surface_general", {}, rectangles=short))
+    y_short = stubby.rf_null()[1]
+    assert y_short < 0.95 * null[1]
+    assert stubby.escape_point()[1] < 0.95 * esc[1]
+    assert stubby.depth_j(300.0, 1.46e-25, HOUSE["omega"]) > 1.2 * depth, (
+        "a lower null means a larger escape Psi at unit rf voltage"
+    )
+    # a single rf rail has no null above it at all, and says so
+    one = GaplessPlaneTrap(
+        Electrodes("surface_general", {}, rectangles={"rf": ((-b, 0.0, -length, length),)})
+    )
+    with pytest.raises(ValueError):
+        one.escape_point()
+
+
+def test_dc_potential_carries_the_external_curvature_like_the_field_and_the_hessian() -> None:
+    """``dc_potential`` was the one dc accessor that omitted the externally solved curvature that ``dc_field``,
+    ``dc_hessian`` and ``total_energy_j`` all include; a caller using it alone got an incomplete potential."""
+    kzz = 1.0e8
+    geometry = Electrodes(
+        "surface_five_wire",
+        {
+            "a_m": HOUSE["a"],
+            "b_m": HOUSE["b"],
+            "dc_curvature_xx_v_per_m2": -kzz / 2,
+            "dc_curvature_yy_v_per_m2": -kzz / 2,
+            "dc_curvature_zz_v_per_m2": kzz,
+        },
+    )
+    trap = GaplessPlaneTrap(geometry)
+    null = trap.rf_null()
+    ext = geometry.external_dc_hessian_v_per_m2()
+    r = null + np.array([3e-6, 2e-6, 8e-6])
+    d = r - null
+    # the potential is the electrodes' plus (1/2) d . H_ext . d, and its gradient/curvature are dc_field/dc_hessian
+    bare = GaplessPlaneTrap(Electrodes("surface_five_wire", {"a_m": HOUSE["a"], "b_m": HOUSE["b"]}))
+    assert trap.dc_potential(r, {"centre": 2.0}) == pytest.approx(
+        bare.dc_potential(r, {"centre": 2.0}) + 0.5 * float(d @ ext @ d), rel=1e-12
+    )
+    assert trap.dc_potential(null, {}) == pytest.approx(0.0, abs=1e-18)
+    h = 1e-8
+    for axis in range(3):
+        rp, rm = r.copy(), r.copy()
+        rp[axis] += h
+        rm[axis] -= h
+        num = -(trap.dc_potential(rp, {"centre": 2.0}) - trap.dc_potential(rm, {"centre": 2.0})) / (2 * h)
+        assert num == pytest.approx(float(trap.dc_field(r, {"centre": 2.0})[axis]), rel=1e-5)
+    # and total_energy_j is unchanged by the move (it used to add the same term itself)
+    energy = trap.total_energy_j(r, HOUSE["v"], HOUSE["m"], HOUSE["omega"], {"centre": 2.0})
+    expected = trap.pseudopotential_j(r, HOUSE["v"], HOUSE["m"], HOUSE["omega"]) + E_C * trap.dc_potential(
+        r, {"centre": 2.0}
+    )
+    assert energy == pytest.approx(expected, rel=1e-12)
+
+
+def test_z_invariant_rails_have_no_axial_rf_curvature() -> None:
+    """Section 9.13: "for z-invariant rails, Q33 = Q13 = Q23 = 0 with Q11 = -Q22" - stated explicitly, not left structural."""
+    trap = GaplessPlaneTrap(Electrodes("surface_five_wire", {"a_m": HOUSE["a"], "b_m": HOUSE["b"]}))
+    null = trap.rf_null()
+    _a_mat, q_mat = mathieu_matrices(
+        np.zeros((3, 3)), HOUSE["v"] * trap.rf_hessian_unit(null), HOUSE["m"], HOUSE["omega"]
+    )
+    scale = float(np.max(np.abs(q_mat)))
+    assert scale > 0.2
+    for i, j in ((2, 2), (0, 2), (1, 2), (2, 0), (2, 1)):
+        assert abs(q_mat[i, j]) < 1e-14 * scale, f"Q[{i}, {j}] is zero for rails invariant along z"
+    assert q_mat[0, 0] == pytest.approx(-q_mat[1, 1], rel=1e-12)
+    assert abs(np.trace(q_mat)) < 1e-14 * scale
+
+
 def test_rectangle_gradient_and_hessian_against_finite_differences() -> None:
     r = np.array([0.2, 0.7, 0.1])
     h = 1e-6
@@ -131,6 +264,26 @@ def test_five_wire_house_fixture_of_section_9_13() -> None:
     assert beta_preprint(0.0, q) * HOUSE["omega"] / 2 / TWO_PI == pytest.approx(4.077e6, abs=2e3)
     # House's 11.5 MHz radial frequency is not reproducible (a dropped 1/(2 sqrt 2)): the negative control
     assert q * HOUSE["omega"] / TWO_PI == pytest.approx(11.42e6, rel=1e-2)
+
+
+def test_four_wire_escape_height_and_the_wesenberg_depth_constant() -> None:
+    """Section 9.13 row "Universal fixed-height depth bound": the four-wire escape height (y_E - y0)/a = sqrt(2 + sqrt 5) - 1
+    = 1.0581710273 = Wesenberg's |p_s|/d, and Ubar_s = (5 sqrt 5 - 11)/(2 pi^2) U0 = 0.009136125 U0."""
+    a = 1.0
+    trap = GaplessPlaneTrap(Electrodes("surface_four_wire", {"a_m": a, "c_m": a}))
+    null, esc = trap.rf_null(), trap.escape_point()
+    assert null[1] == pytest.approx(a, rel=1e-12), "the symmetric four-wire null sits one centre width up"
+    assert abs(esc[0]) < 1e-12 * a and abs(null[0]) < 1e-12 * a, "on the symmetry axis"
+    target = math.sqrt(2.0 + math.sqrt(5.0)) - 1.0
+    assert target == pytest.approx(1.0581710273, abs=5e-11)
+    assert (esc[1] - null[1]) / a == pytest.approx(target, rel=1e-10)
+    # the two printed forms of the same optimum: House's kappa = (5 sqrt 5 - 11)/8 and Wesenberg's Ubar_s/U0 = 4 kappa/pi^2
+    u_bar_over_u0 = (5.0 * math.sqrt(5.0) - 11.0) / (2.0 * math.pi**2)
+    assert u_bar_over_u0 == pytest.approx(0.009136125, abs=5e-10)
+    assert u_bar_over_u0 == pytest.approx(4.0 * KAPPA_MAX / math.pi**2, rel=1e-15)
+    # and the module's depth is that constant with U0 = e^2 V_rf^2/(4 m Omega^2 d^2) (the normalization the two forms imply)
+    depth = trap.depth_j(1.0, 1.0, 1.0)
+    assert depth / (E_C**2 / (4.0 * null[1] ** 2)) == pytest.approx(u_bar_over_u0, rel=1e-9)
 
 
 def test_escape_radical_coefficient_negative_control() -> None:

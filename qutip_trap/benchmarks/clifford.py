@@ -6,8 +6,11 @@ laboratory computes it); they are never applied to a simulated state (Section 3.
 operations through the compiler and played as pulses by ``run``.
 
 - The 24 single-qubit Cliffords are the closure of {H, S} modulo global phase, in a fixed enumeration order; each compiles
-  to at most two GPi2 pulses plus virtual RZ (``decompose_single_qubit``), a pure Z rotation to no pulse at all, which is
-  how the hardware plays it (Section 7.1).
+  through ``decompose_single_qubit`` (Section 7.2 item 1) to virtual RZ plus, as it happens, exactly ONE pulse for 20 of
+  them (16 GPi2 and 4 GPi) and NO pulse for the remaining 4 -- the order-4 Z-rotation subgroup {1, S, Z, S^dag}, one sixth
+  of the group, which the hardware plays as a frame update (Section 7.1). The mean is 0.8333 pulses per Clifford (0.6667
+  GPi2 and 0.1667 GPi); the ZXZXZ branch of the decomposer, which would cost two GPi2 pulses, is never reached by a
+  Clifford, whose ZYZ middle angle is always 0, pi/2 or pi (``tests/test_clifford.py``).
 - The 11520 two-qubit Cliffords split into the four double cosets L g L of the local subgroup L = C1 (x) C1 (576 elements)
   by entangling core g in {1, CNOT, iSWAP, SWAP}, of sizes 576, 5184, 5184, 576 (Barends et al. 2014, Supplementary; the
   stabilizer |L intersect g L g^-1| is 576, 64, 64 and 576). A uniform element of the group is a core drawn with probability

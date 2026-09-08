@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from itertools import combinations_with_replacement, permutations
 
 import numpy as np
+from scipy.linalg import expm
 
 from qutip_trap.trap.crystal import (
     K_COULOMB_J_M,
@@ -44,7 +45,7 @@ from qutip_trap.trap.crystal import (
     axial_hessian_dimensionless,
     length_scale_m,
 )
-from qutip_trap.units import HBAR_J_S
+from qutip_trap.units import HBAR_J_S, TWO_PI
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,9 @@ class AnharmonicTerms:
     cubic_rad_s: dict[tuple[int, int, int], float] = field(default_factory=dict)
     quartic_rad_s: dict[tuple[int, int, int, int], float] = field(default_factory=dict)
     resonance_check: bool = True
+    """Section 5.7: the resonance checker and the integrated-phase estimate are ON BY DEFAULT, independently of whether
+    the cubic Hamiltonian itself is built (``BuilderOptions.include_anharmonic``); the Hamiltonian builder reads this
+    field and reports ``anharmonic_estimate`` in ``BuiltHamiltonian.approximations``. Set False to silence the report."""
 
     def __post_init__(self) -> None:
         for key in self.cubic_rad_s:
@@ -309,6 +313,117 @@ def dispersive_phase_bound_rad(coupling_rad_s: float, mismatch_rad_s: float, dur
     return coupling_rad_s**2 * duration_s / abs(mismatch_rad_s)
 
 
+# ---- the default-on integrated-phase estimator (Sections 4.1.4, 5.7; 9.12 row "Cubic anharmonicity gate") ------------------
+
+
+def integrated_cubic_phase_rad(
+    coupling_rad_s: float,
+    omega_a_rad_s: float,
+    omega_b_rad_s: float,
+    duration_s: float,
+    *,
+    state: tuple[int, int] = (1, 0),
+    dimensions: tuple[int, int] = (8, 6),
+) -> float:
+    """The DIRECTLY INTEGRATED phase of |n_a, n_b> under H = w_a a^dag a + w_b b^dag b + g (a + a^dag)^2 (b + b^dag).
+
+    The phase is taken relative to |0, 0> and beyond free evolution, from the exact propagator:
+    arg[(<s|U|s>/<s|U_0|s>) / (<0|U|0>/<0|U_0|0>)]. This is the fixture of Section 9.12's "Cubic anharmonicity gate"
+    row, which the 2026-09-04 numerics critique made the reported quantity: at g/2pi = 1.419 kHz over 100 us, mismatches
+    of 1, 0.3, 0.1 and 0.03 MHz (w_b = 2 w_a - 2 pi Delta, the 2:1 three-phonon resonance) give 0.0041, 0.0034, 0.0032
+    and 0.0032 rad on |1, 0> - essentially FLAT, where the second-order label g^2 t/Delta_res would give 0.0013, 0.0042,
+    0.0127 and 0.0422 rad (3x low at 1 MHz, 13x high at 0.03 MHz), and 0.016 rad on the resonant pair |2, 0> <-> |0, 1>
+    at 0.1 MHz. The withdrawn first-order figure g t is 0.89 rad over the same 100 us
+    (``validation/scripts/check_anharmonic.py``, whose two-mode model this reproduces).
+
+    ``dimensions`` are the two modes' Fock truncations; the leaked population is below 1e-6 over the whole fixture, so
+    the diagonal element is a phase and not an amplitude.
+    """
+    if duration_s < 0.0:
+        raise ValueError("a duration is non-negative")
+    d_a, d_b = dimensions
+    if state[0] >= d_a or state[1] >= d_b or state[0] < 0 or state[1] < 0:
+        raise ValueError(f"the state {state} does not fit the truncations {dimensions}")
+    a = np.kron(np.diag(np.sqrt(np.arange(1, d_a)), 1), np.eye(d_b))
+    b = np.kron(np.eye(d_a), np.diag(np.sqrt(np.arange(1, d_b)), 1))
+    h0 = omega_a_rad_s * (a.T @ a) + omega_b_rad_s * (b.T @ b)
+    x_a, x_b = a + a.T, b + b.T
+    h = h0 + coupling_rad_s * (x_a @ x_a) @ x_b
+    u = expm(-1j * h * duration_s)
+    u0 = expm(-1j * h0 * duration_s)
+    i = state[0] * d_b + state[1]
+    return float(np.angle((u[i, i] / u0[i, i]) / (u[0, 0] / u0[0, 0])))
+
+
+@dataclass(frozen=True)
+class AnharmonicEstimate:
+    """What the default-on estimator of Section 5.7 reports: the nearest three-mode resonance and the integrated phase.
+
+    ``phase_rad`` is ``integrated_cubic_phase_rad`` evaluated for the worst triple (the one with the largest second-order
+    bound g^2 t/Delta_res) in the canonical two-mode 2:1 model at that triple's coupling and mismatch; ``bound_rad`` is
+    that bound itself, which Section 9.12 keeps ONLY as an explicit upper bound. ``resonances`` are the triples inside the
+    coupling width, where the growth is linear in time instead and the estimate does not apply.
+    """
+
+    phase_rad: float
+    coupling_rad_s: float
+    mismatch_hz: float
+    modes: tuple[int, int, int]
+    bound_rad: float
+    resonances: tuple[Resonance, ...]
+    width_hz: float
+
+    def summary(self) -> str:
+        """The one-line note the Hamiltonian builder appends to ``BuiltHamiltonian.approximations``."""
+        near = (
+            f"{len(self.resonances)} mode triple(s) within the {self.width_hz:.3g} Hz coupling width "
+            f"(nearest {abs(self.resonances[0].mismatch_hz):.3g} Hz: growth is LINEAR in time there)"
+            if self.resonances
+            else f"no mode triple within the {self.width_hz:.3g} Hz coupling width"
+        )
+        return (
+            f"anharmonic resonance check (Section 5.7, on by default): {near}; integrated cubic phase "
+            f"{self.phase_rad:+.3e} rad on modes {self.modes} at g/2pi = {self.coupling_rad_s / TWO_PI:.4g} Hz and "
+            f"Delta_res = {self.mismatch_hz:.4g} Hz (the g^2 t/Delta bound alone would read {self.bound_rad:.3e} rad)"
+        )
+
+
+def anharmonic_estimate(
+    crystal: Crystal, terms: AnharmonicTerms, duration_s: float, *, width_hz: float | None = None
+) -> AnharmonicEstimate | None:
+    """The Section 5.7 default-on report: run the resonance checker and integrate the phase; None with no cubic coupling.
+
+    ``width_hz`` defaults to the coupling width g_max/2pi (Section 4.1.4: "the resonance checker lists the mode triples
+    within a coupling width of Marquet's condition"). The triple the phase is quoted for is the one maximizing the
+    second-order bound g^2/|Delta_res|, i.e. the worst case; an exactly resonant triple has no dispersive phase at all
+    (the growth is linear in time) and is reported through ``resonances`` instead.
+    """
+    if not terms.cubic_rad_s:
+        return None
+    width = terms.largest_cubic_rad_s() / TWO_PI if width_hz is None else float(width_hz)
+    every = three_mode_resonances(
+        crystal, terms, width_hz=math.inf
+    )  # sorted by |mismatch|; one pass, then filtered
+    resonances = tuple(r for r in every if abs(r.mismatch_hz) < width)
+    off = [r for r in every if r.mismatch_hz != 0.0]
+    if not off:
+        return None
+    worst = max(off, key=lambda r: r.coupling_rad_s**2 / abs(TWO_PI * r.mismatch_hz))
+    omega_a = crystal.modes[worst.modes[0]].omega_rad_s
+    phase = integrated_cubic_phase_rad(
+        worst.coupling_rad_s, omega_a, 2.0 * omega_a - TWO_PI * worst.mismatch_hz, duration_s
+    )
+    return AnharmonicEstimate(
+        phase_rad=phase,
+        coupling_rad_s=worst.coupling_rad_s,
+        mismatch_hz=worst.mismatch_hz,
+        modes=worst.modes,
+        bound_rad=dispersive_phase_bound_rad(worst.coupling_rad_s, TWO_PI * worst.mismatch_hz, duration_s),
+        resonances=resonances,
+        width_hz=width,
+    )
+
+
 def axial_hessian_check(u: np.ndarray) -> np.ndarray:
     """sum_p u_p C_mnp = (1/2)(delta_mn - A_mn) - (the Euler identity behind D_mn2): returns the residual matrix."""
     c = marquet_c_tensor(u)
@@ -318,8 +433,10 @@ def axial_hessian_check(u: np.ndarray) -> np.ndarray:
 
 
 __all__ = [
+    "AnharmonicEstimate",
     "AnharmonicTerms",
     "Resonance",
+    "anharmonic_estimate",
     "axial_cubic_closed_form_rad_s",
     "axial_hessian_check",
     "coulomb_anharmonic_terms",
@@ -327,6 +444,7 @@ __all__ = [
     "coulomb_third_derivatives",
     "coupling_g_rad_s",
     "dispersive_phase_bound_rad",
+    "integrated_cubic_phase_rad",
     "marquet_c_tensor",
     "marquet_d_coefficients",
     "marquet_selection_rules",

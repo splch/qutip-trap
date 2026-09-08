@@ -14,6 +14,9 @@ test at 1e-12 rather than a bitwise one because sums over trajectories accumulat
 
 from __future__ import annotations
 
+import os
+import resource
+import sys
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Literal
 
@@ -28,14 +31,44 @@ M9B = "milestone M9b (dynamics/parallel.py, PLAN.md Section 11.3 item 9)"
 MapKind = Literal["serial", "parallel", "loky"]
 
 
+MEMORY_FRACTION_FOR_WORKERS = 0.5
+"""The share of physical memory the forked workers may occupy together (the other half stays with the parent, the page cache
+and the rest of the machine)."""
+MIN_PARENT_BYTES = 512 * 1024**2
+"""The smallest parent footprint the cap reckons with, so a fresh process still gets every CPU."""
+
+
+def peak_rss_bytes() -> int:
+    """This process's peak resident set size (``ru_maxrss``: bytes on macOS, kilobytes on Linux)."""
+    peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return peak if sys.platform == "darwin" else peak * 1024
+
+
+def physical_memory_bytes() -> int:
+    return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))
+
+
+def memory_worker_cap() -> int:
+    """How many forked workers the machine can carry beside this process.
+
+    QuTiP's ``parallel`` map forks (``multiprocessing.get_context("fork")``), so every worker starts as a copy-on-write image
+    of the parent, and Python's reference counting dirties the pages a worker touches: a long session (a test run, an
+    application that has built many Hamiltonians) whose parent has grown to several gigabytes turns N workers into up to N
+    copies of that footprint. Two kernel watchdog panics on 2026-09-08 were exactly that, 18 workers forked from a multi-
+    gigabyte pytest process on a 48 GB machine. The cap keeps the workers' worst-case total (each as large as the parent's
+    peak) inside ``MEMORY_FRACTION_FOR_WORKERS`` of physical memory.
+    """
+    parent = max(peak_rss_bytes(), MIN_PARENT_BYTES)
+    return max(1, int(MEMORY_FRACTION_FOR_WORKERS * physical_memory_bytes() // parent))
+
+
 def worker_count(options: SolverOptions) -> int:
     """The processes the maps may use: ``SolverOptions.workers``, else every CPU QuTiP sees (``available_cpu_count``); 1 under
-    ``map="serial"``."""
+    ``map="serial"``; never more than ``memory_worker_cap()`` allows (ledger ``conv.worker_memory_cap``)."""
     if options.map == "serial":
         return 1
-    if options.workers is not None:
-        return max(1, int(options.workers))
-    return max(1, int(available_cpu_count()))
+    wanted = int(options.workers) if options.workers is not None else int(available_cpu_count())
+    return max(1, min(wanted, memory_worker_cap()))
 
 
 def map_tasks[T, R](
@@ -65,4 +98,14 @@ def map_tasks[T, R](
     return out
 
 
-__all__ = ["M9B", "MapKind", "map_tasks", "worker_count"]
+__all__ = [
+    "M9B",
+    "MEMORY_FRACTION_FOR_WORKERS",
+    "MIN_PARENT_BYTES",
+    "MapKind",
+    "map_tasks",
+    "memory_worker_cap",
+    "peak_rss_bytes",
+    "physical_memory_bytes",
+    "worker_count",
+]

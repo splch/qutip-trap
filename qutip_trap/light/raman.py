@@ -16,6 +16,7 @@ but not applied: the frame alignment of Section 7.5 absorbs it once per ion.
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -23,6 +24,7 @@ import numpy as np
 
 from qutip_trap.control.pulses import Drive, DriveKind, LightShiftCouplings, Tone
 from qutip_trap.device.model import Device
+from qutip_trap.light.comb import CombSpec
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.mathieu import MathieuParameters
 from qutip_trap.trap.micromotion import MicromotionIndex
@@ -177,6 +179,59 @@ def differential_stark_shift_hz(device: Device, ion: int, beam_indices: Sequence
     ) / TWO_PI
 
 
+def quadrupole_stark_shift_hz(device: Device, ion: int, beam: int) -> float:
+    """delta_St/2pi of a driven E2 component from the OTHER components inside the Zeeman span (Section 4.5.7).
+
+    "The ac Stark shift of a driven component by the nine off-resonant components inside the 30 MHz Zeeman
+    span is computed by second-order perturbation from the same Omega(m, m') table." This assembles that
+    table -- every |S, m> <-> |D, m'> Rabi frequency at the ion's position, from the same
+    ``rabi_frequency_e2_rad_s`` the drive uses -- and hands it, with the dressed Zeeman energies, to
+    :func:`~qutip_trap.species.quadrupole.e2_stark_shift_rad_s`.
+
+    I = 0 only, as the whole of 4.5.7 is: a hyperfine-resolved E2 coupling raises in
+    ``Species.rabi_frequency_hz`` and would raise here too. Tagged UNVALIDATED in the ledger
+    (``conv.e2_ac_stark_shift``): Section 4.5.7 and Section 12 carry no source number for it.
+    """
+    from qutip_trap.species.model import level_j
+    from qutip_trap.species.quadrupole import (
+        e2_stark_shift_rad_s,
+        rabi_frequency_e2_rad_s,
+        reduced_element_from_lifetime_m2,
+    )
+    from qutip_trap.species.zeeman import parse_quantum_numbers
+
+    species = device.crystal.species[ion]
+    if species.nuclear_spin != 0.0:
+        raise NotImplementedError(
+            "hyperfine-resolved E2 couplings are not specified (Section 4.5.7 treats I = 0)"
+        )
+    lower, upper = species.qubit
+    lo_level, up_level = lower.split()[0], upper.split()[0]
+    e2 = next(
+        t for t in species.transitions if t.multipole == "E2" and {t.lower, t.upper} == {lo_level, up_level}
+    )
+    st = _structure(device, ion)
+    b = device.beams[beam]
+    pos = _position(device, ion)
+    e0 = st.field_amplitude(b, pos)
+    red = reduced_element_from_lifetime_m2(e2.wavelength_vac_m, e2.partial_rate_rad_s, level_j(e2.upper))
+    j_lo, j_up = level_j(e2.lower), level_j(e2.upper)
+    lower_states = {parse_quantum_numbers(s.label)["mJ"]: s.energy_hz for s in st.states_of(e2.lower)}
+    upper_states = {parse_quantum_numbers(s.label)["mJ"]: s.energy_hz for s in st.states_of(e2.upper)}
+    couplings = {
+        (m, mp): rabi_frequency_e2_rad_s(
+            e0, b.wavelength_m, red, j_lo, m, j_up, mp, b.polarization, b.k_hat, device.field.direction
+        )
+        for m in lower_states
+        for mp in upper_states
+    }
+    m_driven = parse_quantum_numbers(lower.split(" ", 1)[1])["mJ"]
+    mp_driven = parse_quantum_numbers(upper.split(" ", 1)[1])["mJ"]
+    if e2.lower != lo_level:  # the qubit pair is written upper-first
+        m_driven, mp_driven = mp_driven, m_driven
+    return e2_stark_shift_rad_s(couplings, lower_states, upper_states, m_driven, mp_driven) / TWO_PI
+
+
 def derive_raman_drive(
     device: Device, ion: int, beams: tuple[int, int], *, scattering: bool = True
 ) -> DerivedDrive:
@@ -244,11 +299,17 @@ def derive_optical_drive(device: Device, ion: int, beam: int, *, scattering: boo
         delta_k=delta_k,
         etas=etas,
         c0_applied=c0,
-        stark_shift_hz=0.0 if kind == "optical_E2" else differential_stark_shift_hz(device, ion, (beam,)),
+        # Section 4.5.7: the E2 shift is second order in the OTHER nine components, not zero (audit E9)
+        stark_shift_hz=(
+            quadrupole_stark_shift_hz(device, ion, beam)
+            if kind == "optical_E2"
+            else differential_stark_shift_hz(device, ion, (beam,))
+        ),
         scattering=budget,
         micromotion=_micromotion(device, ion, delta_k),
         provenance=(
             "conv.quadrupole_coupling" if kind == "optical_E2" else "conv.rabi_from_intensity",
+            *(("conv.e2_ac_stark_shift",) if kind == "optical_E2" else ()),
             "conv.lamb_dicke",
         ),
     )
@@ -425,9 +486,108 @@ def square_drive(
     )
 
 
+def comb_drive(
+    derived: DerivedDrive,
+    comb: CombSpec,
+    *,
+    omega_q_hz: float,
+    gate_time_s: float,
+    mode_hz: float | None = None,
+    sideband: int = 0,
+    phase_rad: float = 0.0,
+    levels_hz: Sequence[float] | None = None,
+    couplings_hz: Sequence[float] | None = None,
+    n_index: int = 0,
+    rabi_scale: float = 1.0,
+    crosstalk: dict[int, complex] | None = None,
+    nbar: float = 0.0,
+    detuning_hz: float | None = None,
+    fine_structure_hz: float | None = None,
+    theta_per_pulse_rad: float | None = None,
+) -> Drive:
+    """A mode-locked (frequency-comb) Raman drive: the tone SET of Section 4.3.7 through the one builder.
+
+    ``tones`` comes from ``comb.tones()`` and ``stark_shift_hz`` from ``comb.stark4_hz()``, which is what ``Drive.comb``
+    has always promised and nothing built (M2 audit E8): the near-resonant beat notes stay explicit as QobjEvo
+    coefficients and only the far-detuned ones fold into the static fourth-order shift, the two sets partitioning the
+    comb through the same ``gate_time_s`` window (``CombSpec.explicit_orders``).
+
+    ``levels_hz``/``couplings_hz`` (Hz, relative to any origin, one coupling per sublevel) give the fourth-order shift;
+    without them the drive carries no static shift, which is recorded by the caller's guard report rather than assumed
+    to be zero. The per-tone envelope is |Omega| x rabi_scale x sech(pi j nu_rep tau) - ONE sech factor, never three
+    (Section 4.3.7).
+    """
+    if derived.kind != "raman":
+        raise ValueError("a frequency comb generates a Raman drive (Section 4.3.7)")
+    if gate_time_s <= 0.0:
+        raise ValueError("gate_time_s is a positive duration")
+    tones = comb.tones(
+        omega_q_hz,
+        mode_hz,
+        omega0_hz=derived.carrier_rabi_hz * rabi_scale,
+        gate_time_s=gate_time_s,
+        phase_rad=phase_rad,
+        sideband=sideband,
+    )
+    if not tones:
+        raise ValueError(
+            "the comb has no beat note inside the gate window: check aom_offset_hz against nu_q "
+            f"({comb.resonance_target_hz(omega_q_hz, mode_hz, sideband):.6g} Hz) and the rep rate"
+        )
+    shift_hz = 0.0
+    if levels_hz is not None or couplings_hz is not None:
+        if levels_hz is None or couplings_hz is None:
+            raise ValueError("the fourth-order shift needs both levels_hz and couplings_hz")
+        shift_hz = float(
+            comb.stark4_hz(
+                levels_hz,
+                couplings_hz=couplings_hz,
+                n_index=n_index,
+                gate_time_s=gate_time_s,
+                resonance_hz=comb.resonance_target_hz(omega_q_hz, mode_hz, sideband),
+            )[0]
+        )
+    # the validity hierarchy of Section 4.3.7 is a runtime guard, and this is the one place every input exists
+    eta = max((abs(v) for v in derived.etas.values()), default=0.0)
+    failing = [
+        name
+        for name, ok in comb.guards(
+            omega_q_hz,
+            eta,
+            nbar,
+            gate_time_s,
+            abs(mode_hz) if mode_hz else 0.0,
+            detuning_hz=detuning_hz,
+            fine_structure_hz=fine_structure_hz,
+            theta_per_pulse_rad=theta_per_pulse_rad,
+        ).items()
+        if not ok
+    ]
+    missing = comb.unevaluated_guards(detuning_hz=detuning_hz, theta_per_pulse_rad=theta_per_pulse_rad)
+    if failing or missing:
+        warnings.warn(
+            "comb drive on ion "
+            f"{derived.ion}: pulse-train-to-continuous-wave guards failing {failing or 'none'}, not evaluated "
+            f"{list(missing) or 'none'} (Section 4.3.7's validity hierarchy; the builder records the clauses it can "
+            "check in BuiltHamiltonian.approximations)",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return Drive(
+        kind="raman",
+        ions=(derived.ion,),
+        tones=tones,
+        beams=derived.beams,
+        stark_shift_hz=shift_hz,
+        crosstalk=dict(crosstalk or {}),
+        comb=comb,
+    )
+
+
 __all__ = [
     "DerivedDrive",
     "ScatteringBudget",
+    "comb_drive",
     "crosstalk_ratios",
     "derive_light_shift_drive",
     "derive_optical_drive",

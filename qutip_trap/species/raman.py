@@ -81,6 +81,19 @@ class AtomicStructure:
         self.e1: dict[tuple[str, str], Transition] = {
             (t.lower, t.upper): t for t in species.transitions if t.multipole == "E1"
         }
+        if not self.e1:
+            # Section 4.5.4/4.5.5 are explicit sums over the E1-connected levels: with no E1 record every
+            # coupling, light shift and scattering rate would silently return 0 or {} (defect B7, 88Sr+).
+            # The one legitimate case is an I = 0 optical qubit on the E2 pair itself, which Section 4.5.7
+            # drives without any intermediate sum.
+            e2_pairs = {frozenset((t.lower, t.upper)) for t in species.transitions if t.multipole == "E2"}
+            qubit_levels = frozenset(parse_state_label(lab)[0] for lab in species.qubit)
+            if qubit_levels not in e2_pairs:
+                raise ValueError(
+                    f"{species.name}: no E1 transition is tabulated, so no Section 4.5.4 intermediate sum "
+                    f"exists; the qubit pair {sorted(qubit_levels)} is not a tabulated E2 pair either "
+                    f"(E2 pairs: {[sorted(p) for p in e2_pairs]})"
+                )
         self._states: dict[str, DressedState] = {}
         for lv in species.levels:
             sp = self.spectra[lv.name]
@@ -167,6 +180,47 @@ class AtomicStructure:
                 out.append((e, omega, self.detuning_rad_s(a, e, beam)))
         return out
 
+    def nearest_resonance_in_linewidths(
+        self, a: DressedState, beam: Beam, position_m: Sequence[float] | None = None
+    ) -> float:
+        """min_e |Delta_e|/Gamma_e over the intermediate sublevels: how far from resonance the sums are.
+
+        PLAN.md 4.5.6: the second-order sums "have no i gamma/2 in their denominators and are used only far
+        from resonance, the multi-level Bloch solve of Section 4.2.8 taking over within a few linewidths".
+        This is the diagnostic that says which side of that line a call is on; ``inf`` when the beam couples
+        nothing. :meth:`refuse_if_near_resonance` turns it into a refusal.
+        """
+        worst = math.inf
+        for e, _om, delta in self.couplings_from(a, beam, position_m):
+            gamma = self.total_decay_rate_rad_s(e.level)
+            if gamma > 0.0:
+                worst = min(worst, abs(delta) / gamma)
+        return worst
+
+    def refuse_if_near_resonance(
+        self,
+        a: DressedState,
+        beam: Beam,
+        position_m: Sequence[float] | None = None,
+        *,
+        min_linewidths: float = 10.0,
+    ) -> None:
+        """Raise when the beam is within ``min_linewidths`` Gamma_e of any dressed intermediate sublevel.
+
+        Not called by the second-order sums themselves: PLAN.md 4.5.6 requires the residual excited
+        population to be "reported with its size", which ``residual_excited_population`` does, and a hard
+        refusal inside every sum would break the legitimate near-resonant uses of ``couplings_from`` by the
+        Bloch layer. Callers that mean "far from resonance" call this first.
+        """
+        margin = self.nearest_resonance_in_linewidths(a, beam, position_m)
+        if margin < min_linewidths:
+            raise ValueError(
+                f"{self.species.name}: the beam at {beam.wavelength_m * 1e9:.4f} nm is {margin:.3g} "
+                f"linewidths from a dressed intermediate sublevel of {a.full_label}; the second-order sums "
+                f"of Section 4.5.4 have no i gamma/2 and are valid only far from resonance (the multi-level "
+                f"Bloch solve of Section 4.2.8 takes over within a few linewidths)"
+            )
+
     def light_shift_rad_s(
         self, a: DressedState, beams: Sequence[Beam], position_m: Sequence[float] | None = None
     ) -> float:
@@ -204,28 +258,54 @@ class AtomicStructure:
     # ---- decay and scattering ------------------------------------------------------------------------
 
     def total_decay_rate_rad_s(self, level: str) -> float:
-        """Gamma_e of a level, from its tabulated transitions (all of which carry the same total rate)."""
-        rates = {tr.gamma_rad_s for (lo, up), tr in self.e1.items() if up == level}
+        """Gamma_e of a level, from its tabulated transitions (all of which must carry the same total rate)."""
+        rates = {tr.label: tr.gamma_rad_s for (_lo, up), tr in self.e1.items() if up == level}
         if not rates:
             raise KeyError(f"{self.species.name}: level {level} has no tabulated E1 decay")
-        return rates.pop()
+        first = next(iter(rates.values()))
+        disagree = {lab: g for lab, g in rates.items() if not math.isclose(g, first, rel_tol=1e-9)}
+        if disagree:
+            raise ValueError(
+                f"{self.species.name}: the E1 transitions out of {level} disagree on its total decay rate "
+                f"(Section 13: Transition.gamma_hz is the UPPER level's total rate): {rates}"
+            )
+        return first
+
+    def tabulated_branching_total(self, level: str) -> float:
+        """sum_lo branching(lo -> level) over the TABULATED E1 channels out of ``level``.
+
+        1 when the E1 decay of ``level`` is fully tabulated; less when a channel is declared on the
+        :class:`~qutip_trap.species.model.Level` as ``untabulated_branching`` (Section 4.5.5): the missing
+        fraction must never be renormalized away, because that is what silently moved 40Ca+ P3/2's 5.9% of
+        D-state leakage into the 393 nm cycling line.
+        """
+        return sum(tr.branching for (_lo, up), tr in self.e1.items() if up == level)
 
     def decay_amplitudes(self, e: DressedState) -> dict[tuple[str, int], complex]:
-        """sqrt(Gamma_e) c_{e->b q'}: normalized decay amplitudes of e into every lower sublevel b and polarization index q'.
+        """sqrt(Gamma_e) c_{e->b q'}: decay amplitudes of e into every lower sublevel b and polarization index q'.
 
-        c_{e->b q'} = <b|T_{q'}|e> d_red / N_e with N_e^2 = sum_{b q'} |<b|T_{q'}|e> d_red|^2, so sum_{b q'} |c|^2 = 1 exactly;
-        keys are (b.full_label, q') with q' = m_b - m_e the emitted tensor index.
+        Section 4.5.5 fixes the normalization through <b|d_q'|e> = sqrt(3 pi eps0 hbar c^3 Gamma_e/omega_e^3)
+        c_{e->b q'}, so |c|^2 is the PARTIAL-RATE fraction and carries omega_{e,b}^3 **per channel**: each raw
+        element is weighted by omega_{e,lo}^(3/2) before the normalization. Without that weight the branching
+        weight per channel is Gamma_partial/omega^3 rather than Gamma_partial, which overstated 171Yb+'s
+        P1/2 -> D3/2 leakage by 118x (see ``dynamics/multilevel.py``, which already carries one omega^3 per line).
+        sum_{b q'} |c|^2 then equals :meth:`tabulated_branching_total` (1 for a fully tabulated level), never
+        an unconditional 1; keys are (b.full_label, q') with q' = m_b - m_e the emitted tensor index.
         """
         raw: dict[tuple[str, int], complex] = {}
         for lo in self.lower_levels_of(e.level):
+            tr = self.e1[(lo, e.level)]
+            weight = (TWO_PI * C_M_PER_S / tr.wavelength_vac_m) ** 1.5  # per-CHANNEL omega^(3/2)
             for b in self.states_of(lo):
                 for q in (-1, 0, 1):
-                    val = self._lower_upper_element(b, e, q)
+                    val = weight * self._lower_upper_element(b, e, q)
                     if val != 0.0:
                         raw[(b.full_label, q)] = val
         norm = math.sqrt(sum(abs(v) ** 2 for v in raw.values()))
-        root_gamma = math.sqrt(self.total_decay_rate_rad_s(e.level))
-        return {k: root_gamma * v / norm for k, v in raw.items()}
+        scale = (
+            math.sqrt(self.total_decay_rate_rad_s(e.level) * self.tabulated_branching_total(e.level)) / norm
+        )
+        return {k: scale * v for k, v in raw.items()}
 
     def scattering_amplitudes_by_path(
         self, a: DressedState, beam: Beam, position_m: Sequence[float] | None = None

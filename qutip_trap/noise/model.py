@@ -41,7 +41,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap.noise.processes import Trajectory, correlated_normals, mains_trajectory, synthesize, time_grid
+from qutip_trap.noise.processes import (
+    TAU_C_OVERSAMPLE,
+    Trajectory,
+    correlated_normals,
+    mains_trajectory,
+    synthesize,
+    time_grid,
+)
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
     KEY_INTENSITY_TRAJECTORY,
@@ -54,6 +61,7 @@ from qutip_trap.noise.sampling import (
     NoiseSample,
     key_beam_offset_m,
     key_beam_phase_rad,
+    key_beam_phase_trajectory_rad,
     key_mode_offset_hz,
     key_position_offset_m,
     key_qubit_offset_hz,
@@ -100,8 +108,16 @@ class NoiseModel:
     collisions: Collisions | None
     laser_frequency_drift: Drift | None = None
     """Hz: the gate laser's frequency against the transition (optical qubits); None = none (M7 extension, defaulted)."""
-    grid_oversample: float = 4.0
-    """Points per half period of the highest sampled frequency on a trajectory grid (Section 5.5)."""
+    beam_phase_noise: NoiseSpectrum | None = None
+    """rad^2/(rad/s), two-sided: the SAMPLED band of each beam's optical path phase, drawn independently per beam
+    (Section 6.3's route (d) for laser phase noise; Section 7.10's user-supplied beat-note phase spectrum). A Raman
+    pair's beat note sees phi_2(t) - phi_1(t), twice one beam's variance for independent paths and zero for a
+    co-propagating pair; the quasi-static counterpart is ``beam_phase_drift``. None = no sampled beam phase."""
+    grid_oversample: float = TAU_C_OVERSAMPLE
+    """Points per half period of the highest sampled frequency on a trajectory grid (Section 5.5).
+
+    The default 10 pi is Section 5.5's ``Delta t <= tau_c/10`` for the fastest tabulated component (tau_c,min =
+    1/omega_max); the previous default of 4 was 7.9x coarser than the rule (``conv.trajectory_grid_tau_c``)."""
     extra: dict[str, float] = field(default_factory=dict)
     """Free-form documented device numbers (a measured T2 to compare with, a quoted heating rate with its provenance)."""
 
@@ -119,12 +135,9 @@ class NoiseModel:
                 "heats at the single-ion rate), inf for a uniform field (only the centre-of-mass modes of an equal-mass chain), "
                 "or a length (Section 4.1.5: the simulator never defaults to the uniform limit)"
             )
-        tab = single_sided_from_spectrum(np.abs(np.asarray(self.S_E.omega_rad_s)), np.asarray(self.S_E.S))
-        white = 2.0 * self.S_E.white_level
-
-        def s_e(omega: float) -> float:
-            return float(tab(omega) if not self.S_E.is_zero() else 0.0) + white
-
+        # the record itself, not its arrays: S_E.value folds onto |omega|, is zero above the tabulated band and adds
+        # white_level once, so S_E = 2 S^(2) needs no second white term here (Section 13; trap/heating.py)
+        s_e = single_sided_from_spectrum(self.S_E)
         rates = heating_rates_per_mode(device.crystal, s_e, float(self.correlation_length_m))
         return {m: float(r) for m, r in enumerate(rates) if r > 0.0}
 
@@ -201,7 +214,7 @@ class NoiseModel:
         s_b = self.S_B if device is None else self.field_spectrum(device)
         if s_b is not None and not bool(np.all(np.asarray(s_b.S) == 0.0)):
             out["S_B"] = s_b
-        for name in ("laser_phase", "laser_intensity", "rf_amplitude_noise"):
+        for name in ("laser_phase", "laser_intensity", "rf_amplitude_noise", "beam_phase_noise"):
             spec = getattr(self, name)
             if spec is not None and not bool(np.all(np.asarray(spec.S) == 0.0)):
                 out[name] = spec
@@ -214,6 +227,66 @@ class NoiseModel:
         if self.mains is not None and any(a != 0.0 for a in self.mains.amplitudes_t.values()):
             return False
         return not self.sampled_spectra(device)
+
+    def apparatus(self) -> tuple[str, ...]:
+        """Every apparatus tag declared by a non-quiet rate of this model, sorted and de-duplicated (Section 6.1).
+
+        A rate that is zero contributes nothing to a budget, so it contributes no apparatus either; a non-zero rate with
+        no ``provenance`` is what ``provenance_sentence`` reports as undeclared.
+        """
+        tags: set[str] = set()
+        for spec in (
+            self.S_E,
+            self.S_B,
+            self.laser_phase,
+            self.laser_intensity,
+            self.rf_amplitude_noise,
+            self.rf_phase_noise,
+            self.rabi_amplitude,
+            self.beam_phase_noise,
+        ):
+            if spec is not None and not spec.is_zero():
+                tags.update(spec.provenance)
+        for drift in self.drifts.values():
+            if not drift.quiet:
+                tags.update(drift.provenance)
+        return tuple(sorted(tags))
+
+    def undeclared_rate_count(self) -> int:
+        """How many non-quiet rates carry no apparatus tag (Section 6.1's provenance requirement)."""
+        n = 0
+        for spec in (
+            self.S_E,
+            self.S_B,
+            self.laser_phase,
+            self.laser_intensity,
+            self.rf_amplitude_noise,
+            self.rf_phase_noise,
+            self.rabi_amplitude,
+            self.beam_phase_noise,
+        ):
+            if spec is not None and not spec.is_zero() and not spec.provenance:
+                n += 1
+        return n + sum(1 for d in self.drifts.values() if not d.quiet and not d.provenance)
+
+    def provenance_sentence(self) -> str:
+        """Section 6.1's sentence: "An N-ion error budget assembled from them is stitched from at least three apparatus,
+        and the report says so" **[extracted]**. Empty when the model is quiet (no rates, nothing to stitch)."""
+        tags = self.apparatus()
+        undeclared = self.undeclared_rate_count()
+        if not tags and not undeclared:
+            return ""
+        parts = []
+        if tags:
+            parts.append(
+                f"this noise budget is stitched from {len(tags)} apparatus ({', '.join(tags)}): published rates come "
+                "from different machines and mixing them is what Section 6.1 warns about"
+            )
+        if undeclared:
+            parts.append(
+                f"{undeclared} non-zero rate(s) carry no apparatus tag (NoiseSpectrum/Drift.provenance)"
+            )
+        return "; ".join(parts)
 
     def grid_omega_max_rad_s(self, device: Device | None) -> float:
         w = 0.0
@@ -408,6 +481,13 @@ class NoiseModel:
             grids[KEY_RF_FRACTION_TRAJECTORY] = synthesize(
                 spectra["rf_amplitude_noise"], times, rng
             ).as_grid()
+        if "beam_phase_noise" in spectra:
+            # independent per beam: a Raman pair's beat-note phase is the DIFFERENCE of two independent paths
+            # (Section 7.10), so a co-propagating pair (one shared path) must be declared as one beam, not two
+            for b in range(len(device.beams)):
+                grids[key_beam_phase_trajectory_rad(b)] = synthesize(
+                    spectra["beam_phase_noise"], times, rng
+                ).as_grid()
 
 
 def servo_residual(values: np.ndarray, times_s: np.ndarray, bandwidth_hz: float) -> np.ndarray:

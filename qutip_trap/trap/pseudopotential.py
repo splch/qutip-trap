@@ -157,6 +157,51 @@ def linear_trap_parameters(
     return (a_x, a_x, a_z), (q_x, -q_x, 0.0)
 
 
+def trap_inversion_p_s(
+    omega_rad_s: np.ndarray | tuple[float, float, float], mass_kg: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """(P, S) of Home's trap inversion omega_i^2(m) = P_i/m^2 + S_i/m from ONE species' three secular frequencies.
+
+    The pseudopotential splits the confinement into an rf part, whose curvature Psi'' ~ Q^2 |E_rf'|^2/(m Omega^2) makes
+    omega^2 ~ 1/m^2, and a static part with omega^2 ~ 1/m (Home 2013 Eqs. 6-19; PLAN Section 4.1.7). The linear-trap
+    structure of Section 4.1.1 (q_z = 0, q_y = -q_x, and Laplace on the dc potential) fixes P_x = P_y, P_z = 0 and
+    sum_i S_i = 0, which closes the system: 2 P_x/m^2 = sum_i omega_i^2, S_z = m omega_z^2, S_{x,y} = m(omega_{x,y}^2 - P_x/m^2).
+
+    ``P`` is in kg^2 (rad/s)^2 and ``S`` in kg (rad/s)^2. The identity this buys is that
+    omega_x^2(m) - omega_y^2(m) = (m_ref/m)(omega_x,ref^2 - omega_y,ref^2), so the ORDER of the two radial axes is the
+    same for every species (PLAN 9.13: "preserves sign(omega_x^2 - omega_y^2) across species").
+    """
+    w = np.asarray(omega_rad_s, dtype=float)
+    if w.shape != (3,) or np.any(w <= 0.0) or mass_kg <= 0.0:
+        raise ValueError("three positive secular frequencies (rad/s) and a positive mass")
+    p_r = mass_kg**2 * float(np.dot(w, w)) / 2.0
+    s = np.array(
+        [mass_kg * w[0] ** 2 - p_r / mass_kg, mass_kg * w[1] ** 2 - p_r / mass_kg, mass_kg * w[2] ** 2]
+    )
+    return np.array([p_r, p_r, 0.0]), s
+
+
+def pseudopotential_mass_scaling_rad_s(
+    omega_ref_rad_s: np.ndarray | tuple[float, float, float], mass_ref_kg: float, mass_kg: float
+) -> np.ndarray:
+    """Another species' secular frequencies from one species' three, in the PSEUDOPOTENTIAL limit (Home's inversion).
+
+    omega_i(m) = sqrt(P_i/m^2 + S_i/m) with (P, S) from ``trap_inversion_p_s``. Section 9.13's fixture: Be+ at
+    [9.7, 12.9, 4.6] MHz gives Mg+ [1.52, 5.43, 2.82] MHz. This is the Omega_rf -> infinity limit of the exact-exponent
+    route ``Trap.single_ion_frequencies_rad_s`` takes (which inverts the monodromy at the trap's own rf frequency and so
+    carries the O(q^4) Floquet correction: 1.656/4.528 MHz at 40 MHz, 1.520/5.399 at 200 MHz, 1.523/5.430 at 1 GHz).
+    """
+    p, s = trap_inversion_p_s(omega_ref_rad_s, mass_ref_kg)
+    if mass_kg <= 0.0:
+        raise ValueError("a mass is positive")
+    w2 = p / mass_kg**2 + s / mass_kg
+    if np.any(w2 <= 0.0):
+        raise ValueError(
+            f"the pseudopotential does not confine mass {mass_kg} kg on every axis: omega^2 = {w2}"
+        )
+    return np.asarray(np.sqrt(w2))
+
+
 def radial_frequency_from_voltage_rad_s(
     v_rf_peak_v: float, omega_rf_rad_s: float, mass_kg: float, r_m: float, *, charge: int = 1
 ) -> float:
@@ -173,7 +218,9 @@ __all__ = [
     "mathieu_matrices",
     "mathieu_q",
     "pseudopotential_j",
+    "pseudopotential_mass_scaling_rad_s",
     "pseudopotential_v",
     "radial_frequency_from_voltage_rad_s",
     "secular_from_hessian_rad_s",
+    "trap_inversion_p_s",
 ]

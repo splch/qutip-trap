@@ -138,6 +138,40 @@ def wineland_r_se_clock(gamma: float, g_b: float, g_r: float, delta: float, omeg
     return gamma * (g_b**2 + g_r**2) / 3.0 * (1.0 / delta**2 + 2.0 / (delta - omega_f) ** 2)
 
 
+OZERI_PHOTONS_PER_RADIAN_COEFFICIENT = 0.9579
+"""The saturation coefficient of Gamma_total/Delta_St for a FAR-DETUNED clock-qubit Raman drive (Ozeri 2005; PLAN.md:447
+and the 9.10 "Rayleigh amplitudes" row, both [verified]). TRANSCRIBED, not derived here: the coefficient's derivation
+needs Ozeri's four Rayleigh amplitudes at first power in the detuning, and Wineland's Eqs. 2.17-2.18, which the module
+does carry, give exactly 1 (they share one prefactor and one bracket), so 0.9579 is a 4.2 percent correction to that
+identity and not a factor error - see ``wineland_photons_per_stark_radian``."""
+
+
+def ozeri_photons_per_stark_radian(
+    gamma: float, delta_hf: float, coefficient: float = OZERI_PHOTONS_PER_RADIAN_COEFFICIENT
+) -> float:
+    """Gamma_total/Delta_St -> C gamma/Delta_hf: scattered photons per radian of Stark phase, saturated in the detuning.
+
+    Both arguments in the SAME units (angular or ordinary; the ratio is dimensionless). The plan prints
+    0.9579 gamma/Delta_hf = 0.015396 for 9Be+; with the species table's gamma/2pi = 19.4 MHz (Monroe 1995) that product
+    needs Delta_hf/2pi = 1.20702 GHz, which is Langer's clock-point splitting 1.207495843 GHz to 4e-4 and NOT the
+    zero-field |A|(I + 1/2) = 1.250018 GHz (which gives 0.014867). The ledger records the residual.
+    """
+    if delta_hf == 0.0:
+        raise ZeroDivisionError("Delta_hf is the ground-state hyperfine splitting and is nonzero")
+    return coefficient * gamma / delta_hf
+
+
+def wineland_photons_per_stark_radian(gamma: float, omega_0: float) -> float:
+    """R_SE/|delta_{0<->0}| = gamma/omega_0, EXACTLY, for any Delta and any polarization (Wineland Eqs. 2.17-2.18).
+
+    Eq. 2.17 and Eq. 2.18 share the one (g_b^2 + g_r^2)/3 prefactor and the one [1/Delta^2 + 2/(Delta - omega_F)^2]
+    bracket, so their ratio is a pure atomic constant: this is why the clock-qubit shift is polarization independent and
+    therefore UNNULLABLE, unlike the 9Be+ |2,2> <-> |1,1> shift (PLAN.md:685). It is the coefficient-1 reference for
+    Ozeri's 0.9579 above.
+    """
+    return gamma / omega_0
+
+
 # ---- Uys et al. 2010 (Eqs. 4-8) ------------------------------------------------------------------------------
 
 
@@ -162,6 +196,7 @@ def uys_bounds(gamma_dd: float, gamma_uu: float) -> tuple[float, float]:
 
 
 __all__ = [
+    "OZERI_PHOTONS_PER_RADIAN_COEFFICIENT",
     "ozeri_epsilon_s_from_power",
     "ozeri_gamma_over_g_squared",
     "ozeri_gamma_raman",
@@ -170,6 +205,7 @@ __all__ = [
     "ozeri_p_rayleigh",
     "ozeri_p_total",
     "ozeri_p_total_optimum_delta",
+    "ozeri_photons_per_stark_radian",
     "ozeri_raman_rabi_half",
     "uys_bounds",
     "uys_gamma_el",
@@ -179,6 +215,7 @@ __all__ = [
     "wineland_delta_over_omega_clock",
     "wineland_p_se_clock",
     "wineland_p_se_zeeman_22_11",
+    "wineland_photons_per_stark_radian",
     "wineland_r_se_clock",
     "wineland_ratio_function",
 ]

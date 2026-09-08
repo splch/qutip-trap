@@ -33,10 +33,17 @@ written explicitly (Section 13, "Where eta^2 sits").
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from qutip_trap.light.bloch import CoolingError, RateCoefficients
+from qutip_trap.prep.validity import (
+    assert_resolved,
+    assert_resolved_linewidth,
+    assert_three_level_valid,
+    assert_weak_drive,
+)
 from qutip_trap.units import HBAR_J_S, K_B_J_PER_K
 
 
@@ -125,38 +132,113 @@ def doppler_temperature_k(energy_j: float) -> float:
     return energy_j / K_B_J_PER_K
 
 
+def three_beam_optimum(f_s: Sequence[float]) -> tuple[float, ...]:
+    """gamma_si/gamma_tot = sqrt(f_si)/sum_j sqrt(f_sj): how a fixed total scattering rate is best split over three
+    orthogonal Doppler beams (Itano and Wineland 1982 Eqs. 20-26; Section 9.3 "Doppler limit with recoil").
+
+    Axis i takes friction from ITS OWN beam only (proportional to gamma_si) and the emission recoil from ALL of them
+    (f_si gamma_tot, f_si the axis's share of the emitted photon's recoil, sum_i f_si = 1 by the Cartesian sum rule of
+    Section 4.2.8), so E_i is proportional to 1 + f_si gamma_tot/gamma_si and minimizing sum_i E_i at fixed
+    sum_i gamma_si gives gamma_si proportional to sqrt(f_si). Equal shares (1/3 each) for an isotropic pattern.
+    """
+    root = [math.sqrt(float(f)) for f in f_s]
+    if len(root) < 2 or any(f <= 0.0 for f in f_s):
+        raise ValueError("three_beam_optimum needs at least two positive recoil shares f_si")
+    total = sum(root)
+    return tuple(r / total for r in root)
+
+
+def three_beam_energy_j(
+    gamma_rad_s: float, f_s: Sequence[float], shares: Sequence[float]
+) -> tuple[float, ...]:
+    """E_i = (hbar Gamma/4)(1 + f_si/share_i) per mode for three orthogonal beams at Delta = -Gamma/2, s -> 0, the
+    beams carrying the fractions ``shares`` of the total scattering rate (Itano and Wineland 1982 Eqs. 20-26).
+
+    The oscillator energy, so k_B T_i = E_i and the kinetic part is E_i/2; ``shares`` need not be the optimum, which
+    is what makes the un-optimized split a negative control.
+    """
+    if len(shares) != len(f_s):
+        raise ValueError("one share per axis")
+    if abs(sum(shares) - 1.0) > 1e-9 or any(x <= 0.0 for x in shares):
+        raise ValueError("the beams' shares of the total scattering rate are positive and sum to one")
+    return tuple(HBAR_J_S * gamma_rad_s / 4.0 * (1.0 + float(f) / float(x)) for f, x in zip(f_s, shares))
+
+
+def three_beam_minimum_energy_j(gamma_rad_s: float, f_s: Sequence[float]) -> tuple[float, ...]:
+    """E_i = (hbar Gamma/4)(1 + sqrt(f_si) sum_j sqrt(f_sj)) at the optimum split: hbar Gamma/2 per mode for an
+    isotropic pattern (f_si = 1/3), i.e. Itano and Wineland's kinetic hbar Gamma/4 per mode (Section 9.3)."""
+    return three_beam_energy_j(gamma_rad_s, f_s, three_beam_optimum(f_s))
+
+
+def unaddressed_axis_heating_per_s(two_d_per_s: float) -> float:
+    """d<n>/dt = 2D on an axis no beam projects on: no friction, so the occupation grows LINEARLY at the emission
+    recoil rate and there is no three-dimensional steady state (Itano and Wineland 1982; Section 9.3 row "Doppler
+    limit with recoil": "one beam along x leaves <n_y> growing linearly")."""
+    if two_d_per_s < 0.0:
+        raise ValueError("the diffusion rate is non-negative")
+    return two_d_per_s
+
+
 # ---- Stenholm / RMP coefficients (Sections 4.2.2, 4.2.8 iv) ----------------------------------------------------------------
 
 
-def lorentzian_scattering_rate(omega_rad_s: float, gamma_rad_s: float, delta_rad_s: float) -> float:
-    """W(Delta) = Omega^2 Gamma/(Gamma^2 + 4 Delta^2) = (Omega^2/Gamma) L(Delta): the unsaturated two-level rate (Eschner Eq. 6)."""
+def lorentzian_scattering_rate(
+    omega_rad_s: float, gamma_rad_s: float, delta_rad_s: float, *, allow_saturation: bool = False
+) -> float:
+    """W(Delta) = Omega^2 Gamma/(Gamma^2 + 4 Delta^2) = (Omega^2/Gamma) L(Delta): the unsaturated two-level rate (Eschner Eq. 6).
+
+    Refuses Omega/Gamma above ``validity.SMALL`` unless ``allow_saturation``: the unsaturated form is high by 1 + s
+    (Section 4.2.8 vii; the M3a finding on the saturated W).
+    """
+    assert_weak_drive(
+        omega_rad_s,
+        gamma_rad_s,
+        allow_saturation=allow_saturation,
+        what="the unsaturated Lorentzian W(Delta)",
+    )
     return omega_rad_s**2 * gamma_rad_s / (gamma_rad_s**2 + 4.0 * delta_rad_s**2)
 
 
 def stenholm_coefficients(
-    omega_rad_s: float, gamma_rad_s: float, nu_rad_s: float, delta_rad_s: float, carrier_weight: float
+    omega_rad_s: float,
+    gamma_rad_s: float,
+    nu_rad_s: float,
+    delta_rad_s: float,
+    carrier_weight: float,
+    *,
+    allow_saturation: bool = False,
 ) -> RateCoefficients:
     """Bare A_+- = W(Delta -+ nu) + (eta~/eta)^2 W(Delta) with the weak-drive Lorentzian (Stenholm Eqs. 5.49-5.54; Section 13
     "Cooling coefficients A_+-"); the weight is alpha for one resonant beam along the mode axis and alpha (k_em/k_L)^2/cos^2 theta_L
-    in general (Section 4.2.2)."""
+    in general (Section 4.2.2). Refuses Omega/Gamma > 0.1 unless ``allow_saturation`` (Section 4.2.8 vii)."""
     if nu_rad_s <= 0.0:
         raise ValueError("the mode frequency is positive")
-    w0 = lorentzian_scattering_rate(omega_rad_s, gamma_rad_s, delta_rad_s)
+    assert_weak_drive(
+        omega_rad_s, gamma_rad_s, allow_saturation=allow_saturation, what="Stenholm's bare A_+-"
+    )
+    w0 = lorentzian_scattering_rate(omega_rad_s, gamma_rad_s, delta_rad_s, allow_saturation=True)
     a_plus = (
-        lorentzian_scattering_rate(omega_rad_s, gamma_rad_s, delta_rad_s - nu_rad_s) + carrier_weight * w0
+        lorentzian_scattering_rate(omega_rad_s, gamma_rad_s, delta_rad_s - nu_rad_s, allow_saturation=True)
+        + carrier_weight * w0
     )
     a_minus = (
-        lorentzian_scattering_rate(omega_rad_s, gamma_rad_s, delta_rad_s + nu_rad_s) + carrier_weight * w0
+        lorentzian_scattering_rate(omega_rad_s, gamma_rad_s, delta_rad_s + nu_rad_s, allow_saturation=True)
+        + carrier_weight * w0
     )
     return RateCoefficients(a_plus, a_minus, carrier_weight)
 
 
-def sideband_floor(gamma_rad_s: float, nu_rad_s: float, carrier_weight: float) -> float:
+def sideband_floor(
+    gamma_rad_s: float, nu_rad_s: float, carrier_weight: float, *, allow_unresolved: bool = False
+) -> float:
     """nbar_SB = (Gamma/2 nu)^2 [(eta~/eta)^2 + 1/4] at Delta = -nu, Gamma << nu (RMP Eq. 116; Roos Eq. 3.20; Eschner Eq. 6).
 
     Stenholm's (gamma/nu)^2 (alpha + 1/4) with the half width gamma = Gamma/2: 7/12 and 13/20 in units of (gamma/nu)^2 for
     alpha = 1/3 and 2/5; alpha -> 0 leaves (Gamma/4 nu)^2 from off-resonant blue-sideband excitation, never zero.
+    Refuses Gamma/nu > 0.1 unless ``allow_unresolved``, which is how the algebraic normalization above is evaluated
+    (Section 4.2.8 vii).
     """
+    assert_resolved_linewidth(gamma_rad_s, nu_rad_s, allow_unresolved=allow_unresolved)
     return (gamma_rad_s / (2.0 * nu_rad_s)) ** 2 * (carrier_weight + 0.25)
 
 
@@ -210,6 +292,16 @@ class EffectiveTwoLevel:
         """nu >> Gamma' and nu >> gamma' separately (Section 4.2.8 v); here both below nu/5."""
         return max(self.gamma_prime_rad_s, self.gamma_coherence_rad_s) < 0.2 * nu_rad_s
 
+    def assert_resolved(self, nu_rad_s: float, *, allow_unresolved: bool = False) -> None:
+        """The raising form of :meth:`resolved`: Section 4.2.8 (vii) asserts it at run time (``validity``)."""
+        assert_resolved(
+            self.gamma_prime_rad_s,
+            self.gamma_coherence_rad_s,
+            nu_rad_s,
+            allow_unresolved=allow_unresolved,
+            what=f"the effective {self.configuration} two-level system",
+        )
+
 
 def effective_two_level(
     gamma_10_rad_s: float,
@@ -217,11 +309,20 @@ def effective_two_level(
     omega_aux_rad_s: float,
     delta_aux_rad_s: float,
     configuration: Configuration,
+    *,
+    allow_invalid: bool = False,
 ) -> EffectiveTwoLevel:
     """Marzoli Eqs. 12 and 15: the fast level |1> decays to |0> (Gamma_10) and |2> (Gamma_12) and the auxiliary beam
     (Omega_aux, delta_aux) connects it to the metastable level; Xi drives |0> -> |2> narrow with |2> -> |1| auxiliary,
-    V drives |0> -> |1> auxiliary and |0> -> |2> narrow (Section 4.2.8 v). Requires s_aux << 1 and |delta_aux| << Gamma_10 + Gamma_12
-    for the reduction (asserted by ``valid``)."""
+    V drives |0> -> |1> auxiliary and |0> -> |2> narrow (Section 4.2.8 v).
+
+    Section 4.2.8 (vii) asserts the reduction's conditions s_aux << 1 and |delta_aux| << Gamma_10 + Gamma_12 at run
+    time: they are refused unless ``allow_invalid``, which is how Marzoli's own Fig. 3 fixture (delta_aux = -Gamma_10,
+    chosen to display the light shift) is evaluated. ``effective_two_level_valid`` is the same test as a boolean.
+    """
+    assert_three_level_valid(
+        gamma_10_rad_s, gamma_12_rad_s, omega_aux_rad_s, delta_aux_rad_s, allow_invalid=allow_invalid
+    )
     total = gamma_10_rad_s + gamma_12_rad_s
     pi = (omega_aux_rad_s / 2.0) ** 2 / (delta_aux_rad_s**2 + (total / 2.0) ** 2)
     if configuration == "Xi":
@@ -304,6 +405,63 @@ def lambda_repumper_minimum(beta: float, nu_rad_s: float, delta_rad_s: float) ->
     return omega, 1.0 / math.sqrt(beta) - 0.5
 
 
+# ---- sympathetic-cooling optimum (Wubbena 2012 Eqs. 34-36; Section 9.13) -------------------------------------------------
+
+
+def mixed_two_ion_axial_in_phase(mu: float) -> tuple[float, float]:
+    """(b_1, b_2) of the LOWER (in-phase) axial mode of a two-ion mixed crystal, mass-weighted and normalized
+    (Wubbena 2012 Eqs. 12-14; Section 9.13). mu = m_2/m_1, ion 1 the reference (cooling) ion.
+
+    The mass-weighted Hessian is omega_z1^2 [[2, -1/sqrt(mu)], [-1/sqrt(mu), 2/mu]], so b_2/b_1 = sqrt(mu)(2 - lambda)
+    at the eigenvalue lambda = omega_-^2/omega_z1^2: b_1^2 = 0.5 at mu = 1, 0.6839213464 at mu = 0.675 and
+    0.3160786536 at mu = 40/27 (Section 9.12 "Mixed two-ion axial closed forms").
+    """
+    from qutip_trap.trap.crystal import two_ion_mixed_axial_squared
+
+    lam, _upper = two_ion_mixed_axial_squared(mu)
+    ratio = math.sqrt(mu) * (2.0 - lam)
+    b1 = 1.0 / math.sqrt(1.0 + ratio * ratio)
+    return b1, ratio * b1
+
+
+def uniform_field_couplings(mu: float) -> tuple[float, float]:
+    """(sum_j c_j/sqrt(m_j)) of the in-phase and out-of-phase axial modes in units of 1/sqrt(m_1): b_1 + b_2/sqrt(mu)
+    and b_2 - b_1/sqrt(mu) (Kielpinski 2000 Eq. 20; Wubbena 2012 Eqs. 30-31). Both are nonzero for mu != 1: a mixed
+    crystal has no exact centre-of-mass mode, so uniform field noise heats BOTH modes (Section 4.1.7)."""
+    b1, b2 = mixed_two_ion_axial_in_phase(mu)
+    root = math.sqrt(mu)
+    return b1 + b2 / root, b2 - b1 / root
+
+
+def sympathetic_cost(mu: float, *, swapped: bool = True) -> float:
+    """F(mu) = b_2^2 (b_1 + b_2/sqrt mu)^2/b_1^2 + b_1^2 (b_2 - b_1/sqrt mu)^2/b_2^2: the clock ion's heating from
+    uniform field noise, in units of the single-mode rate (Wubbena 2012 Eqs. 34-36; Section 9.13).
+
+    Each mode's heating (its uniform-field coupling squared) is charged to the clock ion with the OTHER ion's
+    amplitude squared, E_c = b_2^2 E_i + b_1^2 E_o, and divided by that mode's own cooling weight; ``swapped=False``
+    is the index negative control b_1^2 E_i + b_2^2 E_o, which has no interior minimum.
+    """
+    b1, b2 = mixed_two_ion_axial_in_phase(mu)
+    e_in, e_out = uniform_field_couplings(mu)
+    w_in, w_out = (b2**2, b1**2) if swapped else (b1**2, b2**2)
+    return w_in * e_in**2 / b1**2 + w_out * e_out**2 / b2**2
+
+
+SYMPATHETIC_OPTIMUM_MU = 8.0 / 11.0
+"""mu* = 8/11 = 0.727272725: the mass ratio minimizing F (Wubbena 2012 Eq. 36; Section 9.13)."""
+
+SYMPATHETIC_OPTIMUM_COST = 23.0 / 16.0
+"""F_min = 23/16 = 1.4375 at mu* = 8/11 (Wubbena 2012 Eq. 36; Section 9.13)."""
+
+
+def sympathetic_optimum(bounds: tuple[float, float] = (0.05, 20.0)) -> tuple[float, float]:
+    """(mu*, F_min) by bounded minimization of :func:`sympathetic_cost`: (8/11, 23/16) exactly (Wubbena Eqs. 34-36)."""
+    from scipy.optimize import minimize_scalar
+
+    sol = minimize_scalar(sympathetic_cost, bounds=bounds, method="bounded", options={"xatol": 1e-12})
+    return float(sol.x), float(sol.fun)
+
+
 # ---- repump recoil per cycle (Che 2017 Eq. 6; Section 9.15) --------------------------------------------------------------
 
 
@@ -321,6 +479,8 @@ def repump_recoil_quanta(
 
 
 __all__ = [
+    "SYMPATHETIC_OPTIMUM_COST",
+    "SYMPATHETIC_OPTIMUM_MU",
     "Configuration",
     "EffectiveTwoLevel",
     "absorption_diffusion",
@@ -341,12 +501,20 @@ __all__ = [
     "lambda_repumper_minimum",
     "lambda_repumper_nbar",
     "lorentzian_scattering_rate",
+    "mixed_two_ion_axial_in_phase",
     "offresonant_scattering_rate_per_s",
     "repump_recoil_quanta",
     "sideband_cooling_rate_n",
     "sideband_floor",
     "stenholm_coefficients",
+    "sympathetic_cost",
+    "sympathetic_optimum",
+    "three_beam_energy_j",
+    "three_beam_minimum_energy_j",
+    "three_beam_optimum",
     "two_level_excited_population",
+    "unaddressed_axis_heating_per_s",
+    "uniform_field_couplings",
     "v_system_diffusion",
     "x0_m",
 ]

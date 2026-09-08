@@ -48,6 +48,38 @@ class Field:
 
 
 @dataclass(frozen=True)
+class GradientField:
+    """The near-field microwave-gradient drive's field configuration (PLAN.md Section 4.4.5; Srinivas et al. 2021).
+
+    A near-field electrode pair carries an oscillating current at ``frequency_hz`` = omega_g/2pi whose magnetic field
+    has a gradient d(B_g . B_hat)/dr = ``gradient_t_per_m`` along the unit direction ``axis``, so the qubit frequency of
+    an ion displaced by x along that direction is modulated at omega_g by (d omega_0/dB) grad(B) x. Two microwave tones
+    of field amplitude ``b1_tesla_lab`` (the complex lab-frame vector of the oscillating field, as
+    ``light.microwave.rabi_frequency_hz`` takes it), symmetrically detuned by +-delta from the ac-Zeeman-shifted qubit
+    frequency, dress the spin; the dressed sigma_z force on the motion carries J_2(4 Omega_mu/delta) and the gate is
+    intrinsically dynamically decoupled where J_0(4 Omega_mu/delta) = 0 (Omega_mu/delta = 0.6012).
+
+    ``phase_rad`` is the gradient's phase at t = 0 relative to the microwave reference (the laboratory's control over
+    the sign of the spin-dependent force, Section 4.4.5); the gradient amplitude and its frequency are DEVICE
+    parameters and Omega_g is derived from them and the species' field sensitivity
+    (``light.microwave.derive_gradient_drive``), never entered as a coupling.
+    """
+
+    gradient_t_per_m: float
+    frequency_hz: float
+    axis: tuple[float, float, float]
+    b1_tesla_lab: tuple[complex, complex, complex]
+    phase_rad: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.frequency_hz <= 0.0:
+            raise ValueError("the gradient's oscillation frequency is positive")
+        norm = math.sqrt(sum(x * x for x in self.axis))
+        if not math.isclose(norm, 1.0, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError(f"GradientField.axis must be a unit vector, got norm {norm}")
+
+
+@dataclass(frozen=True)
 class DerivedQuantities:
     """Every computed number with its provenance id (Section 14.5 ledger)."""
 
@@ -76,6 +108,9 @@ class Device:
     """M12: empty for the single-zone first release."""
     preparation: PreparationRecipe | None = None
     """How the device cools and pumps before every shot (Section 4.2.6; M6); None = ``prep.recipe.standard_recipe``."""
+    gradient: GradientField | None = None
+    """The near-field microwave-gradient electrodes (Section 4.4.5; M4): None on a device with no gradient drive, in which
+    case a ``gradient`` ``Drive`` is refused by the builder."""
 
     def derived(self) -> DerivedQuantities:
         """Every computed number with its provenance id (Section 3.3; the ledger of Section 14.5): the qubit transition
@@ -93,4 +128,4 @@ class Device:
         return canonical_digest(self)
 
 
-__all__ = ["DerivedQuantities", "Device", "Field"]
+__all__ = ["DerivedQuantities", "Device", "Field", "GradientField"]

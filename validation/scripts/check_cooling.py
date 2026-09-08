@@ -381,7 +381,9 @@ print(
 head("D. EIT cooling (Section 4.2.3): closed forms in the plan's sign and the Zeeman-resolved level C")
 nu_m, gam_m, o1, o2, d_m = 2.0068, 20.0, 17.0, 17.0, 70.0
 om_r = composed_coupling_rad_s([o1, o2])
-rc = eit_rate_coefficients(o1, om_r, nu_m, d_m, gam_m)
+# the plan's own fixture has Omega_g = 17 against gamma = 20 MHz: outside the weak-probe regime the closed form
+# assumes, so the Section 4.2.8 (vii) escape is passed explicitly (the recorded M3a finding on this fixture)
+rc = eit_rate_coefficients(o1, om_r, nu_m, d_m, gam_m, allow_saturation=True)
 print(
     f"plan fixture (MHz): Omega_r = sqrt(17^2 + 17^2) = {om_r:.4f}, Delta = +70: <n>_S = {eit_steady_state_nbar(om_r, nu_m, d_m, gam_m):.6f} ((gamma/4 Delta)^2 = {eit_nbar_at_tuning(gam_m, d_m):.7f}); single 17: {eit_steady_state_nbar(17.0, nu_m, d_m, gam_m):.4f}"
 )
@@ -401,8 +403,12 @@ print(
 gam_ca, om_s, om_p = 21.57, 30.0, 6.2
 for shift in (2.2, 2.25, 2.3):
     d_l = brentq(lambda d, target=shift: light_shift_rad_s(d, om_s) - target, 10.0, 1000.0)
-    r_hi = eit_cooling_rate_per_s(1.0 / math.sqrt(3.29), om_p, om_s, 3.29, d_l, gam_ca)
-    r_lo = eit_cooling_rate_per_s(1.0 / math.sqrt(1.13), om_p, om_s, 1.13, d_l, gam_ca)
+    r_hi = eit_cooling_rate_per_s(
+        1.0 / math.sqrt(3.29), om_p, om_s, 3.29, d_l, gam_ca, allow_saturation=True
+    )
+    r_lo = eit_cooling_rate_per_s(
+        1.0 / math.sqrt(1.13), om_p, om_s, 1.13, d_l, gam_ca, allow_saturation=True
+    )
     print(
         f"Lechner 2016 (Omega_sigma = 30, Omega_pi = 6.2 MHz, light shift {shift} MHz -> Delta = {d_l:.2f} MHz): R(3.29)/R(1.13) with eta^2 ∝ 1/nu = {r_hi / r_lo:.3f} (measured 17/5 = 3.4; the plan's 9.12 row prints the inverse 2.9)"
     )
@@ -415,6 +421,7 @@ for f_mode in (1.13, 3.29):
         TWO_PI * f_mode * 1e6,
         TWO_PI * d_l * 1e6,
         TWO_PI * gam_ca * 1e6,
+        allow_saturation=True,
     ).cooling_rate_bare_per_s
     eta1 = (TWO_PI / 397e-9) * math.sqrt(HBAR_J_S / (2 * m40 * TWO_PI * f_mode * 1e6))
     print(
@@ -471,7 +478,7 @@ eta_two = mode_r.eta(b_sigma.k_vector()) - mode_r.eta(b_pi.k_vector())
 w_c = level_c_relaxation_rate(lc_model.build)
 closed = eit_steady_state_nbar(om_sigma, nu_y, delta_roos, TWO_PI * gam_ca * 1e6)
 print(
-    f"level C, Roos geometry on 40Ca+ S1/2 + P1/2 (sigma+ along B, pi beam along x, Omega_sigma/2pi = {om_sigma / TWO_PI / 1e6:.2f} MHz for delta = nu, Omega_pi/2pi = 3 MHz, mode along Delta k, eta = {eta_two:.4f}): nbar = {lc.nbar:.5f} (closed form {closed:.5f}, (gamma/4 Delta)^2 = {eit_nbar_at_tuning(gam_ca, 70.0):.5f}), P(0) = {lc.fock_populations[0]:.4f}, W = {w_c:.4e} s^-1 (closed form {eta_two**2 * eit_rate_coefficients(TWO_PI * 3e6, om_sigma, nu_y, delta_roos, TWO_PI * gam_ca * 1e6).cooling_rate_bare_per_s:.4e}), boundary {lc.boundary_population:.1e}"
+    f"level C, Roos geometry on 40Ca+ S1/2 + P1/2 (sigma+ along B, pi beam along x, Omega_sigma/2pi = {om_sigma / TWO_PI / 1e6:.2f} MHz for delta = nu, Omega_pi/2pi = 3 MHz, mode along Delta k, eta = {eta_two:.4f}): nbar = {lc.nbar:.5f} (closed form {closed:.5f}, (gamma/4 Delta)^2 = {eit_nbar_at_tuning(gam_ca, 70.0):.5f}), P(0) = {lc.fock_populations[0]:.4f}, W = {w_c:.4e} s^-1 (closed form {eta_two**2 * eit_rate_coefficients(TWO_PI * 3e6, om_sigma, nu_y, delta_roos, TWO_PI * gam_ca * 1e6, allow_saturation=True).cooling_rate_bare_per_s:.4e}), boundary {lc.boundary_population:.1e}"
 )
 
 # ---------------------------------------------------------------------------------------------------------------------------------

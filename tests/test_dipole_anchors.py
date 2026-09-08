@@ -145,7 +145,12 @@ def test_reduced_element_and_saturation_of_87rb_d2_and_d1() -> None:
 
 def test_171yb_and_40ca_gamma_to_element_to_i_sat_chain() -> None:
     """171Yb+ 369.5 nm with the partial 19.62 MHz rate: 1.752 e a0 and 50.83 mW/cm^2; 40Ca+ 397/393 nm read as partial 21.57/23.4 MHz
-    at the plan's inputs: 2.045 / 2.972 e a0 and 45.11 / 50.25 mW/cm^2 (Section 9.13, check_atomic.py)."""
+    at the plan's inputs: 2.045 / 2.972 e a0 and 45.11 / 50.25 mW/cm^2 (Section 9.13, check_atomic.py).
+
+    The 171Yb+ row is the TABLE's rate; the two 40Ca+ rows are closed forms at PLAN.md 9.13's own quoted linewidths and AIR
+    wavelengths, and stay that way. The partial reading is now the ca40 table's too, and the 397 nm row comes out of it to
+    4e-5, but the 393 nm one does not: the table's partial rate there is Meir et al. 2020's 22.4071 MHz, not 23.4
+    (tests/test_species_tables.py pins both sides; ledger anchor.ca40.p32_linewidth_readings)."""
     yb = species("171Yb+").transition("S1/2-P1/2")
     omega = TWO_PI * C_M_PER_S / yb.wavelength_vac_m
     d = reduced_element_from_partial_rate(yb.partial_rate_rad_s, omega, HALF, HALF)

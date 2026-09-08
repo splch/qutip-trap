@@ -14,10 +14,12 @@ from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.prep.pumping import optical_pumping
 from qutip_trap.prep.sequence import (
+    SUB_DOPPLER_KINDS,
     PreparationSequence,
     PreparationStage,
     StageOrderError,
     doppler_stage,
+    fock_distribution_state,
     prepare_state,
     pulsed_sideband_stage,
     pump_stage,
@@ -71,6 +73,92 @@ def test_stage_order_is_enforced() -> None:
         PreparationStage("pump", "x")
     with pytest.raises(ValueError):
         PreparationStage("doppler", "x")
+
+
+def test_a_sub_doppler_stage_without_doppler_precooling_before_it_is_refused() -> None:
+    """The module docstring's third rule (Section 4.2.6): "a sub-Doppler stage with no Doppler precooling before it".
+    It was previously only implied by "the sequence starts with Doppler", so ``SUB_DOPPLER_KINDS`` was exported and
+    never used; it is now the rule's own check, which is what catches a sub-Doppler stage after a pump-only prefix."""
+    pump = pump_stage(_pump(), (0,))
+    doppler = _cooling("doppler", {0: 10.0})
+    sideband = _cooling("sideband", {0: 0.05})
+    assert set(SUB_DOPPLER_KINDS) == {"sideband", "eit", "polarization_gradient", "pulsed_sideband"}
+    PreparationSequence((doppler, sideband, pump))
+    # each of the three Section 4.2.6 rules now reports itself, so none is only implied by another
+    with pytest.raises(StageOrderError, match="no Doppler cooling before it"):
+        PreparationSequence((sideband, doppler, pump))
+    with pytest.raises(StageOrderError, match="no Doppler cooling before it"):
+        PreparationSequence((pulsed_sideband_stage({0: 0.05}, (0,)), doppler, pump))
+    with pytest.raises(StageOrderError, match="starts with a pump"):
+        PreparationSequence((pump, doppler, pump))
+    with pytest.raises(StageOrderError, match="no pump follows"):
+        PreparationSequence((doppler, pump, sideband))
+
+
+def test_a_level_b_fock_distribution_reaches_the_hand_off_state_instead_of_its_mean() -> None:
+    """Section 4.2: "The output of every stage is a per-mode thermal density matrix (or the Fock distribution from
+    level B)"; Section 4.2.7: "or the level-C reduced motional state". A stage that carries an explicit motional
+    state hands it to ``HilbertSpace.initial_state(states=...)`` unchanged, so a NON-thermal post-cooling
+    distribution survives the hand-off (it was silently collapsed to nbar before; the M3 finding)."""
+    populations = np.zeros(12)
+    populations[0] = 0.8
+    populations[3] = 0.2  # emphatically not thermal: a hole at n = 1, 2
+    rho = fock_distribution_state(populations)
+    nbar = float(np.dot(np.arange(12), populations))
+    seq = PreparationSequence(
+        (
+            _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
+            sideband_stage({2: nbar}, (0,), motional={2: rho}),
+            pump_stage(_pump(), (0,)),
+        )
+    )
+    assert seq.final_motional() == {2: rho}
+    space = HilbertSpace(
+        ion_dims=(2,), resolved=(ModeTruncation(2, 12, (0, 4), 0.1),), enr_group=None, frozen=(0, 1)
+    )
+    state = prepare_state(space, seq, qubit_labels=QUBIT)
+    assert state.motional.nbar[2] == pytest.approx(nbar, rel=1e-9)
+    got = np.real(np.diag(np.asarray(state.motional.reduced[2].full())))
+    assert np.allclose(got, populations, atol=1e-12)
+    # the thermal path would have filled n = 1 and 2; the explicit state leaves them empty
+    thermal = prepare_state(
+        space,
+        PreparationSequence(
+            (
+                _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
+                sideband_stage({2: nbar}, (0,)),
+                pump_stage(_pump(), (0,)),
+            )
+        ),
+        qubit_labels=QUBIT,
+    )
+    assert np.real(np.diag(np.asarray(thermal.motional.reduced[2].full())))[1] > 0.1
+    # a later thermal stage on the same mode drops the explicit state again
+    later = PreparationSequence(
+        (
+            _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
+            sideband_stage({2: nbar}, (0,), motional={2: rho}),
+            pulsed_sideband_stage({2: 0.02}, (0,)),
+            pump_stage(_pump(), (0,)),
+        )
+    )
+    assert later.final_motional() == {}
+    # bookkeeping guards
+    with pytest.raises(ValueError, match="also carries their nbar"):
+        PreparationStage("pump", "x", pump=_pump(), nbar=None, motional={2: rho})
+    with pytest.raises(ValueError, match="no nbar"):
+        PreparationStage("sideband", "x", nbar={0: 1.0}, motional={2: rho})
+    with pytest.raises(ValueError, match="dimension"):
+        prepare_state(
+            HilbertSpace(
+                ion_dims=(2,), resolved=(ModeTruncation(2, 20, (0, 4), 0.1),), enr_group=None, frozen=(0, 1)
+            ),
+            seq,
+            qubit_labels=QUBIT,
+        )
+    for bad in (np.array([1.0]), np.array([-0.1, 1.0]), np.zeros(4)):
+        with pytest.raises(ValueError):
+            fock_distribution_state(bad)
 
 
 def test_final_nbar_takes_the_last_stage_that_addressed_each_mode() -> None:

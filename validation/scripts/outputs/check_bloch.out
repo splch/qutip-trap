@@ -49,7 +49,10 @@ E. Doppler regime: nu = Gamma/20, Delta = -Gamma/2, sigma+ along B, mode along B
 ==============================================================================
 level A: nbar_D = 6.54260; (Gamma/4 nu)(1 + alpha) = 7.00000; minus the 1/2 zero-point offset 6.50000
 level C: nbar = 6.53099 (boundary population 1.6e-05)
-argmin over Delta of nbar_D (grid step 0.025 Gamma): Delta = -0.500 Gamma
+-(1/2) sqrt(1 + s) at s = 2 (Omega/Gamma)^2 = 0.0050: -0.501248 Gamma
+  argmin over Delta of nbar_D at nu/Gamma = 0.050 (bounded, xatol 1e-7): Delta = -0.504443 Gamma (residual against the limit -3.194e-03)
+  argmin over Delta of nbar_D at nu/Gamma = 0.010 (bounded, xatol 1e-7): Delta = -0.501377 Gamma (residual against the limit -1.282e-04)
+  argmin over Delta of nbar_D at nu/Gamma = 0.002 (bounded, xatol 1e-7): Delta = -0.501253 Gamma (residual against the limit -4.718e-06)
 
 ==============================================================================
 F. Morigi 2000 Fig. 3 as printed: Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta_g = Delta_r = 2.5 gamma

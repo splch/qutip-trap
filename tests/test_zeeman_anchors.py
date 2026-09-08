@@ -45,9 +45,21 @@ def be9_ground() -> HyperfineZeeman:
     )
 
 
+MG25_G_J_ASSUMED = 2.00226
+"""The g_J the Section 9.13 25Mg+ anchor is evaluated at, DECLARED here and not in the species table.
+
+No measured absolute g_J of the 25Mg+ ground state exists: Itano and Wineland 1981 and Brewer et al. 2019
+both servo the field to the electronic transition and determine only the ratio g_I/g_J, which is what
+``mg25.S12.g_I_over_g_J`` stores. Until 2026-09-08 the table carried this value sourced ``PLAN_9_13``; it
+is 9Be+'s measured 2.00226(2) transplanted, and the anchor depends on it at the 0.25 G level (g_J = 2.000
+moves the field-independent point to 213.025 G and f0 by 48 Hz). It therefore belongs in the TEST as a
+declared assumption, not in the table as a constant (ledger conv.mg25_no_measured_g_j).
+"""
+
+
 def mg25_ground() -> HyperfineZeeman:
     return HyperfineZeeman(
-        _s12(MG25["mg25.S12.A_hfs_hz"].value, MG25["mg25.S12.g_J"].value),
+        _s12(MG25["mg25.S12.A_hfs_hz"].value, MG25_G_J_ASSUMED),
         2.5,
         MG25["mg25.mu_I_nuclear_magnetons"].value,
     )
@@ -155,10 +167,25 @@ def test_9be_inverted_multiplet_from_negative_moment() -> None:
 
 
 def test_25mg_clock_point_of_srinivas() -> None:
+    """212.78 G and 1.686462 GHz at the DECLARED g_J of :data:`MG25_G_J_ASSUMED` (see its docstring: 25Mg+
+    has no measured g_J, so this anchor is conditional and the table no longer pretends otherwise)."""
     hz = mg25_ground()
     (cp,) = clock_points(hz, "F=3 mF=1", hz, "F=2 mF=1", 100.0, 400.0)
     assert cp.B0_gauss == pytest.approx(212.78, abs=0.01)
     assert cp.frequency_hz == pytest.approx(1.686462e9, abs=1e3)
+    # the g_J sensitivity the plan quotes, which is why the assumption has to be declared
+    lande = HyperfineZeeman(
+        _s12(MG25["mg25.S12.A_hfs_hz"].value, 2.000),
+        2.5,
+        MG25["mg25.mu_I_nuclear_magnetons"].value,
+    )
+    (cp_lande,) = clock_points(lande, "F=3 mF=1", lande, "F=2 mF=1", 100.0, 400.0)
+    assert cp_lande.B0_gauss == pytest.approx(213.025, abs=0.01), "g_J = 2.000 moves the point by 0.25 G"
+    # only the RATIO g_I/g_J is measured; check the two published ratios agree to 2e-5
+    ratio_1981 = MG25["mg25.S12.g_I_over_g_J"].value
+    ratio_2019 = MG25["mg25.S12.g_I_over_g_J_brewer"].value
+    assert ratio_1981 == pytest.approx(ratio_2019, rel=2e-5)
+    assert "mg25.S12.g_J" not in MG25, "no measured 25Mg+ g_J exists; the table must not carry one"
 
 
 def test_171yb_quadratic_zeeman_coefficient() -> None:

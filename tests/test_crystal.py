@@ -127,6 +127,9 @@ def test_spacing_scale_171yb_at_1_mhz() -> None:
     yb = species("171Yb+")
     s = length_scale_m(yb.mass_u * ATOMIC_MASS_KG, TWO_PI * 1e6)
     s2 = 2 ** (1 / 3) * s
+    # Section 9.1 prints 3.4 um (two digits, a [background] figure); the value the mass table and the James length
+    # scale give is 3.4532 um, and that is what regresses (a +-1.5 % band would not notice a wrong 2^(1/3))
+    assert s2 == pytest.approx(3.4532e-6, rel=1e-4)
     assert 3.4e-6 < s2 < 3.5e-6, "Section 9.1: 171Yb+ at 1 MHz gives 3.4 um"
     cr = solve_crystal(_explicit((3e6, 3e6, 1e6)), (yb, yb))
     assert cr.positions_m[1, 2] - cr.positions_m[0, 2] == pytest.approx(s2, rel=1e-12)
@@ -271,8 +274,12 @@ def test_home_2013_table_i_end_to_end() -> None:
     assert (cr.positions_m[1, 2] - cr.positions_m[0, 2]) * 1e6 == pytest.approx(4.76, abs=5e-3)
     f = {fam: [m.omega_hz / 1e6 for m in cr.family(fam)] for fam in ("axial", "transverse_1", "transverse_2")}
     assert f["axial"] == pytest.approx([1.90, 4.04], abs=6e-3)
-    assert f["transverse_1"] == pytest.approx([4.67, 12.11], abs=6e-3)
-    assert f["transverse_2"] == pytest.approx([3.53, 11.03], abs=6e-3)
+    assert f["transverse_1"][1] == pytest.approx(12.11, abs=6e-3)
+    assert f["transverse_2"][1] == pytest.approx(11.03, abs=6e-3)
+    # the 9.13 row's own instruction: "no assertion tighter than 0.01 MHz on the Mg-dominated radial pair
+    # (4.67 versus 4.68 between his Tables I and II)"
+    assert f["transverse_1"][0] == pytest.approx(4.67, abs=1e-2)
+    assert f["transverse_2"][0] == pytest.approx(3.53, abs=1e-2)
     lo, hi = cr.family("axial")
     assert np.abs(lo.eigenvector) == pytest.approx([0.379, 0.926], abs=1e-3)
     assert np.abs(hi.eigenvector) == pytest.approx([0.926, 0.379], abs=1e-3)
@@ -294,6 +301,48 @@ def test_home_2013_table_i_end_to_end() -> None:
     assert abs(
         cr.lamb_dicke(0, kx, dk_x, micromotion=None) / cr.lamb_dicke(1, kx, dk_x, micromotion=None)
     ) == pytest.approx(91.0, rel=0.02)
+
+
+def test_home_trap_inversion_scales_the_frequencies_and_preserves_the_radial_order() -> None:
+    """Section 9.13, Home row: omega_i^2(m) = P_i/m^2 + S_i/m with P_x = P_y, P_z = 0 preserves sign(omega_x^2 - omega_y^2)
+    across species; Be [9.7, 12.9, 4.6] MHz gives Mg [1.52, 5.43, 2.82] MHz."""
+    from qutip_trap.trap.pseudopotential import (
+        RfDrive,
+        pseudopotential_mass_scaling_rad_s,
+        trap_inversion_p_s,
+    )
+
+    m_be = 9.0121822 * ATOMIC_MASS_KG
+    m_mg = 23.985042 * ATOMIC_MASS_KG
+    w_be = TWO_PI * np.array([9.7, 12.9, 4.6]) * 1e6
+    p, s = trap_inversion_p_s(w_be, m_be)
+    assert p[0] == pytest.approx(p[1], rel=1e-15) and p[2] == 0.0, "the rf part is radial and P_x = P_y"
+    assert abs(float(np.sum(s))) < 1e-12 * abs(float(s[2])), "Laplace on the dc potential: sum_i S_i = 0"
+    assert pseudopotential_mass_scaling_rad_s(w_be, m_be, m_be) == pytest.approx(w_be, rel=1e-12)
+    w_mg = pseudopotential_mass_scaling_rad_s(w_be, m_be, m_mg) / TWO_PI / 1e6
+    assert w_mg == pytest.approx([1.52, 5.43, 2.82], abs=5e-3)
+    # the sign identity, exactly: omega_x^2 - omega_y^2 scales as m_ref/m, so the radial order never inverts
+    for mass_u in (9.0121822, 12.0, 20.0, 23.985042, 26.0):
+        w = pseudopotential_mass_scaling_rad_s(w_be, m_be, mass_u * ATOMIC_MASS_KG)
+        assert (w[0] ** 2 - w[1] ** 2) == pytest.approx(
+            (m_be / (mass_u * ATOMIC_MASS_KG)) * (w_be[0] ** 2 - w_be[1] ** 2), rel=1e-12
+        )
+        assert w[0] < w[1], "sign(omega_x^2 - omega_y^2) is preserved"
+    # S_x < 0 here, so the 1/m^2 rf part loses to the 1/m dc part above 3.01 m_Be: the refusal is explicit, not a nan
+    with pytest.raises(ValueError, match="does not confine"):
+        pseudopotential_mass_scaling_rad_s(w_be, m_be, 40.0 * ATOMIC_MASS_KG)
+    # the shipped exact-exponent route is the same inversion plus the O(q^4) Floquet correction: it converges to it
+    trap = Trap(
+        omega_hz=(9.7e6, 12.9e6, 4.6e6),
+        axis_angle_rad=0.0,
+        rf=RfDrive(0.0, 1.0e9),
+        dc=None,
+        geometry=None,
+        stray_field_v_per_m=(0.0, 0.0, 0.0),
+        shim_voltages_v={},
+    )
+    exact, _axes, _field = trap.single_ion_frequencies_rad_s((_Mass(9.0121822), _Mass(23.985042)))  # type: ignore[arg-type]
+    assert exact[1] / TWO_PI / 1e6 == pytest.approx([1.52, 5.43, 2.82], abs=1e-2)
 
 
 def test_radial_in_phase_mode_is_the_upper_one_and_axial_the_lower() -> None:
@@ -421,6 +470,13 @@ def test_mode_and_crystal_records_enforce_the_appendix_e_invariants() -> None:
         )
     with pytest.raises(ValueError):
         Crystal((yb,), np.zeros((1, 3)), (good,))
+    # PLAN 4.1.3 declares 3N modes in THREE families, i.e. N per family: the 3N count alone would accept 4/1/1, which
+    # is what the non-collinear branch's argmax family assignment could produce for a strongly mixed crystal
+    ax = [Mode("axial", i, 1e6 + i, (0.0, 0.0, 1.0), np.array([-0.6, 0.8])) for i in range(4)]
+    t1 = Mode("transverse_1", 0, 3e6, (1.0, 0.0, 0.0), np.array([-0.6, 0.8]))
+    t2 = Mode("transverse_2", 0, 3.1e6, (0.0, 1.0, 0.0), np.array([-0.6, 0.8]))
+    with pytest.raises(ValueError, match="exactly N = 2 modes"):
+        Crystal((yb, yb), np.zeros((2, 3)), (*ax, t1, t2))
 
 
 def test_hessian_and_transverse_eigenvalue_helpers() -> None:

@@ -1,5 +1,9 @@
 """Two-qubit gate physics through the JOINT_EXACT engine against the closed forms of Section 4.4 (PLAN.md Sections 4.4.1,
-4.4.3, 4.4.7, 6.2, 9.4, 9.16 rows 4.4-4, 4.4-5, 4.4-7, 6-3, 13-8)."""
+4.4.3, 4.4.7, 6.2, 9.4, 9.16 rows 4.4-5, 4.4-7, 6-3).
+
+Rows 4.4-4 (the withdrawn doubled Hamiltonian as a negative control) and 13-8 (Theta = pi/8 and the operator identity
+S_x^2 = 2(1 + sigma_x sigma_x)) live in ``tests/test_m4_rows.py``, which pins them directly rather than through the
+builder anchors; the n-independence and GHZ rows of 9.4 are there too."""
 
 from __future__ import annotations
 
@@ -239,9 +243,11 @@ def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:  # type: ig
         p = np.real(np.diag(state.full()))
         p0, p1, p2 = kirchmair_populations(abs(alpha), gamma, 0.0)
         # Kirchmair's bright state is |d> (the fluorescing S1/2 level): p_2 = P_00, p_0 = P_11
-        assert p[0] == pytest.approx(p2, abs=2e-6) and p[3] == pytest.approx(p0, abs=2e-6)
-        assert p[1] + p[2] == pytest.approx(p1, abs=2e-6)
-    assert worst < 1e-5
+        # measured worst deviations: 3.95e-11 on the populations and 2.28e-11 on the propagator infidelity, so the plan's
+        # 1e-9 default for a pinned closed form (PLAN.md:1152) is the tolerance, not the 2e-6/1e-5 of the first pass
+        assert p[0] == pytest.approx(p2, abs=1e-9) and p[3] == pytest.approx(p0, abs=1e-9)
+        assert p[1] + p[2] == pytest.approx(p1, abs=1e-9)
+    assert worst < 1e-9
     # the sign: alpha's phase convention and the sign of the geometric phase are checked through the full state, the closure exactly
     assert tr.final.motional.nbar[ANCHOR_MODE] < 1e-9
 
@@ -317,7 +323,11 @@ def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
             ov = complex(qt.basis(d, 0).overlap(psi))
             phases[(s1, s2)] = np.angle(ov)
     chi_exact = (phases[(1, 1)] + phases[(-1, -1)] - phases[(1, -1)] - phases[(-1, 1)]) / 4.0
-    assert ints.chi_of(0, 1) == pytest.approx(chi_exact, rel=2e-4)
+    # the 9.10 row asks for 6e-9; measured 2.70e-9 at these 4001 points (2.4e-11 at 20001), so 1e-8 is the pin
+    assert ints.chi_of(0, 1) == pytest.approx(chi_exact, rel=1e-8)
+    assert ints.chi_of(1, 0) == pytest.approx(ints.chi_of(0, 1), rel=1e-12), (
+        "Section 9.16 row 4.4-5 asks for chi_ij = chi_ji explicitly"
+    )
     from scipy.integrate import cumulative_simpson, simpson
 
     f = np.cos(mu * t) * np.exp(1j * omega * t)
@@ -330,8 +340,23 @@ def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
         )
 
     kab, kba = k_of(env_a, env_b), k_of(env_b, env_a)
-    assert kab + kba == pytest.approx(chi_exact, rel=2e-4)
-    assert abs(2 * kab / chi_exact - 1.0) > 0.1 and abs(2 * kba / chi_exact - 1.0) > 0.1
+    assert kab + kba == pytest.approx(chi_exact, rel=1e-8)
+    # the full-square integral of the printed integrand is the ANTISYMMETRIC combination K_ab - K_ba, not chi
+    a_a = complex(simpson(env_a * f, x=t))
+    a_b = complex(simpson(env_b * f, x=t))
+    full_square = float(eta * eta * np.imag(a_a * np.conj(a_b)))
+    assert full_square == pytest.approx(kab - kba, rel=1e-8), (
+        "Section 9.16 row 4.4-5: int_0^tau dt' int_0^tau dt of the printed integrand = K_ab - K_ba"
+    )
+    # the two printed readings 2 K_ab and 2 K_ba miss chi by equal and opposite amounts; measured here
+    dev_ab = 2 * kab / chi_exact - 1.0
+    dev_ba = 2 * kba / chi_exact - 1.0
+    assert abs(dev_ab) > 0.1 and abs(dev_ba) > 0.1
+    assert dev_ab == pytest.approx(-dev_ba, rel=1e-6), "equal and opposite, exactly"
+    assert abs(dev_ab) == pytest.approx(0.268098, rel=1e-3), (
+        "recomputed here on this fixture; the audit's -18.20 %/+18.20 % came from its own (uncommitted) two-mode "
+        "fixture, so the percentage is fixture-dependent and only the equal-and-opposite structure is universal"
+    )
 
 
 def test_residual_displacement_conversions_by_direct_integration(anchor) -> None:  # type: ignore[no-untyped-def]

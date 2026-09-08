@@ -21,11 +21,15 @@ frozen spectators' Fock states are part of the same enumeration (Wineland's shot
 branch runs through ``mesolve`` up to ``SolverOptions.mesolve_dimension_max`` and through ``SolverOptions.ntraj`` keyed
 quantum-jump trajectories above it (Section 5.3).
 
-Shots are distributed round-robin over dynamical samples (Section 3.4: default samples = min(shots, 64) when the noise model
-has quasi-static or sampled content, 1 when it is quiet): sample k is drawn at the shot clock t0 + k_first T_rep with every
-Drift an Ornstein-Uhlenbeck chain over the sample times (Section 7.5), the shots of one sample are drawn from that sample's
-register state, and the error bars use the effective sample size of the between/within-sample decomposition, since shots of
-one sample are not independent draws from the ensemble. The (sample, branch) engine runs of a JOINT_EXACT run are independent
+Shots are distributed over dynamical samples in CONTIGUOUS BLOCKS, not round-robin (Section 3.4 says round-robin; the
+deviation is recorded as ``conv.shot_blocks_per_sample``, because one quasi-static draw per contiguous block of the shot clock
+is what the hardware does: sample k owns shots [sum M_j, sum M_j + M_k) and is drawn at t0 + (sum_{j<k} M_j) T_rep, so its
+Drift values belong to the times its own shots were taken; round-robin would give every sample the same mean time and
+destroy the between-sample spread the Ornstein-Uhlenbeck chain over the sample times produces). Default samples =
+min(shots, 64) when the noise model has quasi-static or sampled content, 1 when it is quiet; every Drift is an
+Ornstein-Uhlenbeck chain over the sample times (Section 7.5), the shots of one sample are drawn from that sample's register
+state, and the error bars use the effective sample size Var(p_hat) = Var_total(p_s)/S, since shots of one sample are not
+independent draws from the ensemble. The (sample, branch) engine runs of a JOINT_EXACT run are independent
 and are spread over the workers of ``SolverOptions.workers`` through QuTiP's map (Section 11.3 item 9; M9b), every branch
 starting from the selected space (a cap the truncation monitor grows on one branch is reported, never carried into another, so
 the result is the same whatever the worker count); a worker runs its own trajectories in-process. Background-gas collisions
@@ -56,16 +60,22 @@ from qutip_trap.control.schedule import (
     schedule,
 )
 from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace
-from qutip_trap.noise.collisions import collision_rate_per_ion, sample_collisions
+from qutip_trap.noise.collisions import (
+    collision_rate_per_ion,
+    sample_collisions,
+    sample_kick_quanta,
+    sample_reorder,
+)
 from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n, quiet_sample
 from qutip_trap.noise.scattering import scattering_estimates
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
 from qutip_trap.prep.sequence import prepare_state
-from qutip_trap.readout.detection import RecordModel
+from qutip_trap.readout.detection import RecordModel, count_anomaly_band
 from qutip_trap.readout.discriminate import (
     POVM,
     Discriminator,
@@ -77,17 +87,20 @@ from qutip_trap.readout.discriminate import (
 )
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, detection_rates_for_ion
 from qutip_trap.run.gate_local import EngineSetup, GateLocalReport, evolve_gate_local
-from qutip_trap.run.levels import FidelityLevel, within_budget
+from qutip_trap.run.levels import FidelityLevel, resolve_level, within_budget
 from qutip_trap.run.results import Diagnostics, Result, RunState, aggregate, binomial_error_bars
 from qutip_trap.run.space import SpaceSelection, select_space
+from qutip_trap.units import TWO_PI
 from qutip_trap.validation.two_qubit_closed_forms import ballance_thermal_error
 
 if TYPE_CHECKING:
     from qutip_trap.control.compiler import Circuit
-    from qutip_trap.control.table import CalibrationTable
+    from qutip_trap.control.shaping import GateModes
+    from qutip_trap.control.table import CalibrationTable, Waveform
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.channels import CollapseOp
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
+    from qutip_trap.light.beams import Beam
 
 ReadoutMode = Literal["fast", "full"]
 
@@ -164,9 +177,23 @@ class Branch:
     """Fock state per resolved mode and per frozen mode with eta != 0."""
 
 
-def _truncated_weights(probabilities: Sequence[float], weight_min: float) -> list[tuple[int, float]]:
+def _truncated_weights(
+    probabilities: Sequence[float], weight_min: float, *, what: str = "factor"
+) -> list[tuple[int, float]]:
+    """The states of one factor whose probability reaches ``weight_min``, with their probabilities.
+
+    An empty result is refused rather than replaced by the most likely state at weight 1: renormalizing a mixture that was
+    truncated to nothing would report a pure state and a dropped weight of zero for a distribution the cutoff never
+    resolved (M6 fix; the old fallback was ``[(argmax, 1.0)]``)."""
     out = [(k, float(p)) for k, p in enumerate(probabilities) if p >= weight_min]
-    return out or [(int(np.argmax(probabilities)), 1.0)]
+    if not out:
+        best = float(np.max(probabilities)) if len(probabilities) else 0.0
+        raise RunError(
+            f"SolverOptions.branch_weight_min = {weight_min:g} keeps no state of the {what}: its most likely state has "
+            f"probability {best:.3e}. Lower branch_weight_min below that (the Fock sum of Section 5.3 needs at least one "
+            "branch), or cool the mode further"
+        )
+    return out
 
 
 def enumerate_branches(
@@ -175,7 +202,10 @@ def enumerate_branches(
     weight_min: float,
 ) -> tuple[list[Branch], float]:
     """Branches of the diagonal initial mixture with weight >= ``weight_min`` (descending), and the dropped weight."""
-    ion_options = [_truncated_weights(p, weight_min) for p in internal_probabilities]
+    ion_options = [
+        _truncated_weights(p, weight_min, what=f"internal state of ion {i}")
+        for i, p in enumerate(internal_probabilities)
+    ]
     mode_options: dict[int, list[tuple[int, float]]] = {}
     for m, nb in mode_nbar.items():
         if nb <= 0.0:
@@ -183,7 +213,9 @@ def enumerate_branches(
             continue
         d = int(math.ceil(math.log(weight_min) / math.log(nb / (1.0 + nb)))) + 2
         mode_options[m] = _truncated_weights(
-            [float(x) for x in thermal_populations(nb, max(d, 2))], weight_min
+            [float(x) for x in thermal_populations(nb, max(d, 2))],
+            weight_min,
+            what=f"thermal state of mode {m} (nbar = {nb:.3g})",
         )
     modes = sorted(mode_options)
     branches: list[Branch] = []
@@ -203,6 +235,17 @@ def enumerate_branches(
                 )
             )
     branches.sort(key=lambda b: -b.weight)
+    if not branches:
+        # every factor kept at least one state, but no PRODUCT of them reaches the cutoff: refuse rather than evolve nothing
+        # (the run would otherwise reach the readout with an empty state and fail there with an opaque message; M6 fix)
+        best = 1.0
+        for options in [*ion_options, *[mode_options[m] for m in modes]]:
+            best *= max(p for _k, p in options)
+        raise RunError(
+            f"SolverOptions.branch_weight_min = {weight_min:g} keeps no branch of the initial mixture: the most likely "
+            f"branch of {len(ion_options)} ion factors and {len(modes)} carried modes has weight {best:.3e}. Lower "
+            "branch_weight_min below that, cool the modes further, or carry fewer modes (Section 5.3)"
+        )
     total = sum(b.weight for b in branches)
     return branches, float(max(1.0 - total, 0.0))
 
@@ -225,10 +268,20 @@ class ReadoutStage:
     schemes: tuple[ReadoutScheme, ...]
     models: tuple[RecordModel, ...]
     discriminator: Discriminator
-    povm: POVM
-    product: POVM
+    povm: POVM | None
+    """The form the fast path samples; None when ``readout="full"`` was asked for and no POVM was needed (a Monte-Carlo
+    POVM over a time-resolved discriminator costs 2 x n_samples records per ion, Section 8.4)."""
+    product: POVM | None
     """The zero-crosstalk product form: the per-ion (eps_B, eps_D) report reads it even when the register form samples."""
     leakage: dict[int, float]
+    depumping: dict[int, tuple[float, float]] = field(default_factory=dict)
+    """Neighbour distance -> (Delta R_d, Delta R_b) the leaked resonant light of one bright neighbour drives: the
+    depumping half of Wineland's crosstalk mechanism (Section 8.5), bounded by I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2)."""
+    crosstalk_discrepancy: float | None = None
+    """max |register confusion - product POVM| at the configured crosstalk: the "bounded and REPORTED" amount of Sections
+    9.5 and 9.17; None at zero crosstalk or when the POVM was not built."""
+    micromotion: dict[int, tuple[float, float]] = field(default_factory=dict)
+    """Per ion, (beta, Omega_rf) of the detection beam when Section 8.8's J_0^2/J_1^2 factor was applied."""
 
 
 def readout_stage(
@@ -237,23 +290,42 @@ def readout_stage(
     *,
     discriminator: Discriminator | None = None,
     levels: Mapping[int, InternalLevels] | None = None,
+    povm_samples: int = 20_000,
+    seed: int = 0,
+    need_povm: bool = True,
 ) -> ReadoutStage:
     """The per-ion rate objects of the device's detection beams, the table's threshold and window, and the POVM; ``levels``
-    extends each scheme's classes to the leakage levels of a d > 2 register factor (M7)."""
+    extends each scheme's classes to the leakage levels of a d > 2 register factor (M7).
+
+    A threshold discriminator's POVM is exact through the count distributions; any other strategy of Section 8.3
+    (time-resolved ML, adaptive, first-photon, camera) has no closed form, so its confusion is estimated from
+    ``povm_samples`` sampled records per level and per ion, seeded from ``seed``, and the POVM carries the statistical
+    uncertainty it earned. ``need_povm=False`` skips the construction entirely, which is what ``readout="full"`` wants:
+    the full record path replaces the POVM rather than preceding it (Section 5.7).
+    """
     from qutip_trap.light.roles import detection_beams
+    from qutip_trap.readout.discriminate import max_confusion_discrepancy
+    from qutip_trap.readout.fluorescence import neighbour_pumping_rates
 
     rates: list[FluorescenceRates] = []
     schemes: list[ReadoutScheme] = []
     models: list[RecordModel] = []
+    micromotion: dict[int, tuple[float, float]] = {}
     for i in range(device.crystal.n_ions):
-        beams = [device.beams[k] for k in detection_beams(device, i)]
+        keys = detection_beams(device, i)
+        beams = [device.beams[k] for k in keys]
+        beta, omega_rf = detection_micromotion(device, i, [device.beams[k] for k in keys])
         r, scheme, model = detection_rates_for_ion(
             device.crystal.species[i],
             device.field.B_gauss,
             device.field.direction,
             beams,
             position_m=tuple(float(x) for x in device.crystal.positions_m[i]),
+            micromotion_beta=beta,
+            omega_rf_rad_s=omega_rf,
         )
+        if beta > 0.0:
+            micromotion[i] = (beta, omega_rf)
         if levels is not None and i in levels:
             ground, _ = model.resonant_manifold()
             scheme = ReadoutScheme.for_species(device.crystal.species[i], ground, labels=levels[i].labels)
@@ -269,19 +341,185 @@ def readout_stage(
                 "discriminator"
             )
         discriminator = ThresholdDiscriminator(float(thr.value), float(win.value))
+    # the time-resolved discriminators of Section 8.3 carry the dark class whose 1/tau is Myerson's decay term; their
+    # default "dark" silently drops it on a shelving device (the shelf decays at 1/tau_D, not at R_b), so the scheme
+    # states it (audit 2026-09-07 B9)
+    dark_classes = {s.dark_class for s in schemes}
+    if hasattr(discriminator, "dark_class") and len(dark_classes) == 1:
+        wanted = next(iter(dark_classes))
+        if discriminator.dark_class != wanted:
+            # ignore: Discriminator is a Protocol, so `replace` cannot see that this instance is a dataclass
+            discriminator = replace(discriminator, dark_class=wanted)  # type: ignore[type-var]
     leakage = {int(k): float(v) for k, v in device.detector.psf_leakage.items() if v > 0.0}
-    product = product_povm(models, schemes, discriminator)
-    povm = povm_for(models, schemes, discriminator, leakage or None) if leakage else product
-    return ReadoutStage(tuple(rates), tuple(schemes), tuple(models), discriminator, povm, product, leakage)
+    # the depumping half of Wineland's crosstalk (Section 8.5): a bright neighbour's leaked resonant light pumps its
+    # neighbours between the manifolds at the bound I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2), which is a pure function of the
+    # cycling wavelength and the ion spacing; taken at the CLOSEST pair of each distance, the worst case
+    depumping: dict[int, tuple[float, float]] = {}
+    pos = np.asarray(device.crystal.positions_m, dtype=float)
+    for d in sorted(leakage):
+        gaps = [float(np.linalg.norm(pos[i + d] - pos[i])) for i in range(len(pos) - d)]
+        if not gaps or min(gaps) <= 0.0:
+            continue
+        i0 = int(np.argmin(gaps))
+        keys = detection_beams(device, i0)
+        cycling = min((device.beams[k] for k in keys), key=lambda b: b.wavelength_m)
+        sp = device.crystal.species[i0]
+        s_beam = cycling.intensity_at(pos[i0]) / sp.transition(sp.cycling).i_sat_w_m2
+        if s_beam <= 0.0:
+            continue
+        d_d, d_b = neighbour_pumping_rates(rates[i0], s_beam, cycling.wavelength_m, min(gaps))
+        if d_d > 0.0 or d_b > 0.0:
+            depumping[d] = (d_d, d_b)
+    if not need_povm:
+        return ReadoutStage(
+            tuple(rates),
+            tuple(schemes),
+            tuple(models),
+            discriminator,
+            None,
+            None,
+            leakage,
+            depumping,
+            None,
+            micromotion,
+        )
+    exact = isinstance(discriminator, ThresholdDiscriminator)
+    n_samples = 0 if exact else int(povm_samples)
+    if not exact and n_samples <= 0:
+        raise RunError(
+            f"the {type(discriminator).__name__} discriminator has no closed-form confusion (Section 8.4): "
+            "povm_samples must be positive, or run with readout='full'"
+        )
+    rng = None if exact else np.random.default_rng(SeedSpec(int(seed)).child(0, 0, 0, 0, "povm_estimate"))
+    product = product_povm(models, schemes, discriminator, n_samples=n_samples, rng=rng)
+    povm = (
+        povm_for(models, schemes, discriminator, leakage, depumping=depumping, n_samples=n_samples, rng=rng)
+        if leakage
+        else product
+    )
+    discrepancy = max_confusion_discrepancy(povm, product) if leakage else None
+    return ReadoutStage(
+        tuple(rates),
+        tuple(schemes),
+        tuple(models),
+        discriminator,
+        povm,
+        product,
+        leakage,
+        depumping,
+        discrepancy,
+        micromotion,
+    )
+
+
+def detection_micromotion(device: Device, ion: int, beams: Sequence[Beam]) -> tuple[float, float]:
+    """(beta, Omega_rf) of the detection light on one ion: Section 8.8's "R_o carries J_0(beta)^2 and a first-sideband
+    channel J_1(beta)^2, like every other drive", with beta = k . u_1 for the SINGLE-photon wavevector of the shortest
+    detection beam (the cycling line, whose photons are the ones counted) and Omega_rf from the trap's rf drive.
+
+    (0, 0) without an rf record or without a detection beam, which is what Section 4.1.1's beta = 0 means: the factor
+    is then the identity and no extra Bloch solve is paid for. A trap that DOES carry an rf drive but whose
+    ``Trap.micromotion_beta`` cannot be evaluated (an rf phase imbalance with no rod geometry factors R_m and alpha, a
+    rod record without its single endcap voltage, a point outside the Mathieu stability region) raises instead of
+    reporting beta = 0, the same rule as ``dynamics.hamiltonian.micromotion_index``: a missing geometry factor hidden
+    behind beta = 0 is a default-value fallback that silently switches the detection sideband off (M1 audit).
+    """
+    if device.trap.rf is None or not beams:
+        return 0.0, 0.0
+    cycling = min(beams, key=lambda b: b.wavelength_m)
+    beta = float(
+        device.trap.micromotion_beta(device.crystal.species[ion], cycling.k_vector()).as_peak().total
+    )
+    if beta <= 0.0:
+        return 0.0, 0.0
+    return beta, float(device.trap.rf.omega_rad_s)
 
 
 # ---- the intrinsic budget of Section 9.6 -----------------------------------------------------------------------------------
 
 
+def sideband_lamb_dicke_deficit(modes: GateModes, selection: SpaceSelection) -> float:
+    """The sideband matrix element's Lamb-Dicke deficit (Section 4.3.1): how far the exact spin-dependent force falls short
+    of its linear-in-eta value at the Fock states the gate actually populates. Reported as its own budget key,
+    ``<gate>.sideband_lamb_dicke_deficit``, and NOT summed into the total: its mean over the thermal state is exactly the
+    force rescaling the s^2 calibration of Section 4.4.7 (7) absorbs, and its thermal spread is the Debye-Waller term
+    (``ballance_thermal_error``) the total already carries, so summing it would double count. It is NOT the "Bessel force
+    saturation" Section 9.6 names, which is Roos's carrier saturation (J_0 + J_2)(4 Omega/mu) of ``roos_bessel_saturation``
+    below.
+
+    The first blue sideband element is Omega_{n+1,n}/Omega = |<n+1|D(i eta)|n>| = e^{-eta^2/2} (eta/sqrt(n+1)) |L^{(1)}_n(eta^2)|
+    (Wineland et al. 1998, NIST J. Res. 103, 259, Eq. 18 with the phase of Eq. 21; Section 4.3.1), whose leading term is
+    eta sqrt(n + 1). The relative deficit
+
+        f = 1 - Omega_{n+1,n}/(Omega eta sqrt(n + 1))
+
+    is the fractional loss of force amplitude, taken over the gate's ions and the resolved and frozen modes at the highest
+    Fock index each carries (``ModeTruncation.expected_n_range``, else the thermal mean), which is the worst case: f grows
+    with n and with eta. It is reported and summed into the budget as a scale, like the off-resonant carrier scale. The
+    calibration absorbs the eta- and mode-INDEPENDENT part of f (the s^2 rescaling of Section 4.4.7 (7) is fitted to the
+    measured angle), so the number below is an upper bound on what survives calibration, not an estimate of it."""
+    from qutip_trap.hilbert.operators import rabi_matrix_element
+
+    worst = 0.0
+    populated = {t.mode: t.expected_n_range[1] for t in selection.space.resolved}
+    for k, m in enumerate(modes.modes):
+        if selection.mode_class.get(m) not in ("resolved", "frozen"):
+            continue
+        eta = max(abs(modes.eta[i][k]) for i in modes.ions)
+        if eta == 0.0:
+            continue
+        n = int(populated.get(m, int(round(modes.nbar[k]))))
+        exact = rabi_matrix_element(n + 1, n, eta)
+        linear = eta * math.sqrt(n + 1.0)
+        if linear <= 0.0:
+            continue
+        worst = max(worst, abs(1.0 - exact / linear))
+    return float(worst)
+
+
+def roos_bessel_saturation(waveform: Waveform) -> float:
+    """Section 9.6's "Bessel force saturation" term as an infidelity scale: the carrier's strong-drive correction scales the
+    spin-dependent force by (J_0 + J_2)(4 Omega/mu) (Roos 2008, New J. Phys. 10, 013002, Eq. 17; Section 4.4.1 "the force
+    is saturated by (J_0 + J_2)" at argument 4 Omega/delta), so an uncalibrated pulse solved for chi = pi/4 with the linear
+    force reaches chi (1 - f)^2 with f = 1 - (J_0 + J_2), an angle error pi f/2 and a Bell-state infidelity
+
+        1 - F = sin^2(pi f / 2)
+
+    (MS(chi + d) against MS(chi) on |00> overlaps as cos d). It is evaluated at the played waveform's worst point: the
+    largest tone amplitude Omega and the smallest tone-to-carrier detuning mu over its segments (an FM segment's detuning is
+    sampled along the segment). Only the bichromatic (MS) family has a carrier coupling to saturate; a light-shift or
+    gradient waveform has none and contributes zero. Like the other scales it is an upper bound on what survives
+    calibration: the s^2 rescaling of Section 4.4.7 (7) absorbs a uniform force deficit entirely."""
+    from qutip_trap.validation.two_qubit_closed_forms import roos_force_saturation
+
+    if waveform.kind != "ms" or waveform.segments is None:
+        return 0.0
+    peak = 0.0
+    mu_min = math.inf
+    for seg in waveform.segments:
+        grid = np.linspace(0.0, seg.duration_s, 101)
+        for amp in seg.amplitude_hz.values():
+            val = float(np.max(np.abs([amp(x) for x in grid]))) if callable(amp) else abs(float(amp))
+            peak = max(peak, val)
+        for det in seg.detuning_hz.values():
+            vals = [abs(float(det(x))) for x in grid] if callable(det) else [abs(float(det))]
+            mu_min = min(mu_min, min(vals))
+    if peak == 0.0:
+        return 0.0
+    if not math.isfinite(mu_min) or mu_min == 0.0:
+        raise RunError(
+            "an MS waveform carries a tone on the carrier: Roos's saturation (J_0 + J_2)(4 Omega/mu) needs mu != 0"
+        )
+    f = 1.0 - roos_force_saturation(TWO_PI * peak, TWO_PI * mu_min)
+    return math.sin(math.pi * f / 2.0) ** 2
+
+
 def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> dict[str, float]:
     """The closed-form error scales reported beside the result (Section 9.6): per entangling gate the residual displacement
     eps_ent = sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1) of the played waveform, the n = 0-referenced Debye-Waller loss of its
-    modes, the off-resonant carrier scale (Omega_peak/nu_min)^2 and the frozen spectators' chi; per single-qubit pulse the
+    modes, the off-resonant carrier scale (Omega_peak/nu_min)^2, Roos's Bessel force saturation sin^2(pi f/2) with
+    f = 1 - (J_0 + J_2)(4 Omega/mu), the frozen spectators' chi, and (reported, not summed) the sideband element's
+    Lamb-Dicke deficit; per single-qubit pulse the
     sideband scale eta^2 (Omega/nu)^2 of the nearest mode and the addressing crosstalk sum_j sin^2(eps_ij theta/2); and
     their sum."""
     from qutip_trap.control.shaping import waveform_integrals
@@ -310,6 +548,8 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
                     )
                     peak = max(peak, val)
         carrier = (2.0 * math.pi * peak / nu_min) ** 2 if nu_min > 0.0 else 0.0
+        lamb_dicke = sideband_lamb_dicke_deficit(modes, selection)
+        bessel = roos_bessel_saturation(gate.waveform)
         chi_frozen = sum(
             abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class.get(m) == "frozen"
         )
@@ -334,9 +574,11 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
         out[f"{gate.gate_id}.residual_displacement"] = eps_ent
         out[f"{gate.gate_id}.debye_waller"] = dw
         out[f"{gate.gate_id}.carrier_scale"] = carrier
+        out[f"{gate.gate_id}.bessel_saturation"] = bessel
+        out[f"{gate.gate_id}.sideband_lamb_dicke_deficit"] = lamb_dicke
         out[f"{gate.gate_id}.frozen_chi_rad"] = chi_frozen
         out[f"{gate.gate_id}.beat_phase_tilt"] = tilt
-        total += eps_ent + dw + carrier + tilt
+        total += eps_ent + dw + carrier + bessel + tilt
     from qutip_trap.light.raman import lamb_dicke_parameters
 
     for pulse in sched.pulses:
@@ -374,9 +616,15 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
 
 
 def effective_sample_size(bits_per_sample: Sequence[np.ndarray]) -> float:
-    """The effective number of independent shots behind a histogram assembled from several dynamical samples (Section 3.4):
-    with S samples of M_s shots and per-sample frequencies p_s of a bitstring, Var(p_hat) = s^2_between/S + mean[p_s(1 - p_s)/M_s]/S
-    and n_eff = p(1 - p)/Var(p_hat); the minimum over the bitstrings seen. One sample returns the shot count."""
+    """The effective number of independent shots behind a histogram assembled from several dynamical samples (Section 3.4).
+
+    With S samples of M_s shots and per-sample frequencies p_s of a bitstring, the pooled estimate is p_hat = sum_s M_s p_s /
+    sum_s M_s and the one-way random-effects decomposition of its variance is Var(p_hat) = Var(p_s)/S, where Var(p_s) =
+    sigma^2_between + p(1 - p)/M is the TOTAL per-sample variance: the within-sample binomial term is already inside the
+    spread of the p_s and must NOT be added a second time. Var(p_hat) is estimated directly by the shot-count-weighted form
+    sum_s M_s (p_s - p_hat)^2 / [(S - 1) sum_s M_s], which is var(p_s, ddof=1)/S exactly when the M_s are equal, and
+    n_eff = p(1 - p)/Var(p_hat), the minimum over the bitstrings seen, capped at the shot count. One sample returns the
+    shot count."""
     total = sum(int(b.shape[0]) for b in bits_per_sample)
     non_empty = [b for b in bits_per_sample if b.shape[0] > 0]
     if len(non_empty) <= 1:
@@ -392,9 +640,9 @@ def effective_sample_size(bits_per_sample: Sequence[np.ndarray]) -> float:
         p = float(np.average(ps, weights=ms))
         if p <= 0.0 or p >= 1.0:
             continue
-        between = float(np.var(ps, ddof=1)) / s_count
-        within = float(np.mean(ps * (1.0 - ps) / ms)) / s_count
-        var = between + within
+        # the total per-sample variance (between + within, weighted by the shot counts), divided by S: adding the binomial
+        # term on top of np.var(ps) would count it twice and shrink n_eff by up to sqrt(2) (M6 finding)
+        var = float(np.sum(ms * (ps - p) ** 2) / ((s_count - 1) * np.sum(ms)))
         if var > 0.0:
             n_eff = min(n_eff, p * (1.0 - p) / var)
     return float(n_eff)
@@ -449,11 +697,12 @@ def run(
     builder_options: BuilderOptions | None = None,
     readout: ReadoutMode = "fast",
     discriminator: Discriminator | None = None,
+    povm_samples: int = 20_000,
     space: HilbertSpace | None = None,
     caps: Mapping[int, int] | None = None,
     channels: Sequence[CollapseOp] = (),
     entangler: Literal["ms", "zz"] = "ms",
-    parallel: bool = False,
+    parallel: bool | None = None,
     keep_final_state: bool = False,
     calibrate_kwargs: Mapping[str, Any] | None = None,
     noise: bool = True,
@@ -475,12 +724,18 @@ def run(
     ``crosstalk_suppression`` selects Section 6.6's echo schemes for the MS gates. ``stark_compensation`` (M8) lets the
     scheduler detune every pulse by the table's believed light shift; the pulses the ions see are the scheduler's requests
     converted through the device's derived values by the engine's played chain (``control.played``), so a table fitted by
-    simulated experiments (``calibrate(surrogate=False)``) drives the machine with its own errors (Sections 7.3, 7.5).
+    simulated experiments (``calibrate(surrogate=False)``) drives the machine with its own errors (Sections 7.3, 7.5). The
+    table's CALIBRATED micromotion shims are programmed onto the device the run evolves (the crystal re-solved at that
+    setting), so a compensation fitted at one time against a stray field that has since drifted leaves the residual excess
+    micromotion a laboratory would have; the reported device hash stays the uncompensated device's. An ``uncalibrated``
+    qubit-frequency entry makes the run REFUSE (``RunError``) rather than take the frame at the true transition.
     ``level`` (M9a): ``"auto"`` runs JOINT_EXACT inside the Section 11.5 guards and GATE_LOCAL above them (Section 5.4: every
     gate step on the exact joint space of its ions and resolved modes, the register carried as a density matrix or a pure-state
     ensemble, the motional model tracked between steps, the residual displacement and the channel summaries reported in
     ``Diagnostics.gate_local``); either level can be forced. ``enr_group`` = (modes, N_exc) carries a group of cold modes as
-    one excitation-number-restricted factor (Section 11.3 item 1).
+    one excitation-number-restricted factor (Section 11.3 item 1). ``parallel`` defaults to the device's
+    ``HardwareChain.parallel_addressing`` (Section 7.3: single-qubit gates run in parallel only if the device model allows
+    parallel addressing); entangling gates stay serialized one at a time per crystal either way.
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
@@ -488,6 +743,25 @@ def run(
     drives = dict(gate_drives) if gate_drives is not None else default_gate_drives(device)
     ent_drives = dict(entangling_drives) if entangling_drives is not None else drives
     notes: list[str] = []
+    # Section 4.5.5: "Leakage is therefore simulated, not estimated, whenever d > 2". A d > 2 register whose scattering
+    # channels are off carries leakage levels that nothing can populate and reports no estimate for them either, so the
+    # combination is refused rather than defaulted silently: the flag is turned on and the run says so. Keep
+    # internal_levels = 2 for the d = 2 per-pulse estimate path of Section 4.3.2.
+    if internal_levels > 2 and not opts.scattering_channels:
+        # Section 4.5.5 asks for the LEAKAGE channel (and with it the spin-flip and Rayleigh operators on the register);
+        # the recoil displacements D(i(eta_abs - eta_em)) of Section 4.5.5's photon-recoil term are a separate, expensive
+        # choice (one displacement-dressed operator per emission direction, per pulse, per branch: 30 to 50x the cost of
+        # the register-only operators on the two-ion fixture), so the automatic switch turns the channels on WITHOUT them
+        # unless the caller asked for the vector quadrature; scattering_channels=True with scattering_recoil="minimal" or
+        # "vector" is the explicit request for recoil (M7 fixer's E-10, consolidated 2026-09-08)
+        recoil = opts.scattering_recoil if opts.scattering_recoil == "vector" else "off"
+        opts = replace(opts, scattering_channels=True, scattering_recoil=recoil)
+        notes.append(
+            f"internal_levels = {internal_levels} > 2: scattering_channels turned ON with scattering_recoil={recoil!r} "
+            "(Section 4.5.5, 'leakage is simulated, not estimated, whenever d > 2'; the recoil displacements are an "
+            "explicit choice: pass scattering_channels=True with scattering_recoil='minimal' or 'vector'); pass "
+            "internal_levels=2 for the d = 2 estimate path instead"
+        )
     # 1. compile
     report = compile_with_report(circuit, device, entangler=entangler)
     compiled = report.circuit
@@ -515,6 +789,42 @@ def run(
             "calibration table fitted for another device configuration (hash mismatch): played as given, never regenerated "
             "silently (Section 7.5)"
         )
+    # 2b. the calibrated micromotion compensation: the shim settings the table carries are what the machine has PROGRAMMED,
+    # so the run evolves the compensated device and a stale calibration against a drifted stray field leaves the residual
+    # excess micromotion a laboratory would have (Section 7.5: "stores shims and beta in the table, so that compensation is
+    # calibrated, drifts with the stray field between calibrations and is re-nulled like a laboratory re-nulls it").
+    # ``device_with_compensation`` re-solves the crystal, so the ions' displacement, the beams' intensity at the ions and
+    # the Lamb-Dicke parameters move together. No device PARAMETER changed - only a programmed voltage - so the hash the
+    # table is compared against above stays the uncompensated device's.
+    shim_entries = {
+        name: entry
+        for name, entry in table.micromotion.items()
+        if name.startswith("shim[") and name.endswith("]")
+    }
+    # only what the compensation experiment MEASURED is programmed: a seed shim is the device's own setting (already in the
+    # device) and an uncalibrated one is a compensation the calibration could not establish, which leaves the device as it is
+    shims = {
+        name[len("shim[") : -1]: float(entry.value)
+        for name, entry in shim_entries.items()
+        if entry.status == "calibrated"
+    }
+    unresolved = sorted(name for name, entry in shim_entries.items() if entry.status == "uncalibrated")
+    if unresolved:
+        notes.append(
+            f"micromotion compensation uncalibrated for {unresolved}: the run keeps the device's own shim settings and "
+            "carries whatever excess micromotion they leave (Section 7.5)"
+        )
+    if shims:
+        from qutip_trap.experiments.micromotion import device_with_compensation
+
+        compensated = device_with_compensation(device, shims)
+        if compensated.trap != device.trap:
+            device = compensated
+            notes.append(
+                "calibrated micromotion compensation applied to the run: "
+                + ", ".join(f"{k} = {v:.6g}" for k, v in sorted(shims.items()))
+                + " (Section 7.5; the reported device hash is the uncompensated device's)"
+            )
     # 3. schedule
     sched = schedule(
         compiled,
@@ -556,6 +866,7 @@ def run(
             {},
             {m: float(prep_run.nbar.get(m, 0.0)) for m in range(n_modes)},
             ("space supplied by the caller",),
+            budget=within_budget(space, opts),
         )
     joint_space = selection.space
     levels = level_maps(device, joint_space)
@@ -564,11 +875,25 @@ def run(
             "register factors with leakage levels: "
             + "; ".join(f"ion {i}: {', '.join(m.labels)}" for i, m in levels.items())
         )
-    ok, dim, nnz = within_budget(joint_space, opts)
-    resolved_level: FidelityLevel = "JOINT_EXACT" if ok else "GATE_LOCAL"
+    # the Section 11.5 verdict the selection already reached on its DECLARATION, before any operator was allocated
+    # (M9b audit B2: HilbertSpace.check() used to build an O(D) identity, so the guard could not refuse what it had built)
+    _ok, dim, nnz = selection.budget
+    # PLAN.md Appendix E: level="auto" "resolves through resolve_level(device, circuit, options)". It used to be dead code
+    # while run() inlined within_budget (M9a audit B6/E18); the run's actual space makes the guards exact instead of the
+    # estimate resolve_level falls back to without one
+    resolved_level: FidelityLevel = resolve_level(device, compiled, opts, space=joint_space)
+    ok = resolved_level == "JOINT_EXACT"
     run_level: FidelityLevel = resolved_level if level == "auto" else level
     if run_level == "JOINT_EXACT" and not ok:
-        notes.append(f"JOINT_EXACT forced above the Section 11.5 guards (dimension {dim}, non-zeros {nnz})")
+        # Section 11.5: the monitor "refuses to build joint spaces above a configurable dimension"; the knobs ARE the
+        # configuration, so an explicit JOINT_EXACT above them is refused rather than built. Before 2026-09-08 it went ahead
+        # with a note: the ENR end-to-end test then built a 37752-dimensional space ([2, 2, 11, 13, 66]) that took 20 GB
+        # and an hour before QobjEvo rejected its term (ledger conv.space_declaration_before_allocation)
+        raise RunError(
+            f"level='JOINT_EXACT' asks for a joint space of dimension {dim} with {nnz} drive non-zeros, above the Section 11.5 "
+            f"guards (joint_dimension_max = {opts.joint_dimension_max}, nnz_max = {opts.nnz_max}); raise them in SolverOptions "
+            "to build it deliberately, reduce the caps or the resolved modes, or let level='auto' route the run to GATE_LOCAL"
+        )
     if run_level == "GATE_LOCAL":
         notes.append(
             f"GATE_LOCAL (Section 5.4): the joint space would have dimension {dim} and {nnz} drive non-zeros against the "
@@ -602,7 +927,11 @@ def run(
                 continue
             for ion in pulse.drive.ions:
                 etas, _ = lamb_dicke_parameters(device, ion, dk)
-                coupled_frozen.update(m for m in joint_space.frozen if abs(etas[m]) > 1e-12)
+                # only FROZEN spectators are enumerated as Fock branches (their Debye-Waller factor is the physics); a
+                # dropped mode is not modelled at all, so it costs no branch (Section 5.2; M6 fix)
+                coupled_frozen.update(
+                    m for m in joint_space.frozen if abs(etas[m]) > 1e-12 and m not in joint_space.dropped
+                )
         mode_nbar = {m.mode: float(state0.motional.nbar.get(m.mode, 0.0)) for m in joint_space.resolved}
         enr_modes = list(joint_space.enr_group[0]) if joint_space.enr_group is not None else []
         mode_nbar.update({m: float(state0.motional.nbar.get(m, 0.0)) for m in enr_modes})
@@ -630,7 +959,19 @@ def run(
         sp = device.crystal.species[i]
         f_true, _d1, _d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], device.field.B_gauss)
         entry = table.qubit_freq.get(i)
-        if entry is None or entry.status == "uncalibrated":
+        if entry is not None and entry.status == "uncalibrated":
+            # ``shifts`` is the ONLY channel by which the table's frequency error reaches the physics, so a zero here would
+            # put the frame exactly on the true transition and make an uncalibrated qubit frequency error-free by
+            # construction - the fallback Section 7.3's last clause forbids ("an entry the calibration could not establish
+            # is uncalibrated and refuses to schedule rather than falling back to them").
+            raise RunError(
+                f"ion {i}: the calibration table's qubit frequency is uncalibrated (fitted by {entry.experiment!r}); the "
+                "frame cannot be programmed and the run refuses rather than taking it at the true transition "
+                "(Section 7.3). Re-calibrate the ion's Ramsey-frequency experiment or pass a table that carries it."
+            )
+        if entry is None:
+            # a device with no qubit-frequency seed at all (never the surrogate, which always seeds one): there is no
+            # believed frame to be wrong about, so the frame is the transition itself and the run says so
             shifts[i] = 0.0
             notes.append(
                 f"ion {i}: the table has no qubit frequency; the frame is taken at the true transition"
@@ -638,7 +979,15 @@ def run(
         else:
             shifts[i] = float(f_true - entry.value)
     # 7. timing (Section 7.5) and the dynamical samples (Section 3.4; M7)
-    stage = readout_stage(device, table, discriminator=discriminator, levels=levels or None)
+    stage = readout_stage(
+        device,
+        table,
+        discriminator=discriminator,
+        levels=levels or None,
+        povm_samples=povm_samples,
+        seed=seed,
+        need_povm=(readout == "fast"),
+    )
     window = float(stage.discriminator.window_s)
     t_rep = (
         float(shot_period_s)
@@ -692,6 +1041,7 @@ def run(
     kernel_kinds: set[str] = set()
     workers_used = 1
     propagator_hits = 0
+    convergence: ConvergenceReport | None = None
     if run_level == "JOINT_EXACT":
         engine = setup.engine()
         total_weight = sum(b.weight for b in branches)
@@ -724,6 +1074,21 @@ def run(
                 )
                 payloads.append((s_idx, k, st, sample_b))
         results, workers_used = _run_engine_tasks(engine, device, sched, joint_space, payloads, seeds, opts)
+        if opts.convergence_check:
+            # Section 5.5's second bullet: repeat the evolution with atol and rtol tightened by ten and report the change in
+            # the FIRST sample's register populations, which are deterministic where the sampled histogram is not (M2's
+            # dynamics.evolve.convergence_check; the plumbing is M9's). Three passes, as the option's docstring says.
+            def _register_populations(o: SolverOptions) -> dict[str, np.ndarray]:
+                res, _w = _run_engine_tasks(engine, device, sched, joint_space, payloads, seeds, o)
+                rho = np.zeros((d_int, d_int), dtype=complex)
+                for (p_idx, k, _st, _sb), (tr_c, _rep_c) in zip(payloads, res):
+                    if p_idx != 0:
+                        continue
+                    rho += (branches[k].weight / total_weight) * np.asarray(tr_c.final.internal.full())
+                return {"register_populations": np.real(np.diag(rho))}
+
+            convergence = convergence_check(_register_populations, opts)
+            notes.append(convergence.summary())
         grown_space = joint_space
         for s_idx in range(len(samples_seq)):
             rho_int = np.zeros((d_int, d_int), dtype=complex)
@@ -788,7 +1153,32 @@ def run(
                 if n not in notes:
                     notes.append(n)
         notes.extend(n for n in gl_report.notes if n not in notes)
-        workers_used = worker_count(opts)
+        # the workers the walk ACTUALLY used, not worker_count(opts): the tomography runs its inputs in-process whenever the
+        # local space has no resolved mode (every carrier step) and the quasi-static samples are iterated serially, so a
+        # GPi2 GATE_LOCAL run used to report N workers while nothing ran in parallel (M9b audit B10)
+        workers_used = gl_report.workers
+        if opts.convergence_check:
+
+            def _gate_local_populations(o: SolverOptions) -> dict[str, np.ndarray]:
+                states, _rep, _mods = evolve_gate_local(
+                    device,
+                    sched,
+                    samples_seq[:1],
+                    seeds,
+                    o,
+                    register0=state0.internal,
+                    nbar0=state0.motional.nbar,
+                    ion_dims=joint_space.ion_dims,
+                    setup=setup,
+                    caps=caps,
+                )
+                rho = sum(w * np.asarray((st if st.isoper else qt.ket2dm(st)).full()) for w, st in states[0])
+                return {"register_populations": np.real(np.diag(np.asarray(rho)))}
+
+            # no cache clearing: fingerprint_options keys the extraction cache on atol and rtol, so the tightened pass
+            # misses and the base-tolerance pass of convergence_check hits what the primary walk already computed
+            convergence = convergence_check(_gate_local_populations, opts)
+            notes.append(convergence.summary())
         approximations.append(
             f"GATE_LOCAL: {len([s for s in gl_report.steps if s.kind == 'gate'])} gate steps and "
             f"{len([s for s in gl_report.steps if s.kind == 'idle'])} idle steps through exact gate-local spaces (largest dimension "
@@ -820,14 +1210,38 @@ def run(
         coll_rates = {
             i: collision_rate_per_ion(collisions, float(device.crystal.masses_kg[i])) for i in range(n_ions)
         }
-    measured = tuple(sorted(compiled.measure)) if compiled.measure else tuple(range(n_ions))
+    # the measured set is the circuit's targets UNIONED with every trailing measure operation, exactly the set the scheduler
+    # puts in its terminal event (control.schedule); reading Circuit.measure alone made run() histogram all N ions on a
+    # circuit whose only measurement was a trailing `measure` op (M6 fix)
+    declared: list[int] = list(compiled.measure)
+    for op in compiled.ops:
+        if op.name == "measure":
+            declared.extend(q for q in op.qubits if q not in declared)
+    measured = tuple(sorted(declared)) if declared else tuple(range(n_ions))
     bits_kept: list[np.ndarray] = []
+    levels_kept: list[np.ndarray] = []
     heralds_kept: list[int] = []
     posteriors_kept: list[np.ndarray] = []
     records_kept: list[list[int]] = []
+    sub_bins_kept: list[np.ndarray] = []
+    arrivals_kept: list[tuple[np.ndarray, ...]] = []
+    anomaly_bands = (
+        [
+            count_anomaly_band(stage.models[q], window, ("bright", stage.schemes[q].dark_class))
+            for q in measured
+        ]
+        if readout == "full"
+        else []
+    )
     bits_per_sample: list[np.ndarray] = []
     discarded = 0
     prep_duration = prep_run.duration_s
+    # the kick heats the SOFTEST mode most (delta nbar = E_kick/(hbar omega_m)), so that mode sets the reported quanta
+    soft_mode_omega = (
+        2.0 * math.pi * min(float(m.omega_hz) for m in device.crystal.modes) if device.crystal.modes else 0.0
+    )
+    kick_quanta: list[float] = []
+    reorders = 0
     outcome: ReadoutOutcome | None = None
     for s_idx, (smp, members) in enumerate(zip(samples_seq, register_states)):
         n_s = counts_per_sample[s_idx]
@@ -857,6 +1271,7 @@ def run(
                 trajectory=0,
                 first_shot=shot,
                 leakage=stage.leakage or None,
+                depumping=stage.depumping or None,
                 mode=readout,
                 povm=stage.povm if readout == "fast" else None,
                 keep_records=(readout == "full"),
@@ -876,18 +1291,35 @@ def run(
                             run_state.events + ((shot, f"collision:{ev.outcome}:ion{ev.ion}"),),
                         )
                         if ev.outcome == "heating_kick":
+                            # the kick's energy scale is the neutral's thermal energy times the mass ratio (Section 6.7);
+                            # drawn per event and recorded in quanta of the softest mode, the one it heats most
+                            kick = 0.0
+                            if soft_mode_omega > 0.0:
+                                kick = sample_kick_quanta(
+                                    rng_c,
+                                    collisions,
+                                    float(device.crystal.masses_kg[ev.ion]),
+                                    soft_mode_omega,
+                                )
+                                kick_quanta.append(kick)
+                            run_state = RunState(
+                                run_state.order,
+                                run_state.dark,
+                                run_state.lost,
+                                run_state.events[:-1]
+                                + ((shot, f"collision:heating_kick:ion{ev.ion}:dnbar={kick:.3g}"),),
+                            )
                             if ev.time_s >= prep_duration:
                                 keep = False  # the crystal melted during the sequence; the Doppler stage recools only before it
                         elif ev.outcome == "reorder":
                             keep = False
-                            order = list(run_state.order)
-                            pos = order.index(ev.ion) if ev.ion in order else 0
-                            other = pos + 1 if pos + 1 < n_ions else pos - 1
-                            if 0 <= other < n_ions and other != pos:
-                                order[pos], order[other] = order[other], order[pos]
                             run_state = RunState(
-                                tuple(order), run_state.dark, run_state.lost, run_state.events
+                                sample_reorder(rng_c, collisions, run_state.order, ev.ion),
+                                run_state.dark,
+                                run_state.lost,
+                                run_state.events,
                             )
+                            reorders += 1
                         elif ev.outcome == "loss":
                             keep = False
                             run_state = RunState(
@@ -905,17 +1337,32 @@ def run(
                     for col, q in enumerate(measured):
                         if q in unusable:
                             row[col] = stage.schemes[q].bit_of_class("dark")
+                if outcome.records is not None and any(
+                    not (lo <= outcome.records[j][q].total <= hi)
+                    for q, (lo, hi) in zip(measured, anomaly_bands)
+                ):
+                    herald |= 4
                 shot += 1
                 if not keep:
                     discarded += 1
                     continue
                 bits_kept.append(row)
+                levels_kept.append(np.asarray(outcome.levels[j, list(measured)], dtype=np.uint8).copy())
                 sample_bits.append(row)
                 heralds_kept.append(herald)
                 if outcome.posteriors is not None:
                     posteriors_kept.append(np.asarray(outcome.posteriors[j]))
                 if readout == "full" and outcome.records is not None:
-                    records_kept.append([rec.total for rec in outcome.records[j]])
+                    recs_j = outcome.records[j]
+                    records_kept.append([recs_j[q].total for q in measured])
+                    if all(recs_j[q].sub_bins is not None for q in measured):
+                        sub_bins_kept.append(
+                            np.stack([np.asarray(recs_j[q].sub_bins, dtype=int) for q in measured])
+                        )
+                    if all(recs_j[q].arrivals_s is not None for q in measured):
+                        arrivals_kept.append(
+                            tuple(np.asarray(recs_j[q].arrivals_s, dtype=float) for q in measured)
+                        )
         bits_per_sample.append(
             np.asarray(sample_bits, dtype=np.uint8).reshape(-1, len(measured))
             if sample_bits
@@ -927,10 +1374,30 @@ def run(
     n_eff = effective_sample_size(bits_per_sample)
     error_bars = binomial_error_bars(probabilities, n_eff)
     spam: dict[str, tuple[float, float]] = {}
-    for i, (eps_b, eps_d) in enumerate(stage.product.per_ion_errors()):
+    if stage.product is not None:
+        model_errors = stage.product.per_ion_errors()
+    else:
+        # readout="full" replaced the POVM rather than preceding it (Section 5.7), so the (eps_B, eps_D) report is
+        # estimated from the records this run actually generated (Section 8.6, "estimated from calibration runs"); a
+        # level the circuit never populated reports nan, never a silent zero
+        lv = np.asarray(levels_kept, dtype=np.uint8).reshape(-1, len(measured))
+        errs: list[tuple[float, float]] = []
+        for col, q in enumerate(measured):
+            bright = stage.schemes[q].bright_level
+            pair: list[float] = []
+            for lev, wrong_bit in ((bright, 1 - bright), (1 - bright, bright)):
+                mask = lv[:, col] == lev
+                pair.append(float(np.mean(bits[mask, col] == wrong_bit)) if np.any(mask) else math.nan)
+            errs.append((pair[0], pair[1]))
+        model_errors = tuple(errs)
+    for i, (eps_b, eps_d) in enumerate(model_errors):
         spam[f"q{i}"] = (float(eps_b), float(eps_d))
         spam[f"q{i}.state_preparation"] = (float(prep_run.preparation_error(i)), 0.0)
     photon_records = np.array(records_kept, dtype=int) if (readout == "full" and records_kept) else None
+    sub_bin_records = (
+        np.stack(sub_bins_kept) if (sub_bins_kept and len(sub_bins_kept) == len(bits_kept)) else None
+    )
+    arrival_times = tuple(arrivals_kept) if (arrivals_kept and len(arrivals_kept) == len(bits_kept)) else None
     posteriors = np.array(posteriors_kept) if posteriors_kept else None
     if not noise:
         approximations.append(
@@ -953,14 +1420,75 @@ def run(
             "ions read dark, and the crystal_image experiment of Section 6.7 detects the event for a recalibration on the "
             "reduced device (a Device with N - 1 ions is a different device and gets its own table, Section 7.5)"
         )
-    approximations.append(
-        "SPAM definition: readout (eps_B, eps_D) of the threshold discriminator at zero crosstalk (Section 13 row "
-        "'Readout figure of merit'); state preparation 1 - P(target) of the optical pump (Section 4.2.6)"
-    )
+    if kick_quanta:
+        approximations.append(
+            f"collisions: {len(kick_quanta)} heating kick(s) drawn from the Section 6.7 energy distribution "
+            f"(k_B T m_gas/m_ion, mean {sum(kick_quanta) / len(kick_quanta):.3g} quanta of the softest mode, max "
+            f"{max(kick_quanta):.3g}); a kick landing before the preparation is recooled by the cooling stage and the shot "
+            "is kept, but a kick landing after it DISCARDS the shot rather than adding its nbar to the already-evolved "
+            "sample, because the dynamical samples are propagated before the shot loop (the melt and recrystallization "
+            "dynamics are a Section 1.3 non-goal)"
+        )
+    if reorders:
+        approximations.append(
+            f"collisions: {reorders} reorder event(s) permuted RunState.order from the configured permutation "
+            "distribution and DISCARDED the shot; the permutation does not re-derive b_{i,m}, eta_{i,m} or the pair sign "
+            "s of Section 7.7 for the shots that follow, so Section 6.7's 'runs the rest of the sequence with the wrong "
+            "mode structure' is met at the herald/discard level only (the sample loop is not re-entered after a reorder)"
+        )
+    if noise:
+        sentence = device.noise.provenance_sentence()
+        if sentence:
+            approximations.append(f"noise provenance (Section 6.1): {sentence}")
+    disc_name = type(stage.discriminator).__name__
+    if stage.product is not None:
+        approximations.append(
+            f"SPAM definition: readout (eps_B, eps_D) of the {disc_name} discriminator's product POVM at zero crosstalk "
+            "(Section 13 row 'Readout figure of merit'); state preparation 1 - P(target) of the optical pump (Section 4.2.6)"
+        )
+        if stage.product.uncertainty > 0.0:
+            approximations.append(
+                f"readout POVM: {disc_name} has no closed-form confusion, so it was estimated from {povm_samples} sampled "
+                f"records per level per ion; every POVM entry carries a statistical uncertainty of "
+                f"{stage.product.uncertainty:.2e} (Section 8.4)"
+            )
+    else:
+        approximations.append(
+            f"SPAM definition: readout (eps_B, eps_D) of the {disc_name} discriminator estimated from this run's own "
+            "photon records (readout='full' replaces the POVM rather than preceding it, Section 5.7); a qubit level the "
+            "circuit never populated reports nan; state preparation 1 - P(target) of the optical pump (Section 4.2.6)"
+        )
     if readout == "fast":
         approximations.append(
             f"readout fast path: the {'register-wide confusion' if stage.leakage else 'product POVM'} applied to the joint outcome "
             "(Section 5.7)"
+        )
+    else:
+        approximations.append(
+            f"readout full path: one photon record per ion per shot generated from the {disc_name} discriminator's window "
+            f"({stage.discriminator.window_s:.4g} s) and discriminated, the neighbour coupling of Section 8.5 "
+            f"{'applied at the configured PSF leakage' if stage.leakage else 'inactive (no PSF leakage configured)'} "
+            "(Section 5.7)"
+        )
+    if stage.depumping:
+        approximations.append(
+            "readout crosstalk (depumping half, Section 8.5): one bright neighbour raises an ion's (R_d, R_b) by "
+            + ", ".join(
+                f"d={d}: ({dd:.4g}, {db:.4g}) s^-1" for d, (dd, db) in sorted(stage.depumping.items())
+            )
+            + " through the leaked resonant light bounded by I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2), the neighbours' "
+            "classes frozen at their start (the first-order form)"
+        )
+    if stage.crosstalk_discrepancy is not None:
+        approximations.append(
+            f"readout crosstalk: the register-wide confusion at the configured PSF leakage {stage.leakage} differs from the "
+            f"product POVM by at most {stage.crosstalk_discrepancy:.4f} in a per-ion declared-bright probability (the "
+            "bounded, reported discrepancy of Sections 9.5 and 9.17)"
+        )
+    for i, (beta, omega_rf) in sorted(stage.micromotion.items()):
+        approximations.append(
+            f"readout micromotion: ion {i}'s detection rates carry J_0({beta:.4g})^2 on the carrier and J_1^2 on each "
+            f"first sideband at Omega_rf/2pi = {omega_rf / (2.0 * math.pi):.4g} Hz (Section 8.8)"
         )
     approximations.extend(device.hardware.describe())
     if selection.guard_violations:
@@ -979,7 +1507,9 @@ def run(
         tolerances=(opts.atol, opts.rtol),
         samples=n_samples,
         trajectories=(len(branches) if branches else 1) * n_traj_max,
+        branches=len(branches) if branches else 1,
         shots_per_sample=int(shots // n_samples),
+        shots_per_sample_realized=tuple(int(m) for m in counts_per_sample),
         effective_sample_size=n_eff,
         root_seed=int(seed),
         calibration=table,
@@ -995,6 +1525,7 @@ def run(
         kernel=_kernel_kind(kernel_kinds),
         workers=workers_used,
         propagator_cache_hits=propagator_hits,
+        convergence=convergence,
     )
     result = Result(
         bitstrings=bits,
@@ -1011,6 +1542,8 @@ def run(
         spam=spam,
         final_state=rho_register if keep_final_state else None,
         diagnostics=diagnostics,
+        sub_bin_records=sub_bin_records,
+        arrival_times_s=arrival_times,
     )
     _LAST_RECORD[id(result)] = RunRecord(
         compile=report,
@@ -1170,6 +1703,7 @@ __all__ = [
     "ReadoutStage",
     "RunError",
     "RunRecord",
+    "detection_micromotion",
     "effective_sample_size",
     "enumerate_branches",
     "ideal_register_state",

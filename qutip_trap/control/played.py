@@ -115,6 +115,15 @@ def physical_drive(
     key = (ion, drive.beams[0] if drive.beams else MICROWAVE_BEAM_KEY)
     omega_true, stark_true = truth.rabi_and_stark(ion, drive.beams, drive.kind)
     belief = table.rabi.get(key)
+    if usable(belief) and belief is not None and belief.value > 0.0 and omega_true == 0.0:
+        # the table believes the pulse can be driven and the DEVICE derives zero coupling for this beam geometry: playing
+        # the request as physical would deliver a pulse the beams cannot produce, under a note that says there is no
+        # usable entry when there is one. That is the default-value fallback that hides missing physics (M4 finding).
+        raise ValueError(
+            f"{tag}: the device derives no {drive.kind} coupling for beams {drive.beams} on ion {ion} (Omega = 0), while "
+            f"the table carries a usable Rabi entry of {belief.value:.6g} Hz for {key}: the requested Rabi frequency "
+            "cannot be played. Fix the beam geometry (polarization, k_hat and B direction) or the drive assignment."
+        )
     if usable(belief) and belief is not None and belief.value > 0.0 and omega_true > 0.0:
         ratio = omega_true / float(belief.value)
     else:

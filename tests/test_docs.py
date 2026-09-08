@@ -32,6 +32,26 @@ def test_generated_tables_are_current_with_the_ledger() -> None:
     assert "conv.rb_error_rate" in blocks["conventions"] and "anchor.m10." in blocks["anchors"]
 
 
+def test_every_ledger_id_cited_in_the_documentation_resolves() -> None:
+    """The M10 audit found `conv.crosstalk_ratio` cited in the prose of `docs/physics_notes.md` with no ledger record
+    behind it -- one dangling reference among 136, which nothing checked. Every `conv.*` / `anchor.*` id in backticks on
+    a documentation page or in the root README must be a record id (a `conv.*`-style wildcard cannot match, the pattern
+    stopping at the identifier characters)."""
+    records = load_ledger()
+    pattern = re.compile(r"`((?:conv|anchor)\.[A-Za-z0-9_.]*[A-Za-z0-9_])`")
+    dangling: dict[str, list[str]] = {}
+    pages = [
+        DOCS / name
+        for name in ("physics_notes.md", "conventions.md", "examples.md", "limits.md", "README.md")
+    ]
+    for path in [*pages, ROOT / "README.md"]:
+        cited = set(pattern.findall(path.read_text(encoding="utf-8")))
+        missing = sorted(c for c in cited if c not in records)
+        if missing:
+            dangling[path.name] = missing
+    assert not dangling, dangling
+
+
 def _python_blocks(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     return re.findall(r"```python\n(.*?)```", text, flags=re.S)

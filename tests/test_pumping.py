@@ -81,7 +81,7 @@ def test_scrambled_initial_state_is_the_resonant_ground_manifold() -> None:
     assert all(pops[lab] == pytest.approx(1.0 / 3.0) for lab in BRIGHT) and pops[DARK] == 0.0
     rho2 = scrambled_initial_state(model, [DARK, BRIGHT[0]])
     assert model.build.populations(rho2)[DARK] == pytest.approx(0.5)
-    assert 0.0 < pumping_time_scale_s(model, [DARK]) < 1e-4
+    assert 0.0 < pumping_time_scale_s(model) < 1e-4
     res = optical_pumping(model, [DARK], duration_s=20e-6, samples=2001, initial=rho2)
     assert res.preparation_error < 1e-5
 

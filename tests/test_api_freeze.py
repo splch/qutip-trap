@@ -7,6 +7,8 @@ import ast
 import dataclasses
 import inspect
 import re
+import sys
+import textwrap
 
 import numpy as np
 import pytest
@@ -31,12 +33,79 @@ PROSE_AMENDMENTS: dict[str, set[str]] = {
 PROPERTY_AS_METHOD: dict[str, set[str]] = {"Drive": {"delta_k"}}
 
 
+# Appendix E declares these Literal types inline; the implementation names them (a type alias resolves to the same
+# Literal, checked by resolving the alias in the defining module, so the comparison is by members, not by spelling)
+# ---- deliberate divergences from Appendix E, each with the milestone that needed it (a widening never narrows a field) ----
+ALLOWED_TYPE_DIVERGENCES: dict[tuple[str, str], tuple[str, str]] = {
+    ("Drive", "kind"): (
+        "Literal['gradient','light_shift','microwave','optical_E1','optical_E2','raman']",
+        "M4: the Section 4.4.4 light-shift force is a drive kind of its own",
+    ),
+    ("Diagnostics", "mode_class"): (
+        "dict[int,Literal['dropped','enr','frozen','resolved']]",
+        "M9a: the ENR group is a fourth mode class (Section 5.1)",
+    ),
+    ("Tone", "envelope_hz"): (
+        "Callable[[float],float]|ndarray|float",
+        "M2: a square pulse is a constant envelope, not a one-point array",
+    ),
+    ("CollapseOp", "op"): ("Qobj|QobjEvo", "M7: a collapse operator with a time-dependent rate"),
+    ("CombSpec", "pair_order_max"): (
+        "int|None",
+        "M2: None derives the sum depth from the envelope (ledger conv.comb_sum_depth); an int is the explicit override",
+    ),
+    ("CombSpec", "tau_convention"): (
+        "Literal['field_fwhm','field_sech','intensity_fwhm','intensity_sech','intensity_sech2']",
+        "M2: the two FWHM conventions the pulse-duration conversion accepts beside the three sech ones (Section 4.3.7)",
+    ),
+    ("Trap", "basis_potentials"): (
+        "dict[str,Callable[...,float]]|None",
+        "M0: the callable's signature is stated (a narrowing of the annotation, not of the value set)",
+    ),
+}
+# fields whose Appendix E default is deliberately not the implemented one, with the reason (ledger conv.appendix_e_signatures)
+ALLOWED_DEFAULT_DIVERGENCES: dict[tuple[str, str], tuple[object, str]] = {
+    ("CombSpec", "pair_order_max"): (
+        None,
+        "M2: Appendix E's literal 1200 is 2.6x too shallow at the plan's 80 MHz / 10 ps operating point; None derives "
+        "the depth from the envelope (ledger conv.comb_sum_depth)",
+    ),
+}
+# methods whose implementation takes a parameter Appendix E omits, with the reason (ledger conv.appendix_e_signatures)
+EXTRA_REQUIRED_PARAMETERS: dict[tuple[str, str], dict[str, str]] = {
+    ("MetastableChannels", "bbr_rate_hz"): {
+        "species": "the channels object is species-agnostic; the line's Einstein coefficient, frequency and degeneracies "
+        "live on the Species record (Section 4.5.7)"
+    },
+    ("Drive", "delta_k"): {
+        "beams": "a Drive stores beam indices; the wavevectors live on Device.beams (Section 9.17)"
+    },
+}
+# Appendix E names owned by milestone M12 (transport), whose methods legitimately raise NotImplementedError
+M12_CLASSES = {"Zone", "VoltageWaveform", "FilterStage", "Transport"}
+M12_METHODS = {("Trap", "pseudopotential_v"), ("Trap", "split_coefficients")}
+
+
+@dataclasses.dataclass
+class DeclaredField:
+    annotation: str
+    default: str | None  # the source text of the default, None when the field is required
+
+
 @dataclasses.dataclass
 class DeclaredClass:
-    fields: set[str] = dataclasses.field(default_factory=set)
-    methods: set[str] = dataclasses.field(default_factory=set)
+    fields: dict[str, DeclaredField] = dataclasses.field(default_factory=dict)
+    methods: dict[str, list[str]] = dataclasses.field(
+        default_factory=dict
+    )  # name -> declared parameters (no self)
     frozen_dataclass: bool = False
     protocol: bool = False
+
+
+@dataclasses.dataclass
+class DeclaredFunction:
+    params: list[str]
+    defaults: dict[str, str]  # parameter -> source text of its default
 
 
 def appendix_e_code_blocks() -> list[str]:
@@ -46,9 +115,24 @@ def appendix_e_code_blocks() -> list[str]:
     return re.findall(r"```python\n(.*?)```", section, flags=re.S)
 
 
-def declared() -> tuple[dict[str, DeclaredClass], dict[str, list[str]]]:
+def _params(node: ast.FunctionDef, *, drop_self: bool) -> tuple[list[str], dict[str, str]]:
+    args = node.args
+    positional = list(args.posonlyargs) + list(args.args)
+    names = [a.arg for a in positional] + [a.arg for a in args.kwonlyargs]
+    if drop_self and names and names[0] == "self":
+        names = names[1:]
+    defaults: dict[str, str] = {}
+    for a, d in zip(positional[len(positional) - len(args.defaults) :], args.defaults):
+        defaults[a.arg] = ast.unparse(d)
+    for a, d in zip(args.kwonlyargs, args.kw_defaults):
+        if d is not None:
+            defaults[a.arg] = ast.unparse(d)
+    return names, defaults
+
+
+def declared() -> tuple[dict[str, DeclaredClass], dict[str, DeclaredFunction]]:
     classes: dict[str, DeclaredClass] = {}
-    functions: dict[str, list[str]] = {}
+    functions: dict[str, DeclaredFunction] = {}
     for block in appendix_e_code_blocks():
         tree = ast.parse(block)
         for node in tree.body:
@@ -66,16 +150,63 @@ def declared() -> tuple[dict[str, DeclaredClass], dict[str, list[str]]]:
                     dc.protocol = True
                 for item in node.body:
                     if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                        dc.fields.add(item.target.id)
+                        dc.fields[item.target.id] = DeclaredField(
+                            ast.unparse(item.annotation),
+                            ast.unparse(item.value) if item.value is not None else None,
+                        )
                     elif isinstance(item, ast.FunctionDef):
-                        dc.methods.add(item.name)
+                        dc.methods[item.name] = _params(item, drop_self=True)[0]
             elif isinstance(node, ast.FunctionDef):
-                params = [a.arg for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs]
-                functions[node.name] = params
+                params, defaults = _params(node, drop_self=False)
+                functions[node.name] = DeclaredFunction(params, defaults)
     return classes, functions
 
 
 CLASSES, FUNCTIONS = declared()
+
+_LITERAL = re.compile(r"Literal\[([^\]]*)\]")
+
+
+def _sorted_literals(text: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        members = sorted(x.strip() for x in m.group(1).split(","))
+        return "Literal[" + ",".join(members) + "]"
+
+    return _LITERAL.sub(repl, text)
+
+
+def normalize_annotation(text: str, module: object | None = None) -> str:
+    """One spelling for an annotation: no spaces or quotes, module prefixes dropped, type aliases of the implementing
+    module resolved to their Literal, Literal members sorted."""
+    s = text.replace('"', "").replace("'", "").replace(" ", "")
+    for prefix in ("np.", "numpy.", "qt.", "qutip.", "typing."):
+        s = s.replace(prefix, "")
+    if module is not None:
+        for name in set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", s)):
+            alias = getattr(module, name, None)
+            if (
+                alias is not None
+                and getattr(alias, "__origin__", None) is not None
+                and str(alias).startswith("typing.Literal")
+            ):
+                members = ",".join(repr(a) for a in alias.__args__)
+                s = re.sub(rf"\b{name}\b", f"Literal[{members}]", s)
+    s = s.replace('"', "").replace("'", "")
+    return _sorted_literals(s)
+
+
+def _default_matches(declared_src: str, f: dataclasses.Field[object]) -> bool:
+    if declared_src.startswith("field(default_factory="):
+        return f.default_factory is not dataclasses.MISSING  # type: ignore[comparison-overlap]
+    try:
+        value = eval(declared_src, {"__builtins__": {}}, {})  # noqa: S307  (Appendix E literals: numbers, strings, None, tuples)
+    except Exception:  # noqa: BLE001
+        return True  # a default the appendix writes symbolically is not comparable
+    if f.default is dataclasses.MISSING:
+        return False
+    if isinstance(value, float) or isinstance(f.default, float):
+        return float(value) == float(f.default)  # type: ignore[arg-type]
+    return bool(value == f.default)
 
 
 def test_appendix_e_was_found_and_parsed() -> None:
@@ -84,22 +215,118 @@ def test_appendix_e_was_found_and_parsed() -> None:
 
 
 @pytest.mark.parametrize("name", sorted(CLASSES))
-def test_declared_class_exists_with_its_fields_and_methods(name: str) -> None:
+def test_declared_class_exists_with_its_fields_types_defaults_and_methods(name: str) -> None:
     decl = CLASSES[name]
     assert hasattr(api, name), f"Appendix E class {name} is missing from qutip_trap.api"
     cls = getattr(api, name)
+    module = sys.modules[cls.__module__]
     if decl.frozen_dataclass:
         assert dataclasses.is_dataclass(cls), f"{name} must be a dataclass"
         assert cls.__dataclass_params__.frozen, (
             f"{name} must be frozen (Appendix E: immutable after construction)"
         )
-        have = {f.name for f in dataclasses.fields(cls)}
-        missing = decl.fields - have
+        have = {f.name: f for f in dataclasses.fields(cls)}
+        missing = set(decl.fields) - set(have)
         assert not missing, f"{name} lacks Appendix E fields {sorted(missing)}"
         amend = PROSE_AMENDMENTS.get(name, set())
-        assert amend <= have, f"{name} lacks the prose amendments {sorted(amend - have)}"
-    for meth in decl.methods:
+        assert amend <= set(have), f"{name} lacks the prose amendments {sorted(amend - set(have))}"
+        for fname, dfield in decl.fields.items():
+            impl = have[fname]
+            want = normalize_annotation(dfield.annotation)
+            got = normalize_annotation(str(impl.type), module)
+            if (name, fname) in ALLOWED_TYPE_DIVERGENCES:
+                allowed, _reason = ALLOWED_TYPE_DIVERGENCES[(name, fname)]
+                assert got == normalize_annotation(allowed), (
+                    f"{name}.{fname}: implemented as {got!r}, the recorded divergence is {allowed!r}"
+                )
+            else:
+                assert got == want, f"{name}.{fname}: Appendix E declares {want!r}, implemented as {got!r}"
+            if dfield.default is None:
+                # a required field in Appendix E may gain a default (additive), never the other way round
+                continue
+            assert (
+                impl.default is not dataclasses.MISSING or impl.default_factory is not dataclasses.MISSING
+            ), (  # type: ignore[comparison-overlap]
+                f"{name}.{fname} has the default {dfield.default} in Appendix E but is required here"
+            )
+            if (name, fname) in ALLOWED_DEFAULT_DIVERGENCES:
+                allowed_default, _why = ALLOWED_DEFAULT_DIVERGENCES[(name, fname)]
+                assert impl.default == allowed_default, (
+                    f"{name}.{fname}: implemented default {impl.default!r}, the recorded divergence is {allowed_default!r}"
+                )
+                continue
+            assert _default_matches(dfield.default, impl), (
+                f"{name}.{fname}: Appendix E default {dfield.default}, implemented default {impl.default!r}"
+            )
+        # additive fields (not in Appendix E) must carry a default, so an Appendix E constructor call still works
+        for fname, impl in have.items():
+            if fname not in decl.fields and fname not in PROSE_AMENDMENTS.get(name, set()):
+                assert (
+                    impl.default is not dataclasses.MISSING or impl.default_factory is not dataclasses.MISSING
+                ), (  # type: ignore[comparison-overlap]
+                    f"{name}.{fname} is not in Appendix E and has no default: an Appendix E construction would fail"
+                )
+    for meth, declared_params in decl.methods.items():
         assert hasattr(cls, meth), f"{name}.{meth} declared in Appendix E is missing"
+        attr = inspect.getattr_static(cls, meth)
+        if isinstance(attr, property) or name in PROPERTY_AS_METHOD and meth in PROPERTY_AS_METHOD[name]:
+            continue
+        if decl.protocol:
+            continue  # the Protocol's implementations are checked where they are used
+        sig = inspect.signature(getattr(cls, meth))
+        params = [p for p in sig.parameters.values() if p.name != "self"]
+        names_ = {p.name for p in params}
+        missing = set(declared_params) - names_
+        assert not missing, f"{name}.{meth} lacks the Appendix E parameters {sorted(missing)}"
+        extra_required = [
+            p.name
+            for p in params
+            if p.name not in declared_params
+            and p.default is inspect.Parameter.empty
+            and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        ]
+        allowed = EXTRA_REQUIRED_PARAMETERS.get((name, meth), {})
+        assert set(extra_required) <= set(allowed), (
+            f"{name}.{meth} requires {extra_required} which Appendix E does not declare (record it in "
+            "EXTRA_REQUIRED_PARAMETERS with the reason, or give it a default)"
+        )
+
+
+def _is_stub(func: object) -> str | None:
+    """The message of a `raise NotImplementedError(...)` that is the whole body of ``func``, else None."""
+    try:
+        src = inspect.getsource(func)  # type: ignore[arg-type]
+    except (OSError, TypeError):
+        return None
+    tree = ast.parse(textwrap.dedent(src))
+    node = tree.body[0]
+    if not isinstance(node, ast.FunctionDef):
+        return None
+    body = [b for b in node.body if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant))]
+    if len(body) == 1 and isinstance(body[0], ast.Raise) and body[0].exc is not None:
+        exc = body[0].exc
+        if isinstance(exc, ast.Call) and getattr(exc.func, "id", "") == "NotImplementedError":
+            return ast.unparse(exc)
+    return None
+
+
+def test_no_appendix_e_method_outside_m12_is_a_stub() -> None:
+    """Every Appendix E method that is not owned by milestone M12 (transport, Section 4.6) has a body: a method that raises
+    NotImplementedError as its whole body is an unfinished M0-M10 deliverable (the 'freeze' is of working interfaces)."""
+    stubs: list[str] = []
+    for name, decl in CLASSES.items():
+        if name in M12_CLASSES or decl.protocol:
+            continue
+        cls = getattr(api, name)
+        for meth in decl.methods:
+            if (name, meth) in M12_METHODS:
+                continue
+            attr = inspect.getattr_static(cls, meth)
+            func = attr.fget if isinstance(attr, property) else attr
+            msg = _is_stub(func)
+            if msg is not None:
+                stubs.append(f"{name}.{meth}: {msg}")
+    assert not stubs, "Appendix E methods that are still stubs:\n  " + "\n  ".join(stubs)
 
 
 def test_property_declared_as_method_is_documented() -> None:
@@ -111,13 +338,37 @@ def test_property_declared_as_method_is_documented() -> None:
 
 
 @pytest.mark.parametrize("name", sorted(FUNCTIONS))
-def test_declared_function_exists_with_its_parameters(name: str) -> None:
+def test_declared_function_exists_with_its_parameters_and_defaults(name: str) -> None:
     assert hasattr(api, name), f"Appendix E function {name} is missing from qutip_trap.api"
     fn = getattr(api, name)
-    have = set(inspect.signature(fn).parameters)
-    want = set(FUNCTIONS[name])
-    missing = want - have
+    decl = FUNCTIONS[name]
+    sig = inspect.signature(fn)
+    have = sig.parameters
+    missing = set(decl.params) - set(have)
     assert not missing, f"{name} lacks parameters {sorted(missing)}"
+    extra_required = [
+        p.name
+        for p in have.values()
+        if p.name not in decl.params
+        and p.default is inspect.Parameter.empty
+        and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+    assert not extra_required, f"{name} requires {extra_required} which Appendix E does not declare"
+    for pname, dsrc in decl.defaults.items():
+        try:
+            want = eval(dsrc, {"__builtins__": {}}, {})  # noqa: S307
+        except Exception:  # noqa: BLE001
+            continue
+        got = have[pname].default
+        assert got is not inspect.Parameter.empty, (
+            f"{name}({pname}) has the default {dsrc} in Appendix E, none here"
+        )
+        if isinstance(want, tuple) and isinstance(got, tuple):
+            assert set(want) <= set(got) or want == got, (
+                f"{name}({pname}): {dsrc} declared, {got!r} implemented"
+            )
+        else:
+            assert got == want, f"{name}({pname}): Appendix E default {dsrc}, implemented {got!r}"
 
 
 def test_every_dataclass_in_the_api_is_frozen() -> None:

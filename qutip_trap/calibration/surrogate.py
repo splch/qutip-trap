@@ -12,7 +12,6 @@ plus a handful of exact checks, which is what the plan asks of the first release
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -53,9 +52,9 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
 
 CROSSTALK_MIN = 1e-6
+"""Rabi ratios below this are not stored (a beam of finite waist gives every ion some light; the threshold keeps the table small)."""
 MU_ABOVE_TOP_FRACTION = 0.35
 """The surrogate's AM beat note sits this fraction of the smallest mode gap above the highest coupled mode (Section 7.8)."""
-"""Rabi ratios below this are not stored (a beam of finite waist gives every ion some light; the threshold keeps the table small)."""
 
 
 def _seed(value: float, pid: str, experiment: str, t0_s: float, unc: float = 0.0) -> CalEntry:
@@ -85,6 +84,7 @@ def surrogate_waveform(
     duration_s: float = 100e-6,
     mu_hz: float | None = None,
     eta_min: float = 1e-9,
+    mode_frequencies_hz: Mapping[int, float] | None = None,
 ) -> tuple[ShapedPulse, GateModes]:
     """The closed-form waveform of Section 4.4.3 for ``pair``: the symmetric square pulse when the Raman pair couples the pair to one
     mode, else Choi's segmented AM (2N + 1 segments) at ``mu_hz``, by default ``MU_ABOVE_TOP_FRACTION`` of the smallest gap
@@ -94,8 +94,14 @@ def surrogate_waveform(
     space whose power-optimal direction flips within tens of hertz, and the exact residual displacement of the solutions
     swings from 1e-4 to 3e-3 quanta on the two-ion 171Yb+ fixture (M6 finding; the exact spot check reports whatever the
     chosen solution leaves).
+
+    ``mode_frequencies_hz`` solves at the frequencies the table BELIEVES instead of the crystal's (Section 7.3): what the
+    full calibration re-solves the pulse at once the sideband spectroscopy has measured them (Section 7.5 item 4, "the
+    closure amplitude the pulse solver predicts at the calibrated mode frequencies").
     """
-    modes = gate_modes(device, pair, beams, nbar=nbar, eta_min=eta_min)
+    modes = gate_modes(
+        device, pair, beams, nbar=nbar, eta_min=eta_min, mode_frequencies_hz=mode_frequencies_hz
+    )
     if modes.n_modes == 1:
         return symmetric_pulse(modes, gate_mode=modes.modes[0], loops=1, duration_s=duration_s), modes
     freqs = sorted(w / TWO_PI for w in modes.omega_rad_s)
@@ -116,9 +122,18 @@ def spot_check_space(
     d_max: int = 64,
     caps: Mapping[int, int] | None = None,
     ions: Sequence[int] | None = None,
+    tail: float | None = None,
 ) -> tuple[HilbertSpace, dict[int, str]]:
     """The reduced joint space of a pair's spot check: its resolved modes by the Section 5.2 classes, everything else frozen;
-    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone, the GATE_LOCAL space of the pair (Section 5.4; M9a)."""
+    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone, the GATE_LOCAL space of the pair (Section 5.4; M9a).
+
+    ``tail`` is the boundary threshold the cap rule sizes at, ``SolverOptions.boundary_population_max`` (the engine's own
+    margin check reads the same number, so the initial cap and the check that grows it must not read two thresholds:
+    ledger ``conv.boundary_threshold_is_branch_scaled_on_both_sides``); None takes the SolverOptions default explicitly
+    rather than ``cap_for``'s own."""
+    from qutip_trap.dynamics.engine import SolverOptions
+
+    boundary = SolverOptions().boundary_population_max if tail is None else float(tail)
     classes: dict[int, str] = {}
     resolved: list[ModeTruncation] = []
     for k, m in enumerate(modes.modes):
@@ -128,7 +143,7 @@ def spot_check_space(
         )
         classes[m] = cls
         if cls == "resolved":
-            tr = cap_for(c.radius, modes.nbar[k], c.eta_max, d_min=d_min, d_max=d_max)
+            tr = cap_for(c.radius, modes.nbar[k], c.eta_max, d_min=d_min, d_max=d_max, tail=boundary)
             d = int(caps[m]) if caps is not None and m in caps else tr.d
             resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
     frozen = tuple(m for m in range(n_modes_total) if m not in {t.mode for t in resolved})
@@ -217,8 +232,11 @@ def surrogate_table(
                 f"ion {i}: a {spec.kind} drive has no derivable carrier Rabi frequency; entry left absent"
             )
     # the entangling drives' own carrier Rabi frequencies and Stark shifts (the global pair), keyed by their table beam, so that
-    # the scheduler compensates the MS gate's light shift and the played chain of M8 has a belief to convert against
-    for i in range(n):
+    # the scheduler compensates the MS gate's light shift and the played chain of M8 has a belief to convert against. Only
+    # the ions that HAVE an entangling drive: a single-qubit device (40Ca+ optical preset, entangling_drives={}) has none and
+    # gets no entangling seed and no waveform, and a partially addressed chain seeds the ions its pairs use (this loop ran
+    # over range(n) and raised KeyError on the first ion without one).
+    for i in sorted(ent):
         spec = ent[i]
         key = (i, spec.table_key_beam)
         if key in rabi or spec.kind != "raman" or len(spec.beams) != 2:
@@ -236,13 +254,26 @@ def surrogate_table(
     }
     heating: dict[int, CalEntry] = {}
     spec_e = device.noise.S_E
+    # the seed is the rate the NOISE MODEL will actually heat the run at (Section 4.1.5, the correlation length and the
+    # spectrum's white level folded in by single_sided_from_spectrum), the same quantity Device.derived() reports. Reading
+    # spec_e's tabulated arrays alone, as this did, misses NoiseSpectrum.white_level entirely, so a device whose S_E is a
+    # pure white level was seeded with zero heating while the engine heated it at tens of quanta per second - and the M8
+    # heating experiment, whose delay span is 10/ndot_seed, then had no scan to run on exactly the devices that heat.
+    model_rates: dict[int, float] = {}
+    if not spec_e.is_zero() and device.noise.correlation_length_m is not None:
+        model_rates = device.noise.heating_rates_quanta_per_s(device)
     for m, mode in enumerate(crystal.modes):
         w = mode.omega_rad_s
-        s_two = float(np.interp(w, spec_e.omega_rad_s, spec_e.S, left=0.0, right=0.0))
-        ion = int(np.argmax(np.abs(mode.eigenvector)))
-        rate = heating_rate_quanta_per_s(
-            float(single_sided_from_two_sided(s_two)), float(crystal.masses_kg[ion]), w
-        )
+        if m in model_rates:
+            rate = float(model_rates[m])
+        else:
+            # no correlation length declared (the noise model refuses to guess one): the per-mode two-sided value at the
+            # mode frequency, which is what Device.derived() falls back to as well
+            s_two = float(np.interp(w, spec_e.omega_rad_s, spec_e.S, left=0.0, right=0.0))
+            ion = int(np.argmax(np.abs(mode.eigenvector)))
+            rate = heating_rate_quanta_per_s(
+                float(single_sided_from_two_sided(s_two)), float(crystal.masses_kg[ion]), w
+            )
         heating[m] = _seed(rate, "conv.electric_field_noise", "derived_heating_rate", t0_s)
     field_entry = _seed(b_gauss, "conv.curvature_naming", "field_value", t0_s)
     base = CalibrationTable(
@@ -270,6 +301,9 @@ def surrogate_table(
     wanted = list(pairs) if pairs is not None else [(a, b) for a in range(n) for b in range(a + 1, n)]
     for pair in wanted:
         a, b = int(pair[0]), int(pair[1])
+        if a not in ent:
+            notes.append(f"pair {(a, b)}: ion {a} has no entangling drive; no waveform is solved for it")
+            continue
         spec_a = ent[a]
         if spec_a.kind != "raman" or len(spec_a.beams) != 2:
             notes.append(f"pair {(a, b)}: the surrogate solves Raman (bichromatic) waveforms only; skipped")
@@ -291,6 +325,7 @@ def surrogate_table(
             freeze_alpha_max=opts.freeze_alpha_max,
             freeze_chi_max_rad=opts.freeze_chi_max_rad,
             caps=caps,
+            tail=opts.boundary_population_max,
         )
         classes_by_pair[(a, b)] = classes
         frozen_chi[(a, b)] = {
@@ -308,6 +343,7 @@ def surrogate_table(
                 freeze_chi_max_rad=opts.freeze_chi_max_rad,
                 caps=caps,
                 ions=(a, b),
+                tail=opts.boundary_population_max,
             )
             inside_local, dim_local, nnz_local = within_budget(space, opts)
             notes.append(
@@ -404,10 +440,6 @@ def surrogate_table(
         nbar=occupations,
         notes=tuple(notes),
     )
-
-
-def _unused() -> float:  # keeps math imported for type checkers that prune it
-    return math.pi
 
 
 __all__ = [

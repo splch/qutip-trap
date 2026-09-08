@@ -195,8 +195,9 @@ def test_two_qubit_rb_and_the_entangling_channel(two_ion) -> None:  # type: igno
 
 @pytest.mark.slow
 def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Section 7.9: the Bell/GHZ bound (P_00 + P_11 + C)/2 from populations and a parity scan through run(), the exact register
-    fidelity beside it (the bound is a lower bound within its shot noise), the predicted floor from the channels."""
+    """Section 7.9: the Bell/GHZ bound (P_00 + P_11 + C)/2 from populations and a parity scan through run(), and the two
+    exact fidelities it sits between -- it estimates max_theta <GHZ_theta| rho |GHZ_theta> (an identity, conv.ghz_parity_bound)
+    and is therefore an UPPER bound on the fixed-phase <GHZ| rho |GHZ> -- plus the predicted floor from the channels."""
     preset, kw = two_ion
     g = ghz_fidelity(preset.device, (0, 1), shots=500, **kw)
     assert g.n_qubits == 2 and len(g.results) == 9 and g.converged
@@ -206,7 +207,17 @@ def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion) -> None:  # typ
     assert 0.95 < c < 1.02 and sc < 0.05
     f, sf = g.fidelity_bound
     assert 0.98 < g.register_fidelity < 1.0
-    assert f - 3.0 * sf < g.register_fidelity + 1e-3, "a lower bound within its error"
+    assert g.register_fidelity_max_phase >= g.register_fidelity - 1e-12, (
+        "the max-phase fidelity is never lower"
+    )
+    assert abs(f - g.register_fidelity_max_phase) < 3.0 * sf + 2e-3, (
+        "the measured bound estimates the max-phase fidelity",
+        f,
+        sf,
+        g.register_fidelity_max_phase,
+    )
+    assert f + 3.0 * sf > g.register_fidelity, "and so bounds the fixed-phase fidelity from ABOVE"
+    assert any("UPPER bound" in n for n in g.notes)
     b = g.budget
     assert b is not None and b.unit == "circuit" and "ms[0,1]" in b.channels and b.counts["ms[0,1]"] == 1.0
     assert 0.99 < b.predicted["F_gates"] < 1.0 and b.predicted["fidelity_bound"] < b.predicted["F_gates"]
@@ -226,7 +237,12 @@ def test_quantum_volume_style_run_at_width_two(two_ion) -> None:  # type: ignore
         np.abs(qv.heavy_output_probability - qv.ideal_heavy_probability) < 4.0 * qv.heavy_sigma + 0.05
     )
     assert not qv.protocol_circuit_count_met and any("100" in n for n in qv.notes)
-    assert (qv.log2_quantum_volume == 2) == qv.passed
+    # Cross et al. Appendix C Eq. (32): sigma = sqrt(h(1 - h)/n_c), far above the standard error of the mean, and a pass
+    # needs the 100 circuits as well as the two-sigma bound, so a two-circuit run clears no quantum volume
+    assert qv.sigma == pytest.approx(math.sqrt(qv.mean * (1.0 - qv.mean) / qv.n_circuits), rel=1e-12)
+    assert qv.sigma > 2.0 * qv.standard_error_of_the_mean
+    assert not qv.passed and qv.log2_quantum_volume is None
+    assert qv.passed == (qv.threshold_cleared and qv.protocol_circuit_count_met)
     b = qv.budget
     assert (
         b is not None

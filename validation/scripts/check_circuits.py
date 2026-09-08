@@ -333,7 +333,7 @@ res3 = run(
 )
 d3 = res3.diagnostics
 print(
-    f"  GHZ circuit through run(): space {d3.space.dims}, classes {d3.mode_class}, branches {d3.trajectories} (dropped {d3.dropped_branch_weight:.1e}), boundary {dict((m, f'{v:.1e}') for m, v in d3.boundary_population.items())}, frozen contribution {dict((m, (f'{a:.1e}', round(c, 4))) for m, (a, c) in d3.frozen_contribution.items())}"
+    f"  GHZ circuit through run(): space {d3.space.dims}, classes {d3.mode_class}, branches {d3.branches} (dropped {d3.dropped_branch_weight:.1e}), boundary {dict((m, f'{v:.1e}') for m, v in d3.boundary_population.items())}, frozen contribution {dict((m, (f'{a:.1e}', round(c, 4))) for m, (a, c) in d3.frozen_contribution.items())}, dropped modes {d3.dropped_modes} contributing ({d3.dropped_contribution[0]:.1e}, {d3.dropped_contribution[1]:.1e}) that nothing absorbs (Section 11.3 item 2)"
 )
 print(
     f"  register 1 - F = {1.0 - register_fidelity(res3):.3e}; budget total {d3.intrinsic_budget['total']:.1e}"
@@ -436,9 +436,10 @@ for idx, p in enumerate(pop):
         idx & 1,
     )  # register order: ion 0 is the most-significant index bit
     data[f"{b2}{b0}"] += float(p)  # data string (qubit 2, qubit 0), qubit 0 rightmost
-    true_bright = [schemes_b[i].classes[lv] == "bright" for i, lv in enumerate((b0, b1, b2))]
+    # the POVM takes the true INTERNAL LEVELS, not the start classes (M5); identical here, wrong for bright_level == 0
+    true_levels = [b0, b1, b2]
     for dec in itertools.product((True, False), repeat=3):
-        q = povm_b.declared_bright_probability(true_bright, list(dec))
+        q = povm_b.declared_bright_probability(true_levels, list(dec))
         bits = [schemes_b[i].bit_of_class("bright" if dec[i] else "dark") for i in range(3)]
         declared[f"{bits[2]}{bits[0]}"] += float(p) * float(q)
 # coherent crosstalk alone: the compiled circuit as matrices, every gpi/gpi2 also rotating its nearest neighbours by eps theta at the pulse phase (Delta k is transverse to the chain, so no geometric phase), the MS gate ideal

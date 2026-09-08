@@ -37,6 +37,7 @@ from scipy.linalg import expm
 
 from qutip_trap.dynamics.multilevel import (
     SINK,
+    EmissionChannel,
     ModeSpec,
     MultiLevelBuild,
     MultiLevelOptions,
@@ -120,9 +121,14 @@ class CeilingReport:
     ground_labels: tuple[str, ...]
     excited_labels: tuple[str, ...]
     ceiling: float
-    """n_e/(n_e + n_g)."""
+    """n_e/(n_e + n_g); NaN when no coupling is near resonance, so there is no closed resonant manifold to bound."""
     excited_population: float
     """Population of the resonant excited states in the state reported."""
+
+    @property
+    def has_manifold(self) -> bool:
+        """False for far-detuned light: no resonant manifold exists and the ceiling check is not applicable."""
+        return bool(self.ground_labels) and bool(self.excited_labels)
 
     @property
     def n_ground(self) -> int:
@@ -204,7 +210,14 @@ class ManifoldRates:
     conditional_b: qt.Qobj
     slow_eigenvalue_per_s: float
     separation: float
-    """|Re lambda_3| / |Re lambda_2|: how well the two-manifold picture is separated from the fast dynamics."""
+    """|Re lambda_next| / |Re lambda_slow|: how well the two-manifold picture is separated from the faster dynamics."""
+    intra_manifold_rates_per_s: tuple[float, ...] = ()
+    """Rates of the modes SLOWER than the chosen one that live inside a single manifold, slowest first.
+
+    Empty for a closed two-manifold cycle. A 171Yb+ detection model that carries the D3/2 branch and its 935 nm
+    repump has such a mode - the D manifold's own relaxation - and it is slower than the bright/dark pumping, so the
+    second-slowest Liouvillian mode is NOT the bright <-> dark one (the M5 finding). They are reported rather than
+    hidden: their presence means the coarse graining is a two-manifold picture inside a richer slow spectrum."""
 
 
 @dataclass(frozen=True)
@@ -374,7 +387,9 @@ class BlochModel:
         """The resonant manifold (couplings within ``window_gammas`` linewidths of resonance) and its ceiling check."""
         ground, excited = self.resonant_manifold(window_gammas=window_gammas)
         if not ground or not excited:
-            return CeilingReport((), (), 1.0, 0.0)
+            # no coupling within window_gammas linewidths of resonance: there is no closed resonant manifold and
+            # therefore no equal-population bound. NaN says so; 1.0 would read as a satisfied check (Section 13).
+            return CeilingReport((), (), math.nan, 0.0)
         pops = self.build.populations(rho)
         p_e = float(sum(pops[lab] for lab in excited))
         ceiling = saturation_ceiling(len(ground), len(excited))
@@ -525,11 +540,31 @@ class BlochModel:
 
     # ---- slow-manifold analysis ----------------------------------------------------------------------------
 
-    def manifold_rates(self, a_labels: Sequence[str], b_labels: Sequence[str]) -> ManifoldRates:
-        """Coarse-grain the Liouvillian into two manifolds by its slowest nonzero mode (Section 8.1 leakage rates).
+    def manifold_rates(
+        self,
+        a_labels: Sequence[str],
+        b_labels: Sequence[str],
+        *,
+        connection_tol: float = 1e-9,
+        closure_tol: float = 1e-3,
+        weight_floor: float = 1e-9,
+    ) -> ManifoldRates:
+        """Coarse-grain the Liouvillian into two manifolds by its slowest CONNECTING mode (Section 8.1 leakage rates).
 
         The conditional states are fixed by requiring each to carry no population in the OTHER manifold's labels;
         the rates follow from the slow eigenvalue k = R_ab + R_ba and the stationary weights.
+
+        The mode is chosen by projecting each eigenvector onto the two manifolds' populations and taking the slowest
+        one that moves population between them (both projections above ``connection_tol`` of the eigenvector's own
+        trace norm). The second-slowest Liouvillian mode is not always that one: a 171Yb+ detection model that
+        carries the D3/2 branch and its 935 nm repump has a slow relaxation INSIDE the D manifold, and picking
+        ``order[1]`` blindly then failed with "the slow mode does not connect the two manifolds" (the M5 finding).
+        The skipped intra-manifold rates are reported on the result.
+
+        The two manifolds must also be a partition of the slow dynamics: population sitting outside them and outside
+        the decaying levels (a D manifold whose repump cycle the species table cannot close, say) makes the
+        two-manifold rates meaningless - they come out negative - so it is refused, with the missing weight named,
+        rather than reported (``closure_tol``).
         """
         b = self.build
         if not b.static or b.space is not None:
@@ -539,21 +574,71 @@ class BlochModel:
         order = np.argsort(-vals.real)
         n = b.n_internal
         rho_ss = _hermitize(vecs[:, order[0]].reshape(n, n, order="F"))
-        slow = vecs[:, order[1]].reshape(n, n, order="F")
-        slow = 0.5 * (slow + slow.conj().T)
-        k_slow = -float(vals[order[1]].real)
-        third = -float(vals[order[2]].real) if n * n > 2 else math.inf
         p_a = b.manifold_projector(a_labels).full()
         p_b = b.manifold_projector(b_labels).full()
+        trace_ss = float(np.real(np.trace(rho_ss)))
+        if trace_ss == 0.0:
+            raise ValueError(
+                "the stationary Liouvillian eigenvector is traceless: no steady state to coarse-grain"
+            )
+        rho_ss = rho_ss / trace_ss
         pa_ss = float(np.real(np.trace(p_a @ rho_ss)))
         pb_ss = float(np.real(np.trace(p_b @ rho_ss)))
-        pa_v = float(np.real(np.trace(p_a @ slow)))
-        pb_v = float(np.real(np.trace(p_b @ slow)))
-        if pa_v == 0.0 or pb_v == 0.0:
-            raise ValueError("the slow mode does not connect the two manifolds")
+        decaying = [lab for lab in b.labels if b.level_of(lab) in b.level_rates_rad_s]
+        accounted = (
+            pa_ss
+            + pb_ss
+            + float(np.real(np.trace(b.manifold_projector(decaying).full() @ rho_ss)) if decaying else 0.0)
+        )
+        if lost := 1.0 - accounted - (rho_ss[b.index(SINK), b.index(SINK)].real if SINK in b.labels else 0.0):
+            if lost > closure_tol:
+                elsewhere = {
+                    lab: float(np.real(rho_ss[b.index(lab), b.index(lab)]))
+                    for lab in b.labels
+                    if lab not in a_labels and lab not in b_labels and lab not in decaying and lab != SINK
+                }
+                worst = sorted(elsewhere.items(), key=lambda kv: -kv[1])[:4]
+                raise ValueError(
+                    f"the two manifolds and the decaying levels carry only {accounted:.4g} of the stationary "
+                    f"population: {lost:.4g} sits elsewhere ({', '.join(f'{k} {v:.3g}' for k, v in worst)}), so the "
+                    "two-manifold coarse graining of Section 8.1 is not a partition of the slow dynamics and its "
+                    "rates would come out negative. Include that population in one of the manifolds, or close its "
+                    "decay path in the species table"
+                )
+        chosen: int | None = None
+        slow = np.zeros((n, n), dtype=complex)
+        pa_v = pb_v = 0.0
+        skipped: list[float] = []
+        for position in range(1, order.size):
+            candidate = vecs[:, order[position]].reshape(n, n, order="F")
+            candidate = 0.5 * (candidate + candidate.conj().T)
+            scale = float(np.sum(np.abs(np.diag(candidate))))
+            if scale <= 0.0:
+                continue
+            a_weight = float(np.real(np.trace(p_a @ candidate)))
+            b_weight = float(np.real(np.trace(p_b @ candidate)))
+            if abs(a_weight) > connection_tol * scale and abs(b_weight) > connection_tol * scale:
+                chosen, slow, pa_v, pb_v = position, candidate, a_weight, b_weight
+                break
+            skipped.append(-float(vals[order[position]].real))
+        if chosen is None:
+            raise ValueError(
+                "no Liouvillian mode connects the two manifolds: the labels given do not exchange population "
+                "(Section 8.1); check that the manifolds are the bright and dark states of one pumping cycle"
+            )
+        k_slow = -float(vals[order[chosen]].real)
+        third = -float(vals[order[chosen + 1]].real) if chosen + 1 < order.size else math.inf
         s = pa_ss / pa_v - pb_ss / pb_v
         w_a = (pa_ss / pa_v) / s
         w_b = 1.0 - w_a
+        if not weight_floor <= w_a <= 1.0 - weight_floor:
+            raise ValueError(
+                f"the stationary weight of the first manifold is {w_a:.4g}, outside ({weight_floor:g}, "
+                f"{1.0 - weight_floor:g}): one manifold is ABSORBING, so there is no two-way pumping cycle to "
+                "coarse-grain and the conditional states diverge (Section 8.1). This is what an open decay path "
+                "looks like - a 171Yb+ D3/2 branch whose 935 nm repump the species table cannot return to S1/2, "
+                "say; close the path or drop the level from the model"
+            )
         rho_a = _hermitize(rho_ss + w_b * s * slow)
         rho_b = _hermitize(rho_ss - w_a * s * slow)
         return ManifoldRates(
@@ -564,13 +649,22 @@ class BlochModel:
             conditional_b=qt.Qobj(rho_b, dims=b.H.dims),
             slow_eigenvalue_per_s=k_slow,
             separation=third / k_slow if k_slow > 0.0 else math.inf,
+            intra_manifold_rates_per_s=tuple(skipped),
         )
 
     def detection_rates(
-        self, bright_labels: Sequence[str], dark_labels: Sequence[str], line: str | None = None
+        self,
+        bright_labels: Sequence[str],
+        dark_labels: Sequence[str],
+        line: str | None = None,
+        *,
+        connection_tol: float = 1e-9,
+        weight_floor: float = 1e-9,
     ) -> DetectionRates:
         """R_o on ``line`` ("S1/2<-P1/2"; default: every non-sink line) in the conditional bright state, with R_d and R_b."""
-        mr = self.manifold_rates(bright_labels, dark_labels)
+        mr = self.manifold_rates(
+            bright_labels, dark_labels, connection_tol=connection_tol, weight_floor=weight_floor
+        )
         rates = self.photon_rates(mr.conditional_a)
         if line is None:
             r_bright = float(sum(v for k, v in rates.items() if not k.startswith(SINK)))
@@ -800,6 +894,33 @@ def rate_coefficients_from_spectrum(model: BlochModel, mode: ModeSpec) -> Spectr
     return SpectrumCoefficients(s_plus + two_d, s_minus + two_d, two_d, s_plus, s_minus)
 
 
+VECTOR_FORM_Q = 9
+"""``EmissionChannel.operator_qs`` sentinel of a vector-form (direction-resolved) channel, which mixes q."""
+
+
+def operator_angular_factor(channel: EmissionChannel, index: int, cos_chi: float) -> float:
+    """alpha of one collapse operator of ``channel``: alpha_q(chi) for a q-resolved operator, the channel's own tabulated
+    ``alpha`` for a vector-form one (Section 4.2.8 ii, "one angular factor per channel and mode axis").
+
+    ``index`` is the operator's offset within ``channel.operator_slice``. A vector-form channel writes the sentinel
+    ``VECTOR_FORM_Q`` because its operators mix q, so no per-operator alpha exists; the channel's ``alpha`` dict then
+    supplies it when the channel has a single polarization index, and a genuinely q-mixing one is REFUSED rather than
+    silently given the isotropic 1/3 (its alpha is the derived second moment of
+    :func:`qutip_trap.light.recoil.derived_angular_factors`, not 1/3).
+    """
+    q = channel.operator_qs[index]
+    if q != VECTOR_FORM_Q:
+        return angular_factor(q, cos_chi)
+    if len(channel.alpha) == 1:
+        return float(next(iter(channel.alpha.values())))
+    raise NotImplementedError(
+        f"channel {channel.lower}<-{channel.upper} is direction-resolved over {sorted(channel.alpha)} polarization "
+        "indices, so no scalar alpha describes one of its operators (Section 4.2.8: no scalar alpha is ever "
+        "hard-coded). Its recoil is already exact in the operators themselves: use the level-C solve, or read "
+        "recoil.derived_angular_factors on the channel's directions"
+    )
+
+
 def emission_diffusion_two_d(
     model: BlochModel, axis: Sequence[float], x0_m: float, rho: qt.Qobj | None = None
 ) -> float:
@@ -821,9 +942,52 @@ def emission_diffusion_two_d(
         eta_em = ch.wavenumber_rad_per_m * x0_m
         start, stop = ch.operator_slice
         for k in range(start, stop):
-            q = ch.operator_qs[k - start]
-            two_d += angular_factor(None if q == 9 else q, cos_chi) * eta_em**2 * float(rates[k])
+            two_d += operator_angular_factor(ch, k - start, cos_chi) * eta_em**2 * float(rates[k])
     return two_d
+
+
+def emission_angular_factor(
+    model: BlochModel,
+    axis: Sequence[float],
+    rho: qt.Qobj | None = None,
+    *,
+    lines: Sequence[tuple[str, str]] | None = None,
+) -> float:
+    """The photon-rate-weighted mean alpha over the emitted polarization channels of a model's steady state.
+
+    alpha_eff = sum_k p_k alpha_{q(k)}(chi) / sum_k p_k over every collapse operator k of the selected decay lines,
+    p_k = Tr(C_k^dagger C_k rho) its photon rate. This is the one scalar angular factor a Fock-space recoil kernel of
+    Section 4.2.8 can carry when the emitted photons are distributed over several polarization channels: a
+    polarization-pure repumper on a mode along B returns 2/5 or 1/5, an unpolarized cycle returns 1/3, and nothing is
+    hard-coded. ``lines`` restricts the average to those (lower, upper) decay lines (default: every non-sink line).
+    Raises CoolingError when the selected lines scatter no photons at all.
+    """
+    b = model.build
+    if rho is None:
+        if b.space is not None or not b.static:
+            raise NotImplementedError(
+                "the emission angular factor needs the static internal-only steady state"
+            )
+        assert isinstance(b.H, qt.Qobj)
+        rho = qt.steadystate(b.H, list(b.c_ops), method="direct")
+    cos_chi = float(np.dot(np.asarray(axis, dtype=float), model.structure.b_hat))
+    wanted = None if lines is None else {(lo, up) for lo, up in lines}
+    rates = model.operator_rates(rho)
+    total = 0.0
+    weighted = 0.0
+    for ch in b.channels:
+        if ch.kind == "sink" or (wanted is not None and (ch.lower, ch.upper) not in wanted):
+            continue
+        start, stop = ch.operator_slice
+        for k in range(start, stop):
+            p = float(rates[k])
+            total += p
+            weighted += p * operator_angular_factor(ch, k - start, cos_chi)
+    if total <= 0.0:
+        raise CoolingError(
+            "the selected decay lines scatter no photons in this steady state: no emission angular factor exists"
+        )
+    return weighted / total
 
 
 __all__ = [
@@ -839,8 +1003,11 @@ __all__ = [
     "SpectrumCoefficients",
     "SteadyStateReport",
     "beam_for_transition",
+    "VECTOR_FORM_Q",
     "carrier_weight",
+    "emission_angular_factor",
     "emission_diffusion_two_d",
+    "operator_angular_factor",
     "intensity_over_isat",
     "WEAK_DRIVE_MAX",
     "rate_coefficients",

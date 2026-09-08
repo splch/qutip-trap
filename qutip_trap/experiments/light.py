@@ -2,7 +2,9 @@
 
 - ``stark_scan``: a Ramsey experiment with ONE beam of the gate drive on during the delay (the other blocked, so no
   two-photon coupling exists): the fringe shift is that beam's differential light shift, the drive's is the sum over its
-  beams, per (ion, beam) as item 7 asks. The alternative both-beams-on measurement with the beat note detuned far from the
+  beams, per (ion, beam) as item 7 asks. The fringe fit returns |delta - probe|, so the scan is run at BOTH probe signs and
+  the shift is the half-difference (``ramsey_frequency``'s estimator); the sum of the two fringes and the delay grid's
+  Nyquist frequency bound the range the estimator is valid on. The alternative both-beams-on measurement with the beat note detuned far from the
   carrier at both signs (the light shift even in the detuning, the coupling shift Omega^2/(2 delta) odd) is kept as
   ``mode="beat_note"``.
 - ``crosstalk_scan``: drive ion i on its carrier with the light its addressing beams put on the neighbours (the derived
@@ -42,12 +44,23 @@ def _wrap(angle: float) -> float:
     return float((angle + math.pi) % (2.0 * math.pi) - math.pi)
 
 
+def _nyquist_hz(delays_s: Sequence[float]) -> float | None:
+    """The highest fringe frequency the delay grid resolves, 1/(2 dt) at the median step; None for fewer than two delays."""
+    ts = np.array(sorted(float(x) for x in delays_s))
+    if ts.size < 2:
+        return None
+    step = float(np.median(np.diff(ts)))
+    return 0.5 / step if step > 0.0 else None
+
+
 def stark_scan(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """The differential light shift of ``ion``'s gate beams (Section 7.5 item 7), per (ion, beam) as the plan asks.
 
     ``mode="per_beam"`` (default): a Ramsey experiment with ONE beam of the drive on during the delay at a time (the other
-    blocked), so that no two-photon coupling exists and the fringe shift is that beam's differential light shift alone; the
-    drive's shift is the sum over its beams (linear in intensity). ``mode="beat_note"``: both beams on with the beat note
+    blocked), so that no two-photon coupling exists and the fringe shift is that beam's differential light shift alone, run at
+    BOTH probe signs so the branch of the fitted |fringe| is resolved (delta = (f_minus - f_plus)/2, exact while
+    |delta| < probe, with f_plus + f_minus = 2 probe as the out-of-range detector and the delay grid's Nyquist frequency as
+    the upper guard); the drive's shift is the sum over its beams (linear in intensity). ``mode="beat_note"``: both beams on with the beat note
     detuned by ``stark_detuning_hz`` (default the highest mode frequency plus ten Rabi frequencies) at both signs; the light
     shift is the even part of the two fringe shifts and the odd part is the off-resonant coupling shift Omega^2/(2 delta), a
     check of the Rabi frequency (the delays must then resolve a fringe at probe minus that shift). ``probe_hz`` the Ramsey probe
@@ -84,15 +97,19 @@ def stark_scan(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -
     fitted: dict[str, tuple[float, float]] = {}
     converged = True
 
-    def run_with(label: float, delay_pulses: Any, tag: str) -> tuple[float, float, bool]:
+    # ``mode`` is this experiment's own switch; ``_setup`` reads a ``mode`` keyword as a driven mode INDEX, so it must not
+    # reach the Ramsey sub-runs (``mode="beat_note"`` raised int('beat_note') before this)
+    base_kw = {k: v for k, v in kw.items() if k != "mode"}
+
+    def run_with(label: float, delay_pulses: Any, tag: str, detuning_hz: float) -> tuple[float, float, bool]:
         # every sub-run draws its own shot noise (the two beams' Ramseys are separate experiments)
         res = ramsey(
             device,
             ion,
             delays_s,
             **{
-                **sub_stream(kw, tag),
-                "detuning_hz": probe,
+                **sub_stream(base_kw, tag),
+                "detuning_hz": detuning_hz,
                 "delay_pulses": delay_pulses,
                 "rabi_hz_belief": belief,
             },
@@ -104,6 +121,7 @@ def stark_scan(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -
 
     if mode == "per_beam":
         total, var = 0.0, 0.0
+        nyquist = _nyquist_hz(delays_s)
         for b in derived.beams:
             shift_b = float(differential_stark_shift_hz(device, ion, (b,)))
 
@@ -119,12 +137,36 @@ def stark_scan(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -
                 )
                 return [Pulse(drive, t0, t1, f"stark_probe[beam {_b}]", ())]
 
-            f, s_f, ok = run_with(float(b), delay_pulses, f"beam{b}")
-            shift = probe - f  # the fringe runs at probe - shift while the shift stays below the probe
-            fitted[f"stark_shift_hz[{b}]"] = (shift, s_f)
+            # the branch of |fringe| is resolved by the two probe signs exactly as ``ramsey_frequency`` resolves a qubit
+            # offset: the fringe runs at |probe - delta| for the + probe and at |probe + delta| for the -, so the
+            # half-DIFFERENCE is delta with its sign and the SUM is 2 probe only while |delta| < probe. A single probe sign
+            # loses the sign of (delta - probe) and aliases a shift above the probe onto one below it (delta = 1.5 probe
+            # was written as 0.5 probe with converged=True).
+            f_p, s_p, ok_p = run_with(float(b), delay_pulses, f"beam{b}/plus", +probe)
+            f_m, s_m, ok_m = run_with(float(b), delay_pulses, f"beam{b}/minus", -probe)
+            shift = 0.5 * (f_m - f_p)
+            s_shift = 0.5 * math.hypot(s_p, s_m)
+            fitted[f"stark_shift_hz[{b}]"] = (shift, s_shift)
+            fitted[f"fringe_plus_hz[{b}]"] = (f_p, s_p)
+            fitted[f"fringe_minus_hz[{b}]"] = (f_m, s_m)
             total += shift
-            var += s_f**2
-            converged = converged and ok and abs(shift) < probe
+            var += s_shift**2
+            ok = ok_p and ok_m and abs(shift) < probe
+            residual = abs(f_p + f_m - 2.0 * probe)
+            tol = max(4.0 * math.hypot(s_p, s_m), 1e-3 * probe)
+            if residual > tol:
+                ok = False
+                notes.append(
+                    f"beam {b}: the two fringes sum to {f_p + f_m:.6g} Hz, not 2 x probe = {2.0 * probe:.6g} Hz "
+                    f"(residual {residual:.3g} above {tol:.3g}): the shift lies outside the probe; raise probe_hz"
+                )
+            if nyquist is not None and abs(shift) + probe > nyquist:
+                ok = False
+                notes.append(
+                    f"beam {b}: the fringe at {abs(shift) + probe:.6g} Hz exceeds the delay grid's Nyquist frequency "
+                    f"{nyquist:.6g} Hz: shorten the delay step or lower probe_hz"
+                )
+            converged = converged and ok
         fitted["stark_shift_hz"] = (total, math.sqrt(var))
     elif mode == "beat_note":
         far = kw.get("stark_detuning_hz")
@@ -145,7 +187,7 @@ def stark_scan(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -
                 )
                 return [Pulse(drive, t0, t1, f"stark_probe[{_sign:+d}]", ())]
 
-            fringes[sign] = run_with(float(sign), delay_pulses_beat, f"sign{sign:+d}")
+            fringes[sign] = run_with(float(sign), delay_pulses_beat, f"sign{sign:+d}", +probe)
         shift_p = probe - fringes[+1][0]
         shift_m = probe - fringes[-1][0]
         fitted["stark_shift_hz"] = (

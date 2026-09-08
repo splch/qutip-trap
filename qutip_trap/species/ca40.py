@@ -3,10 +3,19 @@
 I = 0, so there is no hyperfine structure and the Lande formula supplies g_J ([background]; the measured
 g_S ~ 2.00226 and g_D ~ 1.20033 the plan mentions were "not verified here", Section 4.5.7). The metastable
 D lifetimes are Kreuter et al. 2005's single-ion measurements with the theoretical values stored
-separately as cross-checks and never as lifetimes (Section 4.5.7); the P-level linewidths are the
-"quoted" 21.57 and 23.4 MHz of Section 9.13, whose total-versus-partial reading the plan leaves open, so
-they are tagged ``contested`` and read here as TOTAL rates (the Appendix E field semantics), with the
-Section 9.13 I_sat anchor 45.11 mW/cm^2 reproducible only under the PARTIAL reading (see the tests).
+separately as cross-checks and never as lifetimes (Section 4.5.7).
+
+The P-level TOTAL rates come from MEASURED lifetimes -- Hettrich et al. 2015's tau(P1/2) = 6.904(26) ns
+(gamma/2pi = 23.0526 MHz) and Meir et al. 2020's tau(P3/2) = 6.639(42) ns (23.9727 MHz) -- and Section
+9.13's "quoted" 21.57 and 23.4 MHz are read as PARTIAL rates into S1/2, the reading the plan's own text
+uses for both and the one Hettrich prints for the 397 nm line (gamma_PS = 2 pi x 21.57(8) MHz). Reading
+21.57 MHz as a total would demand tau(P1/2) = 7.379 ns, which no measurement supports. With Ramm et al.
+2013's branching 0.06435(7) the 397 nm partial rate comes out at 21.5691 MHz, reproducing Hettrich's
+printed value to 4e-5, so Section 9.13's 2.045 e a0 and 45.11 mW/cm^2 anchors now come out of this TABLE
+(exactly 2.0446 / 45.106 at the plan's own AIR 396.85 nm, 2.0455 / 45.069 at the vacuum wavelength the
+table stores). The 393 nm pair does not: Meir's lifetime with Gerritsma's branching gives a partial rate
+of 22.4071 MHz, 4.2 % below the plan's unsourced 23.4 MHz, so the plan's 2.972 e a0 / 50.25 mW/cm^2 are a
+closed form at its own number and not the table's (ledger anchor.ca40.p32_linewidth_readings).
 """
 
 from __future__ import annotations
@@ -20,7 +29,6 @@ from qutip_trap.species.table import (
     energy_hz,
     gamma_hz_from_lifetime,
     ion_mass_u,
-    lifetime_s_from_linewidth,
     wavelength_vac_m,
 )
 from qutip_trap.units import lande_g_j
@@ -168,10 +176,14 @@ _ENTRIES: tuple[Cited, ...] = (
         "Hz",
         "PLAN_9_13",
         tag="contested",
-        note="'the quoted 21.57 MHz' of the 397 nm line, source not named in PLAN.md; whether it is the total P1/2 "
-        "decay rate or the partial rate into S1/2 is unresolved ('the species table must say which', Section 9.13). "
-        "THIS TABLE READS IT AS THE TOTAL RATE (Transition.gamma_hz semantics); Section 9.13's 2.045 e a0 and "
-        "45.11 mW/cm^2 assume the partial reading",
+        note="CROSS-CHECK ONLY (nothing is built from it): 'the quoted 21.57 MHz' of the 397 nm line, for "
+        "which PLAN.md 9.13 names no source. THIS TABLE READS IT AS THE PARTIAL RATE into S1/2, because "
+        "(a) Hettrich et al. 2015 print exactly gamma_PS = 2 pi x 21.57(8) MHz as that partial rate, "
+        "(b) Section 9.13 itself reads it that way -- its 2.045 e a0 and 45.11 mW/cm^2 are the partial-rate "
+        "closed forms -- and (c) as a TOTAL rate it would mean tau(P1/2) = 7.379 ns, contradicted by every "
+        "lifetime measurement (Hettrich 6.904(26) ns, Jin and Church 1993 7.098(20) ns). The value the table "
+        "USES is P12.partial_rate_to_S12_hz, reproduced from P12.lifetime_s x the S1/2 branching; the total "
+        "is 23.0526 MHz, not 21.57. Ledger conv.ca40_linewidth_reading",
     ),
     _c(
         "P32.linewidth_quoted_hz",
@@ -179,25 +191,149 @@ _ENTRIES: tuple[Cited, ...] = (
         "Hz",
         "PLAN_9_13",
         tag="contested",
-        note="'the quoted 23.4 MHz' of the 393 nm line, same caveat; read here as the total P3/2 rate",
+        note="CROSS-CHECK ONLY: 'the quoted 23.4 MHz' of the 393 nm line, source not named in PLAN.md, and it "
+        "matches NO measurement under either reading -- Meir et al. 2020's tau = 6.639(42) ns gives 23.9727 MHz "
+        "total and 22.4071 MHz partial, Jin and Church 1993's 6.924(19) ns gives 22.9860 / 21.4848. PLAN.md "
+        "9.13 reads it as a partial rate (its 2.972 e a0 / 50.25 mW/cm^2), so this table reads it the same way "
+        "for consistency with the 397 nm line, but takes the P3/2 total from Meir's lifetime, which means the "
+        "plan's 393 nm anchors are NOT reproduced from the table (2.9085 e a0 / 48.113 mW/cm^2 at the plan's "
+        "own air wavelength). Ledger anchor.ca40.p32_linewidth_readings",
     ),
     _c(
         "P12.branching_to_D32",
+        0.06435,
+        "",
+        "Ramm2013",
+        tag="verified",
+        uncertainty=0.00007,
+        note="the dedicated 40Ca+ P1/2 branching measurement (0.93565(7) into S1/2), corroborated by Hettrich "
+        "et al. 2015's independent 0.93572(25). ADOPTED as the value the table uses in place of Section 8.1's "
+        "rounder '6% branch to D3/2' (kept as P12.branching_to_D32_plan_8_1): with P12.lifetime_s it makes the "
+        "partial rate into S1/2 come out at 21.5691 MHz, reproducing Hettrich's printed 21.57(8) MHz to 4e-5, "
+        "which is what closes the total-versus-partial question of Section 9.13. Ledger conv.ca40_branching",
+    ),
+    _c(
+        "P12.branching_to_D32_plan_8_1",
         0.06,
         "",
         "PLAN_8_1",
         tag="contested",
-        note="'the 6% branch to D3/2' (Section 8.1); Section 12 records 1:12, 1:16 and about 1:17.6 in different "
-        "sources, a 30% uncertainty with no dedicated measurement verified in any run",
+        note="CROSS-CHECK ONLY: 'the 6% branch to D3/2' (Section 8.1), the value Ramm et al. 2013's 0.06435(7) "
+        "replaced; 6.8% low, and it moves the 397 nm partial rate by 0.5%. Section 12 records 1:12, 1:16 and "
+        "about 1:17.6 in different sources, a 30% spread it calls a gap 'with no dedicated measurement' -- the "
+        "dedicated measurement does exist and is now what the table uses",
     ),
     _c(
-        "P32.branching_to_D",
+        "P32.branching_to_D_ozeri",
         1.0 / 17.0,
         "",
         "Ozeri2007",
         tag="contested",
-        note="Ozeri Table I f^-1 = 17 for Ca+ (total P -> D branching); Section 9.13 uses 0.941 for the S1/2 branch. "
-        "The split between D5/2 (854 nm) and D3/2 (850 nm) is not in PLAN.md",
+        note="Ozeri Table I f^-1 = 17 (total P -> D branching), which PLAN.md:457 lists for 43Ca+ and NOT for "
+        "40Ca+ -- the plan's 0.9412 S1/2 branch is that misattribution. SUPERSEDED as the value used by "
+        "Gerritsma et al. 2008's dedicated measurement (total D branching 0.06531, 11% larger); kept as a "
+        "contested cross-check only. It never entered the plan's Section 9.13 anchor 50.25 mW/cm^2, which is "
+        "the closed form at a PARTIAL rate of 23.4 MHz and so carries no branching at all",
+    ),
+    _c(
+        "P32.branching_to_D52",
+        0.0587,
+        "",
+        "Gerritsma2008",
+        tag="verified",
+        uncertainty=0.0002,
+        note="854 nm, the D5/2 repump that flips readout polarity; the dedicated measurement Section 12 "
+        "records as missing. The three printed fractions 0.9347(3)/0.0587(2)/0.00661(4) sum to 1.00001, within "
+        "their combined uncertainty, so the S1/2 share is taken as 1 - 0.0587 - 0.00661 = 0.93469 and "
+        "Gerritsma's printed 0.9347 is reproduced to 1e-5",
+    ),
+    _c(
+        "P32.branching_to_D32",
+        0.00661,
+        "",
+        "Gerritsma2008",
+        tag="verified",
+        uncertainty=0.00004,
+        note="850 nm; the fourth digit matters (0.0066 is 0.15% low)",
+    ),
+    _c(
+        "P12.partial_rate_to_S12_hz",
+        21.57e6,
+        "Hz",
+        "Hettrich2015",
+        tag="verified",
+        uncertainty=0.08e6,
+        note="Hettrich et al. 2015's PARTIAL rate P1/2 -> S1/2, gamma_PS = 2 pi x 21.57(8) MHz (with "
+        "gamma_PD = 2 pi x 1.482(8) MHz and tau = 6.904(26) ns, so the total is 23.05 MHz). This settles what "
+        "PLAN.md 9.13's 'quoted 21.57 MHz' is, and the table now REPRODUCES it rather than storing it: "
+        "gamma/2pi(P1/2) x b(P1/2 -> S1/2) = 23.0526 x 0.93565 = 21.5691 MHz, 4.0e-5 below the printed value "
+        "and 0.02 sigma inside its 0.08 MHz uncertainty (asserted in tests/test_species_tables.py). Hettrich's "
+        "printed <S1/2||d||P1/2> = 2.8928(43) e a0 is the same element in the normalization that omits the "
+        "(2J+1) factor: sqrt(2) x 2.0455 = 2.8920, inside the printed uncertainty. Ledger "
+        "conv.ca40_linewidth_reading",
+    ),
+    _c(
+        "P12.lifetime_s",
+        6.904e-9,
+        "s",
+        "Hettrich2015",
+        tag="verified",
+        uncertainty=0.026e-9,
+        note="the modern single-ion P1/2 lifetime and the source of the TOTAL rate this table uses: "
+        "gamma/2pi = 1/(2 pi tau) = 23.0526 MHz. Jin and Church 1993's 7.098(20) ns is 7 sigma above it and "
+        "Hettrich states it disagrees with theory by more than 11 sigma; both bracket the plan's implied "
+        "7.379 ns out of existence, which is why the quoted 21.57 MHz cannot be the total rate",
+    ),
+    _c(
+        "P32.lifetime_s",
+        6.639e-9,
+        "s",
+        "Meir2020",
+        tag="verified",
+        uncertainty=0.042e-9,
+        note="the modern single-ion P3/2 lifetime and the source of the TOTAL rate this table uses: "
+        "gamma/2pi = 23.9727 MHz, of which 0.93469 x 23.9727 = 22.4071 MHz is the partial rate into S1/2. Jin "
+        "and Church 1993's 6.924(19) ns is 6 sigma above it (22.9860 total, 21.4848 partial). Neither matches "
+        "the plan's unsourced 23.4 MHz under either reading (ledger anchor.ca40.p32_linewidth_readings)",
+    ),
+    _c(
+        "D52_D32.M1_rate_s",
+        2.45e-6,
+        "s^-1",
+        "AliKim1988_via_Kreuter2005",
+        note="A12 of the 3d 2D5/2 -> 3d 2D3/2 magnetic-dipole line, a multiconfiguration Dirac-Fock calculation quoted by "
+        "Kreuter et al. 2005 Eq. 1 for the blackbody mixing rate W12 = A12 n_bar(nu, T); the level energies put the line "
+        "at 1.8194 THz where Kreuter quotes 1.82 THz (Section 4.5.7: W12 = 7.249e-6 s^-1 at 300.0 K with 1.82 THz)",
+    ),
+    _c(
+        "D.collision_quench_H2_cm3_s",
+        37e-12,
+        "cm^3/s",
+        "Knoop1995_via_Kreuter2005",
+        note="collisional quenching of the metastable D levels by H2, a specific coefficient (cm^3 s^-1) that becomes a "
+        "rate only as Gamma_s p_s/(k_B T) (Section 13 'Collision-induced rates')",
+    ),
+    _c(
+        "D.collision_quench_N2_cm3_s",
+        170e-12,
+        "cm^3/s",
+        "Knoop1995_via_Kreuter2005",
+        note="collisional quenching by N2",
+    ),
+    _c(
+        "D.collision_jmix_H2_cm3_s",
+        3e-10,
+        "cm^3/s",
+        "Knoop1995_via_Kreuter2005",
+        note="fine-structure (j-) mixing D5/2 <-> D3/2 by H2; the j-mixing coefficients run 7.73x the quenching ones "
+        "(Section 9.16 'Collision-rate construction')",
+    ),
+    _c(
+        "D.collision_jmix_N2_cm3_s",
+        13e-10,
+        "cm^3/s",
+        "Knoop1995_via_Kreuter2005",
+        note="fine-structure mixing by N2",
     ),
     _c(
         "S12_D52.wavelength_vac_m",
@@ -221,10 +357,12 @@ TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
 
 MISSING: tuple[MissingConstant, ...] = (
     MissingConstant(
-        "measured P1/2 and P3/2 lifetimes (only 'quoted' linewidths with an unresolved total/partial reading)",
-        "PLAN.md Section 9.13 names no source; a modern lifetime measurement must be cited",
+        "a source for the 393 nm 'quoted 23.4 MHz' of PLAN.md 9.13",
+        "no measurement matches it: Meir et al. 2020's tau(P3/2) = 6.639(42) ns gives 23.9727 MHz total and "
+        "22.4071 MHz partial into S1/2, Jin and Church 1993's 6.924(19) ns gives 22.9860 / 21.4848. The table "
+        "uses Meir's lifetime, so the plan's 393 nm anchors are not reproduced from it (ledger "
+        "anchor.ca40.p32_linewidth_readings)",
     ),
-    MissingConstant("P3/2 branching split between D5/2 (854 nm) and D3/2 (850 nm)", "not in PLAN.md"),
     MissingConstant(
         "Kreuter 2005 one-sided systematic corrections to the D lifetimes (Table III)", "Kreuter et al. 2005"
     ),
@@ -266,26 +404,30 @@ def species() -> Species:
     p12 = Level(
         "P1/2",
         e_p12,
-        lifetime_s_from_linewidth(t[_P + "P12.linewidth_quoted_hz"]),
+        t[_P + "P12.lifetime_s"].value,
         0.0,
         0.0,
         lande_g_j(1, half, half),
-        ("NIST_ASD_5_12", "PLAN_9_13", "PLAN_background"),
+        ("NIST_ASD_5_12", "Hettrich2015", "PLAN_background"),
     )
     p32 = Level(
         "P3/2",
         e_p32,
-        lifetime_s_from_linewidth(t[_P + "P32.linewidth_quoted_hz"]),
+        t[_P + "P32.lifetime_s"].value,
         0.0,
         0.0,
         lande_g_j(1, half, Fraction(3, 2)),
-        ("NIST_ASD_5_12", "PLAN_9_13", "PLAN_background"),
+        ("NIST_ASD_5_12", "Meir2020", "PLAN_background"),
     )
 
-    g_p12 = t[_P + "P12.linewidth_quoted_hz"].value
-    g_p32 = t[_P + "P32.linewidth_quoted_hz"].value
+    # the TOTAL rates come from the MEASURED lifetimes, never from Section 9.13's "quoted" linewidths, which
+    # are partial rates into S1/2 (module docstring; ledger conv.ca40_linewidth_reading)
+    g_p12 = gamma_hz_from_lifetime(t[_P + "P12.lifetime_s"])
+    g_p32 = gamma_hz_from_lifetime(t[_P + "P32.lifetime_s"])
     b_p12_d = t[_P + "P12.branching_to_D32"].value
-    b_p32_d = t[_P + "P32.branching_to_D"].value
+    b_p32_d52 = t[_P + "P32.branching_to_D52"].value
+    b_p32_d32 = t[_P + "P32.branching_to_D32"].value
+    p12_cites = ("NIST_ASD_5_12", "Hettrich2015", "Ramm2013")
     s_p12 = Transition(
         "S1/2",
         "P1/2",
@@ -293,7 +435,7 @@ def species() -> Species:
         g_p12,
         1.0 - b_p12_d,
         "E1",
-        ("NIST_ASD_5_12", "PLAN_9_13", "PLAN_8_1"),
+        p12_cites,
     )
     d32_p12 = Transition(
         "D3/2",
@@ -302,23 +444,41 @@ def species() -> Species:
         g_p12,
         b_p12_d,
         "E1",
-        ("NIST_ASD_5_12", "PLAN_9_13", "PLAN_8_1"),
+        p12_cites,
     )
+    p32_cites = ("NIST_ASD_5_12", "Meir2020", "Gerritsma2008")
     s_p32 = Transition(
         "S1/2",
         "P3/2",
         wavelength_vac_m(0.0, e_p32),
         g_p32,
-        1.0 - b_p32_d,
+        1.0 - b_p32_d52 - b_p32_d32,
         "E1",
-        ("NIST_ASD_5_12", "PLAN_9_13", "Ozeri2007"),
+        p32_cites,
+    )
+    # the 854 nm D5/2 repump (the designated repump line, audit item E6) and the 850 nm D3/2 branch: the
+    # P3/2 branching split PLAN.md leaves open and Gerritsma et al. 2008 measured
+    d52_p32 = Transition("D5/2", "P3/2", wavelength_vac_m(e_d52, e_p32), g_p32, b_p32_d52, "E1", p32_cites)
+    d32_p32 = Transition("D3/2", "P3/2", wavelength_vac_m(e_d32, e_p32), g_p32, b_p32_d32, "E1", p32_cites)
+    # the D5/2 -> D3/2 magnetic-dipole branch (Section 4.5.7): A12 tau(D5/2) = 2.9e-6 of the decay, the channel the
+    # blackbody mixing rate of MetastableChannels multiplies by the Bose occupation; unit E2 branching into S1/2 holds
+    # "to 1e-5 for the Ca+ D5/2 level" (Section 4.5.7) and the two branchings sum to exactly 1 here
+    b_m1 = t[_P + "D52_D32.M1_rate_s"].value * t[_P + "D52.lifetime_s"].value
+    d32_d52 = Transition(
+        "D3/2",
+        "D5/2",
+        wavelength_vac_m(e_d32, e_d52),
+        gamma_hz_from_lifetime(t[_P + "D52.lifetime_s"]),
+        b_m1,
+        "M1",
+        ("AliKim1988_via_Kreuter2005", "Kreuter2005", "NIST_ASD_5_12"),
     )
     s_d52 = Transition(
         "S1/2",
         "D5/2",
         wavelength_vac_m(0.0, e_d52),
         gamma_hz_from_lifetime(t[_P + "D52.lifetime_s"]),
-        1.0,
+        1.0 - b_m1,
         "E2",
         ("NIST_ASD_5_12", "Kreuter2005", "Barton2000", "James1998"),
         quadrupole_element_au=t[_P + "S12_D52.quadrupole_element_au"].value,
@@ -342,7 +502,7 @@ def species() -> Species:
         nuclear_spin=0.0,
         mu_I_nuclear_magnetons=0.0,
         levels=(s12, d32, d52, p12, p32),
-        transitions=(s_p12, d32_p12, s_p32, s_d52, s_d32),
+        transitions=(s_p12, d32_p12, s_p32, d52_p32, d32_p32, s_d52, s_d32, d32_d52),
         qubit=("S1/2 mJ=-1/2", "D5/2 mJ=-1/2"),
         cycling="S1/2-P1/2",
         repumps=("D3/2-P1/2", "D5/2-P3/2"),

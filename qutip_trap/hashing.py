@@ -45,11 +45,18 @@ def canonical_float(x: float) -> str:
 
 
 def _callable_token(fn: Callable[..., Any]) -> str:
+    """A stable token for a coefficient function: module, qualname and a digest of its source.
+
+    When ``inspect.getsource`` cannot read the source (a function defined in a REPL or an ``exec``, a builtin, a C
+    extension) the qualname alone is NOT a fingerprint: two different lambdas defined interactively share
+    ``<module>.<lambda>`` and would hash equal, so a device carrying one would silently reuse the other's calibration
+    cache entry. Such a callable is therefore keyed by its identity as well, which makes the hash process-local and
+    refuses to pretend otherwise (the caller sees a fresh cache key rather than a wrong hit)."""
     name = f"{getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', repr(fn))}"
     try:
         src = inspect.getsource(fn)
     except (OSError, TypeError):
-        return f"callable:{name}"
+        return f"callable:{name}:no-source:id={id(fn):x}"
     return f"callable:{name}:{hashlib.sha256(src.encode()).hexdigest()}"
 
 

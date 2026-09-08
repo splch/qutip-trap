@@ -193,6 +193,22 @@ def static_gradient_nbar(
     return tuple(fixed_phase_nbar(xi, float(p), threshold=threshold) for p in phases_rad)
 
 
+def static_gradient_mean_nbar(
+    xi: float, phases_rad: Sequence[float], *, threshold: float = COS2_THRESHOLD
+) -> float:
+    """The chain's mean occupation under a STATIC gradient: the average of H(phi_i)/W(phi_i) - 1/2 over the ions' actual
+    gradient phases (Section 4.2.4, "the module averages H/W - 1/2 over the ions' actual phi").
+
+    This is the per-ion average, not the phase-averaged rate ratio <H>/<W> of the moving gradient
+    (:func:`phase_averaged_nbar`): each ion reaches its OWN steady state under a static gradient, so the occupations
+    average and not the rates. Raises UncooledPhaseError when any ion sits at a node.
+    """
+    values = static_gradient_nbar(xi, phases_rad, threshold=threshold)
+    if not values:
+        raise ValueError("a static-gradient average needs at least one ion phase")
+    return float(sum(values) / len(values))
+
+
 def moving_gradient_window(cooling_rate_rad_s: float, beat_rad_s: float, omega_mode_rad_s: float) -> bool:
     """W < delta < omega_z: the inter-beam frequency difference must outrun the cooling and stay below the trap frequency."""
     return cooling_rate_rad_s < beat_rad_s < omega_mode_rad_s
@@ -322,6 +338,7 @@ __all__ = [
     "recoil_heating_terms",
     "saturation_bridge",
     "saturation_for_xi",
+    "static_gradient_mean_nbar",
     "static_gradient_nbar",
     "three_axis_lamb_dicke",
     "xi_depth",

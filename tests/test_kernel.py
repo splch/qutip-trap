@@ -325,7 +325,15 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
             space,
             quiet_sample(),
             SeedSpec(0),
-            SolverOptions(lindblad_method="mcsolve", ntraj=3, map="serial", margin_check=False),
+            # improved_sampling off: this test compares the two KERNELS trajectory by trajectory, and the no-jump member
+            # mcsolve adds under improved sampling (Section 5.3) makes the stored ensemble four members for ntraj = 3
+            SolverOptions(
+                lindblad_method="mcsolve",
+                ntraj=3,
+                map="serial",
+                margin_check=False,
+                improved_sampling=False,
+            ),
         )
         rep = eng.last_report
         assert rep is not None and rep.method == "mcsolve" and rep.kernel == kernel and rep.trajectories == 3
@@ -392,8 +400,24 @@ ETA = ((0.080, 0.080), (0.0824, -0.0824), (0.047, 0.047))
 EPS = 2 * np.pi * 10e3
 
 
+BENCH_CALLS = [0]
+
+
 def _bench_coefficient(t: float, Om: float, mu: float, tag: object = None) -> float:
+    BENCH_CALLS[0] += 1
     return float(Om * np.cos(mu * t))
+
+
+# validation/scripts/outputs/bench_ms_timing_v5.out, the four Section 11.1 rows under dop853 at atol 1e-10, rtol 1e-8:
+# (right-hand-side evaluations, factorized us per evaluation, CSR us per evaluation, factorized wall time in seconds).
+# The evaluation counts are the plan's own Section 11.2 numbers (1.9/2.1/2.4/3.5 x 10^4 per 20 us) and are set by the
+# integrator's arithmetic, so they reproduce anywhere; the microsecond costs and the wall time are this machine's.
+BENCH_V5 = {
+    (1, 12): (19283, 13.2, 1.9, 0.25),
+    (2, 8): (21067, 21.5, 16.7, 0.35),
+    (3, 6): (24366, 45.4, 195.2, 1.11),
+    (3, 8): (35177, 89.5, 1207.9, 3.15),
+}
 
 
 def _bench_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
@@ -426,15 +450,29 @@ def _bench_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
 
 @pytest.mark.slow
 def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_time() -> None:
-    """The acceptance test of Section 11.3 item 4: on every row of the Section 11.1 table the factorized right-hand side gives the
-    assembled CSR operator's final state to the solver tolerance, and at dimension 2048 (three modes at d_m = 8) it is at least
-    twice as fast, at dimension 48 the assembled operator is faster (the cost model's crossover)."""
+    """The acceptance test of Section 11.3 item 4, against the table's own numbers (M9b audit E10).
+
+    On every row of the Section 11.1 table the factorized right-hand side gives the assembled CSR operator's final state to the
+    solver tolerance; the right-hand-side evaluation counts are the plan's Section 11.2 numbers; and the per-evaluation cost
+    ratio factorized/CSR reproduces ``outputs/bench_ms_timing_v5.out`` (6.9 at dimension 48, 1.29 at 256, 0.23 at 864, 0.074 at
+    2048) within a factor of two, which is the crossover Section 11.2's cost model predicts and the previous version of this
+    test only asserted as an inequality at two of the four rows.
+
+    The evaluation count is set by the integrator's arithmetic and reproduces anywhere; the RATIO of the two per-evaluation
+    costs is a property of memory bandwidth against arithmetic and is the machine-independent half of the timing. The absolute
+    factorized wall times (0.25 / 0.35 / 1.11 / 3.15 s) are checked only within a factor of four, because CI hardware differs
+    and because the plan's machine measured them on an idle box: the whole suite runs many pytest processes at once, and a 2x
+    band flaked at 3.4x under that load (a deviation from the audit's suggested 2x, recorded with the measured margin).
+    """
     walls: dict[tuple[int, int, bool], float] = {}
+    per_eval: dict[tuple[int, int, bool], float] = {}
     for nmodes, nmax in [(1, 12), (2, 8), (3, 6), (3, 8)]:
         finals = {}
+        evals = {}
         psi0 = qt.tensor(qt.basis(2, 1), qt.basis(2, 1), *[qt.basis(nmax, 0)] * nmodes)
         for factorized in (False, True):
             h = _bench_hamiltonian(nmodes, nmax, factorized)
+            BENCH_CALLS[0] = 0
             t0 = time.perf_counter()
             res = qt.sesolve(
                 h,
@@ -448,8 +486,23 @@ def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_ti
                     "store_final_state": True,
                 },
             )
-            walls[(nmodes, nmax, factorized)] = time.perf_counter() - t0
+            wall = time.perf_counter() - t0
+            # four drive terms, each with its own coefficient object: four calls per right-hand side
+            evals[factorized] = BENCH_CALLS[0] // 4
+            walls[(nmodes, nmax, factorized)] = wall
+            per_eval[(nmodes, nmax, factorized)] = 1e6 * wall / max(evals[factorized], 1)
             finals[factorized] = res.final_state
         assert (finals[True] - finals[False]).norm() < 2e-7, (nmodes, nmax)
+        n_ref, us_fact, us_csr, wall_fact = BENCH_V5[(nmodes, nmax)]
+        assert evals[True] == evals[False], (nmodes, nmax, evals)
+        assert evals[True] == pytest.approx(n_ref, rel=0.2), (nmodes, nmax, evals[True], n_ref)
+        ratio = per_eval[(nmodes, nmax, True)] / per_eval[(nmodes, nmax, False)]
+        assert ratio == pytest.approx(us_fact / us_csr, rel=1.0), (nmodes, nmax, ratio, us_fact / us_csr)
+        assert 0.25 * wall_fact < walls[(nmodes, nmax, True)] < 4.0 * wall_fact, (
+            nmodes,
+            nmax,
+            walls[(nmodes, nmax, True)],
+            wall_fact,
+        )
     assert walls[(3, 8, True)] < 0.5 * walls[(3, 8, False)], walls
     assert walls[(1, 12, False)] < walls[(1, 12, True)], walls

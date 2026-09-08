@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from qutip_trap.calibration.cache import DEFAULT_CACHE, CalibrationCache
 from qutip_trap.calibration.experiments import (
+    ALIASES,
     ORDER,
     UPSTREAM,
     CalibrationError,
@@ -32,13 +33,10 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
 
-EXPERIMENTS: tuple[str, ...] = ORDER + (
-    "ms_phase_scan",
-    "thermometry",
-    "mode_spectroscopy",
-    "crosstalk_phase",
-)
-"""The experiment names ``calibrate`` accepts (``ms_scan`` runs the amplitude, detuning and phase scans of the gates)."""
+EXPERIMENTS: tuple[str, ...] = ORDER + tuple(ALIASES)
+"""The experiment names ``calibrate`` accepts: the dependency order of Section 7.5 plus the ``ALIASES`` for its parts
+(``mode_spectroscopy``/``thermometry`` are the sideband spectroscopy, ``crosstalk_phase`` the crosstalk scan,
+``ms_phase_scan`` the phase alignment ``ms_scan`` runs). Every name resolves to an experiment that runs."""
 
 
 def calibrate_with_report(
@@ -109,6 +107,7 @@ def calibrate(
 
 
 __all__ = [
+    "ALIASES",
     "DEFAULT_CACHE",
     "EXPERIMENTS",
     "ORDER",

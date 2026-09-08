@@ -216,6 +216,16 @@ class FloquetCoefficients:
             * (self.c[None, :] * np.exp(2j * self.n[None, :] * xi[:, None])).sum(-1)
         )
 
+    def comb_phase_per_rf_period_rad(self) -> float:
+        """nu T_rf = beta pi: the secular phase u accumulates over ONE rf period, i.e. the phase step between successive
+        teeth of the micromotion comb (Section 9.10, row "Micromotion carrier and comb").
+
+        At a = 0, q = 0.1 the exact exponent gives 0.222580, against 0.222144 from the pseudopotential exponent
+        sqrt(a + q^2/2) - the two differ in the fourth digit, which is the O(q^4) correction to beta. The RMP prints
+        beta omega_rf T, exactly TWICE this, because nu = beta omega_rf/2.
+        """
+        return float(self.beta * math.pi)
+
     def lowest_order_ratios(self) -> tuple[float, float]:
         """The plan's closed forms c_{+1}/c_0 = -q/((2 + beta)^2 - a) and c_{-1}/c_0 = -q/((2 - beta)^2 - a)."""
         return (
@@ -440,6 +450,10 @@ def _off_diagonal(m: np.ndarray) -> float:
     return float(np.max(np.abs(m - np.diag(np.diag(m)))))
 
 
+_DEGENERACY_BREAKER = 0.3712
+"""An arbitrary non-zero, non-round coefficient of Q in the commuting branch of ``_principal_frame`` (see there)."""
+
+
 def _principal_frame(A: np.ndarray, Q: np.ndarray) -> np.ndarray:
     """Columns: eigenvectors of the pseudopotential Hessian A + Q^2/2 (the lowest-order secular matrix), ordered
     so that the axis closest to z comes last and the other two follow a right-handed (x', y', z) triad."""
@@ -448,8 +462,11 @@ def _principal_frame(A: np.ndarray, Q: np.ndarray) -> np.ndarray:
     )
     if commute:
         # commuting matrices share eigenvectors: a generic combination breaks the degeneracies of A + Q^2/2 (a_x = a_y with
-        # q_y = -q_x makes the pseudopotential Hessian isotropic while Q itself is not)
-        p = A + 0.3712 * Q + Q @ Q / 2.0
+        # q_y = -q_x makes the pseudopotential Hessian isotropic while Q itself is not). Because A and Q commute, the
+        # eigenVECTORS of any A + c Q + Q^2/2 are the shared ones for every c, so the value of _DEGENERACY_BREAKER is
+        # immaterial as long as it is non-zero and not a coincidental degeneracy of the particular A, Q: only the
+        # eigenvectors are read here, never the eigenvalues (they come from the monodromy).
+        p = A + _DEGENERACY_BREAKER * Q + Q @ Q / 2.0
     else:
         p = A + Q @ Q / 2.0
     _, vecs = np.linalg.eigh((p + p.T) / 2.0)

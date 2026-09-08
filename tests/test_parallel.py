@@ -20,6 +20,7 @@ from qutip_trap.api import (
     HilbertSpace,
     ModeTruncation,
     Operation,
+    Pulse,
     SeedSpec,
     SolverOptions,
     last_record,
@@ -31,7 +32,7 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
-from qutip_trap.dynamics.parallel import map_tasks, worker_count
+from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.noise.sampling import quiet_sample
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
@@ -59,10 +60,31 @@ def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_thr
     assert map_tasks(_square, [3], map_kind="parallel", workers=4) == [9]
     assert map_tasks(_square, [], map_kind="parallel", workers=4) == []
     assert worker_count(SolverOptions(map="serial", workers=5)) == 1
-    assert worker_count(SolverOptions(map="parallel", workers=5)) == 5
-    assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
+    assert worker_count(SolverOptions(map="parallel", workers=5)) == min(5, memory_worker_cap())
+    assert worker_count(SolverOptions(map="parallel")) == min(int(available_cpu_count()), memory_worker_cap())
     with pytest.raises(ValueError):
         SolverOptions(workers=0)
+
+
+def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """QuTiP's parallel map FORKS its workers, so each starts as a copy-on-write image of the parent and can grow to its size:
+    the cap keeps N x (parent peak) inside half of physical memory (ledger conv.worker_memory_cap). A 3 GB parent on a 48 GB
+    machine gets 8 workers, a 6 GB one 4, a small parent every CPU; an explicit request is capped too, never raised."""
+    import qutip_trap.dynamics.parallel as par
+
+    monkeypatch.setattr(par, "physical_memory_bytes", lambda: 48 * 1024**3)
+    monkeypatch.setattr(par, "peak_rss_bytes", lambda: 3 * 1024**3)
+    assert par.memory_worker_cap() == 8
+    assert worker_count(SolverOptions(map="parallel", workers=18)) == 8
+    assert worker_count(SolverOptions(map="parallel", workers=3)) == 3
+    monkeypatch.setattr(par, "peak_rss_bytes", lambda: 6 * 1024**3)
+    assert par.memory_worker_cap() == 4
+    monkeypatch.setattr(
+        par, "peak_rss_bytes", lambda: 100 * 1024**2
+    )  # below MIN_PARENT_BYTES: reckoned as 512 MB
+    assert par.memory_worker_cap() == 48
+    monkeypatch.setattr(par, "peak_rss_bytes", lambda: 40 * 1024**3)
+    assert par.memory_worker_cap() == 1 and worker_count(SolverOptions(map="parallel")) == 1
 
 
 @pytest.fixture(scope="module")
@@ -91,13 +113,22 @@ def heating_fixture():  # type: ignore[no-untyped-def]
 
 def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identity(heating_fixture) -> None:  # type: ignore[no-untyped-def]
     """Section 9.9: six keyed trajectories of a dissipative entangling pulse in-process and over every CPU: the reduced register
-    agrees to 1e-12, every trajectory's final state and jump record are identical under its seed, and the report names the map."""
+    agrees to 1e-12, every trajectory's final state and jump record are identical under its seed, and the report names the map.
+
+    Plain (uniform-weight) trajectories: the fixture's Bell caps (d = 10, 11) were sized for that ensemble. Under
+    ``improved_sampling`` every stochastic member is conditioned on jumping, and for this seed two of them take several
+    heating jumps (mean occupations 4.0 and 5.6 on the two x modes), so the Section 5.1.1 margin rule asks for d = 17
+    (dimension 1156) and the run exceeds the cap-growth retries. The improved-sampling path's worker identity is covered
+    by ``test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heating_pulse`` below on a space sized for it.
+    """
     dev, _drives, sched, space, _table = heating_fixture
     state = space.initial_state([0, 0])
     out = {}
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
-        opts = SolverOptions(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers)  # type: ignore[arg-type]
+        opts = SolverOptions(
+            lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False
+        )  # type: ignore[arg-type]
         tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(11), opts)
         rep = eng.last_report
         assert (
@@ -106,7 +137,11 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
             and rep.trajectories == 6
             and rep.kernel == "factorized"
         )
-        assert rep.map == mp and rep.workers == (1 if mp == "serial" else min(N_WORKERS, 6))
+        expected = 1 if mp == "serial" else min(worker_count(opts), 6)
+        assert expected >= 2 or mp == "serial", (
+            "the memory cap left no room for a parallel run on this machine"
+        )
+        assert rep.map == mp and rep.workers == expected
         out[mp] = (tr, rep)
     tr_s, rep_s = out["serial"]
     tr_p, rep_p = out["parallel"]
@@ -252,7 +287,9 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
     assert np.array_equal(a.bitstrings, b.bitstrings)
     assert a.final_state is not None and b.final_state is not None
     assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-12
-    assert a.diagnostics.workers == 1 and b.diagnostics.workers == min(N_WORKERS, 6)
+    expected = min(worker_count(SolverOptions(map="parallel", workers=N_WORKERS)), 6)
+    assert expected >= 2, "the memory cap left no room for a parallel run on this machine"
+    assert a.diagnostics.workers == 1 and b.diagnostics.workers == expected
     assert a.diagnostics.trajectories == b.diagnostics.trajectories >= 2
     # one propagator per distinct Fock tuple of the coupled frozen modes (their Debye-Waller factors change H); every internal
     # branch sharing that tuple is a cache hit
@@ -274,3 +311,49 @@ def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_
     assert a.diagnostics.kernel == "factorized" and b.diagnostics.kernel == "factorized"
     assert b.diagnostics.workers > 1
     assert a.probabilities["00"] + a.probabilities["11"] > 0.97
+
+
+def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heating_pulse() -> None:
+    """Section 9.9's worker identity on the improved-sampling path (Section 5.3): a 10 us carrier pulse on one ion whose x mode
+    heats at the white-noise rate, four keyed stochastic trajectories plus the deterministic no-jump member, in-process and
+    over every CPU. The mixture's weights sum to one, the register and P1 agree to 1e-12, and every member's final state and
+    the jump record are identical under the seed."""
+    from qutip_trap.light.raman import derive_raman_drive, square_drive
+    from tests.m2_fixtures import single_ion_raman_device
+
+    base = single_ion_raman_device()
+    dev = dataclasses.replace(
+        base,
+        noise=dataclasses.replace(
+            base.noise, S_E=white_spectrum(1e-9, "(V/m)^2/(rad/s)"), correlation_length_m=0.0
+        ),
+    )
+    dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
+    pulse = Pulse(square_drive(dd, include_stark=False), 0.0, 10e-6, "p", ())
+    sched = Schedule((pulse,), (), (), {0: 0.0})
+    x_mode = 1  # eta ~ 0.111 on the 3 MHz x mode of the single-ion fixture
+    others = tuple(m for m in range(len(dev.crystal.modes)) if m != x_mode)
+    space = HilbertSpace((2,), (ModeTruncation(x_mode, 14, (0, 6), 0.12),), None, others)
+    state = space.initial_state([0])
+    out = {}
+    for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
+        eng = JointExactEngine(device_channels=True)
+        opts = SolverOptions(
+            lindblad_method="mcsolve", ntraj=4, map=mp, workers=workers, improved_sampling=True
+        )  # type: ignore[arg-type]
+        tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(5), opts)
+        rep = eng.last_report
+        # the report counts the members of the weighted mixture: four stochastic members conditioned on jumping plus the
+        # deterministic no-jump member (Section 5.3), whose seeds are the four keyed ones
+        assert rep is not None and rep.method == "mcsolve" and rep.trajectories == 5
+        assert rep.map == mp
+        assert len(rep.trajectory_finals) == 5, len(rep.trajectory_finals)
+        out[mp] = (tr, rep)
+    tr_s, rep_s = out["serial"]
+    tr_p, rep_p = out["parallel"]
+    assert (tr_s.final.internal - tr_p.final.internal).norm() < 1e-12
+    assert np.max(np.abs(tr_s.expectations["P1[0]"] - tr_p.expectations["P1[0]"])) < 1e-12
+    assert rep_s.trajectory_seeds == rep_p.trajectory_seeds and len(rep_s.trajectory_seeds) == 4
+    for a, b in zip(rep_s.trajectory_finals, rep_p.trajectory_finals):
+        assert (a - b).norm() < 1e-14, "per-member identity under the same seed"
+    assert tr_s.jumps == tr_p.jumps and len(tr_s.jumps) >= 4, "every stochastic member jumped at least once"

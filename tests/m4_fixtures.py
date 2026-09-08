@@ -35,11 +35,34 @@ def ms_trap(omega_hz: tuple[float, float, float] = (3.0e6, 2.9e6, 1.0e6)) -> Tra
 
 def global_pair_along_x(power_w: float = 0.3, waist_m: float = 60e-6) -> tuple[Beam, Beam]:
     """Counter-propagating 355 nm beams along +-x pointed at the chain centre; |Delta k| = 2k along x. At 0.3 W in a 60 um waist
-    the derived carrier Rabi frequency is 100.8 kHz (the 10 mW, 200 um pair of the first M4 fixtures gave 303 Hz while its tables
-    claimed 100 kHz; since M8 plays the physical Rabi frequency of a requested one, the beams must deliver what the table says)."""
+    the derived carrier Rabi frequency is 146.9 kHz with the 171Yb+ P1/2 + P3/2 intermediate sum (100.8 kHz when only the P1/2
+    path was tabulated; the 10 mW, 200 um pair of the first M4 fixtures gave 303 Hz while its tables claimed 100 kHz; since M8
+    plays the physical Rabi frequency of a requested one, the beams must deliver what the table says)."""
     b1 = Beam(355e-9, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), waist_m, power_w, (0.0, 0.0, 0.0))
     b2 = Beam(355e-9, (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), waist_m, power_w, (0.0, 0.0, 0.0))
     return b1, b2
+
+
+CA40_729_E2_BEAM = Beam(
+    729.348e-9,
+    (1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0), 0.0),
+    (-1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0), 0.0),
+    200e-6,
+    166e-3,
+    (0.0, 0.0, 0.0),
+)
+"""The 40Ca+ S1/2-D5/2 quadrupole beam whose E2 Rabi frequency the device actually DERIVES: 200144 Hz at 166 mW in a
+200 um waist with B along x (M4). Omega grows as sqrt(P) for a quadrupole transition, so the same geometry at the
+5 mW of the first M4 fixtures derives 34735.4 Hz and its 2.5 us pi pulse becomes 14.4 us, which is why the power is
+what it is: the fixture's 200 kHz is now DELIVERED rather than supplied.
+
+The Delta m = 0 geometric factor of the E2 tensor is g^(0) = c^(0)_ij eps_i n_j with c^(0) = (2/3) diag(-1/2, -1/2, 1)
+in the atomic frame, so it needs eps_z(atomic) n_z(atomic) != 0: k_hat = y_lab with pol = x_lab (the first M4 fixture)
+puts both in the plane perpendicular to B and derives EXACTLY zero, and the played chain of M8 then has to play a
+supplied Rabi frequency the beams cannot deliver. Rotating the beam into the xy plane at 45 degrees with the
+polarization at 135 degrees gives a non-zero factor and a genuinely derived Rabi frequency; two other rotations tried
+(k = (1,1,0)/sqrt2 with pol = z, and k = y with pol = (x + z)/sqrt2) still derive zero. Any preset that reuses this
+geometry should import this constant rather than retype it (``device/presets.py``, M6)."""
 
 
 def chain_device(n_ions: int, omega_hz: tuple[float, float, float] = (3.0e6, 2.9e6, 1.0e6)) -> Device:

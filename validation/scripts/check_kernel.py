@@ -168,7 +168,10 @@ for mp, workers in (("serial", 1), ("parallel", n_workers)):
         space,
         quiet_sample(),
         SeedSpec(11),
-        SolverOptions(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers),
+        # plain (uniform-weight) trajectories: the Bell caps of this fixture were sized for that ensemble; under
+        # improved_sampling the conditioned members of this seed reach mean occupations of 4 to 6 quanta and the
+        # Section 5.1.1 margin rule asks for dimension 1156 (tests/test_parallel.py covers that path on a smaller space)
+        SolverOptions(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False),
     )  # type: ignore[arg-type]
     wall = time.perf_counter() - t0
     rep = eng.last_report

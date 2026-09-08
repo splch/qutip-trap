@@ -1,19 +1,76 @@
-"""Metastable-level channels that default off (PLAN.md Section 4.5.7; Appendix E, Run 5 additions)."""
+"""Metastable-level channels that default off (PLAN.md Section 4.5.7; Appendix E, Run 5 additions; milestone M0a).
+
+Three channels of a metastable D level beyond its spontaneous decay, each a physical input and never a fudge factor:
+
+- **Blackbody M1 mixing** between the fine-structure D levels, W_12 = A_12 n_bar(nu, T) with the Bose occupation
+  n_bar = 1/(exp(h nu/k_B T) - 1) MULTIPLIED (dividing by it is low by n_bar^2 = 8.75x at 300 K), the upward rate
+  carrying the degeneracy ratio g_u/g_l (6/4 for D5/2 over D3/2). For 40Ca+ A_12 = 2.45e-6 s^-1 (Ali and Kim 1988,
+  a calculation) gives 7.249e-6 s^-1 at 300.0 K, 8.5e-6 of the natural decay rate, which is why the default is to
+  omit the channel and expose the temperature (Section 4.5.7; Section 9.15 "Blackbody M1 mixing rate").
+- **Collisional quenching and j-mixing** by the background gas, per-ion rates R = sum_s Gamma_s p_s/(k_B T) with
+  Gamma_s a specific coefficient in cm^3 s^-1 (Knoop, Vedel and Vedel 1995 via Kreuter et al. 2005) and p_s the
+  partial pressure of partner s; the coefficients are species-table constants and a partner or species without a
+  cited coefficient raises rather than defaulting (Section 13 "Collision-induced rates"; Section 9.15
+  "Collision-rate construction": 4.36e-4 s^-1 at 300 K and 1e-11 mbar per partner, j-mixing 7.73x quenching).
+- **Reshelving** p_D_dot = -Gamma p_D + R(1 - p_D), whose long-delay offset R/(Gamma + R) is the experimental
+  signature (Section 9.15 "Reshelving offset and fit bias").
+
+The rates enter the readout's shelf model as extra loss channels of the shelf (``effective_shelf_lifetime_s``) and are
+available to any D-manifold master equation as sqrt(R) collapse-operator rates.
+"""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from qutip_trap.units import C_M_PER_S, H_J_S, K_B_J_PER_K
 
 if TYPE_CHECKING:
     from qutip_trap.species.model import Species
 
-M0A = "milestone M0a (PLAN.md Section 4.5.7)"
+MBAR_TO_PA = 100.0
+CM3_TO_M3 = 1e-6
+COLLISION_PROCESSES = ("quench", "j_mix")
+"""The two Knoop et al. 1995 processes; the table ids are ``<species>.D.collision_{quench,jmix}_<gas>_cm3_s``."""
+_TABLE_PROCESS = {"quench": "quench", "j_mix": "jmix"}
+
+
+def bose_occupation(nu_hz: float, temperature_k: float) -> float:
+    """n_bar = 1/(exp(h nu/k_B T) - 1), the blackbody photon occupation at frequency ``nu_hz`` (Section 13)."""
+    if nu_hz <= 0.0 or temperature_k <= 0.0:
+        raise ValueError("the frequency and the temperature must be positive")
+    return 1.0 / math.expm1(H_J_S * nu_hz / (K_B_J_PER_K * temperature_k))
+
+
+def bbr_mixing_rates_hz(
+    a_s: float, nu_hz: float, temperature_k: float, g_upper: float, g_lower: float
+) -> tuple[float, float]:
+    """(downward A n_bar, upward (g_u/g_l) A n_bar) for a line of Einstein coefficient ``a_s`` (s^-1) at ``nu_hz``.
+
+    The Bose occupation MULTIPLIES the rate (Kreuter et al. 2005 Eq. 1: W_12 = A_12/(e^{h nu/kT} - 1)); the upward
+    (absorption) rate is the downward one times the degeneracy ratio, from detailed balance of the two stimulated
+    rates B_lu rho = (g_u/g_l) B_ul rho with B_ul rho = A n_bar.
+    """
+    if a_s < 0.0:
+        raise ValueError("an Einstein A coefficient is non-negative")
+    if g_upper <= 0.0 or g_lower <= 0.0:
+        raise ValueError("level degeneracies are positive")
+    down = a_s * bose_occupation(nu_hz, temperature_k)
+    return down, (g_upper / g_lower) * down
+
+
+def _degeneracy(level_name: str) -> float:
+    """2J + 1 from a fine-structure level name such as ``"D5/2"``."""
+    from qutip_trap.species.model import level_j
+
+    return 2.0 * float(level_j(level_name)) + 1.0
 
 
 @dataclass(frozen=True)
 class MetastableChannels:
-    """Blackbody D-D mixing, collisional quenching and reshelving: physical inputs, not fudge factors."""
+    """Blackbody D-D mixing, collisional quenching and j-mixing, and reshelving: physical inputs, not fudge factors."""
 
     bbr_temperature_k: float | None = None
     """None disables blackbody D-D mixing entirely."""
@@ -23,22 +80,104 @@ class MetastableChannels:
     """{"H2": 0.5, "N2": 0.5}, must sum to 1 when collisions are enabled."""
     reshelving_rate_hz: float = 0.0
     """R of p_D_dot = -Gamma p_D + R(1 - p_D); exposed, never fitted away."""
+    gas_temperature_k: float = 300.0
+    """The background-gas temperature entering n_s = p_s/(k_B T) (room temperature, the value the sources use); an
+    explicit input because the collision rates are density driven, not pressure driven (Section 13)."""
 
     def __post_init__(self) -> None:
         if self.pressure_mbar is not None:
+            if self.pressure_mbar < 0.0:
+                raise ValueError("pressure_mbar must be non-negative")
             total = sum(self.gas_fractions.values())
             if abs(total - 1.0) > 1e-9:
                 raise ValueError(f"gas_fractions must sum to 1 when collisions are enabled, got {total}")
+            if min(self.gas_fractions.values(), default=0.0) < 0.0:
+                raise ValueError("gas fractions are non-negative")
+        if self.bbr_temperature_k is not None and self.bbr_temperature_k <= 0.0:
+            raise ValueError("bbr_temperature_k must be positive")
+        if self.gas_temperature_k <= 0.0:
+            raise ValueError("gas_temperature_k must be positive")
         if self.reshelving_rate_hz < 0.0:
             raise ValueError("reshelving_rate_hz must be non-negative")
 
-    def bbr_rate_hz(self, transition: str) -> tuple[float, float]:
-        """(downward A*n_bar, upward (g_u/g_l)*A*n_bar) with n_bar = 1/(exp(h nu/kT) - 1) MULTIPLIED (Section 13)."""
-        raise NotImplementedError(f"MetastableChannels.bbr_rate_hz is {M0A}")
+    # ---- blackbody mixing --------------------------------------------------------------------------------
+
+    def bbr_rate_hz(self, transition: str, species: Species) -> tuple[float, float]:
+        """(downward A n_bar, upward (g_u/g_l) A n_bar) in s^-1 for the tabulated line ``transition`` ("D3/2-D5/2") of
+        ``species``, with n_bar = 1/(exp(h nu/k_B T) - 1) MULTIPLIED (Section 13); (0, 0) when the channel is disabled.
+
+        Appendix E declares this method without the species argument; the channels object is species-agnostic, so
+        the line's Einstein coefficient (the transition's partial rate), its frequency (from the level energies) and
+        the two degeneracies are read from the ``Species`` record here.
+        """
+        if self.bbr_temperature_k is None:
+            return 0.0, 0.0
+        tr = species.transition(transition)
+        nu_hz = C_M_PER_S / tr.wavelength_vac_m
+        return bbr_mixing_rates_hz(
+            tr.partial_rate_rad_s,
+            nu_hz,
+            self.bbr_temperature_k,
+            _degeneracy(tr.upper),
+            _degeneracy(tr.lower),
+        )
+
+    # ---- collisions ---------------------------------------------------------------------------------------
+
+    def partner_densities_m3(self) -> dict[str, float]:
+        """n_s = f_s p/(k_B T) per partner in m^-3 (2.4143e11 m^-3 = 2.4143e5 cm^-3 per partner at 1e-11 mbar and 300 K)."""
+        if self.pressure_mbar is None:
+            return {}
+        n_total = self.pressure_mbar * MBAR_TO_PA / (K_B_J_PER_K * self.gas_temperature_k)
+        return {gas: frac * n_total for gas, frac in self.gas_fractions.items()}
+
+    def collision_coefficients_cm3_s(self, species: Species) -> dict[str, dict[str, float]]:
+        """{process: {gas: Gamma_s in cm^3/s}} from the species table (Knoop et al. 1995 via Kreuter et al. 2005 for
+        40Ca+); raises ``LookupError`` naming every (process, partner) the table does not cite."""
+        from qutip_trap.species import MODULES
+
+        module = MODULES.get(species.name)
+        table = getattr(module, "TABLE", {}) if module is not None else {}
+        out: dict[str, dict[str, float]] = {p: {} for p in COLLISION_PROCESSES}
+        missing: list[str] = []
+        for process in COLLISION_PROCESSES:
+            for gas in self.gas_fractions:
+                suffix = f".D.collision_{_TABLE_PROCESS[process]}_{gas}_cm3_s"
+                hits = [c for cid, c in table.items() if cid.endswith(suffix)]
+                if not hits:
+                    missing.append(f"{species.name} {process} by {gas} (table id *{suffix})")
+                    continue
+                c = hits[0]
+                if c.unit != "cm^3/s":
+                    raise ValueError(
+                        f"{c.ledger_id}: collision coefficients are cited in cm^3/s, never as rates"
+                    )
+                out[process][gas] = c.value
+        if missing:
+            raise LookupError(
+                "no cited collision coefficient for: "
+                + "; ".join(missing)
+                + " (Knoop et al. 1995 tabulates 40Ca+ "
+                "with H2 and N2; the plan never defaults a missing constant)"
+            )
+        return out
 
     def collision_rates_hz(self, species: Species) -> dict[str, float]:
-        """{"quench": R_q, "j_mix": R_j} from R = sum_s Gamma_s p_s/(k_B T); Gamma_s in cm^3/s, never a rate."""
-        raise NotImplementedError(f"MetastableChannels.collision_rates_hz is {M0A}")
+        """{"quench": R_q, "j_mix": R_j} in s^-1 from R = sum_s Gamma_s p_s/(k_B T); Gamma_s in cm^3/s, never a rate.
+
+        Per ion and density driven (independent of the number of trapped ions, Section 13); zero when collisions are
+        disabled (``pressure_mbar`` None).
+        """
+        if self.pressure_mbar is None:
+            return {p: 0.0 for p in COLLISION_PROCESSES}
+        densities = self.partner_densities_m3()
+        coefficients = self.collision_coefficients_cm3_s(species)
+        return {
+            process: sum(coefficients[process][gas] * CM3_TO_M3 * n for gas, n in densities.items())
+            for process in COLLISION_PROCESSES
+        }
+
+    # ---- reshelving and the shelf's total loss rate -------------------------------------------------------
 
     def reshelving_offset(self, tau_s: float) -> float:
         """R/(Gamma + R), the fitted-offset signature of reshelving (Section 4.5.7)."""
@@ -47,5 +186,31 @@ class MetastableChannels:
         gamma = 1.0 / tau_s
         return self.reshelving_rate_hz / (gamma + self.reshelving_rate_hz)
 
+    def shelf_loss_rates_hz(self, species: Species, shelf: str) -> dict[str, float]:
+        """Every rate that empties the metastable level ``shelf`` (its decay, quenching, j-mixing, and blackbody
+        transfer along every tabulated M1 line out of it), in s^-1, by channel name."""
+        lifetime = species.level(shelf).lifetime_s
+        if lifetime is None:
+            raise ValueError(f"{species.name} {shelf}: no tabulated lifetime")
+        rates: dict[str, float] = {"decay": 1.0 / lifetime}
+        for process, rate in self.collision_rates_hz(species).items():
+            rates[process] = rate
+        if self.bbr_temperature_k is not None:
+            for tr in species.transitions:
+                if tr.multipole != "M1" or shelf not in (tr.lower, tr.upper):
+                    continue
+                down, up = self.bbr_rate_hz(tr.label, species)
+                rates[f"bbr:{tr.label}"] = down if tr.upper == shelf else up
+        return rates
 
-__all__ = ["MetastableChannels"]
+    def effective_shelf_lifetime_s(self, species: Species, shelf: str) -> float:
+        """1/(sum of the shelf's loss rates): what a readout scheme's ``shelf_lifetime_s`` becomes with the channels on."""
+        return 1.0 / sum(self.shelf_loss_rates_hz(species, shelf).values())
+
+
+__all__ = [
+    "COLLISION_PROCESSES",
+    "MetastableChannels",
+    "bbr_mixing_rates_hz",
+    "bose_occupation",
+]

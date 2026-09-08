@@ -40,6 +40,25 @@ class IncompleteSpeciesTable(LookupError):
         self.missing = missing
 
 
+def required_constants_missing(
+    table: dict[str, Cited], required: dict[str, str], consult: dict[str, str]
+) -> tuple[MissingConstant, ...]:
+    """The :class:`MissingConstant` entries a species table still lacks, DERIVED from ``table`` (Section 4.5.6).
+
+    ``required`` maps every ledger id ``species()`` reads to a one-line description of the quantity;
+    ``consult`` optionally overrides the default "where to get it" per id. Deriving the gap list this way
+    (instead of hand-maintaining a tuple beside an unconditional ``raise``) means that filling a gap makes
+    the species build and that dropping a constant is caught at import rather than silently, which is audit
+    item E21 of the M0a review of 2026-09-07.
+    """
+    out: list[MissingConstant] = []
+    for ledger_id, quantity in required.items():
+        if ledger_id not in table:
+            where = consult.get(ledger_id, f"no cited value for {ledger_id} is in the table yet")
+            out.append(MissingConstant(f"{quantity} ({ledger_id})", where))
+    return tuple(out)
+
+
 def ion_mass_u(atomic_mass: Cited) -> float:
     """The ion mass: the cited relative atomic mass of the neutral atom minus one electron mass.
 
@@ -108,6 +127,7 @@ def a_hfs_from_two_manifold_splitting(
 __all__ = [
     "IncompleteSpeciesTable",
     "MissingConstant",
+    "required_constants_missing",
     "a_hfs_from_two_manifold_splitting",
     "energy_hz",
     "gamma_hz_from_lifetime",

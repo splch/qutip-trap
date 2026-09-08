@@ -233,6 +233,88 @@ def test_full_steady_state_is_mostly_dark_and_the_conditional_state_is_bright() 
     )
 
 
+def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochModel:
+    """171Yb+ S1/2 + P1/2 + D3/2 + 3D[3/2]1/2 with BOTH the 369.5 nm detection beam and the 935 nm repump present.
+
+    The repump is tuned to the level centroid rather than to a sublevel pair, so its residual against the frame that
+    the D3/2 <- P1/2 decay already fixes is zero and the build stays static (Section 4.2.8: levels connected only by
+    decay take their frame from the transition frequency).
+    """
+    st = AtomicStructure(YB, b_gauss, (0.0, 0.0, 1.0))
+    line935 = YB.transition("D3/2-3D[3/2]1/2")
+    power = s0 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
+    detect = beam_for_transition(
+        st, "S1/2 F=1 mF=0", "P1/2 F=0 mF=0", 0.0, (1.0, 0.0, 0.0), MAGIC, power_w=power, waist_m=WAIST
+    )  # type: ignore[arg-type]
+    centroid = TWO_PI * (
+        (YB.level("3D[3/2]1/2").energy_hz - YB.level("D3/2").energy_hz)
+        - (st.state("3D[3/2]1/2 F=1 mF=0").energy_hz - st.state("D3/2 F=1 mF=0").energy_hz)
+    )
+    repump = beam_for_transition(
+        st,
+        "D3/2 F=1 mF=0",
+        "3D[3/2]1/2 F=1 mF=0",
+        centroid,
+        (1.0, 0.0, 0.0),
+        MAGIC,
+        power_w=s935 * line935.i_sat_w_m2 * math.pi * WAIST**2 / 2.0,
+        waist_m=WAIST,  # type: ignore[arg-type]
+    )
+    return BlochModel(
+        st,
+        [detect, repump],
+        levels=("S1/2", "P1/2", "D3/2", "3D[3/2]1/2"),
+        options=MultiLevelOptions(leak="renormalize"),
+    )
+
+
+def test_the_slow_manifold_mode_is_chosen_by_its_manifold_weights_not_by_its_index() -> None:
+    """With the 935 nm repump beam and the D manifold in the model, the SECOND-slowest Liouvillian mode is a D-manifold
+    relaxation, not the bright <-> dark pumping: picking ``order[1]`` blindly failed with "the slow mode does not
+    connect the two manifolds" (the M5 finding). The mode is now chosen by projecting each eigenvector on the two
+    manifolds, and the skipped intra-manifold rates are reported.
+
+    The configuration then runs into the real physics of the plan's recorded gap (``anchor.m3a.yb171_repump_level_gap``):
+    3D[3/2]1/2 -> S1/2 at 297 nm is declared as untabulated branching, not as a Transition, so nothing returns from
+    the D branch to S1/2, the D manifold is ABSORBING and the two-manifold coarse graining of Section 8.1 does not
+    apply. Both refusals name their cause instead of returning a negative rate.
+    """
+    m = _repump_935_model(2.45, 10.0)
+    assert m.build.static and m.build.frame.beats_rad_s == ()
+    assert m.build.n_internal == 20
+    assert any(lab.startswith("3D[3/2]1/2") for lab in m.build.labels)
+    # the D3/2 hyperfine manifold the repump does not address holds the whole steady state
+    with pytest.raises(ValueError, match="not a partition of the slow dynamics"):
+        m.manifold_rates(BRIGHT, DARK)
+    # folding the whole D branch into the dark manifold makes the partition complete, and the mode selection then
+    # skips two slower intra-manifold modes before it finds the connecting one
+    dark_wide = ("S1/2 F=0 mF=0",) + tuple(lab for lab in m.build.labels if lab.startswith("D3/2"))
+    with pytest.raises(ValueError, match="ABSORBING"):
+        m.manifold_rates(BRIGHT, dark_wide)
+    # the selection itself: the second- and third-slowest modes carry no weight on the bright manifold at all
+    liouvillian = np.asarray(m.build.liouvillian().full())
+    vals, vecs = np.linalg.eig(liouvillian)
+    order = np.argsort(-vals.real)
+    n = m.build.n_internal
+    p_bright = m.build.manifold_projector(BRIGHT).full()
+    p_dark = m.build.manifold_projector(dark_wide).full()
+    connecting = []
+    for position in range(1, 6):
+        v = vecs[:, order[position]].reshape(n, n, order="F")
+        v = 0.5 * (v + v.conj().T)
+        scale = float(np.sum(np.abs(np.diag(v))))
+        a = abs(float(np.real(np.trace(p_bright @ v)))) / scale
+        b_w = abs(float(np.real(np.trace(p_dark @ v)))) / scale
+        connecting.append(a > 1e-9 and b_w > 1e-9)
+    assert connecting[0] is False and connecting[1] is False  # order[1] and order[2] are intra-manifold
+    assert True in connecting  # a connecting mode exists further down the spectrum
+    # the closed S1/2 + P1/2 model (the D branch folded back) is unaffected: no mode is skipped there
+    closed = detection_model(2.45, 4.7).manifold_rates(BRIGHT, DARK)
+    assert closed.intra_manifold_rates_per_s == ()
+    assert closed.rate_a_to_b_per_s > 0.0 and closed.rate_b_to_a_per_s > 0.0
+    assert 0.0 < closed.weight_a < 1.0
+
+
 def test_ceiling_is_asserted_not_assumed() -> None:
     m = detection_model(0.1, 1.0)
     rho_bad = qt.Qobj(np.diag([0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0]), dims=m.build.H.dims)
@@ -562,7 +644,12 @@ def test_sink_policy_preserves_the_trace_and_measures_the_leak() -> None:
 
 def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_a_repump() -> None:
     """Without the 935 nm repump the 0.501% branch collects the ion in D3/2 within a few hundred scattered photons; the
-    eight D3/2 sublevels make the steady state non-unique, so the statement is one about the time evolution."""
+    eight D3/2 sublevels make the steady state non-unique, so the statement is one about the time evolution.
+
+    The level set grew from ("S1/2", "D3/2", "P1/2") to include P3/2 and D5/2 when the M0a fix of 2026-09-07
+    (audit item E4) added the 171Yb+ P3/2 record: MultiLevelOptions.address_window is 0.5 of the transition
+    frequency, so the 369.5 nm beam counts the 329 nm S1/2-P3/2 line as addressed (11% away), and leak =
+    "include" then pulls in P3/2's D5/2 decay target. P3/2 is 26 THz off resonance, so it changes no rate here."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     power = 0.1 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     beam = beam_for_transition(
@@ -576,7 +663,7 @@ def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_
         waist_m=WAIST,  # type: ignore[arg-type]
     )
     m = BlochModel(st, [beam])
-    assert m.build.levels == ("S1/2", "D3/2", "P1/2") and m.build.n_internal == 16
+    assert m.build.levels == ("S1/2", "D3/2", "D5/2", "P1/2", "P3/2") and m.build.n_internal == 36
     gamma_d = YB.transition("D3/2-P1/2").partial_rate_rad_s
     trace = m.evolve("S1/2 F=1 mF=0", np.linspace(0.0, 2.0e-3, 41))
     p_d = trace.level_populations["D3/2"]

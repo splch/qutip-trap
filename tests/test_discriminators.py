@@ -301,6 +301,12 @@ def test_camera_spatial_and_neighbour_conditioned_decoding() -> None:
     assert wrong_neighbours <= wrong_independent
     assert wrong_neighbours == 0
     assert all(0.0 <= e < 1e-2 for e in estimates)
+    # Burrell's register error estimate IS sum_k e^{-R_k} with R_k = |ln(p_B/p_D)|: pin the identity at 1e-12 rather than
+    # its apparatus-dependent magnitude (2.2e-42 in this fixture, printed by check_readout.py E; M5 audit note on the
+    # "Camera" row of Section 9.5)
+    assert nb.register_error_estimate == pytest.approx(
+        sum(math.exp(-abs(r)) for r in nb.log_ratios), rel=1e-12
+    )
     # the neighbour-conditioned likelihood of a dark ion next to a bright one differs from the isolated one
     truth = [True, False, False, False]
     img = sample_camera_image(

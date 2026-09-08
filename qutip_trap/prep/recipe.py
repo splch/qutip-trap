@@ -24,8 +24,14 @@ import numpy as np
 from qutip_trap.dynamics.multilevel import LeakPolicy, MultiLevelOptions
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.beams import Beam
-from qutip_trap.light.bloch import BlochModel, CoolingError, beam_for_transition, shifted_beam
-from qutip_trap.light.recoil import angular_factor, emission_lamb_dicke, minimal_quadrature
+from qutip_trap.light.bloch import (
+    BlochModel,
+    CoolingError,
+    beam_for_transition,
+    emission_angular_factor,
+    shifted_beam,
+)
+from qutip_trap.light.recoil import emission_lamb_dicke, minimal_quadrature
 from qutip_trap.prep.doppler import DopplerResult, doppler_cooling, optimize_detuning, with_detuning_offset
 from qutip_trap.prep.pumping import PumpingResult, optical_pumping
 from qutip_trap.prep.sequence import (
@@ -347,8 +353,19 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
             n0 = nbar[m]
             d = int(min(spec.d_max, max(40, math.ceil(30.0 * n0 + 20.0))))
             p0 = thermal_distribution(n0, d)
-            cos_chi = float(np.dot(np.asarray(crystal.modes[m].e_hat, dtype=float), st.b_hat))
-            alpha = angular_factor(None, cos_chi)
+            # the repump's emitted photons carry one alpha PER POLARIZATION CHANNEL (Section 4.2.8 ii); the scalar the
+            # one-dimensional Fock kernel needs is their photon-rate-weighted mean in the repump beams' own steady
+            # state, read off the Bloch model this recipe already builds for the pump -- never a hard-coded 1/3
+            alpha = emission_angular_factor(
+                BlochModel(
+                    st,
+                    recipe.pump_beams,
+                    levels=levels,
+                    position_m=tuple(float(x) for x in crystal.positions_m[ion]),
+                    options=opts,
+                ),
+                crystal.modes[m].e_hat,
+            )
             eta_em = emission_lamb_dicke(crystal, ion, k_em, m)
             kernel = repump_kernel(d, eta_em, minimal_quadrature(alpha), spec.repump_photons)
             t_pi = pi_time_s(omega0, eta, 1, 1)

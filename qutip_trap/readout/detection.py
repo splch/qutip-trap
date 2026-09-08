@@ -13,9 +13,11 @@ chain with ANY number of jumps is the Markov-modulated Poisson process solved by
 (:meth:`RecordModel.count_distribution`), which is what the threshold optimizer and the POVM fast path integrate.
 
 Conventions (Section 13): epsilon_sys is applied once, at scattered -> detected rate, and R_bg is separate; a bright
-neighbour's leaked light is ADDED COUNTS on a dark neighbour (Wineland's mechanism, Section 8.5), never a change of the
-instrumental efficiency; detector dead time, afterpulsing and SNSPD recovery are an optional model whose parameters the
-user must supply (Section 8.8, a named gap of the sources).
+neighbour's leaked light is ADDED COUNTS on a dark neighbour PLUS extra off-resonant pumping on its chain (both halves of
+Wineland's mechanism, Section 8.5: "added counts on a dark neighbour plus depumping-reduced N"), never a change of the
+instrumental efficiency; the camera background is a detector property, spread over the pixels once per exposure rather
+than once per ion; detector dead time, afterpulsing and SNSPD recovery are an optional model whose parameters the user
+must supply (Section 8.8, a named gap of the sources).
 """
 
 from __future__ import annotations
@@ -619,6 +621,79 @@ def apply_detector_nonidealities(
 # ---- registers: neighbour-coupled records (Section 8.5) ---------------------------------------------------------------------
 
 
+def count_anomaly_band(
+    model: RecordModel,
+    window_s: float,
+    starts: Sequence[ReadoutClass] = ("bright", "dark"),
+    *,
+    quantile: float = 1e-6,
+) -> tuple[int, int]:
+    """The [q, 1 - q] band of totals that ANY of the hypotheses in ``starts`` can produce over the window.
+
+    A record whose total lies outside it is the "count anomaly" of Section 8.6's herald list: neither the bright nor the
+    dark hypothesis explains it, which in a laboratory is a cosmic ray, an afterpulse burst or a stray-light flash
+    (Section 8.8 names detector non-idealities as a gap of the sources, and Myerson attributes about 20 % of his dark
+    error to cosmic rays). Computed once per ion from the exact count distributions, so the per-shot test is a comparison.
+    """
+    if not 0.0 < quantile < 0.5:
+        raise ValueError("the quantile lies in (0, 0.5)")
+    lo, hi = None, None
+    for start in starts:
+        dist = model.count_distribution(start, window_s)
+        cdf = np.cumsum(dist.pmf)
+        below = int(np.searchsorted(cdf, quantile, side="left"))
+        above = int(np.searchsorted(cdf, 1.0 - quantile, side="left"))
+        lo = below if lo is None else min(lo, below)
+        hi = above if hi is None else max(hi, above)
+    if lo is None or hi is None:
+        raise ValueError("at least one start hypothesis")
+    return lo, max(hi, lo)
+
+
+Depumping = Mapping[int, tuple[float, float]]
+"""Neighbour distance -> (Delta R_d, Delta R_b) that ONE bright neighbour's leaked light adds to an ion's chain: the
+depumping half of Wineland's crosstalk mechanism (Section 8.5), built by
+:func:`~qutip_trap.readout.fluorescence.neighbour_pumping_rates`."""
+
+
+def depumped_model(
+    models: Sequence[RecordModel],
+    ion: int,
+    classes: Sequence[ReadoutClass],
+    depumping: Depumping | None,
+) -> RecordModel:
+    """Ion ``ion``'s chain with the extra off-resonant pumping every BRIGHT neighbour's leaked light drives (Section 8.5's
+    "depumping-reduced N"), the neighbours frozen at ``classes`` (the same first-order form as the added counts).
+
+    R_d and R_b are linear in intensity with no saturation denominator (Section 8.1), so the contributions of several
+    bright neighbours add; R_o is untouched, because the leaked light is far too weak to change the cycling rate (the
+    bound is I_ion/I_sat ~ 1e-4) and Wineland's mechanism is a degradation of DISCRIMINATION, never of eta_d.
+    """
+    m = models[ion]
+    if not depumping:
+        return m
+    d_d = 0.0
+    d_b = 0.0
+    for j, c in enumerate(classes):
+        if j == ion or c != "bright":
+            continue
+        extra_d, extra_b = depumping.get(abs(ion - j), (0.0, 0.0))
+        d_d += float(extra_d)
+        d_b += float(extra_b)
+    if d_d <= 0.0 and d_b <= 0.0:
+        return m
+    rates = dict(m.rates)
+    rates[("bright", "dark")] = rates.get(("bright", "dark"), 0.0) + d_d
+    rates[("dark", "bright")] = rates.get(("dark", "bright"), 0.0) + d_b
+    return RecordModel(
+        m.detected_bright_per_s,
+        m.background_per_s,
+        {k: v for k, v in rates.items() if v > 0.0},
+        m.dead_time_s,
+        m.afterpulse_prob,
+    )
+
+
 def sample_register_records(
     models: Sequence[RecordModel],
     starts: Sequence[ReadoutClass],
@@ -626,19 +701,27 @@ def sample_register_records(
     rngs: Sequence[np.random.Generator],
     *,
     leakage: Mapping[int, float] | None = None,
+    depumping: Depumping | None = None,
     sub_bin_s: float | None = None,
     arrivals: bool = False,
 ) -> list[PhotonRecord]:
     """Records of every ion in one shot: each chain sampled from its own generator first, then each ion's counts at its own
     rate plus the leaked light of every bright neighbour (fraction ``leakage[|i - j|]`` of the neighbour's detected rate),
-    so the records are neighbour-coupled and the joint confusion is not a product (Section 5.7)."""
+    so the records are neighbour-coupled and the joint confusion is not a product (Section 5.7).
+
+    ``depumping`` adds the other half of Wineland's mechanism (Section 8.5): the leaked light also pumps the neighbour
+    between the bright and dark manifolds, so a bright ion beside a bright one loses photons as well (the
+    "depumping-reduced N"). The pumping is frozen at the neighbours' START classes, the first-order form the factored
+    confusion tensor uses, because the chain of one ion is sampled before its neighbours' paths are known.
+    """
     n = len(models)
     if len(starts) != n or len(rngs) != n:
         raise ValueError("one start class and one generator per ion")
     leak = dict(leakage or {})
-    paths = [m.sample_path(s, window_s, rng) for m, s, rng in zip(models, starts, rngs)]
+    chains = [depumped_model(models, i, starts, depumping) for i in range(n)]
+    paths = [m.sample_path(s, window_s, rng) for m, s, rng in zip(chains, starts, rngs)]
     records: list[PhotonRecord] = []
-    for i, (m, rng) in enumerate(zip(models, rngs)):
+    for i, (m, rng) in enumerate(zip(chains, rngs)):
         extra: list[tuple[float, float, float]] = []
         for j, pj in enumerate(paths):
             f = leak.get(abs(i - j), 0.0) if j != i else 0.0
@@ -663,15 +746,20 @@ def sample_register_records(
 
 
 def neighbourhood_model(
-    models: Sequence[RecordModel], ion: int, classes: Sequence[ReadoutClass], leakage: Mapping[int, float]
+    models: Sequence[RecordModel],
+    ion: int,
+    classes: Sequence[ReadoutClass],
+    leakage: Mapping[int, float],
+    depumping: Depumping | None = None,
 ) -> RecordModel:
     """Ion ``ion``'s record model with its neighbours FROZEN in ``classes``: the leaked light of every bright neighbour is a
-    constant added background, the first-order form of the neighbour coupling used by the factored confusion tensor."""
+    constant added background and (with ``depumping``) extra pumping on the ion's own chain, the first-order form of the
+    neighbour coupling used by the factored confusion tensor (Section 8.5, both halves of Wineland's mechanism)."""
     extra = 0.0
     for j, c in enumerate(classes):
         if j != ion and c == "bright":
             extra += leakage.get(abs(ion - j), 0.0) * models[j].detected_bright_per_s
-    m = models[ion]
+    m = depumped_model(models, ion, classes, depumping)
     return RecordModel(
         m.detected_bright_per_s, m.background_per_s + extra, m.rates, m.dead_time_s, m.afterpulse_prob
     )
@@ -851,11 +939,52 @@ class CameraGeometry:
         return self.brightness_order(ion)[: max(1, min(n_pixels, self.n_pixels))]
 
     def leakage_fraction(self, ion: int, other: int, n_pixels: int) -> float:
-        """Signal of ``other`` inside ion ``ion``'s ROI relative to the ion's own signal there (Burrell: 4.0 % nearest, 0.9 %
-        next-nearest at 14 um for an ROI of one spacing's diameter)."""
+        """Signal of ``other`` inside ion ``ion``'s ROI RELATIVE TO THE ION'S OWN signal there (Burrell: 4.0 % nearest,
+        0.9 % next-nearest at 14 um for an ROI of one spacing's diameter).
+
+        This is the ratio the source quotes and is NOT :attr:`Detector.psf_leakage`, which is the ABSOLUTE fraction of the
+        neighbour's total detected light that lands in the region of interest; the two differ by the ion's own ROI
+        collection efficiency (0.757 in a Burrell-like geometry, so feeding 4.0 % straight in overstates the leak by 32 %).
+        :meth:`absolute_leakage_fraction` and :func:`psf_leakage_from_geometry` do the conversion once.
+        """
         roi = self.roi(ion, n_pixels)
         own = float(self.weights(ion).ravel()[roi].sum())
         return float(self.weights(other).ravel()[roi].sum()) / own if own > 0.0 else 0.0
+
+    def own_roi_efficiency(self, ion: int, n_pixels: int) -> float:
+        """Fraction of ion ``ion``'s own detected light that lands inside its own region of interest."""
+        return float(self.weights(ion).ravel()[self.roi(ion, n_pixels)].sum())
+
+    def absolute_leakage_fraction(self, ion: int, other: int, n_pixels: int) -> float:
+        """Fraction of ``other``'s TOTAL detected light that lands in ion ``ion``'s region of interest: the convention
+        :attr:`Detector.psf_leakage` and the added counts of Section 8.5 use."""
+        roi = self.roi(ion, n_pixels)
+        return float(self.weights(other).ravel()[roi].sum())
+
+
+def psf_leakage_from_geometry(
+    geometry: CameraGeometry, n_pixels: int, *, max_distance: int | None = None
+) -> dict[int, float]:
+    """:attr:`Detector.psf_leakage` derived from the optics: distance -> the absolute fraction of a neighbour's detected
+    light that falls in an ion's region of interest, averaged over the pairs at that distance.
+
+    Section 8.3: "crosstalk then emerges from PSF overlap without a free parameter". The values are ABSOLUTE fractions of
+    the neighbour's total light (:meth:`CameraGeometry.absolute_leakage_fraction`), not the ROI-relative ratios the source
+    quotes, so the conversion happens once, here.
+    """
+    if geometry.n_ions < 2:
+        return {}
+    limit = geometry.n_ions - 1 if max_distance is None else int(max_distance)
+    out: dict[int, float] = {}
+    for d in range(1, limit + 1):
+        pairs = [geometry.absolute_leakage_fraction(i, i + d, n_pixels) for i in range(geometry.n_ions - d)]
+        pairs += [geometry.absolute_leakage_fraction(i + d, i, n_pixels) for i in range(geometry.n_ions - d)]
+        if not pairs:
+            continue
+        value = float(np.mean(pairs))
+        if value > 0.0:
+            out[d] = value
+    return out
 
 
 def sample_camera_image(
@@ -872,7 +1001,15 @@ def sample_camera_image(
     the bright occupancy of ion i's path within the exposure (Section 8.3)."""
     if len(models) != geometry.n_ions or len(paths) != geometry.n_ions:
         raise ValueError("one record model and one class path per ion")
-    mean = np.full((geometry.n_rows, geometry.n_columns), read_noise_counts, dtype=float)
+    # the background is a DETECTOR property, so it is spread over the pixels once per exposure and not once per ion (a
+    # register of N ions used to collect N x R_bg; audit 2026-09-07 B12). Models may disagree on it only through their
+    # detectors, so the maximum is the detector's rate.
+    background = max((m.background_per_s for m in models), default=0.0)
+    mean = np.full(
+        (geometry.n_rows, geometry.n_columns),
+        read_noise_counts + background * exposure_s / geometry.n_pixels,
+        dtype=float,
+    )
     for i, (m, p) in enumerate(zip(models, paths)):
         bright = sum(
             max(0.0, min(b, t_start_s + exposure_s) - max(a, t_start_s))
@@ -880,11 +1017,11 @@ def sample_camera_image(
             if c == "bright"
         )
         mean += geometry.weights(i) * m.detected_bright_per_s * bright
-        mean += m.background_per_s * exposure_s / geometry.n_pixels
     return np.asarray(rng.poisson(mean))
 
 
 __all__ = [
+    "Depumping",
     "CLASS_INDEX",
     "CameraGeometry",
     "ClassPath",
@@ -895,12 +1032,15 @@ __all__ = [
     "acton_bright_distribution",
     "acton_dark_distribution",
     "apply_detector_nonidealities",
+    "count_anomaly_band",
     "crain_printed_bright_error",
+    "depumped_model",
     "first_photon_cutoff_s",
     "log_poisson_pmf",
     "mcsolve_records",
     "neighbourhood_model",
     "poisson_pmf",
+    "psf_leakage_from_geometry",
     "sample_camera_image",
     "sample_spectator_offset_rad_s",
     "spectator_coherence",

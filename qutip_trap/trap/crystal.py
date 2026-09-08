@@ -461,6 +461,14 @@ class Crystal:
             idx = [m.index for m in self.modes if m.family == fam]
             if idx != list(range(len(idx))):
                 raise ValueError(f"{fam} mode indices must run 0, 1, ... in frequency order")
+            # PLAN 4.1.3: "3N modes in THREE families", i.e. N per family. The non-collinear branch assigns a family by
+            # the argmax of the per-axis weight, which for a strongly mixed crystal could return 4/1/1 and pass the
+            # 3N count; a family that is not N modes means the assignment, not the eigenproblem, is wrong.
+            if len(idx) != n:
+                counts = {f: sum(1 for m in self.modes if m.family == f) for f in FAMILY_ORDER}
+                raise ValueError(
+                    f"each of the three mode families has exactly N = {n} modes (Section 4.1.3), got {counts}"
+                )
 
     @property
     def n_ions(self) -> int:

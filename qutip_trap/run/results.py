@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
+    from qutip_trap.dynamics.evolve import ConvergenceReport
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.run.gate_local import GateLocalReport
@@ -134,6 +135,20 @@ class Diagnostics:
     """Processes the parallel maps of Section 11.3 item 9 used (1 = everything in-process)."""
     propagator_cache_hits: int = 0
     """Segments served from the engines' propagator caches (Section 11.3 item 5; M9b)."""
+    branches: int = 1
+    """Branches of the initial mixture (Section 5.3's Fock sum) that were evolved. ``trajectories`` counts branches TIMES the
+    engine's trajectory count, the plan's realized triple being (samples, trajectories, shots per sample); this field
+    separates the two so a reader can tell a Fock branch from a quantum-jump trajectory (M6 fix, ``conv.fock_sum_branches``)."""
+    convergence: ConvergenceReport | None = None
+    """Section 5.5's tolerance-convergence report, present when ``SolverOptions.convergence_check`` was set: the change in the
+    register populations when atol and rtol are tightened by ten (M2's ``dynamics.evolve.convergence_check``; the run-path
+    plumbing is M9's, recorded as ``conv.appendix_e_signatures``). ``None`` means the check was not asked for, never that it
+    passed."""
+    shots_per_sample_realized: tuple[int, ...] = ()
+    """The shots each dynamical sample actually took, in sample order (Section 3.4 / 8.6): ``shots_per_sample`` is the floor
+    ``shots // samples``, so with shots = 2000 over 64 samples it reports 31 while 32 samples took 32 shots. This tuple is
+    also the shot -> sample map Section 8.6 asks the result to make recoverable: sample k owns the contiguous shot block
+    [sum_{j<k} M_j, sum_{j<=k} M_j) (see ``Result.sample_of_shot``)."""
 
 
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:
@@ -152,10 +167,13 @@ class Result:
     probabilities: dict[str, float]
     error_bars: dict[str, float]
     photon_records: np.ndarray | None
+    """(shots, n_qubits) total detected counts per ion per shot; None on the fast readout path."""
     posteriors: np.ndarray | None
     noise_samples: tuple[NoiseSample, ...]
     heralds: np.ndarray
-    """Per-shot flags (collision, all-dark, count anomaly); Section 6.7."""
+    """Per-shot flags, bit 0 = collision, bit 1 = a dark or lost ion, bit 2 = a count anomaly (a record whose total lies
+    outside the [1e-6, 1 - 1e-6] quantile band of BOTH the bright and the dark count distribution of the ion's model, so
+    neither hypothesis explains it: a cosmic ray, an afterpulse burst or a stray-light flash); Sections 6.7, 8.6."""
     discarded_shots: int
     run_state: RunState
     spam: dict[str, tuple[float, float]]
@@ -165,6 +183,13 @@ class Result:
     ``bitstrings``, ``counts`` and ``probabilities`` use the Section 13 order (qubit 0 the least-significant bit), and
     ``run.job.to_register_order`` converts a compiler-order ket to this one."""
     diagnostics: Diagnostics
+    sub_bin_records: np.ndarray | None = None
+    """(shots, n_qubits, n_sub_bins) counts per sub-bin when the discriminator is time resolved, which is Section 8.6's
+    "the photon-count record per ion AND PER SUB-BIN when time-resolved"; None for a threshold discriminator, whose record
+    carries no sub-bin structure, and on the fast path."""
+    arrival_times_s: tuple[tuple[np.ndarray, ...], ...] | None = None
+    """Per shot, per ion, the photon arrival times when the discriminator asked for them (Noek's first-photon protocol,
+    Crain's stop-on-first-photon); None otherwise. Ragged, so a tuple of arrays rather than one array."""
 
     def __post_init__(self) -> None:
         arr = np.asarray(self.bitstrings)
@@ -201,6 +226,45 @@ class Result:
     def to_ionq_shots(self) -> list[str]:
         """The per-shot format: an ordered list of decimal strings ("6", "1", "0", "7" is 110, 001, 000, 111 on three qubits)."""
         return [decimal_key(row) for row in np.asarray(self.bitstrings)]
+
+    @property
+    def sample_of_shot(self) -> np.ndarray:
+        """Per shot, the index of the dynamical sample it was drawn from (Section 8.6: "a Result carries per shot ... the
+        sampled quasi-static noise parameters of that shot's dynamical sample"). ``noise_samples[sample_of_shot[k]]`` is
+        shot k's parameter draw. Shots are allocated in contiguous blocks (``conv.shot_blocks_per_sample``), so this is the
+        block index built from ``Diagnostics.shots_per_sample_realized``; a run with one sample maps every shot to 0."""
+        realized = self.diagnostics.shots_per_sample_realized
+        n = self.shots
+        if not realized:
+            return np.zeros(n, dtype=np.int64)
+        out = np.concatenate([np.full(int(m), s, dtype=np.int64) for s, m in enumerate(realized)])
+        # discarded shots (heralded collisions, Section 6.7) shorten the kept array; the map covers what was kept
+        return (
+            out[:n] if out.shape[0] >= n else np.concatenate([out, np.full(n - out.shape[0], -1, np.int64)])
+        )
+
+    def to_ionq_v2(self, registers: Mapping[str, Sequence[int]] | None = None) -> dict[str, dict[str, float]]:
+        """Section 8.6's v2 register-nested result: ``{register name: {bitstring: probability}}``.
+
+        ``registers`` names the classical registers and the qubits each covers, in the register's own bit order (qubit 0 of
+        the register least significant, the Section 13 convention). With no registers given the whole measured set is one
+        register named ``"c"``, the default name qelib1.inc-style exports use, so the format is always available. The
+        OpenQASM 2 importer does not yet carry its ``creg`` names into the ``Circuit`` (it flattens them in declaration
+        order), so a caller who imported a multi-register program supplies the map itself."""
+        bits = np.asarray(self.bitstrings)
+        regs = dict(registers) if registers else {"c": tuple(range(self.n_qubits))}
+        out: dict[str, dict[str, float]] = {}
+        for name, qubits in regs.items():
+            idx = [int(q) for q in qubits]
+            if any(q < 0 or q >= self.n_qubits for q in idx):
+                raise ValueError(f"register {name!r} names qubits outside the result's {self.n_qubits}")
+            counts: dict[str, int] = {}
+            for row in bits[:, idx] if idx else np.zeros((bits.shape[0], 0), dtype=bits.dtype):
+                key = bitstring_key(row)
+                counts[key] = counts.get(key, 0) + 1
+            total = float(sum(counts.values())) or 1.0
+            out[name] = {k: c / total for k, c in sorted(counts.items())}
+        return out
 
 
 __all__ = [

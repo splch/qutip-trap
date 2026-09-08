@@ -8,7 +8,11 @@ token of the committed ``outputs/<name>.out`` with the fresh output line by line
 non-numeric skeleton, numbers compared to a relative tolerance), and with ``--report`` writes
 ``validation/report/convergence_report.{json,md}`` plus the fresh outputs, which CI uploads as the
 ``convergence-report`` artifact. Wall times are recorded but never compared, and neither are lines a script
-prefixes with ``MC:`` (Monte Carlo results whose last digits depend on the platform's libm; M5).
+prefixes with ``MC:`` (Monte Carlo results whose last digits depend on the platform's libm; M5). A script with no
+committed output fails the run (a hole in the oracle set is not a pass), fresh numeric lines with no committed
+counterpart are counted and reported (a grown script means a stale oracle), and ``--update --only <stem>`` rewrites
+one oracle from a fresh run for a deliberate change. The residual class (numbers below 1e-6 printed with at most three
+significant digits, compared to a factor RESIDUAL_FACTOR) is recorded in the ledger as ``conv.check_script_residual_class``.
 
     uv run python validation/scripts/run_checks.py --report
     uv run python validation/scripts/run_checks.py --only check_atomic check_ms_closure
@@ -95,6 +99,10 @@ class Comparison:
     residual_numbers: int = 0
     max_rel_dev: float = 0.0
     mismatches: list[str] = field(default_factory=list)
+    extra_lines: list[str] = field(default_factory=list)
+    """Fresh numeric lines with no committed counterpart: a script whose output grew since its oracle was committed.
+    Reported (the oracle is then stale and must be regenerated with ``--update``), not a failure, because CI's job is
+    to catch a changed number, and a grown script cannot change a committed one."""
 
     @property
     def ok(self) -> bool:
@@ -142,6 +150,9 @@ def compare(expected: str, actual: str, *, rtol: float, atol: float) -> Comparis
                 result.residual_numbers += 1
             elif e != 0.0:
                 result.max_rel_dev = max(result.max_rel_dev, abs(a - e) / abs(e))
+    for key, leftovers in pool.items():
+        for nums in leftovers:
+            result.extra_lines.append(f"{key} {nums}")
     return result
 
 
@@ -157,6 +168,7 @@ class ScriptReport:
     max_rel_dev: float = 0.0
     mismatches: list[str] = field(default_factory=list)
     note: str = ""
+    extra_lines: int = 0
 
 
 def run_script(path: Path) -> tuple[subprocess.CompletedProcess[str], float]:
@@ -193,12 +205,12 @@ def write_report(reports: list[ScriptReport], vers: dict[str, str]) -> None:
     lines += [f"| {k} | {v} |" for k, v in vers.items()]
     lines += [
         "",
-        "| script | status | wall (s) | lines compared | numbers compared | residual-class numbers | max relative deviation (strict class) |",
-        "|---|---|---|---|---|---|---|",
+        "| script | status | wall (s) | lines compared | numbers compared | residual-class numbers | max relative deviation (strict class) | fresh lines without an oracle |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in reports:
         lines.append(
-            f"| {r.name} | {r.status} | {r.wall_s:.2f} | {r.lines_compared} | {r.numbers_compared} | {r.residual_numbers} | {r.max_rel_dev:.2e} |"
+            f"| {r.name} | {r.status} | {r.wall_s:.2f} | {r.lines_compared} | {r.numbers_compared} | {r.residual_numbers} | {r.max_rel_dev:.2e} | {r.extra_lines} |"
         )
     bad = [r for r in reports if r.mismatches]
     if bad:
@@ -220,7 +232,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", nargs="*", default=None, help="script stems to run")
     parser.add_argument("--rtol", type=float, default=RTOL_DEFAULT)
     parser.add_argument("--atol", type=float, default=1e-12)
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="rewrite outputs/<stem>.out from the fresh run (only with --only; a deliberate oracle change, never CI)",
+    )
     args = parser.parse_args(argv)
+    if args.update and args.only is None:
+        print(
+            "--update needs --only <stems>: an oracle is regenerated one script at a time, on purpose",
+            file=sys.stderr,
+        )
+        return 2
 
     patterns = ["check_*.py"] + (["bench_*.py"] if args.bench else [])
     scripts = sorted({p for pat in patterns for p in HERE.glob(pat)})
@@ -242,6 +265,9 @@ def main(argv: list[str] | None = None) -> int:
             (fresh_dir / f"{path.stem}.out").write_text(proc.stdout, encoding="utf-8")
             (fresh_dir / f"{path.stem}.err").write_text(proc.stderr, encoding="utf-8")
         committed = OUTPUTS / f"{path.stem}.out"
+        if args.update and proc.returncode == 0:
+            committed.write_text(proc.stdout, encoding="utf-8")
+            print(f"updated {committed.relative_to(HERE)}")
         if proc.returncode != 0:
             rep = ScriptReport(
                 path.stem,
@@ -251,7 +277,10 @@ def main(argv: list[str] | None = None) -> int:
                 note=proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "",
             )
         elif not committed.exists():
-            rep = ScriptReport(path.stem, "no committed output", wall, 0)
+            # a check script without its oracle is a hole in the first CI job (PLAN.md M0): a failure, not a note
+            rep = ScriptReport(
+                path.stem, "NO COMMITTED OUTPUT", wall, 0, note=f"commit outputs/{path.stem}.out"
+            )
         elif path.stem.startswith("bench_"):
             rep = ScriptReport(path.stem, "ran (timings not compared)", wall, 0)
         else:
@@ -266,10 +295,14 @@ def main(argv: list[str] | None = None) -> int:
                 cmp.residual_numbers,
                 cmp.max_rel_dev,
                 cmp.mismatches,
+                extra_lines=len(cmp.extra_lines),
             )
+            if cmp.extra_lines:
+                rep.note = f"{len(cmp.extra_lines)} fresh numeric line(s) have no committed counterpart (stale oracle)"
         reports.append(rep)
         print(
             f"{rep.name:32s} {rep.status:28s} {rep.wall_s:7.2f} s  lines={rep.lines_compared} max_rel_dev={rep.max_rel_dev:.1e}"
+            + (f"  extra={rep.extra_lines}" if rep.extra_lines else "")
         )
         for m in rep.mismatches:
             print(f"    {m}")
@@ -278,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         write_report(reports, vers)
         print(f"report written to {REPORT_DIR}")
-    failed = [r for r in reports if r.status in ("FAILED", "MISMATCH")]
+    failed = [r for r in reports if r.status in ("FAILED", "MISMATCH", "NO COMMITTED OUTPUT")]
     return 1 if failed else 0
 
 

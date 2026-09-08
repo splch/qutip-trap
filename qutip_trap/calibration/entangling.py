@@ -67,15 +67,19 @@ def gate_space(
     d_min: int = 6,
     d_max: int = 64,
     extra_levels: int = 0,
+    force_weight: float | None = None,
 ) -> HilbertSpace:
     """A joint space resolving every mode of ``modes``: the cap follows the pulse's coherent excursion (the S = +-2 branch moves
     by sum_i |alpha_im(t)|, whose maximum over the pulse the closed-form trajectories give) through the populated range of the
     displaced thermal mode at the boundary threshold, plus the Section 5.1.1 margin for the mode's eta (Section 5.5; M9a); every
-    other crystal mode is frozen. ``waveform`` supplies the trajectory."""
+    other crystal mode is frozen. ``waveform`` supplies the trajectory; ``force_weight`` is the per-ion spectral radius of
+    the force operator (``control.shaping.excursion_by_mode``), derived from the waveform kind when omitted."""
     nb = dict(nbar or {})
     resolved: list[ModeTruncation] = []
     excursion = (
-        excursion_by_mode(waveform, modes) if waveform is not None and waveform.segments is not None else {}
+        excursion_by_mode(waveform, modes, force_weight=force_weight)
+        if waveform is not None and waveform.segments is not None
+        else {}
     )
     for k, m in enumerate(modes.modes):
         eta_max = max(abs(modes.eta[i][k]) for i in modes.ions)
@@ -412,6 +416,10 @@ def calibrate_entangling_angle(
     total = 1.0
     thermal = dict(nbar or {}) if reference == "thermal" else {}
     converged = False
+    checked = current
+    """The waveform the LAST element of ``checks`` measured: on a converged run it is ``current``, and when the iteration
+    budget runs out it is the one before the final rescale, so that a non-converged run never stamps an angle that was
+    measured on a different amplitude (M4 finding)."""
     for _ in range(max_iterations):
         check, _traces = exact_gate_check(
             device,
@@ -428,6 +436,7 @@ def calibrate_entangling_angle(
             single_qubit_drives=single_qubit_drives,
         )
         checks.append(check)
+        checked = current
         if abs(check.chi_rad - chi_target_rad) < tolerance_rad:
             converged = True
             break
@@ -437,8 +446,11 @@ def calibrate_entangling_angle(
         current = scaled(current, factor)
         total *= factor
         factors.append(total)
+    current = checked
     # the calibrated waveform carries the EXACT two-body angle (the sign from the surrogate, the per-mode split proportional to it),
-    # so that the scheduler's s^2 rescaling starts from the measured angle and MS(., ., 2 chi_target) plays this amplitude unchanged
+    # so that the scheduler's s^2 rescaling starts from the measured angle and MS(., ., 2 chi_target) plays this amplitude unchanged.
+    # ``current`` is the waveform checks[-1] was measured ON, so a run that exhausted max_iterations returns the last CHECKED
+    # amplitude with its own measured angle rather than the final rescale stamped with the previous one's measurement
     surrogate_total = current.chi_total_rad
     exact_total = math.copysign(checks[-1].chi_rad, surrogate_total if surrogate_total != 0.0 else 1.0)
     ratio = exact_total / surrogate_total if surrogate_total != 0.0 else 1.0
@@ -516,11 +528,15 @@ def parity_after_analysis_pulse(
     spin_phases_rad: tuple[float, float] = (0.0, 0.0),
     internal: Sequence[int] | None = None,
     analysis_stark_hz: Mapping[int, float] | None = None,
+    qubit_shifts_hz: Mapping[int, float] | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Parity P_00 + P_11 - P_01 - P_10 after the gate and a pi/2 analysis pulse of phase ``analysis_phase_rad`` on both ions
     (Section 7.9); the analysis pulses use ``analysis_drives`` (default the gate drives' beams) at the given carrier Rabi
     frequencies, with the believed Stark shifts ``analysis_stark_hz`` compensated. ``spin_phases_rad`` are the MS gate's
-    (phi_0, phi_1) and ``internal`` the register's initial levels (default |0...0>), for the phase scans of Section 7.5 (M8)."""
+    (phi_0, phi_1) and ``internal`` the register's initial levels (default |0...0>), for the phase scans of Section 7.5 (M8).
+    ``qubit_shifts_hz`` is the true transition minus the table's frame per ion (Section 7.3), the same channel ``run()`` and
+    ``exact_gate_check`` use: without it the phase scans would measure the entangling axis in a PERFECT qubit frame and write
+    corrections that omit the frame error the run then applies (M8 audit B5)."""
     n_ions = space.n_ions
     sched_ms = ms_schedule(waveform, pair, gate_drives, table, phases_rad=spin_phases_rad)
     dead = float(device.hardware.dead_time_s)
@@ -546,7 +562,9 @@ def parity_after_analysis_pulse(
     )
     levels = [0] * n_ions if internal is None else [int(x) for x in internal]
     state = space.initial_state(levels, thermal=dict(nbar or {}))
-    engine = JointExactEngine(builder_options=builder_options, table=table)
+    engine = JointExactEngine(
+        builder_options=builder_options, table=table, qubit_shifts_hz=dict(qubit_shifts_hz or {})
+    )
     traces = engine.run_pulses(
         device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
     )

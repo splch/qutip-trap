@@ -32,6 +32,51 @@ def test_gpi_is_cos_x_plus_sin_y() -> None:
         assert np.allclose(native.gpi(phi), math.cos(phi) * native.PAULI_X + math.sin(phi) * native.PAULI_Y)
 
 
+PHASE_SWEEP_TURNS = tuple(float(x) for x in np.linspace(0.0, 1.0, 9)[:-1])
+"""Eight phases over a full turn: the sweep the Section 9.10 identity row is checked over."""
+OPERATOR_ATOL = 1e-12
+"""Section 9's operator-identity tolerance (the measured deviations are 0 to 7.1e-16)."""
+
+
+@pytest.mark.parametrize("turns", PHASE_SWEEP_TURNS)
+def test_the_six_native_gate_identities_of_section_9_10(turns: float) -> None:
+    """Section 9.10 row "Native-gate identities" in full, over a phase sweep at the 1e-12 operator tolerance:
+    GPi(phi)^2 = I; GPi2(phi)^2 = -i GPi(phi); GPi2(phi + 0.5) = GPi2(phi)^dag; GPi2(phi) = R(pi/2, 2 pi phi);
+    GPi(phi) = i R(pi, 2 pi phi); VZ(t) G(p) VZ(t)^dag = G(p + t) for both natives (phi in TURNS, p in radians)."""
+    p = native.rad_from_turns(turns)
+    eye = np.eye(2, dtype=complex)
+    assert np.allclose(native.gpi(p) @ native.gpi(p), eye, atol=OPERATOR_ATOL)
+    assert np.allclose(native.gpi2(p) @ native.gpi2(p), -1j * native.gpi(p), atol=OPERATOR_ATOL)
+    assert np.allclose(
+        native.gpi2(native.rad_from_turns(turns + 0.5)), native.gpi2(p).conj().T, atol=OPERATOR_ATOL
+    )
+    assert np.allclose(native.gpi2(p), native.r_phi(math.pi / 2, p), atol=OPERATOR_ATOL)
+    assert np.allclose(native.gpi(p), 1j * native.r_phi(math.pi, p), atol=OPERATOR_ATOL)
+    for t in (0.1, -0.7, 2.3):
+        for gate in (native.gpi, native.gpi2):
+            conjugated = native.rz(t) @ gate(p) @ native.rz(t).conj().T
+            assert np.allclose(conjugated, gate(p + t), atol=OPERATOR_ATOL), (gate.__name__, turns, t)
+    # the identities are sharp: GPi2(phi)^2 is NOT +i GPi(phi), and GPi2(phi + 0.5) is not GPi2(phi) itself
+    assert not np.allclose(native.gpi2(p) @ native.gpi2(p), 1j * native.gpi(p), atol=1e-3)
+    assert not np.allclose(native.gpi2(native.rad_from_turns(turns + 0.5)), native.gpi2(p), atol=1e-3)
+
+
+def test_gpi2_half_turn_is_hilbert_schmidt_orthogonal_to_rx_plus_pi_over_two() -> None:
+    """Section 9.10 row "Native-gate axis mapping": GPi2(0.5) = RX(-pi/2), and its Hilbert-Schmidt overlap with RX(+pi/2)
+    is EXACTLY 0 (the two half-turn rotations about opposite senses of x differ by Z, which is traceless against I)."""
+    half = native.gpi2(native.rad_from_turns(0.5))
+    assert np.allclose(half, native.r_phi(-math.pi / 2, 0.0), atol=OPERATOR_ATOL)
+    overlap = complex(np.trace(half.conj().T @ native.r_phi(math.pi / 2, 0.0)))
+    assert abs(overlap) < OPERATOR_ATOL, overlap
+    # the same statement for GPi: GPi(0) and GPi(0.25) are orthogonal (X against Y)
+    assert (
+        abs(complex(np.trace(native.gpi(0.0).conj().T @ native.gpi(native.rad_from_turns(0.25)))))
+        < OPERATOR_ATOL
+    )
+    # a negative control: the overlap of GPi2(0.5) with itself is the full 2
+    assert abs(complex(np.trace(half.conj().T @ half))) == pytest.approx(2.0, rel=1e-12)
+
+
 def test_ms_fully_entangling_matrix_and_xx_conversion() -> None:
     phi0, phi1 = 0.4, -1.3
     m = native.ms(phi0, phi1, native.rad_from_turns(0.25))

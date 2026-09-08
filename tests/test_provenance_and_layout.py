@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import re
 from pathlib import Path
 
 import pytest
@@ -14,48 +15,42 @@ from tools.ledger_from_tables import render
 ROOT = repository_root()
 PKG = ROOT / "qutip_trap"
 
-SECTION_3_2_MODULES = [
-    "units.py",
-    "species/atomic.py",
-    "trap/mathieu.py",
-    "trap/pseudopotential.py",
-    "trap/surface.py",
-    "trap/crystal.py",
-    "trap/anharmonic.py",
-    "trap/micromotion.py",
-    "trap/heating.py",
-    "light/beams.py",
-    "hilbert/space.py",
-    "hilbert/operators.py",
-    "hilbert/truncation.py",
-    "control/native.py",
-    "control/compiler.py",
-    "control/pulses.py",
-    "control/schedule.py",
-    "control/shaping.py",
-    "control/hardware.py",
-    "control/table.py",
-    "dynamics/hamiltonian.py",
-    "dynamics/channels.py",
-    "dynamics/evolve.py",
-    "dynamics/frames.py",
-    "dynamics/kernels.py",
-    "dynamics/engine.py",
-    "readout/fluorescence.py",
-    "readout/detection.py",
-    "readout/discriminate.py",
-    "noise/spectra.py",
-    "noise/sampling.py",
-    "device/model.py",
-    "device/presets.py",
-    "run/job.py",
-    "run/results.py",
-    "run/levels.py",
-    "io/openqasm.py",
-    "calibration/__init__.py",
-    "experiments/__init__.py",
-    "validation/__init__.py",
-]
+PLAN = ROOT / "PLAN.md"
+
+# modules the plan lists under `qutip_trap/` that live elsewhere in this checkout, each with the reason
+LAYOUT_RELOCATIONS: dict[str, str] = {
+    # the plan puts the check scripts under qutip_trap/validation/scripts/; they are committed at the repository root so
+    # that the first CI job runs them without importing the package (validation/scripts/README.md, run_checks.py)
+    "validation/scripts": "validation/scripts",
+}
+
+
+def section_3_2_modules() -> list[str]:
+    """The `qutip_trap/` entries of the Section 3.2 layout fence of PLAN.md, derived so the guard cannot drift."""
+    text = PLAN.read_text(encoding="utf-8")
+    start = text.index("### 3.2 Package layout")
+    fence = text[text.index("```", start) + 3 : text.index("```", text.index("```", start) + 3)]
+    modules: list[str] = []
+    stack: list[tuple[int, str]] = []  # (indent, directory)
+    for raw in fence.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        name = line.strip()
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if name.endswith("/"):
+            stack.append((indent, name))
+            continue
+        path = "".join(d for _, d in stack) + name
+        if path.startswith("qutip_trap/") and name.endswith(".py"):
+            modules.append(path[len("qutip_trap/") :])
+    return modules
+
+
+SECTION_3_2_MODULES = section_3_2_modules()
+SECTION_3_2_PACKAGES = ["calibration", "experiments", "validation"]  # listed as directories with prose only
 
 
 def test_ledger_loads_with_valid_tags_and_fields() -> None:
@@ -110,3 +105,25 @@ def test_app_scaffold_has_the_flet_create_layout() -> None:
         assert (app / rel).exists(), rel
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'gui = ["flet[all]>=0.86,<1.0", "flet-charts>=0.86,<1.0"]' in text
+
+
+def referenced_provenance_ids() -> set[str]:
+    """Every `conv.*` / `anchor.*` string literal in the package: the ids a derived number, a diagnostics line or an
+    ExperimentResult can stamp on its output."""
+    ids: set[str] = set()
+    pattern = re.compile(r"^(conv|anchor)\.[A-Za-z0-9_.]+$")
+    for path in PKG.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and pattern.match(node.value):
+                ids.add(node.value)
+    return ids
+
+
+def test_every_provenance_id_the_package_stamps_exists_in_the_ledger() -> None:
+    """Appendix E's closing rule: every derived number reachable through Device.derived(), Result.diagnostics or an
+    ExperimentResult carries a provenance id FROM the ledger, so the Section 9.11 coverage test is a set difference.
+    A new id stamped in code without a record is the failure this test exists for."""
+    ledger = load_ledger()
+    missing = sorted(referenced_provenance_ids() - set(ledger))
+    assert not missing, f"provenance ids referenced from qutip_trap/ with no ledger record: {missing}"

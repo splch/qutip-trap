@@ -33,12 +33,7 @@ def analytic_displacement(nmax, alpha):
             else:
                 k = n - m
                 pref = np.exp(0.5 * (gammaln(m + 1) - gammaln(n + 1)))
-                D[m, n] = (
-                    pref
-                    * (-np.conj(alpha)) ** k
-                    * np.exp(-x / 2)
-                    * eval_genlaguerre(m, k, x)
-                )
+                D[m, n] = pref * (-np.conj(alpha)) ** k * np.exp(-x / 2) * eval_genlaguerre(m, k, x)
     return D
 
 
@@ -61,9 +56,7 @@ def run_ivp(Hfun, psi0, T, rtol=1e-8, atol=1e-10):
         return -1j * (Hfun(t) @ y)
 
     t0 = time.perf_counter()
-    sol = solve_ivp(
-        rhs, (0.0, T), psi0, method="DOP853", rtol=rtol, atol=atol, t_eval=[T]
-    )
+    sol = solve_ivp(rhs, (0.0, T), psi0, method="DOP853", rtol=rtol, atol=atol, t_eval=[T])
     dt = time.perf_counter() - t0
     return sol.y[:, -1], sol.nfev, dt
 
@@ -156,23 +149,31 @@ def bench_B1_qutip():
         psi0 = q.tensor(q.basis(2, 1), q.basis(nmax, 1))
         for method in ("vern9", "adams", "dop853"):
             t0 = time.perf_counter()
-            res = q.sesolve(
-                H,
-                psi0,
-                [0, T],
-                options={
-                    "method": method,
-                    "atol": 1e-10,
-                    "rtol": 1e-8,
-                    "store_final_state": True,
-                },
-            )
+            try:
+                res = q.sesolve(
+                    H,
+                    psi0,
+                    [0, T],
+                    options={
+                        "method": method,
+                        "atol": 1e-10,
+                        "rtol": 1e-8,
+                        "store_final_state": True,
+                    },
+                )
+            except Exception as exc:
+                # The MULTISTEP rung is expected to abort: Section 5.3 refuses adams/bdf because they damp the
+                # oscillatory spectrum of -iH, and scipy's zvode gives up with "excess work" at nmax = 41. Catching it
+                # is what lets the script finish and record the step-density and picture-equivalence anchors that
+                # follow; an uncaught traceback truncated the committed output at exactly this point.
+                dt = time.perf_counter() - t0
+                print(
+                    f"nmax={nmax:3d} {method:7s} wall={dt:6.2f}s ABORTED: {type(exc).__name__}: {exc} "
+                    f"(expected for a multistep method; Section 5.3 refuses them)"
+                )
+                continue
             dt = time.perf_counter() - t0
-            stats = {
-                k: v
-                for k, v in res.stats.items()
-                if k in ("num_steps", "run time", "method")
-            }
+            stats = {k: v for k, v in res.stats.items() if k in ("num_steps", "run time", "method")}
             print(f"nmax={nmax:3d} {method:7s} wall={dt:6.2f}s stats={stats}")
     print("available stats keys:", list(res.stats.keys()))
 
@@ -202,9 +203,7 @@ def bench_B2():
                 f"unitarity defect: analytic={u_ex:.1e} expm={u_expm:.1e} | Omega00 an={om00:.10f} expm={om00e:.10f} | "
                 f"boundary element an={omb:.4f} expm={ombe:.4f} | analytic norm loss: col nmax/2={loss_mid:.1e} col nmax-1={loss_top:.2e}"
             )
-    print(
-        "\n-- ENR space: expm of ENR generator vs analytic elements (2 modes, excitation cap Nexc)"
-    )
+    print("\n-- ENR space: expm of ENR generator vs analytic elements (2 modes, excitation cap Nexc)")
     for Nexc in (6, 10, 16):
         for eta in (0.1, 0.3):
             dims = [Nexc + 1, Nexc + 1]

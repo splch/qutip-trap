@@ -50,6 +50,11 @@ CLASSES: tuple[ReadoutClass, ...] = ("bright", "dark", "shelf")
 """The three classes of the readout continuous-time Markov chain (Section 8.2): the fluorescing manifold, the dark
 ground manifold reached by off-resonant pumping, and the metastable shelf that decays back to bright."""
 
+ALL_LINES = "all"
+"""``line=ALL_LINES`` sums the photon rate over every non-sink decay line of the build: the total scattering rate
+W(Delta) of Section 4.2.2, a DIAGNOSTIC and not a detected rate, because epsilon_sys carries exactly one
+epsilon_filter and the filter passes one wavelength (Section 8.1, "Detected rate and background")."""
+
 
 def saturation_ceiling(n_ground: int, n_excited: int) -> float:
     """P_f^max = n_e/(n_e + n_g), the equal-population ceiling of a closed manifold (Section 13; Berkeland Eqs. 13-14, 21)."""
@@ -256,6 +261,35 @@ def neighbour_intensity_ratio(wavelength_m: float, spacing_m: float) -> float:
     I_sat = pi h c Gamma/(3 lambda^3) (Section 8.5 [corrected]: Acton's hbar for h makes the printed 3 lambda^2/(4 pi x^2)
     and its 7e-4 estimate 2 pi too large; 1.1e-4 for 111Cd+ at 4 um)."""
     return 3.0 * wavelength_m**2 / (8.0 * math.pi**2 * spacing_m**2)
+
+
+def neighbour_pumping_rates(
+    rates: FluorescenceRates,
+    s_beam: float,
+    wavelength_m: float,
+    spacing_m: float,
+    *,
+    polarization_purity: float = 1.0,
+) -> tuple[float, float]:
+    """(Delta R_d, Delta R_b) that ONE saturated bright neighbour at ``spacing_m`` adds to an ion's chain: the DEPUMPING
+    half of Wineland's readout-crosstalk mechanism (Section 8.5).
+
+    Section 8.5: the mechanism "is a degradation of state-discrimination efficiency by a neighbour's scattered light of
+    different polarization, not a change in the instrumental eta_d ... modelled as added counts on a dark neighbour PLUS
+    DEPUMPING-REDUCED N", with the radiative pumping "bounded by I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2)". Section 8.1
+    makes R_d and R_b linear in intensity with no saturation denominator, so the leaked light drives the same two channels
+    at the intensity ratio s_neighbour/s_beam of its own saturation parameter to the detection beam's. The neighbour's
+    fluorescence is unpolarized in the atomic frame, so ``polarization_purity`` = 1 is the BOUND the plan states, and a
+    smaller value is the share of the leaked light that reaches the pumping polarization at the ion.
+    """
+    if s_beam <= 0.0:
+        raise ValueError("the detection beam's saturation parameter is positive")
+    if not 0.0 <= polarization_purity <= 1.0:
+        raise ValueError("the polarization share lies in [0, 1]")
+    if spacing_m <= 0.0 or wavelength_m <= 0.0:
+        raise ValueError("the spacing and the wavelength are positive")
+    scale = polarization_purity * neighbour_intensity_ratio(wavelength_m, spacing_m) / s_beam
+    return rates.R_dark_pumping_per_s * scale, rates.R_bright_pumping_per_s * scale
 
 
 # ---- the detection-efficiency chain (Section 8.1 "Detected rate and background") --------------------------------------------
@@ -524,6 +558,16 @@ class ReadoutScheme:
             return {self.classes[level]: 1.0}
         return {c: p for c, p in self.transfer[level] if p > 0.0}
 
+    @property
+    def dark_class(self) -> ReadoutClass:
+        """The non-bright class the other qubit level starts in: "shelf" for a shelving scheme, "dark" for direct
+        fluorescence (the class whose 1/tau the time-resolved discriminators of Section 8.3 need; with an imperfect
+        transfer it is the MOST LIKELY non-bright start, the one that carries the decay term)."""
+        dist = {c: p for c, p in self.start_distribution(1 - self.bright_level).items() if c != "bright"}
+        if not dist:
+            return "dark" if self.kind == "direct" else "shelf"
+        return max(dist, key=dist.__getitem__)
+
     def dark_weights(self) -> tuple[float, ...]:
         """The weights p_l of Pi_dark = sum_l p_l |l><l| (Section 8.1): the probability that level l starts NON-bright."""
         return tuple(1.0 - self.start_distribution(lev).get("bright", 0.0) for lev in range(self.n_levels))
@@ -704,6 +748,32 @@ def rates_from_detected(
     )
 
 
+def detected_line(model: BlochModel) -> str:
+    """The one decay line whose photons the detector counts, when the model carries only one (Section 8.1).
+
+    R_det = epsilon_sys R_o with epsilon_filter INSIDE epsilon_sys: the interference filter passes one wavelength, so
+    photons emitted on a repump line (866 nm beside 40Ca+'s detected 397 nm, 935 nm beside 171Yb+'s 369.5 nm) must not be
+    counted in R_o. When the build carries several non-sink lines the choice is a device property and cannot be derived
+    here, so the caller must name it (or ask for :data:`ALL_LINES` explicitly, as a diagnostic).
+    """
+    from qutip_trap.dynamics.multilevel import SINK
+
+    lines = []
+    for ch in model.build.channels:
+        key = f"{ch.lower}<-{ch.upper}"
+        if not key.startswith(SINK) and key not in lines:
+            lines.append(key)
+    if not lines:
+        raise ValueError("the build has no decay line: nothing is detected")
+    if len(lines) > 1:
+        raise ValueError(
+            f"the detection model carries {len(lines)} decay lines {lines}: name the detected one "
+            f"(R_det = eps_sys R_o counts one wavelength, Section 8.1) or pass line={ALL_LINES!r} for the "
+            "all-line diagnostic sum"
+        )
+    return lines[0]
+
+
 def rates_from_bloch(
     model: BlochModel,
     bright_labels: Sequence[str],
@@ -718,15 +788,23 @@ def rates_from_bloch(
 
     With no dark labels (a shelving scheme whose bright manifold is everything the beams drive, 40Ca+ under 397 + 866 nm)
     the steady state is the bright state and the pumping rates vanish.
+
+    ``line`` names the DETECTED line "lower<-upper" (level names); None derives it with :func:`detected_line` and refuses
+    a model with several lines; :data:`ALL_LINES` sums every non-sink line, which is the total scattering rate of Section
+    4.2.2 and a diagnostic, NOT a detected rate (the single epsilon_sys of Section 8.1 has one epsilon_filter in it).
     """
+    if line == ALL_LINES:
+        chosen: str | None = None
+    else:
+        chosen = line if line is not None else detected_line(model)
     if dark_labels:
-        dr = model.detection_rates(bright_labels, dark_labels, line=line)
+        dr = model.detection_rates(bright_labels, dark_labels, line=chosen)
         r_o, r_d, r_b = dr.R_bright_per_s, dr.R_dark_pumping_per_s, dr.R_bright_pumping_per_s
         ceiling, p_e = dr.ceiling.ceiling, dr.ceiling.excited_population
     else:
         ss = model.steadystate()
         rates = ss.photon_rates_per_s
-        r_o = float(rates[line]) if line is not None else ss.total_photon_rate_per_s
+        r_o = float(rates[chosen]) if chosen is not None else ss.total_photon_rate_per_s
         r_d, r_b = 0.0, 0.0
         ceiling, p_e = ss.ceiling.ceiling, ss.ceiling.excited_population
     return FluorescenceRates(
@@ -771,10 +849,11 @@ def scattering_rate(
 ) -> tuple[FluorescenceRates, BlochModel]:
     """The Section 8.1 rate object from first principles: the multi-level Bloch model of ``beams`` on ``structure``.
 
-    The bright manifold defaults to the ground states the beams drive resonantly (``BlochModel.resonant_manifold``), the
-    dark manifold to the remaining sublevels of the same levels (171Yb+: F = 1 bright, F = 0 dark), and ``line`` to
-    every non-sink decay line. Returns the rates and the model so callers can read the steady state, the dark states
-    and the ceiling report from the same object.
+    The bright manifold defaults to the ground states the beams drive resonantly (``BlochModel.resonant_manifold``) and
+    the dark manifold to the remaining sublevels of the same levels (171Yb+: F = 1 bright, F = 0 dark). ``line`` names the
+    DETECTED decay line; None derives it when the model carries one line and refuses to guess when it carries several
+    (:func:`detected_line`), and :data:`ALL_LINES` opts into the all-line diagnostic sum. Returns the rates and the model
+    so callers can read the steady state, the dark states and the ceiling report from the same object.
     """
     from qutip_trap.dynamics.multilevel import SINK, MultiLevelOptions
     from qutip_trap.light.bloch import BlochModel
@@ -808,9 +887,22 @@ def detection_rates_for_ion(
     levels: Sequence[str] | None = None,
     options: MultiLevelOptions | None = None,
     scheme: ReadoutScheme | None = None,
+    micromotion_beta: float = 0.0,
+    omega_rf_rad_s: float = 0.0,
 ) -> tuple[FluorescenceRates, ReadoutScheme, BlochModel]:
     """Rates and scheme for one ion of a device: the species' cycling and repump lines under the detection beams, the shelf
-    lifetime from the species' metastable level when the scheme shelves (the D level of an optical qubit)."""
+    lifetime from the species' metastable level when the scheme shelves (the D level of an optical qubit).
+
+    R_o counts photons on the species' CYCLING line only, because epsilon_sys carries one epsilon_filter and the filter
+    passes one wavelength (Section 8.1): counting the repump line as well makes R_o 6.9 % high for 40Ca+ under 397 + 866 nm
+    (it was 6.4 % until 2026-09-08, when the 866 nm branching became Ramm et al. 2013's 0.06435 in place of Section 8.1's
+    0.06; ledger conv.ca40_branching).
+    ``micromotion_beta`` > 0 applies Section 8.8's "R_o carries J_0(beta)^2 and a first-sideband channel J_1(beta)^2, like
+    every other drive": the detection drive as a whole is phase-modulated at ``omega_rf_rad_s``, so every rate the Bloch
+    solve returns becomes J_0^2 R(Delta) + J_1^2 [R(Delta - Omega_rf) + R(Delta + Omega_rf)] over three solves.
+    """
+    from qutip_trap.light.bloch import shifted_beam
+    from qutip_trap.light.roles import RESONANT_WINDOW
     from qutip_trap.species.model import parse_state_label, parse_transition_label
     from qutip_trap.species.raman import AtomicStructure
 
@@ -819,11 +911,67 @@ def detection_rates_for_ion(
     if levels is None:
         lv = [lower, upper]
         for rep in species.repumps:
+            tr = next((t for t in species.transitions if t.label == rep and t.multipole == "E1"), None)
+            if tr is None:
+                continue
+            # a repump's manifold enters the detection model only when this device actually shines that light on the ion.
+            # Without the beam the metastable level is a dead end whose own lifetime (52.7 ms for 171Yb+ D3/2) becomes the
+            # slowest Liouvillian mode, so the bright/dark coarse graining of Section 8.1 has no two-manifold slow mode at
+            # all; Section 8.1's "a mis-set or failed repump is a simulable fault" is a property of the BEAMS, not of the
+            # species table (M5 fix, 2026-09-07: tabulating the 935.2 nm line made every 171Yb+ readout raise).
+            if not any(
+                abs(b.wavelength_m - tr.wavelength_vac_m) < RESONANT_WINDOW * tr.wavelength_vac_m
+                for b in beams
+            ):
+                continue
             for end in parse_transition_label(rep):
-                if end not in lv and any(t.label == rep and t.multipole == "E1" for t in species.transitions):
+                if end not in lv:
                     lv.append(end)
         levels = tuple(lv)
-    rates, model = scattering_rate(st, beams, levels=levels, options=options, position_m=position_m)
+    cycling_line = f"{lower}<-{upper}"
+    rates, model = scattering_rate(
+        st, beams, levels=levels, options=options, position_m=position_m, line=cycling_line
+    )
+    if micromotion_beta > 0.0:
+        if omega_rf_rad_s <= 0.0:
+            raise ValueError(
+                "a micromotion modulation index needs the trap's rf frequency Omega_rf for the sideband channels"
+            )
+        solved: dict[float, FluorescenceRates] = {0.0: rates}
+
+        def at(offset: float) -> FluorescenceRates:
+            if offset not in solved:
+                solved[offset], _ = scattering_rate(
+                    st,
+                    [shifted_beam(b, offset) for b in beams],
+                    levels=levels,
+                    options=options,
+                    position_m=position_m,
+                    line=cycling_line,
+                )
+            return solved[offset]
+
+        from dataclasses import replace
+
+        rates = replace(
+            rates,
+            R_bright_per_s=micromotion_detection_rate(
+                lambda d: at(d).R_bright_per_s, micromotion_beta, omega_rf_rad_s
+            ),
+            R_dark_pumping_per_s=micromotion_detection_rate(
+                lambda d: at(d).R_dark_pumping_per_s, micromotion_beta, omega_rf_rad_s
+            ),
+            R_bright_pumping_per_s=micromotion_detection_rate(
+                lambda d: at(d).R_bright_pumping_per_s, micromotion_beta, omega_rf_rad_s
+            ),
+            provenance=rates.provenance
+            + (
+                f"micromotion on the detection beam (Section 8.8): beta = {micromotion_beta:.4g}, "
+                f"Omega_rf/2pi = {omega_rf_rad_s / (2.0 * math.pi):.4g} Hz, "
+                f"J_0^2 = {float(j0(micromotion_beta)) ** 2:.6f} on the carrier and "
+                f"J_1^2 = {float(j1(micromotion_beta)) ** 2:.6f} on each first sideband",
+            ),
+        )
     ground, _ = model.resonant_manifold()
     chosen = scheme if scheme is not None else ReadoutScheme.for_species(species, ground)
     if "shelf" in chosen.classes and rates.shelf_decay_per_s == 0.0:
@@ -842,6 +990,7 @@ def detection_rates_for_ion(
 
 __all__ = [
     "ACTON_P12_FACTORS",
+    "ALL_LINES",
     "CLASSES",
     "ActonAngularFactors",
     "DarkStateReport",
@@ -859,6 +1008,7 @@ __all__ = [
     "camera_snr",
     "crain_dark_pumping_form",
     "crain_saturation_from_s_o",
+    "detected_line",
     "detection_rates_for_ion",
     "doppler_width_hz",
     "emccd_effective_quantum_efficiency",

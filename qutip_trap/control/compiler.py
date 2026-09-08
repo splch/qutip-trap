@@ -290,6 +290,72 @@ def circuit_unitary(circuit: Circuit, ops: Sequence[Operation] | None = None) ->
     return u
 
 
+@dataclass(frozen=True)
+class CircuitCost:
+    """Section 7.7's cost model of a native circuit: the duration and the error the templates predict."""
+
+    duration_s: float
+    """sum over the single-qubit pulses of |theta| tau_1q/pi plus tau_2q per entangling gate (Section 7.7)."""
+    n_single: int
+    n_entangling: int
+    errors: tuple[float, ...]
+    """Per gate, in circuit order: |sin theta| eps_1q for a single-qubit rotation of area theta, |sin 2 chi| E_2q for an
+    entangling gate of angle chi (theta = 2 chi in the native MS parameters)."""
+    fidelity: float
+    """prod_i (1 - e_i) over ``errors`` (Section 7.7's circuit fidelity), NOT 1 - sum e_i."""
+
+
+def cost_of(
+    circuit: Circuit,
+    *,
+    tau_1q_s: float,
+    tau_2q_s: float,
+    eps_1q: float,
+    eps_2q: float,
+) -> CircuitCost:
+    """Section 7.7's cost model: single-qubit duration |theta| tau_1q/pi with error ~ |sin theta| eps_1q, two-qubit duration
+    tau_2q with error ~ |sin 2 chi| E, and circuit fidelity prod(1 - e_i).
+
+    ``theta`` is the ROTATION AREA of the native pulse (pi for gpi, pi/2 for gpi2, |theta| for a native ms whose entangling
+    angle is chi = theta/2, so |sin 2 chi| = |sin theta| there too); a virtual ``rz`` costs no time and no error (Section
+    7.6), and a non-unitary operation is not a gate. The model makes no choices inside the compiler - it is the estimate a
+    caller compares schedules with, which is why it takes the four device numbers rather than reading a device."""
+    if tau_1q_s < 0.0 or tau_2q_s < 0.0 or eps_1q < 0.0 or eps_2q < 0.0:
+        raise ValueError("durations and per-gate errors are non-negative")
+    duration = 0.0
+    errors: list[float] = []
+    n_single = n_entangling = 0
+    for op in circuit.ops:
+        if op.is_non_unitary or op.name == "rz":
+            continue
+        if len(op.qubits) == 1:
+            area = NATIVE_AREAS_RAD.get(op.name)
+            if area is None:
+                raise CompileError(
+                    f"cost_of takes a native circuit; {op.name!r} is not a native single-qubit gate (compile first)"
+                )
+            duration += abs(area) * tau_1q_s / math.pi
+            errors.append(abs(math.sin(area)) * eps_1q)
+            n_single += 1
+        else:
+            if op.name not in ("ms", "zz"):
+                raise CompileError(
+                    f"cost_of takes a native circuit; {op.name!r} is not a native entangling gate"
+                )
+            theta = op.params[-1] if op.name == "ms" else op.params[0]
+            duration += tau_2q_s
+            errors.append(abs(math.sin(float(theta))) * eps_2q)
+            n_entangling += 1
+    fidelity = 1.0
+    for e in errors:
+        fidelity *= 1.0 - e
+    return CircuitCost(duration, n_single, n_entangling, tuple(errors), float(fidelity))
+
+
+NATIVE_AREAS_RAD: Final[dict[str, float]] = {"gpi": math.pi, "gpi2": math.pi / 2.0}
+"""The rotation area of each native single-qubit pulse (``control.schedule.NATIVE_AREAS`` in turns of 2 pi)."""
+
+
 def ideal_probabilities(circuit: Circuit) -> dict[str, float]:
     """The compiler's target distribution (Section 14.5: shown beside the simulated one, never in its place): |<b|U|0...0>|^2 keyed
     by the Section 13 bitstring (qubit 0 rightmost), over the measured qubits only when ``circuit.measure`` is a subset."""
@@ -361,11 +427,35 @@ def _wrap(angle: float) -> float:
     return math.pi if a == -math.pi else a
 
 
-def decompose_single_qubit(u: np.ndarray, qubit: int, *, tol: float = 1e-10) -> list[Operation]:
+PHYSICAL_RZ_AXIS_RAD = 0.0
+"""The reference phase x of Section 7.7's physical RZ, R(pi, x) R(pi, x - theta/2) = RZ(theta): any x gives the same RZ, so
+the axis is a free convention and 0 keeps the two GPi pulses at phases (0, -theta/2)."""
+
+
+def physical_rz(theta_rad: float, qubit: int, *, axis_rad: float = PHYSICAL_RZ_AXIS_RAD) -> list[Operation]:
+    """Section 7.7's physical RZ: GPi(x) GPi(x - theta/2) = RZ(theta) EXACTLY (verified to 2.8e-16 over four angles and
+    three axes), in time order, so the returned list is [GPi(x - theta/2), GPi(x)].
+
+    The compiler emits a virtual ``rz`` instead by default (no pulse, no time, no error: Section 7.6), which is strictly
+    better whenever the frame can carry it. Two physical pulses are needed only where the frame cannot: a z rotation between
+    two gates whose phases the hardware has already programmed, or a benchmarking sequence that must spend real time."""
+    x = float(axis_rad)
+    return [
+        Operation("gpi", (qubit,), (_wrap(x - 0.5 * float(theta_rad)),)),
+        Operation("gpi", (qubit,), (_wrap(x),)),
+    ]
+
+
+def decompose_single_qubit(
+    u: np.ndarray, qubit: int, *, tol: float = 1e-10, physical_z: bool = False
+) -> list[Operation]:
     """Native operations (time order, with virtual rz) for the 2 x 2 unitary ``u`` on ``qubit`` (Section 7.2 item 1).
 
     A pure Z rotation is one rz; a pi/2 or pi equatorial rotation is one GPi2 or GPi pulse plus an rz; anything else is the
     ZXZXZ form with two GPi2 pulses. Verified against ``u`` up to a global phase before it is returned.
+
+    ``physical_z=True`` replaces every virtual ``rz`` by Section 7.7's two-pulse physical RZ (:func:`physical_rz`), so the
+    block carries no frame update at all: the same unitary in 2 to 6 GPi/GPi2 pulses instead of 1 to 2 plus a frame.
     """
     a, b, c, _delta = zyz_angles(u)
     ops: list[Operation]
@@ -395,6 +485,11 @@ def decompose_single_qubit(u: np.ndarray, qubit: int, *, tol: float = 1e-10) -> 
             Operation("rz", (qubit,), (_wrap(alpha),)),
         ]
     ops = [op for op in ops if not (op.name == "rz" and abs(op.params[0]) < tol)]
+    if physical_z:
+        physical: list[Operation] = []
+        for op in ops:
+            physical.extend(physical_rz(op.params[0], qubit) if op.name == "rz" else [op])
+        ops = physical
     _verify_block(ops, np.asarray(u, dtype=complex), (qubit,), "single-qubit")
     return ops
 
@@ -652,13 +747,16 @@ def compile_to_native(circuit: Circuit, device: Device | None = None, **kwargs: 
 __all__ = [
     "BLOCK_TOLERANCE",
     "CNOT_MATRIX",
+    "PHYSICAL_RZ_AXIS_RAD",
     "EXPORTED_NATIVE",
+    "NATIVE_AREAS_RAD",
     "NATIVE_GATES",
     "NON_UNITARY",
     "STANDARD_GATES",
     "SWAP_MATRIX",
     "Circuit",
     "CompileError",
+    "CircuitCost",
     "CompileReport",
     "Entangler",
     "Operation",
@@ -667,6 +765,7 @@ __all__ = [
     "cnot_template",
     "compile_to_native",
     "compile_with_report",
+    "cost_of",
     "cp_matrix",
     "cp_template",
     "cp_template_local_defect_rad",
@@ -678,6 +777,7 @@ __all__ = [
     "frame_unitary",
     "gate_matrix",
     "ideal_probabilities",
+    "physical_rz",
     "propagate_frames",
     "zyz_angles",
 ]

@@ -10,7 +10,7 @@ and error channels), M8 (calibration emulation), M9a (scaling I: resolved-mode s
 option, GATE_LOCAL), M9b (scaling II: the matrix-free drive kernel, trajectory, branch and sample parallelism, the
 propagator cache) and M10 (benchmark emulation and release: randomized benchmarking, GHZ fidelity and a quantum-volume style
 run on the simulated device with the simulator's own error budget alongside, the documentation under `docs/`, version
-0.1.0).** The
+0.1.0), followed by the 2026-09-07 audit of every milestone whose findings and fixes are summarized in the section before "Layout".** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -221,25 +221,30 @@ Stark shift follows the played light with the drive kind's scaling power, so a t
 programmed one).
 `noise/decoupling.py` is the filter-function layer of Section 6.9 with the full 3 x 3 toggling machinery (the closed-form
 segment integrals with removable poles, CPMG, UDD, XY4, XY8, KDD, CDD, custom timings; the amplitude quadrature and its dc
-polygon; chi = (2/pi) int S_b F/omega^2 with omega_min and d ln chi/d ln omega_min reported; the dc floor and the max rule;
+polygon; chi = (2/pi) int S_b F/omega^2 with omega_min and d ln chi/d ln omega_min reported; the dc floor and the max rule,
+the max rule reaching `DecouplingSequence` and `Schedule` through the exact Gaussian frozen-noise average (CPMG-4's frozen
+floor 8.93e-6 against a first-order 1.29e-6) and the detuning moment being the splitting variance 4 <beta_d^2> because c_hat_d
+is fitted against Mount's eps_d = 2 beta_d/Omega (`conv.dc_floor_decoupling_sequences`, `conv.dc_floor_detuning_normalization`);
 a Monte Carlo over sampled trajectories through the builder as the route (c)/(d) closure; `DecouplingSequence.moments`
 counts the pulses from j = 1 as Biercuk's sum does, so A_1 = (-1)^n/2 is its first-order cancellation condition, and
 `feasible()` is a query on the record while `decoupling_sequence` refuses infeasible timings), `noise/collisions.py` the
 Langevin collision process, `noise/summary.py` the Section 6.8 reporting (entanglement and average infidelity, the Pauli
-twirl, Chen's depolarizing normalization). `run()` distributes shots round-robin over dynamical samples at the shot clock
+twirl, Chen's depolarizing normalization). `run()` distributes shots over dynamical samples in balanced contiguous blocks at the shot clock (`conv.shot_blocks_per_sample`)
 (default min(shots, 64) unless the model is quiet), evolves every initial-mixture branch of every sample, reads each sample's
 register state out with the seeds keyed by (sample, trajectory, shot, ion, channel), derives the histogram's error bars from
 the between/within-sample effective sample size, applies the collision process per shot (heralds, discarded shots, a
 permuted ion order, dark and lost ions read dark for every later shot), carries leakage levels (`internal_levels`) and the
 Section 6.6 echo schemes (`crosstalk_suppression="local"|"neighbour"`), and adds the per-pulse scattering probabilities to
-the intrinsic budget. Acceptance (`tests/test_noise_*.py`, `test_decoupling.py`, `test_hardware_chain.py`,
-`test_scattering_channels.py`, `test_collisions.py`, `test_run_noise.py`; `validation/scripts/check_noise.py`): heating and
+the intrinsic budget. Acceptance (`tests/test_noise_*.py`, `test_decoupling.py`, `test_decoupling_mpmath.py`,
+`test_hardware_chain.py`, `test_scattering_channels.py`, `test_collisions.py`, `test_run_noise.py`, `test_m7_dc_floor.py`,
+`test_m7_closed_forms.py`, `test_m7_collisions_physics.py`, `test_m7_noise_processes.py`; `validation/scripts/check_noise.py`):
+heating and
 motional dephasing during the two-ion gate reproduce Ballance's ndot t_g/(2K) and alpha_K t_g/tau to 3-4 % at K = 1 and 2
 (alpha_K = 11/16, 19/64); Fang's exact crosstalk forms (0.900790, 0.097217) and the echo identities to 1e-15; the scattering
 operators' sum rule to 1e-9 with the flip and leakage rates in `mesolve`; the filter-function machinery against every
 `check_composite.py` number (gated CPMG equals Biercuk to 1e-15, the finite-pulse UDD collapse to 4 and 6 with the
 universal 1/16 and 1/64, the SK1/BB1 dc floors 5.87365e-6 and 3.53675e-9); the OU heating slope 9.97506e-4 with its rival
-prefactors excluded; the Langevin rates of `check_collisions.py`; and the two-ion Bell circuit through `run()` with a quiet
+prefactors excluded (in `check_noise.py` only, no test pins that row); the Langevin rates of `check_collisions.py`; and the two-ion Bell circuit through `run()` with a quiet
 model reproducing M6 (register infidelity 2.35e-3 to 2.36e-3 with the branch threshold, M6's 2.353e-3) and with heating, a
 field drift and a Rabi drift on the trajectory path.
 
@@ -286,9 +291,12 @@ silently). `Drift.servo_bandwidth_hz` is applied: a drift with a servo is high-p
 row (the fitted pi time pi/Omega, the half depth at delta = Omega, the half-Rabi form returning Omega/2), the C0 row (the
 sideband-calibrated eta of a single ion at q = 0.3 carries C0 = 1.018 and a gate built from the carrier-derived one misses 2(C0 - 1)
 of two-body phase), thermometry exact to 2e-3 with the thermality flag, the heating rate recovered to 3 % from the engine's own
-channels, the field to 1 mG from a 20 mG-wrong seed, the two-ion fixture's light shift (-42 +- 11 Hz against -38.4), crosstalk
-(0.02218 +- 0.00017 against 0.02202) and crosstalk axis (0.00 +- 0.02 rad), the mode frequency to 275 Hz after the extrapolation of
-the sideband's own 1.5 kHz carrier light shift to zero power, the micromotion nulls at -30.00 +- 0.46 V/m (sideband ratio, residual |beta| 2.5e-4) and
+channels, the field to 1 mG from a 20 mG-wrong seed, the two-ion fixture's light shift (-55.6 +- 3.6 Hz against -54.1 with the
+two-probe branch resolution, per beam -22.3 and -33.3; the numbers moved with the 171Yb+ P3/2 doublet, which raised the
+fixture's Rabi frequency to 147.1 kHz and its shift from -38.4 Hz), crosstalk (0.021741 +- 0.000161 against 0.022021) and
+crosstalk axis (0.00 +- 0.02 rad), the mode frequency to 0.26 Hz in the stand-alone scan and 140 Hz off at +-323 Hz in the full
+calibration after the extrapolation of the sideband's own carrier light shift (now 319 Hz at the fixture's power) to zero
+power, the micromotion nulls at -30.01 +- 0.47 V/m (sideband ratio, residual |beta| 1.7e-4) and
 -19.3 +- 0.8 V/m against -20 (rf-photon correlation with the beam retuned to -Gamma/2, Berkeland's working point, and the first
 harmonic projected on the atom's response phase; 10 s of photon shot noise), and the full calibration of the two-ion fixture by simulated experiments (`check_calibration.py` section 5, reduced scans, 400 shots per point): no refusal and no uncalibrated entry; the field 4.99997 +- 0.00129 G against 5; the qubit frequencies within 7 Hz of the truth; the carrier Rabi frequencies 100886 +- 55 and 100966 +- 51 Hz against 100928 (0.8 sigma); the light shifts -42.1 +- 7.4 and -45.8 +- 7.2 Hz against -38.4; the crosstalk ratios 0.02199 +- 0.00029 and 0.02189 +- 0.00028 against 0.02202; the modes 2.82848 +- 0.00024 and 2.99986 +- 0.00021 MHz against 2.82843 and 3.00000; the entangling closure at scale 1.0019 +- 0.0084 with spin-phase corrections -0.031 +- 0.039 and -0.014 +- 0.039 rad, parity contrast 0.9863 and a Bell fidelity bound 0.9932; the surrogate's error 4e-4 (Rabi), 5e-5 (modes), 6e-12 (qubit frequencies), 0.19 (Stark) and 6e-3 (crosstalk); and the Bell circuit run from the fitted table at 1 - F = 3.5e-3 against 2.3e-3 from the surrogate table and an intrinsic budget of 9.0e-3.
 
@@ -368,9 +376,11 @@ motional-model fingerprint, noise sample, solver options). `Diagnostics.gate_loc
 `Diagnostics.space` is then the joint space the run would have needed. The surrogate calibration uses the same local spaces:
 a pair whose joint spot-check space exceeds the guards is now checked exactly on the pair's own GATE_LOCAL space instead of being
 stored as a seed. Acceptance (`tests/test_gate_local.py`, `test_scaling_modes.py`, `test_tomography.py`;
-`validation/scripts/check_scaling.py`): the Section 9.8 rows (three- and four-ion circuits against JOINT_EXACT within the reported
-bound, the tracked nbar within 5 % of the joint reduced state, the dropped-mode policy with the eta = 1e-3 mode two kilohertz from
-a tone kept), the Section 9.9 frozen-spectator comparison on a tilted-beam fixture whose y-COM is a genuine frozen spectator
+`validation/scripts/check_scaling.py`): the Section 9.8 rows (two- and three-ion circuits against JOINT_EXACT within the reported
+bound with no added slack, and since the 2026-09-07 audit a four-ion GHZ circuit at dimension 192 - the gate mode alone resolved at
+both levels with `freeze_chi_max_rad = 0.3`, because the 2304-dimensional hand-built space would make GATE_LOCAL resolve modes the
+joint space freezes at 0.11-0.13 rad - in `tests/test_m9_four_ion.py`; the tracked nbar within 5 % of the joint reduced state, the
+dropped-mode policy with the eta = 1e-3 mode two kilohertz from a tone kept), the Section 9.9 frozen-spectator comparison on a tilted-beam fixture whose y-COM is a genuine frozen spectator
 (|chi_m| = 1.9e-3 rad, |alpha|^2 (2 nbar + 1) = 4e-32 at 6 degrees), the Section 9.17 rows "Size guard", "GATE_LOCAL
 tomography", "Freeze against drop" and "ENR marginal", and the exactness of a local space over a subset of the ions against the
 full marginal. On the two-ion Bell circuit (`check_scaling.py` 6) GATE_LOCAL and JOINT_EXACT registers agree to 3.0e-5 in every
@@ -430,8 +440,9 @@ the realistic hardware chain, a sampled intensity trajectory and the factorized 
 process, so a segment integrated over workers reports no right-hand-side count. The propagator cache (Section 11.3 item 5) applies
 to internal-state-only spaces only: the segment propagator U(t, t_0) is integrated once as a D x D operator (an operator-valued
 state under `sesolve`, the same ladder) and applied to every initial state, cached per engine on the built Hamiltonian's value
-fingerprint (`BuiltHamiltonian.fingerprint`: the space, the frequencies, the pulses' sampled tones, the sample's offsets and
-trajectories, the shifts, never the branch weight); four inputs through one GPi2 segment cost one integration and three matrix
+fingerprint (`BuiltHamiltonian.fingerprint`: the device hash, the space, the frequencies, the pulses' sampled tones, the sample's
+offsets and trajectories, the shifts, never the branch weight - the device hash since the 2026-09-07 audit, which found one engine
+serving a stale propagator across devices, `conv.hamiltonian_fingerprint_carries_the_device`); four inputs through one GPi2 segment cost one integration and three matrix
 products with |psi_cache - psi_ode| = 0, and the tomography of a carrier step (three frozen-mode Fock branches x sixteen inputs)
 costs 3 integrations and 45 cache hits (`SegmentReport.integrator` reads `dop853[propagator]` or `propagator[cached]`,
 `Diagnostics.propagator_cache_hits`). QuTiP 5 integrates the time-dependent propagator exactly, so the plan's `piecewise_t` route
@@ -444,8 +455,9 @@ M10 closes the first release (Section 10): the benchmarks a laboratory runs on a
 `run()` and reported beside what the simulator's own physics accounts for, plus the documentation. Nothing in
 `qutip_trap/benchmarks/` applies a gate matrix to a state: the ideal Cliffords and SU(4)s define the protocols and their
 inverses (as a laboratory computes them), the compiler turns them into native gates and the engine plays the pulses.
-`benchmarks/clifford.py` holds the 24 single-qubit Cliffords (the closure of {H, S}, each at most two GPi2 pulses plus virtual
-RZ, a third of them Z rotations that cost no pulse) and samples the 11520 two-qubit Cliffords uniformly from the four double
+`benchmarks/clifford.py` holds the 24 single-qubit Cliffords (the closure of {H, S}; 20 of them cost exactly one pulse, 16
+gpi2 and 4 gpi, and the other four - the Z-rotation subgroup {1, S, Z, S^dag}, one sixth of the group - cost none at all,
+a mean of 0.8333 pulses per Clifford) and samples the 11520 two-qubit Cliffords uniformly from the four double
 cosets of the local group by entangling core (1, CNOT, iSWAP, SWAP; stabilizers 576, 64, 64, 576, class sizes 576, 5184,
 5184, 576, both recomputed from the closure; 1.5 entangling gates per Clifford), recognizes an arbitrary two-qubit Clifford's
 class and decomposition by a tensor-product search over the 4 x 576 candidates (the inverse of a sequence's product, never
@@ -456,13 +468,19 @@ shifts, axis permutations and pair negations), emitted as rxx(2a), (S (x) S) rxx
 single-qubit factors and verified against its target up to a global phase like every other template: CNOT and CZ at one
 entangling gate, iSWAP at two, SWAP and every Haar-random SU(4) at three, every Moelmer-Soerensen angle in [0, pi/2].
 `benchmarks/rb.py` runs Clifford RB (single-qubit, simultaneous single-qubit with independent sequences on several ions,
-two-qubit on a pair), fits the mean survival to A p^m + B (B pinned at 1/2^n when a tiny decay leaves A and B degenerate)
-and reports Section 13's r = (1 - p)(2^n - 1)/2^n beside the entanglement infidelity (4^n - 1)(1 - p)/4^n under its own
-name; `benchmarks/ghz.py` runs the GHZ circuit for P(0...0), P(1...1) and, on fresh shots, the parity scan under GPi2(phi) on
-every qubit, fits C cos(N phi + phi_0) and reports the bound (P_0 + P_1 + C)/2 beside the exact register fidelity;
+two-qubit on a pair) and Section 7.9's Knill-style variant (`variant="knill"`: pi/2 pulses with an interleaved pi Pauli or
+an identity and one final pi/2, fitted in the published form B p^L + 1/2), fits the mean survival to A p^m + B (B pinned
+at 1/2^n when a tiny decay leaves A and B degenerate) and reports Section 13's r = (1 - p)(2^n - 1)/2^n beside the
+entanglement infidelity (4^n - 1)(1 - p)/4^n under its own name; the simultaneous variant fits every ion's OWN marginal
+survival and reports its r_q = (1 - p_q)/2 (Gambetta et al. 2012) in the unit the budget composes, keeping the joint
+decay as the per-layer correlation diagnostic; `benchmarks/ghz.py` runs the GHZ circuit for P(0...0), P(1...1) and, on
+fresh shots, the parity scan under GPi2(phi) on every qubit, fits C cos(N phi + phi_0) and reports (P_0 + P_1 + C)/2,
+which is exactly max_theta <GHZ_theta|rho|GHZ_theta> and therefore an UPPER bound on a fixed-phase GHZ fidelity, beside
+both exact fidelities;
 `benchmarks/volume.py` runs Cross et al. 2019's square circuits of Haar-random SU(4) layers on random pairings with the heavy
-outputs of the ideal distribution and the two-sigma pass criterion, stating when the circuit count is below the protocol's
-hundred. `benchmarks/budget.py` is the error budget alongside: the Section 9.6 closed-form scales per Clifford or circuit
+outputs of the ideal distribution and the pass criterion of their Appendix C Eq. (32) - mean - 2 sigma > 2/3 with the
+per-circuit binomial sigma = sqrt(h(1 - h)/n_c), over at least the protocol's hundred circuits, the standard error of the
+mean reported beside it as a diagnostic and never as the criterion - and clears no quantum volume below that circuit count. `benchmarks/budget.py` is the error budget alongside: the Section 9.6 closed-form scales per Clifford or circuit
 from every run's `intrinsic_budget`, the Section 6.8 channel of every native gate kind the benchmark compiled to (one
 one-gate circuit through `run(level="GATE_LOCAL")`, the step's Choi matrix reduced to the benchmarked qubits with the
 crosstalk neighbours traced out in |0>, against the `GateTarget` unitary), the SPAM errors, and their first-order composition
@@ -471,18 +489,25 @@ as an estimate and not a bound. `device/presets.py` promotes the M6 fixture to t
 documentation and the benchmarks run on (`yb171_chain(n)`, hash for hash the fixture). Acceptance (`tests/test_clifford.py`,
 `test_two_qubit_kak.py`, `test_presets.py`, `test_benchmarks.py`, `test_docs.py`; `validation/scripts/check_benchmarks.py`,
 about twenty minutes): on the two-ion example device single-qubit RB to 2048 Cliffords (three sequences, 4000 shots) decays
-from 0.99967 to 0.9636 with F(L) = 0.4997 x 0.99996^L + 0.5 and r = 2.00(45) x 10^-5 per Clifford against r_channel = 2.5 x 10^-5
+from 0.99967 to 0.9636 with F(L) = 0.4997 x 0.99996^L + 0.5 and r = 1.97(42) x 10^-5 per Clifford against r_channel = 2.5 x 10^-5
 from the gpi2 (1.8 x 10^-5) and gpi (7.4 x 10^-5) channels reduced to the benchmarked ion, F(0) = 0.99967 against the SPAM
-prediction 0.99965 and the Section 9.6 scales 4.1 x 10^-4 per Clifford as the bound; simultaneous RB on both ions decays
-thirty-five times faster (P(00) = 0.752 at 512 Cliffords, r = 6.9(8) x 10^-4 per pair of Cliffords against a composed
-3.4 x 10^-4), the 2.2 % addressing crosstalk that single-ion RB cannot see and that adds in amplitude over consecutive pulses
-on the same neighbour; two-qubit RB gives r = 2.8(10) x 10^-3 per Clifford against r_channel = 2.1 x 10^-3, of which the
-entangling gate (1.14 x 10^-4 average gate infidelity, depolarizing rate 1.42 x 10^-4, the M9a numbers) is a small part and the
-carrier pulses' crosstalk on the pair the rest; the two-ion GHZ bound is 0.997(11) against the exact register fidelity
-0.99767 (predicted 0.99860 from the channels; the coherent crosstalk exceeds the product), the three-ion GHZ on the
-1144-dimensional space 0.994(19) against 0.9852; and four width-two quantum-volume circuits give heavy-output probabilities
-0.60 to 0.82 within shot noise of their ideal values 0.59 to 0.87 (mean 0.716(55) against the depolarizing prediction 0.702),
-exact register fidelities 0.990 to 0.996, and no two-sigma pass at four circuits, which the result states. The documentation
+prediction 0.99965 and the Section 9.6 scales 4.1 x 10^-4 per Clifford as a bound over a wider scope; the Knill-style
+variant on the same ion gives r = 8.5(4) x 10^-6 per computational gate, below the Clifford figure although a gate costs
+1.56 pulses against 0.83, because the Pauli randomization twirls the coherent errors rather than letting them cancel;
+simultaneous RB on both ions charges each gate thirteen times more than the ion measures alone (marginal r_q = 1.3 x 10^-4
+and 3.9 x 10^-4, mean 2.59 x 10^-4 against a per-qubit composed 2.86 x 10^-4, agreeing to 9 %) and its joint P(00) decay
+is 6.9 x 10^-4 per layer of two Cliffords against a composed 6.85 x 10^-4, agreeing to 0.9 % - the 2.2 % addressing
+crosstalk that single-ion RB cannot see, and no more than the first-order composition predicts once the two are in the
+same unit; two-qubit RB gives r = 3.1(8) x 10^-3 per Clifford against r_channel = 2.1 x 10^-3, of which the entangling
+gate (1.14 x 10^-4 average gate infidelity, depolarizing rate 1.42 x 10^-4, the M9a numbers) is a small part and the
+carrier pulses' crosstalk on the pair the rest; the two-ion GHZ bound is 0.9975(112), which is exactly
+max_theta <GHZ_theta|rho|GHZ_theta> and matches the exact 0.99808 to 0.0006 while sitting above the fixed-phase 0.99762
+(predicted 0.99860 from the channels; the coherent crosstalk exceeds the product), and the three-ion GHZ on the
+1144-dimensional space 0.9939(185) against a max-phase 0.99227 and a fixed-phase 0.98508; and four width-two
+quantum-volume circuits give heavy-output probabilities 0.60 to 0.82 within shot noise of their ideal values 0.59 to 0.87
+(mean 0.7163 against the depolarizing prediction 0.702), exact register fidelities 0.990 to 0.996, and Eq. (32)'s
+sigma = 0.2254 leaves mean - 2 sigma = 0.2654, so nothing is cleared at four circuits and nothing would be passed below a
+hundred, which the result states. The documentation
 under `docs/` (`physics_notes.md` with the equations, their plan sections, modules and ledger records; `conventions.md`;
 `examples.md`, executed by the test suite; `limits.md`) carries tables generated from the provenance ledger by
 `tools/docs_from_ledger.py`, whose `--check` is a CI step.
@@ -492,14 +517,20 @@ section specifies the protocol, so Cross et al. 2019 enters as a background conv
 compiler had no arbitrary two-qubit unitary, which the random SU(4) layers need, so the KAK decomposition joins the standard
 set (`conv.kak_weyl_chamber`) and Section 3.2's layout gains `benchmarks/` and `control/two_qubit.py` while its
 `device/presets.py` is filled; the first-order composition of Section 6.8 channels is an estimate and not a bound in either
-direction (single-ion RB measures 0.8 of it, simultaneous RB twice it, the GHZ circuit's register infidelity 1.7 times the
-product's) because coherent errors cancel within a Clifford and add over consecutive pulses on one neighbour; single-ion RB
+direction (single-ion RB measures 0.8 of it and the GHZ circuit's register infidelity 1.7 times the product's) because
+coherent errors cancel within a Clifford and add over consecutive pulses on one neighbour; the "simultaneous RB twice it"
+of the first account was a unit mismatch between a per-layer measurement and a per-Clifford composition, not a second
+physical factor, and with the units matched the composition predicts the simultaneous decay to 1 %
+(`conv.simultaneous_rb_units`); single-ion RB
 is blind to addressing crosstalk, the dominant error of this device's two-qubit Cliffords, so the simultaneous variant is
 part of the benchmark; the GHZ parity at phi = 0 is not the maximum (GPi2's rotation axis and the compiled frames put N pi/2
-plus the frame angles into phi_0), so only the fitted contrast enters the bound; a three-parameter RB fit is degenerate when
+plus the frame angles into phi_0), so only the fitted contrast enters the bound - and that bound is exactly
+max_theta <GHZ_theta|rho|GHZ_theta>, an upper bound on a fixed-phase GHZ fidelity and not the lower bound Section 7.9's
+wording suggests (`conv.ghz_parity_bound`); a three-parameter RB fit is degenerate when
 the decay over the affordable lengths is a few 10^-3, so B is pinned at 1/2^n; and at width two the ideal heavy-output
 probability itself spreads from 0.59 to 0.87 between circuits, so the pass criterion needs the protocol's hundred circuits on
-any machine.
+any machine, and the confidence it needs is Cross et al.'s own per-circuit binomial sigma, 4.2 times the standard error of
+the mean the first account used - a difference that decides the pass at a hundred circuits (`conv.heavy_output_criterion`).
 
 Plan inconsistencies surfaced by M8 (ledger `conv.*` records of the calibration layer, `anchor.m8.*`): a resonant sideband
 pulse light-shifts the qubit through its own off-resonant carrier coupling by Omega^2/(2 omega_m) (1.70 kHz at Omega/2pi =
@@ -524,8 +555,11 @@ delays the envelope while the beat note advances 2 pi mu tau_r = 0.96 rad on the
 (0.99992 / 3.3e-5 against 0.99987 / 4.5e-5 for an ideal modulator; the linear mu tau_r leaves 2.2e-4), a reference no source
 states and one M8's phase scans will absorb; the Section 9.16 row 4.4-8 intensity-noise budget reproduces its two-term
 structure and the Gamma_I-independent ratio B/A = 3(N - 1)/(4K) exactly, but with c_op = sqrt(2k) H_int and Gamma_I = k
-Omega^2 defined by the carrier-contrast rate (checked analytically) both terms are twice the plan's derived A = Gamma_I t_g
-eta^2/2 and B, so the plan's A pairs with Gamma_I equal to half the contrast rate or with another fidelity measure; the
+Omega^2 defined by the carrier-contrast rate (checked analytically) both terms are N times the plan's derived A = Gamma_I t_g
+eta^2/2 and B for an N-ion drive - the plan's A is exact at N = 1, so the Gamma_I convention is settled and what its eps_I
+lacks is the factor N (measured A/A_plan = 1.00002, 2.00035, 3.00622 at N = 1, 2, 3; `anchor.m7.intensity_noise_n_ions`; the
+first account's "twice" was the N = 2 case), and the plan's B term is reproduced only by one GLOBAL laser (per-beam operators
+halve B/A), so its eps_I describes a laser shared by the register; the
 derived dephasing forms N t_g/(2 T2) and N^2 t_g/(4 T2) are bounds (Cov_t <= 1) and the N = 3 force model sits at 0.67 and
 0.68 of them with the global > local ordering; Ballance's gate budgets hold for the gate as calibrated, and a symmetric pulse
 whose two-mode closure is played with one mode frozen returns 0.84 and 0.80 of them; the row 4.1-3 estimator ratio 0.99991
@@ -607,6 +641,32 @@ does not match its own D_222 = -1.1225; the distance-to-infidelity conversion "E
 target-last composite-pulse numbers under detuning (4.33e-3 vs 1.84e-3) are not reproduced; Harty's identity-gate
 timing is ambiguous in the source and the one-delay-per-replaced-pulse reading is the one that reproduces the budget.
 
+**2026-09-07 audit of M0-M10.** Every milestone was audited against PLAN.md by a read-only pass and then fixed; the ledger records named below carry the derivations and the numbers, and `docs/physics_notes.md` and `docs/conventions.md` are regenerated from them. What was wrong, by milestone:
+
+M0: the Appendix E freeze test compared names only; it now compares annotations, defaults and parameter sets and refuses stubs outside M12 (`conv.appendix_e_signatures`, with the recorded divergences); `MetastableChannels` was a stub and now carries Section 4.5.7's blackbody M1 mixing (W12 = A12 n_bar, 7.2491e-6 s^-1 at 300 K), the Knoop-via-Kreuter collision rates and the reshelving offset (`anchor.ca40.blackbody_m1_mixing`, `anchor.ca40.collision_rates`); the layout guard reads Section 3.2 from PLAN.md instead of a hand list; every provenance id the package stamps must exist in the ledger; `run_checks.py` fails on a missing committed output and gained `--update`; the QuTiP interface facts of 9.13 are tests (`conv.mcsolve_weight_attributes`: 5.3.1 exposes `deterministic_weights`/`runs_weights`, not the plan's `deterministic_weight_info`); the CI convergence artifact is produced by `-m convergence`; the retired 171Yb+ constants in two check scripts (310.76 Hz/G^2, 50.77 mW/cm^2) are replaced by the adopted ones.
+
+M0a: decay amplitudes lacked the per-channel omega^3, so the 171Yb+ leakage share was 0.5913 instead of the tabulated 0.00501 (`conv.decay_amplitude_omega_cubed`); an incomplete branching set was renormalized instead of refused (`conv.branching_deficit`); 171Yb+ had no P3/2, so the Section 4.5.4 intermediate sum had one path - with the doublet every 171Yb+ Raman Rabi frequency in the fixtures rose by 1.4577 (30.28 -> 44.14 kHz, 100.9 -> 147.1 kHz) and the check outputs that print them were regenerated (`anchor.yb171.p32_doublet`); 43Ca+, 9Be+ and 137Ba+ now build (the 43Ca+ clock anchor 146.094209 G reproduces exactly; the 137Ba+ clock curvature 488.81912 Hz/G^2 to 1e-9; the Ba+ ground-state g_J is Marx 1998's 2.00249192(3), read in Arnold 2020, and NIST ASD's Lande column for the Ba+ D levels (0.79, 1.12) is replaced by the measured 0.7993278(3) and 1.20036739(24), `anchor.species.ba_g_factors`), 25Mg+ refuses because no measured or computed g_J exists (closed by search), 133Ba+ on two hyperfine constants no source prints; the 9Be+ g_J 2.00226239(31) is Wineland 1983's measurement as re-reduced in Shiga 2011's text (`conv.be9_g_j_provenance`); 133Ba+'s ground-state A had the wrong sign (`conv.ba133_inverted_ground_state`); the 40Ca+ table read the plan's "quoted" 21.57 and 23.4 MHz as the TOTAL P1/2 and P3/2 rates, but Hettrich 2015 prints 21.57(8) MHz as the PARTIAL rate to S1/2, the plan's own Section 9.13 reading, and a total of 21.57 MHz would mean tau = 7.38 ns against every measured lifetime - both totals now come from measured lifetimes (Hettrich 6.904(26) ns, Meir 2020 6.639(42) ns) with Ramm 2013's and Gerritsma 2008's branchings, the 397 nm partial rate reproduces Hettrich's 21.57 MHz to 4e-5 and the plan's 2.045 e a0 / 45.11 mW/cm^2 come out of the table, while the 393 nm pair does not (the table gives 22.41 MHz partial where the plan's unsourced 23.4 MHz matches no measurement; `conv.ca40_linewidth_reading`, `anchor.ca40.p32_linewidth_readings`) - every 40Ca+ Doppler limit, scattering rate, light-shift coupling and the `ca40_optical` preset's numbers moved with it and were re-derived (`anchor.ca40.gamma_dependent_repins`; the closed-form EIT and polarization-gradient rows still take the plan's quoted 21.57 MHz as their Gamma input); the Ozeri Table II row is not reproducible from the plan's inputs (factor 2.9633 against Eq. 17, `anchor.m0a.ozeri_table_ii`); retired constants (2.00254, 310.85, 19.6 MHz) are grepped out of the whole tree by a ratchet test.
+
+M1: the heating-spectrum adapter interpolated a symmetric tabulation on |omega| without folding and added the white level twice (`conv.electric_field_noise_adapter`; a second copy in the device card dropped the white level entirely); the in-phase micromotion amplitude carried +|q|/2 instead of -q/2 (`conv.micromotion_amplitude_convention`), beta is signed and the builder carries both quadratures; rod and blade traps refuse shim voltages they cannot turn into fields (`conv.shim_field_response`); the Section 4.1.4 resonance checker was dead and the integrated cubic phase now runs whenever the trap carries `AnharmonicTerms` (`anchor.trap.integrated_cubic_phase`); six 9.12/9.13 anchors became tests; the segmented-rail escape point is found (the rf-null seed used the rail length as its scale); the deferred 9.13 rows are declared (`limits.trap.deferred_section_9_13_rows`); Marquet's alpha_res = 0.09150975 is not reproducible (recorded).
+
+M2: ion-position drift was dropped from the optical phase (0.51 rad where the retained intensity effect was 2.6e-7, `conv.optical_phase_drift`); the beam-path phase sign was reversed (`conv.optical_phase_beam_path_sign`); `CompositePulse.distance` did not quotient the global phase, so short-CORPSE's slope read 2e-16 instead of 4 (`conv.composite_distance_global_phase`); `n_rep` and `phi_t` were applied twice in the noise-layer segments; the two Appendix E methods `filter_function_amplitude` and `dc_floor` were stubs and now reproduce the Section 9.15 floors to 2.5e-7 (`anchor.m2.composite_filter_and_dc_floor_methods`); the comb's fourth-order sum depth is derived from the envelope (1516 and 3184 teeth against the literal 1200, `conv.comb_sum_depth`), a resonant comb is refused instead of returning 1e17 Hz (`conv.comb_resonance_guard`), the explicit and folded tone sets are a partition (a factor-4.78 double count removed, `conv.comb_explicit_folded_partition`), and a comb drive plays through the builder (`anchor.m2.comb_drive_through_the_builder`); the large-mode atol floor fires only on the default tolerance and a `ConvergenceReport` exists (`conv.large_mode_atol_floor`).
+
+M3a/M3: level A reported a steady state for a mode the illuminated ions barely participate in - a participation guard (1e-4) and an opt-in minimum rate now refuse it (`conv.level_a_participation_guard`); sympathetic cooling of a mixed crystal is a supported stage with per-ion atomic structures, the 9.12 selectivity row (the qubit's reduced state unchanged to 1e-12 under the coolant's Liouvillian) and Home 2009's Be-Mg-Mg-Be spectrum reproduced from the plan's own frequencies (251.10 kHz top-mode spacing, every mode inside the row's 0.06; the coolant is 24Mg+, not the 25Mg+ the plan and the audit name; `anchor.m3.home2009_mixed_crystal_modes`, `anchor.m3.home2009_sympathetic_schedule`); the seven Section 4.2.8 (vii) validity conditions raise instead of being reported, each with a documented escape (`prep/validity.py`); the laser linewidth enters the optical coherences as Berkeland-Boshier phase diffusion (`MultiLevelOptions.laser_linewidth_rad_s`); the bright/dark coarse graining picks the slowest eigenvector with weight on both manifolds and refuses an absorbing manifold, which is what a 935 nm repump on the current 171Yb+ table produces because the 297 nm decay is a declared deficit rather than a transition (`anchor.m3a.yb171_repump_level_gap`); Monroe's 15-cycle triple and Lechner's uniform 0.01-0.02 over 18 radial modes are recorded as not reproduced with their diagnoses; Morigi's +5.56 is not reproducible from the plan.
+
+M4: the FM closure solver skipped a mode whenever ONE gate ion sat on its node, leaving |alpha| = 0.0296 on the other ion (`conv.fm_closure_guard`); the `gradient` drive kind was accepted and played as nothing - it is now the near-field microwave-gradient drive end to end, with r_0's total-two-ion-mass normalization derived rather than assumed (`conv.gradient_drive`, `anchor.m4.srinivas_gradient`: Srinivas drives 25Mg+ |3,3>-|2,2> at 1.326467 GHz, not the clock line the 9.13 row cites); a PM solver exists (`conv.pm_solver`); the 9.4 n-independence and N = 4 GHZ rows are tests; the Baldwin echo gives diag(1,-i,-i,1) for tones above the mode; the Hughes smooth gate is recorded as untestable from the plan's corrections (`conv.hughes_smooth_gate_untested`).
+
+M5: the fast readout path applied the transfer channel twice (0.1925 against the POVM's 0.10024 at transfer 0.9; `conv.readout_povm_indexed_by_level`); R_o summed every decay line of the model instead of the detected one (6.4 % high on 40Ca+, `conv.readout_detected_line`); every discriminator is usable from `run` with a Monte-Carlo POVM and its uncertainty (`conv.readout_povm_monte_carlo`); the depumping half of Wineland's crosstalk mechanism and the micromotion J_0^2/J_1^2 factor on the detection rate are implemented (`anchor.m5.crosstalk_depumping`, `conv.readout_micromotion_detection` - micromotion RAISES the leakage ratio R_d/R_o because R_d is linear in intensity while R_o loses the sideband share); the CPT eta/3 negative control and the swallowed Myerson/Noek anchors are emitted.
+
+M6: `effective_sample_size` double counted the within-sample variance (319.77 where the answer is exactly 400, `conv.effective_sample_size`); the dropped mode class was unreachable and, once reachable, had no dynamical meaning - dropped modes now carry no Debye-Waller factor and no Fock branch (`conv.dropped_mode_has_no_dynamics`), and a third drop condition keeps a mode whose Debye-Waller spread eta^2 sqrt(nbar(nbar+1)) exceeds 3e-4 rad frozen (`conv.drop_test_debye_waller_spread`; the three-ion tilt at 9.69e-4 rad is frozen for that reason); MS gates on disjoint pairs were scheduled concurrently under `parallel=True` although one crystal carries one entangling beam pair (`conv.ms_gates_serialized_under_parallel_addressing`); shots are allocated to samples in contiguous blocks, not round-robin (`conv.shot_blocks_per_sample`); a four-ion circuit runs through `run` at the row's dimension 2304; the Section 11.1 native identity is 4.659e-5 exact and 2.32e-10 with the Lamb-Dicke and RWA approximations, and the row's 1.1e-4 is (Omega/2nu)^2 while the budget's `carrier_scale` computes (Omega/nu)^2 (`anchor.m6.section_11_1_native_identity`, left as a bound); the Section 9.6 "Bessel force saturation" term is Roos Eq. 17 entered as sin^2(pi f/2) (2.0e-6 on that pulse), the sideband Lamb-Dicke deficit being reported and not summed (`anchor.m6.bessel_force_saturation`); `improved_sampling` and the weighted no-jump mixture engage on single-segment schedules (`conv.improved_sampling_single_segment`); a 40Ca+ optical-qubit preset `ca40_optical()` exists (`anchor.m6.ca40_optical_preset`).
+
+M7: `filter_function` used a composite pulse's own order for every noise quadrature, so it divided an O(eps^2) infidelity by eps^{2(m+1)} and reported a 70 % infidelity for a BB1 pi pulse under 300 Hz dephasing noise (SK1 108x high, BB1 19400x; `conv.dc_floor_channel_order`), and the detuning dc floor was low by 4^{m+1} because c_hat_d is fitted against Mount's eps_d = 2 beta_d/Omega (`conv.dc_floor_detuning_normalization`; arbitrated against the exact Gauss-Hermite frozen-noise average); the intensity-noise budget's two terms are N times the plan's derived A and B for an N-ion drive, not twice (`anchor.m7.intensity_noise_n_ions`, the old factor-two anchor retired), and the plan's B term is only reproduced by one global laser; Hughes's two-term infidelity is verified against exact propagation (`anchor.m7.hughes_two_term`); the Section 9.15 mpmath rows live in the package with the float64 negative control (`anchor.m7.decoupling_high_precision`); trajectories are sampled at dt <= tau_c/10 with a periodogram test (`conv.trajectory_grid_tau_c`); collision kicks and reorders carry their distributions and their limitation as diagnostics notes (`conv.collision_outcomes`; the plan's own scale gives 7.4e4 quanta of a 1 MHz mode for H2 at 300 K); scattering channels are on automatically at d > 2 - the register operators (leakage into the SINK, spin flips, differential Rayleigh) without the recoil displacements, which cost 30 to 50x more and stay an explicit `scattering_recoil` choice (`conv.scattering_channels_at_d_gt_2`); every noise rate carries provenance and the run states which apparatus its noise is stitched from (`conv.noise_provenance`); `CollapseOp.rate_hz` values were divided by 2 pi (heating reported 63.7 for a 400 quanta/s mode; `conv.collapse_op_rate_units`); eps_D = f P_total beside eps_S (`conv.epsilon_d_split`); the per-beam phase spectrum is synthesized, keyed and read by the builder as e^{-i Delta phi(t)} on the beat note (`conv.beam_phase_spectrum`).
+
+M8: the per-beam Stark scan resolved the Ramsey fringe with one probe sign, so a light shift above the 1 kHz probe was written as a wrong `calibrated` value (1500 Hz became +500 Hz) - it now runs both probe signs with a consistency and a Nyquist guard (`anchor.m8.stark_scan_two_probe_branch`); a refused experiment left its entries as schedulable seeds, which Section 7.3 forbids - a refusal now marks the entries it would have produced `uncalibrated` and the schedule then refuses (`conv.calibration_refusal_marks_its_entries`), while an entry that is a seed because nobody asked for the experiment stays a seed; an `uncalibrated` qubit frequency gave the run perfect frequency knowledge instead of refusing (`conv.uncalibrated_frame_refuses_the_run`); the calibrated micromotion shims were inert bookkeeping and are now programmed onto the device the run evolves, so a stale compensation against a drifted stray field leaves the growing residual PLAN 7.5 asks for (`conv.micromotion_compensation_loop`); the entangling scans dropped `qubit_shifts_hz` and `mode_frequencies_hz` into a swallowing `**kw`, so they ran with a perfect qubit frame and never used the calibrated mode frequencies - both are plumbed, the setup refuses to discard a supplied frequency set, and the pair's waveform is re-solved at the calibrated modes before the amplitude scan (`conv.entangling_scan_beliefs`; a 1 kHz frame error moves the MS phase correction by 0.61 of 2 pi df t_gate, measured and recorded rather than derived, `anchor.m8.entangling_scan_frame_error`); the closure amplitude is fitted at the fitted offset rather than a snapped one; the eta uncertainty lacked its sqrt(nbar + 1); the rf-less micromotion and zero-heating entries were `calibrated` zeros with no measurement behind them and are seeds now; every advertised experiment name runs something (`ms_phase_scan` alone ran nothing); the full-calibration acceptance runs at 2 sigma with a lower bound that fails if the calibration errors disappear; a 5 % Rabi-table error over-rotates the run by the analytic 1 - cos^2(pi/2/1.05) (`anchor.m8.run_level_over_rotation`); the played chain's exemption of microwave, light-shift and gradient drives is recorded (`conv.played_chain`); beyond the audit, the surrogate's heating seed read only the tabulated arrays of S_E and missed `NoiseSpectrum.white_level`, so a device whose S_E is a white level was seeded with zero heating while the engine heated it at about 48 quanta/s, and the heating experiment then had no delay scan to run on exactly the devices that heat; `stark_scan(mode="beat_note")` crashed on its own switch; a refused parity scan was reported under the wrong key.
+
+M9a/M9b: the Hamiltonian fingerprint omitted the device, so one engine served a stale propagator across devices (P1 0.4950194835 against the correct 0.4948647699, `conv.hamiltonian_fingerprint_carries_the_device`); the Section 11.5 size guard ran after an O(D) allocation (`HilbertSpace.check()` is arithmetic above 65536, `conv.space_declaration_before_allocation`), an explicit `level="JOINT_EXACT"` above the guards proceeded with a note and a cap that keeps growing could carry a space past them - both are refused now, after the ENR end-to-end test built a 37752-dimensional space that took 20 GB; the ENR group's operators and states carried QuTiP's per-mode dims while the factorized drive term carried the space's one-factor dims, so no ENR Hamiltonian could ever be assembled (`conv.enr_factor_dims`; the group is now one tensor factor of dimension C(M + N_exc, N_exc) everywhere, and the ENR option is exercised on a cold group at the engine level while the fixture's Doppler-limited y modes are refused within the guards); `d_max = 64` silently narrowed the declared occupation range (`SolverOptions.mode_dimension_max`, `conv.mode_dimension_max`); the Section 9.9 convergence regime exists (`SolverOptions.convergence_check`, `Diagnostics.convergence`, `conv.section_9_9_convergence_regime`) and the improved-sampling histogram row is a test; the ENR option runs end to end; `FactorizedOperator` equality multiplied the scale once per factor, so 2(X x Y) equalled (2X) x (2Y) (`conv.factorized_isequal_is_structural`); the plan's d_m = 121 stiffness abort does not reproduce (`anchor.m9.integrator_ladder_stiffness_not_reproduced`, contested) and a real escalation is forced through the step budget; the Section 11.1 table is pinned by the acceptance test (rhs counts to 20 %, ratios within 2x, wall times within 4x); `Diagnostics.workers` reports the workers used; the three unrecorded fudges in the 9.8 comparisons are gone (`conv.gate_local_discrepancy_has_no_fudge`); the worker count is capped by the parent's memory footprint (QuTiP's parallel map forks its workers, and the two kernel watchdog panics of 2026-09-08 were 18 copy-on-write images of a multi-gigabyte pytest process; `conv.worker_memory_cap`); the 1-versus-18-worker identity is tested on both trajectory paths, the heating fixture on plain trajectories (its Bell caps were sized for that ensemble; under improved sampling two conditioned members of the same seed reach mean occupations 4.0 and 5.6 and the Section 5.1.1 margin rule asks for dimension 1156) and a single-ion heating pulse on the improved-sampling mixture (four stochastic members plus the no-jump one).
+
+M10: simultaneous RB reported the joint P(00) decay with the n-qubit-group formula while the budget composed per Clifford, a unit mismatch that the first account read as a physical factor two - with per-qubit marginal fits (Gambetta 2012) the composition predicts the marginal r to 9 % and the joint per-layer decay to 0.9 % (`conv.simultaneous_rb_units`, `anchor.m10.simultaneous_rb_crosstalk` rewritten; the surviving claim is the 13x per Clifford that single-ion RB cannot see); the quantum-volume confidence was the standard error of the mean, 4.2x smaller than Cross et al.'s Appendix C Eq. (32) sigma = sqrt(h(1-h)/n_c), and `passed` ignored the hundred-circuit requirement - at a hundred circuits the old criterion would have passed a machine Eq. (32) rejects (`conv.heavy_output_criterion`); the GHZ bound (P_0 + P_1 + C)/2 is exactly max_theta <GHZ_theta|rho|GHZ_theta>, an UPPER bound on the fixed-phase fidelity it was compared with (three ions: 0.9939 against max-phase 0.99227 and fixed-phase 0.98508; `conv.ghz_parity_bound`); `pair=` crashed `randomized_benchmarking` for any qubit count but two; four of the 24 Cliffords (not eight, not a third) cost no pulse and twenty cost exactly one; the Section 13 rows depolarizing normalization (with the p/3, p/15 Kraus forms and the Qiskit lambda), rotation generators and gate fidelity measure have records, and the Bermudez mapping is recorded as omitted because the plan transcribes no formulas; Section 7.9's Knill-style RB runs through `run()` (r = 8.5(4)e-6 per computational gate on the example device; Wright's operating point is a hundred times away and recorded as deferred, `anchor.m10.knill_style_rb`); the mean-survival sigma double counted shot noise; multi-piece gate keys reach the budget; `gate_channel`'s cache key omitted the entangler; the CI claim in docs/README.md is corrected and 27 compared `pinned` lines make the benchmark anchors CI-checked; a `release` CI job builds the wheel and imports the package without the dev group.
+
 ## Layout
 
 | Path | What it is |
@@ -642,6 +702,8 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
     uv run mypy
     uv run pytest
     uv run python validation/scripts/run_checks.py --report    # re-run the Appendix D check scripts, write validation/report/
+    uv run python validation/scripts/run_checks.py --update --only check_noise   # rewrite one committed output after a physics change (explain every moved line)
+    uv run pytest -m convergence                               # the Section 9.9 convergence rows (CI uploads them as an artifact)
     uv run python tools/docs_from_ledger.py --check           # the documentation tables are current with the ledger (M10)
     uv run flet doctor                          # the gui extra (Flet) is installed
 

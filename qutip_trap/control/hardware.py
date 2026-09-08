@@ -72,6 +72,11 @@ class HardwareChain:
     """Omega_sat of the static nonlinearity Omega = Omega_sat tanh(V/V_sat); None = linear."""
     timing_jitter_s: float = 0.0
     """rms per-train start-time jitter (sequencer latency), drawn per sample from the keyed seeds."""
+    parallel_addressing: bool = False
+    """Whether the chain can play single-qubit pulses on distinct ions at the same time (Section 7.3: single-qubit gates run
+    "in parallel if the device model allows parallel addressing"; one AWG channel per addressing beam allows it, a switched
+    single channel does not). ``schedule(parallel=None)`` and ``run(parallel=None)`` read this flag. Entangling gates are
+    serialized one at a time per crystal whatever it says (Section 7.3, first release): they share the global beam pair."""
 
     def __post_init__(self) -> None:
         if self.dds_phase_bits <= 0 or self.dds_amplitude_bits <= 0:

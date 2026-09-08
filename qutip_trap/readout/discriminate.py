@@ -10,7 +10,9 @@ iterated conditional modes seeded all-dark, R = |ln(p_B/p_D)| with the register 
 The POVM (Section 5.7) is the SUMMARY of the record and discriminator layers, computed once per device: the product form
 is exact only at zero readout crosstalk, because Section 8.5 makes the records neighbour-coupled; at configured crosstalk
 the fast path carries a register-wide 2^N x 2^N confusion tensor (dense to N = 12, factored by neighbour range beyond) and
-the readout error is never applied twice, because the fast path REPLACES the record layer rather than preceding it.
+the readout error is never applied twice, because the fast path REPLACES the record layer rather than preceding it. Its
+rows are indexed by the ion's INTERNAL LEVEL, with the scheme's shelving/mapping transfer channel folded in once, so the
+fast path applies the POVM to the projectively sampled levels and samples no start class of its own.
 Bright/dark polarity comes from the :class:`~qutip_trap.readout.fluorescence.ReadoutScheme`; epsilon_B and epsilon_D are
 reported separately and averaged only at the end (Section 13, "Readout figure of merit"), with Acton's worst-case
 min(F_B, F_D) as the alternative convention.
@@ -29,6 +31,7 @@ import numpy as np
 from qutip_trap.readout.detection import (
     CLASS_INDEX,
     CameraGeometry,
+    Depumping,
     PhotonRecord,
     RecordModel,
     log_poisson_pmf,
@@ -443,12 +446,21 @@ def camera_pixel_means(
     *,
     read_noise_counts: float = 0.0,
 ) -> np.ndarray:
-    """Expected counts per pixel for a register configuration (bright flags), the Poisson means of the pixel likelihoods."""
-    mean = np.full((geometry.n_rows, geometry.n_columns), read_noise_counts, dtype=float)
+    """Expected counts per pixel for a register configuration (bright flags), the Poisson means of the pixel likelihoods.
+
+    The background is a DETECTOR property, so it is spread over the pixels once per exposure and not once per ion (a
+    register of N ions used to carry N x R_bg here and in :func:`~qutip_trap.readout.detection.sample_camera_image`,
+    which agreed with each other but not with the detector; audit 2026-09-07 B12).
+    """
+    background = max((m.background_per_s for m in models), default=0.0)
+    mean = np.full(
+        (geometry.n_rows, geometry.n_columns),
+        read_noise_counts + background * exposure_s / geometry.n_pixels,
+        dtype=float,
+    )
     for i, (m, b) in enumerate(zip(models, bright)):
         if b:
             mean += geometry.weights(i) * m.detected_bright_per_s * exposure_s
-        mean += m.background_per_s * exposure_s / geometry.n_pixels
     return mean
 
 
@@ -567,37 +579,64 @@ def spatio_temporal_log_likelihoods(
 
 @dataclass(frozen=True)
 class RegisterConfusion:
-    """P(declared bits | true classes) factored by neighbour range: per ion a conditional table over its neighbourhood, exact
-    for per-ion decisions on additive neighbour light (Section 5.7's 'factored by neighbour range beyond N = 12')."""
+    """P(declared bits | true internal LEVELS) factored by neighbour range: per ion a conditional table over its
+    neighbourhood, exact for per-ion decisions on additive neighbour light (Section 5.7's 'factored by neighbour range
+    beyond N = 12').
+
+    The transfer channel of Section 8.1 is inside the table, applied exactly once: the ion's OWN axis runs over its
+    internal levels (the shelving/mapping start distribution folded in, as the product POVM's rows are), while a
+    neighbour's axis runs over its start CLASS, because a neighbour only gates the light it leaks. The neighbours'
+    classes are marginalized here with ``bright_start[j][level_j]``, so the public interface takes levels throughout
+    and the fast path never samples the transfer a second time (the P0 defect of the 2026-09-07 M5 audit).
+    """
 
     n_ions: int
     neighbour_range: int
     tables: tuple[np.ndarray, ...]
-    """tables[i][(c_j for j in neighbourhood(i)) + (declared,)] with class indices 0 = bright, 1 = non-bright start."""
+    """tables[i][(x_j for j in neighbourhood(i)) + (declared,)]: x_i is ion i's LEVEL, x_j (j != i) the neighbour's class
+    (0 = bright, 1 = non-bright), declared 0 = bright."""
+    bright_start: tuple[np.ndarray, ...]
+    """Per ion, P(start class == bright | internal level) over its levels: how a level gates the light it leaks."""
+
+    def __post_init__(self) -> None:
+        if len(self.tables) != self.n_ions or len(self.bright_start) != self.n_ions:
+            raise ValueError("one conditional table and one bright-start vector per ion")
 
     def neighbourhood(self, ion: int) -> tuple[int, ...]:
         lo, hi = max(0, ion - self.neighbour_range), min(self.n_ions - 1, ion + self.neighbour_range)
         return tuple(range(lo, hi + 1))
 
-    def probability(self, true_bright: Sequence[bool], declared_bright: Sequence[bool]) -> float:
+    def bright_probability(self, ion: int, true_levels: Sequence[int]) -> float:
+        """P(ion declared bright | the register's true levels), the neighbours' start classes marginalized."""
+        neigh = self.neighbourhood(ion)
+        others = tuple(j for j in neigh if j != ion)
+        table = self.tables[ion]
+        total = 0.0
+        for pattern in product((0, 1), repeat=len(others)):
+            weight = 1.0
+            for j, c in zip(others, pattern):
+                p_bright = float(self.bright_start[j][int(true_levels[j])])
+                weight *= p_bright if c == 0 else 1.0 - p_bright
+            if weight == 0.0:
+                continue
+            it = iter(pattern)
+            idx = tuple(int(true_levels[ion]) if j == ion else next(it) for j in neigh)
+            total += weight * float(table[idx + (0,)])
+        return total
+
+    def probability(self, true_levels: Sequence[int], declared_bright: Sequence[bool]) -> float:
         p = 1.0
         for i in range(self.n_ions):
-            idx = tuple(0 if true_bright[j] else 1 for j in self.neighbourhood(i)) + (
-                0 if declared_bright[i] else 1,
-            )
-            p *= float(self.tables[i][idx])
+            pb = self.bright_probability(i, true_levels)
+            p *= pb if declared_bright[i] else 1.0 - pb
         return p
 
-    def sample(self, true_bright: Sequence[bool], rng: np.random.Generator) -> tuple[bool, ...]:
-        out: list[bool] = []
-        for i in range(self.n_ions):
-            idx = tuple(0 if true_bright[j] else 1 for j in self.neighbourhood(i))
-            p_bright = float(self.tables[i][idx + (0,)])
-            out.append(rng.random() < p_bright)
-        return tuple(out)
+    def sample(self, true_levels: Sequence[int], rng: np.random.Generator) -> tuple[bool, ...]:
+        return tuple(rng.random() < self.bright_probability(i, true_levels) for i in range(self.n_ions))
 
     def dense(self) -> np.ndarray:
-        """The 2^N x 2^N tensor over (true bright pattern, declared bright pattern), index bit i = 1 when ion i is bright."""
+        """The 2^N x 2^N tensor over (true LEVEL pattern, declared bright pattern), index bit i = ion i's qubit level for
+        the rows and 1 = declared bright for the columns."""
         if self.n_ions > 12:
             raise ValueError(
                 "the dense confusion tensor is guarded to N <= 12 (Section 5.7); use probability()/sample()"
@@ -605,25 +644,32 @@ class RegisterConfusion:
         size = 2**self.n_ions
         out = np.zeros((size, size))
         for a in range(size):
-            true = [bool((a >> i) & 1) for i in range(self.n_ions)]
+            levels = [(a >> i) & 1 for i in range(self.n_ions)]
+            pb = np.array([self.bright_probability(i, levels) for i in range(self.n_ions)])
             for b in range(size):
-                declared = [bool((b >> i) & 1) for i in range(self.n_ions)]
-                out[a, b] = self.probability(true, declared)
+                q = 1.0
+                for i in range(self.n_ions):
+                    q *= pb[i] if (b >> i) & 1 else 1.0 - pb[i]
+                out[a, b] = q
         return out
 
 
 @dataclass(frozen=True)
 class POVM:
     per_ion: tuple[np.ndarray, ...] | None
-    """Product form, valid only at zero readout crosstalk: per ion a (2, 2) matrix P(declared bright | start class), rows
-    (bright start, non-bright start), columns (declared bright, declared dark)."""
+    """Product form, valid only at zero readout crosstalk: per ion an (n_levels, 2) matrix P(declared | internal LEVEL),
+    rows the ion's levels (levels 0 and 1 the qubit, the rest leakage levels), columns (declared bright, declared dark).
+    The scheme's transfer channel is folded into the rows, so the fast path must NOT sample it again (Section 5.7)."""
     confusion: np.ndarray | None
-    """Register-wide 2^N x 2^N tensor otherwise (guarded, Section 5.7)."""
+    """Register-wide 2^N x 2^N tensor otherwise, rows the true qubit-level pattern (guarded, Section 5.7)."""
     crosstalk_domain: Literal["zero", "configured"]
     factored: RegisterConfusion | None = None
     """The neighbour-range factored form the dense tensor was built from (kept beyond N = 12, where ``confusion`` is None)."""
     uncertainty: float = 0.0
     """Statistical uncertainty of Monte-Carlo-estimated entries (0 for exact ones)."""
+    bright_levels: tuple[int, ...] = ()
+    """Per ion of the product form, the qubit level whose ideal class is bright (the polarity of Section 13): what
+    :meth:`per_ion_errors` needs to name epsilon_B and epsilon_D once the rows are indexed by level."""
 
     def __post_init__(self) -> None:
         product_form = self.per_ion is not None
@@ -632,11 +678,26 @@ class POVM:
             raise ValueError("a POVM is either the product form or the register-wide confusion tensor")
         if self.crosstalk_domain == "zero" and not product_form:
             raise ValueError("the zero-crosstalk domain is the product form")
+        if self.crosstalk_domain == "configured" and product_form:
+            raise ValueError(
+                "the product form cannot carry configured crosstalk: Section 8.5 makes the records "
+                "neighbour-coupled, so the configured domain is the register-wide confusion tensor"
+            )
         if self.per_ion is not None:
+            if len(self.bright_levels) != len(self.per_ion) or any(
+                b not in (0, 1) for b in self.bright_levels
+            ):
+                raise ValueError("the product form carries one bright level (0 or 1) per ion")
             for m in self.per_ion:
-                if m.shape != (2, 2) or np.any(m < -1e-12) or not np.allclose(m.sum(axis=1), 1.0, atol=1e-9):
+                if (
+                    m.ndim != 2
+                    or m.shape[0] < 2
+                    or m.shape[1] != 2
+                    or np.any(m < -1e-12)
+                    or not np.allclose(m.sum(axis=1), 1.0, atol=1e-9)
+                ):
                     raise ValueError(
-                        "each per-ion element is a (2, 2) stochastic matrix over (start, declared)"
+                        "each per-ion element is an (n_levels, 2) stochastic matrix over (level, declared)"
                     )
         if self.confusion is not None:
             n = self.confusion.shape[0]
@@ -653,48 +714,58 @@ class POVM:
         return int(round(math.log2(self.confusion.shape[0])))
 
     def declared_bright_probability(
-        self, true_bright: Sequence[bool], declared_bright: Sequence[bool]
+        self, true_levels: Sequence[int], declared_bright: Sequence[bool]
     ) -> float:
+        """P(this declared-bright pattern | the ions' true internal levels)."""
         if self.per_ion is not None:
             p = 1.0
-            for m, t, d in zip(self.per_ion, true_bright, declared_bright):
-                p *= float(m[0 if t else 1, 0 if d else 1])
+            for m, lev, d in zip(self.per_ion, true_levels, declared_bright):
+                p *= float(m[int(lev), 0 if d else 1])
             return p
         if self.factored is not None:
-            return self.factored.probability(true_bright, declared_bright)
+            return self.factored.probability(true_levels, declared_bright)
         assert self.confusion is not None
-        a = sum(int(t) << i for i, t in enumerate(true_bright))
+        a = sum(int(lev) << i for i, lev in enumerate(true_levels))
         b = sum(int(d) << i for i, d in enumerate(declared_bright))
         return float(self.confusion[a, b])
 
-    def sample(self, true_bright: Sequence[bool], rng: np.random.Generator) -> tuple[bool, ...]:
+    def sample(self, true_levels: Sequence[int], rng: np.random.Generator) -> tuple[bool, ...]:
+        """One declared-bright pattern drawn from the confusion, given the projectively sampled internal levels."""
         if self.per_ion is not None:
-            return tuple(rng.random() < float(m[0 if t else 1, 0]) for m, t in zip(self.per_ion, true_bright))
+            return tuple(rng.random() < float(m[int(lev), 0]) for m, lev in zip(self.per_ion, true_levels))
         if self.factored is not None:
-            return self.factored.sample(true_bright, rng)
+            return self.factored.sample(true_levels, rng)
         assert self.confusion is not None
-        a = sum(int(t) << i for i, t in enumerate(true_bright))
+        a = sum(int(lev) << i for i, lev in enumerate(true_levels))
         b = int(rng.choice(self.confusion.shape[1], p=self.confusion[a]))
         return tuple(bool((b >> i) & 1) for i in range(self.n_ions))
 
     def per_ion_errors(self) -> tuple[tuple[float, float], ...]:
-        """(epsilon_B, epsilon_D) per ion of the product form: P(dark | bright start), P(bright | non-bright start)."""
+        """(epsilon_B, epsilon_D) per ion of the product form: P(declared dark | bright level), P(declared bright | the
+        other qubit level), the scheme's transfer channel included (Section 8.4)."""
         if self.per_ion is None:
             raise ValueError(
                 "per-ion errors are defined for the product form; marginalize the register form instead"
             )
-        return tuple((float(m[0, 1]), float(m[1, 0])) for m in self.per_ion)
+        return tuple((float(m[b, 1]), float(m[1 - b, 0])) for m, b in zip(self.per_ion, self.bright_levels))
 
 
-def _start_vectors(scheme: ReadoutScheme) -> tuple[np.ndarray, np.ndarray]:
-    """Start distributions over CLASSES for the bright qubit level and the other qubit level."""
-    vecs: list[np.ndarray] = []
-    for lev in (scheme.bright_level, 1 - scheme.bright_level):
+def level_start_vectors(scheme: ReadoutScheme) -> tuple[np.ndarray, ...]:
+    """Per internal level, the start distribution over CLASSES: the transfer channel of Section 8.1 as a stochastic map
+    level -> class, one row of the per-ion confusion each."""
+    out: list[np.ndarray] = []
+    for lev in range(scheme.n_levels):
         v = np.zeros(3)
         for c, p in scheme.start_distribution(lev).items():
             v[CLASS_INDEX[c]] += p
-        vecs.append(v)
-    return vecs[0], vecs[1]
+        out.append(v)
+    return tuple(out)
+
+
+def bright_start_probabilities(scheme: ReadoutScheme) -> np.ndarray:
+    """P(start class == bright | internal level) over the scheme's levels: how a level gates the light it leaks onto its
+    neighbours (Section 8.5)."""
+    return np.array([v[CLASS_INDEX["bright"]] for v in level_start_vectors(scheme)])
 
 
 def per_ion_confusion(
@@ -705,17 +776,18 @@ def per_ion_confusion(
     n_samples: int = 0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, float]:
-    """P(declared | qubit level) as a (2, 2) matrix over (bright level, other level) x (declared bright, declared dark).
+    """P(declared | internal level) as an (n_levels, 2) matrix over level x (declared bright, declared dark).
 
     Exact through the count distributions for a threshold discriminator (every pumping and decay path of the chain, the
     scheme's imperfect transfer included); Monte Carlo over ``n_samples`` sampled records for the others, with the
-    statistical uncertainty returned beside the matrix. The dark-outcome operator behind row 1 is Section 8.1's
-    Pi_dark = sum_l p_l |l><l|, not a rank-one projector when the transfer is imperfect.
+    statistical uncertainty returned beside the matrix. The dark-outcome operator behind a non-bright row is Section
+    8.1's Pi_dark = sum_l p_l |l><l|, not a rank-one projector when the transfer is imperfect; a d > 2 leakage level gets
+    its OWN row rather than borrowing a qubit level's start distribution.
     """
-    start_bright, start_other = _start_vectors(scheme)
-    out = np.zeros((2, 2))
+    starts = level_start_vectors(scheme)
+    out = np.zeros((len(starts), 2))
     if isinstance(discriminator, ThresholdDiscriminator):
-        for row, start in enumerate((start_bright, start_other)):
+        for row, start in enumerate(starts):
             dist = model.count_distribution(list(start), discriminator.window_s)
             p_bright = dist.probability_above(discriminator.n_c)
             out[row] = (p_bright, 1.0 - p_bright)
@@ -723,7 +795,7 @@ def per_ion_confusion(
     if n_samples <= 0:
         raise ValueError("a non-threshold discriminator needs Monte Carlo samples (n_samples > 0)")
     gen = rng if rng is not None else np.random.default_rng(0)
-    for row, start in enumerate((start_bright, start_other)):
+    for row, start in enumerate(starts):
         hits = 0
         for _ in range(n_samples):
             cls = CLASSES[int(gen.choice(3, p=start))]
@@ -749,13 +821,15 @@ def product_povm(
     rng: np.random.Generator | None = None,
 ) -> POVM:
     """The product POVM of Section 8.4, exact only at zero readout crosstalk (Section 5.7)."""
+    if len(schemes) != len(models):
+        raise ValueError("one scheme per ion")
     mats: list[np.ndarray] = []
     unc = 0.0
     for m, s in zip(models, schemes):
         mat, u = per_ion_confusion(m, s, discriminator, n_samples=n_samples, rng=rng)
         mats.append(mat)
         unc = max(unc, u)
-    return POVM(tuple(mats), None, "zero", None, unc)
+    return POVM(tuple(mats), None, "zero", None, unc, tuple(s.bright_level for s in schemes))
 
 
 def register_confusion(
@@ -764,12 +838,18 @@ def register_confusion(
     discriminator: Discriminator,
     leakage: Mapping[int, float],
     *,
+    depumping: Depumping | None = None,
     n_samples: int = 0,
     rng: np.random.Generator | None = None,
 ) -> POVM:
-    """The register-wide confusion at configured crosstalk: each ion's decision conditioned on its neighbourhood's start
-    classes, the neighbours' leaked light entering as added counts (their own pumping during the window frozen at the start
-    class, the first-order form). Dense 2^N x 2^N to N = 12, the factored tables beyond (Section 5.7)."""
+    """The register-wide confusion at configured crosstalk: each ion's decision conditioned on its OWN internal level and on
+    its neighbours' start classes, the neighbours' leaked light entering as added counts (their own pumping during the
+    window frozen at the start class, the first-order form). Dense 2^N x 2^N to N = 12, the factored tables beyond
+    (Section 5.7).
+
+    The ion's own axis runs over its levels, so the scheme's transfer channel is inside the table and is applied exactly
+    once; a neighbour's axis runs over its start class, which is what gates the leaked light, and
+    :meth:`RegisterConfusion.bright_probability` marginalizes it with the neighbour's own transfer distribution."""
     n = len(models)
     if len(schemes) != n:
         raise ValueError("one scheme per ion")
@@ -780,14 +860,16 @@ def register_confusion(
     for i in range(n):
         lo, hi = max(0, i - rng_range), min(n - 1, i + rng_range)
         neigh = tuple(range(lo, hi + 1))
-        table = np.zeros((2,) * len(neigh) + (2,))
-        for pattern in product((0, 1), repeat=len(neigh)):
+        starts_i = level_start_vectors(schemes[i])
+        axes = tuple(len(starts_i) if j == i else 2 for j in neigh)
+        table = np.zeros(axes + (2,))
+        for pattern in product(*(range(k) for k in axes)):
             classes: list[ReadoutClass] = ["bright"] * n
             for j, c in zip(neigh, pattern):
-                classes[j] = "bright" if c == 0 else "dark"
-            frozen = neighbourhood_model(models, i, classes, leak)
-            start_bright, start_other = _start_vectors(schemes[i])
-            start = start_bright if pattern[neigh.index(i)] == 0 else start_other
+                if j != i:
+                    classes[j] = "bright" if c == 0 else "dark"
+            frozen = neighbourhood_model(models, i, classes, leak, depumping)
+            start = starts_i[pattern[neigh.index(i)]]
             if isinstance(discriminator, ThresholdDiscriminator):
                 dist = frozen.count_distribution(list(start), discriminator.window_s)
                 p_bright = dist.probability_above(discriminator.n_c)
@@ -813,7 +895,9 @@ def register_confusion(
             table[pattern + (0,)] = p_bright
             table[pattern + (1,)] = 1.0 - p_bright
         tables.append(table)
-    factored = RegisterConfusion(n, rng_range, tuple(tables))
+    factored = RegisterConfusion(
+        n, rng_range, tuple(tables), tuple(bright_start_probabilities(s) for s in schemes)
+    )
     dense = factored.dense() if n <= 12 else None
     return POVM(None, dense, "configured", factored, unc)
 
@@ -824,6 +908,7 @@ def povm_for(
     discriminator: Discriminator,
     leakage: Mapping[int, float] | None = None,
     *,
+    depumping: Depumping | None = None,
     n_samples: int = 0,
     rng: np.random.Generator | None = None,
 ) -> POVM:
@@ -831,7 +916,36 @@ def povm_for(
     leak = {int(k): float(v) for k, v in (leakage or {}).items() if v > 0.0}
     if not leak:
         return product_povm(models, schemes, discriminator, n_samples=n_samples, rng=rng)
-    return register_confusion(models, schemes, discriminator, leak, n_samples=n_samples, rng=rng)
+    return register_confusion(
+        models, schemes, discriminator, leak, depumping=depumping, n_samples=n_samples, rng=rng
+    )
+
+
+def max_confusion_discrepancy(register: POVM, product_form: POVM) -> float:
+    """The bounded discrepancy Section 9.5 and 9.17 require to be REPORTED: the largest difference, over ions, internal
+    levels and neighbourhood configurations, between the register-wide confusion at the configured crosstalk and the
+    product POVM that cannot see the neighbours.
+
+    Read off the factored tables, so it is defined beyond N = 12 where the dense tensor is guarded away; the register
+    form's per-ion bright probability is a convex combination of its table's entries over the same level, so this is the
+    supremum of the per-ion marginal discrepancy over every register state.
+    """
+    if register.factored is None:
+        raise ValueError("the discrepancy is measured against the register-wide (factored) form")
+    if product_form.per_ion is None:
+        raise ValueError("the discrepancy is measured against the product form")
+    fac = register.factored
+    worst = 0.0
+    for i, table in enumerate(fac.tables):
+        neigh = fac.neighbourhood(i)
+        own = neigh.index(i)
+        rows = product_form.per_ion[i]
+        for pattern in product(*(range(k) for k in table.shape[:-1])):
+            level = pattern[own]
+            if level >= rows.shape[0]:
+                raise ValueError("the product POVM has no row for a level the register form carries")
+            worst = max(worst, abs(float(table[pattern + (0,)]) - float(rows[level, 0])))
+    return worst
 
 
 # ---- the measurement of Section 5.7 ---------------------------------------------------------------------------------------------
@@ -887,13 +1001,19 @@ def measure(
     trajectory: int = 0,
     first_shot: int = 0,
     leakage: Mapping[int, float] | None = None,
+    depumping: Depumping | None = None,
     mode: Literal["full", "fast"] = "full",
     povm: POVM | None = None,
     keep_records: bool = False,
 ) -> ReadoutOutcome:
     """Sample the joint internal outcome projectively, then either generate every ion's photon record conditioned on it
-    (neighbour-coupled by the leakage) and discriminate (``full``), or apply the POVM directly (``fast``); never both, so the
-    readout error is applied once (Section 5.7). Randomness is keyed by (sample, trajectory, shot, ion, channel)."""
+    (neighbour-coupled by the leakage and the depumping) and discriminate (``full``), or apply the POVM directly to the
+    sampled LEVELS (``fast``); never both, so the readout error is applied once (Section 5.7).
+
+    The full path samples each ion's start class from the scheme's transfer distribution (the ``readout_transfer``
+    channel) and runs the record layer on it; the fast path samples nothing of the kind, because the POVM's rows already
+    carry that transfer (:func:`per_ion_confusion`). Randomness is keyed by (sample, trajectory, shot, ion, channel).
+    """
     n = space.n_ions
     if len(schemes) != n or len(models) != n:
         raise ValueError("one scheme and one record model per ion")
@@ -905,26 +1025,28 @@ def measure(
     records: list[tuple[PhotonRecord, ...]] = []
     if mode == "fast":
         if povm is None:
-            povm = povm_for(models, schemes, discriminator, leakage)
+            povm = povm_for(models, schemes, discriminator, leakage, depumping=depumping)
     for s in range(shots):
         shot = first_shot + s
         rng_outcome = np.random.default_rng(seeds.child(sample, trajectory, shot, 0, "register_outcome"))
         outcome = sample_joint_outcome(probs, rng_outcome)
         levels[s] = outcome
+        if mode == "fast":
+            # the POVM's rows ARE indexed by level: the scheme's transfer channel is inside them, so sampling a start
+            # class here as well would apply it twice (Section 5.7 "the readout error is never applied twice")
+            assert povm is not None
+            rng_p = np.random.default_rng(seeds.child(sample, trajectory, shot, 0, "povm"))
+            declared = povm.sample(outcome, rng_p)
+            for i in range(n):
+                bits[s, i] = schemes[i].bit_of_class("bright" if declared[i] else "dark")
+                times[s, i] = discriminator.window_s
+            continue
         starts: list[ReadoutClass] = []
         for i in range(n):
             rng_t = np.random.default_rng(seeds.child(sample, trajectory, shot, i, "readout_transfer"))
             dist = schemes[i].start_distribution(outcome[i])
             names = list(dist)
             starts.append(names[int(rng_t.choice(len(names), p=[dist[c] for c in names]))])
-        if mode == "fast":
-            assert povm is not None
-            rng_p = np.random.default_rng(seeds.child(sample, trajectory, shot, 0, "povm"))
-            declared = povm.sample([c == "bright" for c in starts], rng_p)
-            for i in range(n):
-                bits[s, i] = schemes[i].bit_of_class("bright" if declared[i] else "dark")
-                times[s, i] = discriminator.window_s
-            continue
         rngs = [
             np.random.default_rng(seeds.child(sample, trajectory, shot, i, "photon_record")) for i in range(n)
         ]
@@ -934,6 +1056,7 @@ def measure(
             discriminator.window_s,
             rngs,
             leakage=leakage,
+            depumping=depumping,
             sub_bin_s=discriminator.sub_bin_s,
             arrivals=discriminator.needs_arrivals,
         )
@@ -969,15 +1092,15 @@ def confusion_from_outcomes(outcome: ReadoutOutcome, schemes: Sequence[ReadoutSc
 
 
 def povm_confusion_over_levels(povm: POVM, schemes: Sequence[ReadoutScheme]) -> np.ndarray:
-    """The product POVM re-indexed by qubit level: (n_ions, 2, 2) over (true level, declared bit), comparable with
-    :func:`confusion_from_outcomes`."""
+    """The product POVM's declared column re-labelled as the reported BIT: (n_ions, 2, 2) over (true qubit level, declared
+    bit), comparable with :func:`confusion_from_outcomes`. The rows are already levels; only the polarity of Section 13
+    turns "declared bright" into a bit."""
     if povm.per_ion is None:
         raise ValueError("re-indexing by level is defined for the product form")
     out = np.zeros((len(schemes), 2, 2))
     for i, (m, s) in enumerate(zip(povm.per_ion, schemes)):
         for lev in (0, 1):
-            row = 0 if lev == s.bright_level else 1
-            p_bright = float(m[row, 0])
+            p_bright = float(m[lev, 0])
             out[i, lev, s.bright_level] = p_bright
             out[i, lev, 1 - s.bright_level] = 1.0 - p_bright
     return out
@@ -1057,6 +1180,7 @@ __all__ = [
     "ThresholdScanPoint",
     "TimeResolvedML",
     "average_detection_time_s",
+    "bright_start_probabilities",
     "camera_log_likelihoods",
     "camera_pixel_means",
     "camera_threshold_decode",
@@ -1064,6 +1188,8 @@ __all__ = [
     "decode_camera_image",
     "exact_log_likelihoods",
     "joint_level_probabilities",
+    "level_start_vectors",
+    "max_confusion_discrepancy",
     "measure",
     "myerson_brute_force",
     "myerson_log_likelihoods",

@@ -1,8 +1,3 @@
-Installed 4 packages in 34ms
-/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/__init__.py:24: UserWarning: matplotlib not found: Graphics will not work.
-  warnings.warn("matplotlib not found: Graphics will not work.")
-/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/scipy/integrate/_ode.py:420: UserWarning: _zvode: Excess work done on this call. (Perhaps wrong MF.)
-  self._y, self.t = mth(self.f, self.jac or (lambda: None),
 
 === B2: displacement operator in truncated Fock space ===
 nmax= 10 eta=0.1 | max|Dex-Dexpm| low-block=3.3e-16 all=4.8e-02 | unitarity defect: analytic=9.5e-02 expm=2.6e-16 | Omega00 an=0.9950124792 expm=0.9950124792 | boundary element an=0.2867 expm=0.2916 | analytic norm loss: col nmax/2=2.1e-10 col nmax-1=9.30e-02
@@ -26,58 +21,31 @@ Nexc=16 eta=0.3 nstates= 153 | max|Denr-Dref| all=4.5e-01 inner(n1+n2<=Nexc/2)=6
 === B1: stiffness, Schroedinger-motion vs interaction picture (solve_ivp DOP853, rtol 1e-8, atol 1e-10) ===
 
 -- carrier, delta=0,      n0=1, T=2us
-nmax=  6 dim=  12 | S: nfev=   1301   0.04s | I(11 sb terms): nfev=    641   0.18s | |psiS-psiI|=4.0e-09  P_up=0.999234  nfev ratio S/I=2.0
-nmax= 11 dim=  22 | S: nfev=   1253   0.04s | I(21 sb terms): nfev=    617   0.34s | |psiS-psiI|=5.5e-09  P_up=0.999234  nfev ratio S/I=2.0
-nmax= 21 dim=  42 | S: nfev=   1565   0.05s | I(41 sb terms): nfev=    593   0.66s | |psiS-psiI|=3.5e-09  P_up=0.999234  nfev ratio S/I=2.6
-nmax= 41 dim=  82 | S: nfev=   3233   0.16s | I(81 sb terms): nfev=    569   1.36s | |psiS-psiI|=1.9e-09  P_up=0.999234  nfev ratio S/I=5.7
+nmax=  6 dim=  12 | S: nfev=   1301   0.05s | I(11 sb terms): nfev=    641   0.24s | |psiS-psiI|=4.0e-09  P_up=0.999234  nfev ratio S/I=2.0
+nmax= 11 dim=  22 | S: nfev=   1253   0.05s | I(21 sb terms): nfev=    617   0.44s | |psiS-psiI|=5.5e-09  P_up=0.999234  nfev ratio S/I=2.0
+nmax= 21 dim=  42 | S: nfev=   1565   0.07s | I(41 sb terms): nfev=    593   0.86s | |psiS-psiI|=3.5e-09  P_up=0.999234  nfev ratio S/I=2.6
+nmax= 41 dim=  82 | S: nfev=   3233   0.18s | I(81 sb terms): nfev=    569   1.79s | |psiS-psiI|=1.9e-09  P_up=0.999234  nfev ratio S/I=5.7
 
 -- carrier, delta=10kHz,  n0=1, T=2us
-nmax=  6 dim=  12 | S: nfev=   1301   0.04s | I(11 sb terms): nfev=    641   0.18s | |psiS-psiI|=4.0e-09  P_up=0.997648  nfev ratio S/I=2.0
-nmax= 11 dim=  22 | S: nfev=   1253   0.04s | I(21 sb terms): nfev=    617   0.34s | |psiS-psiI|=5.4e-09  P_up=0.997648  nfev ratio S/I=2.0
-nmax= 21 dim=  42 | S: nfev=   1529   0.05s | I(41 sb terms): nfev=    593   0.67s | |psiS-psiI|=3.5e-09  P_up=0.997648  nfev ratio S/I=2.6
-nmax= 41 dim=  82 | S: nfev=   3101   0.15s | I(81 sb terms): nfev=    569   1.39s | |psiS-psiI|=1.5e-09  P_up=0.997648  nfev ratio S/I=5.4
+nmax=  6 dim=  12 | S: nfev=   1301   0.05s | I(11 sb terms): nfev=    641   0.24s | |psiS-psiI|=4.0e-09  P_up=0.997648  nfev ratio S/I=2.0
+nmax= 11 dim=  22 | S: nfev=   1253   0.05s | I(21 sb terms): nfev=    617   0.45s | |psiS-psiI|=5.4e-09  P_up=0.997648  nfev ratio S/I=2.0
+nmax= 21 dim=  42 | S: nfev=   1529   0.07s | I(41 sb terms): nfev=    593   0.87s | |psiS-psiI|=3.5e-09  P_up=0.997648  nfev ratio S/I=2.6
+nmax= 41 dim=  82 | S: nfev=   3101   0.17s | I(81 sb terms): nfev=    569   1.73s | |psiS-psiI|=1.5e-09  P_up=0.997648  nfev ratio S/I=5.4
 
 -- SDF: delta=omega-20kHz (blue sb detuned), n0=0, T=10us
-nmax=  6 dim=  12 | S: nfev=   5117   0.16s | I(11 sb terms): nfev=   4157   1.19s | |psiS-psiI|=2.4e-08  P_up=0.000696  nfev ratio S/I=1.2
-nmax= 11 dim=  22 | S: nfev=   4937   0.16s | I(21 sb terms): nfev=   4001   2.23s | |psiS-psiI|=3.1e-08  P_up=0.000696  nfev ratio S/I=1.2
-nmax= 21 dim=  42 | S: nfev=   8429   0.30s | I(41 sb terms): nfev=   3845   4.36s | |psiS-psiI|=3.8e-09  P_up=0.000696  nfev ratio S/I=2.2
-nmax= 41 dim=  82 | S: nfev=  16121   0.79s | I(81 sb terms): nfev=   3689   8.95s | |psiS-psiI|=3.1e-09  P_up=0.000696  nfev ratio S/I=4.4
+nmax=  6 dim=  12 | S: nfev=   5117   0.18s | I(11 sb terms): nfev=   4157   1.43s | |psiS-psiI|=2.4e-08  P_up=0.000696  nfev ratio S/I=1.2
+nmax= 11 dim=  22 | S: nfev=   4937   0.19s | I(21 sb terms): nfev=   4001   2.68s | |psiS-psiI|=3.1e-08  P_up=0.000696  nfev ratio S/I=1.2
+nmax= 21 dim=  42 | S: nfev=   8429   0.35s | I(41 sb terms): nfev=   3845   5.39s | |psiS-psiI|=3.8e-09  P_up=0.000696  nfev ratio S/I=2.2
+nmax= 41 dim=  82 | S: nfev=  16121   0.89s | I(81 sb terms): nfev=   3689  11.51s | |psiS-psiI|=3.1e-09  P_up=0.000696  nfev ratio S/I=4.4
 
 === B1b: QuTiP sesolve wall time, motion-Schroedinger picture, carrier pulse (vern9 / adams / dop853) ===
-nmax= 11 vern9   wall=  0.00s stats={'method': 'vern9', 'run time': 0.001260995864868164}
-nmax= 11 adams   wall=  0.00s stats={'method': 'scipy zvode adams', 'run time': 0.0022068023681640625}
-nmax= 11 dop853  wall=  0.00s stats={'method': 'scipy ode dop853', 'run time': 0.0011887550354003906}
-nmax= 21 vern9   wall=  0.00s stats={'method': 'vern9', 'run time': 0.0033500194549560547}
-nmax= 21 adams   wall=  0.01s stats={'method': 'scipy zvode adams', 'run time': 0.006001949310302734}
-nmax= 21 dop853  wall=  0.01s stats={'method': 'scipy ode dop853', 'run time': 0.006075143814086914}
-nmax= 41 vern9   wall=  0.01s stats={'method': 'vern9', 'run time': 0.010728120803833008}
-Traceback (most recent call last):
-  File "/private/tmp/claude-501/-Users-churchill-Repositories-qutip-trap/a7fc0d35-5d47-48d5-824d-f7132f324fa7/scratchpad/bench_numerics.py", line 233, in <module>
-    bench_B1_qutip()
-    ~~~~~~~~~~~~~~^^
-  File "/private/tmp/claude-501/-Users-churchill-Repositories-qutip-trap/a7fc0d35-5d47-48d5-824d-f7132f324fa7/scratchpad/bench_numerics.py", line 159, in bench_B1_qutip
-    res = q.sesolve(
-        H,
-    ...<7 lines>...
-        },
-    )
-  File "/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/solver/sesolve.py", line 119, in sesolve
-    return solver.run(psi0, tlist, e_ops=e_ops)
-           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/solver/solver_base.py", line 215, in run
-    for t, state in self._integrator.run(tlist):
-                    ~~~~~~~~~~~~~~~~~~~~^^^^^^^
-  File "/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/solver/integrator/integrator.py", line 201, in run
-    yield self.integrate(t, False)
-          ~~~~~~~~~~~~~~^^^^^^^^^^
-  File "/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/solver/integrator/scipy_integrator.py", line 111, in integrate
-    return self.get_state(copy)
-           ~~~~~~~~~~~~~~^^^^^^
-  File "/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/solver/integrator/scipy_integrator.py", line 86, in get_state
-    self._check_failed_integration()
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
-  File "/Users/churchill/.cache/uv/archive-v0/nlI3pacaiaKaTYmJ/lib/python3.13/site-packages/qutip/solver/integrator/scipy_integrator.py", line 157, in _check_failed_integration
-    raise IntegratorException(
-        messages[self._ode_solver._integrator.istate]
-    )
-qutip.solver.integrator.integrator.IntegratorException: Excess work done on this call. Try to increasing the nsteps parameter in the Options class
+nmax= 11 vern9   wall=  0.00s stats={'method': 'vern9', 'run time': 0.0017867088317871094}
+nmax= 11 adams   wall=  0.00s stats={'method': 'scipy zvode adams', 'run time': 0.003134012222290039}
+nmax= 11 dop853  wall=  0.00s stats={'method': 'scipy ode dop853', 'run time': 0.0014851093292236328}
+nmax= 21 vern9   wall=  0.00s stats={'method': 'vern9', 'run time': 0.004364013671875}
+nmax= 21 adams   wall=  0.01s stats={'method': 'scipy zvode adams', 'run time': 0.007963180541992188}
+nmax= 21 dop853  wall=  0.01s stats={'method': 'scipy ode dop853', 'run time': 0.008408069610595703}
+nmax= 41 vern9   wall=  0.01s stats={'method': 'vern9', 'run time': 0.013052940368652344}
+nmax= 41 adams   wall=  0.01s ABORTED: IntegratorException: Excess work done on this call. Try to increasing the nsteps parameter in the Options class (expected for a multistep method; Section 5.3 refuses them)
+nmax= 41 dop853  wall=  0.02s stats={'method': 'scipy ode dop853', 'run time': 0.022536039352416992}
+available stats keys: ['method', 'init time', 'preparation time', 'run time', 'solver']

@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.optimize import minimize_scalar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -198,25 +199,52 @@ print(
 )
 mode_d = ModeSpec(nu_d, MASS_KG, (0.0, 0.0, 1.0), d=70, expected_n_max=40)
 lc = level_c_steady_state(
-    BlochModel(st, [beam], states=(TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS), mode=mode_d, options=MultiLevelOptions(recoil="minimal")).build
+    BlochModel(
+        st,
+        [beam],
+        states=(TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS),
+        mode=mode_d,
+        options=MultiLevelOptions(recoil="minimal"),
+    ).build
 )
 print(f"level C: nbar = {lc.nbar:.5f} (boundary population {lc.boundary_population:.1e})")
-grid = np.linspace(-1.0 * G, -0.25 * G, 31)
-vals = [
-    rate_coefficients(
+# the argmin is -(Gamma/2) sqrt(1 + s) only as nu/Gamma -> 0, and it sits 3e-3 Gamma below that at nu/Gamma = 0.05,
+# so it is found with a bounded minimizer: the 0.025 Gamma grid this used to scan could only ever print -0.500
+
+
+def _nbar_at(detuning_over_gamma: float, nu: float) -> float:
+    return rate_coefficients(
         BlochModel(
-            st, [sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, d)]
+            st,
+            [
+                sigma_plus_beam(
+                    st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, detuning_over_gamma * G
+                )
+            ],
         ).w_of_offset(0),
-        nu_d,
+        nu,
         carrier_weight(alpha, beam.k_rad_per_m, beam.k_rad_per_m),
     ).nbar
-    for d in grid
-]
-print(
-    f"argmin over Delta of nbar_D (grid step 0.025 Gamma): Delta = {grid[int(np.argmin(vals))] / G:.3f} Gamma"
-)
 
-head("F. Morigi 2000 Fig. 3 as printed: Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta_g = Delta_r = 2.5 gamma")
+
+s_sat = 2.0 * 0.05**2
+limit = -0.5 * math.sqrt(1.0 + s_sat)
+print(f"-(1/2) sqrt(1 + s) at s = 2 (Omega/Gamma)^2 = {s_sat:.4f}: {limit:.6f} Gamma")
+for ratio in (0.05, 0.01, 0.002):
+    sol = minimize_scalar(
+        lambda x, nu=ratio * G: _nbar_at(x, nu),
+        bounds=(-1.0, -0.25),
+        method="bounded",
+        options={"xatol": 1e-7},
+    )
+    print(
+        f"  argmin over Delta of nbar_D at nu/Gamma = {ratio:.3f} (bounded, xatol 1e-7): "
+        f"Delta = {float(sol.x):.6f} Gamma (residual against the limit {float(sol.x) - limit:+.3e})"
+    )
+
+head(
+    "F. Morigi 2000 Fig. 3 as printed: Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta_g = Delta_r = 2.5 gamma"
+)
 lam = lambda_atom()
 stl = structure(lam)
 nu_m, om_r, om_g, delta_m = 0.1 * G, 1.0 * G, 0.05 * G, 2.5 * G
@@ -228,12 +256,21 @@ mode_m = ModeSpec(nu_m, mass_m, (0.0, 0.0, 1.0), d=30, expected_n_max=8)
 
 
 def eit_rate(sign: float) -> float:
-    return (om_g**2 / G) * G**2 * nu_m**2 / (G**2 * nu_m**2 + 4.0 * (om_r**2 / 4.0 - nu_m * (nu_m - sign * delta_m)) ** 2)
+    return (
+        (om_g**2 / G)
+        * G**2
+        * nu_m**2
+        / (G**2 * nu_m**2 + 4.0 * (om_r**2 / 4.0 - nu_m * (nu_m - sign * delta_m)) ** 2)
+    )
 
 
 a_plus, a_minus = eit_rate(+1.0), eit_rate(-1.0)
-print(f"two-photon eta = {mode_m.eta(b_g.k_vector()) - mode_m.eta(b_r.k_vector()):.4f} (mass {mass_m / 1.66053906892e-27:.1f} u)")
-print(f"Morigi Eq. (5): nbar_S = {a_plus / (a_minus - a_plus):.6f}; Eq. (6) rate eta^2 (A_- - A_+) = {0.145**2 * (a_minus - a_plus):.4e} s^-1; (gamma/4 Delta)^2 = 0.01")
+print(
+    f"two-photon eta = {mode_m.eta(b_g.k_vector()) - mode_m.eta(b_r.k_vector()):.4f} (mass {mass_m / 1.66053906892e-27:.1f} u)"
+)
+print(
+    f"Morigi Eq. (5): nbar_S = {a_plus / (a_minus - a_plus):.6f}; Eq. (6) rate eta^2 (A_- - A_+) = {0.145**2 * (a_minus - a_plus):.4e} s^-1; (gamma/4 Delta)^2 = 0.01"
+)
 for recoil in ("off", "minimal", "vector"):
     m = BlochModel(
         stl,
@@ -244,6 +281,10 @@ for recoil in ("off", "minimal", "vector"):
     )
     lc = level_c_steady_state(m.build)
     w = level_c_relaxation_rate(m.build)
-    print(f"  level C (recoil {recoil:7s}): nbar = {lc.nbar:.6f}, P(0) = {lc.fock_populations[0]:.4f}, W = {w:.4e} s^-1")
-print("-> the plan's 'Fig. 3' fixture (nu = 2.0068, Omega_1 = Omega_2 = 17, Delta = 70 MHz) is not this caption (M3a finding)")
+    print(
+        f"  level C (recoil {recoil:7s}): nbar = {lc.nbar:.6f}, P(0) = {lc.fock_populations[0]:.4f}, W = {w:.4e} s^-1"
+    )
+print(
+    "-> the plan's 'Fig. 3' fixture (nu = 2.0068, Omega_1 = Omega_2 = 17, Delta = 70 MHz) is not this caption (M3a finding)"
+)
 print("done")

@@ -19,6 +19,7 @@ from qutip_trap.readout.presets import (
     EGAN_YB171,
     HARTY_CA43,
     MYERSON_CA40_PMT,
+    NOEK_YB171_PMT,
     PRESETS,
 )
 from tests.readout_fixtures import YB_DIRECT, crain_record_model, myerson_record_model, yb_readout_device
@@ -100,6 +101,18 @@ def test_presets_carry_apparatus_data_with_sources() -> None:
     assert set(PRESETS) >= {MYERSON_CA40_PMT.name, CRAIN_YB171_SNSPD.name, BURRELL_CA40_CAMERA.name}
     for preset in PRESETS.values():
         assert preset.source and preset.species and 0.0 < preset.efficiency <= 1.0
+        # every preset either has a detected rate or says so; none of them raises the "a bright state that scatters
+        # nothing cannot be read out" trap of a placeholder 0.0 (audit 2026-09-07 B7)
+        if preset.has_detected_rate:
+            assert preset.rates().R_bright_per_s > 0.0
+        else:
+            with pytest.raises(ValueError, match="does not quote a detected bright rate"):
+                preset.rates()
+    assert {p.name for p in PRESETS.values() if not p.has_detected_rate} == {
+        NOEK_YB171_PMT.name,
+        BURRELL_CA40_CAMERA.name,
+        EGAN_YB171.name,
+    }
     rates = MYERSON_CA40_PMT.rates()
     assert rates.R_bright_per_s == pytest.approx(55_800.0 / 0.0019)
     assert rates.shelf_decay_per_s == pytest.approx(1.0 / 1.168)
@@ -144,6 +157,11 @@ def test_calibrate_detection_recovers_the_rates_and_picks_the_interior_optimum()
     assert e["eps_B"].status == "calibrated" and e["eps_B"].experiment == "detection_histogram"
     assert 0.5 * (e["eps_B"].value + e["eps_D"].value) == pytest.approx(5.9e-4, abs=0.6e-4)
     assert cal.povm.per_ion is not None and cal.discriminator.n_c == 0.5
+    # the histograms report the laboratory's own (eps_B, eps_D) beside the model's; they agree to counting statistics but
+    # the CHOICE of (n_c, t_b) is the fitted model's (M5 fix 2026-09-07)
+    lab_eps_b, lab_eps_d = cal.histogram_errors
+    assert lab_eps_b == pytest.approx(e["eps_B"].value, abs=4.0 * e["eps_B"].uncertainty + 1e-4)
+    assert lab_eps_d == pytest.approx(e["eps_D"].value, abs=4.0 * e["eps_D"].uncertainty + 1e-4)
     lab_b, lab_d = histogram_error_rates(np.array([0, 1, 5, 7]), np.array([0, 0, 1, 0]), 0.5)
     assert lab_b == 0.25 and lab_d == 0.25
     assert cal.bright_histogram.sum() == 10_000 and cal.dark_histogram.sum() == 10_000

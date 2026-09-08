@@ -17,13 +17,20 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 import qutip as qt
+from qutip.solver.integrator import IntegratorException
 
 from qutip_trap.dynamics.engine import SolverOptions
 
 M2 = "milestone M2 (dynamics/evolve.py, PLAN.md Section 5.3)"
 
 LARGE_MODE_DIMENSION = 100
-"""Above this per-mode dimension atol relaxes to 1e-8 (dop853 aborts as 'probably stiff' at d_m = 121 with 1e-10)."""
+"""Above this per-mode dimension the DEFAULT atol relaxes to ``LARGE_MODE_ATOL`` (dop853 aborts as 'probably stiff' at
+d_m = 121 with atol 1e-10; Section 5.3, keyed to the measured points)."""
+LARGE_MODE_ATOL = 1e-8
+"""The relaxed atol above ``LARGE_MODE_DIMENSION``, applied only when the caller left ``SolverOptions.atol`` at its default:
+a deliberate tightening (the Section 5.5 convergence run) is never clamped back up."""
+_DEFAULT_ATOL = SolverOptions().atol
+"""1e-10. The keying is on 'the caller did not choose an atol', which is what this comparison expresses."""
 
 
 @dataclass(frozen=True)
@@ -100,8 +107,16 @@ def evolve(
     if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
         raise ValueError("times_s must be an increasing array with at least two points")
     atol = opts.atol
-    if largest_mode_dimension is not None and largest_mode_dimension > LARGE_MODE_DIMENSION:
-        atol = max(atol, 1e-8)
+    if (
+        largest_mode_dimension is not None
+        and largest_mode_dimension > LARGE_MODE_DIMENSION
+        and opts.atol == _DEFAULT_ATOL
+    ):
+        # the keying of Section 5.3 relaxes the DEFAULT atol above d_m ~ 100 (dop853 aborts as "probably stiff" at
+        # d_m = 121 with 1e-10). It must not clamp a tolerance the caller chose deliberately: max(atol, 1e-8) turned a
+        # Section 5.5 tolerance-convergence run at d_m > 100 into an rtol-only tightening, so the convergence check
+        # reported a spuriously small change (M2 audit E9/E10).
+        atol = LARGE_MODE_ATOL
     ladder: list[tuple[str, float, float]] = [(m, atol, 0.0) for m in opts.integrators]
     last = opts.integrators[-1]
     max_step = (2.0 * math.pi / omega_max_rad_s / 14.0) if omega_max_rad_s else 0.0
@@ -128,9 +143,12 @@ def evolve(
             )
             used = (method, a, ms)
             break
-        except (
-            Exception
-        ) as exc:  # the integrator's own failure ("probably stiff", "excess work"): escalate, report
+        except IntegratorException as exc:
+            # the INTEGRATOR's own failure ("probably stiff", "excess work", "larger nsteps is needed"): escalate and
+            # report. Anything else propagates: a bare `except Exception` here recorded a TypeError in a coefficient or a
+            # KeyError from an unsupported solver option as an integrator failure, tried every remaining rung on the same
+            # broken input and ended in "every rung of the integrator ladder failed", hiding the programming error the
+            # plan never asked the ladder to rescue (M9b audit B8)
             retries.append(f"{method}@atol={a:g},max_step={ms:g}: {type(exc).__name__}: {exc}")
             continue
     if result is None:
@@ -155,8 +173,77 @@ def evolve(
 
 
 def tightened(options: SolverOptions, factor: float = 10.0) -> SolverOptions:
-    """The Section 5.5 tolerance-convergence companion: atol and rtol divided by ``factor``."""
+    """The Section 5.5 tolerance-convergence companion: atol and rtol divided by ``factor``.
+
+    Both tolerances move, which is the point: above ``LARGE_MODE_DIMENSION`` the atol keying used to clamp the tightened
+    atol back to 1e-8 and leave rtol alone, so the comparison measured an rtol-only change (M2 audit E9).
+    """
     return replace(options, atol=options.atol / factor, rtol=options.rtol / factor)
 
 
-__all__ = ["LARGE_MODE_DIMENSION", "Evolution", "evolve", "tightened"]
+@dataclass(frozen=True)
+class ConvergenceReport:
+    """The Section 5.5 / 9.9 tolerance-convergence comparison of one run (Section 14.5's convergence badge)."""
+
+    tolerances: tuple[float, float]
+    tightened_tolerances: tuple[float, float]
+    changes: dict[str, float]
+    """Per observable, max_t |p_tight(t) - p(t)|."""
+    tol: float
+    """The threshold the comparison is judged against."""
+
+    @property
+    def max_change(self) -> float:
+        return max(self.changes.values()) if self.changes else 0.0
+
+    @property
+    def converged(self) -> bool:
+        return self.max_change < self.tol
+
+    def summary(self) -> str:
+        worst = max(self.changes, key=lambda k: self.changes[k]) if self.changes else "-"
+        return (
+            f"tolerance convergence: atol/rtol {self.tolerances[0]:g}/{self.tolerances[1]:g} against "
+            f"{self.tightened_tolerances[0]:g}/{self.tightened_tolerances[1]:g} moves the probabilities by at most "
+            f"{self.max_change:.3g} (on {worst!r}), threshold {self.tol:g}: "
+            f"{'converged' if self.converged else 'NOT CONVERGED'}"
+        )
+
+
+def convergence_check(
+    run: Callable[[SolverOptions], Mapping[str, np.ndarray]],
+    options: SolverOptions | None = None,
+    *,
+    factor: float = 10.0,
+    tol: float = 1e-6,
+) -> ConvergenceReport:
+    """Run ``run`` at ``options`` and again at ``tightened(options, factor)``, and report the change per observable.
+
+    Section 5.5 says the test suite does this for EVERY validation case; ``hilbert.truncation.halving_test`` is the
+    single-array form behind the convergence badge and this is the named-observable form a run path can report
+    (Section 9.9). ``run`` returns the observable traces of one integration, keyed as the engine keys them.
+    """
+    if factor <= 1.0:
+        raise ValueError("the tightening factor exceeds one")
+    opts = options or SolverOptions()
+    tight = tightened(opts, factor)
+    a = run(opts)
+    b = run(tight)
+    if set(a) != set(b):
+        raise ValueError("the two runs returned different observables")
+    changes = {
+        key: float(np.max(np.abs(np.asarray(b[key], dtype=float) - np.asarray(a[key], dtype=float))))
+        for key in a
+    }
+    return ConvergenceReport((opts.atol, opts.rtol), (tight.atol, tight.rtol), changes, tol)
+
+
+__all__ = [
+    "LARGE_MODE_ATOL",
+    "LARGE_MODE_DIMENSION",
+    "ConvergenceReport",
+    "Evolution",
+    "convergence_check",
+    "evolve",
+    "tightened",
+]

@@ -12,7 +12,11 @@ stores one. Its pieces, each in its own module and re-exported here:
 - :mod:`~qutip_trap.species.polarization`: the laboratory-to-atomic-frame decomposition into sigma-, pi, sigma+;
 - :mod:`~qutip_trap.species.raman`: Raman couplings, light shifts and Kramers-Heisenberg scattering amplitudes,
   rates, leakage and differential-Rayleigh dephasing from explicit intermediate-state sums;
-- :mod:`~qutip_trap.species.quadrupole`: the electric-quadrupole coupling of optical qubits (Section 4.5.7).
+- :mod:`~qutip_trap.species.quadrupole`: the electric-quadrupole coupling of optical qubits, its per-component
+  decay weights and collapse operators, and the second-order ac Stark shift of a driven component by the
+  other nine (Section 4.5.7);
+- :mod:`~qutip_trap.species.metastable`: the blackbody, collisional and reshelving channels of a metastable
+  D level, all defaulting off (Section 4.5.7).
 
 Conventions (Section 13): Steck's normalizations throughout; g_I = -(mu_I/(I mu_N))(m_e/m_p); q_op = m_lower -
 m_upper = -q_gamma; wavelengths vacuum; I_sat with the ANGULAR partial rate; C0 is not this layer's business.
@@ -46,10 +50,13 @@ from qutip_trap.species.polarization import (
     to_atomic_frame,
 )
 from qutip_trap.species.quadrupole import (
+    decay_weights,
+    e2_stark_shift_rad_s,
     geometric_factor,
     geometric_factor_closed_form,
     geometric_factors,
     lambda_3j,
+    quadrupole_collapse_operators,
     rabi_frequency_e2_rad_s,
     reduced_element_a0_squared,
     reduced_element_from_lifetime_m2,
@@ -67,6 +74,7 @@ from qutip_trap.species.zeeman import (
     clock_points,
     g_I_steck,
     hyperfine_zeeman,
+    lande_g_f,
     transition_sensitivity,
 )
 
@@ -83,6 +91,8 @@ __all__ = [
     "atomic_frame",
     "breit_rabi_hz",
     "clebsch_gordan",
+    "decay_weights",
+    "e2_stark_shift_rad_s",
     "clock_points",
     "coupled_state_vector",
     "dipole_operator_uncoupled",
@@ -95,10 +105,12 @@ __all__ = [
     "hyperfine_element",
     "hyperfine_reduced_factor",
     "hyperfine_zeeman",
+    "lande_g_f",
     "lambda_3j",
     "linear_polarization",
     "operator_index",
     "partial_rate_from_reduced_element",
+    "quadrupole_collapse_operators",
     "rabi_frequency_e2_rad_s",
     "rabi_frequency_two_level_rad_s",
     "reduced_element_a0_squared",

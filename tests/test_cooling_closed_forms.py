@@ -32,15 +32,23 @@ from qutip_trap.prep.closed_forms import (
     lambda_repumper_minimum,
     lambda_repumper_nbar,
     lorentzian_scattering_rate,
+    mixed_two_ion_axial_in_phase,
     offresonant_scattering_rate_per_s,
     repump_recoil_quanta,
     sideband_cooling_rate_n,
     sideband_floor,
     stenholm_coefficients,
+    sympathetic_cost,
+    sympathetic_optimum,
+    three_beam_energy_j,
+    three_beam_minimum_energy_j,
+    three_beam_optimum,
     two_level_excited_population,
+    uniform_field_couplings,
     v_system_diffusion,
     x0_m,
 )
+from qutip_trap.prep.validity import ValidityError
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 
 # ---- Doppler force model (Section 4.2.1; 9.12 "Doppler-limit fork") ------------------------------------------------------------
@@ -89,11 +97,18 @@ def test_force_model_optimum_and_the_zero_point_offset() -> None:
 
 
 def test_sideband_floor_coefficients_and_alpha_to_zero() -> None:
-    """(gamma/nu)^2 (alpha + 1/4) with gamma = Gamma/2: 7/12 and 13/20 for alpha = 1/3, 2/5; alpha -> 0 leaves (Gamma/4 nu)^2 = 6.25e-6 at Gamma/nu = 0.01."""
-    assert sideband_floor(2.0, 1.0, 1.0 / 3.0) == pytest.approx(7.0 / 12.0)
-    assert sideband_floor(2.0, 1.0, 0.4) == pytest.approx(13.0 / 20.0)
+    """(gamma/nu)^2 (alpha + 1/4) with gamma = Gamma/2: 7/12 and 13/20 for alpha = 1/3, 2/5; alpha -> 0 leaves (Gamma/4 nu)^2 = 6.25e-6 at Gamma/nu = 0.01.
+
+    The 7/12 and 13/20 rows are the algebraic normalization at gamma = Gamma/2 = nu, which is outside the floor's own
+    Gamma << nu regime, so they pass the Section 4.2.8 (vii) escape explicitly; the 6.25e-6 row is inside it.
+    """
+    assert sideband_floor(2.0, 1.0, 1.0 / 3.0, allow_unresolved=True) == pytest.approx(7.0 / 12.0)
+    assert sideband_floor(2.0, 1.0, 0.4, allow_unresolved=True) == pytest.approx(13.0 / 20.0)
     assert sideband_floor(0.01, 1.0, 0.0) == pytest.approx(6.25e-6)
     assert sideband_floor(0.01, 1.0, 0.4) / sideband_floor(0.01, 1.0, 0.0) == pytest.approx(2.6)
+    # Section 4.2.8 (vii) asserts Gamma << nu at run time rather than documenting it
+    with pytest.raises(ValidityError):
+        sideband_floor(2.0, 1.0, 1.0 / 3.0)
 
 
 def test_stenholm_coefficients_carrier_term_cancels_in_the_rate_but_not_in_the_steady_state() -> None:
@@ -138,8 +153,10 @@ def test_cooling_rate_saturates_at_half_the_linewidth() -> None:
 def test_effective_two_level_ratios_light_shift_and_role_assignment() -> None:
     """gamma'/Gamma' = (Gamma_10 + Gamma_12)/(2 Gamma_10) = 0.55 (Xi) and /(2 Gamma_12) = 5.5 (V) for Gamma_12 = 0.1 Gamma_10, never 1/2; the aux beam
     at Omega_12 = 0.2, delta_12 = -1 shifts the level by +0.0077 Gamma_10 so the optimum is delta_20 = -0.058 (Marzoli Fig. 3); V cools at +nu."""
-    xi = effective_two_level(1.0, 0.1, 0.2, -1.0, "Xi")
-    v = effective_two_level(1.0, 0.1, 0.2, -1.0, "V")
+    # Marzoli's Fig. 3 fixture sits at delta_aux = -Gamma_10 to display the light shift, so |delta_aux| << Gamma_10 + Gamma_12
+    # fails and the Section 4.2.8 (vii) escape is passed explicitly (the condition itself is pinned below)
+    xi = effective_two_level(1.0, 0.1, 0.2, -1.0, "Xi", allow_invalid=True)
+    v = effective_two_level(1.0, 0.1, 0.2, -1.0, "V", allow_invalid=True)
     assert xi.excitation_fraction == pytest.approx(0.01 / 1.3025, rel=1e-9)
     assert xi.ratio == pytest.approx(0.55) and v.ratio == pytest.approx(5.5)
     assert xi.light_shift_rad_s == pytest.approx(0.0077, abs=1e-4)
@@ -157,7 +174,94 @@ def test_effective_two_level_ratios_light_shift_and_role_assignment() -> None:
         lorentzian_scattering_rate(0.1, 1.0, 0.3), rel=1e-12
     )
     with pytest.raises(ValueError):
-        effective_two_level(1.0, 0.1, 0.2, -1.0, "Lambda")  # type: ignore[arg-type]
+        effective_two_level(1.0, 0.1, 0.2, -1.0, "Lambda", allow_invalid=True)  # type: ignore[arg-type]
+
+
+def test_metastable_depletion_rate_traces_a_lorentzian_of_half_width_half_the_total_fast_linewidth() -> None:
+    """Section 9.3 row "Effective two-level parameters": Gamma'(delta_aux) = Pi Gamma_10 is a Lorentzian in delta_aux whose
+    HALF WIDTH at half maximum is (Gamma_10 + Gamma_12)/2, exactly the denominator of Marzoli's Pi (Eqs. 12, 15)."""
+    g10, g12, om_aux = 1.0, 0.1, 0.02
+    half = 0.5 * (g10 + g12)
+    peak = effective_two_level(g10, g12, om_aux, 0.0, "Xi").gamma_prime_rad_s
+    at_half = effective_two_level(g10, g12, om_aux, half, "Xi", allow_invalid=True).gamma_prime_rad_s
+    assert at_half == pytest.approx(0.5 * peak, rel=1e-12)
+    # and the profile is a Lorentzian of that half width at every detuning, not only at the half-maximum point
+    for delta in (0.1 * half, 0.5 * half, 2.0 * half, 7.0 * half):
+        got = effective_two_level(g10, g12, om_aux, delta, "Xi", allow_invalid=True).gamma_prime_rad_s
+        assert got == pytest.approx(peak / (1.0 + (delta / half) ** 2), rel=1e-12)
+    # the wrong width (the full Gamma_10 + Gamma_12) would put the half maximum at twice the detuning
+    assert effective_two_level(
+        g10, g12, om_aux, g10 + g12, "Xi", allow_invalid=True
+    ).gamma_prime_rad_s == pytest.approx(0.2 * peak, rel=1e-12)
+
+
+# ---- Itano and Wineland's three-beam optimum (Eqs. 20-26; Section 9.3 "Doppler limit with recoil") -----------------------------
+
+
+def test_three_beam_optimum_splits_the_scattering_rate_as_the_root_of_the_recoil_share() -> None:
+    """gamma_si/gamma_tot = sqrt(f_si)/sum_j sqrt(f_sj) (Itano and Wineland 1982 Eqs. 20-26): 1/3 each for an isotropic
+    pattern, whose per-mode kinetic energy at the optimum is then exactly hbar Gamma/4; the sigma pattern along z
+    (f = 3/10, 3/10, 2/5, the Cartesian sum rule of Section 4.2.8) tilts the split towards the driven axis and the
+    optimum beats the uniform split, which is the negative control."""
+    g = TWO_PI * 20e6
+    isotropic = (1.0 / 3.0,) * 3
+    assert three_beam_optimum(isotropic) == (
+        pytest.approx(1.0 / 3.0, rel=1e-12),
+        pytest.approx(1.0 / 3.0, rel=1e-12),
+        pytest.approx(1.0 / 3.0, rel=1e-12),
+    )
+    # E_i = (hbar Gamma/4)(1 + 1) = hbar Gamma/2 per mode, so the KINETIC part E_i/2 is Itano's hbar Gamma/4 per mode
+    for e in three_beam_minimum_energy_j(g, isotropic):
+        assert e == pytest.approx(HBAR_J_S * g / 2.0, rel=1e-12)
+        assert 0.5 * e == pytest.approx(HBAR_J_S * g / 4.0, rel=1e-12)
+    sigma = (0.3, 0.3, 0.4)
+    assert sum(sigma) == pytest.approx(1.0, rel=1e-12)
+    shares = three_beam_optimum(sigma)
+    assert sum(shares) == pytest.approx(1.0, rel=1e-12)
+    assert shares == (
+        pytest.approx(0.3169873, abs=1e-7),
+        pytest.approx(0.3169873, abs=1e-7),
+        pytest.approx(0.3660254, abs=1e-7),
+    )
+    best = sum(three_beam_minimum_energy_j(g, sigma))
+    uniform = sum(three_beam_energy_j(g, sigma, (1.0 / 3.0,) * 3))
+    assert best < uniform
+    assert best / (HBAR_J_S * g / 4.0) == pytest.approx(
+        3.0 + sum(math.sqrt(f) for f in sigma) ** 2, rel=1e-12
+    )
+    assert uniform / (HBAR_J_S * g / 4.0) == pytest.approx(6.0, rel=1e-12)
+    with pytest.raises(ValueError):
+        three_beam_optimum((0.5, 0.0, 0.5))
+    with pytest.raises(ValueError):
+        three_beam_energy_j(g, sigma, (0.5, 0.5, 0.5))
+
+
+# ---- Wubbena's sympathetic-cooling optimum (Eqs. 34-36; Section 9.13) ----------------------------------------------------------
+
+
+def test_wubbena_sympathetic_optimum_is_eight_elevenths_with_cost_twenty_three_sixteenths() -> None:
+    """Minimizing F(mu) = b_2^2(b_1 + b_2/sqrt mu)^2/b_1^2 + b_1^2(b_2 - b_1/sqrt mu)^2/b_2^2 over the mass ratio gives
+    mu* = 8/11 = 0.727272725 with F_min = 23/16 = 1.4375 (Wubbena 2012 Eqs. 34-36); the un-swapped b_1^2 E_i + b_2^2 E_o
+    has no interior minimum, which is the index negative control the row names."""
+    mu_star, f_min = sympathetic_optimum()
+    assert mu_star == pytest.approx(8.0 / 11.0, abs=1e-9)
+    # the plan prints 0.727272725, which is 8/11 = 0.7272727272727... with the last two digits slipped (2.3e-9 off)
+    assert mu_star == pytest.approx(0.727272725, abs=1e-8)
+    assert f_min == pytest.approx(23.0 / 16.0, rel=1e-9)
+    assert sympathetic_cost(8.0 / 11.0) == pytest.approx(23.0 / 16.0, rel=1e-12)
+    assert sympathetic_cost(1.0) == pytest.approx(2.0, rel=1e-12)  # equal masses: the two weights coincide
+    # the eigenvector normalization behind it is Section 9.12's row (b_1^2 of the in-phase mode)
+    assert mixed_two_ion_axial_in_phase(1.0)[0] ** 2 == pytest.approx(0.5, rel=1e-12)
+    assert mixed_two_ion_axial_in_phase(0.675)[0] ** 2 == pytest.approx(0.6839213464, rel=1e-9)
+    assert mixed_two_ion_axial_in_phase(40.0 / 27.0)[0] ** 2 == pytest.approx(0.3160786536, rel=1e-9)
+    # a mixed crystal has no exact COM mode: BOTH modes couple to uniform field noise, and only mu = 1 kills one
+    assert all(abs(c) > 0.05 for c in uniform_field_couplings(0.675))
+    assert uniform_field_couplings(1.0)[1] == pytest.approx(0.0, abs=1e-15)
+    # negative control: the un-swapped index has its minimum on the search boundary, never inside
+    grid = np.linspace(0.06, 19.9, 400)
+    g_values = np.array([sympathetic_cost(float(m), swapped=False) for m in grid])
+    assert int(np.argmin(g_values)) == g_values.size - 1
+    assert sympathetic_cost(8.0 / 11.0, swapped=False) > 23.0 / 16.0
 
 
 # ---- V-system diffusion (Marzoli Eq. B4) ---------------------------------------------------------------------------------------

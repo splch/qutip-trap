@@ -11,10 +11,16 @@ import pytest
 
 from qutip_trap.api import Beam, Trap
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
+from qutip_trap.light.bloch import CoolingError
 from qutip_trap.light.recoil import angular_factor
-from qutip_trap.prep.closed_forms import doppler_force_nbar, doppler_limit_nbar, stenholm_coefficients
+from qutip_trap.prep.closed_forms import (
+    doppler_force_nbar,
+    doppler_limit_nbar,
+    stenholm_coefficients,
+    unaddressed_axis_heating_per_s,
+)
 from qutip_trap.prep.doppler import doppler_cooling, optimize_detuning, with_detuning_offset
-from qutip_trap.prep.rates import UncooledModeError, ion_mode_rates, models_per_ion
+from qutip_trap.prep.rates import UncooledModeError, ion_mode_rates, mode_rates, models_per_ion
 from qutip_trap.species import species
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.species.raman import AtomicStructure
@@ -101,6 +107,40 @@ def test_a_mode_no_cooling_beam_addresses_raises_instead_of_returning_a_steady_s
     # the z mode alone is fine
     res = doppler_cooling(st, [beam], crystal, modes=[0])
     assert [m.mode for m in res.modes] == [0] and res.mode(0).nbar == pytest.approx(6.54, abs=0.05)
+
+
+def test_one_beam_along_one_axis_leaves_the_transverse_occupations_growing_linearly() -> None:
+    """Section 9.3 row "Doppler limit with recoil": "one beam along x leaves <n_y> growing linearly". The transverse
+    modes get NO friction from that beam (their projection is zero, so there is no force spectrum to take) but they
+    still take the emission recoil, so heating and cooling are BOTH equal to 2D: W_m = 0, no steady state exists, and
+    <n_m>(t) = n_0 + 2D t grows linearly at the emission diffusion rate. The module's UncooledModeError is that
+    statement as a refusal (Section 4.2), and the level-A objects carry the linear rate itself."""
+    sp = two_level_atom()
+    g = gamma_rad_s()
+    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
+    st = structure(sp)
+    beam = sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * g, -0.5 * g)  # along z = B
+    models = models_per_ion(st, [beam], crystal, (0,))
+    driven = crystal.mode_index("axial", 0)
+    for m in range(len(crystal.modes)):
+        r = ion_mode_rates(models[0], crystal, 0, m)
+        assert r is not None
+        if m == driven:
+            assert r.cooling_per_s > r.heating_per_s
+            continue
+        assert r.projection_cos2[0] < 1e-12  # the beam does not project on this axis at all
+        assert r.heating_per_s == pytest.approx(r.two_d_per_s, rel=1e-15)
+        assert r.cooling_per_s == pytest.approx(r.two_d_per_s, rel=1e-15)
+        assert r.two_d_per_s > 0.0
+        rates = mode_rates(models, crystal, m, projection_threshold=0.0)
+        assert rates.rate_per_s == pytest.approx(0.0, abs=1e-12 * r.two_d_per_s)
+        assert unaddressed_axis_heating_per_s(r.two_d_per_s) == r.two_d_per_s
+        # linear growth: <n>(t) = n_0 + 2D t, and no steady state exists
+        with pytest.raises(CoolingError):
+            _ = rates.nbar
+        growth = [r.two_d_per_s * t for t in (1e-3, 5e-3, 20e-3)]
+        assert growth[1] / growth[0] == pytest.approx(5.0, rel=1e-12)
+        assert growth[2] / growth[0] == pytest.approx(20.0, rel=1e-12)
 
 
 def test_optimum_detuning_of_a_low_frequency_mode_is_minus_half_the_linewidth() -> None:
@@ -200,9 +240,13 @@ def test_monroe_three_modes_from_one_beam_are_not_reproduced_by_a_single_oblique
 
 def test_ca40_multilevel_doppler_limit_against_the_two_level_estimate() -> None:
     """S1/2-P1/2-D3/2 with the 397 nm beam at -20 MHz along (1,1,1)/sqrt3 and the 866 nm repumper, B = 4 G along z, on Roos's 3.3 MHz axial and
-    1.6 MHz radial modes: the eight-state model gives nbar_z = 3.7 and nbar_y = 8.7 at s_397 = 1, s_866 = 3, within 5 % of the S-P two-level
-    model with the D branch renormalized (3.65, 8.5); the measured 6.5(1.0) and 16(2) are not a level-structure effect at these parameters
-    (M3 finding: the plan's 'two-level estimate n_z ~ 3, n_y ~ 6 fails because of the multi-level structure' is not reproduced)."""
+    1.6 MHz radial modes: the eight-state model gives nbar_z = 4.0 and nbar_y = 9.4 at s_397 = 1, s_866 = 3, within 4 % of the S-P two-level
+    model with the D branch renormalized (3.90, 9.08); the measured 6.5(1.0) and 16(2) are not a level-structure effect at these parameters
+    (M3 finding: the plan's 'two-level estimate n_z ~ 3, n_y ~ 6 fails because of the multi-level structure' is not reproduced).
+
+    All four numbers rose 7.5 % on 2026-09-08 (3.74/8.74 and 3.65/8.50 before) when the 397 nm TOTAL rate became Hettrich et al. 2015's
+    measured lifetime, gamma/2pi = 23.0526 MHz, instead of PLAN.md 9.13's quoted 21.57 MHz read as a total: nbar_D scales as Gamma, and the
+    +6.9 % in Gamma is amplified slightly by the beam sitting at a fixed -20 MHz rather than at -Gamma/2 (ledger conv.ca40_linewidth_reading)."""
     ca = species("40Ca+")
     st = AtomicStructure(ca, 4.0, (0.0, 0.0, 1.0))
     l397, l866 = ca.transition("S1/2-P1/2"), ca.transition("D3/2-P1/2")
@@ -227,8 +271,10 @@ def test_ca40_multilevel_doppler_limit_against_the_two_level_estimate() -> None:
     )
     z = crystal.mode_index("axial", 0)
     y = crystal.mode_index("transverse_2", 0)
-    assert full.mode(z).nbar == pytest.approx(3.74, abs=0.1)
-    assert full.mode(y).nbar == pytest.approx(8.74, abs=0.2)
+    assert full.mode(z).nbar == pytest.approx(4.02, abs=0.1)
+    assert full.mode(y).nbar == pytest.approx(9.41, abs=0.2)
+    assert two.mode(z).nbar == pytest.approx(3.90, abs=0.1)
+    assert two.mode(y).nbar == pytest.approx(9.08, abs=0.2)
     assert full.mode(z).nbar == pytest.approx(two.mode(z).nbar, rel=0.06)
     assert full.mode(y).nbar == pytest.approx(two.mode(y).nbar, rel=0.06)
     assert full.mode(z).nbar < 6.5 - 1.0 and full.mode(y).nbar < 16.0 - 2.0

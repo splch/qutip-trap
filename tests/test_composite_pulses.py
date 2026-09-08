@@ -10,17 +10,21 @@ import pytest
 from qutip_trap.api import CompositePulse, composite_pulse
 from qutip_trap.control.composite import (
     MOUNT_PD6_PHASES,
+    SUZUKI_PHASE_TOLERANCE,
+    _t2j,
     ap1_phases,
     certificate,
     corpse_angles,
     fidelity_avg,
     fidelity_c,
     fidelity_k,
+    fitted_leading_coefficient,
     fold,
     fold_addressing,
     leading_coefficient,
     operator_distance,
     pd2_phases,
+    phi_sk1,
     rotation,
     seq_bb1,
     seq_nb1,
@@ -32,6 +36,7 @@ from qutip_trap.control.composite import (
     seq_sk1,
     seq_sk1_printed,
     suzuki_factor,
+    suzuki_phase,
     toggled_phases,
 )
 
@@ -71,7 +76,9 @@ def test_fidelity_measure_relations() -> None:
         ("primitive", 2, 2, 2, ((1e-3, 1e-2), (1e-3, 1e-2))),
         ("SK1", 4, 2, 2, ((1e-4, 1e-3), (1e-3, 1e-2))),
         ("BB1", 6, 2, 2, ((3e-3, 3e-2), (1e-3, 1e-2))),
+        ("PB1", 6, 2, 2, ((3e-3, 3e-2), (1e-3, 1e-2))),
         ("CORPSE", 2, 4, 2, ((1e-3, 1e-2), (1e-5, 1e-4))),
+        ("short_CORPSE", 2, 4, 2, ((1e-3, 1e-2), (1e-5, 1e-4))),
         ("SCROFULOUS", 4, 2, 2, ((1e-4, 1e-3), (1e-3, 1e-2))),
         ("CinSK", 4, 4, 4, ((1e-4, 1e-3), (1e-5, 1e-4))),
         ("CinBB", 6, 4, 4, ((3e-3, 3e-2), (1e-5, 1e-4))),
@@ -118,6 +125,13 @@ def test_leading_coefficients_at_theta_pi() -> None:
     assert leading_coefficient(composite_pulse("CinBB", PI), "detuning", 4, 1e-4) == pytest.approx(
         0.75, rel=2e-3
     )
+    # PB1 = P2 = PD2 is a second-order amplitude corrector like BB1, with its own leading coefficient
+    assert leading_coefficient(composite_pulse("PB1", PI), "amplitude", 6, 3e-4) == pytest.approx(
+        118.295935928, rel=1e-6
+    )
+    assert leading_coefficient(composite_pulse("BB1", PI), "amplitude", 6, 3e-4) == pytest.approx(
+        9.388566343, rel=2e-6
+    )
     assert leading_coefficient(composite_pulse("BB1", PI), "amplitude", 6, 3e-3) == pytest.approx(
         9.388566, rel=1e-2
     )
@@ -151,8 +165,18 @@ def test_bb1_general_axis_and_the_corrector_identity() -> None:
     ua = fold(seq_bb1(PI, phit), eps_a=0.05)
     ub = z @ fold(seq_bb1(PI, 0.0), eps_a=0.05) @ z.conj().T
     assert operator_distance(ua, ub) < 1e-12
+    # W1 = +I "for any phi" (Section 4.3.5), not at one phase only
+    for theta in (PI / 2, PI, 3 * PI / 2, 2.1):
+        p1 = phi_sk1(theta)
+        w1 = [(PI, p1), (2 * PI, 3 * p1), (PI, p1)]
+        assert operator_distance(fold(w1), np.eye(2)) < 1e-12, theta
     assert operator_distance(fold(seq_bb1(PI)[1:]), np.eye(2)) < 1e-12
-    assert math.acos(-PI / (4 * PI)) == pytest.approx(math.acos(-0.25))
+    # phi_B2 = arccos(-theta_t/4 pi) at the plan's three target angles (Section 4.3.5 [recomputed here]); the W1
+    # identity above is the theta-independent half, this is the theta-dependent one
+    for theta, phi_b2 in ((PI / 2, 1.696124158), (PI, 1.823476582), (3 * PI / 2, 1.955193101)):
+        assert phi_sk1(theta) == pytest.approx(phi_b2, rel=1e-9), theta
+        assert seq_bb1(theta)[1][1] == pytest.approx(phi_b2, rel=1e-9)
+    assert phi_sk1(PI) == pytest.approx(math.acos(-0.25), rel=1e-15)
     # NB1 in the addressing model equals B2 in the amplitude model, numerically
     for x in (0.2, 0.1, 0.05):
         n2 = 1 - fidelity_c(np.eye(2), fold_addressing(seq_nb1(PI / 2), x))
@@ -181,6 +205,28 @@ def test_suzuki_ladder_and_its_printed_defect() -> None:
     phi_P4 = arccos(-theta/48 pi); P2 is PB1; the corrected odd-k B layer reproduces Eq. 43."""
     assert [suzuki_factor(j, 4) for j in (1, 2, 3, 4)] == [4, 24, 720, 90720]
     assert [suzuki_factor(j, 2) for j in (1, 2, 3, 4)] == [2, 12, 360, 45360]
+    # PLAN.md:493 requires the phase to be ROOT-FOUND on the leading eps coefficient and not read off f_j: the
+    # agreement is what certifies the transcribed recursion (P/B null the toggled amplitude polygon, N the bare
+    # addressing sum), and the printed (2^{2j-1} - 1) recursion is the negative control it catches
+    for family in ("P", "N", "B"):
+        for j in (1, 2, 3):
+            root, residual = suzuki_phase(j, PI / 2, family)
+            assert residual < SUZUKI_PHASE_TOLERANCE, (family, j, residual)
+            f1 = 4.0 if family == "P" else 2.0
+            assert root == pytest.approx(math.acos(-(PI / 2) / (2 * PI * suzuki_factor(j, f1))), abs=1e-12)
+    assert suzuki_factor(2, 4, printed=True) == 28.0 and suzuki_factor(2, 2, printed=True) == 14.0
+    for family in ("P", "N", "B"):
+        _root, residual = suzuki_phase(2, PI / 2, family, printed=True)
+        assert residual > 1e-3, (
+            family,
+            residual,
+        )  # 1.5e-3 (P), 3.0e-3 (N, B): six decades above the tolerance
+    # the printed f_2 = 28 ladder is FIRST order, not fourth: its amplitude infidelity slope is 2, not 10
+    printed_phi = math.acos(-(PI / 2) / (2 * PI * suzuki_factor(2, 4, printed=True)))
+    segs = [(PI / 2, 0.0)] + [(a, p) for a, p in _t2j(2, 1.0, printed_phi, "P")]
+    eps = np.geomspace(1e-3, 1e-2, 7)
+    vals = [1 - fidelity_k(rotation(PI / 2, 0.0), fold(segs, eps_a=e)) for e in eps]
+    assert float(np.polyfit(np.log(eps), np.log(vals), 1)[0]) == pytest.approx(2.0, abs=0.1)
     p2 = composite_pulse("P2j", PI / 2, order=1)
     assert np.allclose(np.array(p2.segments), np.array(composite_pulse("PB1", PI / 2).segments))
     p4 = composite_pulse("P2j", PI / 2, order=2)
@@ -237,13 +283,92 @@ def test_mount_pd6_anchors() -> None:
 
 
 def test_dc_polygon_and_record_invariants() -> None:
-    assert composite_pulse("SK1", PI).dc_polygon()[1]
-    assert composite_pulse("BB1", PI).dc_polygon()[1]
-    assert not composite_pulse("primitive", PI).dc_polygon()[1]
-    assert not composite_pulse("CORPSE", PI).dc_polygon()[1]
+    """Section 9.15: the polygon closes for every amplitude-correcting family and equals (pi, 0, 0) otherwise."""
+    for family in ("SK1", "BB1", "PB1", "SCROFULOUS", "CinSK", "CinBB"):
+        assert composite_pulse(family, PI).dc_polygon()[1], family
+    for family in ("primitive", "CORPSE"):
+        poly, closed = composite_pulse(family, PI).dc_polygon()
+        assert not closed, family
+        assert poly == pytest.approx([PI, 0.0, 0.0], abs=1e-14), family
     with pytest.raises(ValueError):
         CompositePulse("BB1", PI, 0.0, 2, frozenset({"amplitude"}), ((PI, 0.0), (-PI, 0.0)))
     with pytest.raises(ValueError):
         composite_pulse("SK1", 5 * PI)  # arccos domain
     with pytest.raises(NotImplementedError):
         composite_pulse("SKn", PI, order=2)
+
+
+# ---- Appendix E's two filter-function methods (Section 6.9) --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("family", "slope"),
+    [
+        ("primitive", 2.0),
+        ("SK1", 4.0),
+        ("BB1", 4.0),
+        ("PB1", 4.0),
+        ("SCROFULOUS", 4.0),
+        ("CinSK", 4.0),
+        ("CinBB", 4.0),
+        ("CORPSE", 2.0),
+    ],
+)
+def test_filter_function_amplitude_low_frequency_slope(family: str, slope: float) -> None:
+    """Section 9.15: F_a ~ omega^2 for a family that does not correct amplitude at first order, omega^4 for one that does.
+
+    ``CompositePulse.filter_function_amplitude`` is Appendix E's method; it delegates to the exact A_l/B_l segment sum
+    of ``noise.decoupling.amplitude_filter_function`` and must agree with it element by element.
+    """
+    from qutip_trap.noise.decoupling import amplitude_filter_function, composite_segments, local_slope
+
+    cp = composite_pulse(family, PI)
+    omega = np.geomspace(1e-5, 1e-4, 4)
+    f = cp.filter_function_amplitude(omega, 1.0)
+    assert np.array_equal(f, amplitude_filter_function(composite_segments(cp, 1.0), omega))
+    assert local_slope(omega, f) == pytest.approx(slope, abs=1e-3), (family, f)
+    # the method carries the Rabi frequency: F_a is a function of omega/Omega
+    assert cp.filter_function_amplitude(2.0 * omega, 2.0) == pytest.approx(f, rel=1e-12)
+
+
+def test_dc_floor_method_fits_the_leading_coefficients_and_the_section_9_15_floors() -> None:
+    """Appendix E's ``dc_floor``: c-hat fitted numerically, cached, and combined as c-hat (2m+1)!! (<beta^2>/Omega^2)^{m+1}.
+
+    The fitted c-hats reproduce the Section 4.3.5 values to 2e-7 relative or better (SK1 4.1e-10, BB1 1.5e-7, CORPSE
+    1.6e-7 as measured here), so the floors come out at 2.5e-7 relative - the precision of the fit, not of the plan.
+    """
+    assert fitted_leading_coefficient(composite_pulse("SK1", PI), "amplitude", 4) == pytest.approx(
+        22.8302557111, rel=1e-6
+    )
+    assert fitted_leading_coefficient(composite_pulse("BB1", PI), "amplitude", 6) == pytest.approx(
+        9.388566343, rel=1e-6
+    )
+    assert fitted_leading_coefficient(composite_pulse("CORPSE", PI), "detuning", 4) == pytest.approx(
+        0.006500751892, rel=1e-6
+    )
+    var = 2.07e9 / PI  # <beta^2> in (rad/s)^2 at the Section 9.15 benchmark, Omega = 1.5e6 rad/s
+    assert composite_pulse("SK1", PI).dc_floor({"amplitude": var}, 1.5e6) == pytest.approx(
+        5.87365e-6, rel=1e-5
+    )
+    assert composite_pulse("BB1", PI).dc_floor({"amplitude": var}, 1.5e6) == pytest.approx(
+        3.53675e-9, rel=1e-5
+    )
+    assert composite_pulse("CORPSE", PI).dc_floor({"detuning": var}, 1.5e6) == pytest.approx(
+        1.67248e-9, rel=1e-5
+    )
+    # a channel the family does not correct enters at m = 0: BB1 has no detuning correction, so its detuning floor is
+    # the primitive's (c-hat = 1 at theta = pi, (2.0 + 1)!! ... m = 0 gives 1!! = 1)
+    prim = composite_pulse("primitive", PI)
+    bb1 = composite_pulse("BB1", PI)
+    assert bb1.dc_floor({"detuning": var}, 1.5e6) == pytest.approx(
+        prim.dc_floor({"detuning": var}, 1.5e6), rel=2e-3
+    )
+    # the channels add
+    both = bb1.dc_floor({"amplitude": var, "detuning": var}, 1.5e6)
+    assert both == pytest.approx(
+        bb1.dc_floor({"amplitude": var}, 1.5e6) + bb1.dc_floor({"detuning": var}, 1.5e6), rel=1e-12
+    )
+    with pytest.raises(ValueError, match="amplitude and detuning"):
+        bb1.dc_floor({"addressing": var}, 1.5e6)
+    with pytest.raises(ValueError, match="Rabi frequency"):
+        bb1.dc_floor({"amplitude": var}, 0.0)

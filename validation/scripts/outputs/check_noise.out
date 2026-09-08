@@ -21,11 +21,11 @@
   Landsman: (1/2)||E||_diamond <= sum |Theta| = 0.18 (vacuous: False); with phases (0.6, 0.5, 0.1, 0.1) the bound 1.3 > 1 is vacuous
 
 == 5. photon scattering on the single-ion 171Yb+ fixture (Section 9.7 row 8; Sections 4.5.5, 6.5)
-  derived carrier Rabi 30.278 kHz at the beams' power; rates from |0>: Rayleigh 1.5404e-02 s^-1, spin flip 1.5404e-02, leakage 8.2263e-02; Gamma_el = 7.80e-08 s^-1 (clock states)
-  96 operators at 50x the nominal intensity; sum <0|L^dag L|0> = 1.5404e+00 against 50 x (Rayleigh + flip) = 1.5404e+00
-  mesolve over 0.02 scattering events: P(flip) = 9.9007e-03 against Gamma_flip t = 1.0000e-02; recoil quanta per photon on the x mode 4.3221e-03
-  per-pulse estimates at 50x: ion0.P_raman = 7.699e-01, ion0.P_leak = 4.112e+00, ion0.P_rayleigh = 7.699e-01, ion0.rayleigh_dephasing = 1.949e-06
-  d = 3 with the SINK ('S1/2 F=0 mF=0', 'S1/2 F=1 mF=0', 'SINK'): P(SINK) = 9.9539e-03 against Gamma_leak t = 1.0004e-02; 28 operators, notes []
+  derived carrier Rabi 44.136 kHz at the beams' power; rates from |0>: Rayleigh 2.9996e-04 s^-1, spin flip 8.9482e-02, leakage 9.0894e-02; Gamma_el = 4.52e-07 s^-1 (clock states)
+  96 operators at 50x the nominal intensity; sum <0|L^dag L|0> = 4.4891e+00 against 50 x (Rayleigh + flip) = 4.4891e+00
+  mesolve over 0.02 scattering events: P(flip) = 1.9541e-02 against Gamma_flip t = 1.9933e-02; recoil quanta per photon on the x mode 4.3221e-03
+  per-pulse estimates at 50x: ion0.P_raman = 4.473e+00, ion0.P_leak = 4.544e+00, ion0.P_rayleigh = 1.509e-02, ion0.rayleigh_dephasing = 1.130e-05
+  d = 3 with the SINK ('S1/2 F=0 mF=0', 'S1/2 F=1 mF=0', 'SINK'): P(SINK) = 9.9520e-03 against Gamma_leak t = 1.0002e-02; 28 operators, notes []
 
 == 6. Ornstein-Uhlenbeck field noise heating (Section 9.16 row 4.1-3; e = m = hbar = 1, omega = 1, sigma^2 = 0.02, tau_c = 0.05)
   e^2 S_E^(1)/(4 m hbar omega) = 9.975062e-04; exact double integral <n>(200)/200 = 9.972581e-04 (ratio 0.99975; the row prints 0.99991 for its estimator)
@@ -36,7 +36,7 @@ MC: <n>(200) over 4000 classical trajectories = 0.19376 +- 0.00311 against slope
   beat note mu/2pi = 3.0601 MHz, AOM tau_r = 50 ns: 2 pi mu tau_r = 0.9613 rad, arctan = 0.7657 = the compensation 0.7657
   ideal modulator                 : fidelity 0.9999, leakage 4.49e-05
   chain with the arctan reference : fidelity 0.9999, leakage 3.31e-05
-  quantization only (zero rise)   : fidelity 0.9999, leakage 4.49e-05
+  quantization only (zero rise)   : fidelity 0.9999, leakage 4.48e-05
   (uncompensated, the response alone left 2.9e-3 leakage and 0.9970: Roos's tilt at the envelope's delayed arrival; the linear mu tau_r reference 2.2e-4)
 
 == 8. filter functions from the package machinery (Section 6.9; check_composite.py sections 10-14)

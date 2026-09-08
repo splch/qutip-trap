@@ -95,7 +95,10 @@ def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_u
     truth = fx.device.crystal.modes[3].omega_hz
     f, s = res.fitted["mode_hz"]
     assert res.converged, res.notes
-    assert s < 300.0 and abs(f - truth) < 4.0 * s, (f, s, truth)
+    # the fitted centre's uncertainty scales with the line's own width, 0.5/t_pi = Omega/2: the pin was 300 Hz while the
+    # fixture's carrier ran at 100.9 kHz and the M0a P3/2 correction of 2026-09-08 raised it by 1.4577 to 147.1 kHz, so the
+    # same scan now reads 322 Hz (300 x 1.4577 = 437). What Section 7.5 actually requires is the FM solvers' sub-kilohertz.
+    assert s < 450.0 and abs(f - truth) < 4.0 * s, (f, s, truth)
     eta, s_eta = res.fitted["eta"]
     assert abs(eta - abs(dd.etas[3])) < 4.0 * s_eta and s_eta < 0.01
     nb, s_nb = res.fitted["nbar"]
@@ -270,9 +273,11 @@ def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_th
     parabola over the compensation field crosses its minimum at -30 V/m and the residual |beta| at the null is below 1e-3."""
     dev = _rf_device(30.0)
     dk = derive_raman_drive(dev, 0, (0, 1), scattering=False).delta_k
-    assert dev.trap.micromotion_beta(dev.crystal.species[0], np.asarray(dk)).in_phase == pytest.approx(
-        0.245, abs=0.01
-    )
+    # the in-phase index is SIGNED (M1: u_1 = -(1/2) q u_0 at the adopted Mathieu origin, so a stray field contracts at the
+    # rf phase origin); Berkeland's magnitude is what this row pins, and the experiment layer reads the same product
+    beta_in = dev.trap.micromotion_beta(dev.crystal.species[0], np.asarray(dk)).in_phase
+    assert abs(beta_in) == pytest.approx(0.245, abs=0.01)
+    assert beta_in == pytest.approx(signed_beta(dev, 0, np.asarray(dk)), rel=1e-12)
     res = micromotion_scan(dev, 0, 0, {"Ex": (-60.0, 0.0)}, method="sideband_ratio", points=5)
     assert res.converged, res.notes
     null, s_null = res.fitted["shim[Ex]"]
@@ -331,6 +336,25 @@ def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field()
     assert mean_plus < signals[0.1][1], "half a linewidth to the red the mean rate is lower than on resonance"
     k_vec = np.asarray(dev.beams[beam].k_vector())
     assert signed_beta(dev, 0, k_vec) != 0.0
+    # Section 9.17, "the modulation index changes sign ... as the shim voltage crosses the compensated value": the
+    # ABSOLUTE sign, not just oddness in a hand-supplied beta. The residual field here is +20 V/m along x, compensated
+    # at Ex = -20 V/m; under the adopted rf phase origin u_1 = -(1/2) Q u_0, so sign(beta) = -sign(q_x E_x) on either
+    # side of it, and the signal (odd in beta) steps by pi with it while the fitted null does not move.
+    from qutip_trap.experiments.micromotion import device_with_compensation
+
+    q_x = float(dev.trap.mathieu(dev.crystal.species[0]).q[0, 0])
+    for shim, residual_x in ((-10.0, +10.0), (-30.0, -10.0)):
+        trial = device_with_compensation(dev, {"Ex": shim})
+        assert trial.trap.residual_field_v_per_m()[0] == pytest.approx(residual_x, rel=1e-12)
+        beta_trial = signed_beta(trial, 0, k_vec)
+        assert math.copysign(1.0, beta_trial) == -math.copysign(1.0, q_x * residual_x)
+        assert math.copysign(1.0, corr.observables(beta_trial)[0]) == math.copysign(1.0, beta_trial)
+    assert signed_beta(device_with_compensation(dev, {"Ex": -10.0}), 0, k_vec) == pytest.approx(
+        -signed_beta(device_with_compensation(dev, {"Ex": -30.0}), 0, k_vec), rel=1e-9
+    )
+    assert signed_beta(device_with_compensation(dev, {"Ex": -20.0}), 0, k_vec) == pytest.approx(
+        0.0, abs=1e-15
+    )
     res = micromotion_scan(
         dev, 0, beam, {"Ex": (-40.0, 0.0)}, method="rf_photon_correlation", points=5, rf_points=24
     )

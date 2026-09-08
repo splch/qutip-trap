@@ -83,6 +83,25 @@ def test_c0_is_exactly_one_without_rf() -> None:
     assert c0_wronskian(0.01, 0.0) == 1.0
 
 
+def test_comb_phase_per_rf_period_of_section_9_10() -> None:
+    """Section 9.10, second clause: comb phase per rf period 0.222580 against beta omega_rf T/2 = 0.222144 from the
+    pseudopotential exponent sqrt(a + q^2/2); the printed beta omega_rf T is exactly 2x, because nu = beta omega_rf/2."""
+    fc = floquet_coefficients(0.0, 0.1)
+    phase = fc.comb_phase_per_rf_period_rad()
+    assert phase == pytest.approx(0.222580, abs=5e-7)
+    assert phase == pytest.approx(fc.beta * math.pi, rel=1e-15), "nu T_rf with nu = beta omega_rf/2"
+    ppt = math.sqrt(0.0 + 0.1**2 / 2.0) * math.pi
+    assert ppt == pytest.approx(0.222144, abs=5e-7)
+    assert phase / ppt - 1.0 == pytest.approx(1.963e-3, rel=1e-2), (
+        "the O(q^4) correction to beta, not a convention"
+    )
+    assert 2.0 * phase == pytest.approx(0.445161, abs=1e-6), "the RMP's printed beta omega_rf T"
+    # a q = 0 trap has no comb at all: the phase per rf period is sqrt(a) pi exactly
+    assert floquet_coefficients(0.01, 0.0).comb_phase_per_rf_period_rad() == pytest.approx(
+        math.sqrt(0.01) * math.pi, rel=1e-12
+    )
+
+
 def test_two_constructions_of_the_floquet_function_agree() -> None:
     """The recursion null vector and the direct integration give the same Wronskian-normalized c_0 (check_c0_floquet.py)."""
     for q in (0.1, 0.3):
@@ -109,11 +128,26 @@ def test_floquet_ratios_under_the_adopted_sign() -> None:
 
 
 def test_trajectory_micromotion_ratio_q_over_2_and_second_harmonic_q2_over_32() -> None:
-    """Wineland 1998 Eq. 4: in-phase modulation of fractional amplitude q/2 (a contraction in the adopted sign), q^2/32 at 2 Omega."""
-    for q in (0.05, 0.1):
+    """Wineland 1998 Eq. 4: in-phase modulation of fractional amplitude q/2 (a contraction in the adopted sign), q^2/32
+    at 2 Omega. The ORDER of the residual is what pins the Floquet coefficients: (c_1 + c_-1)/c_0 + q/2 is O(q^3) and
+    (c_2 + c_-2)/c_0 - q^2/32 is O(q^4), so halving q shrinks them by 8x and 16x. A test with only a fixed relative band
+    (the 2 % / 5 % it replaces, five to seven times the actual deviation) would pass with an O(q^2)-wrong coefficient."""
+    d1: dict[float, float] = {}
+    d2: dict[float, float] = {}
+    for q in (0.2, 0.1, 0.05, 0.025):
         fc = floquet_coefficients(0.0, q)
-        assert (fc.ratio(1) + fc.ratio(-1)) == pytest.approx(-q / 2.0, rel=0.02)
-        assert (fc.ratio(2) + fc.ratio(-2)) == pytest.approx(q * q / 32.0, rel=0.05)
+        first = fc.ratio(1) + fc.ratio(-1)
+        second = fc.ratio(2) + fc.ratio(-2)
+        d1[q] = first + q / 2.0
+        d2[q] = second - q * q / 32.0
+        # the anchors themselves, at the deviation actually measured rather than a 5x band
+        assert first == pytest.approx(-q / 2.0, rel=0.42 * q**2)
+        assert second == pytest.approx(q * q / 32.0, rel=0.78 * q**2)
+        assert abs(d1[q]) < 0.21 * q**3, "the leading correction to -q/2 is O(q^3)"
+        assert abs(d2[q]) < 0.024 * q**4, "the leading correction to q^2/32 is O(q^4)"
+    for hi, lo in ((0.2, 0.1), (0.1, 0.05), (0.05, 0.025)):
+        assert d1[hi] / d1[lo] == pytest.approx(8.0, rel=0.03), "O(q^3): halving q shrinks the residual 8x"
+        assert d2[hi] / d2[lo] == pytest.approx(16.0, rel=0.03), "O(q^4): 16x"
 
 
 def test_sideband_weights_reduce_to_q2_over_16() -> None:

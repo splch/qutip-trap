@@ -5,8 +5,10 @@ fine-structure :class:`Level` records (energy, lifetime, hyperfine A and B, Land
 fine-structure :class:`Transition` records (vacuum wavelength, the upper level's TOTAL decay rate as an
 ordinary frequency, the fine-structure branching into the lower level), plus the designated qubit pair,
 cycling, repump and shelving transitions. Everything hyperfine-resolved (Zeeman energies, dipole matrix
-elements per sublevel, Raman couplings, scattering amplitudes) is DERIVED by ``species/atomic.py``
-(milestone M0a), never typed in; the derived methods below raise ``NotImplementedError`` until then.
+elements per sublevel, Raman couplings, scattering amplitudes) is DERIVED by ``species/zeeman.py``,
+``species/dipole.py`` and ``species/raman.py`` (milestone M0a), never typed in; the derived methods below
+delegate to them. Only ``rabi_frequency_hz`` still raises, and only for a hyperfine-resolved E2 line,
+which Section 4.5.7 does not specify (it is written for I = 0).
 
 Conventions restated (Section 13):
 
@@ -79,9 +81,20 @@ class Level:
     lifetime_systematics_s: tuple[tuple[str, float], ...] = ()
     """One-sided signed systematic corrections to ``lifetime_s`` by name; the sources never combine them in
     quadrature with the statistical error (Appendix E, Run 5 amendment; Section 4.5.7)."""
+    untabulated_branching: tuple[tuple[str, float], ...] = ()
+    """Declared decay channels of this level that carry branching but have NO ``Transition`` record:
+    (what the channel is, its branching fraction) pairs. ``Species.__post_init__`` requires the tabulated
+    branchings out of an E1-reached upper level plus these to sum to 1 within 1e-9, so an incomplete
+    branching set can never be silently renormalized to unity by the scattering sums of Section 4.5.5
+    (this is a deviation from Appendix E, recorded as ``conv.branching_deficit`` in the ledger)."""
 
     def __post_init__(self) -> None:
         level_j(self.name)  # validates the name
+        for what, fraction in self.untabulated_branching:
+            if not what:
+                raise ValueError(f"{self.name}: an untabulated decay channel must name itself")
+            if not 0.0 < fraction <= 1.0:
+                raise ValueError(f"{self.name}: untabulated branching {what!r} must lie in (0, 1]")
         if self.energy_hz < 0.0:
             raise ValueError(f"{self.name}: energy_hz must be >= 0 (measured from the ground level)")
         if self.lifetime_s is not None and self.lifetime_s <= 0.0:
@@ -219,6 +232,8 @@ class Species:
                 raise ValueError(f"{self.name} {lv.name}: a spin-zero nucleus has no hyperfine structure")
         by_name = {lv.name: lv for lv in self.levels}
         upper_branching: dict[str, float] = {}
+        e1_branching: dict[str, float] = {}
+        e1_rates: dict[str, dict[str, float]] = {}
         for tr in self.transitions:
             for end in (tr.lower, tr.upper):
                 if end not in by_name:
@@ -239,19 +254,49 @@ class Species:
                     f"{self.name}: {tr.label} gamma_hz {tr.gamma_hz:.6e} disagrees with 1/(2 pi tau) of {up.name}"
                 )
             upper_branching[tr.upper] = upper_branching.get(tr.upper, 0.0) + tr.branching
+            if tr.multipole == "E1":
+                e1_branching[tr.upper] = e1_branching.get(tr.upper, 0.0) + tr.branching
+                e1_rates.setdefault(tr.upper, {})[tr.label] = tr.gamma_hz
         for up_name, total in upper_branching.items():
             if total > 1.0 + 1e-9:
                 raise ValueError(f"{self.name}: branchings out of {up_name} sum to {total} > 1")
+        # Section 4.5.5: |c_{e->b q'}|^2 is a partial-rate FRACTION, so the tabulated E1 branchings out of an
+        # E1-reached upper level must account for all of its decay, or the level must declare the deficit.
+        for up_name, total in e1_branching.items():
+            declared = sum(f for _what, f in by_name[up_name].untabulated_branching)
+            if not math.isclose(total + declared, 1.0, rel_tol=0.0, abs_tol=1e-9):
+                raise ValueError(
+                    f"{self.name}: the E1 branchings out of {up_name} sum to {total!r} and the declared "
+                    f"untabulated channels to {declared!r}, not 1 within 1e-9; either tabulate the missing "
+                    f"transitions or declare them in {up_name}.untabulated_branching (Section 4.5.5)"
+                )
+        # Section 13: Transition.gamma_hz is the UPPER level's TOTAL rate, so every transition out of one
+        # upper level must carry the same value (raman.py's total_decay_rate_rad_s reads exactly one).
+        for up_name, rates in e1_rates.items():
+            first = next(iter(rates.values()))
+            if any(not math.isclose(g, first, rel_tol=1e-9) for g in rates.values()):
+                raise ValueError(
+                    f"{self.name}: the E1 transitions out of {up_name} disagree on its total decay rate "
+                    f"gamma_hz: {rates}"
+                )
         for lab in self.qubit:
             lv_name, _ = parse_state_label(lab)
             if lv_name not in by_name:
                 raise ValueError(f"{self.name}: qubit label {lab!r} names unknown level {lv_name!r}")
         labels = [self.cycling, *self.repumps] + ([self.shelving] if self.shelving is not None else [])
+        tabulated = {tr.label for tr in self.transitions}
         for lab in labels:
             lo_name, up_name = parse_transition_label(lab)
             for end in (lo_name, up_name):
                 if end not in by_name:
                     raise ValueError(f"{self.name}: transition label {lab!r} names unknown level {end!r}")
+            # a designated cycling / repump / shelving line must be a tabulated Transition, not just two
+            # known level names: without this, species("88Sr+").transition(cycling) raised KeyError
+            if lab not in tabulated:
+                raise ValueError(
+                    f"{self.name}: the designated transition {lab!r} has no Transition record; add it to the "
+                    f"table or move it into MISSING (tabulated: {sorted(tabulated)})"
+                )
 
     # ---- lookups -------------------------------------------------------------------------------------
 

@@ -24,7 +24,6 @@ from qutip_trap.trap.heating import (
     single_sided_from_two_sided,
     thermal_collapse_rates,
 )
-from qutip_trap.units import TWO_PI, hz_from_rad_s
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
@@ -37,7 +36,13 @@ class CollapseOp:
     """A constant operator, or a QobjEvo whose coefficient is the time-dependent amplitude (a shaped pulse's scattering,
     the white intensity-noise channel proportional to the drive term; M7)."""
     rate_hz: float
-    """The rate the operator carries under its root, as an ordinary frequency for reporting."""
+    """The rate the operator carries under its root, in s^-1 (Hz), for reporting.
+
+    Section 5.6's 2 pi rule converts ANGULAR FREQUENCIES, not rates. ndot in quanta/s, gamma_phi = 1/T_2, 2/tau and the
+    intensity-noise and scattering densities are ordinary rates already, so the six construction sites' division by
+    2 pi reported a number 6.28 times small (audit E-18). The name is Appendix E's (PLAN.md:2561) and is kept: a rate in
+    Hz IS a rate in s^-1, and what was wrong was treating the value as an angular frequency, not the label.
+    """
     channel: str
     ion: int | None
     mode: int | None
@@ -57,8 +62,8 @@ def heating_channels(
             continue
         down, up = thermal_collapse_rates(float(ndot), n_bar_bath)
         a = space.annihilation(mode)
-        out.append(CollapseOp(math.sqrt(down) * a, float(hz_from_rad_s(down)), "heating_down", None, mode))  # type: ignore[arg-type]
-        out.append(CollapseOp(math.sqrt(up) * a.dag(), float(hz_from_rad_s(up)), "heating_up", None, mode))  # type: ignore[arg-type]
+        out.append(CollapseOp(math.sqrt(down) * a, float(down), "heating_down", None, mode))
+        out.append(CollapseOp(math.sqrt(up) * a.dag(), float(up), "heating_up", None, mode))
     return tuple(out)
 
 
@@ -93,9 +98,7 @@ def qubit_dephasing_channels(
         if g <= 0.0 or not space.has_ion(ion):
             continue  # a GATE_LOCAL space carries a subset of the ions (Section 5.4)
         out.append(
-            CollapseOp(
-                math.sqrt(g / 2.0) * space.sigma_z(ion), float(g / TWO_PI), "qubit_dephasing", ion, None
-            )
+            CollapseOp(math.sqrt(g / 2.0) * space.sigma_z(ion), float(g), "qubit_dephasing", ion, None)
         )
     return tuple(out)
 
@@ -109,7 +112,7 @@ def motional_dephasing_channels(space: HilbertSpace, tau_s: Mapping[int, float])
         out.append(
             CollapseOp(
                 math.sqrt(2.0 / tau) * space.number(mode),
-                float((2.0 / tau) / TWO_PI),
+                float(2.0 / tau),
                 "motional_dephasing",
                 None,
                 mode,
@@ -127,9 +130,7 @@ def rayleigh_dephasing_channels(
         if g <= 0.0 or not space.has_ion(ion):
             continue
         out.append(
-            CollapseOp(
-                0.5 * math.sqrt(g) * space.sigma_z(ion), float(g / TWO_PI), "rayleigh_dephasing", ion, None
-            )
+            CollapseOp(0.5 * math.sqrt(g) * space.sigma_z(ion), float(g), "rayleigh_dephasing", ion, None)
         )
     return tuple(out)
 
@@ -149,11 +150,7 @@ def intensity_noise_channels(
         dens = float(densities.get(gate_id, 0.0))
         if dens <= 0.0:
             continue
-        out.append(
-            CollapseOp(
-                math.sqrt(dens) * part, float(dens / TWO_PI), f"intensity_noise[{gate_id}]", None, None
-            )
-        )
+        out.append(CollapseOp(math.sqrt(dens) * part, float(dens), f"intensity_noise[{gate_id}]", None, None))
     return tuple(out)
 
 

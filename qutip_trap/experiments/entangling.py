@@ -11,14 +11,17 @@ FIXED analysis pulse played by the single-qubit drives, and the parity's phase o
 matrices is the misalignment of the entangling axis relative to the single-qubit frame (the beam-path phase between the
 entangling and the addressing beams, which the native MS(phi_0, phi_1) definition absorbs); from |00> the scan measures the
 SUM of the two ions' offsets, from |01> (a GPi on the second ion first) their DIFFERENCE, so both per-ion corrections follow.
-All three read the populations through the observation model (``shots``, ``readout``) and report uncertainties.
+All three read the populations through the observation model (``shots``, ``readout``) and report uncertainties, and all
+three run in the frame the machine programs (``qubit_shifts_hz``, the true transition minus the table's belief per ion) at
+the mode frequencies the table believes (``mode_frequencies_hz``), never in a perfect frame at the crystal's hidden
+truth: the spin-phase corrections they write therefore carry the frame error ``run()`` will apply (Section 7.3).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -51,7 +54,19 @@ def _entangling_setup(
     if len(beams) != 2:
         raise ValueError("the entangling experiments take a Raman (two-beam) entangling drive")
     nbar: dict[int, float] = {int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()}
-    modes = kw.get("modes") or gate_modes(device, pair, (beams[0], beams[1]), nbar=nbar)
+    # the mode frequencies the machine BELIEVES (the calibrated table's), never the crystal's hidden truth (Section 7.3): the
+    # gate space and every solver these experiments run are built at them. Refuse rather than swallow: a supplied GateModes
+    # already carries its frequencies, so accepting both would discard one of them silently (M8 audit B5).
+    mode_hz = {int(k): float(v) for k, v in dict(kw.get("mode_frequencies_hz") or {}).items()}
+    supplied = kw.get("modes")
+    if supplied is not None and mode_hz:
+        raise ValueError(
+            "give the gate modes or the mode_frequencies_hz they are built from, not both: the supplied GateModes carries "
+            "its own frequencies and mode_frequencies_hz would be discarded"
+        )
+    modes = supplied or gate_modes(
+        device, pair, (beams[0], beams[1]), nbar=nbar, mode_frequencies_hz=mode_hz or None
+    )
     space = kw.get("space") or gate_space(modes, device.crystal.n_ions, nbar=nbar, waveform=waveform)
     if table is None:
         raise ValueError(
@@ -76,11 +91,33 @@ def _pops4(pops: Mapping[str, float]) -> np.ndarray:
     return np.array([pops["P00"], pops["P01"], pops["P10"], pops["P11"]], dtype=float)
 
 
+def _frame_shifts(kw: Mapping[str, Any]) -> dict[int, float]:
+    """The true transition minus the table's frame per ion (Section 7.3), the channel by which a wrong ``table.qubit_freq``
+    reaches the physics: these experiments run in the SAME imperfect frame ``run()`` will, so the corrections they write
+    include the frame error (``calibration.experiments.frame_shifts`` produces it)."""
+    return {int(k): float(v) for k, v in dict(kw.get("qubit_shifts_hz") or {}).items()}
+
+
 def _observe_pops(
     obs: Any, pops: Mapping[str, float], pair: tuple[int, int], key: str, index: int
 ) -> tuple[np.ndarray, np.ndarray | None]:
     measured, sigma = obs.joint(_pops4(pops), pair, key, index)
     return measured, sigma
+
+
+@dataclass(frozen=True, eq=False)
+class OffsetFn:
+    """tau -> fn(tau) + offset: a frequency-modulated leg's detuning shifted by a scan offset (picklable when ``fn`` is).
+
+    Section 11.3 item 9 and ``control.pulses`` require every coefficient on the pulse path to be picklable, because
+    ``SolverOptions.map`` defaults to ``"parallel"``: a lambda here made an ``ms_scan`` over detuning offsets on an FM
+    waveform unpicklable (M4 finding)."""
+
+    fn: Callable[[float], float]
+    offset: float
+
+    def __call__(self, tau: float) -> float:
+        return float(self.fn(tau)) + self.offset
 
 
 def _shift_detuning(waveform: Any, offset_hz: float) -> Any:
@@ -92,8 +129,7 @@ def _shift_detuning(waveform: Any, offset_hz: float) -> Any:
 
     def shift(v: Any, sign: float) -> Any:
         if callable(v):
-            fn = v
-            return lambda tau: float(fn(tau)) + sign * offset_hz
+            return OffsetFn(v, sign * offset_hz)
         return float(v) + sign * offset_hz
 
     segs = tuple(
@@ -121,7 +157,9 @@ def ms_scan(
     Fitted: ``closure_offset_hz`` (the leakage minimum over the offsets, a parabola fit, when three or more offsets are scanned),
     ``chi_unit_rad`` (the entangling angle at unit scale from (P00 - P11)/(P00 + P11) = cos(2 chi_1 s^2) at the closure offset) and
     ``closure_scale`` = sqrt((pi/4)/chi_1) with its uncertainty (Section 7.5 item 4); ``converged`` is False when a fit failed or the
-    closure scale lies at the edge of the scanned amplitudes.
+    closure scale lies at the edge of the scanned amplitudes. ``closure_offset_used_hz`` is the offset the scale was measured
+    at, which is the FITTED closure offset whenever the parabola converged (one extra amplitude scan is run there when the
+    scanned grid does not already carry it), so the table may apply the two together.
     """
     from qutip_trap.calibration.entangling import exact_gate_check
     from qutip_trap.control.shaping import scaled
@@ -135,7 +173,10 @@ def ms_scan(
     rows: list[tuple[float, float, float, float, float]] = []
     sig: list[np.ndarray | None] = []
     idx = 0
-    for off in offsets:
+
+    def amplitude_row(off: float) -> None:
+        """One amplitude scan at detuning offset ``off``, appended to the rows."""
+        nonlocal idx
         wf_off = _shift_detuning(waveform, off)
         for s in scales:
             check, _ = exact_gate_check(
@@ -149,11 +190,15 @@ def ms_scan(
                 options=_solver_options(kw),
                 builder_options=kw.get("builder_options"),
                 sample=kw.get("sample"),
+                qubit_shifts_hz=_frame_shifts(kw),
             )
             p, sg = _observe_pops(obs, check.populations, pair, "ms_scan", idx)
             idx += 1
             rows.append((s, off, float(p[0]), float(p[1] + p[2]), float(p[3])))
             sig.append(sg)
+
+    for off in offsets:
+        amplitude_row(off)
     data = np.array(rows)
     fitted: dict[str, tuple[float, float]] = {}
     notes: list[str] = []
@@ -188,7 +233,16 @@ def ms_scan(
             and fit.params[0] > 0.0
             and not at_scan_edge(off0, float(x.min()), float(x.max()), 0.02)
         ):
-            off_used = float(offsets[int(np.argmin(np.abs(np.asarray(offsets) - off0)))])
+            # the amplitude is measured AT the fitted closure offset, which is the offset the table then applies: with the
+            # scale taken at the nearest SCANNED offset instead, a fixture whose parabola minimum sat 222 Hz off a 2 kHz
+            # grid measured the scale at 0 Hz and applied it at +222 Hz (M8 audit B6). One extra amplitude scan when the
+            # grid does not already carry the fitted offset.
+            off_used = float(off0)
+            step = float(np.min(np.diff(np.asarray(offsets)))) if len(offsets) > 1 else 0.0
+            if min(abs(off_used - o) for o in offsets) > 1e-3 * max(step, 1.0):
+                amplitude_row(off_used)
+                data = np.array(rows)
+                sig_rows = [v for v in sig if v is not None]
         else:
             converged = False
             notes.append(
@@ -296,6 +350,7 @@ def parity_scan(
             sample=kw.get("sample"),
             analysis_drives=sq,
             analysis_stark_hz=stark,
+            qubit_shifts_hz=_frame_shifts(kw),
         )
         p, sg = _observe_pops(obs, pops, pair, "parity_scan", k)
         par = float(p[0] + p[3] - p[1] - p[2])
@@ -335,6 +390,7 @@ def parity_scan(
             options=_solver_options(kw),
             builder_options=kw.get("builder_options"),
             sample=kw.get("sample"),
+            qubit_shifts_hz=_frame_shifts(kw),
         )
         pb, sgb = _observe_pops(obs, base.populations, pair, "parity_populations", 0)
         s_pop = 0.0 if sgb is None else float(math.hypot(float(sgb[0]), float(sgb[3])))
@@ -455,6 +511,7 @@ def ms_phase_scan(
                 analysis_stark_hz=stark,
                 spin_phases_rad=sp,
                 internal=internal,
+                qubit_shifts_hz=_frame_shifts(kw),
             )
             p, sg = _observe_pops(obs, pops, pair, f"ms_phase_scan[{inp}]", k)
             par = float(p[0] + p[3] - p[1] - p[2])

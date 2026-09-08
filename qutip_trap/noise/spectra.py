@@ -36,6 +36,16 @@ class NoiseSpectrum:
     white_level: float = 0.0
     """The flat two-sided density ABOVE the tabulated band (same unit as S): the white component that Section 6.1
     routes to a Lindblad operator; 0 when the spectrum has no white part (M7)."""
+    provenance: tuple[str, ...] = ()
+    """Where this density came from: one entry per apparatus, in the form "author year, species, N ions" (Section 6.1
+    tags this **[extracted]**). Section 6.1 requires the report to say when a budget mixes machines, because "Fang's
+    614 quanta/s ... Cetina's 88(6) quanta/s ... Trout's simulated 25 quanta/s" are different traps; ``apparatus_count``
+    over every rate in play is what ``Diagnostics.approximations`` emits. Empty = undeclared, which the report says."""
+
+    @property
+    def apparatus_count(self) -> int:
+        """The number of distinct apparatus this density is stitched from (0 when undeclared)."""
+        return len(set(self.provenance))
 
     def __post_init__(self) -> None:
         w = np.asarray(self.omega_rad_s, dtype=float)
@@ -168,10 +178,16 @@ class Drift:
     servo_bandwidth_hz: float | None
     rate_per_s: float = 0.0
     """Deterministic ramp (a reference cavity in Hz/s is the dominant optical-qubit drift)."""
+    provenance: tuple[str, ...] = ()
+    """One entry per apparatus, as on ``NoiseSpectrum`` (Section 6.1 **[extracted]**)."""
 
     def __post_init__(self) -> None:
         if self.rms < 0.0 or self.tau_s <= 0.0:
             raise ValueError("rms is non-negative and the correlation time positive")
+
+    @property
+    def apparatus_count(self) -> int:
+        return len(set(self.provenance))
 
     @property
     def quiet(self) -> bool:
@@ -224,6 +240,21 @@ class Collisions:
     temperature_k: float = 300.0
     """The gas temperature that converts the pressure to a density (300 K unless the chamber is cryogenic)."""
 
+    kick_distribution: Literal["exponential", "thermal_maxwell"] = "exponential"
+    """The shape of the heating kick's energy distribution (Section 6.7: "a heating kick drawn from a configured energy
+    distribution whose scale is the neutral's thermal energy times the mass ratio, tens to thousands of quanta").
+
+    ``"exponential"`` draws E from an exponential of that mean (the maximum-entropy choice at fixed mean energy);
+    ``"thermal_maxwell"`` draws it from the chi-squared-with-3-degrees-of-freedom Maxwell energy distribution of the same
+    mean. No source quantifies the shape, so it is a device input **[background]** and the scale is the physics.
+    """
+    kick_scale_multiplier: float = 1.0
+    """Multiplies the k_B T m_gas/m_ion energy scale, for a chamber whose measured kicks depart from the Langevin estimate."""
+    reorder_permutations: tuple[tuple[int, ...], ...] = ()
+    """The configured permutation distribution of Section 6.7 ("sampled from a configured permutation distribution"),
+    as candidate orders of the ion labels; drawn uniformly. Empty = the adjacent transposition at the struck ion, the
+    single-swap default a Langevin kick most often produces."""
+
     def __post_init__(self) -> None:
         if self.pressure_pa < 0.0 or self.temperature_k <= 0.0:
             raise ValueError("pressure is non-negative and the temperature positive")
@@ -231,6 +262,11 @@ class Collisions:
             total = sum(table.values())
             if table and abs(total - 1.0) > 1e-9:
                 raise ValueError(f"{name} fractions must sum to 1, got {total}")
+        if self.kick_scale_multiplier <= 0.0:
+            raise ValueError("kick_scale_multiplier is positive")
+        for perm in self.reorder_permutations:
+            if sorted(perm) != list(range(len(perm))):
+                raise ValueError(f"reorder_permutations entries must be permutations of range(N), got {perm}")
 
 
 __all__ = [

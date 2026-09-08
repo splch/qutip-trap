@@ -43,14 +43,15 @@ from qutip_trap.validation.two_qubit_closed_forms import (
     srinivas_gradient_rabi_rad_s,
 )
 from tests.fixtures import make_detector, make_hardware, make_noise
-from tests.m4_fixtures import derived_seeds, table_with_waveform
+from tests.m4_fixtures import CA40_729_E2_BEAM, derived_seeds, table_with_waveform
 
 C_M_PER_S = 299792458.0
 
 
 def ca_light_shift_device() -> Device:
     """Two 40Ca+ ions (optical S1/2-D5/2 qubit), a counter-propagating 398.5 nm pair along x (3 THz below the S-P1/2 line, both
-    circular about B || x) for the light-shift force and a 729 nm beam along y for the E2 single-qubit pulses."""
+    circular about B || x) for the light-shift force, and the ``CA40_729_E2_BEAM`` quadrupole beam for the E2 single-qubit
+    pulses - rotated into the xy plane so that its Rabi frequency is DERIVED (200144 Hz at 166 mW) rather than supplied."""
     ca = species("40Ca+")
     trap = Trap(
         omega_hz=(3.0e6, 2.9e6, 1.0e6),
@@ -66,7 +67,7 @@ def ca_light_shift_device() -> Device:
     s = 1.0 / math.sqrt(2.0)
     b1 = Beam(lam, (1.0, 0.0, 0.0), (0.0, s, 1j * s), 200e-6, 10e-3, (0.0, 0.0, 0.0))
     b2 = Beam(lam, (-1.0, 0.0, 0.0), (0.0, s, 1j * s), 200e-6, 10e-3, (0.0, 0.0, 0.0))
-    b729 = Beam(729.348e-9, (0.0, 1.0, 0.0), (1.0, 0.0, 0.0), 200e-6, 5e-3, (0.0, 0.0, 0.0))
+    b729 = CA40_729_E2_BEAM
     return Device(
         crystal=crystal,
         trap=trap,
@@ -99,22 +100,39 @@ def ca_device():  # type: ignore[no-untyped-def]
 
 
 def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:  # type: ignore[no-untyped-def]
-    """Only the S1/2 level of the optical qubit sees the 398 nm two-photon shift (weights (-2, 0)), no Raman spin flip couples S to
-    D5/2, and the differential coupling is half the S level's self-coupling (Section 4.4.4; Zhu 2006 Eq. 2)."""
+    """Essentially only the S1/2 level of the optical qubit sees the 398 nm two-photon shift (weights (-1.99748, 0.00252)), the
+    S-to-D5/2 Raman spin flip the same beams drive is 411 THz off resonance, and the differential coupling is half the
+    difference of the two levels' self-couplings (Section 4.4.4; Zhu 2006 Eq. 2).
+
+    Four pins moved on 2026-09-08 with the 40Ca+ P-level rates (ledger conv.ca40_linewidth_reading): the S1/2 shift is set by
+    the 397/393 nm dipole elements, whose squares scale with the PARTIAL rates, and the D5/2 shift by the 854/850 nm ones.
+      - the S1/2 self-coupling -9973.1 -> -10554.4 Hz and so the differential Omega_LS/2pi 4993.0 -> 5283.8 Hz, +5.8 %:
+        the 397 nm partial rate rose 6.4 % (20.276 -> 21.569 MHz) and the 393 nm one 2.4 % (21.872 -> 22.407).
+      - level_weights (-1.99740, 0.00260) -> (-1.99748, 0.00252): the D5/2 share of the pair fell, because the 854/850 nm
+        partial rates rose only 2.4 % against the S levels' 6.4 % and 2.4 % mix.
+      - spin_flip_weight -0.17366 -> -0.16812, -3.2 %, for the same reason (an S-D product over an S-S one).
+      - the Raman rabi_hz -867.1 -> -888.3 Hz, +2.4 %, is the S-D two-photon element, which carries one 397/393 factor and
+        one 854/850 factor."""
     dev, _ent, _sq, modes = ca_device
     dn, up = two_photon_self_couplings_hz(dev, 0, (0, 1))
-    assert up == 0.0 and abs(dn) > 1e3
+    # the D5/2 level's own two-photon shift from the newly tabulated D-P dipole couplings is 1.3e-3 of the S level's
+    assert abs(dn) > 1e3 and abs(up) < 2e-3 * abs(dn)
     ls = derive_light_shift_drive(dev, 0, (0, 1), scattering=False)
     assert ls.kind == "light_shift" and ls.light_shift is not None
-    assert ls.rabi_hz == pytest.approx(-dn / 2.0)
-    assert ls.light_shift.level_weights == pytest.approx((-2.0, 0.0))
-    assert ls.light_shift.spin_flip_weight == 0.0
-    assert ls.light_shift.qubit_freq_hz == pytest.approx(C_M_PER_S / 729.348e-9, rel=1e-3)
-    assert ls.stark_shift_hz == pytest.approx(-dn.real, rel=1e-6), (
-        "the static shift delta(D) - delta(S) = -delta(S) is minus the two beams' two-photon self-coupling of S (equal beams)"
+    assert ls.rabi_hz == pytest.approx((up - dn) / 2.0)
+    assert dn == pytest.approx(-10554.4, rel=1e-4) and up == pytest.approx(13.311, rel=1e-3)
+    assert ls.light_shift.level_weights == pytest.approx((-1.997481, 0.002519), abs=1e-6)
+    assert ls.light_shift.level_weights[1] - ls.light_shift.level_weights[0] == pytest.approx(2.0, rel=1e-12)
+    assert ls.light_shift.spin_flip_weight == pytest.approx(-0.16812, rel=1e-3), (
+        "the same beams drive an S-D two-photon matrix element, 411 THz off resonance (excitation ~1e-23)"
     )
+    assert ls.light_shift.qubit_freq_hz == pytest.approx(C_M_PER_S / 729.348e-9, rel=1e-3)
+    assert ls.stark_shift_hz == pytest.approx((up - dn).real, rel=1e-6), (
+        "the static shift delta(D) - delta(S) is the difference of the two levels' two-photon self-couplings (equal beams)"
+    )
+    assert ls.stark_shift_hz == pytest.approx(10567.7, rel=1e-4)
     rr = derive_raman_drive(dev, 0, (0, 1), scattering=False)
-    assert rr.rabi_hz == 0.0
+    assert rr.rabi_hz == pytest.approx(-888.3, rel=2e-2)
     assert modes.modes == (X_ROCK, X_COM) and abs(modes.eta[0][1]) == pytest.approx(0.1448, abs=1e-3)
     drive = light_shift_drive(ls, beat_hz=2.98e6)
     assert (
@@ -133,10 +151,11 @@ def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:  # type
 
 def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> None:  # type: ignore[no-untyped-def]
     """The drive term is (1/2) Omega_LS e^{-i(mu t - phi)} [w_dn P_0 + w_up P_1] (x) D + h.c. = Omega_LS cos(...) [sigma_z + (w_up + w_dn)/2] (x) D:
-    at t = 0 with phi = 0 the Hamiltonian's spin part on ion 0 is -2 Omega_LS P_0 (x) (D + D^dag)/2."""
+    at t = 0 with phi = 0 the Hamiltonian's spin part on ion 0 is Omega_LS (w_dn P_0 + w_up P_1) (x) (D + D^dag)/2."""
     dev, _ent, _sq, _modes = ca_device
     ls = derive_light_shift_drive(dev, 0, (0, 1), scattering=False)
     omega_ls = TWO_PI * abs(ls.rabi_hz)
+    w_dn, w_up = ls.light_shift.level_weights  # type: ignore[union-attr]
     from qutip_trap.control.pulses import Pulse
 
     drive = light_shift_drive(ls, beat_hz=2.98e6, include_stark=False)
@@ -146,9 +165,10 @@ def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> 
     )
     h0 = built.H(0.0)
     d_op = space.displacement_factor(X_COM, ls.etas[X_COM])
-    expected = TWO_PI * dev.crystal.modes[X_COM].omega_hz * space.number(X_COM) + (
-        -2.0 * omega_ls
-    ) * space.embed_many({0: qt.basis(2, 0).proj(), 2: 0.5 * (d_op + d_op.dag())})
+    force = complex(w_dn) * qt.basis(2, 0).proj() + complex(w_up) * qt.basis(2, 1).proj()
+    expected = TWO_PI * dev.crystal.modes[X_COM].omega_hz * space.number(X_COM) + omega_ls * space.embed_many(
+        {0: force, 2: 0.5 * (d_op + d_op.dag())}
+    )
     assert (h0 - expected).norm() < 1e-9 * expected.norm()
     assert not any("spin flip" in a and "keeps" in a for a in built.approximations)
 
@@ -158,10 +178,13 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignor
     the optical qubit; the sign follows the detuning side; the exact spot check calibrates the pulse angle; the AM solver closes the
     rocking mode for a light-shift force too."""
     dev, ent, sq, modes = ca_device
-    # the fixture's 729 nm E2 Rabi frequency is a supplied value (the quadrupole coupling of this beam geometry derives to 0, so
-    # the played chain plays the request as physical and says so); the E2 drive has no differential light shift
-    rabi = {(0, 2): 200e3, (1, 2): 200e3}
-    stark = derived_seeds(dev, sq)[1]
+    # every number the table carries for the 729 nm E2 echo pulses is DERIVED from the beam's geometry and power
+    # (200144 Hz at 166 mW in a 200 um waist), so the played chain of M8 (requested -> physical) is the identity here
+    # and the fixture's 200 kHz is delivered rather than supplied; the E2 drive has no differential light shift
+    rabi, stark = derived_seeds(dev, sq)
+    assert rabi[(0, 2)] == pytest.approx(2.00144e5, rel=1e-4), (
+        "the derived E2 Rabi frequency, not a supplied one"
+    )
     wf = Waveform.symmetric(
         modes,
         gate_mode=X_COM,
@@ -174,9 +197,19 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignor
     assert wf.kind == "light_shift" and wf.segments is not None and wf.segments[0].legs == ("blue",)
     assert wf.chi_total_rad < 0.0
     space = gate_space(modes, 2, waveform=wf)
+    plain = gate_space(modes, 2, waveform=wf, force_weight=1.0)
+    assert [t.d for t in space.resolved] >= [t.d for t in plain.resolved]
+    assert space.dims != plain.dims, (
+        "the light-shift force operator's spectral radius is 2 for weights (-2, 0), so the cap the excursion asks for is "
+        "larger than the +-1 assumption's (M4 finding)"
+    )
     table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
-    check, _ = exact_gate_check(
+    check, trace = exact_gate_check(
         dev, wf, (0, 1), ent, table, space=space, chi_target_rad=math.pi / 8, single_qubit_drives=sq
+    )
+    assert max(trace.boundary_population.values()) < 1e-10, (
+        "the Fock cap holds the sigma_z force's excursion, which is TWICE the +-1 assumption of the closed-form "
+        "trajectory for level weights (-2, 0) (control.shaping.LIGHT_SHIFT_FORCE_WEIGHT)"
     )
     assert 0.85 < check.chi_rad / (math.pi / 8) < 0.95, (
         "the surrogate over-predicts the angle by the Debye-Waller corrections at eta = 0.145"
@@ -233,17 +266,22 @@ def test_baldwin_echo_gives_diag_1_i_i_1() -> None:
     omega = ratio * delta / eta
     u = baldwin_echo_unitary(eta, omega, delta, d=24)
     target = np.diag([1.0, 1j, 1j, 1.0])
-    assert equal_up_to_global_phase(u, target, atol=2e-5) or equal_up_to_global_phase(
-        u, target.conj(), atol=2e-5
+    # ONE sign, not a disjunction: for tones ABOVE the mode (delta > 0 here) the echo gives the CONJUGATE of the
+    # paper's printed diag(1, i, i, 1), which is what ledger anchor.m4.baldwin_echo records; the printed sign is the
+    # other detuning side, and asserting it here is the negative control
+    assert equal_up_to_global_phase(u, target.conj(), atol=2e-5)
+    assert not equal_up_to_global_phase(u, target, atol=1e-2), (
+        "the two detuning sides are distinguishable: the disjunction the first pass asserted was blind to a sign error"
     )
+    below = baldwin_echo_unitary(eta, omega, -delta, d=24)
+    assert equal_up_to_global_phase(below, target, atol=2e-5), "tones below the mode give the printed sign"
     assert baldwin_loop_phase(eta, omega, delta) == pytest.approx(2.0 * math.pi / 32.0)
     assert 4.0 * baldwin_loop_phase(eta, omega, delta) == pytest.approx(math.pi / 4.0), (
         "8 pi (eta Omega/delta)^2 over the two echo loops"
     )
-    # which sign the detuning side gives
-    assert equal_up_to_global_phase(u, native_zz(math.pi / 2), atol=2e-5) or equal_up_to_global_phase(
-        u, native_zz(-math.pi / 2), atol=2e-5
-    )
+    # which sign the detuning side gives, as one value
+    assert equal_up_to_global_phase(u, native_zz(-math.pi / 2), atol=2e-5)
+    assert equal_up_to_global_phase(below, native_zz(math.pi / 2), atol=2e-5)
 
 
 def test_ballance_srinivas_hughes_closed_forms() -> None:

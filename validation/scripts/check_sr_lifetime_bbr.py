@@ -2,7 +2,11 @@
 import numpy as np
 
 h, hbar, kB, c = 6.62607015e-34, 1.054571817e-34, 1.380649e-23, 299792458.0
-lam_PD = 1032.7309e-9      # m, D5/2 - P3/2, NIST JPCRD Table 2 (10 327.309 A, air) 
+# Section 13 / PLAN.md 4.5.7: lambda is the VACUUM wavelength. NIST JPCRD Table 2 prints the AIR value
+# 10 327.309 A; the vacuum wavelength from the NIST ASD levels 4d 2D5/2 = 14 836.24 cm^-1 and
+# 5p 2P3/2 = 24 516.65 cm^-1 is 1e7/9680.41 = 1033.0141 nm (276 ppm larger, so hbar*omega/kT shifts by
+# 276 ppm and n_bar by 1.4%; immaterial to the eleven-orders-of-magnitude conclusion, but the convention).
+lam_PD = 1033.0141e-9      # m, D5/2 - P3/2 VACUUM (air 1032.7309 nm, NIST JPCRD Table 2)
 A_PD   = 8.7e6             # s^-1, NIST JPCRD Table 2 ref 67GAL; same value used in thesis Sec 5.6.2/5.6.3
 JP, JD = 1.5, 2.5
 b      = 0.06              # branch from 5p P3/2 back to 4d D5/2 (so (1-b) leaves the shelf)

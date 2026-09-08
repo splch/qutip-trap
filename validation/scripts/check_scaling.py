@@ -104,8 +104,9 @@ for label, eta, gap in (("eta = 1e-3, 2 kHz from the tone", 1e-3, 2e3), ("eta = 
     wf = Waveform.symmetric(modes, gate_mode=0, epsilon_hz=20e3, duration_s=100e-6, all_modes=False)
     cc = waveform_contributions(wf, modes, (0, 1))[1]
     cls = classify(cc, coupled=True, freeze_alpha_max=OPTS.freeze_alpha_max, freeze_chi_max_rad=OPTS.freeze_chi_max_rad)
-    cls_uncoupled = classify(cc, coupled=False, freeze_alpha_max=OPTS.freeze_alpha_max, freeze_chi_max_rad=OPTS.freeze_chi_max_rad)
-    print(f"  {label}: |alpha|^2 (2n+1) = {cc.alpha2_weighted:.2e}, |chi| = {cc.chi_rad:.2e} rad, loop radius {cc.radius:.4f} -> {cls} (a mode no pulse couples to would be {cls_uncoupled})")
+    print(f"  {label}: |alpha|^2 (2n+1) = {cc.alpha2_weighted:.2e}, |chi| = {cc.chi_rad:.2e} rad, loop radius {cc.radius:.4f} -> {cls} (drop pair 1e-6 / 1e-4, freeze pair {OPTS.freeze_alpha_max:g} / {OPTS.freeze_chi_max_rad:g})")
+# Section 5.2 line 822: the contribution pair decides alone, and the coupling test decides ONLY a mode no entangling gate touches
+print(f"  a mode with no entangling contribution at all: {classify(None, coupled=True, freeze_alpha_max=OPTS.freeze_alpha_max, freeze_chi_max_rad=OPTS.freeze_chi_max_rad)} when some drive couples to it (its Debye-Waller factor is what the carrier sees), {classify(None, coupled=False, freeze_alpha_max=OPTS.freeze_alpha_max, freeze_chi_max_rad=OPTS.freeze_chi_max_rad)} when none does")
 print(f"  tone at {mu_tone / 1e6:.6f} MHz for the x-COM at 3.0 MHz (inside detuning, eps = 20 kHz); amplitude {float(wf0.segments[0].amplitude_hz[(0, 'blue')]) / 1e3:.3f} kHz")  # type: ignore[arg-type]
 
 section("3. the frozen spectators' off-resonant excitation bound and the detuning guard (Section 5.2)")

@@ -46,6 +46,31 @@ jobs:
         run: uv run python tools/docs_from_ledger.py --check
       - name: pytest
         run: uv run pytest
+      - name: convergence tests (Section 5.5 / 9.9) as a junit report for the convergence-report artifact
+        if: always()
+        run: |
+          mkdir -p validation/report
+          uv run pytest -m convergence --junitxml=validation/report/convergence_tests.xml -q
+      - name: Upload the convergence-test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: convergence-tests
+          path: validation/report/convergence_tests.xml
+
+  release:
+    name: the 0.1.0 release checks - `uv build` and the import without the dev group (M10)
+    needs: validation-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: build the wheel and the sdist
+        run: uv build --out-dir dist
+      - name: the public API imports without the dev group (Appendix E)
+        run: uv run --no-dev python -c "import qutip_trap.api as a; print(len(a.__all__), 'public names')"
 
   gui:
     name: Flet extra installs and `flet doctor` passes (M0)

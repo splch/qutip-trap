@@ -113,6 +113,20 @@ class MultiLevelOptions:
     """A beam addresses a transition when |omega_b - omega_LU| < address_window x omega_LU."""
     beam_phases_rad: tuple[float, ...] = ()
     """Optical phase of each beam at the ion (default 0); only relative phases between beams on one transition matter."""
+    laser_linewidth_rad_s: tuple[float, ...] = ()
+    """delta omega_L of each beam (FWHM, angular): the phase-diffusion rate its light puts on the optical coherences.
+
+    Empty (the default) means an ideal monochromatic laser. Section 8.1 requires "-(gamma/2 + delta omega_L/2) on
+    optical coherences": the Lindblad form supplies -gamma/2 by itself, and a nonzero entry here adds the missing
+    -delta omega_L/2 as one phase-diffusion collapse operator per beam,
+
+        C_b = sqrt(delta omega_L,b / 4) (P_upper(b) - P_lower(b)),
+
+    the projector difference on the manifolds beam b connects (Berkeland and Boshier, Phys. Rev. A 65, 033413 (2002)
+    Eq. 12: a Lorentzian laser spectrum of full width delta omega_L is a Wiener phase whose Lindblad generator damps
+    the driven transition's coherence at delta omega_L/2 and leaves every population and every within-manifold
+    coherence untouched). This is the constant-rate Lorentzian of Section 8.1, not the laser's spectrum as a
+    spectral density, which Section 12 grants may be omitted."""
 
     def __post_init__(self) -> None:
         if self.recoil_nodes < 3:
@@ -121,6 +135,8 @@ class MultiLevelOptions:
             raise ValueError("address_window is a fraction of the transition frequency in (0, 1)")
         if self.frame_tolerance_rad_s <= 0.0:
             raise ValueError("frame_tolerance_rad_s is positive")
+        if any(w < 0.0 for w in self.laser_linewidth_rad_s):
+            raise ValueError("a laser linewidth is non-negative")
 
 
 # ---- records --------------------------------------------------------------------------------------------------------------
@@ -214,6 +230,11 @@ class MultiLevelBuild:
     mode: ModeSpec | None
     options: MultiLevelOptions
     n_beams: int
+    dephasing_slice: tuple[int, int] = (0, 0)
+    """[start, stop) of the laser-linewidth phase-diffusion operators in ``c_ops`` (empty when no linewidth is given).
+
+    They are Lindblad operators like the decay ones, but they carry no photon and no recoil, so the decay sum rule of
+    Section 4.2.8 excludes them (``decay_sum_rule_residual``) and no ``EmissionChannel`` claims them."""
 
     # ---- bookkeeping ---------------------------------------------------------------------------------------
 
@@ -810,6 +831,42 @@ def build_multilevel(
                 f"{up}: decay outside the included states ({np.max(deficit) / TWO_PI:.4g} Hz) routed to the sink state"
             )
 
+    # ---- laser linewidth on the optical coherences (Section 8.1; Berkeland and Boshier 2002 Eq. 12) ----
+    dephasing_start = len(c_ops)
+    if opts.laser_linewidth_rad_s:
+        if len(opts.laser_linewidth_rad_s) != len(beams):
+            raise ValueError("laser_linewidth_rad_s has one entry per beam")
+        for b, width in enumerate(opts.laser_linewidth_rad_s):
+            if width <= 0.0:
+                continue
+            addressed = addressed_transitions(st, beams[b], level_order, opts.address_window)
+            if not addressed:
+                continue
+            weight = np.zeros(n_int)
+            for lo, up in addressed:
+                for d in dressed_by_level.get(up, []):
+                    weight[idx[d.full_label]] += 1.0
+                for d in dressed_by_level.get(lo, []):
+                    weight[idx[d.full_label]] -= 1.0
+            if not np.any(weight != 0.0):
+                continue
+            op_int = qt.Qobj(np.diag(math.sqrt(0.25 * width) * weight), dims=[[n_int], [n_int]])
+            c_ops.append(embed(op_int).to("CSR"))
+            approximations.append(
+                f"beam {b}: laser linewidth {width / TWO_PI:.4g} Hz added as phase diffusion on its optical "
+                "coherences (-delta omega_L/2; Section 8.1, Berkeland and Boshier 2002 Eq. 12), a constant "
+                "Lorentzian rate and not the laser's spectrum (Section 12) [background]"
+            )
+        if any(
+            width > 0.0 and len(addressed_transitions(st, beams[b], level_order, opts.address_window)) > 1
+            for b, width in enumerate(opts.laser_linewidth_rad_s)
+        ):
+            approximations.append(
+                "a beam addressing several transitions gets ONE phase-diffusion operator over the union of its "
+                "manifolds: exact for the coherences it drives, and a level that is both an upper and a lower of "
+                "that beam cancels out of it [background]"
+            )
+
     h_static = h_static.to("CSR")
     H: qt.Qobj | qt.QobjEvo = qt.QobjEvo([h_static, *terms]) if terms else h_static
     return MultiLevelBuild(
@@ -826,6 +883,7 @@ def build_multilevel(
         mode=mode,
         options=opts,
         n_beams=len(beams),
+        dephasing_slice=(dephasing_start, len(c_ops)),
     )
 
 
@@ -834,10 +892,13 @@ def decay_sum_rule_residual(build: MultiLevelBuild) -> float:
 
     Zero to round-off under ``sink`` and ``renormalize``; under ``include`` it reports the dropped (untabulated) share.
     """
-    if not build.c_ops:
+    decay = [
+        c for k, c in enumerate(build.c_ops) if not build.dephasing_slice[0] <= k < build.dephasing_slice[1]
+    ]
+    if not decay:
         return 0.0
-    total = build.c_ops[0].dag() * build.c_ops[0]
-    for c in build.c_ops[1:]:
+    total = decay[0].dag() * decay[0]
+    for c in decay[1:]:
         total = total + c.dag() * c
     if build.space is not None:
         tot = np.asarray(total.full()).reshape(build.space.dims + build.space.dims)

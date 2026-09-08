@@ -46,6 +46,13 @@ M2 = "milestone M2 (hilbert/, PLAN.md Section 5.1)"
 ORACLE_MIN_MARGIN = 4
 """The smallest margin the Section 5.1.1 table covers (its d = 8 row); below it the oracle is reported, not asserted."""
 
+IDENTITY_CHECK_MAX_DIMENSION = 1 << 16
+"""Above this joint dimension ``check()`` asserts shape == prod(dims) arithmetically over the FACTOR shapes instead of forming
+``qt.tensor(*factor_identities())`` (M9b audit B2). The Kronecker product's shape is the product of its factors' shapes, so the
+two assertions are the same statement; the tensor is what costs O(D) non-zeros, which is what Section 11.5's guard exists to
+prevent - measured 64 MB at D = 4.2e6 and, for the eight-ion eight-mode case Section 5.4 cites, about 86 GB inside ``check()``,
+dying before the guard could reroute the run to GATE_LOCAL."""
+
 ModeClass = Literal["resolved", "enr", "frozen"]
 
 
@@ -121,6 +128,12 @@ class HilbertSpace:
     """The DEVICE ion carried by each ion factor, in factor order (M9a, GATE_LOCAL): a space over a subset of the crystal's
     ions names them here, so that every ``ion`` argument of this class and of the builder is a device index (a position in
     ``Crystal``), never a factor position; empty = the identity (0, 1, ..., n_ions - 1), the JOINT_EXACT case."""
+    dropped: tuple[int, ...] = ()
+    """The subset of ``frozen`` that Section 5.2 DROPPED rather than froze: |alpha_m|^2 (2 n_m + 1) < 1e-6 and |chi_m| < 1e-4,
+    "nothing absorbs a dropped mode's loss". Like a frozen mode it has no tensor factor and never enters the drive operators,
+    but unlike one it gets no Debye-Waller factor (``dynamics.hamiltonian``) and no Fock branch (``run.job``): it evolves
+    freely and is not modelled at all, so ``SpaceSelection.dropped_contribution`` reports a loss the run really does not
+    incur (Section 11.3 item 2; 9.8 row 3). Empty by default, so every space built before M6's fix froze what it dropped."""
 
     def __post_init__(self) -> None:
         self.check()
@@ -128,7 +141,16 @@ class HilbertSpace:
     # ---- bookkeeping ---------------------------------------------------------------------------------------------
 
     def check(self) -> None:
-        """The Section 5.1 invariants, including shape == prod(dims) on the product factors and the ENR shape rule."""
+        """The Section 5.1 invariants: exactly one class per mode, and shape == prod(dims) with the ENR factor's
+        C(M + N_exc, N_exc) shape read from the Qobj and never from ``dims``.
+
+        Every invariant here is arithmetic, and nothing allocates the JOINT space unless it is small enough for the
+        assertion to be free (``IDENTITY_CHECK_MAX_DIMENSION``). Section 11.5's monitor "refuses to build" joint spaces
+        above its guards, and it cannot refuse after ``__post_init__`` has already formed an O(D) identity (M9b audit B2:
+        the guard ran after the allocation, so the eight-ion eight-mode case of Section 5.4 would have died inside
+        ``check()`` at about 86 GB instead of being routed to GATE_LOCAL). A Kronecker product's shape is the product of
+        its factors' shapes, so the assertion this keeps is the same statement as the one it skips.
+        """
         if not self.ion_dims or any(d < 2 for d in self.ion_dims):
             raise ValueError("every ion is a qudit of dimension >= 2")
         if self.ions:
@@ -142,18 +164,26 @@ class HilbertSpace:
         all_modes = resolved + enr_modes + frozen
         if len(set(all_modes)) != len(all_modes):
             raise ValueError("a mode is resolved, in the ENR group or frozen, never in two classes")
+        if not set(self.dropped) <= set(frozen):
+            raise ValueError(
+                "dropped names the subset of frozen that Section 5.2 dropped (no Debye-Waller factor, no Fock branch); "
+                f"{sorted(set(self.dropped) - set(frozen))} are not frozen modes of this space"
+            )
         if any(m < 0 for m in all_modes):
             raise ValueError("mode indices are positions in Crystal.modes and non-negative")
         if self.enr_group is not None and (not enr_modes or self.enr_group[1] < 0):
             raise ValueError("an ENR group names at least one mode and a non-negative excitation cap")
-        # the Qobj shape assertions (Section 5.1): product factors multiply, the ENR factor is one C(M + N_exc, N_exc) block
-        ident = self.identity()
-        if ident.shape[0] != self.dimension or ident.shape[1] != self.dimension:
-            raise ValueError(f"joint identity has shape {ident.shape}, expected {self.dimension}")
+        # the Qobj shape assertions (Section 5.1): the ENR factor is one C(M + N_exc, N_exc) block - the one place where the
+        # product of ``dims`` disagrees with ``shape`` - and the product factors multiply out to the joint dimension
         if self.enr_group is not None:
             n_modes, n_exc = len(self.enr_group[0]), self.enr_group[1]
-            if self.enr_identity().shape[0] != enr_dimension(n_modes, n_exc):
+            d_enr = enr_dimension(n_modes, n_exc)
+            if d_enr <= IDENTITY_CHECK_MAX_DIMENSION and self.enr_identity().shape[0] != d_enr:
                 raise ValueError("ENR factor shape disagrees with C(M + N_exc, N_exc)")
+        if self.dimension <= IDENTITY_CHECK_MAX_DIMENSION:
+            ident = self.identity()
+            if ident.shape[0] != self.dimension or ident.shape[1] != self.dimension:
+                raise ValueError(f"joint identity has shape {ident.shape}, expected {self.dimension}")
 
     @property
     def n_ions(self) -> int:
@@ -256,8 +286,28 @@ class HilbertSpace:
             ops.append(self.enr_identity())
         return ops
 
+    def with_space_dims(self, op: qt.Qobj) -> qt.Qobj:
+        """``op`` relabelled with this space's ``dims``: the ENR group is ONE tensor factor of dimension C(M + N_exc, N_exc).
+
+        QuTiP's ``enr_*`` constructors report the group's per-mode dims (n_exc + 1 each), whose product disagrees with the
+        shape; a ``QobjEvo`` refuses to combine terms whose dims differ, so every joint operator and state this space hands
+        out carries the one convention the factorized drive kernel already uses (Section 5.1.1). Data is shared, not copied.
+        """
+        if self.enr_group is None:
+            return op
+        d = self.dims
+        if op.isket:
+            dims = [d, [1]]
+        elif op.isbra:
+            dims = [[1], d]
+        else:
+            dims = [d, d]
+        if op.dims == dims:
+            return op
+        return qt.Qobj(op.data, dims=dims)
+
     def identity(self) -> qt.Qobj:
-        return qt.tensor(*self.factor_identities())
+        return self.with_space_dims(qt.tensor(*self.factor_identities()))
 
     def embed(self, op: qt.Qobj, factor: int) -> qt.Qobj:
         """``op`` on one tensor factor, identities elsewhere (CSR)."""
@@ -269,7 +319,7 @@ class HilbertSpace:
                 f"operator shape {op.shape} does not fit factor {factor} of shape {ops[factor].shape}"
             )
         ops[factor] = op
-        return qt.tensor(*ops).to("CSR")
+        return self.with_space_dims(qt.tensor(*ops).to("CSR"))
 
     def embed_many(self, ops_by_factor: Mapping[int, qt.Qobj]) -> qt.Qobj:
         ops = self.factor_identities()
@@ -277,7 +327,7 @@ class HilbertSpace:
             if op.shape != ops[f].shape:
                 raise ValueError(f"operator shape {op.shape} does not fit factor {f}")
             ops[f] = op
-        return qt.tensor(*ops).to("CSR")
+        return self.with_space_dims(qt.tensor(*ops).to("CSR"))
 
     def sigma_plus(self, ion: int) -> qt.Qobj:
         """|1><0| on DEVICE ion ``ion`` (raising the lower qubit level to the upper), identities elsewhere."""
@@ -530,8 +580,8 @@ class HilbertSpace:
                 raise ValueError("no state given for the ENR group (key -1)")
             parts.append(motional[-1])
         if all(p.isket for p in parts):
-            return qt.tensor(*parts)
-        return qt.tensor(*[p if p.isoper else qt.ket2dm(p) for p in parts])
+            return self.with_space_dims(qt.tensor(*parts))
+        return self.with_space_dims(qt.tensor(*[p if p.isoper else qt.ket2dm(p) for p in parts]))
 
     def initial_state(
         self,
@@ -702,7 +752,7 @@ class HilbertSpace:
         if self.enr_group is not None and mode in self.enr_group[0]:
             return self.grown_enr(add)
         res = tuple(m.grown(add) if m.mode == mode else m for m in self.resolved)
-        return HilbertSpace(self.ion_dims, res, self.enr_group, self.frozen, self.ions)
+        return HilbertSpace(self.ion_dims, res, self.enr_group, self.frozen, self.ions, self.dropped)
 
     def grown_enr(self, add: int) -> HilbertSpace:
         """A copy with the ENR group's excitation cap N_exc raised by ``add`` (Section 5.5 on the top ENR shell)."""
@@ -711,7 +761,9 @@ class HilbertSpace:
         if add <= 0:
             raise ValueError("grow by a positive number of excitations")
         modes, n_exc = self.enr_group
-        return HilbertSpace(self.ion_dims, self.resolved, (modes, n_exc + add), self.frozen, self.ions)
+        return HilbertSpace(
+            self.ion_dims, self.resolved, (modes, n_exc + add), self.frozen, self.ions, self.dropped
+        )
 
     @classmethod
     def for_(

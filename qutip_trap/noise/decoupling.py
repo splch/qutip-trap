@@ -39,7 +39,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -296,9 +296,91 @@ def double_factorial_odd(m: int) -> int:
 
 
 def dc_floor(c_hat: float, order: int, beta_variance: float, omega_rad_s: float) -> float:
-    """c^_{m+1} (2m + 1)!! (<beta^2>/Omega^2)^{m+1}: the frozen-noise floor of an mth-order sequence (Section 6.9)."""
+    """c^_{m+1} (2m + 1)!! (<beta^2>/Omega^2)^{m+1}: the frozen-noise floor of an mth-order sequence (Section 6.9).
+
+    ``beta_variance`` must be in the SAME normalization as the c_hat it is paired with. ``leading_coefficient`` fits
+    c_hat against Mount's (eps_a, eps_d), for which eps_a = beta_a/Omega but eps_d = 2 beta_d/Omega (beta_d being half
+    the splitting fluctuation, Section 6.9); ``filter_function`` therefore passes 4 <beta_d^2> on the detuning channel.
+    """
     rel = beta_variance / omega_rad_s**2
     return c_hat * double_factorial_odd(order) * rel ** (order + 1)
+
+
+def frozen_noise_infidelity(
+    segs: Sequence[ControlSegment], beta_rad_s: float, quadrature: Quadrature = "dephasing"
+) -> float:
+    """1 - (1/4)|Tr(U_c^dag U)|^2 for a control held under a CONSTANT noise field beta (Section 6.9's dc limit).
+
+    Exact to all Magnus orders, which is the point: the first-order filter function under-estimates the error for
+    omega/Omega << 1 precisely because it drops the higher orders that survive when the noise is frozen. The noise
+    enters as Section 6.9's H_0 = beta . sigma with NO factor 1/2 on the Pauli vector: beta_z = beta for the dephasing
+    quadrature (beta being half the splitting fluctuation) and beta_a rho^(phi_l)/2 for the amplitude one, so an
+    amplitude beta is a fractional Rabi error beta/Omega. An instantaneous pulse (duration 0) is a bang-bang delta
+    that the frozen field cannot act during, so it contributes its bare rotation.
+    """
+    if quadrature == "universal":
+        raise ValueError(
+            "the frozen-noise limit is evaluated one quadrature at a time (dephasing or amplitude)"
+        )
+    u = np.eye(2, dtype=complex)
+    uc = np.eye(2, dtype=complex)
+    for seg in segs:
+        s_phi = math.cos(seg.phi_rad) * _SX + math.sin(seg.phi_rad) * _SY
+        if seg.is_instantaneous:
+            block_c = rotation(seg.theta_rad, seg.phi_rad)
+            block = block_c
+        else:
+            h_c = 0.5 * seg.omega_rad_s * s_phi if not seg.is_free else np.zeros((2, 2), dtype=complex)
+            h_0 = beta_rad_s * _SZ if quadrature == "dephasing" else 0.5 * beta_rad_s * s_phi
+            if seg.is_free and quadrature == "amplitude":
+                h_0 = np.zeros((2, 2), dtype=complex)  # no drive, no amplitude noise
+            block_c = _expm_hermitian2(h_c, seg.duration_s)
+            block = _expm_hermitian2(h_c + h_0, seg.duration_s)
+        u = block @ u
+        uc = block_c @ uc
+    return float(1.0 - abs(np.trace(uc.conj().T @ u)) ** 2 / 4.0)
+
+
+def frozen_noise_floor(
+    segs: Sequence[ControlSegment],
+    beta_variance: float,
+    quadrature: Quadrature = "dephasing",
+    *,
+    nodes: int = 41,
+) -> float:
+    """<1 - F> over a zero-mean Gaussian frozen beta of variance ``beta_variance``, by Gauss-Hermite quadrature.
+
+    The dc floor of Section 6.9 without a fitted c_hat: for a ``DecouplingSequence`` or a ``Schedule`` no source
+    supplies one, and the plan's own recipe (ĉ_{m+1}(2m+1)!!<beta^2>^{m+1}) is only the leading term of this average.
+    Reproduces the composite-pulse ĉ floors to 5e-4 relative in their stated regime (``tests/test_m7_dc_floor.py``).
+    """
+    if beta_variance < 0.0:
+        raise ValueError("a variance is non-negative")
+    if beta_variance == 0.0:
+        return 0.0
+    x, w = np.polynomial.hermite_e.hermegauss(int(nodes))
+    w = w / float(np.sum(w))
+    sigma = math.sqrt(beta_variance)
+    vals = np.array([frozen_noise_infidelity(segs, sigma * float(xi), quadrature) for xi in x])
+    return float(np.sum(w * vals))
+
+
+def _expm_hermitian2(h: np.ndarray, t: float) -> np.ndarray:
+    """exp(-i t h) for a TRACELESS Hermitian 2x2 h, in closed form: cos(|v| t) 1 - i sin(|v| t) (v_hat . sigma).
+
+    Every h this module builds is a real combination of sigma_x, sigma_y and sigma_z (a drive term plus a frozen noise
+    term), so writing h = v . sigma gives the exact Pauli exponential and the Gauss-Hermite average of
+    ``frozen_noise_infidelity`` needs no matrix exponential at all - 41 nodes x the segment count would otherwise be
+    that many ``scipy.linalg.expm`` calls per floor.
+    """
+    vx = float(np.real(h[0, 1]))
+    vy = float(np.imag(h[1, 0]))
+    vz = float(np.real(h[0, 0]))
+    norm = math.sqrt(vx * vx + vy * vy + vz * vz)
+    if norm == 0.0:
+        return np.eye(2, dtype=complex)
+    c, s_ = math.cos(norm * t), math.sin(norm * t) / norm
+    return c * np.eye(2, dtype=complex) - 1j * s_ * (vx * _SX + vy * _SY + vz * _SZ)
 
 
 # ---- the sequences -------------------------------------------------------------------------------------------------------
@@ -310,6 +392,162 @@ def cpmg_centres(n: int) -> tuple[float, ...]:
 
 def udd_centres(n: int) -> tuple[float, ...]:
     return tuple(math.sin(math.pi * j / (2.0 * n + 2.0)) ** 2 for j in range(1, n + 1))
+
+
+# ---- arbitrary precision (Section 9.15 "Bang-bang suppression orders (mpmath >= 200 dps)") ---------------------------------
+#
+# ``mpmath`` is a DEVELOPMENT dependency of this project (pyproject.toml's dev group, for the committed check scripts),
+# not a runtime one, so every function below imports it lazily: the module imports and every float64 entry point works
+# without mpmath installed, and only these validation helpers need it.
+#
+# F is an O(1) sum that cancels to omega^{2n+2}, so double precision loses the whole signal by n ~ 4: a UDD-8 filter
+# function at omega tau = 1e-3 is 1e-48 of an O(1) sum. Section 6.9 says so ("Verifying these orders needs arbitrary
+# precision ... so the test runs in mpmath"). These functions are the SAME equations as
+# ``DecouplingSequence.biercuk_filter_function`` and ``control_matrix``'s zz row, evaluated in mpmath instead of float64;
+# ``tests/test_decoupling_mpmath.py`` cross-checks them against the float64 versions where those are still accurate.
+
+
+def biercuk_amplitude_mp(
+    deltas: Sequence[float], n_pulses: int, x: Any, tau_pi_frac: float = 0.0, dps: int = 200
+) -> Any:
+    """R_zz(x)/(-i) of Biercuk Eq. 2 at ``mp.dps = dps``: 1 + (-1)^{n+1} e^{ix} + 2 cos(x delta_pi/2) sum_j (-1)^j e^{i d_j x}.
+
+    ``x = omega tau`` (an ``mpmath`` number or anything ``mp.mpf`` accepts), ``tau_pi_frac = tau_pi/tau``. The modulus
+    squared is the filter function; the lowest nonvanishing Taylor order of this amplitude in x is the roll-off order the
+    9.15 row pins (3 for Carr-Purcell at every even n, n + 1 for UDD).
+    """
+    from mpmath import mp  # type: ignore[import-untyped]  # mpmath ships no py.typed marker
+
+    with mp.workdps(int(dps)):
+        xx = _as_mpf(x, dps)
+        acc = mp.mpf(0)
+        for j, d in enumerate(deltas, start=1):
+            acc += (-1) ** j * mp.e ** (1j * _as_mpf(d, dps) * xx)
+        y = 1 + (-1) ** (n_pulses + 1) * mp.e ** (1j * xx)
+        y += 2 * mp.cos(xx * _as_mpf(tau_pi_frac, dps) / 2) * acc
+        return +y
+
+
+def chi_integral_mp(
+    spectrum_two_sided: Callable[[Any], Any],
+    filter_fn: Callable[[Any], Any],
+    omega_min_rad_s: float,
+    omega_max_rad_s: float,
+    *,
+    dps: int = 120,
+    maxdegree: int = 9,
+) -> Any:
+    """chi = (2/pi) int (d omega/omega^2) S_b F at ``mp.dps = dps``, substituting u = ln omega (``mp.quad``).
+
+    The mpmath twin of :func:`chi_integral`. Section 9.15's IR-convergence row cannot be reproduced in float64 for even
+    n: the even-n finite-pulse F is (omega tau)^2 (omega tau_pi)^4/64, which at omega = 1e-6 is 1e-43 of an O(1) sum, so
+    double precision returns cancellation noise of order 1e-32 instead. That noise is omega-independent, which turns the
+    ``S ~ omega^-4`` integrand into omega^-6 and reports chi = 128 where the true value is 1.2e-4
+    (``tests/test_decoupling_mpmath.py``).
+    """
+    from mpmath import mp
+
+    if omega_min_rad_s <= 0.0 or omega_max_rad_s <= omega_min_rad_s:
+        raise ValueError("0 < omega_min < omega_max")
+    with mp.workdps(int(dps)):
+
+        def integrand(u: Any) -> Any:
+            w = mp.e**u
+            return spectrum_two_sided(w) * filter_fn(w) / w
+
+        lo = mp.log(_as_mpf(omega_min_rad_s, dps))
+        hi = mp.log(_as_mpf(omega_max_rad_s, dps))
+        return +(2 / mp.pi * mp.quad(integrand, [lo, hi], maxdegree=int(maxdegree)))
+
+
+def _as_mpf(value: Any, dps: int) -> Any:
+    """``mp.mpf`` of a float, an int or an existing mpmath number. A float goes through ``repr`` so that the decimal the
+    caller wrote is what mpmath sees (``mp.mpf(0.05)`` carries the float64 representation error into 200 digits, which is
+    exactly the precision loss these functions exist to avoid); an mpf is already exact and passes through."""
+    from mpmath import mp
+
+    with mp.workdps(int(dps)):
+        if isinstance(value, float):
+            return mp.mpf(repr(value))
+        if isinstance(value, int):
+            return mp.mpf(value)
+        return +value
+
+
+def biercuk_filter_function_mp(
+    deltas: Sequence[float], n_pulses: int, x: Any, tau_pi_frac: float = 0.0, dps: int = 200
+) -> Any:
+    """|R_zz|^2 of Biercuk Eq. 2 at ``mp.dps = dps`` (the mpmath twin of ``biercuk_filter_function``)."""
+    from mpmath import mp
+
+    with mp.workdps(int(dps)):
+        return abs(biercuk_amplitude_mp(deltas, n_pulses, x, tau_pi_frac, dps)) ** 2
+
+
+def cpmg_centres_mp(n: int, dps: int = 200) -> tuple[Any, ...]:
+    """delta_j = (2j - 1)/(2n) exactly, as mpmath rationals (the CPMG timings are rational, so they are exact)."""
+    from mpmath import mp
+
+    with mp.workdps(int(dps)):
+        return tuple(mp.mpf(2 * j - 1) / (2 * n) for j in range(1, n + 1))
+
+
+def udd_centres_mp(n: int, dps: int = 200) -> tuple[Any, ...]:
+    """delta_j = sin^2[pi j/(2n + 2)] at ``dps`` digits: the float64 ``udd_centres`` is only good to 1e-16, which caps the
+    verifiable order at about 4."""
+    from mpmath import mp
+
+    with mp.workdps(int(dps)):
+        return tuple(mp.sin(mp.pi * j / (2 * n + 2)) ** 2 for j in range(1, n + 1))
+
+
+def biercuk_taylor_coefficients_mp(
+    deltas: Sequence[Any], n_pulses: int, dps: int = 200, max_order: int = 32
+) -> list[Any]:
+    """The EXACT Taylor coefficients of the bang-bang Biercuk amplitude in x = omega tau, to ``max_order``.
+
+    A sum of exponentials has closed-form Taylor coefficients, so no numerical differentiation is needed (and none may
+    be used: ``mp.taylor`` of an O(1) sum cancelling at order n + 1 is both slow and precision-limited). With
+    A_k = sum_j (-1)^j delta_j^k,
+
+        c_0 = 1 + (-1)^{n+1} + 2 A_0,      c_k = (i^k/k!)[(-1)^{n+1} + 2 A_k]   (k >= 1),
+
+    the bracket being what a sequence's timings must annihilate: order n + 1 for UDD means A_k = -(-1)^{n+1}/2 for
+    every k <= n. Bang-bang only (tau_pi = 0); the finite-pulse cos(x delta_pi/2) factor multiplies the whole A sum.
+    """
+    from mpmath import mp
+
+    with mp.workdps(int(dps)):
+        parity = mp.mpf((-1) ** (n_pulses + 1))
+        out: list[Any] = []
+        for k in range(int(max_order) + 1):
+            a_k = mp.mpf(0)
+            for j, d in enumerate(deltas, start=1):
+                a_k += (-1) ** j * (mp.mpf(1) if k == 0 else d**k)
+            bracket = parity + 2 * a_k
+            if k == 0:
+                out.append(+(1 + bracket))
+            else:
+                out.append(+((1j) ** k / mp.factorial(k) * bracket))
+        return out
+
+
+def leading_taylor_order_mp(
+    deltas: Sequence[Any], n_pulses: int, dps: int = 200, max_order: int = 32
+) -> tuple[int, Any]:
+    """(k, c_k): the lowest nonvanishing Taylor order of the bang-bang Biercuk amplitude and its coefficient.
+
+    "Nonvanishing" means larger than 10^{-dps/2}, half the working precision, so the answer cannot be an artefact of the
+    arithmetic (this is the whole reason Section 6.9 sends the check to mpmath).
+    """
+    from mpmath import mp
+
+    with mp.workdps(int(dps)):
+        floor_mag = mp.mpf(10) ** (-int(dps) // 2)
+        for k, c in enumerate(biercuk_taylor_coefficients_mp(deltas, n_pulses, dps, max_order)):
+            if abs(c) > floor_mag:
+                return k, +c
+        raise ValueError(f"no nonvanishing Taylor coefficient below order {max_order} at dps = {dps}")
 
 
 def _xy_axes(n: int, pattern: Sequence[float]) -> tuple[float, ...]:
@@ -557,15 +795,17 @@ def decoupling_sequence(
 
 
 def composite_segments(pulse: CompositePulse, rabi_rad_s: float) -> tuple[ControlSegment, ...]:
-    """A composite pulse at constant Rabi frequency: segment durations theta_l/Omega."""
+    """A composite pulse at constant Rabi frequency: segment durations theta_l/Omega, phases as stored.
+
+    ``pulse.segments`` already carries the target azimuth on EVERY entry, the zeroth included (Section 13's row
+    "Composite-pulse sequence order in time"; ``CompositePulse.phi_rad``), and already carries ``n_rep`` repetitions
+    of the corrector (Appendix E; ``control.composite.repeat_corrector``). Adding either here double-counted it:
+    every phase came out at phi_t too high, and the total area at n_rep times the value ``total_rotation_rad``
+    reports (M2 audit E4, E12).
+    """
     if rabi_rad_s <= 0.0:
         raise ValueError("the Rabi frequency must be positive")
-    return (
-        tuple(
-            ControlSegment(area, phase + pulse.phi_rad, area / rabi_rad_s) for area, phase in pulse.segments
-        )
-        * pulse.n_rep
-    )
+    return tuple(ControlSegment(area, phase, area / rabi_rad_s) for area, phase in pulse.segments)
 
 
 def schedule_segments(schedule: Schedule, ion: int) -> tuple[ControlSegment, ...]:
@@ -690,7 +930,9 @@ def filter_function(
     dlnchi = math.log(chi_hi / chi) / math.log(1.1) if chi > 0.0 and chi_hi > 0.0 else 0.0
     a1sq = chi / 2.0
     w_coh = math.exp(-chi)
-    variance = float(spec.variance()) * conv + spec.white_level * conv * 0.0
+    # the TABULATED band only: white noise is not frozen over the sequence, so it does not enter the dc floor or xi^2
+    # (chi above uses spec.value, band plus white, because the filter function does score the white part).
+    variance = float(spec.variance()) * conv
     xi2 = tau**2 * variance
     fitted: dict[str, tuple[float, float]] = {
         "chi": (chi, 0.0),
@@ -708,9 +950,30 @@ def filter_function(
         from qutip_trap.control.composite import leading_coefficient
 
         channel = "amplitude" if quadrature == "amplitude" else "detuning"
-        m = control.order
+        # Section 6.9: c-hat is sequence- AND axis-dependent. ``CompositePulse.order`` is the order of the channels the
+        # pulse CORRECTS; against any other channel the residual is O(eps^2) and the floor is the primitive's (m = 0).
+        # Using control.order unconditionally divides an O(eps^2) infidelity by eps^{2(m+1)}, inflating c_hat as
+        # eps^{-2m} (BB1 under dephasing noise then reports a 70 % infidelity).
+        m = control.order if channel in control.corrects else 0
         c_hat = leading_coefficient(control, channel, 2 * (m + 1))
-        floor = dc_floor_value(c_hat, m, variance, omega_ctrl)
+        # c_hat comes from ``CompositePulse.infidelity(eps_a, eps_d)``, i.e. Mount's primitive
+        # R = exp[-(i/2) theta (1 + eps_a)(sigma_phi + eps_d sigma_z)]. Matching that against Section 6.9's
+        # H_0 = beta . sigma (no 1/2 on the Pauli vector) gives eps_a = beta_a/Omega but eps_d = 2 beta_d/Omega,
+        # because beta_d is HALF the splitting fluctuation while eps_d scales the whole splitting. So the detuning
+        # moment must be the SPLITTING variance 4 <beta_d^2>; pairing c_hat_d with <beta_d^2>/Omega^2 under-reports the
+        # floor by 4^(m+1). Verified against the Gauss-Hermite average of the exact frozen-noise 1 - (1/4)|Tr U_c^dag U|^2:
+        # the ratio is 4.0000 at m = 0 and 16 for CORPSE at m = 1 (conv.dc_floor_detuning_normalization).
+        beta_variance = variance * (4.0 if channel == "detuning" else 1.0)
+        floor = dc_floor_value(c_hat, m, beta_variance, omega_ctrl)
+        fitted["infidelity_dc"] = (floor, 0.0)
+        fitted["dc_c_hat"] = (c_hat, 0.0)
+        fitted["dc_order"] = (float(m), 0.0)
+    elif dc_floor and variance > 0.0:
+        # Section 6.9's max rule is stated for "an mth-order sequence", and a DecouplingSequence or Schedule is one:
+        # without a floor the module reports the first-order estimate alone "for precisely the band that dominates a
+        # real trap". No source supplies a c_hat for these, so the floor is the EXACT Gaussian frozen-noise average
+        # rather than its leading term (conv.dc_floor_decoupling_sequences).
+        floor = frozen_noise_floor(segs, variance, quadrature)
         fitted["infidelity_dc"] = (floor, 0.0)
     fitted["infidelity"] = (max(a1sq, floor), 0.0)
     if monte_carlo_samples > 0:
@@ -799,19 +1062,24 @@ def _monte_carlo_dephasing(
 
 
 __all__ = [
-    "KDD_BLOCK",
     "ControlSegment",
     "DecouplingSequence",
+    "KDD_BLOCK",
     "Quadrature",
     "Timing",
     "accumulated_adjoints",
     "adjoint",
     "amplitude_filter_function",
+    "biercuk_amplitude_mp",
+    "biercuk_filter_function_mp",
+    "biercuk_taylor_coefficients_mp",
     "chi_integral",
+    "chi_integral_mp",
     "composite_segments",
     "control_matrix",
     "control_matrix_time",
     "cpmg_centres",
+    "cpmg_centres_mp",
     "dc_floor",
     "dc_polygon",
     "decoupling_sequence",
@@ -819,10 +1087,14 @@ __all__ = [
     "double_factorial_odd",
     "filter_function",
     "final_adjoint",
+    "frozen_noise_floor",
+    "frozen_noise_infidelity",
+    "leading_taylor_order_mp",
     "pulse_adjoint",
     "rotation",
     "schedule_segments",
     "segment_frequency_integrals",
     "udd_centres",
+    "udd_centres_mp",
     "universal_filter_function",
 ]

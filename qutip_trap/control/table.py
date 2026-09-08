@@ -17,9 +17,10 @@ if TYPE_CHECKING:
     from qutip_trap.control.shaping import GateModes, Kernel
 
 Leg = Literal["red", "blue"]
-WaveformKind = Literal["ms", "light_shift"]
+WaveformKind = Literal["ms", "light_shift", "gradient"]
 """``ms``: bichromatic red/blue legs on the spin flip (Section 4.4.1); ``light_shift``: one beat note ("blue") on the
-state-dependent light shift, sigma_z sigma_z (Section 4.4.4)."""
+state-dependent light shift, sigma_z sigma_z (Section 4.4.4); ``gradient``: the two microwave tones at -/+ delta of a
+near-field magnetic-gradient drive, whose dressed sigma_z force carries J_2(4 Omega_mu/delta) (Section 4.4.5)."""
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,9 @@ class Segment:
 
     duration_s: float
     amplitude_hz: dict[tuple[int, Leg], float | Callable[[float], float]]
-    """Omega per (ion, leg), leg in {red, blue}; per-ion imbalance is a CalibrationTable entry."""
+    """Omega per (ion, leg), leg in {red, blue}. A per-ion or per-leg imbalance is NOT a table entry: Kirchmair's
+    Omega_b = Omega(1 + xi), Omega_r = Omega(1 - xi) is carried by the two legs' own amplitudes, which the pulse solvers
+    set through ``waveform_from_segmented(imbalance=...)`` (Section 4.4.1; ledger ``conv.no_stark_imbalance``)."""
     phase_rad: dict[tuple[int, Leg], float]
     detuning_hz: dict[Leg, float | Callable[[float], float]]
 
@@ -116,8 +119,11 @@ class Waveform:
             for s in self.segments:
                 if self.kind == "light_shift" and s.legs != ("blue",):
                     raise ValueError("a light-shift waveform has one leg, 'blue' (the beat note itself)")
-                if self.kind == "ms" and s.legs != ("red", "blue"):
-                    raise ValueError("an MS waveform has a red and a blue leg on every ion")
+                if self.kind in ("ms", "gradient") and s.legs != ("red", "blue"):
+                    raise ValueError(
+                        "an MS waveform has a red and a blue leg on every ion, and so does a gradient waveform "
+                        "(its two microwave tones at -/+ delta)"
+                    )
 
     @property
     def ions(self) -> tuple[int, ...]:
@@ -147,11 +153,14 @@ class Waveform:
         imbalance: float = 0.0,
         detuning_side: Literal["inside", "outside"] = "inside",
         all_modes: bool = True,
-        kind: WaveformKind = "ms",
+        kind: Literal["ms", "light_shift"] = "ms",
     ) -> Waveform:
         """The equal-envelope symmetric-detuning shortcut (Appendix E): one square segment, tones at -/+ (omega_g -/+ eps) closing
         ``gate_mode`` after ``loops`` loops (tau = 2 pi K/eps), the amplitude from |chi| = chi_target over the pair's modes; for
-        one mode eta Omega/eps = 1/(2 sqrt K) exactly (Section 4.4.1). Equals the general solver at equal envelopes (Section 9.17)."""
+        one mode eta Omega/eps = 1/(2 sqrt K) exactly (Section 4.4.1). Equals the general solver at equal envelopes (Section 9.17).
+
+        ``kind`` is ``ms`` or ``light_shift``: the closure algebra of Section 4.4.3 does not cover a ``gradient`` waveform,
+        whose force is a Bessel function of the tone amplitude rather than linear in it (ledger ``conv.gradient_drive``)."""
         from qutip_trap.control.shaping import symmetric_pulse
 
         return symmetric_pulse(
@@ -196,8 +205,10 @@ class CalibrationTable:
     crosstalk_phase: dict[tuple[int, int], CalEntry] = dc_field(default_factory=dict)
     """arg(epsilon_ij) per (ion, neighbour) from the crosstalk scan's phase measurement (Section 7.5 item 8; M8); absent = 0."""
     lamb_dicke: dict[tuple[int, int], CalEntry] = dc_field(default_factory=dict)
-    """|eta_{i,m}| per (ion, mode) extracted from the sideband Rabi frequency (Section 7.9; M8), what the pulse solvers may
-    read in place of the derived value; C0 is inside a sideband-calibrated eta and outside a carrier-derived one (Section 9.17)."""
+    """|eta_{i,m}| per (ion, mode) extracted from the sideband Rabi frequency (Section 7.9; M8); C0 is inside a
+    sideband-calibrated eta and outside a carrier-derived one (Section 9.17). NO solver reads it today - ``gate_modes`` has
+    no eta override and every caller builds ``GateModes`` from the device's crystal - which is the beliefs-vs-truth gap
+    recorded as ``conv.solvers_read_the_device_modes`` rather than a capability this docstring may claim."""
     fitted_at_s: float = 0.0
     """The laboratory time the table was assembled at (the age of its youngest entry is ``fitted_at_s`` too; Section 7.5)."""
 

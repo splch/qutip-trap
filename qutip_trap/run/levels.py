@@ -20,7 +20,11 @@ ESTIMATE_MODE_DIMENSION = 12
 
 
 def within_budget(space: HilbertSpace, options: SolverOptions) -> tuple[bool, int, int]:
-    """(inside the Section 11.5 guards, joint dimension, drive-operator non-zero estimate) for a built space."""
+    """(inside the Section 11.5 guards, joint dimension, drive-operator non-zero estimate) of a DECLARED space.
+
+    Both numbers are arithmetic in the declaration's ion dimensions, resolved caps and ENR group, and a ``HilbertSpace``
+    allocates no operator when it is constructed, so this decides whether to build anything at all - which is what Section
+    11.5's "refuses to build" requires (M9b audit B2)."""
     from qutip_trap.run.space import drive_operator_nonzeros
 
     dim = space.dimension

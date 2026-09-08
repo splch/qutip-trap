@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
 from qutip_trap.trap.crystal import Crystal
 from qutip_trap.trap.mathieu import floquet_coefficients
 from qutip_trap.units import E_C, HBAR_J_S, K_B_J_PER_K
+
+if TYPE_CHECKING:
+    from qutip_trap.noise.spectra import NoiseSpectrum
 
 SpectralDensity = Callable[[float], float]
 """A single-sided S_E(omega) in (V/m)^2/Hz as a function of ANGULAR frequency omega in rad/s."""
@@ -71,13 +74,20 @@ def two_sided_from_single_sided(s_single_sided: float) -> float:
     return s_single_sided / 2.0
 
 
-def single_sided_from_spectrum(omega_rad_s: np.ndarray, s_two_sided: np.ndarray) -> SpectralDensity:
-    """Interpolate a two-sided spectrum (a ``NoiseSpectrum``'s arrays) into a single-sided S_E(omega) callable; S(-omega) = S(omega)."""
-    w = np.asarray(omega_rad_s, dtype=float)
-    s = np.asarray(s_two_sided, dtype=float)
+def single_sided_from_spectrum(spectrum: NoiseSpectrum) -> SpectralDensity:
+    """S_E(omega) = 2 S^(2)(|omega|) from a two-sided ``NoiseSpectrum``, its band edges and its white level.
+
+    The evaluation is the spectrum's OWN ``value`` (Section 6.1): the tabulated part folded onto |omega| and ZERO above
+    the tabulated band, plus ``white_level`` everywhere - which is the split the two fields declare, the tabulated band
+    being the sampled-trajectory route and the white level the Lindblad route. The caller must therefore not add the
+    white level a second time. Taking the record rather than its arrays is what keeps the folding in one place: a
+    symmetric tabulation running from -omega_max to +omega_max has a non-monotonic ``|omega_rad_s|``, on which a bare
+    ``np.interp`` silently returns garbage, and ``np.interp`` clamps at the top of the band where the physics is the
+    white level alone (the micromotion-sideband sum of ``micromotion_sideband_heating_rate`` evaluates S_E at tens of MHz).
+    """
 
     def s_e(omega: float) -> float:
-        return float(2.0 * np.interp(abs(omega), w, s))
+        return 2.0 * float(spectrum.value(abs(omega)))
 
     return s_e
 
@@ -171,6 +181,11 @@ def micromotion_sideband_heating_rate(
     omega^2/(2 Omega^2) at a = 0 (they agree to 0.4% at q = 0.1); never add the two.
     """
     if q == 0.0:
+        if a <= 0.0:
+            raise ValueError(
+                f"a = {a} with q = 0 is not a confined axis: omega = sqrt(a) Omega/2 has no heating rate "
+                "(the axis is unstable; check the sign of the dc curvature)"
+            )
         omega = math.sqrt(a) * omega_rf_rad_s / 2.0
         return heating_rate_quanta_per_s(s_e_single_sided(omega), mass_kg, omega)
     fc = floquet_coefficients(a, q)

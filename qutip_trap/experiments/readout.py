@@ -19,18 +19,23 @@ def detection_histogram(device: Device, ion: int, n_records: int, **kw: Any) -> 
     The rates come from the M3a Bloch model of the device's detection beams at the ion (``detection_beams`` overrides the
     beams near the species' cycling wavelength; ``scheme`` a :class:`~qutip_trap.readout.fluorescence.ReadoutScheme`;
     ``levels`` the included fine-structure levels; ``windows_s`` the candidate bin times, default 0.25 to 2.5 times the
-    detector's window; ``seed`` the record generator). ``data`` holds the bright and dark histograms at the chosen window
+    detector's window; ``seed`` the record generator), with the micromotion factor of Section 8.8 applied exactly as the
+    readout stage of ``run`` applies it. ``data`` holds the bright and dark histograms at the chosen window
     (rows) and ``fitted`` the threshold, window, eps_B, eps_D and the fitted rates with their uncertainties.
     """
     from qutip_trap.calibration.readout import calibrate_detection
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel
     from qutip_trap.readout.fluorescence import detection_rates_for_ion
+    from qutip_trap.run.job import detection_micromotion
 
     species = device.crystal.species[ion]
     beams = kw.get("detection_beams")
     if beams is None:
         beams = [device.beams[k] for k in detection_beams(device, ion)]
+    # the same J_0^2/J_1^2 factor the readout stage of ``run`` applies (Section 8.8), so the table this experiment fits and
+    # the run that reads it see one rate object
+    beta, omega_rf = detection_micromotion(device, ion, beams)
     rates, scheme, _model = detection_rates_for_ion(
         species,
         device.field.B_gauss,
@@ -39,6 +44,8 @@ def detection_histogram(device: Device, ion: int, n_records: int, **kw: Any) -> 
         position_m=tuple(float(x) for x in device.crystal.positions_m[ion]),
         levels=kw.get("levels"),
         scheme=kw.get("scheme"),
+        micromotion_beta=beta,
+        omega_rf_rad_s=omega_rf,
     )
     record_model = RecordModel.from_rates(rates, device.detector)
     windows = kw.get("windows_s")

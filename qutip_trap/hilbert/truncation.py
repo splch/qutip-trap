@@ -17,6 +17,7 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.dynamics.engine import SolverOptions, State
+from qutip_trap.dynamics.evolve import ConvergenceReport
 from qutip_trap.hilbert.space import HilbertSpace
 
 M2 = "milestone M2 (hilbert/truncation.py, PLAN.md Section 5.5)"
@@ -118,6 +119,116 @@ def halving_test(
     return delta < tol, delta, tight
 
 
+def grown_caps(space: HilbertSpace, add: int = 2, *, dimension_max: int | None = None) -> HilbertSpace:
+    """Every resolved cap of ``space`` (and the ENR group's excitation cap) raised by ``add``: the truncation half of Section
+    9.9's convergence regime.
+
+    Section 9.9 asks for the comparison "where the doubled cap stays within the dimension ceiling; otherwise the check runs
+    on the reduced mode set", so with ``dimension_max`` the modes are grown one at a time in resolved order and a mode whose
+    growth would cross the ceiling is left at its cap.
+    """
+    if add <= 0:
+        raise ValueError("grow by a positive number of levels")
+    out = space
+    for m in space.resolved:
+        candidate = out.grown(m.mode, add)
+        if dimension_max is not None and candidate.dimension > dimension_max:
+            continue
+        out = candidate
+    if space.enr_group is not None:
+        candidate = out.grown_enr(add)
+        if dimension_max is None or candidate.dimension <= dimension_max:
+            out = candidate
+    return out
+
+
+@dataclass(frozen=True)
+class ConvergenceRegime:
+    """The three comparisons Section 9.9 asks of every validation case, each one a ``dynamics.evolve.ConvergenceReport``.
+
+    - ``tightened``: atol and rtol divided by ``factor`` (Section 5.5's second bullet, the run-level check
+      ``SolverOptions.convergence_check`` reports on its own);
+    - ``loosened``: both multiplied by ``factor``, which Section 9.9 asks for "for the integrator ladder";
+    - ``caps``: every resolved cap and the ENR excitation cap raised by ``add`` at UNCHANGED tolerances, so its report's
+      ``tolerances`` and ``tightened_tolerances`` are equal and ``grown_modes`` names what moved instead.
+    """
+
+    tightened: ConvergenceReport
+    loosened: ConvergenceReport
+    caps: ConvergenceReport
+    grown_modes: tuple[int, ...]
+    """The resolved modes whose caps were actually raised (a mode whose growth would cross the dimension ceiling is left)."""
+    add: int
+
+    @property
+    def max_change(self) -> float:
+        return max(self.tightened.max_change, self.loosened.max_change, self.caps.max_change)
+
+    @property
+    def converged(self) -> bool:
+        return self.tightened.converged and self.loosened.converged and self.caps.converged
+
+    def summary(self) -> str:
+        return (
+            f"Section 9.9 convergence: tolerances tightened move the probabilities by "
+            f"{self.tightened.max_change:.3g}, loosened by {self.loosened.max_change:.3g}, caps +{self.add} on modes "
+            f"{list(self.grown_modes)} by {self.caps.max_change:.3g}; threshold {self.tightened.tol:g}: "
+            f"{'converged' if self.converged else 'NOT CONVERGED'}"
+        )
+
+
+def convergence_report(
+    run: Callable[[SolverOptions, HilbertSpace], Mapping[str, np.ndarray]],
+    options: SolverOptions,
+    space: HilbertSpace,
+    *,
+    factor: float = 10.0,
+    add: int = 2,
+    tol: float = 1e-6,
+) -> ConvergenceRegime:
+    """Section 9.9's convergence regime for one validation case, all three arms through
+    :class:`~qutip_trap.dynamics.evolve.ConvergenceReport`.
+
+    ``run(options, space)`` returns the case's reported probabilities keyed by observable, as the engine keys them. The
+    tolerance arms are ``dynamics.evolve.convergence_check`` on a closure that holds the space fixed; the loosened arm is
+    that same comparison started from ``options`` scaled UP by ``factor``, so its pair is (loose, options) and |delta p| is
+    the same number the plan asks for. The cap arm raises the caps at fixed tolerances (``grown_caps``); a case that carries
+    a fixed joint state regrids it inside its own closure (``regrid_state(state, space, grown)``), which is what makes that
+    arm comparable at all.
+
+    ``halving_test`` is the single-array form of the first comparison; this is the whole Section 9.9 row, and the tests that
+    call it carry the ``convergence`` marker so the CI convergence-report artifact means something (Sections 5.5, 14.5).
+    """
+    from qutip_trap.dynamics.evolve import convergence_check
+
+    if factor <= 1.0:
+        raise ValueError("the tightening factor exceeds one")
+    loose = replace(options, atol=options.atol * factor, rtol=options.rtol * factor)
+    tightened_rep = convergence_check(lambda o: run(o, space), options, factor=factor, tol=tol)
+    loosened_rep = convergence_check(lambda o: run(o, space), loose, factor=factor, tol=tol)
+    grown = grown_caps(space, add, dimension_max=options.joint_dimension_max)
+    a = run(options, space)
+    b = a if grown == space else run(options, grown)
+    if set(a) != set(b):
+        raise ValueError("the two runs returned different observables")
+    changes = {
+        key: float(np.max(np.abs(np.asarray(b[key], dtype=float) - np.asarray(a[key], dtype=float))))
+        for key in a
+    }
+    caps_rep = ConvergenceReport((options.atol, options.rtol), (options.atol, options.rtol), changes, tol)
+    return ConvergenceRegime(
+        tightened=tightened_rep,
+        loosened=loosened_rep,
+        caps=caps_rep,
+        grown_modes=tuple(
+            m.mode
+            for m, g in zip(space.resolved, grown.resolved)
+            if g.d > m.d  # a mode left at its cap by the dimension ceiling is not part of the comparison
+        ),
+        add=add,
+    )
+
+
 def regrid_state(joint: qt.Qobj, old: HilbertSpace, new: HilbertSpace) -> qt.Qobj:
     """Embed a joint state of ``old`` into ``new``, a copy of it with larger caps: zero-padded Fock factors for the resolved
     modes, and for an ENR group a larger excitation cap, every old Fock tuple mapped to its index in the new group's
@@ -158,12 +269,15 @@ def regrid_state(joint: qt.Qobj, old: HilbertSpace, new: HilbertSpace) -> qt.Qob
 
 
 __all__ = [
+    "ConvergenceRegime",
     "MarginReport",
     "TruncationError",
     "boundary_population",
     "boundary_populations",
+    "convergence_report",
     "grow_for_boundary",
     "grow_for_margins",
+    "grown_caps",
     "halving_test",
     "margin_reports",
     "regrid_state",

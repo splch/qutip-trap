@@ -80,16 +80,28 @@ class Trajectory:
 MIN_GRID_POINTS = 65
 """Every trajectory grid has at least this many points, so a slow process is still a smooth curve over the shot."""
 
+TAU_C_OVERSAMPLE = 10.0 * math.pi
+"""``oversample`` that makes ``time_grid`` honour Section 5.5's ``Delta t <= tau_c/10``.
+
+The shortest correlation time a tabulated band carries is that of its fastest component, tau_c,min = 1/omega_max, so
+the rule reads dt <= 1/(10 omega_max); ``time_grid`` sets dt = pi/(omega_max x oversample), which meets it at
+oversample >= 10 pi = 31.4159. The historical default of 4 gave dt = 0.785/omega_max, 7.9x coarser than the rule
+(``conv.trajectory_grid_tau_c``)."""
+
 
 def time_grid(
     duration_s: float,
     omega_max_rad_s: float,
     *,
     t0_s: float = 0.0,
-    oversample: float = 4.0,
+    oversample: float = TAU_C_OVERSAMPLE,
     min_points: int = MIN_GRID_POINTS,
 ) -> np.ndarray:
-    """A uniform grid over [t0, t0 + duration] resolving omega_max with ``oversample`` points per half period."""
+    """A uniform grid over [t0, t0 + duration] resolving omega_max with ``oversample`` points per half period.
+
+    The default is ``TAU_C_OVERSAMPLE`` = 10 pi, which is Section 5.5's ``Delta t <= tau_c/10`` for the band's fastest
+    component (tau_c,min = 1/omega_max); a caller that wants only Nyquist passes ``oversample=1``.
+    """
     if duration_s <= 0.0:
         raise ValueError("duration must be positive")
     if omega_max_rad_s <= 0.0:
@@ -198,6 +210,7 @@ def correlated_normals(rng: np.random.Generator, times_s: np.ndarray, tau_s: flo
 __all__ = [
     "MAX_GRID_POINTS",
     "MIN_GRID_POINTS",
+    "TAU_C_OVERSAMPLE",
     "Trajectory",
     "correlated_normals",
     "mains_trajectory",

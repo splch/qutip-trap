@@ -27,7 +27,15 @@ explicit-frequency path, which has no electrode model (``Trap`` refuses non-zero
 ``Ey``, ``Ez`` are the components of the compensation FIELD in V/m added to the stray field, the equivalent knob (Appendix E
 lists the scan as ``shim_ranges_v``; the unit follows the path and is recorded in the notes). A trial device re-solves its
 crystal at every setting, so the ions' displacement, the beams' intensity at the ions and the Lamb-Dicke parameters all move
-together. A trap without an rf record has no micromotion to compensate (C0 = 1, beta = 0) and the entries are calibrated zeros.
+together. A trap without an rf record has no micromotion to compensate (C0 = 1, beta = 0) and the scan returns exact zeros
+with no measurement behind them, which ``calibration.experiments`` stores as ``seed`` entries, not ``calibrated`` ones
+(Section 7.5: an entry carries the experiment that produced it, and none ran here).
+
+The calibrated ``shim[...]`` entries are what the machine PROGRAMS: ``run()`` applies them to the device it evolves through
+``device_with_compensation``, so a compensation fitted at one time against a stray field that has since drifted leaves the
+residual excess micromotion a laboratory would have (the loop of Section 7.5). ``signed_beta`` and ``MicromotionIndex``
+carry the sign of the index, so the correlation signal's pi step across the null is preserved; the fitted null itself is a
+zero crossing and does not depend on it.
 """
 
 from __future__ import annotations
@@ -138,7 +146,13 @@ def device_with_compensation(device: Device, shims: Mapping[str, float]) -> Devi
 
 
 def signed_beta(device: Device, ion: int, k_vector: np.ndarray) -> float:
-    """k . u_1: the signed modulation index along ``k_vector`` (peak), 0 without an rf record."""
+    """k . u_1: the signed modulation index along ``k_vector`` (peak), 0 without an rf record.
+
+    The sign is the plan's, not a free choice: u_1 = -(1/2) Q u_0 under the adopted Mathieu origin a - 2q cos 2xi
+    (Section 13, "Floquet function and rf phase origin"), so sign(beta) = -sign(q_x E_x) and beta steps by pi as a
+    shim crosses the compensated value. The rf-photon correlation signal is odd in beta, so that pi step is what the
+    servo reads (Section 9.17); the fitted null is a zero crossing and does not depend on it.
+    """
     if device.trap.rf is None:
         return 0.0
     amp = device.trap.micromotion_amplitude_m(device.crystal.species[ion])
@@ -250,7 +264,8 @@ def micromotion_scan(
     correlation and Doppler methods (default 1 s, sets the shot-noise uncertainty), ``gate_drive`` and ``sideband_duration_s``
     for the sideband-ratio method (``beam`` then names the drive's table-key beam). Fitted: ``shim[name]`` (the null and its
     uncertainty), ``beta[beam]`` (the residual index along the beam at the null, peak convention), ``beta_before``; data rows
-    (pass, shim index, setting, signal, sigma). A trap without an rf record returns calibrated zeros.
+    (pass, shim index, setting, signal, sigma). A trap without an rf record returns exact zeros with no scan behind them
+    (the caller stores them as seeds, not as a measurement).
     """
     if method not in METHODS:
         raise ValueError(f"method is one of {METHODS}")

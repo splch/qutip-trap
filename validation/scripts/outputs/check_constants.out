@@ -99,15 +99,15 @@ rejected diagnostic Gamma_el,diff = 2(Guu-Gdd)^2/(Guu+Gdd) at Guu = Gdd = 1: 0.0
 ==============================================================================
 7. g_F, the MHz/G trap, and the Breit-Rabi curvature (171Yb+)
 ==============================================================================
-g_F(2S_1/2, F=1) = g_J/2 = 1.001128 (dimensionless)
-g_F mu_B/h = 1.4012 x 1e10 Hz/T = 1.4012 MHz/G
-delta_B/2pi at B = 5.9 G (adjacent m_F) = 8.267 MHz (printed 8.2 MHz); m_F = -1 to +1 span = 16.53 MHz
+g_F(2S_1/2, F=1) = g_J/2 = 1.001308 (dimensionless)
+g_F mu_B/h = 1.4015 x 1e10 Hz/T = 1.4015 MHz/G
+delta_B/2pi at B = 5.9 G (adjacent m_F) = 8.269 MHz (printed 8.2 MHz); m_F = -1 to +1 span = 16.54 MHz
 NEGATIVE TEST, coding g_F = 1.4 as a dimensionless g-factor: 11.56 MHz, a 40% error in the quantity that gates the CPT window
 
-taylor_c2 = (g_J - g_I)^2 mu_B^2/(2 h^2 nu_0) = 310.76 Hz/G^2 (310.59 with g_I = 0), reproducing the quoted +310.8 Hz/G^2 and confirming it is (1/2) d^2nu/dB^2, not d^2nu/dB^2
+taylor_c2 = (g_J - g_I)^2 mu_B^2/(2 h^2 nu_0) = 310.87 Hz/G^2 (310.70 with g_I = 0), reproducing PLAN.md 9.13's 310.87 +- 0.02 Hz/G^2 (the source's rounded +310.8) and confirming it is (1/2) d^2nu/dB^2, not d^2nu/dB^2
   printed 12.642815 GHz sits 2.882 kHz above the zero-field value, i.e. B = 3.045 G - a shifted value, never a zero-field constant
-  printed 12.642819 GHz sits 6.882 kHz above the zero-field value, i.e. B = 4.706 G - a shifted value, never a zero-field constant
-  printed 12.642821 GHz sits 8.882 kHz above the zero-field value, i.e. B = 5.346 G - a shifted value, never a zero-field constant
+  printed 12.642819 GHz sits 6.882 kHz above the zero-field value, i.e. B = 4.705 G - a shifted value, never a zero-field constant
+  printed 12.642821 GHz sits 8.882 kHz above the zero-field value, i.e. B = 5.345 G - a shifted value, never a zero-field constant
 
 ==============================================================================
 8. Recoil kernel: second moments and the coherent-sum failure mode (Joshi Table A1)

@@ -64,9 +64,27 @@ def key_frozen_n(mode: int) -> str:
 
 
 def key_beam_phase_rad(beam: int) -> str:
-    """The optical path phase of ``beam`` (rad); a Raman pair's difference phi_1 - phi_2 enters the drive as e^{-i Delta phi}
-    (Section 13 row "Optical phase factor on sigma_+"; Section 6.6: phi_beam drifts on hundreds of milliseconds)."""
+    """The optical path phase phi_j of ``beam``, in the convention E_j ~ cos(k_j . r - omega_j t + phi_j) (rad).
+
+    A Raman pair's beat note is E ~ cos(omega_L t - Delta k . r + Delta phi) with Delta k = k_1 - k_2 and
+    Delta phi = phi_2 - phi_1 (PLAN.md:808), and the factor on sigma_+ is e^{+i(Delta k . X - Delta phi)}, so beam 1's
+    path phase enters the drive as e^{+i phi_1} and beam 2's as e^{-i phi_2} (Section 13 row "Optical phase factor on
+    sigma_+"); a single-beam optical drive has Delta phi = -phi_1. Section 6.6: phi_beam drifts on hundreds of ms.
+    """
     return f"beam_phase_rad[{beam}]"
+
+
+def key_beam_phase_trajectory_rad(beam: int) -> str:
+    """ou_grids: the SAMPLED part of beam ``beam``'s optical path phase, phi_j(t) in rad (Section 6.3's route (d) for laser
+    phase noise, Section 7.10's "the optical path difference between two Raman beams sets the beat-note phase, and its
+    mechanical drift is the spin-phase noise that Chen et al. invoke, entered as a user-supplied phase spectrum").
+
+    Independent per beam, so a Raman pair's beat note sees the DIFFERENTIAL phase phi_2(t) - phi_1(t) with twice the
+    variance of one beam, while a co-propagating pair's differential phase cancels. The quasi-static counterpart is
+    ``key_beam_phase_rad``; a single-photon optical drive's own laser phase stays on
+    ``KEY_LASER_PHASE_TRAJECTORY``.
+    """
+    return f"beam_phase_trajectory_rad[{beam}]"
 
 
 def key_beam_offset_m(beam: int, axis: int) -> str:
@@ -130,6 +148,7 @@ __all__ = [
     "NoiseSample",
     "key_beam_offset_m",
     "key_beam_phase_rad",
+    "key_beam_phase_trajectory_rad",
     "key_frozen_n",
     "key_mode_offset_hz",
     "key_position_offset_m",

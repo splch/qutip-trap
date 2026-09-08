@@ -14,6 +14,8 @@ import math
 
 import numpy as np
 import pytest
+import qutip as qt
+from scipy.optimize import minimize_scalar
 
 from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions, decay_sum_rule_residual
 from qutip_trap.light.beams import Beam
@@ -236,17 +238,42 @@ def test_doppler_limit_with_recoil_at_the_minimum_detuning() -> None:
     closed = (G / (4.0 * nu_d)) * (1.0 + alpha)
     assert rc.nbar == pytest.approx(closed - 0.5, rel=8e-3)
     assert closed == pytest.approx(7.0)
+
+    # the argmin is -(Gamma/2) sqrt(1 + s), i.e. -0.50125 Gamma at s = 2 x 0.05^2 = 0.005 (RMP Eq. 106); a 21-point
+    # grid of spacing 0.025 Gamma cannot resolve that, so it is found with a bounded minimizer (the M3 finding)
+    def nbar_at(detuning_over_gamma: float) -> float:
+        beam_at = sigma_plus_beam(
+            ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, detuning_over_gamma * G
+        )
+        return rate_coefficients_from_model(BlochModel(ST, [beam_at]), 0, nu_d, cw).nbar
+
+    s = 2.0 * 0.05**2
+    target = -0.5 * math.sqrt(1.0 + s)
+    assert target == pytest.approx(-0.501248, abs=1e-6)
+    sol = minimize_scalar(nbar_at, bounds=(-0.8, -0.3), method="bounded", options={"xatol": 1e-7})
+    assert float(sol.x) == pytest.approx(-0.504442, abs=1e-5)  # the measured argmin at nu/Gamma = 0.05
+    # -(Gamma/2) sqrt(1 + s) is the nu/Gamma -> 0 limit; the residual is first order in nu/Gamma
+    residuals = {}
+    for ratio in (0.05, 0.01, 0.002):
+        nu_r = ratio * G
+
+        def nbar_r(detuning_over_gamma: float, nu_r: float = nu_r) -> float:
+            beam_r = sigma_plus_beam(
+                ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, detuning_over_gamma * G
+            )
+            return rate_coefficients_from_model(BlochModel(ST, [beam_r]), 0, nu_r, cw).nbar
+
+        best = minimize_scalar(nbar_r, bounds=(-0.8, -0.3), method="bounded", options={"xatol": 1e-7})
+        residuals[ratio] = float(best.x) - target
+    assert residuals[0.05] == pytest.approx(-3.19e-3, rel=0.02)
+    assert residuals[0.01] == pytest.approx(-1.28e-4, rel=0.02)
+    assert residuals[0.002] == pytest.approx(-4.37e-6, rel=0.05)
+    assert abs(residuals[0.002]) < 1e-5  # the plan's argmin -0.5000 is the limit, reached from below
+    # the 21-point grid of the earlier revision lands on its nearest node and cannot see any of that
     grid = np.linspace(-0.8 * G, -0.3 * G, 21)
-    nbars = [
-        rate_coefficients_from_model(
-            BlochModel(ST, [sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, d)]),
-            0,
-            nu_d,
-            cw,
-        ).nbar
-        for d in grid
-    ]
-    assert grid[int(np.argmin(nbars))] / G == pytest.approx(-0.5, abs=0.026)
+    nbars = [nbar_at(float(d) / G) for d in grid]
+    assert grid[int(np.argmin(nbars))] / G == pytest.approx(-0.5, abs=1e-9)
+    assert abs(grid[int(np.argmin(nbars))] / G - float(sol.x)) > 1e-3
 
 
 @pytest.mark.slow
@@ -351,17 +378,81 @@ def test_eit_closed_form_is_the_weak_probe_limit_of_level_c() -> None:
 
 
 def test_phonon_rate_equation_mesolve_matches_the_closed_form_to_1e_12() -> None:
+    """Section 9.3 "Phonon rate equation" pins 1e-12; the solver's own settings (atol 1e-13, rtol 1e-11, dop853) deliver
+    max abs 3.73e-13 (max rel 3.95e-12) on this fixture."""
     a_plus, a_minus, eta = 3.0e4, 4.0e5, 0.1
     times = np.linspace(0.0, 3.0e-3, 31)
     mesolve = phonon_rate_equation_mesolve(a_plus, a_minus, eta, 5, 40, times)
     closed = phonon_mean_closed_form(a_plus, a_minus, eta, 5.0, times)
-    assert np.max(np.abs(mesolve - closed)) < 1e-9
+    assert np.max(np.abs(mesolve - closed)) < 1e-12
     assert phonon_steady_state(a_plus, a_minus) == pytest.approx(a_plus / (a_minus - a_plus))
     gen = phonon_generator(a_plus, a_minus, eta, 40)
     assert np.allclose(gen.sum(axis=0), 0.0, atol=1e-9)
     stationary = np.array([(a_plus / a_minus) ** n for n in range(40)])
     stationary /= stationary.sum()
     assert np.allclose(gen @ stationary, 0.0, atol=1e-9 * np.max(np.abs(gen)))
+
+
+def test_the_birth_death_generator_conserves_probability_and_vanishes_without_coefficients() -> None:
+    """Section 9.15: "Sum_n dP(n)/dt = 0 to machine precision for the canonical birth-death form, while Morigi's
+    Eq. 29 as printed gives +5.56 ... and must be rejected"; Section 9.13: "W_k = 0 gives dP/dt = 0, no steady state".
+
+    The canonical form's column sums vanish to machine precision. Morigi's printed Eq. 29 carries a plus for a minus
+    (Section 4.2.8: "the arXiv v1 Eq. 29 has a plus for a minus that breaks probability conservation"), and PLAN.md
+    does not say WHICH of the two loss terms is affected, so the printed +5.56 is not reproducible from the plan;
+    what is testable, and is what the row is for, is that a sign flip on EITHER loss term breaks the conservation by
+    an amount of order the cooling rate, so the printed form must be rejected rather than copied.
+    """
+    a_plus, a_minus, eta, d = 0.37, 1.0, 1.0, 60
+    canonical = phonon_generator(a_plus, a_minus, eta, d)
+    assert np.max(np.abs(canonical.sum(axis=0))) < 1e-14
+    n = np.arange(d)
+    for flipped in ("cooling", "heating"):
+        wrong = np.zeros((d, d))
+        for k in range(d):
+            if k + 1 < d:
+                wrong[k + 1, k] += (k + 1) * a_plus
+                wrong[k, k] += (k + 1) * a_plus if flipped == "heating" else -(k + 1) * a_plus
+            if k > 0:
+                wrong[k - 1, k] += k * a_minus
+                wrong[k, k] += k * a_minus if flipped == "cooling" else -k * a_minus
+        stationary = np.array([(a_plus / a_minus) ** m for m in range(d)])
+        stationary /= stationary.sum()
+        leak = float(np.sum(wrong @ stationary))
+        assert abs(leak) > 0.5  # of order the rate itself: the printed form is not a generator at all
+        assert abs(float(np.sum(canonical @ stationary))) < 1e-14
+    # A_+- = 0 gives the zero generator: no evolution and therefore no steady state to speak of
+    assert np.all(phonon_generator(0.0, 0.0, eta, d) == 0.0)
+    with pytest.raises(CoolingError):
+        phonon_steady_state(0.0, 0.0)
+    assert float(n @ stationary) == pytest.approx(a_plus / (a_minus - a_plus), rel=1e-9)
+
+
+def test_the_printed_sideband_hamiltonian_is_not_hermitian_and_grows_the_norm() -> None:
+    """Section 9.3 row "Sideband limit" / Section 9.16 row 4.2-3: RMP Eq. 109 is printed as i eta (sigma_+ a +
+    sigma_- a^dagger), which is NOT Hermitian; the plan's corrected i eta (sigma_+ a - sigma_- a^dagger) is. The
+    builder is Hermitian by construction (``multilevel``: h_static + c op + conj(c) op.dag()), so this is the
+    negative control the plan's row asks for: the printed form has |H + H^dagger| > 0 and an evolution that leaves
+    the norm, while the corrected one reproduces sin^2(eta Omega sqrt(n) t/2) at unit norm."""
+    d, eta, omega = 8, 0.1, 1.0e6
+    a = qt.tensor(qt.qeye(2), qt.destroy(d))
+    sp = qt.tensor(qt.sigmap(), qt.qeye(d))
+    sm = qt.tensor(qt.sigmam(), qt.qeye(d))
+    printed = 0.5 * omega * eta * 1j * (sp * a + sm * a.dag())
+    correct = 0.5 * omega * eta * 1j * (sp * a - sm * a.dag())
+    assert (correct - correct.dag()).norm() < 1e-12
+    assert (printed - printed.dag()).norm() > 1e-3 * omega * eta
+    psi0 = qt.tensor(qt.basis(2, 1), qt.basis(d, 1))  # |down, n = 1>
+    times = np.linspace(0.0, 4.0 * math.pi / (omega * eta), 41)
+    opts = {"normalize_output": False, "progress_bar": "", "atol": 1e-12, "rtol": 1e-10}
+    good = qt.sesolve(correct, psi0, times, options=opts)
+    bad = qt.sesolve(printed, psi0, times, options=opts)
+    up = qt.tensor(qt.basis(2, 0), qt.basis(d, 0))
+    for t, state in zip(times, good.states):
+        assert abs(state.norm() ** 2 - 1.0) < 1e-7
+        expected = math.sin(0.5 * omega * eta * math.sqrt(1.0) * t) ** 2
+        assert abs(abs(up.overlap(state)) ** 2 - expected) < 1e-6
+    assert max(s.norm() ** 2 for s in bad.states) > 1.5
 
 
 def test_heating_configuration_raises_instead_of_returning_a_negative_occupation() -> None:

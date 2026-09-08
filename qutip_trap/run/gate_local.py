@@ -344,12 +344,15 @@ def step_space(
     *,
     caps: Mapping[int, int] | None = None,
     d_min: int = 6,
-    d_max: int = 64,
+    d_max: int | None = None,
 ) -> StepSpace:
     """The gate-local space of a gate step (Section 5.4): the addressed ions plus the neighbours above the crosstalk threshold,
     and the modes the Section 11.3 criterion resolves for the step's played gates at the TRACKED occupations; every other mode is
     frozen. The cap of a resolved mode follows the loop radius and the tracked state's populated range plus the Section 5.1.1
-    margin."""
+    margin.
+
+    ``d_max`` = None reads ``options.mode_dimension_max`` (default 64) and a clamp is named in ``notes`` with the range the
+    rule asked for (M9a audit D1)."""
     addressed = set(step.ions)
     neighbours: set[int] = set()
     dropped_xt = 0.0
@@ -361,6 +364,7 @@ def step_space(
             else:
                 dropped_xt += math.sin(abs(complex(eps)) * theta / 2.0) ** 2
     ions_local = tuple(sorted(addressed | neighbours))
+    d_ceiling = int(options.mode_dimension_max if d_max is None else d_max)
     n_modes = len(device.crystal.modes)
     nbar_now = {m: float(model.nbar.get(m, 0.0)) for m in range(n_modes)}
     best = best_contributions(device, step.played, nbar_now)
@@ -379,7 +383,9 @@ def step_space(
         if classes[m] != "resolved":
             continue
         c = best[m]
-        tr = cap_for(c.radius, nbar_now[m], c.eta_max, d_min=d_min, d_max=d_max)
+        # the same boundary threshold the engine's margin check reads (Section 5.5's per-test override; M9a audit B4)
+        tail = float(options.boundary_population_max)
+        tr = cap_for(c.radius, nbar_now[m], c.eta_max, d_min=d_min, d_max=d_ceiling, tail=tail)
         n_hi = tr.expected_n_range[1]
         tracked = model.reduced.get(m)
         if tracked is not None:
@@ -387,10 +393,16 @@ def step_space(
             n_tracked = _populated_of(tracked, options.boundary_population_max)
             excursion = int(math.ceil(c.radius**2 + 2.0 * c.radius)) if c.radius > 0.0 else 0
             n_hi = max(n_hi, n_tracked + excursion)
-        d = max(tr.d, n_hi + 1 + required_margin(c.eta_max))
-        d = min(max(d, d_min), d_max)
+        d_want = max(tr.d, n_hi + 1 + required_margin(c.eta_max), d_min)
+        d = min(d_want, d_ceiling)
         if caps is not None and m in caps:
             d = int(caps[m])
+        elif d_want > d:
+            notes.append(
+                f"mode {m}: the cap rule asks for d = {d_want} (expected occupation up to n = {n_hi}) but "
+                f"mode_dimension_max = {d_ceiling} clamps it to d = {d} (declared range up to n = {min(n_hi, d - 1)}); the "
+                "Section 5.1.1 oracle check and the Section 5.5 margin check are evaluated over the clamped range"
+            )
         resolved.append(ModeTruncation(m, d, (0, min(n_hi, d - 1)), tr.eta_max))
         notes.append(
             f"mode {m}: resolved at d = {d} (|alpha|^2(2n+1) = {c.alpha2_weighted:.2e}, |chi| = {c.chi_rad:.3e} rad, radius "
@@ -450,6 +462,9 @@ class GateLocalStep:
     boundary_population: dict[int, float]
     margin_reached: dict[int, int]
     notes: tuple[str, ...]
+    workers: int = 1
+    """Processes this step's engine runs actually used (M9b audit B10): the tomography inputs spread over a parallel map, or
+    the trajectories inside one engine run. 1 = in-process, which is every carrier step (no resolved mode in its space)."""
 
 
 @dataclass(frozen=True)
@@ -473,6 +488,10 @@ class GateLocalReport:
     motional_after: dict[str, dict[int, float]]
     """Per step id (the first sample), nbar per tracked mode after the step."""
     notes: tuple[str, ...] = field(default_factory=tuple)
+    workers: int = 1
+    """The largest number of processes any step of any sample actually used (M9b audit B10). The walk itself iterates its
+    quasi-static samples serially (Section 11.3 item 9 asks for them to be spread too; that is unimplemented and this number
+    says so), so a run whose every step is a carrier reports 1 however many workers were configured."""
 
     @property
     def discrepancy_bound(self) -> float:
@@ -589,6 +608,7 @@ def _idle_step(
     n_modes = len(device.crystal.modes)
     sched = Schedule((), ((step.t_start_s, step.t_end_s),), (), {}, t0_s=step.t_start_s)
     runs = 0
+    workers = 1
     integrators: list[str] = []
     method = "sesolve"
     notes: list[str] = []
@@ -597,6 +617,7 @@ def _idle_step(
         engine = setup.engine()
         rec = engine.tomography(device, sched, space_q, model, sample, seeds, options)
         runs += rec.engine_runs
+        workers = max(workers, rec.workers)
         for i in rec.integrators:
             if i not in integrators:
                 integrators.append(i)
@@ -632,6 +653,7 @@ def _idle_step(
         runs += 1
         rep = engine.last_report
         assert rep is not None
+        workers = max(workers, rep.workers)
         for seg in rep.segments:
             if seg.integrator not in integrators:
                 integrators.append(seg.integrator)
@@ -671,6 +693,7 @@ def _idle_step(
         boundary_population={},
         margin_reached={},
         notes=tuple(notes),
+        workers=workers,
     )
     return new_model, report, runs
 
@@ -721,7 +744,10 @@ def _gate_step(
         nbar[m] = _nbar(arr)
         purity[m] = _purity_deficit(arr)
     resid = rec.residual_displacement()
-    bound = float(sum(v**2 * (2.0 * nbar.get(m, 0.0) + 1.0) for m, v in resid.items()))
+    # Section 9.8's bound sum_m |alpha_m|^2 (2 nbar_m + 1) at the occupation the mode HAD when the step started: the
+    # post-step nbar of the same step's own output made the reported bound depend on the gate's heating (conservative for a
+    # heating gate, an under-estimate for a cooling one) and so not reproducible from the step's inputs (M9a audit B12)
+    bound = float(sum(v**2 * (2.0 * float(model.nbar.get(m, 0.0)) + 1.0) for m, v in resid.items()))
     excitation, guard = frozen_excitation_bounds(device, step.pulses, sel.frozen_coupled, nbar)
     ideal = local_ideal(space.ion_labels, space.ion_dims, step.targets)
     summary = rec.summary(ideal)
@@ -761,6 +787,8 @@ def _gate_step(
         boundary_population=dict(rec.boundary_population),
         margin_reached=dict(rec.margin_reached),
         notes=tuple(dict.fromkeys(notes)),
+        # a cache hit ran nothing, so it used no worker (M9b audit B10)
+        workers=1 if hit else rec.workers,
     )
     return new_model, report, (0 if hit else rec.engine_runs), hit, rec.space
 
@@ -793,6 +821,7 @@ def evolve_gate_local(
     motional_after: dict[str, dict[int, float]] = {}
     runs_total = 0
     hits_total = 0
+    workers_max = 1
     largest = 0
     bound_total = 0.0
     frozen_total = 0.0
@@ -817,12 +846,14 @@ def evolve_gate_local(
                     device, step, register, model, smp, seeds, options, setup, ion_dims, heating, k
                 )
                 runs_total += runs
+                workers_max = max(workers_max, rep.workers)
             else:
                 model, rep, runs, hit, space_used = _gate_step(
                     device, step, register, model, smp, seeds, options, setup, ion_dims, caps, k
                 )
                 runs_total += runs
                 hits_total += int(hit)
+                workers_max = max(workers_max, rep.workers)
                 largest = max(largest, space_used.dimension)
                 if s_idx == 0:
                     bound_total += rep.residual_bound
@@ -853,6 +884,7 @@ def evolve_gate_local(
         summaries=summaries,
         motional_after=motional_after,
         notes=tuple(notes),
+        workers=workers_max,
     )
     return out_states, report, models
 

@@ -245,7 +245,8 @@ def _make_op(ctx: _OpContext, matrix: np.ndarray, name: str) -> CollapseOp:
     else:
         full = qt.QobjEvo([root_w * op, qt.coefficient(_scale_coef, args={"scale": ctx.time_scale})])
         rate = scale_rate * float(ctx.time_scale(ctx.t_start)) ** 2
-    return CollapseOp(full, float(rate / (2.0 * math.pi)), name, ctx.ion, None)
+    # a scattering rate is already s^-1: Section 5.6's 2 pi rule converts angular frequencies, not rates (audit E-18)
+    return CollapseOp(full, float(rate), name, ctx.ion, None)
 
 
 def scattering_channels(

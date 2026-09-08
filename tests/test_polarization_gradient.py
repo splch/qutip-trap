@@ -33,6 +33,7 @@ from qutip_trap.prep.polarization_gradient import (
     recoil_heating_terms,
     saturation_bridge,
     saturation_for_xi,
+    static_gradient_mean_nbar,
     static_gradient_nbar,
     three_axis_lamb_dicke,
     xi_depth,
@@ -133,11 +134,51 @@ def test_three_axis_lamb_dicke_triple_of_ejtemaee_and_haljan() -> None:
 
 
 def test_static_gradient_raises_at_a_node_and_averages_per_ion_otherwise() -> None:
-    """Section 9.17: an ion at phi = pi/4 raises the uncooled-mode error; the moving-gradient 0.8693 is returned only inside W < delta < omega."""
+    """Section 9.17: an ion at phi = pi/4 raises the uncooled-mode error; the moving-gradient 0.8693 is returned only inside
+    W < delta < omega. Section 4.2.4's "the module averages H/W - 1/2 over the ions' actual phi" is
+    ``static_gradient_mean_nbar``, which is the average of the OCCUPATIONS and not the phase-averaged rate ratio of the
+    moving gradient (each ion reaches its own steady state under a static gradient)."""
     with pytest.raises(UncooledPhaseError):
         static_gradient_nbar(0.5, [0.0, math.pi / 4.0])
     values = static_gradient_nbar(0.5, [0.0, 0.3])
     assert values[0] == pytest.approx(0.5) and values[1] > values[0]
+    phases = [0.0, 0.12, 0.3, -0.21]
+    per_ion = static_gradient_nbar(0.5, phases)
+    assert static_gradient_mean_nbar(0.5, phases) == pytest.approx(sum(per_ion) / len(per_ion), rel=1e-12)
+    assert static_gradient_mean_nbar(0.5, [0.0]) == pytest.approx(0.5, rel=1e-12)
+    # the static per-ion average is NOT the moving-gradient phase average: 0.8693 is the latter's minimum
+    assert static_gradient_mean_nbar(0.5, phases) != pytest.approx(phase_averaged_nbar(0.5), rel=1e-3)
+    with pytest.raises(UncooledPhaseError):
+        static_gradient_mean_nbar(0.5, [0.0, math.pi / 4.0])
+    with pytest.raises(ValueError):
+        static_gradient_mean_nbar(0.5, [])
+
+
+def test_the_sisyphus_cooling_rate_follows_the_measured_saturation_squared_law() -> None:
+    """Section 9.3 row "Sisyphus": the measured cooling rate scales as s0^2 with fitted exponents 1.98(6) and 1.91(3)
+    (Ejtemaee and Haljan). The analytic model's exponent is EXACTLY 2: W = (16/9) eta^2 Gamma s xi cos^2 2phi with
+    xi = Delta s/(3 omega), so W is proportional to s^2, and s is proportional to the on-resonance s0 through
+    ``saturation_bridge``. A log-log fit over the source's factor of seven in s0 returns 2.000000, inside both
+    measured error bars; the linear-in-s law (xi held fixed) returns 1.0 and is the negative control."""
+    gamma, delta, omega = TWO_PI * 19.6e6, TWO_PI * 310e6, TWO_PI * 0.79e6
+    eta = 0.09023
+    s0 = np.geomspace(2.0, 15.0, 24)  # a factor of 7.5, the source's range
+    rates = []
+    for value in s0:
+        s = saturation_bridge(float(value), gamma, delta)
+        rates.append(cooling_rate_per_s(eta, gamma, s, xi_depth(delta, s, omega), 0.0))
+    slope, _intercept = np.polyfit(np.log(s0), np.log(np.asarray(rates)), 1)
+    assert slope == pytest.approx(2.0, abs=1e-9)
+    assert 1.98 - 3.0 * 0.06 < slope < 1.98 + 3.0 * 0.06  # the measured 1.98(6)
+    assert 1.91 - 3.0 * 0.03 < slope < 1.91 + 3.0 * 0.03  # and the measured 1.91(3)
+    # negative control: holding xi fixed (a depth independent of the intensity) makes the law linear
+    fixed_xi = [
+        cooling_rate_per_s(eta, gamma, saturation_bridge(float(v), gamma, delta), 1.35, 0.0) for v in s0
+    ]
+    linear, _ = np.polyfit(np.log(s0), np.log(np.asarray(fixed_xi)), 1)
+    assert linear == pytest.approx(1.0, abs=1e-9)
+    # the plan forbids pinning the measured steady state against this model (Section 4.2.4: 1.5-2 is [contested])
+    assert 1.5 < 2.0
 
 
 def test_pol_gradient_beams_methods_delegate_to_the_analytic_model() -> None:

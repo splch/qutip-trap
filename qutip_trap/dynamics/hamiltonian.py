@@ -63,7 +63,9 @@ from qutip_trap.dynamics.multilevel import (  # the multi-level mode of Section 
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.hilbert.operators import debye_waller_factor, qudit_projector, qudit_sigma_plus
 from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.light.comb import comb_build_notes
 from qutip_trap.light.raman import lamb_dicke_parameters, mathieu_or_none
+from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (
     KEY_BRANCH_WEIGHT,
     KEY_INTENSITY_TRAJECTORY,
@@ -75,6 +77,7 @@ from qutip_trap.noise.sampling import (
     NoiseSample,
     key_beam_offset_m,
     key_beam_phase_rad,
+    key_beam_phase_trajectory_rad,
     key_frozen_n,
     key_mode_offset_hz,
     key_position_offset_m,
@@ -82,6 +85,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_trajectory_hz,
     quiet_sample,
 )
+from qutip_trap.trap.anharmonic import anharmonic_estimate
 from qutip_trap.units import TWO_PI
 
 M2 = "milestone M2 (dynamics/hamiltonian.py, PLAN.md Section 4.3.1)"
@@ -90,6 +94,7 @@ M3A = "milestone M3a (the multi-level mode of Section 4.2.8, dynamics/multilevel
 Frame = Literal["schrodinger", "interaction"]
 MicromotionMode = Literal["none", "carrier_j0", "modulated"]
 PhaseMode = Literal["continuous", "reset"]
+GradientForm = Literal["bare", "dressed"]
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,12 @@ class BuilderOptions:
     frozen_debye_waller: bool = True
     curvature: Mapping[int, CurvatureSpec] = field(default_factory=dict)
     """Per ion: the Cetina beam-curvature coupling (Section 6.2); empty = off."""
+    gradient_form: GradientForm = "bare"
+    """A ``gradient`` drive (Section 4.4.5, M4): ``bare`` builds the two microwave tones as ordinary carrier terms beside the
+    laboratory sigma_z force w_{i,m} cos(omega_g t + phi_g), so the J_2(4 Omega_mu/delta) weight and the J_0 = 0 intrinsic
+    dynamical decoupling emerge from the exact dynamics (the plan's "everything derived" preference); ``dressed`` builds the
+    adiabatically eliminated effective force (w_{i,m}/2) J_2(4 Omega_mu/delta) sigma_z^i (a_m e^{i(...)} + h.c.) alone and
+    records the elimination in ``approximations``."""
     kernel: KernelChoice = "auto"
     """How the drive operators sigma_+^i (x) prod_m D_m are held and applied (Section 11.3 item 4; M9b): ``assembled`` builds
     the CSR matrix (M2 to M9a), ``factorized`` holds the per-mode factors and applies them mode by mode as a matrix-free
@@ -263,8 +274,37 @@ class _ScalarCoefficient:
         return float(self.fn(t - self.t_start))
 
 
+@dataclass(eq=False)
+class _GradientCoefficient:
+    """f(t) on sigma_z^i (x) a_m of a near-field microwave-gradient drive (Section 4.4.5; M4).
+
+    ``dressed=False`` is the LABORATORY force w_{i,m} cos(omega_g t + phi_g), both rotating components present, which is
+    what the bare two-tone build uses: the J_2(4 Omega_mu/delta) weight then emerges from the exact dynamics of the
+    microwave dressing that the drive's own tones generate. ``dressed=True`` is the adiabatically eliminated
+    co-rotating term (w_{i,m}/2) J_2(4 Omega_mu/delta) e^{i(rotation t + phi)}, an approximation recorded by the builder.
+    """
+
+    weight: float
+    omega_g: float
+    phase: float
+    t_start: float
+    counter: _Counter
+    rotation: float = 0.0
+    dressed: bool = False
+    continuous: bool = True
+
+    def __call__(self, t: float) -> complex:
+        self.counter.calls += 1
+        tt = t if self.continuous else t - self.t_start
+        if self.dressed:
+            return self.weight * cmath.exp(1j * (self.rotation * tt + self.phase))
+        return complex(self.weight * math.cos(self.omega_g * tt + self.phase))
+
+
 def _coef_plain(
-    t: float, coef: _DriveCoefficient | _RotatedCoefficient | _ScalarCoefficient, **_: object
+    t: float,
+    coef: _DriveCoefficient | _RotatedCoefficient | _ScalarCoefficient | _GradientCoefficient,
+    **_: object,
 ) -> complex:
     return complex(coef(t))
 
@@ -274,7 +314,9 @@ def _traj_coef(t: float, traj: Callable[[float], float], scale: float, **_: obje
     return float(scale * traj(t))
 
 
-def _coef_conj(t: float, coef: _DriveCoefficient | _RotatedCoefficient, **_: object) -> complex:
+def _coef_conj(
+    t: float, coef: _DriveCoefficient | _RotatedCoefficient | _GradientCoefficient, **_: object
+) -> complex:
     return complex(coef(t)).conjugate()
 
 
@@ -370,14 +412,24 @@ def _beat_phase_function(
     return _IntegratedBeat(np.asarray(integral), duration_s, float(offset))
 
 
-def micromotion_index(device: Device, ion: int, delta_k: np.ndarray) -> float:
-    """beta_total of the ion's excess micromotion along delta_k (Section 4.3.6), 0 without an rf record or a field."""
-    if float(np.linalg.norm(delta_k)) == 0.0:
-        return 0.0
-    try:
-        return float(device.trap.micromotion_beta(device.crystal.species[ion], delta_k).as_peak().total)
-    except ValueError:
-        return 0.0
+def micromotion_index(device: Device, ion: int, delta_k: np.ndarray) -> tuple[float, float]:
+    """(beta, rf-phase offset) of the ion's excess micromotion along delta_k (Section 4.3.6).
+
+    ``MicromotionIndex.as_modulation``: beta = hypot(in_phase, out_of_phase) >= 0 and the offset -atan2(out_of_phase,
+    in_phase) is what the modulated coefficient e^{i beta cos(Omega_rf t + delta)} needs added to the drive's rf phase in
+    order to carry BOTH quadratures - and with a SIGNED in-phase index, the pi step across a compensating shim
+    (Section 9.17). J_0 is even, so the ``carrier_j0`` route sees only beta.
+
+    (0, 0) means one of the two things that make the micromotion index physically zero: a drive with no wavevector
+    (a microwave drive), or a trap with NO rf record, where Section 4.1.1's beta = 0 and C0 = 1 hold by construction.
+    Anything else - a trap that carries an rf drive but whose ``Trap.micromotion_beta`` cannot be evaluated, e.g. an rf
+    phase imbalance without the rod geometry factors R_m and alpha, a rod record without its single endcap voltage, or a
+    point outside the Mathieu stability region - RAISES. A missing geometry factor reported as beta = 0 is a
+    default-value fallback that silently switches the micromotion comb off (M1 audit; found by the M5 fixer).
+    """
+    if float(np.linalg.norm(delta_k)) == 0.0 or device.trap.rf is None:
+        return 0.0, 0.0
+    return device.trap.micromotion_beta(device.crystal.species[ion], delta_k).as_peak().as_modulation()
 
 
 def _truncated_exponential(space: HilbertSpace, mode: int, eta: float, order: int) -> qt.Qobj:
@@ -411,6 +463,94 @@ def _use_kernel(space: HilbertSpace, ion: int, etas: Mapping[int, float], option
     if options.kernel == "factorized":
         return True
     return prefer_factorized(space.dims, space.ion_factor(ion), mode_factors)
+
+
+@dataclass(frozen=True)
+class _GradientSpec:
+    """What the builder needs of a ``gradient`` drive (Section 4.4.5, M4): the per-(ion, mode) force coefficient, the
+    gradient's angular frequency and phase, the Bessel weight of the dressed form and its extra rotation."""
+
+    weights: dict[tuple[int, int], float]
+    omega_g: float
+    phase: float
+    bessel: float
+    rotation: float
+    dressed: bool
+    notes: tuple[str, ...]
+
+
+def _gradient_terms(device: Device, drive: Drive, options: BuilderOptions) -> _GradientSpec:
+    """The Section 4.4.5 sigma_z force of ``drive`` on the configured gradient electrodes, everything derived.
+
+    The two tones are the microwave pair at -/+ delta from the (ac-Zeeman-shifted) qubit frequency, each carrying
+    2 Omega_mu/2pi in the plan's (hbar Omega/2) convention; their half-difference phase phi_d enters the dressed force as
+    e^{i(phi_g + 2 phi_d)} (a pi/2 shift of phi_d reverses the force, which is how the Walsh segments of Srinivas et al.
+    close the loop), and the dressed term is resonant where 2 delta = omega_m - omega_g."""
+    from qutip_trap.light.microwave import derive_gradient_drive
+
+    grad = device.gradient
+    if grad is None:
+        raise ValueError(
+            "a 'gradient' drive needs Device.gradient (the near-field electrodes' gradient amplitude, frequency and "
+            "microwave field amplitude; Section 4.4.5)"
+        )
+    if len(drive.tones) != 2:
+        raise ValueError(
+            "a gradient drive carries the two microwave tones symmetrically detuned by +-delta from the qubit "
+            "frequency (Section 4.4.5)"
+        )
+    detunings = []
+    for tone in drive.tones:
+        if callable(tone.detuning_hz):
+            raise NotImplementedError("a gradient drive's microwave tones carry constant detunings +-delta")
+        detunings.append(TWO_PI * float(tone.detuning_hz))
+    if not math.isclose(detunings[0], -detunings[1], rel_tol=1e-9, abs_tol=0.0) or detunings[0] == 0.0:
+        raise ValueError(
+            f"the two microwave tones of a gradient drive sit at +-delta: got {detunings[0]:.6g} and "
+            f"{detunings[1]:.6g} rad/s"
+        )
+    delta = abs(detunings[0])
+    envelopes = []
+    for tone in drive.tones:
+        if callable(tone.envelope_hz) or isinstance(tone.envelope_hz, np.ndarray):
+            raise NotImplementedError("a gradient drive's microwave tones carry constant amplitudes")
+        envelopes.append(TWO_PI * float(tone.envelope_hz))
+    # Srinivas's Omega_mu is HALF the tone Rabi frequency of the (hbar Omega/2) convention (light/microwave.py)
+    omega_mu = 0.5 * float(np.mean(envelopes))
+    phases = []
+    for tone in drive.tones:
+        if callable(tone.phase_rad):
+            raise NotImplementedError("a gradient drive's microwave tones carry constant phases")
+        phases.append(float(tone.phase_rad))
+    plus = 0 if detunings[0] > 0.0 else 1
+    phi_d = 0.5 * (phases[plus] - phases[1 - plus])
+    derived = derive_gradient_drive(device, drive.ions)
+    weights = {key: val for key, val in derived.coupling_rad_s.items() if key[0] in drive.ions}
+    omega_g = TWO_PI * grad.frequency_hz
+    bessel = float(jv(2, 4.0 * omega_mu / delta))
+    notes: list[str] = []
+    dressed = options.gradient_form == "dressed"
+    if dressed:
+        notes.append(
+            "gradient drive: microwave dressing adiabatically eliminated, the force carries "
+            f"J_2(4 Omega_mu/delta) = {bessel:.6f} at Omega_mu/delta = {omega_mu / delta:.4f} and the counter-rotating "
+            "(omega_m + omega_g), J_0 and sigma_y dressed terms are dropped"
+        )
+    else:
+        notes.append(
+            f"gradient drive: the two microwave tones at +-{delta / TWO_PI:.6g} Hz are built as carrier terms and the "
+            f"J_2(4 Omega_mu/delta) = {bessel:.6f} weight of the sigma_z force emerges from the dynamics "
+            f"(J_0 = {float(jv(0, 4.0 * omega_mu / delta)):.6f}; intrinsic dynamical decoupling at J_0 = 0)"
+        )
+    return _GradientSpec(
+        weights=weights,
+        omega_g=omega_g,
+        phase=grad.phase_rad + (2.0 * phi_d if dressed else 0.0),
+        bessel=bessel,
+        rotation=omega_g + 2.0 * delta if dressed else 0.0,
+        dressed=dressed,
+        notes=tuple(notes),
+    )
 
 
 def _drive_operator(
@@ -481,6 +621,37 @@ def _frozen_fock_states(
 
 
 # ---- the builder ---------------------------------------------------------------------------------------------------------
+
+
+def _beam_phase_trajectory(smp: NoiseSample, drive: Drive) -> Trajectory | None:
+    """Delta phi(t), the sampled beam-path phase of the drive's beat note: phi_2(t) - phi_1(t) for a Raman or light-shift
+    pair (``Delta k = k_1 - k_2``) and -phi_1(t) for a single-beam optical drive, the convention of ``key_beam_phase_rad``;
+    ``None`` when the sample carries no beam-phase trajectory for the drive's beams (a beam without one contributes zero)."""
+    if drive.kind in ("raman", "light_shift"):
+        t1 = smp.trajectory(key_beam_phase_trajectory_rad(drive.beams[1]))
+        t0 = smp.trajectory(key_beam_phase_trajectory_rad(drive.beams[0]))
+        if t1 is None and t0 is None:
+            return None
+        if t1 is None:
+            assert t0 is not None
+            return t0.scaled(-1.0)
+        if t0 is None:
+            return t1
+        return _sum_trajectories(t1, t0.scaled(-1.0))
+    if drive.kind in ("optical_E1", "optical_E2"):
+        t0 = smp.trajectory(key_beam_phase_trajectory_rad(drive.beams[0]))
+        return None if t0 is None else t0.scaled(-1.0)
+    return None
+
+
+def _sum_trajectories(a: Trajectory, b: Trajectory) -> Trajectory:
+    """a(t) + b(t) on their common grid. ``NoiseModel`` synthesizes every trajectory of one sample on one ``time_grid``, so
+    two grids that differ are a construction error, not a case to interpolate over."""
+    if a.times_s.shape != b.times_s.shape or not np.array_equal(a.times_s, b.times_s):
+        raise ValueError(
+            "two noise trajectories of one sample sit on different time grids; NoiseModel synthesizes them on one grid"
+        )
+    return Trajectory(a.times_s, a.values + b.values)
 
 
 def build_hamiltonian(
@@ -616,6 +787,13 @@ def build_hamiltonian(
         approximations.append(
             "anharmonic terms present on the trap but switched off (include_anharmonic=False)"
         )
+    # Section 5.7: the cubic Hamiltonian is opt-in, but "the resonance checker and the estimated accumulated phase are
+    # ON BY DEFAULT" - so this runs whatever include_anharmonic says, gated only by the record's own resonance_check
+    # switch and by there being three modes for a triple to exist (Sections 4.1.4, 9.12; audit item E.5).
+    if anh is not None and anh.resonance_check and n_modes >= 3:
+        estimate = anharmonic_estimate(crystal, anh, t_end - t_start)
+        if estimate is not None:
+            approximations.append(estimate.summary())
 
     terms.append(static)
     terms.extend(trajectory_terms)
@@ -630,23 +808,51 @@ def build_hamiltonian(
     for pulse in pulses:
         drive: Drive = pulse.drive
         duration = pulse.duration_s
+        gradient = _gradient_terms(device, drive, opts) if drive.kind == "gradient" else None
         delta_k = drive.delta_k(device.beams)
         part_key = pulse.gate_id or f"pulse@{pulse.t_start_s:.9g}"
         part = drive_parts.setdefault(part_key, [])
-        # quasi-static beam-path phases (Section 13 row "Optical phase factor on sigma_+": e^{+i(Delta k . X - Delta phi)})
+        # quasi-static beam-path phases: Delta phi, the phase of the beat note written E ~ cos(omega_L t - Delta k . r
+        # + Delta phi), so Delta phi = phi_2 - phi_1 for a Raman pair with Delta k = k_1 - k_2 and E_j ~ cos(k_j . r -
+        # omega_j t + phi_j), and Delta phi = -phi_1 for a single beam (PLAN.md:808; Section 13 row "Optical phase factor
+        # on sigma_+": the factor is e^{+i(Delta k . X - Delta phi)}, so the RELATIVE sign of the two is physical)
         beam_phase = 0.0
         if drive.kind in ("raman", "light_shift"):
-            beam_phase = smp.get(key_beam_phase_rad(drive.beams[0]), 0.0) - smp.get(
-                key_beam_phase_rad(drive.beams[1]), 0.0
+            beam_phase = smp.get(key_beam_phase_rad(drive.beams[1]), 0.0) - smp.get(
+                key_beam_phase_rad(drive.beams[0]), 0.0
             )
         elif drive.kind in ("optical_E1", "optical_E2"):
-            beam_phase = smp.get(key_beam_phase_rad(drive.beams[0]), 0.0)
+            beam_phase = -smp.get(key_beam_phase_rad(drive.beams[0]), 0.0)
         if beam_phase != 0.0:
             approximations.append(
-                f"pulse {pulse.gate_id!r}: quasi-static beam-path phase {beam_phase:.3g} rad"
+                f"pulse {pulse.gate_id!r}: quasi-static beam-path phase Delta phi = {beam_phase:.3g} rad"
+            )
+        if drive.comb is not None:
+            # the validity hierarchy of Section 4.3.7 is "a runtime guard logged before every solve": the clauses the
+            # builder can evaluate from the pulse go into approximations here, the rest at construction time in
+            # light.raman.comb_drive, which is where the species and the intensity chain are known (M2 audit E8)
+            approximations.extend(
+                comb_build_notes(
+                    drive.comb,
+                    duration,
+                    len(drive.tones),
+                    float(drive.stark_shift_hz) if not callable(drive.stark_shift_hz) else float("nan"),
+                )
             )
         is_laser = drive.kind in ("raman", "light_shift", "optical_E1", "optical_E2")
         phase_traj = laser_phase_traj if drive.kind in ("optical_E1", "optical_E2") else None
+        # the SAMPLED beam-path phase Delta phi(t) (Section 6.3 route (d), Section 7.10; conv.beam_phase_spectrum): the same
+        # combination as the quasi-static Delta phi above, on the sample's shared grid. The static factor below carries
+        # e^{-i Delta phi} and _DriveCoefficient adds its phase trajectory as e^{+i phi(t)}, so it enters as -Delta phi(t),
+        # beside a single-photon drive's own laser phase (M7 hand-off, consolidated 2026-09-08)
+        beam_phase_traj = _beam_phase_trajectory(smp, drive)
+        if beam_phase_traj is not None:
+            minus = beam_phase_traj.scaled(-1.0)
+            phase_traj = minus if phase_traj is None else _sum_trajectories(phase_traj, minus)
+            approximations.append(
+                f"pulse {pulse.gate_id!r}: sampled beam-path phase trajectory Delta phi(t) "
+                f"(rms {beam_phase_traj.rms():.3g} rad) enters the beat note as e^(-i Delta phi(t))"
+            )
         amp_traj = intensity_traj if is_laser else None
         amp_power = 0.5 if drive.kind in ("optical_E1", "optical_E2") else 1.0
         laser_rotation = (
@@ -711,6 +917,10 @@ def build_hamiltonian(
             and float(tone.envelope_hz) == 0.0
             for tone in drive.tones
         )
+        if gradient is not None and gradient.dressed:
+            # the dressed effective form REPLACES the two microwave tones by their J_2 weight on the force, so the
+            # spin-flip carrier terms they would otherwise build are not part of that Hamiltonian
+            silent = True
         tone_fns: list[_ToneFn] = []
         for tone in drive.tones:
             constants: tuple[float, float, float] | None = None
@@ -747,7 +957,9 @@ def build_hamiltonian(
                 approximations.append(
                     f"ion {ion}: no rf record, C0 = 1 and beta = 0 in the Lamb-Dicke parameters"
                 )
-            beta = micromotion_index(device, ion, delta_k) if opts.micromotion != "none" else 0.0
+            beta, beta_phase = (
+                micromotion_index(device, ion, delta_k) if opts.micromotion != "none" else (0.0, 0.0)
+            )
             if opts.micromotion == "carrier_j0":
                 carrier = float(jv(0, beta))
                 if beta != 0.0:
@@ -759,12 +971,33 @@ def build_hamiltonian(
             dw = 1.0
             if opts.frozen_debye_waller:
                 for m in space.frozen:
+                    # a DROPPED mode is not modelled at all (Section 5.2: "nothing absorbs a dropped mode's loss"), so it
+                    # gets no Debye-Waller factor either; only the frozen spectators do (M6 fix)
+                    if m in space.dropped:
+                        continue
                     dw *= debye_waller_factor(frozen_states[m], etas[m])
+            # the optical phase carries the RELATIVE ion-position drift as well as the equilibrium geometry: a stray
+            # field displaces ion i by u_0(i) = Q E_dc/(m omega^2) (Section 4.1.1; Berkeland 1998 Eq. 16), sampled as
+            # key_position_offset_m, and Section 13's row "Optical phase factor on sigma_+" stores "beam-path AND
+            # ion-position drift ... as one scalar per ion per pulse". The primary's own drift is a per-ion constant
+            # that the frame alignment of Section 7.5 step 3 absorbs, so only Delta k . (u_0(j) - u_0(i)) survives.
             geometric = (
                 0.0
                 if ion == primary
-                else float(np.dot(delta_k, np.asarray(crystal.positions_m[ion]) - x_primary))
+                else float(
+                    np.dot(
+                        delta_k,
+                        (np.asarray(crystal.positions_m[ion], dtype=float) + _position_offset(ion, smp))
+                        - (x_primary + _position_offset(primary, smp)),
+                    )
+                )
             )
+            drift_phase = float(np.dot(delta_k, _position_offset(ion, smp) - _position_offset(primary, smp)))
+            if drift_phase != 0.0:
+                approximations.append(
+                    f"pulse {pulse.gate_id!r}, ion {ion}: sampled ion-position drift phase "
+                    f"Delta k . (u_0({ion}) - u_0({primary})) = {drift_phase:.6g} rad"
+                )
             pointing = _pointing_factor(device, drive, ion, smp)
             if pointing != 1.0:
                 approximations.append(
@@ -839,7 +1072,9 @@ def build_hamiltonian(
                         term_scale,
                         beta if opts.micromotion == "modulated" else 0.0,
                         rf_omega,
-                        rf_delta,
+                        # the micromotion index's own quadrature offset -atan2(beta_op, beta_ip) on top of the drive's rf
+                        # phase, so that beta cos(Omega t + delta) is beta_ip cos + beta_op sin (Section 9.17)
+                        rf_delta + beta_phase,
                         extra_rotation + laser_rotation,
                         counter,
                         phase_traj,
@@ -927,6 +1162,48 @@ def build_hamiltonian(
                 approximations.append(
                     f"ion {ion}: displacement operators expanded to order {opts.lamb_dicke_order} in eta"
                 )
+        # the near-field microwave-gradient force (Section 4.4.5, M4): sum_{i,m} w_{i,m} sigma_z^i (a_m + a_m^dag) x
+        # cos(omega_g t + phi_g), the position-dependent Zeeman shift of the oscillating gradient, with w_{i,m} built
+        # from the mode's mass-weighted displacement pattern by ``light.microwave.derive_gradient_drive``. The two
+        # microwave tones of the same drive were built above as ordinary carrier terms (``bare``), so J_2(4 Omega_mu/delta)
+        # and the J_0 = 0 decoupling come out of the dynamics; ``dressed`` builds the eliminated form instead.
+        if gradient is not None:
+            if opts.frame != "schrodinger":
+                raise NotImplementedError("a gradient drive is built in the Schroedinger frame only")
+            approximations.extend(gradient.notes)
+            omega_max = max(omega_max, gradient.omega_g)
+            for ion in drive.ions:
+                if not space.has_ion(ion):
+                    raise ValueError(
+                        f"pulse {pulse.gate_id!r} addresses ion {ion}, which the space does not carry"
+                    )
+                sz = space.sigma_z(ion)
+                for tr in space.resolved:
+                    weight = gradient.weights.get((ion, tr.mode), 0.0)
+                    if weight == 0.0:
+                        continue
+                    op = (sz * space.annihilation(tr.mode)).to("CSR")
+                    grad_coef = _GradientCoefficient(
+                        weight=0.5 * weight * gradient.bessel if gradient.dressed else weight,
+                        omega_g=gradient.omega_g,
+                        phase=gradient.phase,
+                        t_start=pulse.t_start_s,
+                        counter=counter,
+                        rotation=gradient.rotation,
+                        dressed=gradient.dressed,
+                        continuous=opts.phase_mode == "continuous",
+                    )
+                    t_plain = [op, qt.coefficient(_coef_plain, args={"coef": grad_coef})]
+                    t_conj = [op.dag(), qt.coefficient(_coef_conj, args={"coef": grad_coef})]
+                    terms.extend([t_plain, t_conj])
+                    part.extend([t_plain, t_conj])
+                    n_drive_terms += 2
+                    kernel_flags.append(False)
+                for m in space.frozen:
+                    if gradient.weights.get((ion, m), 0.0) != 0.0:
+                        approximations.append(
+                            f"pulse {pulse.gate_id!r}, ion {ion}: gradient force on frozen mode {m} dropped"
+                        )
         # H_Stark
         if opts.include_stark:
             st = drive.stark_shift_hz
@@ -966,6 +1243,11 @@ def build_hamiltonian(
     fingerprint = canonical_digest(
         (
             "build_hamiltonian",
+            # H(t) depends on the device through every eta (lamb_dicke_parameters), the beam waists and pointing
+            # (_pointing_factor) and the geometric phase Delta k . X_i, none of which any other entry of this digest
+            # carries: without it the engine's propagator cache serves one device's propagator for another (M9b audit
+            # B1: two devices differing only in beam 0's wavelength gave 0.4950194835 instead of 0.4948647699)
+            device.hash(),
             tuple(space.ion_dims),
             tuple(space.dims),
             tuple(space.ion_labels),
@@ -1005,6 +1287,18 @@ def build_hamiltonian(
     )
 
 
+def _position_offset(ion: int, sample: NoiseSample) -> np.ndarray:
+    """The sampled quasi-static displacement u_0 of ``ion`` (m, laboratory axes): Section 4.1.1's Q E_dc/(m omega^2)
+    under an uncompensated stray field (Berkeland 1998 Eq. 16), drawn by ``noise/model.py``'s ``stray_field_drift``.
+
+    It enters the drive TWICE and in two different ways: in the optical phase, as Delta k . u_0 (Section 13 row
+    "Optical phase factor on sigma_+"), and in the intensity, by moving the ion on the beams' profile
+    (``_pointing_factor``). For 171Yb+ at 355 nm counter-propagating the phase term is the larger by six orders of
+    magnitude (0.51 rad against 2.6e-7 in amplitude at u_0 = 14.3 nm), so dropping either is not symmetric.
+    """
+    return np.array([sample.get(key_position_offset_m(ion, ax), 0.0) for ax in range(3)])
+
+
 def _pointing_factor(device: Device, drive: Drive, ion: int, sample: NoiseSample) -> float:
     """sqrt(prod_beams I_b(x_ion + dx_ion - d_b)/I_b(x_ion)) for the drive's beams: a beam pointing offset d_b or an ion
     displacement dx_ion (a stray field) moves the ion on the intensity profile, so Omega and the crosstalk ratios change
@@ -1012,7 +1306,7 @@ def _pointing_factor(device: Device, drive: Drive, ion: int, sample: NoiseSample
     if not drive.beams:
         return 1.0
     x = np.asarray(device.crystal.positions_m[ion], dtype=float)
-    dx = np.array([sample.get(key_position_offset_m(ion, ax), 0.0) for ax in range(3)])
+    dx = _position_offset(ion, sample)
     factor = 1.0
     for b in drive.beams:
         d_b = np.array([sample.get(key_beam_offset_m(b, ax), 0.0) for ax in range(3)])

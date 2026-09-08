@@ -40,13 +40,27 @@ def test_single_qubit_group_has_24_elements_closed_under_products_and_inverses()
         assert matrix_key(a.conj().T) in keys
         for b in SINGLE_QUBIT_CLIFFORDS:
             assert matrix_key(a @ b) in keys
-    # every element is at most two GPi2 pulses plus virtual RZ (Section 7.2 item 1); a pure Z rotation costs no pulse
+    # the pulse cost of the group (Section 7.2 item 1): 20 of the 24 Cliffords cost exactly ONE pulse (16 gpi2, 4 gpi)
+    # and the remaining 4 -- the order-4 Z-rotation subgroup {1, S, Z, S^dag}, one sixth of the group, not "a third" and
+    # not "eight" -- cost none at all; the two-GPi2 ZXZXZ branch of the decomposer is never reached by a Clifford
     pulses = []
+    n_gpi2 = n_gpi = 0
     for m in SINGLE_QUBIT_CLIFFORDS:
         ops = decompose_single_qubit(m, 0)
         pulses.append(sum(1 for op in ops if op.name in ("gpi", "gpi2")))
+        n_gpi2 += sum(1 for op in ops if op.name == "gpi2")
+        n_gpi += sum(1 for op in ops if op.name == "gpi")
         assert all(op.name in ("gpi", "gpi2", "rz") for op in ops)
-    assert max(pulses) <= 2 and pulses.count(0) == 4, pulses
+    assert max(pulses) == 1 and pulses.count(0) == 4 and pulses.count(1) == 20, pulses
+    assert (n_gpi2, n_gpi) == (16, 4)
+    assert sum(pulses) / 24 == pytest.approx(0.8333333333333334, rel=1e-12)
+    assert n_gpi2 / 24 == pytest.approx(2.0 / 3.0, rel=1e-12)
+    assert n_gpi / 24 == pytest.approx(1.0 / 6.0, rel=1e-12)
+    # the four pulse-free elements are exactly the diagonal (Z-rotation) Cliffords
+    free = [m for m, k in zip(SINGLE_QUBIT_CLIFFORDS, pulses) if k == 0]
+    assert len(free) == 4
+    for m in free:
+        assert np.max(np.abs(m - np.diag(np.diag(m)))) < 1e-12
 
 
 def test_two_qubit_group_order_class_sizes_and_stabilizers() -> None:

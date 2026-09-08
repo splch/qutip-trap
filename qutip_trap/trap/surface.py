@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
+from scipy.optimize import brentq
 
 from qutip_trap.units import E_C
 
@@ -143,23 +144,24 @@ class Electrodes:
 # ---- strips: complex potential ------------------------------------------------------------------------------------
 
 
-def _edges(intervals: tuple[tuple[float, float], ...]) -> tuple[np.ndarray, np.ndarray, float]:
-    """Finite edges with their signs (+1 left, -1 right) and the constant from infinite edges (in units of V)."""
+def _edges(intervals: tuple[tuple[float, float], ...]) -> tuple[np.ndarray, np.ndarray]:
+    """The FINITE edges with their signs (+1 left, -1 right) of a strip set.
+
+    A semi-infinite edge contributes only an additive constant to the potential itself (arctan((x1 - x)/y) -> -pi/2,
+    i.e. +1/2 per infinite edge in units of V) and nothing to any derivative, so it carries no edge here. Every caller
+    is a derivative (the complex derivative of order >= 1, the rf null, the escape saddle), which is why the constant
+    is not returned: a caller that ever needs the potential must use ``strip_potential``, which handles +-inf directly.
+    """
     e: list[float] = []
     s: list[float] = []
-    const = 0.0
     for x1, x2 in intervals:
         if math.isfinite(x1):
             e.append(x1)
             s.append(1.0)
-        else:
-            const += 0.5  # arctan((x1 - x)/y) -> -pi/2 contributes +1/2
         if math.isfinite(x2):
             e.append(x2)
             s.append(-1.0)
-        else:
-            const += 0.5
-    return np.asarray(e, dtype=float), np.asarray(s, dtype=float), const
+    return np.asarray(e, dtype=float), np.asarray(s, dtype=float)
 
 
 def strip_potential(x: float, y: float, x1: float, x2: float) -> float:
@@ -175,7 +177,7 @@ def strip_complex_derivative(w: complex, intervals: tuple[tuple[float, float], .
     """f^(order)(w) for f = (i/pi) sum_k sigma_k ln(w - e_k) at unit voltage (order >= 1)."""
     if order < 1:
         raise ValueError("use strip_potential for the potential itself")
-    e, s, _ = _edges(intervals)
+    e, s = _edges(intervals)
     coef = (1j / math.pi) * (-1.0) ** (order - 1) * math.factorial(order - 1)
     return complex(coef * np.sum(s / (w - e) ** order))
 
@@ -354,7 +356,7 @@ class GaplessPlaneTrap:
         """The zero of the rf field above the plane: algebraic for a strip rf electrode, Newton for rectangles."""
         name = self.electrodes.rf_name
         if self.translation_invariant:
-            e, s, _ = _edges(self.strips[name])
+            e, s = _edges(self.strips[name])
             # f'(w) = 0  <=>  sum_k s_k prod_{j != k} (w - e_j) = 0
             poly = np.zeros(1)
             for k in range(len(e)):
@@ -366,7 +368,7 @@ class GaplessPlaneTrap:
                 raise ValueError("the rf field has no zero above the plane for this layout")
             best = min(upper, key=lambda w: abs(np.sum(s / (w - e))))
             return np.array([best.real, best.imag, 0.0])
-        r = np.array([0.0, 1.0, 0.0]) * self._scale() if guess is None else np.array(guess, dtype=float)
+        r = self._null_seed() if guess is None else np.array(guess, dtype=float)
         scale = self._scale()
         # Newton on E_u(r) = 0 with the analytic Jacobian dE/dr = -H (least squares: a long finite rail leaves H_zz ~ 0)
         for _ in range(100):
@@ -389,18 +391,54 @@ class GaplessPlaneTrap:
         vals += [abs(v) for rs in self.rectangles.values() for rc in rs for v in rc]
         return max(vals) if vals else 1.0
 
-    def escape_point(self, null: np.ndarray | None = None) -> np.ndarray:
-        """The saddle of |E_rf|^2 above the plane (the pseudopotential escape point) for a strip rf electrode.
+    def _rf_extent(self) -> tuple[float, float, float]:
+        """(x_lo, x_hi, z_centre) of the rf electrode's own finite edges: the box the rf null lives in."""
+        name = self.electrodes.rf_name
+        xs = [v for iv in self.strips.get(name, ()) for v in iv if math.isfinite(v)]
+        xs += [v for rc in self.rectangles.get(name, ()) for v in rc[:2]]
+        zs = [v for rc in self.rectangles.get(name, ()) for v in rc[2:]]
+        if not xs:
+            raise ValueError(
+                f"the rf electrode {name!r} has no finite transverse edge to bound the null search"
+            )
+        return min(xs), max(xs), (0.5 * (min(zs) + max(zs)) if zs else 0.0)
 
-        Where E != 0 the critical points of |f'|^2 are the zeros of f'' (Section 13, "escape point a saddle from
-        G'(Z) = 0"), a polynomial of degree 2(K - 1) in the K finite edges; the escape point is the upper-half-plane
-        zero of lowest pseudopotential.
+    def _null_seed(self, n: int = 61) -> np.ndarray:
+        """The best point of a coarse (x, y) grid inside the rf electrode's transverse span, as a Newton seed.
+
+        |E_rf| falls to zero both at the null and at infinity, so a search seeded from a single point above the
+        electrodes runs away upward (the Newton step follows the decaying tail) and a global minimum over an unbounded
+        grid is the far corner. The seed is therefore taken from a BOUNDED box: x across the rf electrode's own finite
+        edges and y log-spaced over 0.02 to 1 times that span, at the axial centre of the rf patches - a surface trap's
+        null sits at a height of order the electrode widths (House 2008). A caller with a better estimate passes
+        ``guess`` to ``rf_null``.
+        """
+        x_lo, x_hi, z_c = self._rf_extent()
+        span = x_hi - x_lo
+        if span <= 0.0:
+            raise ValueError("the rf electrode has zero transverse extent")
+        best_r, best = np.array([0.5 * (x_lo + x_hi), 0.25 * span, z_c]), math.inf
+        for x in np.linspace(x_lo, x_hi, n):
+            for y in np.geomspace(0.02 * span, span, n):
+                r = np.array([x, y, z_c])
+                e = self.rf_field_unit(r)
+                value = float(np.dot(e, e))
+                if value < best:
+                    best, best_r = value, r
+        return best_r
+
+    def escape_point(self, null: np.ndarray | None = None) -> np.ndarray:
+        """The saddle of |E_rf|^2 above the plane (the pseudopotential escape point).
+
+        Strip rf electrodes take the algebraic route: where E != 0 the critical points of |f'|^2 are the zeros of f''
+        (Section 13, "escape point a saddle from G'(Z) = 0"), a polynomial of degree 2(K - 1) in the K finite edges, and
+        the escape point is the upper-half-plane zero of lowest pseudopotential. Rectangles (a segmented trap) take the
+        numerical route of ``_escape_saddle_numeric``; PLAN 4.1.6 requires h and the trap depth to be reported with
+        every device that uses this module, so a segmented trap cannot be left without one.
         """
         if not self.translation_invariant:
-            raise NotImplementedError(
-                "the escape point is computed algebraically for strip rf electrodes only"
-            )
-        e, s, _ = _edges(self.strips[self.electrodes.rf_name])
+            return self._escape_saddle_numeric(null)
+        e, s = _edges(self.strips[self.electrodes.rf_name])
         poly = np.zeros(1)
         for k in range(len(e)):
             others = np.delete(e, k)
@@ -414,9 +452,86 @@ class GaplessPlaneTrap:
         w_best = cands[int(np.argmin(e2))]
         return np.array([w_best.real, w_best.imag, 0.0])
 
+    def _grad_psi_unit(self, r: np.ndarray) -> np.ndarray:
+        """grad |E_rf|^2 = -2 H_rf E_rf (dE_i/dr_j = -H_ij and H is symmetric): the stationarity condition of Psi."""
+        return np.asarray(-2.0 * (self.rf_hessian_unit(r) @ self.rf_field_unit(r)), dtype=float)
+
+    def _escape_saddle_numeric(self, null: np.ndarray | None = None) -> np.ndarray:
+        """The escape saddle of Psi ~ |E_rf|^2 for a layout with rectangles, by a bracketed climb plus Newton.
+
+        Psi is 0 at the rf null, rises with height and decays as the field does, so d Psi/dy has exactly one sign change
+        on the vertical line above the null: that root is the escape height (and the escape point itself for a layout
+        mirror-symmetric about that line). A Newton step on grad Psi = 0 with a finite-difference Jacobian and a
+        least-squares solve (a long rail leaves the axial row of the Jacobian near zero, as in ``rf_null``) then moves
+        it off the line when the layout is not symmetric. The result is accepted only if the Hessian of Psi there has
+        exactly ONE negative eigenvalue - a saddle, which is what an escape point is (Section 13); a maximum finder
+        would return the wrong point, the error the 2026-09-04 critique flagged for the strip route.
+        """
+        r0 = self.rf_null() if null is None else np.asarray(null, dtype=float)
+        y0 = float(r0[1])
+        if y0 <= 0.0:
+            raise ValueError("the rf null must sit above the electrode plane")
+
+        def dpsi_dy(y: float) -> float:
+            return float(self._grad_psi_unit(np.array([r0[0], y, r0[2]]))[1])
+
+        lo = 1.02 * y0
+        if dpsi_dy(lo) <= 0.0:
+            raise ValueError("Psi is already falling just above the rf null: no escape saddle above it")
+        hi = 2.0 * y0
+        for _ in range(40):
+            if dpsi_dy(hi) < 0.0:
+                break
+            hi *= 1.5
+        else:
+            raise ValueError("Psi does not turn over above the rf null: the layout has no bounded depth")
+        y_e = float(brentq(dpsi_dy, lo, hi, xtol=1e-14 * y0, rtol=1e-15))
+        r = np.array([r0[0], y_e, r0[2]])
+        # Newton on grad Psi = 0 with a finite-difference Jacobian (grad Psi already needs the Hessian, so its
+        # derivative is a third derivative and is taken numerically)
+        step_h = 1e-6 * y0
+        for _ in range(50):
+            g = self._grad_psi_unit(r)
+            jac = np.zeros((3, 3))
+            for j in range(3):
+                rp, rm = r.copy(), r.copy()
+                rp[j] += step_h
+                rm[j] -= step_h
+                jac[:, j] = (self._grad_psi_unit(rp) - self._grad_psi_unit(rm)) / (2.0 * step_h)
+            delta, *_ = np.linalg.lstsq(jac, -g, rcond=1e-10)
+            r = r + delta
+            if r[1] <= 0.0:
+                raise ValueError("the escape-point search left the half-space above the electrodes")
+            if float(np.max(np.abs(delta))) < 1e-13 * y0:
+                break
+        else:
+            raise ValueError("the escape-point search did not converge")
+        curvature = np.zeros((3, 3))
+        for j in range(3):
+            rp, rm = r.copy(), r.copy()
+            rp[j] += step_h
+            rm[j] -= step_h
+            curvature[:, j] = (self._grad_psi_unit(rp) - self._grad_psi_unit(rm)) / (2.0 * step_h)
+        eigs = np.linalg.eigvalsh((curvature + curvature.T) / 2.0)
+        scale = float(np.max(np.abs(eigs)))
+        negative = int(np.sum(eigs < -1e-8 * scale))
+        if negative != 1:
+            raise ValueError(
+                f"the point found is not a saddle of Psi: the curvature eigenvalues are {eigs} "
+                f"({negative} negative, expected exactly one)"
+            )
+        return np.asarray(r, dtype=float)
+
     # -- dc --
 
     def dc_potential(self, r: np.ndarray, voltages: dict[str, float]) -> float:
+        """The full static potential in volts: the named electrodes plus the externally solved dc curvature.
+
+        The external quadratic term (1/2)(r - r_null) . H_ext . (r - r_null) is part of the dc potential exactly as
+        ``dc_field`` and ``dc_hessian`` treat it; leaving it out here made this the one dc accessor that returned an
+        incomplete potential (``total_energy_j`` used to add the quadratic term back itself, which is why the assembled
+        trap was still consistent).
+        """
         tot = 0.0
         for name, v in voltages.items():
             if name == self.electrodes.rf_name or v == 0.0:
@@ -424,6 +539,10 @@ class GaplessPlaneTrap:
             if name not in self.names:
                 raise KeyError(f"dc voltage on unknown electrode {name!r}; layout has {self.names}")
             tot += v * self.potential(name, r)
+        ext = self.electrodes.external_dc_hessian_v_per_m2()
+        if np.any(ext):
+            d = np.asarray(r, dtype=float) - self.rf_null()
+            tot += 0.5 * float(d @ ext @ d)
         return tot
 
     def dc_field(self, r: np.ndarray, voltages: dict[str, float]) -> np.ndarray:
@@ -466,11 +585,8 @@ class GaplessPlaneTrap:
     ) -> float:
         """Psi + Q Phi_dc - Q E_stray . (r - r_null): the ion sits at its minimum, not at the rf null (Section 13)."""
         u = self.pseudopotential_j(r, v_rf_peak_v, mass_kg, omega_rf_rad_s, charge=charge)
-        u += charge * E_C * self.dc_potential(r, voltages)
-        ext = self.electrodes.external_dc_hessian_v_per_m2()
+        u += charge * E_C * self.dc_potential(r, voltages)  # the external dc curvature is inside dc_potential
         d = np.asarray(r, dtype=float) - self.rf_null()
-        if np.any(ext):
-            u += charge * E_C * 0.5 * float(d @ ext @ d)
         if stray_field_v_per_m is not None:
             u += -charge * E_C * float(np.dot(np.asarray(stray_field_v_per_m, dtype=float), d))
         return u

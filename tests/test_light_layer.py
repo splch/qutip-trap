@@ -74,7 +74,14 @@ def test_raman_rabi_frequency_scales_as_the_field_product_and_matches_the_specie
 
 def test_stark_shift_is_the_differential_light_shift() -> None:
     """delta_St = delta(up) - delta(down) summed over the beams (Section 4.3.2); 355 nm is blue of the P1/2 line, so each
-    level is pushed up and the differential shift is the small hyperfine asymmetry; the Stark term follows the intensity."""
+    level is pushed up and the differential shift is the small hyperfine asymmetry; the Stark term follows the intensity.
+
+    The differential-to-scalar bound was 1e-3 while 171Yb+ had no P3/2 record. The M0a fix of 2026-09-07 (audit
+    item E4) added it, and 355 nm sits between the two fine-structure levels with opposite-sign detunings
+    (+33.2 THz from P1/2, -66.6 THz from P3/2), so the SCALAR shift very nearly cancels -- (1/3)/33.2 -
+    (2/3)/66.6 = 3e-5 of either term alone -- while the differential shift, which is set by the hyperfine
+    splittings in the denominators, does not. The ratio is therefore legitimately 1.3e-2 now, and the bound is
+    restated at 3e-2 with the sign and the intensity scaling still pinned."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     yb = species("171Yb+")
@@ -86,7 +93,7 @@ def test_stark_shift_is_the_differential_light_shift() -> None:
     assert differential_stark_shift_hz(dev, 0, (0, 1)) == pytest.approx(expected, rel=1e-9)
     assert device_stark_shift_hz(dev, 0, (0, 1)) == pytest.approx(expected, rel=1e-9)
     assert yb.light_shift_hz(lower, dev.beams[0], dev.field) > 0.0, "blue-detuned light raises the level"
-    assert abs(dd.stark_shift_hz) < 1e-3 * yb.light_shift_hz(lower, dev.beams[0], dev.field)
+    assert abs(dd.stark_shift_hz) < 3e-2 * yb.light_shift_hz(lower, dev.beams[0], dev.field)
     assert intensity_scaled(10.0, 0.5) == pytest.approx(2.5)
     drive = square_drive(dd, detuning_hz=1e3, phase_rad=0.2)
     assert drive.stark_shift_hz == pytest.approx(dd.stark_shift_hz)

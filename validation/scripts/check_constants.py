@@ -394,9 +394,9 @@ print(
 # ----------------------------------------------------------------------------------
 sep("7. g_F, the MHz/G trap, and the Breit-Rabi curvature (171Yb+)")
 # ----------------------------------------------------------------------------------
-g_J = 2.00225664
+g_J = 2.002615  # the adopted 171Yb+ 2S_1/2 g_J (species table yb171.S12.g_J, PLAN.md 9.13); 2.00225664 is 43Ca+'s
 g_F = g_J / 2
-mu_I_over_muN, I_spin = 0.4919, 0.5  # 171Yb nuclear moment, mu_N
+mu_I_over_muN, I_spin = 0.49367, 0.5  # 171Yb nuclear moment, mu_N (yb171.mu_I_nuclear_magnetons); 0.4919 is retired
 g_I = -(mu_I_over_muN / (I_spin)) * m_e_over_m_p
 print(f"g_F(2S_1/2, F=1) = g_J/2 = {g_F:.6f} (dimensionless)")
 print(
@@ -416,7 +416,8 @@ c2 = (g_J - g_I) ** 2 * mu_B_over_h**2 / (2 * nu0) * 1e-8  # Hz/G^2
 c2_gI0 = g_J**2 * mu_B_over_h**2 / (2 * nu0) * 1e-8
 print(
     f"\ntaylor_c2 = (g_J - g_I)^2 mu_B^2/(2 h^2 nu_0) = {c2:.2f} Hz/G^2 "
-    f"({c2_gI0:.2f} with g_I = 0), reproducing the quoted +310.8 Hz/G^2 and confirming it is "
+    f"({c2_gI0:.2f} with g_I = 0), reproducing PLAN.md 9.13's 310.87 +- 0.02 Hz/G^2 (the source's rounded +310.8) "
+    f"and confirming it is "
     f"(1/2) d^2nu/dB^2, not d^2nu/dB^2"
 )
 for printed in (12.642815e9, 12.642819e9, 12.642821e9):

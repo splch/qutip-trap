@@ -168,6 +168,7 @@ def test_thermal_populations_normalize_and_truncate() -> None:
 # ---- margins and tolerances (Section 5.1.1 rule ii) --------------------------------------------------------------------------
 
 
+@pytest.mark.convergence
 def test_margin_fixture_and_interior_tolerance() -> None:
     assert required_margin(0.05) == 6 and required_margin(0.1) == 6
     assert required_margin(0.5) == 10 and required_margin(1.0) == 20
@@ -222,6 +223,7 @@ def test_drive_operator_structure_and_nonzeros() -> None:
     assert qt.expect(sz, ket1) == pytest.approx(1.0)
 
 
+@pytest.mark.convergence
 def test_states_marginals_and_boundary_population() -> None:
     space = HilbertSpace((2,), (ModeTruncation(0, 10, (0, 3), 0.15),), None, (1, 2))
     st = space.initial_state([0], thermal={0: 0.5, 1: 0.2})
@@ -273,6 +275,7 @@ def test_enr_space_marginals_and_displacement() -> None:
     )  # loose: mode 2's displacement mixes n2 = m2 elements by up to eta_2; the unitarity check above is the sharp one
 
 
+@pytest.mark.convergence
 def test_regrid_and_halving_test() -> None:
     old = HilbertSpace((2,), (ModeTruncation(0, 6, (0, 2), 0.1),), None, ())
     new = old.grown(0, 4)
