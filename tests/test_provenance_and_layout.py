@@ -47,6 +47,7 @@ SECTION_3_2_MODULES = [
     "noise/spectra.py",
     "noise/sampling.py",
     "device/model.py",
+    "device/presets.py",
     "run/job.py",
     "run/results.py",
     "run/levels.py",

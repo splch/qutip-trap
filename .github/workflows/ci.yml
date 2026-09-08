@@ -42,6 +42,8 @@ jobs:
         run: uv run mypy
       - name: provenance ledger is current with the species tables
         run: uv run python tools/ledger_from_tables.py --check
+      - name: documentation tables are current with the ledger (M10)
+        run: uv run python tools/docs_from_ledger.py --check
       - name: pytest
         run: uv run pytest
 

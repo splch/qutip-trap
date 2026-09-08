@@ -1,7 +1,7 @@
 [project]
 name = "qutip-trap"
-version = "0.0.1"
-description = "First-principles trapped-ion quantum computer simulator built on QuTiP (PLAN.md; milestone M0: scaffolding and public interfaces)"
+version = "0.1.0"
+description = "First-principles trapped-ion quantum computer simulator built on QuTiP (PLAN.md milestones M0 to M10: the first release)"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 authors = [{ name = "Spencer Churchill", email = "25377399+splch@users.noreply.github.com" }]

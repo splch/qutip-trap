@@ -217,3 +217,16 @@ Added on 2026-09-07 by milestone M9b:
   integration per distinct segment Hamiltonian, the other inputs matrix products, against the per-state ODE path; the
   tomography of a carrier step at 48 engine runs, 3 integrations, 45 cache hits). Runs the package (about two minutes); lines
   prefixed `MC:` carry wall times.
+
+Added on 2026-09-07 by milestone M10 (benchmark emulation):
+
+- `check_benchmarks.py`: the Clifford groups behind randomized benchmarking (|C1| = 24 and |C2| = 11520 by closure, the four
+  entangling classes with their stabilizers 576/64/64/576 and sizes 576/5184/5184/576, 1.5 entangling gates per Clifford, class
+  recognition, sequence closure by the inverse of the product), the KAK decomposition of two-qubit unitaries (named gates,
+  Haar-random SU(4) at three entangling gates in the Weyl chamber, the ideal heavy-output statistics of random square
+  circuits), and on the two-ion 171Yb+ example device (`qutip_trap/device/presets.py`, the M6 fixture): single-qubit RB to 2048
+  Cliffords with the Section 6.8 channels and SPAM alongside, simultaneous RB on both ions (the addressing crosstalk that
+  single-ion RB cannot see), two-qubit RB on the pair with the entangling gate's GATE_LOCAL channel, GHZ fidelity on two and
+  three ions (populations, parity scan, the bound (P_0 + P_1 + C)/2, the exact register fidelity), and a quantum-volume style
+  run at width two against the depolarizing prediction (Sections 7.9, 9.12, 13, 6.8, 9.6). Runs the package (about twenty
+  minutes); lines prefixed `MC:` carry shot noise.

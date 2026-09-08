@@ -1662,6 +1662,112 @@ records:
     source: "bench_ms_timing_v5.py part 2; tests/test_kernel.py (slow)"
     equation: "the 20 us pulse of the Section 11.1 fixture with one coefficient per drive term, dop853 at atol 1e-10, rtol 1e-8: factorized 0.25 / 0.45 / 1.11 / 3.15 s against CSR 0.04 / 0.35 / 4.76 / 42.49 s, unmerged dense 0.09 / 0.34 / 11.61 / 109.50 s and the merged dense operator of the plan's table 0.03 / 0.12 / 1.01 / 23.52 s at dimensions 48 / 256 / 864 / 2048 (vern9 within 25 %); every construction's final state agrees with the CSR one to 4e-13 under dop853 and to 6e-7 between the integrators; per right-hand side the factorized terms cost 13, 22, 45 and 90 us against 2, 17, 195 and 1208 us CSR"
     corrected_form: "the plan's column for Sections 11.2 to 11.4 was the merged dense operator, which a shared coefficient function produces and the real builder cannot (every drive term carries its own scale factors); against it the kernel is 7x faster at dimension 2048 and slower below 864, so the 'twentyfold' amplitude ratio of Section 11.3 is a measured 14x against CSR at 2048 and a loss at 48 and 256 that the auto rule avoids"
+  # ---- M10: benchmark emulation (Section 10 M10; Sections 7.9, 6.8, 9.6; Section 13 rows "RB error rate", "Depolarizing normalization") ----
+  - id: conv.rb_error_rate
+    symbol: "r = (1 - p)(2^n - 1)/2^n"
+    tag: corrected
+    section: "13 RB error rate; 7.9; 6.8"
+    source: "Magesan, Gambetta and Emerson 2011; Wright et al. 2019; Chen et al. 2023"
+    equation: "an RB decay F(m) = A p^m + B reports r = (1 - p)(2^n - 1)/2^n, the average error per Clifford ((1 - p)/2 for one qubit, (3/4)(1 - p) for two); (4^n - 1)(1 - p)/4^n is the entanglement infidelity of the depolarizing channel with the same p and is reported under that name (noise/summary.py rb_error_per_clifford and depolarizing_entanglement_infidelity; benchmarks/rb.py RBResult.error_per_clifford and depolarizing_entanglement_infidelity)"
+    corrected_form: "the first version of the plan labelled the entanglement infidelity the RB error rate, 1.5x (n = 1) and 1.25x (n = 2) too large, which would have offset every RB comparison of M10; Wright's 'p is the gate fidelity'; Chen's Eq. 3 conflates decay bases with rates and prints a singular matrix"
+  - id: conv.rb_sequence_inverse
+    symbol: "C_inv = (C_m ... C_1)^-1"
+    tag: corrected
+    section: "7.9 Randomized benchmarking variants"
+    source: "Egan et al. 2021; Mount et al. 2015; Magesan 2011"
+    equation: "m uniform Cliffords are closed by the inverse of THEIR PRODUCT, computed from the ideal matrices, recognized as a Clifford of its own class (two qubits) and compiled as one more Clifford; the survival is P(every benchmarked qubit reads 0); B is fixed at 1/2^n when fewer than three lengths are scanned or fix_offset is set, since a tiny decay leaves A and B degenerate (benchmarks/rb.py)"
+    corrected_form: "the inverse of each Clifford, the extraction error Section 7.9 corrects"
+  - id: conv.two_qubit_clifford_classes
+    symbol: "|C1| = 24, |C2| = 11520 = 576 + 5184 + 5184 + 576"
+    tag: recomputed here
+    section: "7.9; M10"
+    source: "Barends et al. 2014 Supplementary; benchmarks/clifford.py; check_benchmarks.py 1; tests/test_clifford.py"
+    equation: "C1 is the closure of {H, S} modulo global phase (24, eight of them pure Z rotations that cost no pulse); C2 the closure of {H (x) 1, 1 (x) H, S (x) 1, 1 (x) S, CNOT} (11520); the double cosets L g L of L = C1 (x) C1 (576) by the core g in {1, CNOT, iSWAP, SWAP} have stabilizers |L n g L g^-1| = 576, 64, 64, 576 and sizes 576^2/stabilizer = 576, 5184, 5184, 576; a uniform element is a core drawn by class size and two independent uniform local elements l_1 g l_2 (every element reached by the same number of pairs); 0, 1, 2, 3 entangling gates per class, 1.5 on average; the class of any element is the rank of the off-diagonal block of its symplectic matrix (0 identity, 1 CNOT, 2 with a zero diagonal block SWAP, 2 otherwise iSWAP), and the decomposition is found by the 4 x 576 tensor-product search"
+    corrected_form: "a phase key that rounded floats distinguished -0.0 from 0.0 and closed C1 to 311 'elements'; the key quantizes to integers"
+  - id: conv.kak_weyl_chamber
+    symbol: "U = e^{i phi} (A (x) B) exp[-i (a XX + b YY + c ZZ)] (C (x) D)"
+    tag: background
+    section: "7.2 (an arbitrary SU(4) as the standard set's U3 is an arbitrary SU(2)); 7.1; M10"
+    source: "Kraus and Cirac 2001; Zhang, Vala, Sastry and Whaley 2003; the magic-basis bidiagonalization of Makhlin 2002 as Cirq implements it"
+    equation: "Q = M^dag U M = O_1 D O_2^T with O_1, O_2 real special orthogonal and D diagonal unitary (O_2 and D^2 from the complex-symmetric unitary Q^T Q, whose real and imaginary parts one real orthogonal matrix diagonalizes); (a, b, c) and phi from the four phases of D through the +-1 table of XX, YY, ZZ on the Bell states; the coefficients moved into the Weyl chamber pi/4 >= a >= b >= |c| >= 0 by pi/2 shifts absorbed as Paulis into A, B, by the axis permutations (S (x) S), (H (x) H), (R_x(pi/2) (x) R_x(pi/2)) and by the pair negations (Z, Y, X (x) 1); emitted as rxx(2a), (S (x) S) rxx(2b) (S^dag (x) S^dag), rzz(2c) with the local factors through decompose_single_qubit, so every Moelmer-Soerensen gate is played at an angle in [0, pi/2] and a generic SU(4) costs three; verified against the target up to a global phase (control/two_qubit.py)"
+    corrected_form: ""
+  - id: conv.ghz_parity_bound
+    symbol: "F >= (P_0 + P_1 + C)/2"
+    tag: verified
+    section: "7.9 Entangling gate; 9.6 rows 1 and 2; M10"
+    source: "Sackett et al. 2000; Leibfried et al. 2005; Wright et al. 2019 (the two-qubit form, Section 7.9 [verified])"
+    equation: "P_0 = P(0...0) and P_1 = P(1...1) from the GHZ circuit H, CNOT chain; on fresh shots the parity <prod_q Z_q> after GPi2(phi) on every qubit oscillates as C cos(N phi + phi_0) with C = 2 |rho_{0...0, 1...1}|, fitted from at least four phases over one period 2 pi/N; F >= (P_0 + P_1 + C)/2 with the shot-noise uncertainties combined in quadrature, an equality for the ideal state; the simulator reports the exact register fidelity <GHZ| rho |GHZ> beside it (benchmarks/ghz.py)"
+    corrected_form: "phi_0 carries N pi/2 from the rotation axis of GPi2 and the compiled circuit's residual virtual-Z frames, so the parity at phi = 0 is not the maximum (it vanishes for the real GHZ state); only the contrast enters the bound"
+  - id: conv.heavy_output_criterion
+    symbol: "mean(h_U) - 2 sigma > 2/3"
+    tag: background
+    section: "10 M10; 4.6 (the four-qubit quantum-volume circuit of Pino et al. 2021)"
+    source: "Cross, Bishop, Sheldon, Nation and Gambetta, PRA 100, 032328 (2019)"
+    equation: "square circuits of width n and depth d = n, every layer a uniform random permutation and a Haar-random SU(4) (Mezzadri's QR construction) on each of the floor(n/2) pairs, adjacent local unitaries merged per qubit; the heavy outputs of a circuit are the strings whose IDEAL probability exceeds the median of the ideal distribution (half the strings); h_U is the measured fraction of shots on them; the width passes when the mean over circuits of h_U exceeds 2/3 by two standard errors (between-circuit variance plus shot noise), the protocol asking for at least 100 circuits (a smaller run says so); under a depolarizing composition h_pred = h_ideal (1 - eps) + eps/2 (benchmarks/volume.py)"
+    corrected_form: ""
+  - id: conv.benchmark_budget_composition
+    symbol: "r_channel = sum_kinds n_kind eps_kind; F_gates = prod (1 - eps)"
+    tag: background
+    section: "10 M10; 6.8; 8.4; 9.6"
+    source: "Magesan 2011 (additivity of average infidelities to first order); Wright et al. 2019 (the composite expected-fidelity product of Section 7.9); Sections 6.8 and 9.6"
+    equation: "beside every benchmark: (i) the Section 9.6 closed-form scales per unit, summed per native gate kind from Diagnostics.intrinsic_budget; (ii) the Section 6.8 channel of every native gate kind the benchmark compiled to, from ONE one-gate circuit through run(level='GATE_LOCAL') (the step's Choi matrix, its ideal the GateTarget unitary), reduced to the benchmarked qubits with the crosstalk neighbours traced out in |0> (E_keep(rho) = Tr_rest E(rho (x) |0><0|)) and converted to the average gate infidelity; (iii) the SPAM errors; composed as r_channel = sum n_kind eps_kind, F_gates = prod (1 - eps_kind)^n_kind, F(0) = prod_q [(1 - eps_prep)(1 - eps_D) + eps_prep eps_B], the GHZ readout factors (1 - sum eps_q) on the populations and prod (1 - 2 eps_q) on the contrast, the depolarizing heavy-output prediction (benchmarks/budget.py)"
+    corrected_form: "an estimate, never a bound: coherent errors of one Clifford's pulses partly cancel (single-qubit RB on the example device measures r about half of r_channel) while the coherent crosstalk rotations of consecutive carrier pulses on one neighbour add in amplitude (the GHZ circuit's exact register infidelity exceeds 1 - F_gates); the Section 9.6 scales are bounds on the coherent errors and are reported beside the prediction, never summed into it"
+  - id: anchor.m10.clifford_groups
+    symbol: "|C1| = 24, |C2| = 11520"
+    tag: recomputed here
+    section: "7.9; 13 RB error rate; M10"
+    source: "benchmarks/clifford.py; check_benchmarks.py 1; tests/test_clifford.py"
+    equation: "the closure of {H, S} has 24 elements and the closure of {H (x) 1, 1 (x) H, S (x) 1, 1 (x) S, CNOT} 11520; the stabilizers |L n g L g^-1| of the cores 1, CNOT, iSWAP, SWAP are 576, 64, 64, 576, so the classes have 576, 5184, 5184, 576 elements, which the symplectic invariant counts over the whole group; 1.5 entangling gates per Clifford on average; 200 of 200 random elements are recognized with their class and 50 of 50 random six-Clifford sequences closed by the inverse of their product return the identity"
+    corrected_form: "a phase key built from rounded floats distinguished -0.0 from 0.0 and closed C1 to 311 'elements'; the key quantizes to integers"
+  - id: anchor.m10.kak_decomposition
+    symbol: "(a, b, c) in the Weyl chamber"
+    tag: recomputed here
+    section: "7.2; M10"
+    source: "control/two_qubit.py; check_benchmarks.py 2; tests/test_two_qubit_kak.py"
+    equation: "CNOT and CZ decompose to (pi/4, 0, 0) at one entangling gate, iSWAP to (pi/4, pi/4, 0) at two, SWAP to (pi/4, pi/4, -pi/4) at three, CP(0.3) to (0.075, 0, 0) at one, residuals below 1e-15; 200 Haar-random SU(4) all cost three entangling gates with a worst residual of 1.3e-14, every Moelmer-Soerensen angle in [0, pi/2]; the ideal heavy-output probability of random width-2 depth-2 circuits is 0.796 +- 0.092 (one standard deviation over 200 circuits) against the large-width asymptote (1 + ln 2)/2 = 0.8466"
+    corrected_form: ""
+  - id: anchor.m10.single_qubit_rb
+    symbol: "r = (1 - p)/2 on the two-ion example device"
+    tag: recomputed here
+    section: "7.9; 9.12 Wright reproduction; 13 RB error rate; M10"
+    source: "check_benchmarks.py 3; tests/test_benchmarks.py"
+    equation: "lengths (1, 128, 512, 2048), three sequences, 4000 shots: mean survival 0.99967, 0.9975, 0.987, 0.9636; with B fixed at 1/2 the fit gives A = 0.49971(28), p = 0.999960(9), F(L) = 0.4997 x 0.99996^L + 0.5000 and r = (1 - p)/2 = 2.00(45)e-5 (the depolarizing entanglement infidelity (3/4)(1 - p) = 2.99e-5 is reported under that name); 0.829 pulses per Clifford (0.66 gpi2, 0.169 gpi, a third of the Cliffords being Z rotations that cost no pulse); the Section 6.8 channels reduced to the benchmarked ion are 1.840e-5 (gpi2) and 7.358e-5 (gpi), the full two-ion steps 2.582e-4 and 1.032e-3 with the neighbour's crosstalk rotation counted; r_channel = 2.455e-5, r_intrinsic = 4.07e-4 (the Section 9.6 scales), F(0) from SPAM 0.99965 against the measured 0.99967(29)"
+    corrected_form: "the three-parameter fit is degenerate at this decay (A = 0.19 +- 0.93 and B = 0.81 +- 0.93 on the same data), so B is pinned at 1/2^n (fix_offset); the first-order composition of the channels over-predicts r by 20 %: a Clifford's two pulses carry coherent errors that partly cancel"
+  - id: anchor.m10.simultaneous_rb_crosstalk
+    symbol: "P(00) under independent sequences on both ions"
+    tag: recomputed here
+    section: "6.6; 7.9; M10"
+    source: "check_benchmarks.py 3; benchmarks/rb.py (pair=False)"
+    equation: "both ions driven by independent Clifford sequences (2000 shots, two sequences), joint survival P(00) = 0.9975, 0.914, 0.752 at m = 1, 128, 512; p = 0.999080(100) and r = (3/4)(1 - p) = 6.90(75)e-4 per pair of Cliffords against 2 x 2.0e-5 for the ions benchmarked alone; the channels reduced to the pair charge the neighbour's crosstalk rotation (gpi2 2.582e-4, gpi 1.032e-3) and compose to r_channel = 3.43e-4"
+    corrected_form: "the measured joint decay is twice the first-order composition: consecutive carrier pulses rotate the same neighbour about nearby axes and their 2.2 % crosstalk errors add in amplitude, not in probability (Wright's 1-4 %, Section 6.6); single-ion RB is blind to this error, which is why the benchmark offers the simultaneous variant"
+  - id: anchor.m10.two_qubit_rb
+    symbol: "r = (3/4)(1 - p) on the pair"
+    tag: recomputed here
+    section: "7.9; 13 RB error rate; 6.8; M10"
+    source: "check_benchmarks.py 4; tests/test_benchmarks.py"
+    equation: "lengths (1, 6, 16), two sequences, 400 shots: survival 0.9963(45), 0.9825(53), 0.9563(178); with B fixed at 1/4 the fit gives p = 0.99631(136) and r = (3/4)(1 - p) = 2.77(100)e-3 (entanglement infidelity (15/16)(1 - p) = 3.46e-3); 7.0 pulses and 1.442 entangling gates per Clifford in this sample; the channels on the pair are gpi2 2.582e-4, gpi 1.032e-3 and ms 1.137e-4 (depolarizing rate 1.421e-4, twirl p_II 0.99986, 48 engine runs on the 572-dimensional gate-local space, the M9a numbers); r_channel = 2.12e-3, r_intrinsic = 1.23e-2, F(0) from SPAM 0.99930"
+    corrected_form: "the two-qubit Clifford error of this device is the carrier pulses' crosstalk, not the entangling gate: 4.9 gpi2 and 0.67 gpi per Clifford at 2.6e-4 and 1.0e-3 on the pair against 1.44 entangling gates at 1.1e-4; the swap class emits one CNOT on the reversed pair, so ms[1,0] is a kind of its own (0.058 per Clifford)"
+  - id: anchor.m10.ghz_fidelity
+    symbol: "(P_0 + P_1 + C)/2 against <GHZ| rho |GHZ>"
+    tag: recomputed here
+    section: "7.9 Entangling gate; 9.6 rows 1 and 2; M10"
+    source: "check_benchmarks.py 5; tests/test_benchmarks.py"
+    equation: "two ions, 1000 shots: P00 0.542(16), P11 0.454(16), parity contrast 0.9981(19) from eight phases (chi2/dof 0.19), bound 0.9970(112), exact register fidelity 0.99767, predicted F_gates 0.99860 and bound 0.99716; three ions on the three-ion example device (2.0 um addressing waist), five phases, 400 shots, dimension 1144 = [2, 2, 2, 11, 13] with the zigzag frozen: P000 0.545(25), P111 0.4475(25), contrast 0.9945(116), bound 0.9935(185), exact register fidelity 0.98520, Section 9.6 scales 3.0e-2"
+    corrected_form: "the exact two-ion register infidelity 2.33e-3 exceeds 1 - F_gates = 1.40e-3: the five carrier pulses' crosstalk rotations on the same neighbour add coherently (M6's finding in channel language); the parity at phi = 0 is -1.0 and not +1 because GPi2's rotation axis and the compiled frames put N pi/2 plus the frame angles into phi_0, so the bound reads the contrast, never the value at one phase"
+  - id: anchor.m10.quantum_volume_width_two
+    symbol: "h_U at width two"
+    tag: recomputed here
+    section: "10 M10; 4.6 (Pino 2021's quantum-volume circuit)"
+    source: "check_benchmarks.py 6; tests/test_benchmarks.py"
+    equation: "four random square circuits of depth two (six entangling gates and 26 pulses each after merging the local unitaries), 400 shots: heavy-output probabilities 0.795(20), 0.648(24), 0.820(19), 0.603(25) against the ideal 0.7429, 0.6176, 0.8657, 0.5858; mean 0.716(55) against the ideal mean 0.703 and the depolarizing prediction 0.7016 (eps_gates 5.83e-3 from the full-angle channels, eps_readout 9.6e-4); exact register fidelities 0.990, 0.996, 0.995, 0.991; mean - 2 sigma > 2/3 is not met with four circuits"
+    corrected_form: "at width two the ideal heavy-output probability itself spreads from 0.59 to 0.87 between circuits (0.796 +- 0.092 over 200), so the two-sigma pass criterion needs the protocol's hundred circuits even on a machine at 0.99 register fidelity; the result carries the circuit count and says so"
+  - id: anchor.m10.example_device_preset
+    symbol: "yb171_chain(n).device.hash()"
+    tag: recomputed here
+    section: "3.2 device/presets.py; M10"
+    source: "device/presets.py; tests/test_presets.py"
+    equation: "the package-level example device reproduces the M6 fixture tests/m6_fixtures.circuit_fixture(n) hash for hash (Appendix E's canonical digest) for n = 2 and for n = 3 at the 2.0 um addressing waist, with the same drive maps and detection beam index, so every number the M6 to M10 suites established on the fixture holds for the preset the documentation examples and the benchmarks run on"
+    corrected_form: ""
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

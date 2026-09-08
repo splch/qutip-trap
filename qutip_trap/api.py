@@ -8,6 +8,27 @@ later milestone raise ``NotImplementedError`` naming that milestone.
 
 from __future__ import annotations
 
+from qutip_trap.benchmarks import (
+    BenchmarkBudget,
+    GateChannel,
+    GHZResult,
+    QVCircuit,
+    QVResult,
+    RBResult,
+    RBSequence,
+    StepChannel,
+    TwoQubitClifford,
+    clear_budget_cache,
+    decompose_two_qubit_clifford,
+    gate_channel,
+    ghz_circuit,
+    ghz_fidelity,
+    parity_circuit,
+    quantum_volume,
+    random_square_circuit,
+    random_two_qubit_clifford,
+    randomized_benchmarking,
+)
 from qutip_trap.calibration import (
     CalibrationCache,
     CalibrationError,
@@ -51,7 +72,14 @@ from qutip_trap.control.shaping import (
     solve_frequency_modulation,
 )
 from qutip_trap.control.table import CalEntry, CalibrationTable, Segment, Waveform
+from qutip_trap.control.two_qubit import (
+    KAK,
+    decompose_two_qubit_unitary,
+    haar_random_unitary,
+    kak_decomposition,
+)
 from qutip_trap.device.model import DerivedQuantities, Device, Field
+from qutip_trap.device.presets import DevicePreset, yb171_chain
 from qutip_trap.dynamics.channels import CollapseOp
 from qutip_trap.dynamics.engine import (  # noqa: I001
     ChannelSummary,
@@ -188,6 +216,31 @@ from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import Gauss, Hz, RadPerS, Tesla, hz_from_rad_s, rad_s_from_hz
 
 __all__ = [
+    "BenchmarkBudget",
+    "DevicePreset",
+    "GHZResult",
+    "GateChannel",
+    "KAK",
+    "QVCircuit",
+    "QVResult",
+    "RBResult",
+    "RBSequence",
+    "StepChannel",
+    "TwoQubitClifford",
+    "clear_budget_cache",
+    "decompose_two_qubit_clifford",
+    "decompose_two_qubit_unitary",
+    "gate_channel",
+    "ghz_circuit",
+    "ghz_fidelity",
+    "haar_random_unitary",
+    "kak_decomposition",
+    "parity_circuit",
+    "quantum_volume",
+    "random_square_circuit",
+    "random_two_qubit_clifford",
+    "randomized_benchmarking",
+    "yb171_chain",
     "GateLocalReport",
     "GateLocalStep",
     "GateStep",

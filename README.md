@@ -7,8 +7,10 @@ A first-principles trapped-ion quantum computer simulator built on QuTiP. The sp
 crystal), M2 (single ion, spin-motion coupling, single-qubit gates), M3a (multi-level optical-Bloch builder), M3 (cooling
 and state preparation), M4 (two-ion entangling gates), M5 (readout), M6 (end-to-end circuits in JOINT_EXACT), M7 (noise
 and error channels), M8 (calibration emulation), M9a (scaling I: resolved-mode selection, frozen spectators, the ENR
-option, GATE_LOCAL) and M9b (scaling II: the matrix-free drive kernel, trajectory, branch and sample parallelism, the
-propagator cache).** The
+option, GATE_LOCAL), M9b (scaling II: the matrix-free drive kernel, trajectory, branch and sample parallelism, the
+propagator cache) and M10 (benchmark emulation and release: randomized benchmarking, GHZ fidelity and a quantum-volume style
+run on the simulated device with the simulator's own error budget alongside, the documentation under `docs/`, version
+0.1.0).** The
 simulator now evolves one ion with its motional modes through the one Hamiltonian builder of Section 4.3: exact displacement
 operators by matrix exponential asserted against the analytic Laguerre elements over the populated range (Section 5.1.1),
 cached operators and marginals (ENR included), the boundary monitor with cap-raising retries (Section 5.5), Raman,
@@ -438,6 +440,67 @@ with its segmentation error is not used. Two more plan facts corrected by measur
 does not arise because the engine averages the trajectories itself in keyed order (`MultiTrajResult`'s own running sums are not
 used).
 
+M10 closes the first release (Section 10): the benchmarks a laboratory runs on a machine, run on the simulated one through
+`run()` and reported beside what the simulator's own physics accounts for, plus the documentation. Nothing in
+`qutip_trap/benchmarks/` applies a gate matrix to a state: the ideal Cliffords and SU(4)s define the protocols and their
+inverses (as a laboratory computes them), the compiler turns them into native gates and the engine plays the pulses.
+`benchmarks/clifford.py` holds the 24 single-qubit Cliffords (the closure of {H, S}, each at most two GPi2 pulses plus virtual
+RZ, a third of them Z rotations that cost no pulse) and samples the 11520 two-qubit Cliffords uniformly from the four double
+cosets of the local group by entangling core (1, CNOT, iSWAP, SWAP; stabilizers 576, 64, 64, 576, class sizes 576, 5184,
+5184, 576, both recomputed from the closure; 1.5 entangling gates per Clifford), recognizes an arbitrary two-qubit Clifford's
+class and decomposition by a tensor-product search over the 4 x 576 candidates (the inverse of a sequence's product, never
+of each Clifford, Section 7.9 [corrected]), and emits iSWAP as two rxx(-pi/2) with the YY term conjugated by S (x) S.
+`control/two_qubit.py` is the KAK decomposition of an arbitrary SU(4) in the magic basis (the bidiagonalization of the
+complex-symmetric Gram matrix, the coefficients moved into the Weyl chamber pi/4 >= a >= b >= |c| by Pauli-absorbed pi/2
+shifts, axis permutations and pair negations), emitted as rxx(2a), (S (x) S) rxx(2b) (S^dag (x) S^dag), rzz(2c) around
+single-qubit factors and verified against its target up to a global phase like every other template: CNOT and CZ at one
+entangling gate, iSWAP at two, SWAP and every Haar-random SU(4) at three, every Moelmer-Soerensen angle in [0, pi/2].
+`benchmarks/rb.py` runs Clifford RB (single-qubit, simultaneous single-qubit with independent sequences on several ions,
+two-qubit on a pair), fits the mean survival to A p^m + B (B pinned at 1/2^n when a tiny decay leaves A and B degenerate)
+and reports Section 13's r = (1 - p)(2^n - 1)/2^n beside the entanglement infidelity (4^n - 1)(1 - p)/4^n under its own
+name; `benchmarks/ghz.py` runs the GHZ circuit for P(0...0), P(1...1) and, on fresh shots, the parity scan under GPi2(phi) on
+every qubit, fits C cos(N phi + phi_0) and reports the bound (P_0 + P_1 + C)/2 beside the exact register fidelity;
+`benchmarks/volume.py` runs Cross et al. 2019's square circuits of Haar-random SU(4) layers on random pairings with the heavy
+outputs of the ideal distribution and the two-sigma pass criterion, stating when the circuit count is below the protocol's
+hundred. `benchmarks/budget.py` is the error budget alongside: the Section 9.6 closed-form scales per Clifford or circuit
+from every run's `intrinsic_budget`, the Section 6.8 channel of every native gate kind the benchmark compiled to (one
+one-gate circuit through `run(level="GATE_LOCAL")`, the step's Choi matrix reduced to the benchmarked qubits with the
+crosstalk neighbours traced out in |0>, against the `GateTarget` unitary), the SPAM errors, and their first-order composition
+(r_channel = sum of pieces x channel infidelity, F_gates = the product, F(0) from the preparation and readout errors), stated
+as an estimate and not a bound. `device/presets.py` promotes the M6 fixture to the package as the example device the
+documentation and the benchmarks run on (`yb171_chain(n)`, hash for hash the fixture). Acceptance (`tests/test_clifford.py`,
+`test_two_qubit_kak.py`, `test_presets.py`, `test_benchmarks.py`, `test_docs.py`; `validation/scripts/check_benchmarks.py`,
+about twenty minutes): on the two-ion example device single-qubit RB to 2048 Cliffords (three sequences, 4000 shots) decays
+from 0.99967 to 0.9636 with F(L) = 0.4997 x 0.99996^L + 0.5 and r = 2.00(45) x 10^-5 per Clifford against r_channel = 2.5 x 10^-5
+from the gpi2 (1.8 x 10^-5) and gpi (7.4 x 10^-5) channels reduced to the benchmarked ion, F(0) = 0.99967 against the SPAM
+prediction 0.99965 and the Section 9.6 scales 4.1 x 10^-4 per Clifford as the bound; simultaneous RB on both ions decays
+thirty-five times faster (P(00) = 0.752 at 512 Cliffords, r = 6.9(8) x 10^-4 per pair of Cliffords against a composed
+3.4 x 10^-4), the 2.2 % addressing crosstalk that single-ion RB cannot see and that adds in amplitude over consecutive pulses
+on the same neighbour; two-qubit RB gives r = 2.8(10) x 10^-3 per Clifford against r_channel = 2.1 x 10^-3, of which the
+entangling gate (1.14 x 10^-4 average gate infidelity, depolarizing rate 1.42 x 10^-4, the M9a numbers) is a small part and the
+carrier pulses' crosstalk on the pair the rest; the two-ion GHZ bound is 0.997(11) against the exact register fidelity
+0.99767 (predicted 0.99860 from the channels; the coherent crosstalk exceeds the product), the three-ion GHZ on the
+1144-dimensional space 0.994(19) against 0.9852; and four width-two quantum-volume circuits give heavy-output probabilities
+0.60 to 0.82 within shot noise of their ideal values 0.59 to 0.87 (mean 0.716(55) against the depolarizing prediction 0.702),
+exact register fidelities 0.990 to 0.996, and no two-sigma pass at four circuits, which the result states. The documentation
+under `docs/` (`physics_notes.md` with the equations, their plan sections, modules and ledger records; `conventions.md`;
+`examples.md`, executed by the test suite; `limits.md`) carries tables generated from the provenance ledger by
+`tools/docs_from_ledger.py`, whose `--check` is a CI step.
+
+Plan inconsistencies surfaced by M10 (ledger `conv.*` and `anchor.m10.*`): Section 10 names a quantum-volume style run but no
+section specifies the protocol, so Cross et al. 2019 enters as a background convention (`conv.heavy_output_criterion`); the
+compiler had no arbitrary two-qubit unitary, which the random SU(4) layers need, so the KAK decomposition joins the standard
+set (`conv.kak_weyl_chamber`) and Section 3.2's layout gains `benchmarks/` and `control/two_qubit.py` while its
+`device/presets.py` is filled; the first-order composition of Section 6.8 channels is an estimate and not a bound in either
+direction (single-ion RB measures 0.8 of it, simultaneous RB twice it, the GHZ circuit's register infidelity 1.7 times the
+product's) because coherent errors cancel within a Clifford and add over consecutive pulses on one neighbour; single-ion RB
+is blind to addressing crosstalk, the dominant error of this device's two-qubit Cliffords, so the simultaneous variant is
+part of the benchmark; the GHZ parity at phi = 0 is not the maximum (GPi2's rotation axis and the compiled frames put N pi/2
+plus the frame angles into phi_0), so only the fitted contrast enters the bound; a three-parameter RB fit is degenerate when
+the decay over the affordable lengths is a few 10^-3, so B is pinned at 1/2^n; and at width two the ideal heavy-output
+probability itself spreads from 0.59 to 0.87 between circuits, so the pass criterion needs the protocol's hundred circuits on
+any machine.
+
 Plan inconsistencies surfaced by M8 (ledger `conv.*` records of the calibration layer, `anchor.m8.*`): a resonant sideband
 pulse light-shifts the qubit through its own off-resonant carrier coupling by Omega^2/(2 omega_m) (1.70 kHz at Omega/2pi =
 100.9 kHz, omega_m/2pi = 3 MHz), pulling both sideband resonances toward the carrier, so Section 7.5's single fine scan at full
@@ -558,16 +621,17 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
 | `qutip_trap/light/` | drives derived from beams: `raman` (two-photon Rabi frequency, Delta k, eta per mode, Stark shift, scattering budget, crosstalk ratios), `microwave` (magnetic-dipole Rabi frequency, ac Zeeman shift), `stark`, `scattering`, `comb` (Section 4.3.7 tone set, comb factor, guards), `beams`, `bloch` (the scattering-rate object of Section 13: steady state, Floquet fixed point, slow-manifold rates, dark states, pumping evolution, A_+- suppliers; M3a), `recoil` (the emission kernel of Section 4.2.8; M3a), `roles` (which beams are resonant cooling/detection light and which are far-detuned gate light; M6) |
 | `qutip_trap/noise/` | the noise layer of Section 6 (M7): `spectra` (two-sided spectra with a declared white level, Drift, Mains, Collisions), `processes` (fixed-grid Gaussian and OU trajectories, mains), `sampling` (the NoiseSample keys), `model` (`NoiseModel.channels` and `sample_sequence`), `scattering` (Raman, Rayleigh, leakage and recoil operators per pulse), `levels` (register level maps with the SINK), `collisions` (Langevin events), `decoupling` (the Section 6.9 filter-function machinery and sequences), `summary` (Section 6.8 reporting) |
 | `qutip_trap/prep/` | the cooling and preparation stages of Section 4.2 (M3): `closed_forms` (the level-A oracles), `rates` (per-ion, per-mode level-A rates with participation), `doppler`, `sideband` (continuous and pulsed schedules, thermometry), `eit`, `polarization_gradient` (Joshi's analytic model and the Lindblad layer), `pumping`, `sequence` (stage order and the `State` hand-off), `level_c` (the one-mode level-C solve and the level-B Fock rate equation; M3a), `recipe` (the device's PreparationRecipe, `standard_recipe`, `run_preparation`; M6) |
-| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library), `hardware` (the Section 7.10 chain and `apply_hardware_chain`; the beat-phase reference `response_phase_rad` and the `crosstalk_suppression` echoes in `schedule`, M7); `played` (the requested -> physical chain of Section 7.3 the engine applies to programmed drives, M8); the Stark compensation and its frame update (`stark_phase_rad`, `frame_after`) in `schedule`, M8 |
+| `qutip_trap/control/` | native gates, the circuit IR and the compiler (`compiler`: decompositions, templates, frame propagation, verification; M6), `pulses` (Tone/Drive/Pulse, the `light_shift` kind and its couplings), `schedule` (single-qubit gates as pulses with virtual-RZ tracking; `ms`/`zz` from the table's waveforms with the wrapper and echo constructions, M4; the terminal measurement event, mid-circuit refusal, played-gate records and the per-gate beat-phase reset, M6), `shaping` (the Section 4.4.3 integrals and the AM/FM/Fourier solvers, M4), `table` (`Waveform.symmetric`, segments with callable amplitudes and detunings), `composite` (Section 4.3.5 library), `hardware` (the Section 7.10 chain and `apply_hardware_chain`; the beat-phase reference `response_phase_rad` and the `crosstalk_suppression` echoes in `schedule`, M7); `played` (the requested -> physical chain of Section 7.3 the engine applies to programmed drives, M8); the Stark compensation and its frame update (`stark_phase_rad`, `frame_after`) in `schedule`, M8; `two_qubit` (the KAK decomposition of an arbitrary SU(4) into three entangling gates in the Weyl chamber, M10) |
 | `qutip_trap/calibration/` | `entangling` (the exact spot-check calibration of the entangling angle, the thermal robustness curve, the light-shift echo schedule, `frame_rotated`; M4, M8); `readout` (the detection threshold and window, M5); `surrogate` and `calibrate(surrogate=True)` (the Section 7.5 surrogate table: derived seeds for every drive, spot-checked waveforms on the resolved-mode space, detection; M6, M8); `experiments` (`full_calibration`: the simulated-experiment path `calibrate(surrogate=False)` on the dependency graph, `CalibrationScans`, `CalibrationReport` with the surrogate's error; M8); `cache` (tables per device hash and seed; M8) |
 | `qutip_trap/experiments/` | the simulated experiments of Section 7.5 on the engine: `single_ion` (`rabi_scan`, `ramsey`, `ramsey_frequency`, `sideband_spectroscopy`; M2, extended), `motion` (`thermometry`, `mode_spectroscopy`, `heating_rate`), `light` (`stark_scan`, `crosstalk_scan`, `field_scan`), `entangling` (`ms_scan`, `parity_scan`, `ms_phase_scan`; M4, extended), `micromotion` (`micromotion_scan` by three of Berkeland's methods), `imaging` (`crystal_image`), `readout` (`detection_histogram`; M5), `fitting` (the plan's lineshapes, weighted fits, the observation model of shots and readout errors); M8 |
 | `qutip_trap/run/` | `job` (`run`, `prepare`, the initial-mixture branches, the readout stage, `register_fidelity`; M6; the GATE_LOCAL route and the ENR option, M9a), `space` (the resolved/frozen/dropped mode classes and the joint space, `HilbertSpace.for_`; M6; the frozen excitation bound, the dropped contribution, the `enr` class and the exact cap rule, M9a), `gate_local` (the GATE_LOCAL executor of Section 5.4: steps, local spaces, the register as a density matrix or a Kraus-sampled ensemble, the motional model, the report; M9a), `levels` (the Section 11.5 budget), `results` (`Result`, `Diagnostics` with the intrinsic budget, `RunState`; the M9a fields); samples at the shot clock, the effective sample size, collisions and heralds, leakage levels (M7) |
-| `qutip_trap/device/` | `model` (`Device`, `Field`, `DerivedQuantities`), `derived` (`Device.derived()`: every computed number with its ledger id, the calibration's seeds; M8) |
+| `qutip_trap/device/` | `model` (`Device`, `Field`, `DerivedQuantities`), `derived` (`Device.derived()`: every computed number with its ledger id, the calibration's seeds; M8), `presets` (the example 171Yb+ chain the documentation and the benchmarks run on, hash for hash the M6 fixture; M10) |
+| `qutip_trap/benchmarks/` | M10: `clifford` (the 24- and 11520-element groups, uniform sampling by double coset, class recognition), `rb` (single-qubit, simultaneous and two-qubit Clifford RB with the Section 13 error rate), `ghz` (populations, parity scan, the bound beside the exact fidelity), `volume` (Cross et al. 2019's heavy outputs), `budget` (the Section 9.6 scales, the Section 6.8 channels of the native gate set by GATE_LOCAL tomography reduced to the benchmarked qubits, SPAM, and their composition) |
 | `qutip_trap/io/` | `ionq` (IonQ circuit JSON, both ways), `openqasm` (the OpenQASM 2 subset importer with custom-gate inlining; M6) |
 | `qutip_trap/validation/` | closed forms used as test oracles (`atomic_closed_forms`, `spin_motion_closed_forms`, `two_qubit_closed_forms`, Harty's RB model `harty_rb`); the Fang, Landsman and OU-heating forms of M7 |
-| `docs/provenance/ledger.yaml` | the provenance ledger of Section 14.5 (one record per quantity) |
+| `docs/` | the release documentation (M10): `physics_notes.md` (the equations with their plan sections, modules and ledger records), `conventions.md`, `examples.md` (executed by `tests/test_docs.py`), `limits.md`, with tables generated from the ledger by `tools/docs_from_ledger.py`; `provenance/ledger.yaml` is the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
-| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests, the M8 calibration-layer, experiment and end-to-end calibration tests, the M9a tomography, GATE_LOCAL and scaling-mode tests) |
+| `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests, the M8 calibration-layer, experiment and end-to-end calibration tests, the M9a tomography, GATE_LOCAL and scaling-mode tests, the M10 Clifford, KAK, preset, benchmark and documentation tests) |
 | `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 
@@ -578,6 +642,7 @@ timing is ambiguous in the source and the one-delay-per-replaced-pulse reading i
     uv run mypy
     uv run pytest
     uv run python validation/scripts/run_checks.py --report    # re-run the Appendix D check scripts, write validation/report/
+    uv run python tools/docs_from_ledger.py --check           # the documentation tables are current with the ledger (M10)
     uv run flet doctor                          # the gui extra (Flet) is installed
 
 Ruff 0.16 formats fenced Python blocks inside Markdown, which would rewrite Appendix E of `PLAN.md`; `*.md` is
