@@ -666,6 +666,43 @@ CATALOGUE: dict[str, Quantity] = {
             "4.4.1",
             "conv.entangling_angle",
         ),
+        # ---- the channel replay and verify deeper (Sections 5.4, 14.5) -------------------------------------------------
+        _q(
+            "derivation_residual",
+            "How much this derived run can be off by",
+            "channel-derivation residual: sum |alpha_m|^2 (2 nbar_m + 1) + frozen + dropped + projection + covariance",
+            "",
+            0,
+            "9.8",
+            "conv.gate_local_residual_bound_pre_step",
+        ),
+        _q(
+            "frame_covariance",
+            "How exactly a phase-shifted gate equals the rotated phase-zero gate",
+            "max |Choi(phi) - R Choi(0) R^dag|",
+            "",
+            0,
+            "7.6",
+            "conv.virtual_z_propagation",
+        ),
+        _q(
+            "verify_discrepancy",
+            "How far the deeper engine's answer sits from this one",
+            "max |p_shallow - p_deep| over register populations",
+            "",
+            0,
+            "9.8",
+            "conv.gate_local_discrepancy_has_no_fudge",
+        ),
+        _q(
+            "verify_bound",
+            "The gap the physics allows between the two engines",
+            "Section 9.8 bound or the channel-derivation residual",
+            "",
+            0,
+            "9.8",
+            "conv.gate_local_residual_bound_pre_step",
+        ),
         # ---- the numerics panel ----------------------------------------------------------------------------------------
         _q(
             "dimension",

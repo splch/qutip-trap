@@ -32,9 +32,10 @@ packages = ["src/qutip_trap_app"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 markers = [
     "ui: Flet integration tests that drive the Flutter client (`flet test`); skipped unless QUTIP_TRAP_APP_UI_TESTS=1",
+    "slow: runs that take minutes (a second device with its calibration and channel library); deselect locally with -m 'not slow'",
 ]
 
 [tool.mypy]
@@ -45,7 +46,7 @@ mypy_path = "src:.."  # the core is type-checked from its source tree; it ships 
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["qutip", "qutip.*", "scipy", "scipy.*", "flet", "flet.*", "yaml"]
+module = ["qutip", "qutip.*", "scipy", "scipy.*", "flet_charts", "flet_charts.*", "yaml"]
 ignore_missing_imports = true
 
 [tool.flet]

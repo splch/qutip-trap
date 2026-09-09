@@ -61,6 +61,8 @@ class NumericsPanel:
     truncation_check: TruncationCheck | None
     engine_note: str
     badge: Badge
+    derivation_residual: Shown | None = None
+    """The channel-derivation residual of a CHANNEL_REPLAY record (the bound verify deeper compares against)."""
 
 
 def convergence_badge(
@@ -107,6 +109,10 @@ def convergence_badge(
             )
     if record.diagnostics.dropped_branch_weight > 0.0:
         run.append("dropped initial-mixture weight reported")
+    if record.diagnostics.level == "CHANNEL_REPLAY":
+        not_run.append(
+            "verify deeper against GATE_LOCAL or JOINT_EXACT (a derived engine has no truncation of its own)"
+        )
     if reasons:
         status: BadgeStatus = "fail"
         label = "fail: the result is not converged"
@@ -157,16 +163,33 @@ def numerics_panel(
         )
         for m, lv in sorted(d.margin_levels.items())
     )
-    engine_note = (
-        f"{d.level}: every pulse on the {sp.dimension}-dimensional joint space {list(sp.dims)}"
-        if d.level == "JOINT_EXACT"
-        else f"GATE_LOCAL: exact gate-local spaces up to dimension {record.gate_local.largest_local_dimension if record.gate_local else '?'}, "
-        "correlations traced out between steps (Section 5.4)"
-    )
+    if d.level == "JOINT_EXACT":
+        engine_note = f"{d.level}: every pulse on the {sp.dimension}-dimensional joint space {list(sp.dims)}"
+    elif d.level == "GATE_LOCAL":
+        engine_note = (
+            "GATE_LOCAL: exact gate-local spaces up to dimension "
+            f"{record.gate_local.largest_local_dimension if record.gate_local else '?'}, correlations traced out between "
+            "steps (Section 5.4)"
+        )
+    else:
+        engine_note = (
+            "CHANNEL_REPLAY (derived, app-side): every gate applied as its extracted Section 6.8 channel; the joint space "
+            f"{list(sp.dims)} is what a JOINT_EXACT run would use; verify deeper to compare"
+        )
     if zoom is not None:
         engine_note += f"; this pulse re-simulated with {zoom.n_store} stored points per segment ({', '.join(zoom.integrators + (zoom.method,))})"
     wall = zoom.wall_time_s if zoom is not None else d.wall_time_s
+    residual = (
+        None
+        if record.replay is None
+        else Shown(
+            "derivation_residual",
+            record.replay.residual_total,
+            ", ".join(f"{k} {v:.2e}" for k, v in record.replay.residual_terms.items()),
+        )
+    )
     return NumericsPanel(
+        derivation_residual=residual,
         level=Shown("fidelity_level", d.level),
         dimension=Shown("dimension", sp.dimension),
         dims=sp.dims,

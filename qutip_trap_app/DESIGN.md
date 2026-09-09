@@ -102,7 +102,7 @@ The ladder is also the app's answer to Hick's law (UX): the whole physics is nev
 
 **The explain drawer** (every level). The Part II subsection governing the screen, the concept cards at the learner's depth with the deeper button, the chips of the quantities on screen, and the card's prompt at the end.
 
-## 6. What M11.1 built underneath
+## 6. What M11.1 and M11.2 built
 
 - `record.py`: the run record of Section 14.3 as frozen dataclasses of plain values and arrays, built from a `run()` result and the core's own `RunRecord`; the storage policy in its docstring (always stored, recomputed and cached, not available from the core).
 - `codec.py`, `storage.py`: JSON plus `.npy` arrays in one zip with a digest; export and import are bitwise (Section 9.11, record round trip).
@@ -110,6 +110,9 @@ The ladder is also the app's answer to Hick's law (UX): the whole physics is nev
 - `provenance.py`: the index generated from the ledger and PLAN.md into `src/assets/provenance_index.json` (644 records, 82 Part II sections), with a `--check` for CI; chips and sections at run time.
 - `viewmodel/`: the catalogue of displayed quantities with ledger ids; Levels 0 to 3; the numerics panel and badge; the learning layer (26 concepts, 3 depths, 28 prompts, the level plans, the spacing rule, the mastery log, the scoring functions, the six-stop tour).
 - `core.py`: the one module that imports the core, with the recorded gaps: the concrete engine and two noise-sample keys are not re-exported by `qutip_trap.api` (feature requests filed as `CORE_GAPS`); `Traces` carries no per-time Fock distribution; `run()` reports no wall time and no per-gate register for GATE_LOCAL.
+- `replay.py` and `replay_record.py` (M11.2): Level 0's default engine. Each gate kind is extracted once by the core's GATE_LOCAL tomography from the prepared motional state and conjugated to the played phase; the frame covariance of that conjugation is measured per kind (1.5e-10 for GPi2 and 4.9e-10 for MS on the example device) and joins the residual; a hotter motional state widens the residual and the discrepancy together.
+- `verify.py` (M11.2): the verify-deeper action; `workers.py`: the worker process with progress events, the live state it keeps per record, and a hard cancel.
+- `views/` (M11.2): the shell (rail, breadcrumb zoom bar, Escape and Cmd/Ctrl plus and minus, explain drawer, numerics strip, the first-launch question), Level 0 to 2, Learn, and placeholders that say what M11.3 brings. Every number on screen is a `Shown` rendered with its chip. The pages scroll; the explain cards, the numerics strip and the unitary and Pauli tiles keep their open state across re-renders; a run over a few seconds shows a live elapsed time and a Cancel (Section 4, response budgets); the prediction is asked before every run of a changed circuit and scored beside that run's histogram; the learner (prior knowledge, retention target, mastery log, with skips recorded as exposures) persists on the device through Flet's `SharedPreferences`, which is what lets the review tray of Section 3 come due across launches.
 
 ## 7. What counts as success
 
@@ -125,4 +128,4 @@ The ladder is also the app's answer to Hick's law (UX): the whole physics is nev
 
 ## 9. Milestones
 
-M11.2 builds Levels 0 to 2 and the shell over these view-models, with the channel replay engine and the verify-deeper action. M11.3 builds Level 3 with re-simulation and the Level 4 pages with downward propagation and stale badges. M11.4 adds the validation-suite presets with published numbers beside simulated ones, the explain drawer's content for every Part II subsection, the `flet test` navigation and run-flow tests (the six-click path), desktop bundles and documentation.
+M11.2 built Levels 0 to 2 and the shell over these view-models, the channel replay engine and the verify-deeper action. M11.3 builds Level 3 with re-simulation and the Level 4 pages with downward propagation and stale badges. M11.4 adds the validation-suite presets with published numbers beside simulated ones, the explain drawer's content for every Part II subsection, the `flet test` navigation and run-flow tests (the six-click path), the rest of the Learn view of Section 5 (the faded GHZ exercise, the free exercise, the discrimination drills, the mastery log's two accuracies), keyboard-focusable chips, desktop bundles and documentation.

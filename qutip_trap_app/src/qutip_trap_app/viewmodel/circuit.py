@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -198,6 +199,10 @@ def timeline(record: Record) -> tuple[GateView, ...]:
             for st in record.gate_local.steps:
                 if st.gate_id == step.gate_id and st.summary is not None:
                     channel = st.summary
+        if record.replay is not None:
+            for g in record.replay.gates:
+                if g.gate_id == tg.gate_id and g.key in record.replay.channels:
+                    channel = record.replay.channels[g.key].pieces[0].summary
         out.append(
             GateView(
                 index=k,
@@ -261,24 +266,36 @@ def _weights(record: Record, sample_index: int | None, branch: int | None) -> li
     return [(tr, w / total) for tr, w in weights]
 
 
+def target_ket(targets: Sequence[tuple[np.ndarray, tuple[int, ...]]], n_ions: int) -> np.ndarray:
+    """The target unitaries (each on its ions in matrix order) applied in sequence to |0...0>, in the register order."""
+    ket = np.zeros(2**n_ions, dtype=complex)
+    ket[0] = 1.0
+    for unitary, ions in targets:
+        ket = embed_operator(unitary, tuple(ions), n_ions) @ ket
+    return ket
+
+
 def target_ket_after(record: Record, gate_index: int) -> np.ndarray:
     """The target unitaries of gates 0..k applied to |0...0>, in the register order."""
-    n = record.n_qubits
-    ket = np.zeros(2**n, dtype=complex)
-    ket[0] = 1.0
-    for tg in _target_by_time(record)[: gate_index + 1]:
-        ket = embed_operator(tg.unitary, tg.ions, n) @ ket
-    return ket
+    return target_ket(
+        [(tg.unitary, tg.ions) for tg in _target_by_time(record)[: gate_index + 1]], record.n_qubits
+    )
 
 
 def register_after(
     record: Record, gate_index: int, *, sample_index: int | None = None, branch: int | None = None
 ) -> RegisterView:
-    """The register after gate ``gate_index`` from the recorded traces: the reduced state at the gate's end time, weighted
-    over the branches (and samples) unless one is selected."""
+    """The register after gate ``gate_index``: from the recorded traces (the reduced state at the gate's end time, weighted
+    over the branches and samples unless one is selected), or from the channel replay's own register sequence for a
+    CHANNEL_REPLAY record (labelled derived). A GATE_LOCAL record stores neither (``core_gaps``)."""
     n = record.n_qubits
     tg = _target_by_time(record)[gate_index]
     t_end = tg.t_end_s
+    if not record.traces and record.replay is not None:
+        rho = np.asarray(record.replay.register_after[gate_index], dtype=complex)
+        return _register_view(
+            record, gate_index, t_end, rho, "derived: the channel replay's register after this gate's channel"
+        )
     rho = np.zeros((2**n, 2**n), dtype=complex)
     for tr, w in _weights(record, sample_index, branch):
         idx = tr.index_at(t_end)
@@ -372,6 +389,7 @@ __all__ = [
     "register_from_joint",
     "register_from_state",
     "single_ion_reduced",
+    "target_ket",
     "target_ket_after",
     "timeline",
 ]

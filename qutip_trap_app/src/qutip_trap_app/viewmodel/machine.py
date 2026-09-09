@@ -201,15 +201,22 @@ def device_card_view(record: Record) -> CardView:
     )
     modes = tuple(Shown("mode_frequency", m.omega_hz, f"{m.family} {m.family_index}") for m in card.modes)
     spam: list[CardRow] = []
+    spam_status = (
+        "calibrated (table)"
+        if record.diagnostics.level == "CHANNEL_REPLAY"
+        else "measured (this run's readout model)"
+    )
     for key in sorted(card.spam):
         eps_b, eps_d = card.spam[key]
         if key.endswith(".state_preparation"):
             spam.append(
-                CardRow(f"{key.split('.')[0]} preparation error", Shown("prep_error", eps_b), "measured")
+                CardRow(
+                    f"{key.split('.')[0]} preparation error", Shown("prep_error", eps_b), "derived (recipe)"
+                )
             )
         else:
-            spam.append(CardRow(f"{key} bright read as dark", Shown("spam_eps_b", eps_b), "measured"))
-            spam.append(CardRow(f"{key} dark read as bright", Shown("spam_eps_d", eps_d), "measured"))
+            spam.append(CardRow(f"{key} bright read as dark", Shown("spam_eps_b", eps_b), spam_status))
+            spam.append(CardRow(f"{key} dark read as bright", Shown("spam_eps_d", eps_d), spam_status))
     errors: list[CardRow] = []
     for gate, value in sorted(card.gate_error_tomography.items()):
         errors.append(CardRow(gate, Shown("gate_error_tomography", value), "calibrated"))

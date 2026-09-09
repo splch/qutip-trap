@@ -39,8 +39,12 @@ def test_concept_ladder_is_well_formed() -> None:
                 assert pr.rubric, pr.id
             elif pr.kind in ("predict_histogram", "predict_direction"):
                 assert pr.checks, pr.id
+                assert pr.where, (
+                    f"{pr.id}: the learner is told where to look in plain words, never the machine reference"
+                )
             elif pr.kind == "locate":
                 assert pr.answer and route_matches(pr.answer), pr.id
+                assert pr.where, f"{pr.id}: the learner is told where to look in plain words, never the route"
     assert {c.level for c in CONCEPTS.values()} == {0, 1, 2, 3, 4}
     kinds = {c.kind for c in CONCEPTS.values()}
     assert {"fact", "concept", "procedure", "discrimination"} <= kinds

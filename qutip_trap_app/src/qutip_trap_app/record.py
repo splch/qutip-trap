@@ -53,7 +53,8 @@ from qutip_trap_app.codec import digest, to_document
 OptionValue = bool | int | float | str | tuple[str, ...] | None
 PresetArg = bool | float | tuple[float, float, float]
 FidelityLevelRequest = Literal["JOINT_EXACT", "GATE_LOCAL", "auto"]
-FidelityLevelRun = Literal["JOINT_EXACT", "GATE_LOCAL"]
+FidelityLevelRun = Literal["JOINT_EXACT", "GATE_LOCAL", "CHANNEL_REPLAY"]
+"""The two core levels of Section 5.4 plus the app-side channel replay of Section 14.2 row 0 (labelled derived)."""
 
 PRESETS: dict[str, Callable[..., core.DevicePreset]] = {
     "yb171_chain": core.yb171_chain,
@@ -737,6 +738,67 @@ class DiagnosticsRecord:
     run_state_events: tuple[tuple[int, str], ...]
 
 
+# ---- the channel replay (Section 14.2 row 0; app-side, derived) ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChannelPieceRecord:
+    gate_id: str
+    ions: tuple[int, ...]
+    choi: np.ndarray
+    ideal: np.ndarray
+    summary: ChannelSummaryRecord
+    residual_bound: float
+    frozen_excitation: float
+    dropped_crosstalk: float
+    cp_residual: float
+    tp_residual: float
+    residual_displacement: dict[int, float]
+    nbar_after: dict[int, float]
+    local_dimension: int
+    engine_runs: int
+
+
+@dataclass(frozen=True)
+class ChannelEntryRecord:
+    key: str
+    kind: str
+    addressed: tuple[int, ...]
+    angle: float | None
+    pieces: tuple[ChannelPieceRecord, ...]
+    covariance_residual: float | None
+    wall_time_s: float
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReplayGate:
+    gate_id: str
+    key: str
+    ions: tuple[int, ...]
+    phases: dict[int, float]
+    residual: float
+    average_gate_infidelity: float
+    depolarizing_rate: float
+
+
+@dataclass(frozen=True)
+class ReplayRecord:
+    """What the channel replay did: which channel each gate was played as, the register after each gate, and the
+    channel-derivation residual the replay reports (Section 9.11 row "Channel derivation")."""
+
+    engine: str
+    gates: tuple[ReplayGate, ...]
+    register_after: np.ndarray
+    """(n_gates, 2^n, 2^n): the register after each gate piece, register order."""
+    channels: dict[str, ChannelEntryRecord]
+    residual_terms: dict[str, float]
+    residual_total: float
+    bright_levels: tuple[int, ...]
+    spam_used: dict[str, tuple[float, float]]
+    notes: tuple[str, ...]
+
+
 # ---- the zoom cache -----------------------------------------------------------------------------------------------------------
 
 
@@ -809,6 +871,8 @@ class Record:
     joint_store_dimension_max: int
     boundaries: tuple[BoundaryState, ...] = ()
     zooms: tuple[ZoomTrace, ...] = ()
+    replay: ReplayRecord | None = None
+    """Present when the record was made by the app-side channel replay (Level 0's default engine)."""
 
     # -- identity --
 
@@ -816,6 +880,20 @@ class Record:
         """The bitwise identity of the record's data (the ``record_id`` of an export)."""
         doc, arrays = to_document(self)
         return digest(doc, arrays)
+
+    def key(self) -> str:
+        """The identity of the RUN behind the record: the digest with the caches, the clock and the wall times left out, so
+        that a record and the same record with more zooms cached share one key (what the worker keys its live state by)."""
+        bare = dataclasses.replace(
+            self,
+            created_utc="",
+            versions={},
+            boundaries=(),
+            zooms=(),
+            diagnostics=dataclasses.replace(self.diagnostics, wall_time_s=0.0),
+        )
+        doc, arrays = to_document(bare)
+        return digest(doc, arrays)[:24]
 
     # -- lookups the view-models share --
 
@@ -948,9 +1026,12 @@ def table_record(table: core.CalibrationTable) -> TableRecord:
 
 def device_card(
     device: core.Device,
-    result: core.Result,
-    rec: core.RunRecord,
+    *,
+    spam: Mapping[str, tuple[float, float]],
+    intrinsic_budget: Mapping[str, float],
+    tomography: Mapping[str, float],
 ) -> DeviceCard:
+    """The Level 0 device card from the device and the run's SPAM, closed-form error scales and tomography infidelities."""
     derived = device.derived()
     crystal = device.crystal
     modes = tuple(
@@ -985,18 +1066,12 @@ def device_card(
         psf_leakage={int(k): float(v) for k, v in det.psf_leakage.items()},
         numerical_aperture=None if det.numerical_aperture is None else float(det.numerical_aperture),
     )
-    budget = result.diagnostics.intrinsic_budget
     estimates: dict[str, float] = {}
-    for key, value in budget.items():
+    for key, value in intrinsic_budget.items():
         if key == "total" or "." not in key:
             continue
         gate = key.split(".")[0]
         estimates[gate] = estimates.get(gate, 0.0) + float(value)
-    tomography: dict[str, float] = {}
-    if rec.gate_local is not None:
-        for step_id, summary in rec.gate_local.summaries.items():
-            if not math.isnan(summary.average_gate_infidelity):
-                tomography[step_id] = float(summary.average_gate_infidelity)
     trap = device.trap
     omega = None if trap.omega_hz is None else tuple(float(x) for x in trap.omega_hz)
     return DeviceCard(
@@ -1028,9 +1103,9 @@ def device_card(
             notes=tuple(derived.notes),
         ),
         native_gates=NATIVE_GATE_SET,
-        spam={str(k): (float(v[0]), float(v[1])) for k, v in result.spam.items()},
+        spam={str(k): (float(v[0]), float(v[1])) for k, v in spam.items()},
         gate_error_estimates=estimates,
-        gate_error_tomography=tomography,
+        gate_error_tomography={str(k): float(v) for k, v in tomography.items() if not math.isnan(v)},
     )
 
 
@@ -1416,7 +1491,16 @@ def build_record(
         job=job,
         device_hash=device.hash(),
         table=table_record(table),
-        device_card=device_card(device, result, rec),
+        device_card=device_card(
+            device,
+            spam=result.spam,
+            intrinsic_budget=result.diagnostics.intrinsic_budget,
+            tomography=(
+                {sid: summ.average_gate_infidelity for sid, summ in rec.gate_local.summaries.items()}
+                if rec.gate_local is not None
+                else {}
+            ),
+        ),
         compiled=CompiledRecord(
             native=CircuitRecord.from_core(rec.compile.circuit),
             final_frame_rad={int(q): float(v) for q, v in rec.compile.final_frame_rad.items()},
@@ -1571,6 +1655,8 @@ __all__ = [
     "BranchRecord",
     "CalEntryRecord",
     "CalibrationRef",
+    "ChannelEntryRecord",
+    "ChannelPieceRecord",
     "ChannelSummaryRecord",
     "CircuitRecord",
     "CompiledRecord",
@@ -1596,6 +1682,8 @@ __all__ = [
     "ReadoutRecord",
     "Record",
     "RecordError",
+    "ReplayGate",
+    "ReplayRecord",
     "ResultsRecord",
     "SampledFn",
     "ScheduleRecord",

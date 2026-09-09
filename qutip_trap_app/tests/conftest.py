@@ -10,14 +10,12 @@ from __future__ import annotations
 import os
 
 import pytest
+from fixtures import BELL, FAST, SEED, SHOTS
 
-from qutip_trap_app.core import Circuit, Operation, SolverOptions
-from qutip_trap_app.record import LiveRun, Record, execute, job_for_preset
-
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-FAST = SolverOptions(branch_weight_min=1e-3)
-SHOTS = 200
-SEED = 7
+from qutip_trap_app.core import SolverOptions
+from qutip_trap_app.record import LiveRun, Record, calibrate_for, execute, job_for_preset
+from qutip_trap_app.replay import ChannelLibrary, replay
+from qutip_trap_app.replay_record import build_replay_record
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -48,3 +46,16 @@ def under_truncated() -> tuple[Record, LiveRun]:
         "yb171_chain", 2, BELL, SHOTS, seed=SEED, options=options, detection_records=500, caps={2: 4, 3: 4}
     )
     return execute(job, preset)
+
+
+@pytest.fixture(scope="session")
+def bell_replay(bell: tuple[Record, LiveRun]) -> tuple[Record, ChannelLibrary]:
+    """The same Bell job by the app-side channel replay: the library (gpi2 on each ion, the ms pair, each with its frame
+    covariance measured) and the replay record (about 45 s: the ms tomography twice)."""
+    record, _live = bell
+    job = record.job
+    preset = job.device.build()
+    table = calibrate_for(job, preset)
+    library = ChannelLibrary.for_job(job, preset.device, table)
+    outcome = replay(job, preset.device, table, library)
+    return build_replay_record(job, preset.device, table, outcome, library), library

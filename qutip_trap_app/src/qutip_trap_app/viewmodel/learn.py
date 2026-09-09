@@ -59,6 +59,9 @@ class Prompt:
     -> the Bloch vector after the gate)."""
     rubric: str = ""
     """For free text: what a complete answer contains; the app shows the simulator's own numbers beside the learner's words."""
+    where: str = ""
+    """For ``predict_*`` and ``locate``: where on the screen to look, in plain words. This is what the learner is told;
+    ``checks`` and ``answer`` are the machine's references and never appear on screen."""
 
 
 @dataclass(frozen=True)
@@ -152,6 +155,7 @@ CONCEPTS: dict[str, Concept] = {
                 "predict_histogram",
                 "Before running the Bell circuit: sketch the histogram you expect.",
                 checks="results.probabilities",
+                where="the bars of the Results card once the run is in",
             ),
             Prompt(
                 "histogram.q2",
@@ -242,6 +246,7 @@ CONCEPTS: dict[str, Concept] = {
                 "predict_direction",
                 "Where does ion 0's arrow point after the first GPi2 pulse?",
                 checks="register_after(0).bloch[0]",
+                where="ion 0's Bloch arrow in the Register card, with the first gpi2 gate selected on Level 1",
             ),
         ),
         _c(
@@ -329,6 +334,7 @@ CONCEPTS: dict[str, Concept] = {
                 "predict_direction",
                 "Where do the arrows point right after the MS gate?",
                 checks="register_after(ms).bloch",
+                where="both Bloch arrows in the Register card, with the MS gate selected on Level 1",
             ),
             Prompt(
                 "entanglement_by_ms.q2",
@@ -565,6 +571,7 @@ CONCEPTS: dict[str, Concept] = {
                 "locate",
                 "Find the matrix element of the drive term that couples |0, n=0> to |1, n=1>.",
                 answer="/device/hamiltonian",
+                where="the Hamiltonian builder page of Level 4 (Physics in the rail)",
             ),
         ),
         _c(
