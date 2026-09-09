@@ -28,7 +28,9 @@ PriorKnowledge = Literal["newcomer", "circuits", "physicist", "unknown"]
 
 Depth = Literal["sentence", "picture", "equation"]
 Kind = Literal["fact", "concept", "procedure", "discrimination"]
-PromptKind = Literal["predict_histogram", "choose", "predict_direction", "free_text", "locate"]
+PromptKind = Literal[
+    "predict_histogram", "choose", "predict_direction", "predict_closure", "free_text", "locate"
+]
 
 
 @dataclass(frozen=True)
@@ -411,7 +413,7 @@ CONCEPTS: dict[str, Concept] = {
             ("conv.ms_closure", "conv.entangling_sign"),
             "4.4.3",
             "The entangling gate pushes the ions' motion in a loop that must come back to where it started, or the qubits stay tangled with the motion.",
-            "The closure indicators show, per mode, how far the loop missed closing; a tiny number means the motion was returned.",
+            "The closure indicators show, per ion and mode, how far each spin branch's loop missed closing; a tiny number means the motion was returned.",
             "alpha_m(tau) ~ 0 for every mode while sum_m chi_m = chi_target (conv.ms_closure).",
             "explain what fails when a loop does not close and where the error shows up",
             Prompt(
@@ -458,9 +460,17 @@ CONCEPTS: dict[str, Concept] = {
             ("conv.ms_closure", "conv.spin_motion_phases"),
             "4.4.1",
             "The two tones push the motion in a direction that depends on the qubits' state; the loop's area becomes a phase that entangles them.",
-            "The phase-space plot traces <a>(t) for each mode as the pulse runs; the loop area is the entangling angle.",
+            "The phase-space plot traces alpha_im(t), where one spin branch takes each mode as the pulse runs; the area the pair's two loops sweep together, 2 Im of the integral of conj(alpha_a) d alpha_b, is the entangling angle. The average over both branches, <a>(t), cancels and shows nothing.",
             "H = (hbar Omega/2) sum e^{-i(mu t - phi)} sigma_+ D(i eta) + h.c.; chi from the enclosed phase-space area (Section 4.4.1).",
             "explain how a force on the motion can entangle two qubits",
+            Prompt(
+                "spin_dependent_force.q0",
+                "predict_closure",
+                "Before the loops are drawn: does the motion of every mode return to where it started by the end of this pulse?",
+                ("every loop closes", "at least one loop stays open", "cannot be known before running"),
+                checks="loops.closes",
+                where="the phase-space loops of the Dynamics card once revealed, with the closure distance under each",
+            ),
             Prompt(
                 "spin_dependent_force.q1",
                 "free_text",
@@ -656,6 +666,85 @@ CONCEPTS: dict[str, Concept] = {
                 "Doubling the electric-field noise density S_E doubles",
                 ("the heating rate", "the qubit frequency", "the Rabi frequency"),
                 "the heating rate",
+            ),
+        ),
+        _c(
+            "light_coupling",
+            4,
+            "How much light does what",
+            "Rabi frequency, light shift and scattering from intensity",
+            "concept",
+            ("pulse", "atomic_structure"),
+            ("conv.rabi_from_intensity", "conv.two_photon_rabi", "conv.scattering_channels"),
+            "4.5.4",
+            "Brighter light turns the qubit faster, but also shifts its frequency and scatters photons; how far the light is tuned from the atomic lines sets the trade-off.",
+            "The light page shows the Rabi frequency, the light shift and the scattering error per pulse for each beam pair; the scattering curve falls as the detuning grows.",
+            "Omega = sum_e Omega_e^(1) Omega_e^(2)*/(2 Delta_e); P_scatter per pi pulse ~ (pi gamma/omega_f)(2Delta^2 + (Delta - omega_f)^2)/|Delta(Delta - omega_f)| (Sections 4.3.2, 4.5.4).",
+            "predict how the scattering error per pulse changes when the laser is detuned further",
+            Prompt(
+                "light_coupling.q1",
+                "choose",
+                "Doubling the laser power of a Raman pair (both beams) changes the two-photon Rabi frequency by",
+                ("x2", "x sqrt 2", "x4"),
+                "x2",
+            ),
+        ),
+        _c(
+            "cooling_ladder",
+            4,
+            "Cold, then colder",
+            "Doppler cooling, then sideband cooling, then optical pumping",
+            "procedure",
+            ("fock_states", "mode"),
+            (
+                "conv.preparation_stage_order",
+                "anchor.m3a.doppler_limit",
+                "anchor.m3.rasmusson_pulsed_cooling",
+            ),
+            "4.2",
+            "Every shot starts by cooling the motion with light: a fast stage takes the ions to a few quanta, a slow stage on the sidebands takes the gate modes to almost none, and a final pump puts the qubits in zero.",
+            "The cooling page shows each stage's occupation per mode, the sideband pulses one by one and the pumping populations against time.",
+            "Doppler: nbar_D = A_+/(A_- - A_+) from the rate coefficients; pulsed sideband: p -> W_k(t) p per pulse with exact Omega_{n,n-k}; pump: the multi-level master equation (Sections 4.2.1, 4.2.2, 4.2.6).",
+            "say why the pump comes last and what a sideband pulse does to the vibration numbers",
+            Prompt(
+                "cooling_ladder.q1",
+                "choose",
+                "Optical pumping is done last because",
+                (
+                    "Doppler cooling scrambles the internal state, so a pump done first would be erased",
+                    "the pump needs a cold ion to work",
+                    "it takes the longest",
+                ),
+                "Doppler cooling scrambles the internal state, so a pump done first would be erased",
+            ),
+        ),
+        _c(
+            "readout_rates",
+            4,
+            "Why the detector cannot look forever",
+            "R_o, R_d, R_b and the window optimum",
+            "concept",
+            ("spam",),
+            (
+                "conv.saturation_ceiling",
+                "anchor.m3a.yb171_leakage_prefactors",
+                "conv.readout_figure_of_merit",
+            ),
+            "8.1",
+            "A bright ion scatters photons at a rate that saturates, while the same light slowly pumps it dark and pumps a dark ion bright; a longer window collects more photons but gives the pumping more time.",
+            "The readout page shows the two count histograms, the error against the window length with its minimum, and the three rates against the light level.",
+            "R_o = (Gamma/18) s/[1 + (2/9) s + (2 Delta/Gamma)^2] capped at Gamma/4; R_d, R_b linear in s with no saturation, so s stays near 1 (Section 8.1).",
+            "explain why the readout error has an interior optimum in the window length",
+            Prompt(
+                "readout_rates.q1",
+                "choose",
+                "Raising the detection light far above saturation makes",
+                (
+                    "the bright rate saturate while the pumping rates keep growing: worse discrimination",
+                    "everything faster and better",
+                    "no difference",
+                ),
+                "the bright rate saturate while the pumping rates keep growing: worse discrimination",
             ),
         ),
         _c(
@@ -999,6 +1088,55 @@ DEVICE_PAGES: tuple[str, ...] = (
 )
 
 
+PAGE_SECTIONS: dict[str, str] = {
+    "species": "4.5.1",
+    "trap": "4.1.1",
+    "crystal": "4.1.3",
+    "light": "4.5.4",
+    "noise": "6.1",
+    "cooling": "4.2",
+    "readout": "8.1",
+    "hamiltonian": "5.7",
+}
+"""The Part II subsection each Level 4 page's explain drawer opens (Section 14.5 "Explain panel")."""
+
+PAGE_CONCEPTS: dict[str, tuple[str, ...]] = {
+    "species": ("atomic_structure", "light_coupling"),
+    "trap": ("trap_and_mathieu", "lamb_dicke"),
+    "crystal": ("mode", "lamb_dicke", "trap_and_mathieu"),
+    "light": ("light_coupling", "pulse", "crosstalk"),
+    "noise": ("noise_as_physics", "quantum_jumps"),
+    "cooling": ("cooling_ladder", "fock_states", "debye_waller"),
+    "readout": ("readout_rates", "spam"),
+    "hamiltonian": ("hamiltonian", "lamb_dicke", "quantum_jumps", "calibration"),
+}
+"""The concepts each Level 4 page's explain drawer carries, in teaching order (a page is a subset of the level)."""
+
+
+LoopKey = tuple[int, int]
+"""(ion, mode) of one spin-branch loop of a played entangling waveform (``viewmodel.dynamics.closure_table``)."""
+
+
+def score_closure(
+    answer: str,
+    closes: Mapping[LoopKey, float],
+    excursions: Mapping[LoopKey, float],
+    *,
+    tolerance: float = 0.05,
+) -> bool:
+    """Whether a closure prediction matches the record. The loops are the played waveform's spin-branch trajectories
+    alpha_im(t) on the run's own modes (Section 4.4.1), keyed by (ion, mode); a loop counts as closed when its end-to-start
+    distance is below ``tolerance`` of its largest excursion (an open loop at 5 % of its radius leaves 0.25 % of a quantum's
+    worth of spin-motion entanglement per unit (2 nbar + 1), Section 4.4.3). The exact simulation's spin-averaged <a_m>(t)
+    is never scored: the branches' displacements cancel in it whenever the register has <S_phi> = 0."""
+    all_closed = all(closes[m] <= tolerance * max(excursions.get(m, 0.0), 1e-12) for m in closes)
+    if answer == "every loop closes":
+        return all_closed
+    if answer == "at least one loop stays open":
+        return not all_closed
+    return False
+
+
 def route_matches(route: str) -> bool:
     for pattern in ROUTE_PATTERNS:
         parts = pattern.strip("/").split("/")
@@ -1017,6 +1155,8 @@ __all__ = [
     "CONCEPTS",
     "DEFAULT_RETENTION_DAYS",
     "DEVICE_PAGES",
+    "PAGE_CONCEPTS",
+    "PAGE_SECTIONS",
     "ROUTE_PATTERNS",
     "SPACING_ANCHORS",
     "Attempt",
@@ -1042,6 +1182,8 @@ __all__ = [
     "review_gap_days",
     "route_matches",
     "score_choice",
+    "LoopKey",
+    "score_closure",
     "score_direction",
     "score_histogram_prediction",
 ]

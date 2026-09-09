@@ -587,6 +587,14 @@ def Level0Page(store: Store, session: Session, index: ProvenanceIndex) -> ft.Con
             )
         ]
     )
+    # Section 14.4: a device edited on the Physics pages shows its re-derived card here, stale badge and Recalibrate included
+    layer = store.layer()
+    if store.device_overrides or (
+        layer is not None and record is not None and layer.device_hash != record.device_hash
+    ):
+        from qutip_trap_app.views.level4 import CurrentDeviceCard
+
+        left = [CurrentDeviceCard(store, session, index)] + left
     centre: list[ft.Control] = [CircuitEditor(store, session), ProgressRows(store, session)]
     plan = store.learner.plan(0)
     # asked before every reveal: the first run, and every run of a circuit edited since the last one

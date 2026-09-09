@@ -507,8 +507,14 @@ def ExplainCardView(
 
 @ft.component
 def ExplainDrawer(
-    store: Any, session: Any, level: int, index: ProvenanceIndex, section_number: str
+    store: Any,
+    session: Any,
+    level: int,
+    index: ProvenanceIndex,
+    section_number: str,
+    concepts: tuple[str, ...] | None = None,
 ) -> ft.Control:
+    """The explain drawer of a level, or of one Level 4 page when ``concepts`` names the page's subset (DESIGN.md Section 5)."""
     ft.use_state(store)
     depth = store.learner.depth(level)
     order: tuple[str, ...] = ("sentence", "picture", "equation")
@@ -530,9 +536,8 @@ def ExplainDrawer(
         )
     except KeyError:
         section_text = f"PLAN.md Section {section_number}"
-    cards = [
-        ExplainCardView(session, explain(cid, depth), index, deeper) for cid in LEVEL_CONCEPTS.get(level, ())
-    ]
+    ids = concepts if concepts is not None else LEVEL_CONCEPTS.get(level, ())
+    cards = [ExplainCardView(session, explain(cid, depth), index, deeper) for cid in ids]
     return ft.Container(
         content=ft.Column(
             [

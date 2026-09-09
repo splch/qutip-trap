@@ -32,6 +32,7 @@ from qutip_trap_app.record import (
     ReplayGate,
     ReplayRecord,
     ResultsRecord,
+    branch_loops,
     device_card,
     schedule_record,
     space_record,
@@ -249,6 +250,7 @@ def build_replay_record(
         diagnostics=diagnostics,
         notes=tuple(outcome.notes),
         core_gaps=core.CORE_GAPS,
+        branch_loops=branch_loops(outcome.schedule, device, {int(m): float(v) for m, v in prep.nbar.items()}),
         joint_store_dimension_max=4096,
         replay=replay_rec,
     )

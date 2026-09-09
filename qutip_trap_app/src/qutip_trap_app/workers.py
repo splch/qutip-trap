@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from qutip_trap_app.record import JobSpec, LiveRun, Record
+from qutip_trap_app.record import DeviceRef, JobSpec, LiveRun, Record
 
 EventKind = Literal["progress", "result", "error"]
 
@@ -58,9 +58,52 @@ class _LiveState:
     lives: dict[str, LiveRun] = field(default_factory=dict)
     libraries: dict[str, Any] = field(default_factory=dict)
     """Channel libraries per (device hash, table seed, options digest)."""
+    presets: dict[str, Any] = field(default_factory=dict)
+    """Built presets per ``DeviceRef.cache_key()`` (a build with the recipe re-derived takes seconds; M11.3)."""
+    tables: dict[str, Any] = field(default_factory=dict)
+    """Recalibrated ``CalibrationTable`` per device hash (Section 14.4's user-initiated job)."""
+    stability: Any = None
+
+
+def _preset_for(state: _LiveState, ref: DeviceRef, progress: Any) -> Any:
+    """The built preset of a device reference, cached by its arguments and overrides; the hash is checked when the
+    reference carries one (an empty hash is a request from the UI, which never builds a device itself)."""
+    key = ref.cache_key()
+    preset = state.presets.get(key)
+    if preset is None:
+        if ref.overrides:
+            progress(
+                "building device", None, "applying the Level 4 knobs and re-deriving the preparation recipe"
+            )
+        preset = ref.build(check=bool(ref.hash))
+        state.presets[key] = preset
+    elif ref.hash and preset.device.hash() != ref.hash:
+        raise WorkerError(
+            f"the device reference's hash {ref.hash[:12]} does not match the built device {preset.device.hash()[:12]}"
+        )
+    return preset
+
+
+def complete_job(job: JobSpec, preset: Any) -> JobSpec:
+    """A job the UI submitted without building a device (empty hash, empty drive maps) completed from the built preset."""
+    import dataclasses
+
+    from qutip_trap_app.record import DriveRef
+
+    out = job
+    if not out.device.hash:
+        out = dataclasses.replace(out, device=dataclasses.replace(out.device, hash=preset.device.hash()))
+    if not out.gate_drives and not out.entangling_drives:
+        out = dataclasses.replace(
+            out,
+            gate_drives={int(i): DriveRef.from_core(d) for i, d in preset.gate_drives.items()},
+            entangling_drives={int(i): DriveRef.from_core(d) for i, d in preset.entangling_drives.items()},
+        )
+    return out
 
 
 def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: Any) -> Any:
+    from qutip_trap_app import device_layer as layer_mod
     from qutip_trap_app import record as rec_mod
     from qutip_trap_app import replay as replay_mod
     from qutip_trap_app import resim
@@ -69,14 +112,15 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
 
     if request == "run_job":
         job: JobSpec = payload["job"]
-        preset = job.device.build()
+        preset = _preset_for(state, job.device, progress)
+        job = complete_job(job, preset)
         progress("calibrating", None, "the surrogate calibration table (cached per device and seed)")
         table = rec_mod.calibrate_for(job, preset)
+        state.tables[preset.device.hash()] = table
         progress(
             "running", None, f"{job.level} run of {job.shots} shots on {preset.device.crystal.n_ions} ions"
         )
         record, live = rec_mod.execute(job, preset)
-        del table
         key = record.key()
         state.records[key] = record
         state.lives[key] = live
@@ -84,7 +128,8 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
         return record
     if request == "replay":
         job = payload["job"]
-        preset = job.device.build()
+        preset = _preset_for(state, job.device, progress)
+        job = complete_job(job, preset)
         progress("calibrating", None, "the surrogate calibration table (cached per device and seed)")
         table = rec_mod.calibrate_for(job, preset)
         lib_key = f"{preset.device.hash()}/{table.seed}/{replay_mod.options_digest(job.solver_options())}"
@@ -93,6 +138,7 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
             library = replay_mod.ChannelLibrary.for_job(job, preset.device, table)
             state.libraries[lib_key] = library
         outcome = replay_mod.replay(job, preset.device, table, library, progress=progress)
+        state.tables[preset.device.hash()] = table
         record = build_replay_record(job, preset.device, table, outcome, library)
         state.records[record.key()] = record
         progress("recording", 1.0, "record built")
@@ -104,21 +150,110 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
         if live_opt is None or record_opt is None:
             raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
         live, record = live_opt, record_opt
+        step_i, sample_i, branch_i = (
+            int(payload["step"]),
+            int(payload.get("sample", 0)),
+            int(payload.get("branch", 0)),
+        )
         progress(
             "zooming",
             None,
-            f"re-simulating step {payload['step']} with {payload.get('n_store', resim.DEFAULT_ZOOM_POINTS)} stored points per segment",
+            f"re-simulating step {step_i} with {payload.get('n_store', resim.DEFAULT_ZOOM_POINTS)} stored points per segment",
         )
         record, z, stats = resim.zoom(
             record,
             live,
+            step_i,
+            sample_i,
+            branch_i,
+            n_store=int(payload.get("n_store", resim.DEFAULT_ZOOM_POINTS)),
+        )
+        progress("building", 0.9, "listing the Hamiltonian terms and collapse operators of the step")
+        record, ham = resim.hamiltonian_record(record, live, step_i, sample_i, branch_i)
+        state.records[key] = record
+        return {"zoom": z, "boundaries": record.boundaries, "stats": stats, "hamiltonian": ham}
+    if request == "fock_movie":
+        key = payload["key"]
+        live_opt = state.lives.get(key)
+        record_opt = state.records.get(key)
+        if live_opt is None or record_opt is None:
+            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
+        record, movie = resim.fock_movie(
+            record_opt,
+            live_opt,
             int(payload["step"]),
             int(payload.get("sample", 0)),
             int(payload.get("branch", 0)),
-            n_store=int(payload.get("n_store", resim.DEFAULT_ZOOM_POINTS)),
+            n_frames=int(payload.get("n_frames", resim.DEFAULT_FOCK_FRAMES)),
+            progress=progress,
         )
         state.records[key] = record
-        return {"zoom": z, "boundaries": record.boundaries, "stats": stats}
+        return {"movie": movie, "boundaries": record.boundaries}
+    if request == "tomography":
+        key = payload["key"]
+        live_opt = state.lives.get(key)
+        record_opt = state.records.get(key)
+        if live_opt is None or record_opt is None:
+            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
+        record, pm = resim.process_matrix(
+            record_opt,
+            live_opt,
+            int(payload["step"]),
+            int(payload.get("sample", 0)),
+            int(payload.get("branch", 0)),
+            progress=progress,
+        )
+        state.records[key] = record
+        return {"process_matrix": pm, "boundaries": record.boundaries}
+    if request == "recheck":
+        key = payload["key"]
+        live_opt = state.lives.get(key)
+        record_opt = state.records.get(key)
+        if live_opt is None or record_opt is None:
+            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
+        step_i, sample_i, branch_i = (
+            int(payload["step"]),
+            int(payload.get("sample", 0)),
+            int(payload.get("branch", 0)),
+        )
+        progress("rechecking", 0.0, "tolerances tightened by ten on the zoomed step")
+        record, tol = resim.tolerance_recheck(record_opt, live_opt, step_i, sample_i, branch_i)
+        progress("rechecking", 0.5, "every resolved cap raised by two, re-chained from the initial state")
+        record, trunc = resim.truncation_recheck(record, live_opt, step_i, sample_i, branch_i)
+        state.records[key] = record
+        return {"tolerance": tol, "truncation": trunc, "zooms": record.zooms, "boundaries": record.boundaries}
+    if request == "derive":
+        ref: DeviceRef = payload["device"]
+        preset = _preset_for(state, ref, progress)
+        if state.stability is None:
+            progress("deriving", 0.1, "the Mathieu stability boundary (once per session)")
+            state.stability = layer_mod.stability_map()
+        table_opt = state.tables.get(preset.device.hash())
+        layer = layer_mod.derive_device_layer(
+            preset,
+            preset_name=str(ref.preset),
+            kwargs=ref.kwargs,
+            overrides=ref.overrides,
+            table=table_opt,
+            table_record=payload.get("table_record"),
+            stability=state.stability,
+            sweeps=bool(payload.get("sweeps", True)),
+            progress=progress,
+        )
+        return layer
+    if request == "recalibrate":
+        job = payload["job"]
+        preset = _preset_for(state, job.device, progress)
+        job = complete_job(job, preset)
+        progress(
+            "calibrating",
+            None,
+            "the surrogate table for the edited device: closed forms, exact spot checks, detection records",
+        )
+        table = rec_mod.calibrate_for(job, preset)
+        state.tables[preset.device.hash()] = table
+        progress("recording", 1.0, "table built")
+        return {"table": rec_mod.table_record(table), "device_hash": preset.device.hash(), "job": job}
     if request == "verify":
         key = payload["key"]
         record_opt = payload.get("record") or state.records.get(key)
@@ -286,4 +421,4 @@ class SimulationWorker:
         raise WorkerError(f"request {ticket.kind} timed out after {timeout_s:g} s")
 
 
-__all__ = ["Event", "EventKind", "SimulationWorker", "Ticket", "WorkerError"]
+__all__ = ["Event", "EventKind", "SimulationWorker", "Ticket", "WorkerError", "complete_job"]

@@ -42,10 +42,17 @@ def test_zoom_budget_and_dynamics_view(bell: tuple[Record, LiveRun]) -> None:
     assert stats.wall_time_s < 60.0
     dyn = pulse_dynamics(record, z)
     assert dyn.gate_id.startswith("ms") and dyn.times_s.size == z.trace.times_s.size
-    assert len(dyn.populations) == 2 and len(dyn.nbar) == 2 and len(dyn.loops) == 2
+    assert len(dyn.populations) == 2 and len(dyn.nbar) == 2
+    # the loops are the played waveform's spin-branch trajectories (two ions x two coupled modes, on their own grid); the
+    # zoom's spin-averaged <a_m>(t) per mode rides on the zoom's grid and is kept as a residue
+    assert len(dyn.loops) == 4 and len(dyn.mean_alpha) == 2
     for loop in dyn.loops:
-        assert loop.alpha.size == dyn.times_s.size
-        assert loop.closes < 0.05, "the calibrated waveform returns the motion (Section 4.4.3 closure)"
+        assert loop.ion in (0, 1) and loop.excursion > 0.05
+        assert loop.closes < 0.05 * loop.excursion, (
+            "the calibrated waveform returns the motion (Section 4.4.3 closure)"
+        )
+    for residue in dyn.mean_alpha:
+        assert residue.ion is None and residue.alpha.size == dyn.times_s.size
     assert (
         dyn.concurrence is not None and dyn.concurrence.values[-1] > 0.95 and dyn.concurrence.values[0] < 0.05
     )

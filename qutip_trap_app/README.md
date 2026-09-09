@@ -8,15 +8,22 @@ imports this package.
 
 ## Status
 
-**M11.1 and M11.2 done.** The record layer and the first three levels of the ladder exist and run in a native window or a
-browser served from the host. What exists and is tested:
+**M11.1 to M11.3 done.** The record layer and all five levels of the ladder exist and run in a native window or a browser
+served from the host. What exists and is tested:
 
 - `record.py` - the run record of Section 14.3 (job, compiled circuit, schedule, space, preparation, noise samples,
   branches, per-(sample, branch) traces, readout records, results with the target beside them, diagnostics, device card,
   calibration table, core gaps) and its storage policy; `execute(job)` runs a job and records it.
 - `codec.py`, `storage.py` - export to one zip of JSON plus `.npy` arrays with a digest; bitwise re-import.
 - `resim.py` - the engine as `run()` built it; boundary states by chaining over gate steps; zoom into one pulse with a fine
-  store, cached by key; tolerance and cap re-checks for the convergence badge.
+  store, cached by key; tolerance and cap re-checks for the convergence badge; (M11.3) the Fock movie by truncated
+  re-simulation, the Hamiltonian record of a step (terms, matrix elements, collapse operators) and the process matrix of a
+  step by state-based tomography from its recorded motional state.
+- `knobs.py`, `device_layer.py` (M11.3) - the Level 4 knobs of Section 14.4 and the rebuild of a preset with overrides
+  (crystal re-solved, recipe re-derived); the device layer every physics page reads, derived in the worker from the public
+  API alone: species, trap with the Mathieu stability boundary, crystal, light with the scattering sweep, noise, cooling,
+  readout with exact count distributions and the threshold scan, the pulse-solver solutions per pair, and the device card of
+  an edited device.
 - `replay.py`, `replay_record.py` (M11.2) - the app-side channel replay of Section 5.4: every gate as the Section 6.8
   channel the core extracts by GATE_LOCAL tomography, conjugated to the played phase (the frame covariance is measured,
   not assumed), the register as a density matrix, the table's readout errors; the channel-derivation residual it reports
@@ -26,31 +33,43 @@ browser served from the host. What exists and is tested:
 - `workers.py` (M11.2) - one worker process that holds the live state and streams progress; the UI never blocks.
 - `provenance.py` - the index generated from `docs/provenance/ledger.yaml` and `PLAN.md` into
   `src/assets/provenance_index.json`; chips and Part II sections at run time.
-- `viewmodel/` - `catalogue` (every displayed quantity with its ledger id), `machine` (Level 0), `circuit` (Level 1),
-  `schedule` (Level 2), `dynamics` (Level 3), `numerics` (the panel and badge), `learn` (concepts, prompts, prior-knowledge
-  plans, spacing, mastery log, the six-click tour).
+- `viewmodel/` - `catalogue` (every displayed quantity with its ledger id, 191 of them), `machine` (Level 0), `circuit`
+  (Level 1), `schedule` (Level 2), `dynamics` (Level 3: the recorded trace, the fine trace, Fock heatmaps, the process
+  view, the closure table), `physics` (Level 4: one view per page over the device layer, the Hamiltonian view, the knob rows,
+  the edited device's card), `numerics` (the panel and badge), `learn` (29 concepts, prompts, prior-knowledge plans, spacing,
+  mastery log, the six-click tour, the per-page concept sets).
 - `views/` (M11.2) - the Flet screens: the shell with the navigation rail, the breadcrumb zoom bar with keyboard zoom, the
   explain drawer and the numerics strip; Level 0 (device card, circuit editor with OpenQASM 2 and IonQ JSON, engine choice,
   Run, predict-then-reveal, histogram with the target beside it, shots behind a bar, verify deeper); Level 1 (timeline,
   gate card with target unitary and calibrated parameters, register after the gate, phase register, compile report);
   Level 2 (time axis, tones against the mode spectrum, waveform segments, closure indicators, crosstalk); the Learn page;
-  placeholders for Level 3 and the Level 4 pages (M11.3). Every level page scrolls; the explain cards and the expandable
+  (M11.3) Level 3 (sample and branch selectors, the recorded trace at once and Re-simulate, the closure prediction before
+  the loops are drawn, P1 and coherences, concurrence and Pauli correlators, <n_m>(t), the spin-branch loops of the played waveform, Fock bars and
+  the P(n, t) heatmap, jumps linking to their collapse operator, the process matrix, the convergence re-checks) and the
+  eight Level 4 pages with their knob panels, stale badges and Recalibrate, drawn on Flet's canvas and a pure-Python PNG
+  heatmap (`views/drawing.py`; matplotlib is not a dependency). Every level page scrolls; the explain cards and the expandable
   tiles keep their open state across re-renders; a run shows a live elapsed time and a Cancel button; the prediction is
   asked before every run of a changed circuit and scored beside that run's histogram; the learner's settings and mastery
   log are kept on the device through Flet's `SharedPreferences`, so the first-launch question is asked once per device
   and the review tray can come due across launches.
-- `tests/` - the Section 9.11 rows M11.1 and M11.2 own: coarse-graining identity, record round trip, re-simulation cache,
-  convergence badge, provenance coverage, channel derivation (cold; the hotter half is `-m slow`), plus verify deeper, the
-  worker, the learning layer's integrity, and the application state (`test_state.py`: the learner's persistence document,
-  one prediction per run, the progress heartbeat, cancel, the zoom bar's parent route).
+- `tests/` - the Section 9.11 rows M11.1 to M11.3 own: coarse-graining identity, record round trip, re-simulation cache,
+  convergence badge, provenance coverage (Levels 0 to 4), channel derivation (cold; the hotter half is `-m slow`), downward
+  propagation (`test_knobs.py`: the rf amplitude scales q at fixed a with beta, nu and eta following Section 4.1, the
+  recalibrated table re-solves the pair's waveform to the layer's own closed-form solution up to the exact spot check's
+  amplitude factor, the device card updates; the layer agrees
+  with the record it describes), plus verify deeper, the worker, the learning layer's integrity, the application state
+  (`test_state.py`, `test_device_state.py`: one derive per knob change, the layer and the recalibration landing in the
+  store, the worker building an edited device once) and Level 3 on demand (`test_level3.py`: the Hamiltonian record's
+  matrix elements against QuTiP's displacement operator, the Fock movie's frames against the boundary states and the fine
+  zoom, the process matrix's normalizations, the recorded trace, the closure scorer).
 
 ## Commands
 
 From the repository root:
 
     uv sync --all-packages --extra gui --group dev                 # installs the core, the app and Flet
-    uv run --package qutip-trap-app pytest qutip_trap_app/tests -m 'not slow'   # the view-model tests (about five minutes)
-    uv run --package qutip-trap-app pytest qutip_trap_app/tests               # with the hotter-state channel test (about ten)
+    uv run --package qutip-trap-app pytest qutip_trap_app/tests -m 'not slow'   # the view-model tests (about eight minutes)
+    uv run --package qutip-trap-app pytest qutip_trap_app/tests               # with the hotter-state channel test (about thirteen)
     uv run python -m qutip_trap_app.provenance                     # regenerate src/assets/provenance_index.json
     uv run python -m qutip_trap_app.provenance --check             # CI: the asset is current with the ledger and the plan
     (cd qutip_trap_app && uv run mypy)                              # strict types for src/qutip_trap_app
@@ -94,3 +113,22 @@ assert import_record("bell.qtrec.zip").digest() == record_id
 
 Every displayed value is a `Shown(quantity, value)` whose quantity names a ledger record; `provenance.ProvenanceIndex`
 turns it into a chip.
+
+The Level 4 layer from Python (M11.3): a device edited by its knobs, derived into the records the physics pages read, and
+the pulse re-simulated on demand for the Level 3 views:
+
+```python
+from qutip_trap_app import device_layer, knobs, resim
+from qutip_trap_app.viewmodel.dynamics import fock_heatmaps, process_view
+from qutip_trap_app.viewmodel.physics import trap_view
+
+edited = record.job.device.with_overrides({"trap.rf_frequency_hz": 40e6, "trap.rf_amplitude_scale": 1.1})
+layer = device_layer.derive_device_layer(edited.build(), preset_name="yb171_chain", overrides=edited.overrides,
+                                         table_record=record.table)      # about 4 s; layer.stale is True
+print(trap_view(layer).mathieu)                                          # a, q, beta, nu, C0 per axis, each a Shown
+record, ham = resim.hamiltonian_record(record, live, ms.step_index)      # the terms and collapse operators of the step
+record, movie = resim.fock_movie(record, live, ms.step_index, n_frames=4)   # P(n, t) by truncated re-simulation
+record, pm = resim.process_matrix(record, live, ms.step_index)          # the step as a channel (16 inputs, about 15 s)
+print(fock_heatmaps(movie)[0].values.shape, process_view(pm).infidelity)
+print(knobs.knobs_for(edited.build().device)["trap.rf_amplitude_scale"].doc)
+```

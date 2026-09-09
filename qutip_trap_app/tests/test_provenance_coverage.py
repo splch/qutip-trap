@@ -7,13 +7,26 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from qutip_trap_app import provenance
+from qutip_trap_app import device_layer, provenance, resim
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel import catalogue, learn
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
 from qutip_trap_app.viewmodel.circuit import compile_report, phase_register, register_after, timeline
+from qutip_trap_app.viewmodel.dynamics import pulse_dynamics, recorded_zoom
 from qutip_trap_app.viewmodel.machine import device_card_view, histogram, shot
 from qutip_trap_app.viewmodel.numerics import numerics_panel
+from qutip_trap_app.viewmodel.physics import (
+    cooling_view,
+    crystal_view,
+    gate_rows,
+    hamiltonian_view,
+    layer_card_view,
+    light_view,
+    noise_view,
+    readout_view,
+    species_view,
+    trap_view,
+)
 from qutip_trap_app.viewmodel.schedule import closure, pulse_view, time_axis
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "qutip_trap_app"
@@ -50,7 +63,7 @@ def _shown(obj: object, out: list[Shown], depth: int = 0) -> None:
     if isinstance(obj, Shown):
         out.append(obj)
         return
-    if depth > 6:
+    if depth > 9:
         return
     if isinstance(obj, dict):
         for v in obj.values():
@@ -86,6 +99,40 @@ def test_every_displayed_quantity_of_the_bell_record_has_a_chip(bell: tuple[Reco
     for s in shown:
         q = CATALOGUE[s.quantity]
         assert idx.has(q.ledger_id), s.quantity
+
+
+def test_every_displayed_quantity_of_levels_3_and_4_has_a_chip(bell: tuple[Record, LiveRun]) -> None:
+    """The M11.3 views: the Level 3 dynamics of the recorded trace and the Hamiltonian record, and every Level 4 page over the
+    device layer of the record's own device."""
+    record, live = bell
+    idx = provenance.ProvenanceIndex.load()
+    step = next(s.index for s in record.schedule.steps if s.gate_id.startswith("ms"))
+    record, ham = resim.hamiltonian_record(record, live, step)
+    layer = device_layer.derive_device_layer(
+        record.job.device.build(), preset_name="yb171_chain", table=live.table, sweeps=False
+    )
+    views: list[object] = [
+        pulse_dynamics(record, recorded_zoom(record, step)),
+        hamiltonian_view(record, ham),
+        species_view(layer),
+        trap_view(layer),
+        crystal_view(layer),
+        light_view(layer),
+        noise_view(layer),
+        cooling_view(layer),
+        readout_view(layer, record.table),
+        gate_rows(layer, record.table),
+        layer_card_view(layer, record.table),
+    ]
+    shown: list[Shown] = []
+    for v in views:
+        _shown(v, shown, 0)
+    assert len(shown) > 200
+    for s in shown:
+        q = CATALOGUE[s.quantity]
+        assert idx.has(q.ledger_id), s.quantity
+    levels = {CATALOGUE[s.quantity].level for s in shown}
+    assert {3, 4} <= levels
 
 
 def test_core_is_imported_in_one_module_only() -> None:

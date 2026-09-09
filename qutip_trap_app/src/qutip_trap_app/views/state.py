@@ -20,8 +20,9 @@ from typing import Any, Literal, cast
 import flet as ft
 
 from qutip_trap_app.core import Circuit, Operation, SolverOptions
+from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
-from qutip_trap_app.record import JobSpec, Record, job_for_preset
+from qutip_trap_app.record import DeviceRef, JobSpec, Record, TableRecord, job_for_preset
 from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.learn import (
     DEFAULT_RETENTION_DAYS,
@@ -62,6 +63,8 @@ class JobStatus:
     done: bool = False
     job: JobSpec | None = None
     engine: Engine = "full"
+    target: dict[str, Any] = field(default_factory=dict)
+    """What the request was about (record key, step, sample, branch, device cache key), read back when its result lands."""
 
     @property
     def elapsed_s(self) -> float:
@@ -168,12 +171,68 @@ class Store:
     worker_alive: bool = False
     tick: int = 0
     """Bumped by the poll loop when any job progressed (and once a second while one runs), so progress rows re-render."""
+    # ---- Level 4: the device model as the single source of truth (Section 14.4; M11.3) ----
+    preset_name: str = "yb171_chain"
+    preset_kwargs: dict[str, Any] = field(default_factory=dict)
+    device_overrides: dict[str, float] = field(default_factory=dict)
+    """The Level 4 knobs as set (``knobs`` ids); empty is the preset as published."""
+    layers: dict[str, DeviceLayer] = field(default_factory=dict)
+    """Derived device layers per ``DeviceRef.cache_key()``."""
+    tables: dict[str, TableRecord] = field(default_factory=dict)
+    """Recalibrated tables per device hash (the user-initiated job of Section 14.4)."""
+    device_page: str = "hamiltonian"
+    # ---- Level 3 selections ----
+    branch: int = 0
+    """The initial-mixture branch Level 3 shows (the sample comes from the route)."""
+    closure_predictions: dict[str, str] = field(default_factory=dict)
+    """Per ``key:step``, the learner's closure pick before the loops were revealed ("skipped" when declined)."""
+    rechecks: dict[str, Any] = field(default_factory=dict)
+    """Per ``key:step:sample:branch``, the (tolerance, truncation) re-check pair a Level 3 request produced."""
+    hamiltonian_target: tuple[str, int, int, int] | None = None
+    """(record key, step, sample, branch) the Hamiltonian page shows; None = the current record's first entangling step."""
+    selected_channel: str | None = None
+    """A collapse channel opened from a jump marker on Level 3 (highlighted on the Hamiltonian page)."""
+    selected_term: int | None = None
 
     def record(self) -> Record | None:
         return self.records.get(self.current) if self.current else None
 
     def running(self) -> list[JobStatus]:
         return [j for j in self.jobs.values() if not j.done]
+
+    def running_of(self, request: str, **target: Any) -> JobStatus | None:
+        """The running job of one request kind whose target carries the given items, if any."""
+        for j in self.jobs.values():
+            if j.done or j.request != request:
+                continue
+            if all(j.target.get(k) == v for k, v in target.items()):
+                return j
+        return None
+
+    def device_ref(self, n_ions: int | None = None) -> DeviceRef:
+        """The current device as a reference: the preset, its arguments, the overrides, and the hash when a derived layer
+        already knows it (the UI never builds a device; the worker does, Section 14.6)."""
+        rec = self.record()
+        n = n_ions if n_ions is not None else (rec.device_card.n_ions if rec is not None else 2)
+        ref = DeviceRef("", self.preset_name, int(n), dict(self.preset_kwargs), dict(self.device_overrides))
+        layer = self.layers.get(ref.cache_key())
+        if layer is not None:
+            ref = dataclasses.replace(ref, hash=layer.device_hash)
+        return ref
+
+    def layer(self, n_ions: int | None = None) -> DeviceLayer | None:
+        return self.layers.get(self.device_ref(n_ions).cache_key())
+
+    def table_for(self, device_hash: str) -> TableRecord | None:
+        """The calibration table that belongs to a device hash: a recalibrated one, else the current record's when it
+        was made on that device."""
+        t = self.tables.get(device_hash)
+        if t is not None:
+            return t
+        rec = self.record()
+        if rec is not None and rec.device_hash == device_hash:
+            return rec.table
+        return None
 
     def prediction_pending(self) -> bool:
         """Whether the next Run is a run the learner has not predicted: nothing submitted yet, or the circuit text changed
@@ -264,17 +323,25 @@ class Session:
         return load_openqasm2(text)
 
     def build_job(self, *, n_ions: int | None = None, seed: int = 0) -> JobSpec:
+        """The job for the current circuit on the current device (the Level 4 overrides included). Nothing is built here:
+        the device hash is left for the worker to fill unless a derived layer already knows it."""
         circuit = self.parse_circuit()
         n = n_ions if n_ions is not None else max(2, circuit.n_qubits)
         job, _preset = job_for_preset(
-            "yb171_chain",
+            self.store.preset_name,
             n,
             circuit,
             int(self.store.shots),
             seed=seed,
             options=FAST_OPTIONS,
             detection_records=500,
+            preset_kwargs=self.store.preset_kwargs,
+            overrides=self.store.device_overrides,
+            build=False,
         )
+        ref = self.store.device_ref(n)
+        if ref.hash:
+            job = dataclasses.replace(job, device=dataclasses.replace(job.device, hash=ref.hash))
         return job
 
     def submit_run(self) -> JobStatus | None:
@@ -299,10 +366,88 @@ class Session:
         self.store.jobs = {**self.store.jobs, ticket.id: status}
         return status
 
-    def submit_zoom(self, key: str, step: int, n_store: int = 201) -> JobStatus:
-        ticket = self.worker.submit("zoom", key=key, step=step, n_store=n_store)
-        status = JobStatus(ticket.id, "zoom")
+    def submit_zoom(
+        self, key: str, step: int, sample: int = 0, branch: int = 0, n_store: int = 201
+    ) -> JobStatus:
+        ticket = self.worker.submit("zoom", key=key, step=step, sample=sample, branch=branch, n_store=n_store)
+        status = JobStatus(
+            ticket.id, "zoom", target={"key": key, "step": step, "sample": sample, "branch": branch}
+        )
         status.message = f"{key}:{step}"
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    def submit_fock_movie(
+        self, key: str, step: int, sample: int = 0, branch: int = 0, n_frames: int = 8
+    ) -> JobStatus:
+        ticket = self.worker.submit(
+            "fock_movie", key=key, step=step, sample=sample, branch=branch, n_frames=n_frames
+        )
+        status = JobStatus(
+            ticket.id, "fock_movie", target={"key": key, "step": step, "sample": sample, "branch": branch}
+        )
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    def submit_tomography(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
+        ticket = self.worker.submit("tomography", key=key, step=step, sample=sample, branch=branch)
+        status = JobStatus(
+            ticket.id, "tomography", target={"key": key, "step": step, "sample": sample, "branch": branch}
+        )
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    def submit_recheck(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
+        ticket = self.worker.submit("recheck", key=key, step=step, sample=sample, branch=branch)
+        status = JobStatus(
+            ticket.id, "recheck", target={"key": key, "step": step, "sample": sample, "branch": branch}
+        )
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    # -- the device model (Section 14.4) --
+
+    def set_knob(self, knob_id: str, value: float | None) -> None:
+        """Set (or, with None, reset) one Level 4 knob and re-derive the analytic layer for the new device."""
+        ov = dict(self.store.device_overrides)
+        if value is None:
+            ov.pop(knob_id, None)
+        else:
+            ov[knob_id] = float(value)
+        self.store.device_overrides = ov
+        self.submit_derive()
+
+    def reset_knobs(self) -> None:
+        self.store.device_overrides = {}
+        self.submit_derive()
+
+    def submit_derive(self, n_ions: int | None = None) -> JobStatus | None:
+        """Derive the device layer of the current device (immediate tier in the worker); a repeat for a layer the store
+        already holds is skipped, and so is a duplicate of a running request."""
+        ref = self.store.device_ref(n_ions)
+        ck = ref.cache_key()
+        if ck in self.store.layers or self.store.running_of("derive", cache_key=ck) is not None:
+            return None
+        rec = self.store.record()
+        table_record = rec.table if rec is not None else None
+        ticket = self.worker.submit("derive", device=ref, table_record=table_record)
+        status = JobStatus(ticket.id, "derive", target={"cache_key": ck})
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    def submit_recalibrate(self) -> JobStatus | None:
+        """The user-initiated recalibration of Section 14.4: the surrogate table for the current device (edited knobs
+        included) and the current circuit's pairs, so that the next Run finds it in the worker's cache."""
+        try:
+            job = self.build_job()
+        except Exception as exc:  # a syntax error in the circuit text: shown, never a crash
+            self.store.error = f"the circuit could not be read: {exc}"
+            return None
+        ck = job.device.cache_key()
+        if self.store.running_of("recalibrate", cache_key=ck) is not None:
+            return None
+        ticket = self.worker.submit("recalibrate", job=job)
+        status = JobStatus(ticket.id, "recalibrate", job=job, target={"cache_key": ck})
         self.store.jobs = {**self.store.jobs, ticket.id: status}
         return status
 
@@ -325,6 +470,9 @@ class Session:
         if not events:
             return
         jobs = dict(self.store.jobs)
+        # published BEFORE the handlers run: a result handler may submit a follow-up job (a finished recalibration re-derives
+        # the layer), and a write-back after the loop would silently drop that job's status from the store
+        self.store.jobs = jobs
         for ev in events:
             status = jobs.get(ev.ticket)
             if status is None:
@@ -337,7 +485,6 @@ class Session:
             else:
                 status.done, status.stage, status.fraction = True, "done", 1.0
                 self._apply_result(status, ev.payload)
-        self.store.jobs = jobs
         self.store.tick = self.store.tick + 1
 
     def _apply_result(self, status: JobStatus, payload: Any) -> None:
@@ -364,7 +511,52 @@ class Session:
             record = self.store.records.get(key)
             if record is not None:
                 merged = record.with_boundaries(payload["boundaries"]).with_zoom(payload["zoom"])
+                ham = payload.get("hamiltonian")
+                if ham is not None:
+                    merged = merged.with_hamiltonian(ham)
                 self.store.records = {**self.store.records, key: merged}
+        elif status.request == "fock_movie" and isinstance(payload, dict):
+            key = str(status.target.get("key"))
+            record = self.store.records.get(key)
+            if record is not None:
+                merged = record.with_boundaries(payload["boundaries"]).with_fock_movie(payload["movie"])
+                self.store.records = {**self.store.records, key: merged}
+        elif status.request == "tomography" and isinstance(payload, dict):
+            key = str(status.target.get("key"))
+            record = self.store.records.get(key)
+            if record is not None:
+                merged = record.with_boundaries(payload["boundaries"]).with_process_matrix(
+                    payload["process_matrix"]
+                )
+                self.store.records = {**self.store.records, key: merged}
+        elif status.request == "recheck" and isinstance(payload, dict):
+            key = str(status.target.get("key"))
+            record = self.store.records.get(key)
+            if record is not None:
+                merged = record.with_boundaries(payload["boundaries"])
+                for z in payload["zooms"]:
+                    merged = merged.with_zoom(z)
+                self.store.records = {**self.store.records, key: merged}
+            t = status.target
+            self.store.rechecks = {
+                **self.store.rechecks,
+                f"{key}:{t.get('step')}:{t.get('sample')}:{t.get('branch')}": (
+                    payload["tolerance"],
+                    payload["truncation"],
+                ),
+            }
+        elif status.request == "derive" and isinstance(payload, DeviceLayer):
+            ck = str(status.target.get("cache_key"))
+            self.store.layers = {**self.store.layers, ck: payload}
+        elif status.request == "recalibrate" and isinstance(payload, dict):
+            table: TableRecord = payload["table"]
+            self.store.tables = {**self.store.tables, str(payload["device_hash"]): table}
+            # the layer for this device compared itself with an older table: re-derive so the stale badge clears
+            ck = str(status.target.get("cache_key"))
+            layers = dict(self.store.layers)
+            layers.pop(ck, None)
+            self.store.layers = layers
+            self.submit_derive()
 
     def heartbeat(self, now: float, period_s: float = 1.0) -> bool:
         """Re-render the progress rows once per ``period_s`` while a job runs, so the elapsed time keeps moving between

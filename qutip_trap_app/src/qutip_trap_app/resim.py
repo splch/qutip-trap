@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import math
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -30,10 +31,16 @@ from qutip_trap_app import core
 from qutip_trap_app.codec import dumps
 from qutip_trap_app.record import (
     BoundaryState,
+    CollapseRecord,
     ConvergenceRecord,
+    DriveTermRecord,
+    FockMovie,
+    HamiltonianRecord,
     LiveRun,
+    ProcessMatrixRecord,
     Record,
     RecordError,
+    SegmentSummary,
     ZoomTrace,
     options_record,
     trace_record,
@@ -439,15 +446,416 @@ def truncation_recheck(
     )
 
 
+# ---- Level 3 on demand: Fock movies, the process matrix, the Hamiltonian record (Section 14.2 rows 3 and 4; M11.3) ------------
+
+DEFAULT_FOCK_FRAMES = 8
+"""Frames of a Fock movie after the step's start: the truncation points t_k = t_start + k/K (t_end - t_start)."""
+
+TWO_PI = 2.0 * math.pi
+
+
+def _truncated_schedule(live: LiveRun, step: core.GateStep, t_k: float) -> core.Schedule:
+    """The step's schedule cut at ``t_k``: every pulse that started before ``t_k`` ends there (causality makes the truncated
+    pulse's final state the full pulse's state at ``t_k``; no tone is changed before that time), idle intervals likewise."""
+    sched = sub_schedule(live, step)
+    pulses = tuple(
+        dataclasses.replace(p, t_end_s=min(p.t_end_s, t_k)) for p in sched.pulses if p.t_start_s < t_k - 1e-15
+    )
+    idle = tuple((a, min(b, t_k)) for a, b in sched.idle if a < t_k - 1e-15)
+    return dataclasses.replace(sched, pulses=pulses, idle=idle, events=())
+
+
+def fock_movie_key(
+    step_index: int, sample_index: int, branch: int, n_frames: int, options: core.SolverOptions
+) -> str:
+    return f"fock/step{step_index}/s{sample_index}/b{branch}/k{n_frames}/{options_digest(options)}"
+
+
+def fock_movie(
+    record: Record,
+    live: LiveRun,
+    step_index: int,
+    sample_index: int = 0,
+    branch: int = 0,
+    *,
+    n_frames: int = DEFAULT_FOCK_FRAMES,
+    options: core.SolverOptions | None = None,
+    progress: Callable[[str, float | None, str], None] | None = None,
+) -> tuple[Record, FockMovie]:
+    """Per-time Fock distributions of every resolved mode inside one step by truncated re-simulation, cached by key.
+
+    The core's traces carry <n_m>(t) only (``core.CORE_GAPS``); the state at an interior time t_k is the final state of the
+    same pulses cut at t_k, so K truncated runs from the recorded boundary state give P(n_m, t_k) exactly, at about K/2 times
+    the cost of one full zoom. Frame 0 is the recorded boundary state; frame K ends at the step's end.
+    """
+    if n_frames < 1:
+        raise ValueError("a Fock movie has at least one frame after the start")
+    opts = options if options is not None else live.options
+    key = fock_movie_key(step_index, sample_index, branch, n_frames, opts)
+    cached = record.fock_movie(key)
+    if cached is not None:
+        return record, cached
+    t0 = time.perf_counter()
+    rec = boundary_states(record, live, sample_index, branch, up_to=step_index)
+    start = rec.boundary(step_index, sample_index, branch)
+    assert start is not None
+    space = live.space
+    state = _state_from_boundary(start, space)
+    _st, sample = initial_state(rec, live, sample_index, branch)
+    step = live.steps[step_index]
+    engine = engine_for(rec, live, store_per_segment=2)
+    resolved = [m.mode for m in space.resolved]
+    times = [float(step.t_start_s)]
+    dists: dict[int, list[np.ndarray]] = {
+        m: [np.real(np.diag(start.mode_reduced[m])).astype(float)]
+        for m in resolved
+        if m in start.mode_reduced
+    }
+    nbars: dict[int, list[float]] = {m: [float(start.nbar.get(m, 0.0))] for m in dists}
+    calls = 0
+    for k in range(1, n_frames + 1):
+        t_k = step.t_start_s + (step.t_end_s - step.t_start_s) * k / n_frames
+        if progress is not None:
+            progress(
+                "fock movie",
+                (k - 1) / n_frames,
+                f"frame {k} of {n_frames}: the pulse cut at {t_k * 1e6:.2f} us",
+            )
+        tr = engine.run_pulses(
+            live.device,
+            _truncated_schedule(live, step, t_k),
+            state,
+            space,
+            sample,
+            core.SeedSpec(rec.job.seed),
+            opts,
+        )
+        calls += 1
+        times.append(float(t_k))
+        for m in dists:
+            dists[m].append(np.asarray(space.fock_populations(tr.final, m), dtype=float))
+            nbars[m].append(float(tr.final.motional.nbar.get(m, 0.0)))
+    movie = FockMovie(
+        key=key,
+        step_index=step_index,
+        sample_index=sample_index,
+        branch=branch,
+        options_digest=options_digest(opts),
+        times_s=np.asarray(times, dtype=float),
+        distributions={m: np.vstack(v) for m, v in dists.items()},
+        nbar={m: np.asarray(v, dtype=float) for m, v in nbars.items()},
+        engine_calls=calls,
+        wall_time_s=time.perf_counter() - t0,
+        method="truncated re-simulation of the recorded pulses from the recorded boundary state (causality)",
+    )
+    return rec.with_fock_movie(movie), movie
+
+
+def _segments_of(step: core.GateStep) -> list[tuple[float, float, list[core.Pulse]]]:
+    """The step cut at every pulse boundary, the engine's own segmentation (Section 5.2): (start, end, active pulses)."""
+    edges = sorted({float(p.t_start_s) for p in step.pulses} | {float(p.t_end_s) for p in step.pulses})
+    out: list[tuple[float, float, list[core.Pulse]]] = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        active = [p for p in step.pulses if p.t_start_s <= a + 1e-15 and p.t_end_s >= b - 1e-15]
+        if active:
+            out.append((a, b, active))
+    return out
+
+
+def _nnz(op: object) -> int:
+    obj = op(0.0) if callable(op) and not hasattr(op, "to") else op
+    try:
+        return int(obj.to("CSR").data.as_scipy().nnz)  # type: ignore[union-attr]
+    except Exception:  # a Dense operator or another data layer: count the non-zeros of the full matrix
+        arr = np.asarray(obj.full())  # type: ignore[union-attr]
+        return int(np.count_nonzero(arr))
+
+
+def hamiltonian_key(step_index: int, sample_index: int, branch: int) -> str:
+    return f"ham/step{step_index}/s{sample_index}/b{branch}"
+
+
+def hamiltonian_record(
+    record: Record, live: LiveRun, step_index: int, sample_index: int = 0, branch: int = 0
+) -> tuple[Record, HamiltonianRecord]:
+    """The terms of H(t) and the collapse operators the engine assembled for one step (Section 5.7), listed with their numbers:
+    the builder is called as the engine calls it (same space, sample, frozen Fock states and qubit shifts), on every segment of
+    the step for the summary table and on the first for the term list."""
+    key = hamiltonian_key(step_index, sample_index, branch)
+    cached = record.hamiltonian(key)
+    if cached is not None:
+        return record, cached
+    t0 = time.perf_counter()
+    space = live.space
+    device = live.device
+    _st, sample = initial_state(record, live, sample_index, branch)
+    step = live.steps[step_index]
+    frozen_n = {m: int(sample.get(core.key_frozen_n(m), 0.0)) for m in space.frozen if m not in space.dropped}
+    segments = _segments_of(step)
+    summaries: list[SegmentSummary] = []
+    first: core.BuiltHamiltonian | None = None
+    first_pulses: list[core.Pulse] = []
+    for a, b, active in segments:
+        built = core.build_hamiltonian(
+            device,
+            active,
+            space,
+            sample=sample,
+            qubit_shifts_hz=dict(live.core_record.qubit_shifts_hz),
+            frozen_n=frozen_n,
+        )
+        summaries.append(
+            SegmentSummary(
+                t_start_s=a,
+                t_end_s=b,
+                pulses=tuple(str(p.gate_id) for p in active),
+                n_drive_terms=int(built.n_drive_terms),
+                omega_max_hz=float(built.omega_max_rad_s / TWO_PI),
+                kernel=str(built.kernel),
+            )
+        )
+        if first is None:
+            first, first_pulses = built, list(active)
+    if first is None:
+        # an idle step: the free Hamiltonian alone
+        first = core.build_hamiltonian(
+            device,
+            [],
+            space,
+            sample=sample,
+            qubit_shifts_hz=dict(live.core_record.qubit_shifts_hz),
+            frozen_n=frozen_n,
+        )
+    pulse_records = {p.gate_id: p for p in record.schedule.pulses if p.gate_id is not None}
+    drives: list[DriveTermRecord] = []
+    for r in first.records:
+        pr = pulse_records.get(r.pulse or "")
+        core_pulse = next((p for p in first_pulses if p.gate_id == r.pulse), None)
+        etas = {int(m): float(e) for m, e in r.etas.items()}
+        tables = {
+            m.mode: np.asarray(core.rabi_table(int(m.d), abs(etas.get(m.mode, 0.0))), dtype=float)
+            for m in space.resolved
+        }
+        dw = {
+            m: float(core.debye_waller_factor(int(frozen_n.get(m, 0)), abs(etas.get(m, 0.0))))
+            for m in space.frozen
+            if m not in space.dropped
+        }
+        resolved_modes = {t.mode for t in space.resolved}
+        op = space.drive_operator(int(r.ion), {m: e for m, e in etas.items() if m in resolved_modes})
+        tones_mu: tuple[float, ...] = ()
+        tones_phi: tuple[float, ...] = ()
+        tones_peak: tuple[float, ...] = ()
+        if pr is not None:
+            tones_mu = tuple(float(t.detuning_hz.at(np.zeros(1), pr.duration_s)[0]) for t in pr.tones)
+            tones_phi = tuple(float(t.phase_rad.at(np.zeros(1), pr.duration_s)[0]) for t in pr.tones)
+            tones_peak = tuple(
+                float(np.max(np.abs(t.envelope_hz.at(np.linspace(0.0, pr.duration_s, 65), pr.duration_s))))
+                for t in pr.tones
+            )
+        drives.append(
+            DriveTermRecord(
+                pulse=str(r.pulse),
+                ion=int(r.ion),
+                primary_ion=int(r.primary_ion),
+                kind=str(core_pulse.drive.kind) if core_pulse is not None else "",
+                beams=tuple(int(b) for b in core_pulse.drive.beams) if core_pulse is not None else (),
+                etas=etas,
+                frozen_n={int(m): int(n) for m, n in r.frozen_n.items()},
+                debye_waller=float(r.debye_waller),
+                micromotion_beta=float(r.micromotion_beta),
+                carrier_factor=float(r.carrier_factor),
+                crosstalk=complex(r.crosstalk),
+                rabi_scale=float(r.rabi_scale),
+                omega_peak_hz=float(r.omega_peak_rad_s / TWO_PI),
+                tone_detunings_hz=tones_mu,
+                tone_phases_rad=tones_phi,
+                tone_peaks_hz=tones_peak,
+                operator_nnz=_nnz(op),
+                matrix_elements=tables,
+                frozen_debye_waller=dw,
+            )
+        )
+    collapse: list[CollapseRecord] = []
+    noise_active = bool(record.job.noise)
+    for c in device.noise.channels(device, space):
+        collapse.append(
+            CollapseRecord(
+                channel=str(c.channel),
+                rate_hz=float(c.rate_hz),
+                ion=None if c.ion is None else int(c.ion),
+                mode=None if c.mode is None else int(c.mode),
+                time_dependent=bool(c.time_dependent),
+                operator_nnz=_nnz(c.op),
+                active_in_run=noise_active,
+                note="device channel of Section 5.7 (heating, motional dephasing, qubit dephasing)"
+                + ("" if noise_active else "; the run was made with noise=False, so it was not integrated"),
+            )
+        )
+    scattering_on = bool(getattr(live.options, "scattering_channels", False))
+    if first_pulses:
+        try:
+            ops, notes = core.scattering_channels(device, first_pulses[0], space)
+        except Exception as exc:  # a drive kind without scattering (microwave) or a level set the model lacks
+            ops, notes = (), (f"scattering channels unavailable: {exc}",)
+        for c in ops:
+            collapse.append(
+                CollapseRecord(
+                    channel=str(c.channel),
+                    rate_hz=float(c.rate_hz),
+                    ion=None if c.ion is None else int(c.ion),
+                    mode=None if c.mode is None else int(c.mode),
+                    time_dependent=bool(c.time_dependent),
+                    operator_nnz=_nnz(c.op),
+                    active_in_run=scattering_on,
+                    note="photon-scattering channel of Section 6.5"
+                    + (
+                        ""
+                        if scattering_on
+                        else "; not integrated in this run (SolverOptions.scattering_channels is off: the per-pulse error is estimated instead)"
+                    ),
+                )
+            )
+        for n in notes:
+            collapse.append(
+                CollapseRecord("scattering note", 0.0, None, None, False, 0, scattering_on, str(n))
+            )
+    const = next((x for x in first.H.to_list() if not isinstance(x, list)), None)
+    stark: dict[int, float] = {}
+    for p in first_pulses:
+        pr = pulse_records.get(p.gate_id or "")
+        if pr is not None:
+            for ion in pr.ions:
+                stark[int(ion)] = float(pr.stark_shift_hz.at(np.zeros(1), pr.duration_s)[0])
+    ham = HamiltonianRecord(
+        key=key,
+        step_index=step_index,
+        sample_index=sample_index,
+        branch=branch,
+        gate_id=str(step.gate_id),
+        t_start_s=float(step.t_start_s),
+        t_end_s=float(step.t_end_s),
+        frame=str(first.frame),
+        dims=tuple(int(d) for d in space.dims),
+        dimension=int(space.dimension),
+        ion_labels=tuple(int(i) for i in space.ion_labels),
+        mode_frequencies_hz={int(m): float(w / TWO_PI) for m, w in first.mode_frequencies_rad_s.items()},
+        mode_offsets_hz={
+            m: float(sample.get(core.key_mode_offset_hz(m), 0.0)) for m in range(len(device.crystal.modes))
+        },
+        qubit_offsets_hz={
+            int(i): float(sample.get(core.key_qubit_offset_hz(int(i)), 0.0)) for i in space.ion_labels
+        },
+        mode_classes={m: str(space.mode_class(m)) for m in range(len(device.crystal.modes))},
+        caps={int(m.mode): int(m.d) for m in space.resolved},
+        segments=tuple(summaries),
+        drives=tuple(drives),
+        collapse=tuple(collapse),
+        approximations=tuple(str(a) for a in first.approximations),
+        n_drive_terms=int(first.n_drive_terms),
+        omega_max_hz=float(first.omega_max_rad_s / TWO_PI),
+        kernel=str(first.kernel),
+        fingerprint=str(first.fingerprint),
+        free_term_nnz=_nnz(const) if const is not None else 0,
+        stark_shifts_hz=stark,
+        wall_time_s=time.perf_counter() - t0,
+    )
+    return record.with_hamiltonian(ham), ham
+
+
+def process_matrix_key(step_index: int, sample_index: int, branch: int) -> str:
+    return f"pm/step{step_index}/s{sample_index}/b{branch}"
+
+
+def process_matrix(
+    record: Record,
+    live: LiveRun,
+    step_index: int,
+    sample_index: int = 0,
+    branch: int = 0,
+    *,
+    progress: Callable[[str, float | None, str], None] | None = None,
+) -> tuple[Record, ProcessMatrixRecord]:
+    """Process tomography of one step from its recorded initial motional state (Section 5.4 (a)): every product input of the
+    register propagated through the step's pulses by the engine, the Choi matrix by least squares, projected onto CP and TP,
+    summarized against the step's ideal unitary (Section 6.8)."""
+    from qutip_trap_app.viewmodel.circuit import embed_operator
+
+    key = process_matrix_key(step_index, sample_index, branch)
+    cached = record.process_matrix(key)
+    if cached is not None:
+        return record, cached
+    t0 = time.perf_counter()
+    rec = boundary_states(record, live, sample_index, branch, up_to=step_index)
+    start = rec.boundary(step_index, sample_index, branch)
+    assert start is not None
+    space = live.space
+    state = _state_from_boundary(start, space)
+    _st, sample = initial_state(rec, live, sample_index, branch)
+    step = live.steps[step_index]
+    labels = tuple(int(i) for i in space.ion_labels)
+    n = len(labels)
+    ideal = np.eye(2**n, dtype=complex)
+    for tg in step.targets:
+        pos = tuple(labels.index(int(i)) for i in tg.ions)
+        ideal = embed_operator(np.asarray(tg.unitary(), dtype=complex), pos, n) @ ideal
+    n_inputs = int(np.prod([d * d for d in space.ion_dims]))
+    if progress is not None:
+        progress(
+            "tomography",
+            None,
+            f"{n_inputs} input states through the {step.gate_id} pulses at dimension {space.dimension}",
+        )
+    engine = engine_for(rec, live)
+    summary = engine.process_tomography(
+        live.device,
+        step.pulses,
+        space,
+        state.motional,
+        sample,
+        core.SeedSpec(rec.job.seed),
+        live.options,
+        ideal=ideal,
+    )
+    choi = np.asarray(summary.choi, dtype=complex)
+    pm = ProcessMatrixRecord(
+        key=key,
+        step_index=step_index,
+        sample_index=sample_index,
+        branch=branch,
+        gate_id=str(step.gate_id),
+        ions=labels,
+        choi=choi,
+        ideal=ideal,
+        n_inputs=n_inputs,
+        cp_tp_residual=(float(summary.cp_tp_residual[0]), float(summary.cp_tp_residual[1])),
+        average_gate_infidelity=float(summary.average_gate_infidelity),
+        entanglement_infidelity=float(core.entanglement_infidelity(choi, core.choi_from_unitary(ideal))),
+        depolarizing_rate=float(summary.depolarizing_rate),
+        pauli_twirled={str(k): float(v) for k, v in summary.pauli_twirled.items()},
+        n_traj=int(summary.n_traj),
+        wall_time_s=time.perf_counter() - t0,
+        method="state-based process tomography from the recorded boundary motional state (Section 5.4 (a))",
+    )
+    return rec.with_process_matrix(pm), pm
+
+
 __all__ = [
     "CONVERGENCE_TOL",
+    "DEFAULT_FOCK_FRAMES",
     "DEFAULT_ZOOM_POINTS",
     "TruncationCheck",
     "ZoomStats",
     "boundary_states",
     "engine_for",
+    "fock_movie",
+    "fock_movie_key",
+    "hamiltonian_key",
+    "hamiltonian_record",
     "initial_state",
     "options_digest",
+    "process_matrix",
+    "process_matrix_key",
     "sub_schedule",
     "tightened",
     "tolerance_recheck",

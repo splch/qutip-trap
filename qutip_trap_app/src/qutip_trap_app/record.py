@@ -39,13 +39,13 @@ import math
 import platform
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 import numpy as np
 
 from qutip_trap_app import __version__ as app_version
-from qutip_trap_app import core
+from qutip_trap_app import core, knobs
 from qutip_trap_app.codec import digest, to_document
 
 # ---- the job -----------------------------------------------------------------------------------------------------------------
@@ -106,28 +106,45 @@ class CircuitRecord:
 
 @dataclass(frozen=True)
 class DeviceRef:
-    """Which device the job ran on: a public preset with its arguments (rebuildable) and always the canonical hash."""
+    """Which device the job ran on: a public preset with its arguments (rebuildable), the Level 4 overrides applied to it
+    (Section 14.4; ``knobs.apply_overrides``) and always the canonical hash of the result."""
 
     hash: str
     preset: str | None
     n_ions: int
     kwargs: dict[str, PresetArg]
+    overrides: dict[str, float] = field(default_factory=dict)
+    """Knob id -> value (``knobs.KNOBS``); empty for the preset as published."""
 
-    def build(self) -> core.DevicePreset:
-        """Rebuild the preset and check its hash against the recorded one (Section 7.5: a table or record is invalidated,
-        never silently reused, when a device parameter changes)."""
+    def build(self, *, check: bool = True) -> core.DevicePreset:
+        """Rebuild the preset with its overrides and check its hash against the recorded one (Section 7.5: a table or
+        record is invalidated, never silently reused, when a device parameter changes)."""
         if self.preset is None:
             raise RecordError("the record names no device preset; the device cannot be rebuilt from it")
         if self.preset not in PRESETS:
             raise RecordError(f"unknown device preset {self.preset!r}; known: {sorted(PRESETS)}")
         # the preset functions take keyword arguments of several types; the record's PresetArg union covers them
         preset = PRESETS[self.preset](self.n_ions, **cast(dict[str, Any], self.kwargs))
-        if preset.device.hash() != self.hash:
+        if self.overrides:
+            preset = knobs.apply_overrides(preset, self.overrides)
+        if check and preset.device.hash() != self.hash:
             raise RecordError(
                 f"the rebuilt device's hash {preset.device.hash()[:12]} differs from the recorded {self.hash[:12]}: "
                 "the preset or the core changed since the record was made"
             )
         return preset
+
+    def with_overrides(self, overrides: Mapping[str, float]) -> DeviceRef:
+        """The same preset with other overrides; the hash is recomputed by rebuilding (the only way to know it)."""
+        ref = DeviceRef(
+            "", self.preset, self.n_ions, dict(self.kwargs), {k: float(v) for k, v in overrides.items()}
+        )
+        preset = ref.build(check=False)
+        return dataclasses.replace(ref, hash=preset.device.hash())
+
+    def cache_key(self) -> str:
+        """What identifies the built preset (the worker caches presets by it; a 3 s build with the recipe re-derived)."""
+        return f"{self.preset}/{self.n_ions}/{sorted(self.kwargs.items())}/{sorted(self.overrides.items())}"
 
 
 @dataclass(frozen=True)
@@ -222,22 +239,39 @@ def job_for_preset(
     detection_records: int = 2000,
     detection_windows_s: Sequence[float] = DEFAULT_DETECTION_WINDOWS_S,
     preset_kwargs: Mapping[str, PresetArg] | None = None,
+    overrides: Mapping[str, float] | None = None,
+    preset: core.DevicePreset | None = None,
+    build: bool = True,
     **run_fields: Any,
-) -> tuple[JobSpec, core.DevicePreset]:
-    """A JobSpec on a public preset, with the preset built so the caller can go on to :func:`execute`."""
+) -> tuple[JobSpec, core.DevicePreset | None]:
+    """A JobSpec on a public preset, with the preset built (or the already built ``preset`` for these arguments taken as
+    is) so the caller can go on to :func:`execute`; ``overrides`` are the Level 4 knobs of Section 14.4. With
+    ``build=False`` nothing is built: the device reference carries an empty hash and the drive maps are empty, both filled by
+    the worker when it builds the preset (``workers.complete_job``), which is how the UI submits a run without a multi-second
+    build on its own loop."""
     if preset_name not in PRESETS:
         raise RecordError(f"unknown device preset {preset_name!r}; known: {sorted(PRESETS)}")
     kwargs = dict(preset_kwargs or {})
-    preset = PRESETS[preset_name](n_ions, **cast(dict[str, Any], kwargs))
+    ov = {k: float(v) for k, v in (overrides or {}).items()}
+    if preset is None and build:
+        preset = PRESETS[preset_name](n_ions, **cast(dict[str, Any], kwargs))
+        if ov:
+            preset = knobs.apply_overrides(preset, ov)
     opts = options or core.SolverOptions()
     pairs_t = tuple((int(a), int(b)) for a, b in (pairs if pairs is not None else circuit.entangling_pairs()))
     job = JobSpec(
         circuit=CircuitRecord.from_core(circuit),
         shots=int(shots),
         seed=int(seed),
-        device=DeviceRef(preset.device.hash(), preset_name, int(n_ions), kwargs),
-        gate_drives={i: DriveRef.from_core(d) for i, d in preset.gate_drives.items()},
-        entangling_drives={i: DriveRef.from_core(d) for i, d in preset.entangling_drives.items()},
+        device=DeviceRef(
+            preset.device.hash() if preset is not None else "", preset_name, int(n_ions), kwargs, ov
+        ),
+        gate_drives={}
+        if preset is None
+        else {i: DriveRef.from_core(d) for i, d in preset.gate_drives.items()},
+        entangling_drives={}
+        if preset is None
+        else {i: DriveRef.from_core(d) for i, d in preset.entangling_drives.items()},
         calibration=CalibrationRef(
             seed=int(seed),
             surrogate=True,
@@ -565,6 +599,46 @@ class BranchRecord:
 
 
 @dataclass(frozen=True)
+class BranchLoopRecord:
+    """The phase-space trajectory alpha_im(t) of ONE spin branch (ion ``ion`` in the +1 eigenstate of its sigma_phi) for one
+    mode of a played entangling waveform, integrated on the run's own modes and Lamb-Dicke parameters (Section 4.4.1, by the
+    closed-form kernel of Section 4.4.3): the loop the pulse solver closed, whose swept area is the entangling angle. The
+    exact trace's <a_m>(t) (``TraceRecord.alpha_m``) averages the branches, whose displacements are equal and opposite for a
+    register with <S_phi> = 0, so it is a residue and not this loop."""
+
+    gate_id: str
+    pair: tuple[int, int]
+    ion: int
+    mode: int
+    omega_hz: float
+    eta: float
+    """eta_{ion, mode} the loop was integrated with (C0 inside, Section 4.1.1)."""
+    kernel: str
+    times_s: np.ndarray
+    """Laboratory time of every stored point (the gate's start plus the pulse time)."""
+    alpha: np.ndarray
+    """Complex alpha_im(t) at ``times_s``, decimated from the integration grid with the first and last points kept."""
+    chi_m_rad: float
+    """The played waveform's booked per-mode entangling angle: the table's exact spot-check angle (Section 7.8) times the
+    scale the scheduler applied to reach the requested gate angle."""
+    chi_closed_form_rad: float
+    """2 Im int conj(alpha_a) d alpha_b over the pair's two loops on this mode (Section 4.4.3): the closed-form angle at the
+    played amplitude; its gap to ``chi_m_rad`` is what the exact spot check corrected (Debye-Waller, beyond Lamb-Dicke)."""
+    n_grid: int
+    """Points of the uniform Simpson grid the trajectory was integrated on before decimation."""
+
+    @property
+    def closes(self) -> float:
+        """|alpha(end) - alpha(start)|: how far the loop failed to close."""
+        return float(abs(self.alpha[-1] - self.alpha[0])) if self.alpha.size else 0.0
+
+    @property
+    def excursion(self) -> float:
+        """max |alpha(t) - alpha(start)|: the loop's reach."""
+        return float(np.max(np.abs(self.alpha - self.alpha[0]))) if self.alpha.size else 0.0
+
+
+@dataclass(frozen=True)
 class TraceRecord:
     """One dynamics trace: one (sample, branch) evolution of the run, at the times the run stored (Section 14.3)."""
 
@@ -839,9 +913,141 @@ class ZoomTrace:
     engine_dimension: int
 
 
+@dataclass(frozen=True)
+class FockMovie:
+    """Per-time Fock distributions inside one gate step for one (sample, branch), from truncated re-simulations (Section 14.2
+    row 3 "Fock distributions per mode as heatmaps"; ``core.CORE_GAPS``: the core stores none, causality supplies them)."""
+
+    key: str
+    step_index: int
+    sample_index: int
+    branch: int
+    options_digest: str
+    times_s: np.ndarray
+    """(K + 1,) frame times: the step's start, then K truncation points ending at the step's end."""
+    distributions: dict[int, np.ndarray]
+    """Per resolved mode, (K + 1, d) Fock populations P(n, t_k)."""
+    nbar: dict[int, np.ndarray]
+    """Per resolved mode, (K + 1,) <n>(t_k) of the frames (checked against the fine trace by the tests)."""
+    engine_calls: int
+    wall_time_s: float
+    method: str
+
+
+@dataclass(frozen=True)
+class DriveTermRecord:
+    """One (pulse, ion) drive term the builder assembled: sigma_+^ion (x) prod_m D_m(i eta_im) with its scalar coefficient
+    (Section 5.2), and what went into it (``DriveRecord`` of the core plus the tone summary of the record's pulse)."""
+
+    pulse: str
+    ion: int
+    primary_ion: int
+    kind: str
+    beams: tuple[int, ...]
+    etas: dict[int, float]
+    frozen_n: dict[int, int]
+    debye_waller: float
+    micromotion_beta: float
+    carrier_factor: float
+    crosstalk: complex
+    rabi_scale: float
+    omega_peak_hz: float
+    tone_detunings_hz: tuple[float, ...]
+    tone_phases_rad: tuple[float, ...]
+    tone_peaks_hz: tuple[float, ...]
+    operator_nnz: int
+    matrix_elements: dict[int, np.ndarray]
+    """Per resolved mode, the (d, d) table Omega_{n',n}/Omega = |<n'|D(i eta)|n>| at this term's eta (Section 4.3.1)."""
+    frozen_debye_waller: dict[int, float]
+    """Per frozen mode, e^{-eta^2/2} L_n(eta^2) at the sample's Fock state n (the factor the builder multiplied in)."""
+
+
+@dataclass(frozen=True)
+class CollapseRecord:
+    channel: str
+    rate_hz: float
+    ion: int | None
+    mode: int | None
+    time_dependent: bool
+    operator_nnz: int
+    active_in_run: bool
+    """Whether the recorded run integrated this channel (a scattering channel exists only when the run switched it on)."""
+    note: str
+
+
+@dataclass(frozen=True)
+class SegmentSummary:
+    t_start_s: float
+    t_end_s: float
+    pulses: tuple[str, ...]
+    n_drive_terms: int
+    omega_max_hz: float
+    kernel: str
+
+
+@dataclass(frozen=True)
+class HamiltonianRecord:
+    """The H(t) terms and collapse operators assembled for one gate step (Section 14.2 row 4, the Hamiltonian builder page;
+    Section 5.7), for one (sample, branch): what the engine integrated, listed rather than integrated."""
+
+    key: str
+    step_index: int
+    sample_index: int
+    branch: int
+    gate_id: str
+    t_start_s: float
+    t_end_s: float
+    frame: str
+    dims: tuple[int, ...]
+    dimension: int
+    ion_labels: tuple[int, ...]
+    mode_frequencies_hz: dict[int, float]
+    mode_offsets_hz: dict[int, float]
+    qubit_offsets_hz: dict[int, float]
+    mode_classes: dict[int, str]
+    caps: dict[int, int]
+    segments: tuple[SegmentSummary, ...]
+    drives: tuple[DriveTermRecord, ...]
+    """The drive terms of the FIRST segment (the operators are the same on every segment of a step; the coefficients differ)."""
+    collapse: tuple[CollapseRecord, ...]
+    approximations: tuple[str, ...]
+    n_drive_terms: int
+    omega_max_hz: float
+    kernel: str
+    fingerprint: str
+    free_term_nnz: int
+    stark_shifts_hz: dict[int, float]
+    """Per addressed ion, the differential light shift the pulse's own beams impose (H_Stark of Section 5.7), at the pulse start."""
+    wall_time_s: float
+
+
+@dataclass(frozen=True)
+class ProcessMatrixRecord:
+    """Process tomography of one gate step from its recorded initial motional state (Section 14.2 row 3 "the process matrix
+    of the finished pulse"; Section 5.4 (a)), for one (sample, branch)."""
+
+    key: str
+    step_index: int
+    sample_index: int
+    branch: int
+    gate_id: str
+    ions: tuple[int, ...]
+    choi: np.ndarray
+    ideal: np.ndarray
+    n_inputs: int
+    cp_tp_residual: tuple[float, float]
+    average_gate_infidelity: float
+    entanglement_infidelity: float
+    depolarizing_rate: float
+    pauli_twirled: dict[str, float]
+    n_traj: int
+    wall_time_s: float
+    method: str
+
+
 # ---- the record -----------------------------------------------------------------------------------------------------------------
 
-RECORD_FORMAT = "qutip-trap-app/record/1"
+RECORD_FORMAT = "qutip-trap-app/record/2"
 
 
 @dataclass(frozen=True)
@@ -873,6 +1079,11 @@ class Record:
     zooms: tuple[ZoomTrace, ...] = ()
     replay: ReplayRecord | None = None
     """Present when the record was made by the app-side channel replay (Level 0's default engine)."""
+    fock_movies: tuple[FockMovie, ...] = ()
+    hamiltonians: tuple[HamiltonianRecord, ...] = ()
+    process_matrices: tuple[ProcessMatrixRecord, ...] = ()
+    branch_loops: tuple[BranchLoopRecord, ...] = ()
+    """The spin-branch loops of every played entangling waveform (Level 3's phase-space drawing; part of the run, not a cache)."""
 
     # -- identity --
 
@@ -890,6 +1101,9 @@ class Record:
             versions={},
             boundaries=(),
             zooms=(),
+            fock_movies=(),
+            hamiltonians=(),
+            process_matrices=(),
             diagnostics=dataclasses.replace(self.diagnostics, wall_time_s=0.0),
         )
         doc, arrays = to_document(bare)
@@ -944,6 +1158,36 @@ class Record:
     def with_zoom(self, zoom: ZoomTrace) -> Record:
         keep = tuple(z for z in self.zooms if z.key != zoom.key)
         return dataclasses.replace(self, zooms=keep + (zoom,))
+
+    def fock_movie(self, key: str) -> FockMovie | None:
+        for m in self.fock_movies:
+            if m.key == key:
+                return m
+        return None
+
+    def with_fock_movie(self, movie: FockMovie) -> Record:
+        keep = tuple(m for m in self.fock_movies if m.key != movie.key)
+        return dataclasses.replace(self, fock_movies=keep + (movie,))
+
+    def hamiltonian(self, key: str) -> HamiltonianRecord | None:
+        for h in self.hamiltonians:
+            if h.key == key:
+                return h
+        return None
+
+    def with_hamiltonian(self, ham: HamiltonianRecord) -> Record:
+        keep = tuple(h for h in self.hamiltonians if h.key != ham.key)
+        return dataclasses.replace(self, hamiltonians=keep + (ham,))
+
+    def process_matrix(self, key: str) -> ProcessMatrixRecord | None:
+        for pm in self.process_matrices:
+            if pm.key == key:
+                return pm
+        return None
+
+    def with_process_matrix(self, pm: ProcessMatrixRecord) -> Record:
+        keep = tuple(x for x in self.process_matrices if x.key != pm.key)
+        return dataclasses.replace(self, process_matrices=keep + (pm,))
 
 
 def _same_boundary(a: BoundaryState, b: BoundaryState) -> bool:
@@ -1231,6 +1475,75 @@ def space_record(space: core.HilbertSpace, selection: Any) -> SpaceRecord:
 
 def _qobj_array(q: Any) -> np.ndarray:
     return np.asarray(q.full(), dtype=complex)
+
+
+LOOP_GRID = 20001
+"""Points of the uniform Simpson grid a spin-branch loop is integrated on (the core's own default for sampled envelopes)."""
+LOOP_STORE = 1001
+"""Points of a stored loop: every twentieth grid point, the first and last always kept."""
+
+
+def branch_loops(
+    sched: core.Schedule,
+    device: core.Device,
+    nbar: Mapping[int, float],
+    *,
+    n_grid: int = LOOP_GRID,
+    n_store: int = LOOP_STORE,
+) -> tuple[BranchLoopRecord, ...]:
+    """The spin-branch loops of every played entangling waveform on the run's own modes (Section 4.4.1).
+
+    alpha_im(t) by the closed-form kernel the solver closed the pulse with ("choi": the force cos(mu t) with its
+    counter-rotating part), on a uniform Simpson grid of ``n_grid`` points, stored every ((n_grid - 1)/(n_store - 1))-th
+    point with both ends kept. The pair's closed-form angle per mode, 2 Im int conj(alpha_a) d alpha_b, comes from the
+    analytic segment integrals when the waveform is segmented and from the grid otherwise. A Fourier-parameterized waveform
+    carries no explicit envelope (the core's ``envelope_of`` refuses it) and gets no loop."""
+    out: list[BranchLoopRecord] = []
+    for g in sched.gates:
+        wf = g.waveform
+        if wf.segments is None or len(g.beams) != 2:
+            continue
+        pair = (int(g.pair[0]), int(g.pair[1]))
+        gm = core.gate_modes(device, pair, (int(g.beams[0]), int(g.beams[1])), nbar=nbar)
+        env = core.envelope_of(wf, pair)
+        if isinstance(env, core.SegmentedEnvelope):
+            analytic = core.integrals_segmented(env, gm, "choi").chi_by_mode
+            sampled = env.sampled(n_grid)
+        else:
+            analytic = None
+            sampled = env
+        n = int(sampled.times_s.size)
+        stride = max(1, (n - 1) // max(1, n_store - 1))
+        keep = np.arange(0, n, stride)
+        if keep[-1] != n - 1:
+            keep = np.append(keep, n - 1)
+        for k, m in enumerate(gm.modes):
+            paths = {ion: core.trajectory_sampled(sampled, gm, ion, int(m), kernel="choi") for ion in pair}
+            a, b = paths[pair[0]], paths[pair[1]]
+            if analytic is not None:
+                chi_closed = float(
+                    analytic.get((pair[0], pair[1], int(m)), analytic.get((pair[1], pair[0], int(m)), 0.0))
+                )
+            else:
+                chi_closed = 2.0 * float(np.sum(np.imag(np.conj(a[:-1]) * np.diff(b))))
+            for ion in pair:
+                out.append(
+                    BranchLoopRecord(
+                        gate_id=str(g.gate_id),
+                        pair=pair,
+                        ion=int(ion),
+                        mode=int(m),
+                        omega_hz=float(gm.omega_rad_s[k] / (2.0 * math.pi)),
+                        eta=float(gm.eta[ion][k]),
+                        kernel="choi",
+                        times_s=np.asarray(float(g.t_start_s) + sampled.times_s[keep], dtype=float),
+                        alpha=np.asarray(paths[ion][keep], dtype=complex),
+                        chi_m_rad=float(wf.chi_m.get(int(m), 0.0)),
+                        chi_closed_form_rad=chi_closed,
+                        n_grid=n,
+                    )
+                )
+    return tuple(out)
 
 
 def trace_record(
@@ -1552,6 +1865,9 @@ def build_record(
         diagnostics=diagnostics_record(result.diagnostics, opts, wall_time_s),
         notes=tuple(rec.notes),
         core_gaps=core.CORE_GAPS,
+        branch_loops=branch_loops(
+            rec.schedule, device, {int(m): float(v) for m, v in rec.preparation.nbar.items()}
+        ),
         joint_store_dimension_max=int(joint_store_dimension_max),
     )
 
@@ -1647,11 +1963,14 @@ def execute(
 
 __all__ = [
     "DEFAULT_DETECTION_WINDOWS_S",
+    "LOOP_GRID",
+    "LOOP_STORE",
     "NATIVE_GATE_SET",
     "PRESETS",
     "RECORD_FORMAT",
     "BeamRecord",
     "BoundaryState",
+    "BranchLoopRecord",
     "BranchRecord",
     "CalEntryRecord",
     "CalibrationRef",
@@ -1659,6 +1978,7 @@ __all__ = [
     "ChannelPieceRecord",
     "ChannelSummaryRecord",
     "CircuitRecord",
+    "CollapseRecord",
     "CompiledRecord",
     "ConvergenceRecord",
     "DerivedRecord",
@@ -1667,9 +1987,12 @@ __all__ = [
     "DeviceRef",
     "DiagnosticsRecord",
     "DriveRef",
+    "DriveTermRecord",
     "EventRecord",
+    "FockMovie",
     "GateLocalRecord",
     "GateLocalStepRecord",
+    "HamiltonianRecord",
     "IonRatesRecord",
     "JobSpec",
     "LiveRun",
@@ -1678,6 +2001,7 @@ __all__ = [
     "OpRecord",
     "PlayedGateRecord",
     "PreparationRecord",
+    "ProcessMatrixRecord",
     "PulseRecord",
     "ReadoutRecord",
     "Record",
@@ -1688,6 +2012,7 @@ __all__ = [
     "SampledFn",
     "ScheduleRecord",
     "SegmentRecord",
+    "SegmentSummary",
     "SpaceRecord",
     "StepRecord",
     "TableRecord",
@@ -1697,6 +2022,7 @@ __all__ = [
     "TruncationRecord",
     "WaveformRecord",
     "ZoomTrace",
+    "branch_loops",
     "build_record",
     "calibrate_for",
     "execute",
