@@ -65,8 +65,29 @@ def _operators(nuclear_spin: float, J_lower: Fraction, J_upper: Fraction) -> dic
     return {q: dipole_operator_uncoupled(nuclear_spin, J_lower, J_upper, q) for q in (-1, 0, 1)}
 
 
+def structure_at(species: Species, b_gauss: float, b_hat: Vec) -> AtomicStructure:
+    """The :class:`AtomicStructure` of ``species`` at the field (B_gauss, b_hat), built once per distinct field and SHARED.
+
+    A structure is read-only after construction and memoizes its dipole elements and decay amplitudes, so every caller that
+    re-derives couplings or scattering rates for the same device (the intrinsic budget per pulse, the played chain per drive,
+    the scattering channels per segment, the calibration seeds) reuses the elements instead of recomputing the exact
+    Wigner algebra: 6.6 s of a 27 s two-ion Bell run were that recomputation (performance pass 2026-09-09).
+    """
+    return _structure_cached(species, float(b_gauss), tuple(float(x) for x in np.asarray(b_hat, dtype=float)))
+
+
+@lru_cache(maxsize=64)
+def _structure_cached(species: Species, b_gauss: float, b_hat: tuple[float, ...]) -> AtomicStructure:
+    return AtomicStructure(species, b_gauss, b_hat)
+
+
 class AtomicStructure:
-    """A species at a static field: dressed spectra, E1 operators and beam couplings (the engine behind the Species API)."""
+    """A species at a static field: dressed spectra, E1 operators and beam couplings (the engine behind the Species API).
+
+    Instances are read-only after construction and memoize the field-independent algebra per instance (reduced elements,
+    the <a|T_q|b> elements between two dressed sublevels, decay amplitudes, total rates and branching totals); obtain them
+    through :func:`structure_at` so that callers share one per (species, field).
+    """
 
     def __init__(self, species: Species, b_gauss: float, b_hat: Vec) -> None:
         self.species = species
@@ -95,11 +116,28 @@ class AtomicStructure:
                     f"(E2 pairs: {[sorted(p) for p in e2_pairs]})"
                 )
         self._states: dict[str, DressedState] = {}
+        self._states_by_level: dict[str, tuple[DressedState, ...]] = {}
         for lv in species.levels:
             sp = self.spectra[lv.name]
+            per_level: list[DressedState] = []
             for k, lab in enumerate(sp.labels):
                 st = DressedState(lv.name, lab, float(sp.energies_hz[k]), sp.eigenvectors[:, k].copy())
                 self._states[f"{lv.name} {lab}"] = st
+                per_level.append(st)
+            self._states_by_level[lv.name] = tuple(per_level)
+        self._upper_of: dict[str, list[str]] = {}
+        self._lower_of: dict[str, list[str]] = {}
+        for lo, up in self.e1:
+            self._upper_of.setdefault(lo, []).append(up)
+            self._lower_of.setdefault(up, []).append(lo)
+        # the memo tables (performance pass 2026-09-09): keyed by the dressed states' labels, which name one object each
+        # in this structure; a state from ANOTHER structure (a different field) bypasses them by the identity check
+        self._reduced: dict[tuple[str, str], float] = {}
+        self._elements: dict[tuple[str, str, int], complex] = {}
+        self._decays: dict[str, dict[tuple[str, int], complex]] = {}
+        self._gamma: dict[str, float] = {}
+        self._branching: dict[str, float] = {}
+        self._eps: dict[tuple[complex, ...], np.ndarray] = {}
 
     # ---- states --------------------------------------------------------------------------------------
 
@@ -113,29 +151,50 @@ class AtomicStructure:
         return self._states[f"{level} {sp.labels[k]}"]
 
     def states_of(self, level: str) -> list[DressedState]:
-        return [st for st in self._states.values() if st.level == level]
+        return list(self._states_by_level.get(level, ()))
 
     def upper_levels_of(self, level: str) -> list[str]:
         """Levels connected to ``level`` by a tabulated E1 transition in which ``level`` is the lower one."""
-        return [up for (lo, up) in self.e1 if lo == level]
+        return list(self._upper_of.get(level, ()))
 
     def lower_levels_of(self, level: str) -> list[str]:
-        return [lo for (lo, up) in self.e1 if up == level]
+        return list(self._lower_of.get(level, ()))
+
+    def _own(self, state: DressedState) -> bool:
+        """Whether ``state`` is this structure's own object for its label (the memo tables key by label)."""
+        return self._states.get(state.full_label) is state
 
     # ---- dipole elements -----------------------------------------------------------------------------
 
     def reduced_element_c_m(self, lower: str, upper: str) -> float:
         """|<J||d||J'>| of the tabulated E1 transition lower-upper from its PARTIAL rate (Section 4.5.2)."""
-        tr = self.e1.get((lower, upper))
+        key = (lower, upper)
+        cached = self._reduced.get(key)
+        if cached is not None:
+            return cached
+        tr = self.e1.get(key)
         if tr is None:
             raise KeyError(f"{self.species.name}: no tabulated E1 transition {lower}-{upper}")
         omega = TWO_PI * C_M_PER_S / tr.wavelength_vac_m
-        return reduced_element_from_partial_rate(tr.partial_rate_rad_s, omega, level_j(lower), level_j(upper))
+        value = reduced_element_from_partial_rate(
+            tr.partial_rate_rad_s, omega, level_j(lower), level_j(upper)
+        )
+        self._reduced[key] = value
+        return value
 
     def _lower_upper_element(self, a: DressedState, b: DressedState, q: int) -> complex:
         """<a|T_q|b> in C m for a in the lower and b in the upper level of an E1 transition (q = m_a - m_b)."""
+        own = self._own(a) and self._own(b)
+        key = (a.full_label, b.full_label, q)
+        if own:
+            cached = self._elements.get(key)
+            if cached is not None:
+                return cached
         ops = _operators(self.species.nuclear_spin, level_j(a.level), level_j(b.level))
-        return complex(np.vdot(a.vector, ops[q] @ b.vector) * self.reduced_element_c_m(a.level, b.level))
+        value = complex(np.vdot(a.vector, ops[q] @ b.vector) * self.reduced_element_c_m(a.level, b.level))
+        if own:
+            self._elements[key] = value
+        return value
 
     def dipole_element_c_m(self, bra: DressedState, ket: DressedState, q: int) -> complex:
         """<bra|T_q|ket> in C m in the field-dressed basis, either ordering of lower and upper (Appendix E)."""
@@ -153,11 +212,20 @@ class AtomicStructure:
         pos = np.asarray(beam.pointing_m if position_m is None else position_m, dtype=float)
         return field_amplitude_v_per_m(beam.intensity_at(pos))
 
+    def _spherical(self, polarization: Sequence[complex] | np.ndarray) -> np.ndarray:
+        """The helicity components of a beam polarization about B_hat, memoized per polarization vector."""
+        key = tuple(complex(x) for x in np.asarray(polarization))
+        eps = self._eps.get(key)
+        if eps is None:
+            eps = np.asarray(spherical_components(polarization, self.b_hat))
+            self._eps[key] = eps
+        return eps
+
     def single_photon_coupling_rad_s(
         self, a: DressedState, e: DressedState, beam: Beam, position_m: Sequence[float] | None = None
     ) -> complex:
         """Omega_{ea} = E_0 sum_q eps_q <e|T_q|a> / hbar (rad/s, complex) for a lower and e upper."""
-        eps = spherical_components(beam.polarization, self.b_hat)
+        eps = self._spherical(beam.polarization)
         element = sum(eps[q + 1] * self.dipole_element_c_m(e, a, q) for q in (-1, 0, 1))
         return complex(self.field_amplitude(beam, position_m) * element / HBAR_J_S)
 
@@ -259,6 +327,9 @@ class AtomicStructure:
 
     def total_decay_rate_rad_s(self, level: str) -> float:
         """Gamma_e of a level, from its tabulated transitions (all of which must carry the same total rate)."""
+        cached = self._gamma.get(level)
+        if cached is not None:
+            return cached
         rates = {tr.label: tr.gamma_rad_s for (_lo, up), tr in self.e1.items() if up == level}
         if not rates:
             raise KeyError(f"{self.species.name}: level {level} has no tabulated E1 decay")
@@ -269,6 +340,7 @@ class AtomicStructure:
                 f"{self.species.name}: the E1 transitions out of {level} disagree on its total decay rate "
                 f"(Section 13: Transition.gamma_hz is the UPPER level's total rate): {rates}"
             )
+        self._gamma[level] = first
         return first
 
     def tabulated_branching_total(self, level: str) -> float:
@@ -279,7 +351,11 @@ class AtomicStructure:
         fraction must never be renormalized away, because that is what silently moved 40Ca+ P3/2's 5.9% of
         D-state leakage into the 393 nm cycling line.
         """
-        return sum(tr.branching for (_lo, up), tr in self.e1.items() if up == level)
+        cached = self._branching.get(level)
+        if cached is None:
+            cached = sum(tr.branching for (_lo, up), tr in self.e1.items() if up == level)
+            self._branching[level] = cached
+        return cached
 
     def decay_amplitudes(self, e: DressedState) -> dict[tuple[str, int], complex]:
         """sqrt(Gamma_e) c_{e->b q'}: decay amplitudes of e into every lower sublevel b and polarization index q'.
@@ -292,6 +368,11 @@ class AtomicStructure:
         sum_{b q'} |c|^2 then equals :meth:`tabulated_branching_total` (1 for a fully tabulated level), never
         an unconditional 1; keys are (b.full_label, q') with q' = m_b - m_e the emitted tensor index.
         """
+        own = self._own(e)
+        if own:
+            memo = self._decays.get(e.full_label)
+            if memo is not None:
+                return dict(memo)
         raw: dict[tuple[str, int], complex] = {}
         for lo in self.lower_levels_of(e.level):
             tr = self.e1[(lo, e.level)]
@@ -305,7 +386,10 @@ class AtomicStructure:
         scale = (
             math.sqrt(self.total_decay_rate_rad_s(e.level) * self.tabulated_branching_total(e.level)) / norm
         )
-        return {k: scale * v for k, v in raw.items()}
+        out = {k: scale * v for k, v in raw.items()}
+        if own:
+            self._decays[e.full_label] = dict(out)
+        return out
 
     def scattering_amplitudes_by_path(
         self, a: DressedState, beam: Beam, position_m: Sequence[float] | None = None
@@ -350,4 +434,4 @@ class AtomicStructure:
         return total
 
 
-__all__ = ["AtomicStructure", "DressedState"]
+__all__ = ["AtomicStructure", "DressedState", "structure_at"]

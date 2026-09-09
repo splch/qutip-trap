@@ -60,7 +60,10 @@ def _solve(
     max_step: float,
     store_states: bool,
     propagator: bool = False,
-) -> qt.solver.Result:
+) -> tuple[qt.solver.Result, int]:
+    """The QuTiP result and the number of coefficient calls one right-hand-side evaluation makes per coefficient-bearing
+    element of ``H`` (1 under ``sesolve``; 2 under ``mesolve``, whose Liouvillian carries every drive term twice, as
+    ``spre`` and ``spost`` elements that each evaluate the term's coefficient)."""
     options: dict[str, object] = {
         "method": method,
         "atol": atol,
@@ -79,8 +82,25 @@ def _solve(
         warnings.filterwarnings("ignore", message=".*step size becomes too small.*", category=UserWarning)
         if not c_ops and (state0.isket or propagator):
             # an operator-valued "state" under sesolve integrates the propagator U(t) itself (Section 11.3 item 5)
-            return qt.sesolve(H, state0, times, e_ops=eops, options=options)
-        return qt.mesolve(H, state0, times, c_ops=list(c_ops), e_ops=eops, options=options)
+            return qt.sesolve(H, state0, times, e_ops=eops, options=options), 1
+        solver = qt.MESolver(H, c_ops=list(c_ops), options=options)
+        return solver.run(state0, times, e_ops=eops), _calls_per_element(solver.rhs, H)
+
+
+def _coefficient_elements(op: qt.QobjEvo | qt.Qobj) -> int:
+    if not isinstance(op, qt.QobjEvo):
+        return 0
+    return sum(1 for el in op.to_list() if isinstance(el, list))
+
+
+def _calls_per_element(rhs: qt.QobjEvo, H: qt.QobjEvo | qt.Qobj) -> int:
+    """How many coefficient-bearing elements the solver's right-hand side carries per element of ``H`` (the Liouvillian's
+    spre and spost pair of each drive term makes it 2 on the mesolve path, so the evaluation count read from the
+    coefficient counter is divided by it; the count was twice the evaluations on every mesolve segment before)."""
+    n_h = _coefficient_elements(H)
+    if n_h == 0:
+        return 1
+    return max(1, round(_coefficient_elements(rhs) / n_h))
 
 
 def evolve(
@@ -124,10 +144,11 @@ def evolve(
     retries: list[str] = []
     calls0 = counter_calls() if counter_calls is not None else 0
     result = None
+    per_element = 1
     used = ladder[-1]
     for method, a, ms in ladder:
         try:
-            result = _solve(
+            result, per_element = _solve(
                 H,
                 state0,
                 times,
@@ -158,7 +179,11 @@ def evolve(
         for key, arr in zip(e_ops.keys(), result.expect):
             expect[str(key)] = np.asarray(arr)
     states = tuple(result.states) if store_states else None
-    evals = (counter_calls() - calls0) // max(calls_per_rhs, 1) if counter_calls is not None else None
+    evals = (
+        (counter_calls() - calls0) // max(calls_per_rhs * per_element, 1)
+        if counter_calls is not None
+        else None
+    )
     return Evolution(
         times_s=times,
         final=result.final_state,

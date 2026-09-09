@@ -104,14 +104,24 @@ with two or three dynamically resolved modes, or more ions with one or two resol
 5.4), with the guards of Section 11.5 routing anything larger to GATE_LOCAL under `level="auto"` and refusing an explicit
 `level="JOINT_EXACT"` above them (raise `joint_dimension_max` or `nnz_max` deliberately to build such a space; a cap that
 would grow past the guard during a run is refused the same way). Measured on the reference machine (Apple
-Accelerate BLAS, 18 CPUs, QuTiP 5.3.1) for a two-ion 100 µs Mølmer-Sørensen pulse:
+Accelerate BLAS, 18 CPUs, QuTiP 5.3.1) for a two-ion 100 µs Mølmer-Sørensen pulse; the last column is the default since the
+performance pass of 2026-09-09, which integrates every ket segment in the exact rotating frame ψ = e^{−iH₀t} φ of
+`dynamics/rotating.py` (the same drive operators, tolerances and integrator, 3 to 8 times fewer right-hand-side evaluations,
+results equal to the solver tolerance; ledger `anchor.perf.rotating_frame_exactness`, `validation/scripts/bench_rotating.py`):
 
-| joint dimension | one pulse (merged dense, `dop853`) | with the factorized kernel |
-|---|---|---|
-| 48 (one mode, d_m = 12) | 0.15 s | assembled wins |
-| 256 (two modes, d_m = 8) | 0.6 s | assembled wins |
-| 864 (three modes, d_m = 6) | 6 s | 5.6 s |
-| 2048 (three modes, d_m = 8) | 2.1 min | 16 s |
+| joint dimension | merged dense, Schrödinger picture (Section 11.1) | factorized kernel, Schrödinger picture | factorized kernel, rotating frame |
+|---|---|---|---|
+| 48 (one mode, d_m = 12) | 0.15 s | 1.6 s | 0.7 s |
+| 256 (two modes, d_m = 8) | 0.6 s | 2.5 s | 0.8 s |
+| 864 (three modes, d_m = 6) | 6 s | 4.9 s | 1.2 s |
+| 2048 (three modes, d_m = 8) | 2.1 min | 12 s | 1.9 s |
+
+(the two right-hand columns are five times the measured 20 µs integrations of `bench_rotating.py`; the engine's `auto` kernel
+still assembles the small spaces, where the assembled operator is the cheaper one per evaluation). The two-ion 100 µs
+single-loop pulse of the M4 fixtures on the space [2, 2, 9, 15] the cap rule selects takes 5.1 s in the Schrödinger picture
+and 1.0 s in the rotating frame, 43 against 7 integrator steps per period of the 3 MHz mode, with the register populations
+equal to 3 × 10⁻⁸. `SolverOptions(rotating_frame=False)` restores the Schrödinger-picture integration, and
+`SegmentReport.frame` names the picture each segment used.
 
 Parallel maps fork their workers (QuTiP's `parallel` map uses the `fork` start method), so every worker begins as a
 copy-on-write image of the calling process and can grow toward its size as it touches objects. `SolverOptions.workers = None`
@@ -121,8 +131,9 @@ gets 8 workers, a fresh process every CPU), an explicit request is capped the sa
 count actually used (ledger `conv.worker_memory_cap`). A long session that has built many Hamiltonians is the case this
 guards; two kernel watchdog panics on 2026-09-08 came from 18 workers forked out of multi-gigabyte pytest processes.
 
-and for the two-ion example device of `device/presets.py`: the surrogate calibration 15 s, a Bell circuit with 2000 shots
-about 8 s (five carrier pulses and one entangling gate on the 572-dimensional space [2, 2, 11, 13]), a 384-Clifford
+and for the two-ion example device of `device/presets.py` (2026-09-09, after the performance pass): the surrogate
+calibration about 6 s (15 s before it), a Bell circuit with 2000 shots about 3.5 s (8 s before; five carrier pulses and one
+entangling gate on the 572-dimensional space [2, 2, 11, 13]), a 384-Clifford
 single-qubit RB sequence 2 s (the carrier pulses run on the internal space through the propagator cache), a two-qubit
 Clifford about 10 s (1.5 entangling gates on average), the GATE_LOCAL tomography of one entangling gate about 60 s, a
 two-qubit quantum-volume circuit (two SU(4) layers, six entangling gates) about one minute. Calibration by simulated

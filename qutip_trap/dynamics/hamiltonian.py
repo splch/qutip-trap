@@ -1226,7 +1226,11 @@ def build_hamiltonian(
             approximations.append("micromotion factors switched off")
 
     terms[0] = terms[0].to("CSR")
-    H = qt.QobjEvo(terms)
+    # compress=False: the constant part is already one Qobj and every drive term carries its own coefficient object (the
+    # module docstring), so QuTiP's merge pass could only compare the k drive operators pairwise (k^2 Qobj equalities, a
+    # third of a build) and, in the one case it would merge (two terms sharing one cached operator), make n_drive_terms and
+    # the evaluation count disagree with the element count (performance pass 2026-09-09)
+    H = qt.QobjEvo(terms, compress=False)
     kernel: Literal["assembled", "factorized", "mixed", "none"]
     if not kernel_flags:
         kernel = "none"
@@ -1281,7 +1285,7 @@ def build_hamiltonian(
         dropped_weight=dropped_total,
         mode_frequencies_rad_s=omegas,
         counter=counter,
-        drive_parts={k: qt.QobjEvo(v) for k, v in drive_parts.items() if v},
+        drive_parts={k: qt.QobjEvo(v, compress=False) for k, v in drive_parts.items() if v},
         kernel=kernel,
         fingerprint=fingerprint,
     )

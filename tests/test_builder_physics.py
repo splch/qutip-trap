@@ -56,7 +56,18 @@ def raman():  # type: ignore[no-untyped-def]
 
 
 def _run(
-    dev, drive, t, space, n0=0, opts=None, n_store=2, thermal=None, sample=None, channels=(), store_times=()
+    dev,
+    drive,
+    t,
+    space,
+    n0=0,
+    opts=None,
+    n_store=2,
+    thermal=None,
+    sample=None,
+    channels=(),
+    store_times=(),
+    sopts=None,
 ):  # type: ignore[no-untyped-def]
     pulse = Pulse(drive, 0.0, t, "p", ())
     state = space.initial_state([0], fock={KX: n0} if thermal is None else None, thermal=thermal)
@@ -73,7 +84,7 @@ def _run(
         space,
         sample or quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        sopts or SolverOptions(),
     )
     return tr, eng
 
@@ -99,12 +110,29 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     assert tr.boundary_population[KX] < 1e-12
     rep = eng.last_report
     assert rep is not None and rep.segments[0].integrator == "dop853"
-    assert 10 < rep.segments[0].steps_per_period < 60, (
+    # the Section 5.3 step-density band is a Schroedinger-picture measurement (the state rotates at the Fock energies), so it
+    # is checked on the Schroedinger-picture integration; the default rotating frame of dynamics/rotating.py integrates the
+    # same pulse with fewer steps per period of the highest mode and the same physics (performance pass 2026-09-09)
+    tr_s, eng_s = _run(
+        dev,
+        square_drive(dd, include_stark=False),
+        t_pi,
+        space,
+        n_store=21,
+        sopts=SolverOptions(rotating_frame=False),
+    )
+    rep_s = eng_s.last_report
+    assert (
+        rep_s is not None and rep_s.segments[0].frame == "schrodinger" and rep.segments[0].frame == "rotating"
+    )
+    assert 10 < rep_s.segments[0].steps_per_period < 60, (
         "Section 5.3's step-density budget is 14 to 45 steps per period of the highest mode, measured with solve_ivp; "
         "QuTiP's dop853 wrapper reports about 2x that on the same problem (12 against 27 in the plan's own bench), and "
         "the count moves with the fixture's Rabi frequency, so the window is widened and the discrepancy is recorded "
         "in the ledger as anchor.m2.picture_equivalence_and_step_density rather than absorbed into the band"
     )
+    assert rep.segments[0].steps_per_period < 0.5 * rep_s.segments[0].steps_per_period
+    assert float(np.max(np.abs(tr.expectations["P1[0]"] - tr_s.expectations["P1[0]"]))) < 1e-7
     # the sample's Rabi scale multiplies the drive
     tr2, _ = _run(
         dev,

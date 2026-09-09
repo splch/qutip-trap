@@ -44,6 +44,7 @@ FAMILY_TITLES: dict[str, str] = {
     "m9a": "Scaling I: mode selection, frozen spectators, ENR, GATE_LOCAL (Sections 9.8, 9.9; M9a)",
     "m9b": "Scaling II: the matrix-free kernel and parallelism (Sections 9.9, 11.1; M9b)",
     "m10": "Benchmark emulation (Section 10 M10)",
+    "perf": "Performance pass of 2026-09-09: the exact rotating frame, the kernel's products, the shared atomic algebra, the direct steady state (Sections 5.2, 5.3, 11.1, 11.2)",
 }
 
 

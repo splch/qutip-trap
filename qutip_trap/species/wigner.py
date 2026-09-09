@@ -17,6 +17,7 @@ import numpy as np
 Half = Fraction | int | float
 
 
+@lru_cache(maxsize=4096)
 def as_half_integer(x: Half) -> Fraction:
     """Coerce an angular-momentum quantum number to an exact integer or half-integer Fraction."""
     f = Fraction(x).limit_denominator(2)

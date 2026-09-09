@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from qutip_trap.species.model import Species, parse_state_label
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import structure_at
 
 SINK = "SINK"
 """The label of the collecting level: every scattering final state outside the resolved sublevels."""
@@ -58,7 +58,7 @@ def internal_levels(
     """The level map of one ion at dimension ``d`` (2 = the qubit alone; up to the qubit level(s)' sublevel count plus one)."""
     if d < 2:
         raise ValueError("a register factor carries at least the two qubit levels")
-    st = AtomicStructure(species, b_gauss, b_hat)
+    st = structure_at(species, b_gauss, b_hat)
     lower, upper = species.qubit
     qubit_labels = (st.state(lower).full_label, st.state(upper).full_label)
     others: list[tuple[float, str]] = []

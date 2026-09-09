@@ -25,7 +25,7 @@ import numpy as np
 from qutip_trap.control.pulses import Drive, DriveKind, LightShiftCouplings, Tone
 from qutip_trap.device.model import Device
 from qutip_trap.light.comb import CombSpec
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import AtomicStructure, structure_at
 from qutip_trap.trap.mathieu import MathieuParameters
 from qutip_trap.trap.micromotion import MicromotionIndex
 from qutip_trap.units import TWO_PI
@@ -95,7 +95,7 @@ def _position(device: Device, ion: int) -> list[float]:
 
 def _structure(device: Device, ion: int) -> AtomicStructure:
     species = device.crystal.species[ion]
-    return AtomicStructure(species, device.field.B_gauss, device.field.direction)
+    return structure_at(species, device.field.B_gauss, device.field.direction)
 
 
 def mathieu_or_none(device: Device, ion: int) -> MathieuParameters | None:
@@ -232,10 +232,44 @@ def quadrupole_stark_shift_hz(device: Device, ion: int, beam: int) -> float:
     return e2_stark_shift_rad_s(couplings, lower_states, upper_states, m_driven, mp_driven) / TWO_PI
 
 
+_DERIVED: dict[tuple[object, ...], tuple[Device, DerivedDrive]] = {}
+"""Derived drives keyed by (kind, device identity, ion, beams, scattering), the device kept alive so its id cannot be reused."""
+_DERIVED_MAX = 4096
+
+
+def _derived_memo(device: Device, key: tuple[object, ...]) -> DerivedDrive | None:
+    entry = _DERIVED.get(key)
+    if entry is not None and entry[0] is device:
+        return entry[1]
+    return None
+
+
+def _remember(device: Device, key: tuple[object, ...], value: DerivedDrive) -> DerivedDrive:
+    if len(_DERIVED) >= _DERIVED_MAX:
+        _DERIVED.clear()
+    _DERIVED[key] = (device, value)
+    return value
+
+
 def derive_raman_drive(
     device: Device, ion: int, beams: tuple[int, int], *, scattering: bool = True
 ) -> DerivedDrive:
-    """A stimulated-Raman drive of ``ion`` by (beam 1, beam 2): Omega_R, Delta k = k_1 - k_2, etas, Stark shift, scattering."""
+    """A stimulated-Raman drive of ``ion`` by (beam 1, beam 2): Omega_R, Delta k = k_1 - k_2, etas, Stark shift, scattering.
+
+    Memoized per device instance (``_derived_memo``): the played chain of Section 7.3 re-derives every drive of every engine
+    run, and a GATE_LOCAL tomography makes tens of thousands of those on one device (159 s of a 1137 s four-qubit GHZ run;
+    performance pass 2026-09-09). The result is a frozen record nobody mutates.
+    """
+    key = ("raman", id(device), int(ion), (int(beams[0]), int(beams[1])), bool(scattering))
+    hit = _derived_memo(device, key)
+    if hit is not None:
+        return hit
+    return _remember(device, key, _derive_raman_drive(device, ion, beams, scattering=scattering))
+
+
+def _derive_raman_drive(
+    device: Device, ion: int, beams: tuple[int, int], *, scattering: bool = True
+) -> DerivedDrive:
     b1, b2 = beams
     st = _structure(device, ion)
     species = device.crystal.species[ion]
@@ -265,7 +299,17 @@ def derive_raman_drive(
 
 
 def derive_optical_drive(device: Device, ion: int, beam: int, *, scattering: bool = True) -> DerivedDrive:
-    """A single-photon optical drive (E1, or E2 for an I = 0 quadrupole qubit): Omega from Species.rabi_frequency_hz."""
+    """A single-photon optical drive (E1, or E2 for an I = 0 quadrupole qubit): Omega from Species.rabi_frequency_hz.
+
+    Memoized per device instance like :func:`derive_raman_drive`."""
+    key = ("optical", id(device), int(ion), (int(beam),), bool(scattering))
+    hit = _derived_memo(device, key)
+    if hit is not None:
+        return hit
+    return _remember(device, key, _derive_optical_drive(device, ion, beam, scattering=scattering))
+
+
+def _derive_optical_drive(device: Device, ion: int, beam: int, *, scattering: bool = True) -> DerivedDrive:
     species = device.crystal.species[ion]
     lower, upper = species.qubit
     omega_hz = species.rabi_frequency_hz(lower, upper, device.beams[beam], device.field)

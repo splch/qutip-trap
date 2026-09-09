@@ -24,6 +24,7 @@ import qutip as qt
 from scipy.optimize import curve_fit
 
 from qutip_trap.dynamics.multilevel import MultiLevelBuild
+from qutip_trap.dynamics.steady import steady_state_direct
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.light.bloch import CoolingError
 
@@ -75,7 +76,7 @@ def level_c_steady_state(build: MultiLevelBuild) -> LevelCSteadyState:
     if not build.static:
         raise NotImplementedError("the level-C steady state is built for a consistent frame")
     assert isinstance(build.H, qt.Qobj)
-    rho = qt.steadystate(build.H, list(build.c_ops), method="direct")
+    rho = steady_state_direct(build.H, build.c_ops)
     pn = build.space.fock_populations(rho, 0)
     return LevelCSteadyState(
         nbar=float(np.dot(np.arange(pn.size), pn)),

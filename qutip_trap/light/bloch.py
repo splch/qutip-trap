@@ -43,10 +43,11 @@ from qutip_trap.dynamics.multilevel import (
     MultiLevelOptions,
     build_multilevel,
 )
+from qutip_trap.dynamics.steady import spectrum_es, steady_state_direct
 from qutip_trap.light.beams import Beam, PolarizationModulation
 from qutip_trap.light.recoil import angular_factor
 from qutip_trap.readout.fluorescence import DarkStateReport, saturation_ceiling
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import AtomicStructure, structure_at
 from qutip_trap.units import C_M_PER_S, TWO_PI
 
 M3A = "milestone M3a (light/bloch.py, PLAN.md Section 4.2.8)"
@@ -431,7 +432,7 @@ class BlochModel:
         b = self.build
         if b.static:
             assert isinstance(b.H, qt.Qobj)
-            rho = qt.steadystate(b.H, list(b.c_ops), method="direct")
+            rho = steady_state_direct(b.H, b.c_ops)
             return self._report(rho, "steadystate", None)
         if b.space is not None:
             raise NotImplementedError(
@@ -703,7 +704,7 @@ class BlochModel:
             raise ValueError("no resonant static coupling: nothing is driven")
         couplings = b.couplings
         if zero_field:
-            st0 = AtomicStructure(self.structure.species, 1e-6, tuple(float(x) for x in self.structure.b_hat))
+            st0 = structure_at(self.structure.species, 1e-6, tuple(float(x) for x in self.structure.b_hat))
             couplings = build_multilevel(
                 st0,
                 self.beams,
@@ -885,10 +886,10 @@ def rate_coefficients_from_spectrum(model: BlochModel, mode: ModeSpec) -> Spectr
     if b.space is not None or not b.static:
         raise NotImplementedError("the spectrum path runs on the static internal-only model")
     assert isinstance(b.H, qt.Qobj)
-    rho = qt.steadystate(b.H, list(b.c_ops), method="direct")
+    rho = steady_state_direct(b.H, b.c_ops)
     f = model.force_operator(mode)
     df = f - float(np.real(qt.expect(f, rho)))
-    s = qt.spectrum(b.H, np.array([mode.omega_rad_s, -mode.omega_rad_s]), list(b.c_ops), df, df)
+    s = spectrum_es(b.H, b.c_ops, np.array([mode.omega_rad_s, -mode.omega_rad_s]), df, df, rho_ss=rho)
     s_plus, s_minus = float(np.real(s[0])), float(np.real(s[1]))
     two_d = emission_diffusion_two_d(model, mode.axis, mode.x0_m, rho)
     return SpectrumCoefficients(s_plus + two_d, s_minus + two_d, two_d, s_plus, s_minus)
@@ -932,7 +933,7 @@ def emission_diffusion_two_d(
         if b.space is not None or not b.static:
             raise NotImplementedError("the emission diffusion needs the static internal-only steady state")
         assert isinstance(b.H, qt.Qobj)
-        rho = qt.steadystate(b.H, list(b.c_ops), method="direct")
+        rho = steady_state_direct(b.H, b.c_ops)
     cos_chi = float(np.dot(np.asarray(axis, dtype=float), model.structure.b_hat))
     rates = model.operator_rates(rho)
     two_d = 0.0
@@ -969,7 +970,7 @@ def emission_angular_factor(
                 "the emission angular factor needs the static internal-only steady state"
             )
         assert isinstance(b.H, qt.Qobj)
-        rho = qt.steadystate(b.H, list(b.c_ops), method="direct")
+        rho = steady_state_direct(b.H, b.c_ops)
     cos_chi = float(np.dot(np.asarray(axis, dtype=float), model.structure.b_hat))
     wanted = None if lines is None else {(lo, up) for lo, up in lines}
     rates = model.operator_rates(rho)

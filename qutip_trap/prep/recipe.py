@@ -52,7 +52,7 @@ from qutip_trap.prep.sideband import (
 )
 from qutip_trap.species.model import parse_state_label, parse_transition_label
 from qutip_trap.species.polarization import linear_polarization
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import AtomicStructure, structure_at
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
@@ -119,7 +119,7 @@ def _structure(device: Device) -> AtomicStructure:
     species = {sp.name for sp in device.crystal.species}
     if len(species) != 1:
         raise NotImplementedError("the M6 preparation recipe covers single-species crystals")
-    return AtomicStructure(device.crystal.species[0], device.field.B_gauss, device.field.direction)
+    return structure_at(device.crystal.species[0], device.field.B_gauss, device.field.direction)
 
 
 def _cycling_levels(device: Device) -> tuple[str, str]:

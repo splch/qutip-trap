@@ -124,8 +124,26 @@ class Device:
         return derived_quantities(self)
 
     def hash(self) -> str:
-        """The canonical digest of Appendix E: declaration-order fields, 12-digit floats, sorted dicts, Qobj excluded."""
-        return canonical_digest(self)
+        """The canonical digest of Appendix E: declaration-order fields, 12-digit floats, sorted dicts, Qobj excluded.
+
+        Memoized per instance (a frozen dataclass whose arrays and dicts the code never mutates in place; a changed device is a
+        new instance through ``dataclasses.replace``): the builder fingerprints every segment Hamiltonian with it, and a
+        GATE_LOCAL tomography builds tens of thousands of segments on one device (0.9 ms each at four ions, 80 s of a 1137 s
+        four-qubit GHZ run; performance pass 2026-09-09).
+        """
+        entry = _HASHES.get(id(self))
+        if entry is not None and entry[0] is self:
+            return entry[1]
+        digest = canonical_digest(self)
+        if len(_HASHES) >= _HASHES_MAX:
+            _HASHES.clear()
+        _HASHES[id(self)] = (self, digest)
+        return digest
+
+
+_HASHES: dict[int, tuple[Device, str]] = {}
+"""``Device.hash`` memo keyed by instance identity, the instance kept alive so that its id cannot be reused."""
+_HASHES_MAX = 256
 
 
 __all__ = ["DerivedQuantities", "Device", "Field", "GradientField"]

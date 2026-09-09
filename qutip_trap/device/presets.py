@@ -39,7 +39,7 @@ from qutip_trap.prep.recipe import PreparationRecipe, magic_angle_polarization, 
 from qutip_trap.readout.detection import Detector
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
 from qutip_trap.species import species
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import structure_at
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.model import Trap
 
@@ -149,7 +149,7 @@ def oblique_detection_beam(
     """The 369.5 nm resonant beam along (1, 1, 1)/sqrt 3 at I/I_sat = s_o on axis (Crain's operating point), linear polarization
     at the magic angle to B = x, wide enough that every ion of a short chain sees the same intensity to a percent."""
     yb = species("171Yb+")
-    st = AtomicStructure(yb, b_gauss, (1.0, 0.0, 0.0))
+    st = structure_at(yb, b_gauss, (1.0, 0.0, 0.0))
     line = yb.transition("S1/2-P1/2")
     power = s_o * line.i_sat_w_m2 * math.pi * waist_m**2 / 2.0
     pol = magic_angle_polarization(OBLIQUE, (1.0, 0.0, 0.0))
@@ -336,7 +336,7 @@ def ca40_optical_recipe(
     ca = species("40Ca+")
     if {sp.name for sp in device.crystal.species} != {"40Ca+"}:
         raise ValueError("ca40_optical_recipe is the 40Ca+ optical-qubit recipe")
-    st = AtomicStructure(ca, device.field.B_gauss, device.field.direction)
+    st = structure_at(ca, device.field.B_gauss, device.field.direction)
     line397 = ca.transition("S1/2-P1/2")
     line866 = ca.transition("D3/2-P1/2")
     gamma = line397.gamma_rad_s
@@ -462,7 +462,7 @@ def ca40_optical(
     trap = secular_trap(omega_hz)
     ca = species("40Ca+")
     crystal = solve_crystal(trap, tuple([ca] * n_ions))
-    st = AtomicStructure(ca, FIELD_GAUSS, (1.0, 0.0, 0.0))
+    st = structure_at(ca, FIELD_GAUSS, (1.0, 0.0, 0.0))
     line397 = ca.transition("S1/2-P1/2")
     line866 = ca.transition("D3/2-P1/2")
     line854 = ca.transition("D5/2-P3/2")

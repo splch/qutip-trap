@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
+from functools import lru_cache
 
 import numpy as np
 
@@ -40,6 +41,7 @@ from qutip_trap.species.wigner import (
 from qutip_trap.units import C_M_PER_S, EPSILON_0_F_PER_M, H_J_S, HBAR_J_S
 
 
+@lru_cache(maxsize=4096)
 def reduced_element_from_partial_rate(
     partial_rate_rad_s: float, omega_rad_s: float, J_lower: Half, J_upper: Half
 ) -> float:

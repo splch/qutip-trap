@@ -464,9 +464,10 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
                 reported
             )  # the top ENR shell is the group's boundary (Section 5.1)
     # the two constructions integrate the same physics on different dimensions: the difference is the integrator's
-    # tolerance over the played schedule (measured 2.4e-9 at atol 1e-10, rtol 1e-8), not the ENR construction, whose
-    # operator identity is pinned to 1e-12 in tests/test_scaling_modes.py
-    assert np.max(np.abs(finals["enr"] - finals["product"])) < 1e-8, finals
+    # tolerance over the played schedule (measured 2.4e-9 at atol 1e-10, rtol 1e-8 in the Schroedinger picture, 2.9e-8 in
+    # the rotating frame the engine integrates in since 2026-09-09, both inside the ~5e-7 in norm that Section 11.1 calls
+    # identical), not the ENR construction, whose operator identity is pinned to 1e-12 in tests/test_scaling_modes.py
+    assert np.max(np.abs(finals["enr"] - finals["product"])) < 1e-7, finals
     assert 0.4 < finals["enr"][0] < 0.6, finals["enr"]  # a Bell state's register populations
 
     kw = dict(

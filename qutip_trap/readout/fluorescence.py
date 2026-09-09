@@ -904,9 +904,9 @@ def detection_rates_for_ion(
     from qutip_trap.light.bloch import shifted_beam
     from qutip_trap.light.roles import RESONANT_WINDOW
     from qutip_trap.species.model import parse_state_label, parse_transition_label
-    from qutip_trap.species.raman import AtomicStructure
+    from qutip_trap.species.raman import structure_at
 
-    st = AtomicStructure(species, b_gauss, b_hat)
+    st = structure_at(species, b_gauss, b_hat)
     lower, upper = parse_transition_label(species.cycling)
     if levels is None:
         lv = [lower, upper]

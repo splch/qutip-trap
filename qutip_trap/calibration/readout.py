@@ -95,13 +95,19 @@ def calibrate_detection(
     bright_records = [model.sample_record("bright", t_max, gen, sub_bin_s=sub_bin) for _ in range(n_records)]
     dark_records = [model.sample_record(start, t_max, gen, sub_bin_s=sub_bin) for _ in range(n_records)]
 
-    def counts_at(records: Sequence[PhotonRecord], t: float, bin_s: float) -> np.ndarray:
-        k = int(round(t / bin_s))
-        out: list[int] = []
+    def stacked(records: Sequence[PhotonRecord]) -> np.ndarray:
+        rows: list[np.ndarray] = []
         for r in records:
             assert r.sub_bins is not None
-            out.append(int(np.sum(r.sub_bins[:k])))
-        return np.array(out)
+            rows.append(np.asarray(r.sub_bins, dtype=np.int64))
+        return np.vstack(rows)
+
+    def counts_at(records: np.ndarray, t: float, bin_s: float) -> np.ndarray:
+        """Per record, the count within ``t`` of the window start (the sub-bin sums, exact integers)."""
+        k = int(round(t / bin_s))
+        return np.asarray(records[:, :k].sum(axis=1), dtype=np.int64)
+
+    bright_stack, dark_stack = stacked(bright_records), stacked(dark_records)
 
     # the mean-count fit needs windows long against 1/R_d and 1/R_b (Noek fitted n̄(τ) out to 60 ms): at bin-time windows the
     # curvature is invisible and (R_d, R_b) are degenerate, so a separate, longer set of bright records serves the fit
@@ -112,7 +118,9 @@ def calibrate_detection(
     t_fit = fit_windows[-1]
     fit_bin = t_fit / 400.0
     n_fit = n_records if n_fit_records is None else n_fit_records
-    fit_records = [model.sample_record("bright", t_fit, gen, sub_bin_s=fit_bin) for _ in range(n_fit)]
+    fit_records = stacked(
+        [model.sample_record("bright", t_fit, gen, sub_bin_s=fit_bin) for _ in range(n_fit)]
+    )
     taus = np.array(fit_windows)
     nbar = np.array([counts_at(fit_records, t, fit_bin).mean() for t in fit_windows])
     guess = (float(nbar[0] / taus[0]), 1.0 / t_fit, 0.05 / t_fit)
@@ -130,7 +138,7 @@ def calibrate_detection(
     )
     optimum = optimize_threshold(fitted, windows, dark_start=start)
     n_c, t_b = optimum.best.n_c, optimum.best.window_s
-    hb, hd = counts_at(bright_records, t_b, sub_bin), counts_at(dark_records, t_b, sub_bin)
+    hb, hd = counts_at(bright_stack, t_b, sub_bin), counts_at(dark_stack, t_b, sub_bin)
     eps_b_lab, eps_d_lab = histogram_error_rates(hb, hd, n_c)
     sigma_b = math.sqrt(max(eps_b_lab * (1.0 - eps_b_lab), 1.0 / n_records) / n_records)
     sigma_d = math.sqrt(max(eps_d_lab * (1.0 - eps_d_lab), 1.0 / n_records) / n_records)

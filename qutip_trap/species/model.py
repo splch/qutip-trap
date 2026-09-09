@@ -29,6 +29,7 @@ import math
 import re
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import cache
 from typing import TYPE_CHECKING, Literal
 
 from qutip_trap.units import (
@@ -47,6 +48,7 @@ _LEVEL_NAME = re.compile(r"^(?:\d)?([SPDFGH])(?:\[\d+/2\])?(\d+/2)$")
 _LABEL = re.compile(r"^(?P<level>[^ ]+)(?: (?P<rest>.+))?$")
 
 
+@cache
 def level_j(name: str) -> Fraction:
     """The electronic angular momentum J encoded in a level name ("S1/2" -> 1/2, "3D[3/2]1/2" -> 1/2)."""
     m = _LEVEL_NAME.match(name)
@@ -55,6 +57,7 @@ def level_j(name: str) -> Fraction:
     return Fraction(m.group(2))
 
 
+@cache
 def level_l(name: str) -> int:
     """The orbital label of a level name as an integer (S=0, P=1, D=2, F=3, G=4, H=5).
 
@@ -320,9 +323,9 @@ class Species:
         return hyperfine_zeeman(self.level(level), self.nuclear_spin, self.mu_I_nuclear_magnetons)
 
     def _structure(self, field: Field) -> AtomicStructure:
-        from qutip_trap.species.raman import AtomicStructure
+        from qutip_trap.species.raman import structure_at
 
-        return AtomicStructure(self, field.B_gauss, field.direction)
+        return structure_at(self, field.B_gauss, field.direction)
 
     def zeeman_spectrum(self, level: str, B_gauss: float) -> ZeemanSpectrum:
         """The hyperfine-Zeeman spectrum of ``level`` at ``B_gauss`` with adiabatic labels and field derivatives."""

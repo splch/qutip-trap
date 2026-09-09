@@ -61,7 +61,7 @@ from qutip_trap.light.raman import (
 from qutip_trap.light.recoil import angular_factor, direction_quadrature, pattern_density, recoil_projections
 from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.species.polarization import atomic_frame
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import structure_at
 
 RecoilOption = Literal["off", "minimal", "vector"]
 
@@ -293,7 +293,7 @@ def scattering_channels(
         )
         if lev.d != d:
             raise ValueError(f"ion {ion}: the level map has {lev.d} levels but the register factor has {d}")
-        st = AtomicStructure(species, device.field.B_gauss, b_hat)
+        st = structure_at(species, device.field.B_gauss, b_hat)
         pos = [float(x) for x in device.crystal.positions_m[ion]]
         for b in drive.beams:
             beam = device.beams[b]

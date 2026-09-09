@@ -230,3 +230,12 @@ Added on 2026-09-07 by milestone M10 (benchmark emulation):
   three ions (populations, parity scan, the bound (P_0 + P_1 + C)/2, the exact register fidelity), and a quantum-volume style
   run at width two against the depolarizing prediction (Sections 7.9, 9.12, 13, 6.8, 9.6). Runs the package (about twenty
   minutes); lines prefixed `MC:` carry shot noise.
+
+Added on 2026-09-09 by the performance pass:
+
+- `bench_rotating.py`: the exact rotating frame of `dynamics/rotating.py` against the Schroedinger-picture integration on the
+  four Section 11.1 rows (factorized kernel, dop853 at atol 1e-10, rtol 1e-8, 20 us): wall times, right-hand-side evaluations
+  (x3.20, 4.12, 5.02, 7.65 fewer), the final states back in the Schroedinger picture (1.35e-7 to 5.78e-7 in norm, the
+  dop853-vern9 figure), and the real two-ion 100 us single-loop pulse of `tests/m4_fixtures.py` through
+  `JointExactEngine.run_pulses` with `SolverOptions.rotating_frame` off and on (5.12 against 1.00 s, populations equal to 3e-8,
+  the <a_m> traces to 3.6e-10). `outputs/bench_rotating.out`; runs the package in about a minute; wall times are never compared.

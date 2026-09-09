@@ -25,7 +25,7 @@ from qutip_trap.control.pulses import Drive, Tone
 from qutip_trap.device.model import Device, Field
 from qutip_trap.species.model import Species, level_j, parse_state_label
 from qutip_trap.species.polarization import to_atomic_frame
-from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.raman import AtomicStructure, structure_at
 from qutip_trap.species.wigner import angular_momentum_matrices, as_half_integer
 from qutip_trap.species.zeeman import g_I_steck
 from qutip_trap.units import HBAR_J_S, MU_B_J_PER_T, TWO_PI
@@ -65,7 +65,7 @@ def rabi_frequency_hz(
     species: Species, field: Field, b1_tesla_lab: Sequence[complex] | np.ndarray
 ) -> complex:
     """Omega/2pi of the qubit transition under the microwave amplitude B_1 (complex lab-frame vector, tesla)."""
-    st = AtomicStructure(species, field.B_gauss, field.direction)
+    st = structure_at(species, field.B_gauss, field.direction)
     lower, upper = species.qubit
     return complex(coupling_rad_s(st, lower, upper, b1_tesla_lab) / TWO_PI)
 
@@ -74,7 +74,7 @@ def ac_zeeman_shift_hz(
     species: Species, field: Field, b1_tesla_lab: Sequence[complex], drive_hz: float
 ) -> float:
     """delta_ac/2pi of the qubit transition from the off-resonant Zeeman spectator transitions (Section 4.3.3)."""
-    st = AtomicStructure(species, field.B_gauss, field.direction)
+    st = structure_at(species, field.B_gauss, field.direction)
     lower, upper = species.qubit
     level = parse_state_label(lower)[0]
     omega = TWO_PI * drive_hz

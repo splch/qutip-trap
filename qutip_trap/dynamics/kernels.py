@@ -194,9 +194,26 @@ class FactorizedOperator(Data):  # type: ignore[misc]
 
 class _ApplicationPlan:
     """How to apply (x)_f A_f to an array reshaped to ``dims + (ncols,)``: which axes are sliced (a factor with one non-zero
-    element), which are scaled by a diagonal (broadcast) and which take a batched matrix product, precomputed once."""
+    element), which are scaled by a diagonal (broadcast) and which take a matrix product, precomputed once.
 
-    __slots__ = ("block_dims", "d", "dims", "prefactor", "sliced", "slices_in", "slices_out", "steps")
+    The products are arranged so that each factor costs one BLAS call where the layout allows it (M9b performance pass):
+    the trailing factor of the block is applied as one (lead, d) @ A^T product instead of a batch of lead tiny (d, d) @ (d, 1)
+    products (the batched form cost 9.0 against 2.1 us at d_m = 8, lead = 128, measured 2026-09-09), a leading factor as one A @ (d, trail)
+    product, and only a middle factor as a batched product. The operator's scalar prefactor is folded into the first
+    factor matrix at construction (d^2 multiplications once) so that no pass over the output is spent on it.
+    """
+
+    __slots__ = (
+        "block_dims",
+        "d",
+        "dims",
+        "prefactor",
+        "sliced",
+        "slices_in",
+        "slices_out",
+        "steps",
+        "tail_scale",
+    )
 
     def __init__(self, dims: tuple[int, ...], factors: Mapping[int, np.ndarray], scale: complex) -> None:
         self.dims = dims
@@ -224,47 +241,79 @@ class _ApplicationPlan:
                 remaining.append((f, "dense", a))
         kept = [f for f in range(len(dims)) if f not in sliced]
         self.block_dims = tuple(dims[f] for f in kept)
-        steps: list[tuple[str, int, int, int, np.ndarray]] = []
-        for f, kind, mat in remaining:
+        # (kind, lead, d, trail, matrix or diagonal, transposed matrix or None); the prefactor rides on the first step
+        steps: list[tuple[str, int, int, int, np.ndarray, np.ndarray | None]] = []
+        folded = prefactor != 0.0 and bool(remaining)
+        for idx, (f, kind, mat) in enumerate(remaining):
             ax = kept.index(f)
             lead = _prod(self.block_dims[:ax])
             trail = _prod(self.block_dims[ax + 1 :])
-            steps.append((kind, lead, int(dims[f]), trail, mat))
+            m = np.ascontiguousarray(mat * prefactor if (folded and idx == 0) else mat)
+            m_t = np.ascontiguousarray(m.T) if kind == "dense" else None
+            steps.append((kind, lead, int(dims[f]), trail, m, m_t))
         self.steps = tuple(steps)
         self.sliced = tuple(sliced)
         self.slices_in: tuple[int | slice, ...] = tuple(slices_in)
         self.slices_out: tuple[int | slice, ...] = tuple(slices_out)
         self.prefactor = prefactor
+        self.tail_scale = 1.0 + 0.0j if folded else prefactor
+        """What still multiplies the block after the steps: 1 once the prefactor is folded into a factor, the prefactor
+        itself for a pure slice (a bare sigma_+ with no mode factor)."""
+
+    def _transform(self, a: np.ndarray, ncols: int, alpha: complex = 1.0) -> np.ndarray:
+        """alpha x (prefactor (x)_kept A_f) applied to the sliced-in block of ``a`` (shape (D, ncols), C order), returned with
+        shape ``block_dims + (ncols,)``."""
+        y = a.reshape(self.dims + (ncols,))[self.slices_in]
+        first = True
+        for kind, lead, d, trail, mat, mat_t in self.steps:
+            if first and alpha != 1.0:
+                # alpha rides on the first factor (d^2 multiplications) rather than on the output (D/d_ion of them)
+                mat = mat * alpha
+                mat_t = None if mat_t is None else mat_t * alpha
+            first = False
+            t = trail * ncols
+            if kind == "dense":
+                assert mat_t is not None
+                if t == 1:
+                    y = y.reshape(lead, d) @ mat_t
+                elif lead == 1:
+                    y = mat @ y.reshape(d, t)
+                else:
+                    y = np.matmul(mat, y.reshape(lead, d, t))
+            else:
+                y = y.reshape(lead, d, t) * mat[None, :, None]
+        scale = self.tail_scale * (alpha if first else 1.0)
+        if scale != 1.0:
+            y = y * scale
+        return y.reshape(self.block_dims + (ncols,))
 
     def apply(self, arr: np.ndarray) -> np.ndarray:
-        a = np.asarray(arr, dtype=complex)
+        a = np.asarray(arr)
+        if a.dtype != np.complex128:
+            a = a.astype(np.complex128)
         vector = a.ndim == 1
-        if vector:
-            a = a.reshape(-1, 1)
+        ncols = 1 if vector else a.shape[1]
         if a.shape[0] != self.d:
             raise ValueError(f"state of dimension {a.shape[0]} does not live on dims {self.dims}")
-        ncols = a.shape[1]
         if self.prefactor == 0.0:
-            out = np.zeros_like(a)
-            return out.reshape(-1) if vector else out
-        x = np.ascontiguousarray(a).reshape(self.dims + (ncols,))
-        y = x[self.slices_in]
-        for kind, lead, d, trail, mat in self.steps:
-            y3 = y.reshape(lead, d, trail * ncols)
-            if kind == "dense":
-                y = np.matmul(mat, y3)
-            else:
-                y = mat[None, :, None] * y3
-        y = y.reshape(self.block_dims + (ncols,))
+            out = np.zeros(a.shape, dtype=complex)
+            return out
+        y = self._transform(a, ncols)
         if self.sliced:
             out = np.zeros(self.dims + (ncols,), dtype=complex)
             out[self.slices_out] = y
         else:
-            out = np.ascontiguousarray(y)
-        out = out.reshape(-1, ncols)
-        if self.prefactor != 1.0:
-            out = out * self.prefactor
-        return out.reshape(-1) if vector else out
+            out = y
+        return out.reshape(-1) if vector else out.reshape(-1, ncols)
+
+    def apply_into(self, a: np.ndarray, alpha: complex, out: np.ndarray) -> None:
+        """``out += alpha x (self @ a)`` for C-contiguous complex ``a`` and ``out`` of one shape (D, ncols): the accumulating
+        form the rotating-frame composite of ``dynamics.rotating`` uses, one zero fill for all its terms."""
+        if self.prefactor == 0.0 or alpha == 0.0:
+            return
+        y = self._transform(a, a.shape[1], complex(alpha))
+        block = out.reshape(self.dims + (a.shape[1],))[self.slices_out]
+        block += y
 
 
 # ---- dispatcher specialisations ----------------------------------------------------------------------------------------------------
@@ -287,10 +336,21 @@ def _from_dense(matrix: Dense) -> FactorizedOperator:
 
 
 def _matmul_factorized_dense(left: FactorizedOperator, right: Dense, scale: complex = 1) -> Dense:
-    out = left.apply(right.as_ndarray())
-    if scale != 1:
-        out = out * scale
-    return Dense(out, copy=False)
+    arr = right.as_ndarray()
+    if scale == 1:
+        return Dense(left.apply(arr), copy=False)
+    plan = left._plan
+    if arr.dtype != np.complex128:
+        arr = arr.astype(np.complex128)
+    if plan.prefactor == 0.0:
+        return Dense(np.zeros(arr.shape, dtype=complex), copy=False)
+    y = plan._transform(np.ascontiguousarray(arr), arr.shape[1], complex(scale))
+    if plan.sliced:
+        out = np.zeros(plan.dims + (arr.shape[1],), dtype=complex)
+        out[plan.slices_out] = y
+    else:
+        out = y
+    return Dense(out.reshape(-1, arr.shape[1]), copy=False)
 
 
 def _matmul_factorized_factorized(
@@ -498,7 +558,11 @@ def is_factorized(op: qt.Qobj | qt.QobjEvo | Data) -> bool:
     if isinstance(op, qt.Qobj):
         return isinstance(op.data, FactorizedOperator)
     # a QobjEvo: every coefficient-bearing element (the drive terms) is factorized; the constant part (H_mot + H_int) is CSR
-    kinds = [isinstance(el[0].data, FactorizedOperator) for el in op.to_list() if isinstance(el, list)]
+    kinds = [
+        isinstance(el[0].data, FactorizedOperator)
+        for el in op.to_list()
+        if isinstance(el, list) and isinstance(el[0], qt.Qobj)  # a function element is [callable, args]
+    ]
     return bool(kinds) and all(kinds)
 
 

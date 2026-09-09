@@ -7,7 +7,7 @@
 == 2. C0 applied once (Section 9.17 row): sideband-calibrated against carrier-derived eta at q = 0.3
   q_x = 0.2983, C0 = 1.017910 (series 1 + 3q^2/16 = 1.016689); derived eta with rf record / bare = 1.017910
   sideband-calibrated eta 0.113106 +- 1.2e-05 against eta C0 = 0.113116; two-body phase ratio (eta_sb/eta_bare)^2 - 1 = 0.0360 against 2(C0 - 1) = 0.0358
-  mode frequency 3000000.08 +- 0.26 Hz against 3000000.00 Hz (blue sideband at scales 1, 0.5: 2999681.3, 2999920.4 Hz; the drive's carrier light shift -318.7 Hz removed by extrapolation to zero power)
+  mode frequency 3000000.09 +- 0.26 Hz against 3000000.00 Hz (blue sideband at scales 1, 0.5: 2999681.3, 2999920.4 Hz; the drive's carrier light shift -318.7 Hz removed by extrapolation to zero power)
 
 == 3. single-ion experiments against the device (Sections 4.1.5, 4.2.7, 7.5)
   thermometry of a thermal state at nbar = 0.3: 0.300064 (ratio 0.230807 against 0.3/1.3 = 0.230769); ratio spread under a second duration 3.68e-05

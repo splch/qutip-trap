@@ -48,6 +48,7 @@ import qutip as qt
 
 from qutip_trap.dynamics.channels import CollapseOp
 from qutip_trap.dynamics.parallel import worker_count
+from qutip_trap.dynamics.rotating import RotatingSegment, expectation_phase, rotating_frame
 from qutip_trap.hilbert.operators import required_margin
 
 if TYPE_CHECKING:
@@ -207,6 +208,17 @@ class SolverOptions:
     """Internal-state-only spaces (every mode frozen; Section 11.3 item 5, M9b): the segment propagator is integrated once as a
     D x D operator through the same ladder and applied to every initial state, cached per engine on the built Hamiltonian's
     fingerprint; False integrates every state through the ODE ladder (the reference)."""
+    rotating_frame: bool = True
+    """Integrate every ket segment (``sesolve`` and ``mcsolve``) in the exact rotating frame of its diagonal H_0 = H_mot + H_int
+    (``dynamics.rotating``; Sections 5.2, 5.3): psi = e^{-i H_0 t} phi with the phases applied to the STATE and undone on the
+    way out, so the same drive operators, tolerances and integrator ladder integrate a state that moves at the drive and
+    detuning frequencies instead of the Fock energies. Nothing is expanded or dropped; the results equal the Schroedinger-picture
+    integration to the solver tolerance (1e-7 in norm at atol 1e-10, rtol 1e-8, the Section 11.1 meaning of 'identical'), with
+    3 to 8 times fewer right-hand-side evaluations on the Section 11.1 rows (performance pass 2026-09-09). False integrates in
+    the Schroedinger picture, the M2 to M9b reference and the picture the Section 5.3 step-density band (27 to 52 steps per
+    period of the highest mode) was measured in. A segment the frame does not cover (a non-diagonal static part such as an
+    anharmonic term, a function-element term, a collapse operator that is not an eigenoperator of H_0 such as a recoil kick or
+    the intensity-noise channel) integrates in the Schroedinger picture and says so in ``SegmentReport.frame``."""
 
     def __post_init__(self) -> None:
         if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
@@ -332,6 +344,11 @@ class SegmentReport:
     kernel: str = "none"
     """How the segment's drive operators were held (Section 11.3 item 4; M9b): ``factorized``, ``assembled``, ``mixed`` or
     ``none`` (no drive term)."""
+    frame: str = "schrodinger"
+    """The picture the segment was integrated in: ``rotating`` (the exact rotating frame of ``dynamics.rotating`` under
+    ``SolverOptions.rotating_frame``) or ``schrodinger`` (the closed forms, the propagator path, every ``mesolve`` segment, and
+    the ket segments the frame does not cover). ``rhs_evaluations`` and ``steps_per_period`` count the evaluations of the picture
+    named here, so the Section 5.3 band applies to ``schrodinger`` rows only."""
 
 
 @dataclass(frozen=True)
@@ -821,6 +838,29 @@ class JointExactEngine:
             rhs_evals: int | None = None
             retries_seg: tuple[str, ...] = ()
             # ---- integrate ----------------------------------------------------------------------------------------
+            # the exact rotating frame of Section 5.2 for the ket paths (sesolve, mcsolve): the state carries e^{-i H_0 t}
+            # and the drive terms are applied between the phases (dynamics/rotating.py); mesolve segments form the
+            # Liouvillian from the Schroedinger-picture matrices (Section 5.3) and the closed forms need no frame
+            rot: RotatingSegment | None = None
+            if (
+                options.rotating_frame
+                and kets is not None
+                and not mesolve_seg
+                and not built.H.isconstant
+                and (bool(space.resolved) or space.enr_group is not None)
+            ):
+                rot = rotating_frame(built.H, space.dims, c_ops)
+                if rot is not None:
+                    for n in rot.notes:
+                        if n not in notes:
+                            notes.append(n)
+            # per e_op, the e^{i lambda t} an expectation value picks up on the way back from the rotating frame (0 for the
+            # populations, -omega_m for a_m); None means the trace is taken on the rotated-back states
+            e_phases: dict[str, float | None] = (
+                {k: expectation_phase(op, rot.frame) for k, op in zip(e_keys, e_list)}
+                if rot is not None
+                else {}
+            )
             closed: _ClosedForm | None = None
             if (
                 self.closed_form_constant
@@ -895,8 +935,8 @@ class JointExactEngine:
                     red_acc: list[np.ndarray] = []
                     for psi, w_k in zip(kets, weights):
                         ev = evolve(
-                            built.H,
-                            psi,
+                            built.H if rot is None else rot.H,
+                            psi if rot is None else rot.frame.to_frame(psi, float(times[0])),
                             times,
                             e_ops=dict(zip(e_keys, e_list)),
                             options=options,
@@ -906,12 +946,22 @@ class JointExactEngine:
                             counter_calls=built.counter.count,
                             calls_per_rhs=built.n_drive_terms,
                         )
-                        new_kets.append(ev.final)
-                        for k in e_keys:
-                            exp_acc[k] += w_k * np.asarray(ev.expect[k])
                         assert ev.states is not None
+                        if rot is None:
+                            states_back: list[qt.Qobj] = list(ev.states)
+                            final_k = ev.final
+                        else:
+                            states_back = [
+                                rot.frame.from_frame(st, float(t)) for st, t in zip(ev.states, times)
+                            ]
+                            final_k = rot.frame.from_frame(ev.final, float(times[-1]))
+                        new_kets.append(final_k)
+                        for k, op in zip(e_keys, e_list):
+                            exp_acc[k] += w_k * _expectation_back(
+                                np.asarray(ev.expect[k]), e_phases.get(k, 0.0), times, op, states_back
+                            )
                         red_acc.append(
-                            w_k * np.array([space.internal_marginal(st).full() for st in ev.states[sel]])
+                            w_k * np.array([space.internal_marginal(st).full() for st in states_back[sel]])
                         )
                         integrator, atol_used, rhs_evals, retries_seg = (
                             ev.integrator,
@@ -1026,8 +1076,8 @@ class JointExactEngine:
                     ):
                         if target_tol_estimate is None:
                             probe = qt.MCSolver(
-                                built.H,
-                                c_ops,
+                                built.H if rot is None else rot.H,
+                                c_ops if rot is None else list(rot.c_ops),
                                 options={
                                     **mc_opts,
                                     "map": "serial",
@@ -1037,7 +1087,7 @@ class JointExactEngine:
                                     "improved_sampling": False,
                                 },
                             ).run(
-                                kets[0],
+                                kets[0] if rot is None else rot.frame.to_frame(kets[0], float(times[0])),
                                 times,
                                 ntraj=options.ntraj,
                                 e_ops=e_list,
@@ -1060,7 +1110,12 @@ class JointExactEngine:
                     seg_workers = min(n_workers, n_stoch) if seg_map != "serial" else 1
                     mc_opts["map"], mc_opts["num_cpus"] = seg_map, seg_workers
                     workers_used = max(workers_used, seg_workers)
-                    solver = qt.MCSolver(built.H, c_ops, options=mc_opts)
+                    solver = qt.MCSolver(
+                        built.H if rot is None else rot.H,
+                        c_ops if rot is None else list(rot.c_ops),
+                        options=mc_opts,
+                    )
+                    kets_in = kets if rot is None else [rot.frame.to_frame(k, float(times[0])) for k in kets]
                     # one trajectory per ket of the ensemble, each with its keyed seed (Section 3.4), through QuTiP's map:
                     # mixed initial conditions with an explicit per-state trajectory count; the results come back in completion
                     # order and are matched to their kets by seed (Section 11.3 item 9; M9b)
@@ -1069,12 +1124,12 @@ class JointExactEngine:
                         for k_traj in range(n_stoch)
                     ]
                     if improved_seg:
-                        res = solver.run(kets[0], times, ntraj=n_stoch, e_ops=e_list, seeds=seeds_k)
+                        res = solver.run(kets_in[0], times, ntraj=n_stoch, e_ops=e_list, seeds=seeds_k)
                     elif len(kets) == 1:
-                        res = solver.run(kets[0], times, ntraj=1, e_ops=e_list, seeds=seeds_k)
+                        res = solver.run(kets_in[0], times, ntraj=1, e_ops=e_list, seeds=seeds_k)
                     else:
                         res = solver.run(
-                            [(psi, 1.0 / len(kets)) for psi in kets],
+                            [(psi, 1.0 / len(kets)) for psi in kets_in],
                             times,
                             ntraj=[1] * len(kets),
                             e_ops=e_list,
@@ -1107,14 +1162,24 @@ class JointExactEngine:
                             j = by_seed[key_k]
                             members.append((res.trajectories[j], float(w_k), key_k, j))
                     for k_traj, (traj_m, w_m, key_m, j_m) in enumerate(members):
-                        new_kets.append(traj_m.final_state)
+                        if rot is None:
+                            states_m: list[qt.Qobj] = list(traj_m.states)
+                            final_m = traj_m.final_state
+                        else:
+                            states_m = [
+                                rot.frame.from_frame(st, float(t)) for st, t in zip(traj_m.states, times)
+                            ]
+                            final_m = rot.frame.from_frame(traj_m.final_state, float(times[-1]))
+                        new_kets.append(final_m)
                         new_weights.append(w_m)
                         if key_m is not None:
                             trajectory_seeds.append(key_m)
-                        for idx, k in enumerate(e_keys):
-                            exp_acc[k] += w_m * np.asarray(traj_m.expect[idx])
+                        for idx, (k, op) in enumerate(zip(e_keys, e_list)):
+                            exp_acc[k] += w_m * _expectation_back(
+                                np.asarray(traj_m.expect[idx]), e_phases.get(k, 0.0), times, op, states_m
+                            )
                         red_acc.append(
-                            w_m * np.array([space.internal_marginal(st).full() for st in traj_m.states[sel]])
+                            w_m * np.array([space.internal_marginal(st).full() for st in states_m[sel]])
                         )
                         if j_m is not None:
                             for t_c, which in zip(res.col_times[j_m], res.col_which[j_m]):
@@ -1168,6 +1233,7 @@ class JointExactEngine:
                     n_collapse_ops=len(seg_ops),
                     channels=kinds,
                     kernel=built.kernel,
+                    frame="rotating" if rot is not None else "schrodinger",
                 )
             )
             if active:
@@ -1340,6 +1406,23 @@ class _ClosedForm:
     integrator: str
     atol: float
     retries: tuple[str, ...]
+
+
+def _expectation_back(
+    values: np.ndarray,
+    lam: float | None,
+    times: np.ndarray,
+    op: qt.Qobj,
+    states: Sequence[qt.Qobj],
+) -> np.ndarray:
+    """An expectation trace taken in the rotating frame, back in the Schroedinger picture: <psi|O|psi> = e^{i lambda t} <phi|O|phi>
+    for an eigenoperator of ad_{H_0} (``lam``; 0 leaves the populations untouched), the trace over the rotated-back ``states`` for
+    anything else (``lam`` None)."""
+    if lam is None:
+        return np.array([qt.expect(op, st) for st in states], dtype=complex)
+    if lam == 0.0:
+        return np.asarray(values, dtype=complex)
+    return np.asarray(values, dtype=complex) * np.exp(1j * lam * np.asarray(times, dtype=float))
 
 
 def _mixture(kets: list[qt.Qobj], weights: list[float]) -> qt.Qobj:
