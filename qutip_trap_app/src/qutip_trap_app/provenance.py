@@ -21,7 +21,7 @@ import hashlib
 import json
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +64,12 @@ ASSET_PATH = Path(__file__).resolve().parents[1] / "assets" / "provenance_index.
 PART_II_SECTIONS = ("4", "5", "6", "7", "8")
 """PLAN.md Part II is Sections 4 to 8: "Every numbered subsection below is the specification of one module"."""
 
+TEXT_SECTIONS: tuple[str, ...] | None = None
+"""The top-level sections whose own Markdown the index carries for the explain drawer's Specification tile (Section 14.5
+"Explain panel": the subsection that governs what is on screen is shown beside it); None means every section, which is what
+ships: the governing sections of the screens reach outside Part II (the seed's Section 3.4, the wall time's Section 11.1, the
+provenance tags' Section 14.5), and the packaged app has no PLAN.md to fall back on."""
+
 _HEADER = re.compile(r"^(#{2,4})\s+(?:(\d+(?:\.\d+)*)\.?\s+)(.*\S)\s*$")
 _APPENDIX = re.compile(r"^##\s+(Appendix [A-Z])\.\s+(.*\S)\s*$")
 _TAG = re.compile(
@@ -100,13 +106,16 @@ def _parse_sections(plan_text: str) -> dict[str, dict[str, Any]]:
         counts = {t: 0 for t in TAGS}
         for tag in _TAG.findall(body):
             counts[tag] += 1
-        out[number] = {
+        entry: dict[str, Any] = {
             "title": title,
             "line": line,
             "depth": depth,
             "part_ii": number.split(".")[0] in PART_II_SECTIONS,
             "tags": {t: n for t, n in counts.items() if n},
         }
+        if TEXT_SECTIONS is None or number.split(".")[0] in TEXT_SECTIONS:
+            entry["text"] = body.strip("\n")
+        out[number] = entry
     return out
 
 
@@ -236,6 +245,21 @@ class ProvenanceIndex:
         self._data = data
         self._records: dict[str, dict[str, Any]] = data["records"]
         self._sections: dict[str, dict[str, Any]] = data["sections"]
+        self.on_open_section: Callable[[str], None] | None = None
+        """What a clicked chip does (DESIGN.md Section 10 R8): the session sets it to open the explain drawer's
+        Specification tile at the chip's section; None (tests, headless use) leaves chips as hover-only labels. One index
+        is loaded per page, so the hook is per session."""
+
+    def section_for_chip(self, ledger_id: str) -> str:
+        """The section a chip opens: its first Part II section, else the first section it names that has text."""
+        infos = self.sections_for(ledger_id)
+        for info in infos:
+            if self._sections[info.number].get("text"):
+                return info.number
+        if infos:
+            return self.nearest_section_with_text(infos[0].number)
+        named = sections_named(self.chip(ledger_id).section)
+        return self.nearest_section_with_text(named[0]) if named else "13"
 
     @classmethod
     def load(cls, path: Path | None = None) -> ProvenanceIndex:
@@ -277,6 +301,35 @@ class ProvenanceIndex:
         return SectionInfo(
             number, s["title"], int(s["line"]), int(s["depth"]), bool(s["part_ii"]), dict(s["tags"])
         )
+
+    def section_text(self, number: str) -> str:
+        """The section's own Markdown (its text up to the next header of any depth), for the explain drawer's Specification
+        tile; empty for a section outside :data:`TEXT_SECTIONS`."""
+        s = self._sections.get(number)
+        if s is None:
+            raise KeyError(f"PLAN.md has no section {number!r}")
+        return str(s.get("text", ""))
+
+    def subsections(self, number: str) -> tuple[SectionInfo, ...]:
+        """The sections one level below ``number`` (``"4.1"`` -> 4.1.1, 4.1.2, ...), in the plan's order."""
+        prefix = number + "."
+        out = [
+            self.section(n)
+            for n in self._sections
+            if n.startswith(prefix) and n.count(".") == number.count(".") + 1
+        ]
+        return tuple(sorted(out, key=lambda s: s.line))
+
+    def nearest_section_with_text(self, number: str) -> str:
+        """``number`` when it carries text, else the nearest enclosing section that does (a chip may name a top-level
+        section such as "13")."""
+        parts = number.split(".")
+        while parts:
+            n = ".".join(parts)
+            if n in self._sections and self._sections[n].get("text"):
+                return n
+            parts.pop()
+        return number
 
     def sections_for(self, ledger_id: str) -> tuple[SectionInfo, ...]:
         """The plan sections a record names, Part II first (the explain panel's targets)."""
@@ -332,6 +385,7 @@ __all__ = [
     "ASSET_PATH",
     "PART_II_SECTIONS",
     "TAG_GLYPH",
+    "TEXT_SECTIONS",
     "TAG_MEANING",
     "TAGS",
     "Chip",

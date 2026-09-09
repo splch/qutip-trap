@@ -1,6 +1,7 @@
-"""Level 2, the schedule (PLAN.md Section 14.2 row 2; DESIGN.md Section 5): pulses on ion lanes, the selected pulse's tones
-against the mode spectrum with each two-indexed detuning named, the waveform's segment table, the loop-closure indicators,
-crosstalk onto neighbours and the beams' directions."""
+"""Level 2, the schedule (PLAN.md Section 14.2 row 2; DESIGN.md Sections 5 and 10): the selected pulse's tones against the
+mode spectrum as the focal picture, the pulses on ion lanes, the pulse's stat tiles and envelope, the loop-closure pills per
+mode, and, for an entangling pulse, the second request control of Section 14.4 (a beat-note detuning set by hand, played as
+written). The tone, sideband and segment tables are behind Details."""
 
 from __future__ import annotations
 
@@ -11,17 +12,21 @@ import flet_charts as fc
 
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
+from qutip_trap_app.requests import RequestError, request_detuning
 from qutip_trap_app.viewmodel.schedule import closure, pulse_view, time_axis
 from qutip_trap_app.views.common import (
     card,
     content_widths,
     data_table,
-    kv_rows,
+    details,
+    hint,
     level_header,
-    shown,
+    stat_row,
+    stat_tile,
+    status_line,
     value_cell,
 )
-from qutip_trap_app.views.state import Store
+from qutip_trap_app.views.state import Session, Store
 
 ROLE_COLORS = {
     "red": ft.Colors.ERROR_CONTAINER,
@@ -59,6 +64,9 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
                     tooltip=f"pulse {span.pulse_index} ({span.kind}) {span.t_start_s * 1e6:.2f} to {span.t_end_s * 1e6:.2f} µs; gate {span.gate_id}",
                     on_click=lambda e, k=span.pulse_index: on_select(k),
                     ink=True,
+                    key=f"pulse:{span.pulse_index}"
+                    if lane.ion == min(lane.ion for lane in axis.lanes)
+                    else None,
                 )
             )
         lanes.append(
@@ -100,14 +108,14 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
 
 
 def _spectrum_strip(pv: Any, width: float) -> ft.Control:
-    """Mode frequencies as ticks and the pulse's tone detunings (their absolute values) drawn against them."""
+    """Mode frequencies as ticks and the pulse's tone detunings (their absolute values) drawn against them: the focal picture."""
     modes = [(float(m.value or 0.0), m.detail or "") for m in pv.mode_spectrum]
     tones = [abs(float(t.detuning.value or 0.0)) for t in pv.tones]
     values = [f for f, _ in modes] + tones
     lo, hi = min(values) * 0.97, max(values) * 1.03 + 1.0
     scale = width / (hi - lo)
     controls: list[ft.Control] = [
-        ft.Container(left=0, top=30, width=width, height=1, bgcolor=ft.Colors.OUTLINE)
+        ft.Container(left=0, top=44, width=width, height=1, bgcolor=ft.Colors.OUTLINE)
     ]
     label_right = -1e9
     for f, label in sorted(modes):
@@ -115,9 +123,9 @@ def _spectrum_strip(pv: Any, width: float) -> ft.Control:
         controls.append(
             ft.Container(
                 left=x - 1,
-                top=8,
+                top=16,
                 width=2,
-                height=24,
+                height=30,
                 bgcolor=ft.Colors.ON_SURFACE,
                 tooltip=f"{label}: {f / 1e6:.4f} MHz",
             )
@@ -128,15 +136,15 @@ def _spectrum_strip(pv: Any, width: float) -> ft.Control:
                 ft.Container(
                     content=ft.Text(f"{f / 1e6:.3f}", size=10),
                     left=x - 22,
-                    top=34,
+                    top=48,
                     width=44,
                     alignment=ft.Alignment.CENTER,
                 )
             )
             label_right = x + 22.0
     for k, mu in enumerate(tones):
-        # the 10 px dot stays inside the strip (a carrier tone sits at the far left edge)
-        x = min(max((mu - lo) * scale, 5.0), width - 5.0)
+        # the 14 px dot stays inside the strip (a carrier tone sits at the far left edge)
+        x = min(max((mu - lo) * scale, 7.0), width - 7.0)
         sign = "+" if float(pv.tones[k].detuning.value or 0.0) >= 0 else "-"
         role = next(
             (sb.role for sb in pv.tones[k].sidebands if sb.role in ("red", "blue")),
@@ -144,27 +152,41 @@ def _spectrum_strip(pv: Any, width: float) -> ft.Control:
         )
         controls.append(
             ft.Container(
-                left=x - 5,
-                top=0,
-                width=10,
-                height=10,
-                border_radius=ft.BorderRadius.all(5),
+                left=x - 7,
+                top=2,
+                width=14,
+                height=14,
+                border_radius=ft.BorderRadius.all(7),
                 bgcolor=ROLE_COLORS.get(role, ft.Colors.PRIMARY),
-                border=ft.Border.all(1, ft.Colors.ON_SURFACE),
+                border=ft.Border.all(1.5, ft.Colors.ON_SURFACE),
                 tooltip=f"tone {k}: mu = {sign}{mu / 1e6:.4f} MHz from the carrier ({role} sideband)",
             )
         )
-    return ft.Column(
+    legend = ft.Row(
         [
-            ft.Stack(controls, width=width, height=52),
-            ft.Text(
-                "|detuning from the carrier| in MHz; ticks are the crystal's modes, dots the tones (red = below a mode, blue = above)",
-                size=11,
-                color=ft.Colors.ON_SURFACE_VARIANT,
+            ft.Container(
+                width=12,
+                height=12,
+                bgcolor=ROLE_COLORS["red"],
+                border=ft.Border.all(1, ft.Colors.ON_SURFACE),
+                border_radius=6,
             ),
+            ft.Text("red tone", size=11),
+            ft.Container(
+                width=12,
+                height=12,
+                bgcolor=ROLE_COLORS["blue"],
+                border=ft.Border.all(1, ft.Colors.ON_SURFACE),
+                border_radius=6,
+            ),
+            ft.Text("blue tone", size=11),
+            ft.Container(width=2, height=14, bgcolor=ft.Colors.ON_SURFACE),
+            ft.Text("mode (|detuning| in MHz)", size=11),
         ],
-        spacing=2,
+        spacing=6,
+        wrap=True,
     )
+    return ft.Column([ft.Stack(controls, width=width, height=66), legend], spacing=4)
 
 
 def _envelope_chart(pv: Any) -> ft.Control:
@@ -183,7 +205,7 @@ def _envelope_chart(pv: Any) -> ft.Control:
         return ft.Container()
     chart: ft.Control = fc.LineChart(
         data_series=series,
-        height=140,
+        height=130,
         expand=True,
         left_axis=fc.ChartAxis(title=ft.Text("Omega/2pi (kHz)", size=10), label_size=40),
         bottom_axis=fc.ChartAxis(title=ft.Text("t (µs)", size=10), label_size=24),
@@ -192,8 +214,94 @@ def _envelope_chart(pv: Any) -> ft.Control:
     return chart
 
 
+def _closure_pill(m: Any) -> ft.Control:
+    ok = m.closed
+    return ft.Container(
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE if ok else ft.Icons.RADIO_BUTTON_UNCHECKED, size=14),
+                ft.Text(f"mode {m.mode}: {'closed' if ok else 'open'}", size=12),
+            ],
+            spacing=4,
+            tight=True,
+        ),
+        bgcolor=ft.Colors.PRIMARY_CONTAINER if ok else ft.Colors.ERROR_CONTAINER,
+        border_radius=ft.BorderRadius.all(12),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+        tooltip=f"|alpha_{m.mode}|^2 (2 nbar + 1) = {m.residual:.2e} against 1e-6 (Section 5.2); mode class {m.mode_class}",
+    )
+
+
 @ft.component
-def Level2Page(store: Store, record: Record, pulse_param: str, index: ProvenanceIndex) -> ft.Control:
+def RequestDetuningPanel(
+    store: Store, session: Session, record: Record, gate_id: str, index: ProvenanceIndex
+) -> ft.Control:
+    """Section 14.4 at Level 2: set the pair's beat-note detuning by hand; the waveform is played as written."""
+    ft.use_state(store)
+    text, set_text = ft.use_state("5")
+    running = store.running_of("request_run", gate_id=gate_id) is not None
+
+    def submit(_e: Any) -> None:
+        try:
+            offset_khz = float(text)
+        except ValueError:
+            store.error = "the offset must be a number in kHz"
+            return
+        try:
+            req = request_detuning(record, gate_id, offset_khz * 1e3)
+        except RequestError as exc:
+            store.error = str(exc)
+            return
+        session.submit_request(req)
+
+    controls: list[ft.Control] = [
+        ft.Row(
+            [
+                ft.TextField(
+                    label="offset (kHz)",
+                    value=text,
+                    width=120,
+                    dense=True,
+                    text_size=13,
+                    on_change=lambda e: set_text(str(e.control.value)),
+                    key="request-detuning-value",
+                ),
+                ft.FilledTonalButton(
+                    content=ft.Text("Set the detuning by hand"),
+                    icon=ft.Icons.TUNE,
+                    on_click=submit,
+                    disabled=running,
+                    tooltip="applied as written: blue legs up, red legs down, amplitude unchanged; the job re-runs at the full engine and Level 1 shows the actual unitary (Section 14.4)",
+                    key="request-detuning",
+                ),
+            ],
+            spacing=8,
+            wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+    ]
+    last = store.last_request
+    if last is not None and last.kind == "detuning" and last.gate_id == gate_id:
+        if last.refusal:
+            controls.append(
+                ft.Text(f"refused: {last.refusal}", size=12, color=ft.Colors.ERROR, key="request-refusal")
+            )
+        else:
+            controls.append(status_line(last.note))
+    if record.job.waveform_overrides:
+        controls.append(
+            status_line(
+                "this run plays a hand-set detuning: "
+                + ", ".join(f"pair {k}: {v / 1e3:+.3g} kHz" for k, v in record.job.waveform_overrides.items())
+            )
+        )
+    return ft.Column(controls, spacing=6)
+
+
+@ft.component
+def Level2Page(
+    store: Store, session: Session, record: Record, pulse_param: str, index: ProvenanceIndex
+) -> ft.Control:
     ft.use_state(store)
     pulses = record.schedule.pulses
     if not pulses:
@@ -207,86 +315,102 @@ def Level2Page(store: Store, record: Record, pulse_param: str, index: Provenance
     key = record.key()
     pv = pulse_view(record, sel)
     lanes_width, strip_width = content_widths(store, page, 2)
-    step = record.step(pv.step_index) if pv.step_index >= 0 else None
+    plain = store.learner.plan(2).plain_labels_first
 
     def on_select(k: int) -> None:
         page.navigate(f"/job/{key}/schedule/{k}")
 
-    tone_rows: list[list[ft.Control | str]] = []
+    tone_tiles: list[ft.Control] = []
     for t in pv.tones:
-        tone_rows.append(
-            [
-                str(t.index),
-                value_cell(t.detuning, index),
-                value_cell(t.envelope_peak, index),
-                value_cell(t.phase_start, index),
-            ]
+        tone_tiles.append(
+            stat_tile(t.detuning, index, plain=plain, label=f"tone {t.index}: detuning from the carrier")
         )
-    sideband_rows: list[list[ft.Control | str]] = []
-    for t in pv.tones:
-        for sb in t.sidebands:
-            sideband_rows.append(
-                [
-                    f"tone {t.index}",
-                    str(sb.mode),
-                    value_cell(sb.mode_frequency, index),
-                    value_cell(sb.detuning, index),
-                    sb.role,
-                ]
-            )
-    pulse_rows: list[tuple[str, ft.Control]] = [
-        ("pulse", ft.Text(f"{sel}: {pv.pulse.gate_id} ({pv.pulse.kind}) on ions {pv.ions}")),
-        (
-            "time",
-            ft.Text(
-                f"{pv.pulse.t_start_s * 1e6:.2f} to {pv.pulse.t_end_s * 1e6:.2f} µs ({pv.pulse.duration_s * 1e6:.2f} µs)"
-            ),
-        ),
-        ("beams", ft.Row(list(shown(b, index, label=False) for b in pv.beams), wrap=True, spacing=8)),
-        ("Stark shift", shown(pv.stark_shift, index, label=False)),
+        tone_tiles.append(
+            stat_tile(t.envelope_peak, index, plain=plain, label=f"tone {t.index}: peak Rabi frequency")
+        )
+    tone_rows: list[list[ft.Control | str]] = [
+        [
+            str(t.index),
+            value_cell(t.detuning, index),
+            value_cell(t.envelope_peak, index),
+            value_cell(t.phase_start, index),
+        ]
+        for t in pv.tones
     ]
-    if pv.crosstalk:
-        pulse_rows.append(
-            ("crosstalk", ft.Row([shown(c, index, label=False) for c in pv.crosstalk], wrap=True, spacing=8))
-        )
-    zoom_target = f"/job/{key}/dynamics/{sel}/0"
-    pulse_card = card(
-        f"Pulse {sel}",
+    sideband_rows: list[list[ft.Control | str]] = [
+        [
+            f"tone {t.index}",
+            str(sb.mode),
+            value_cell(sb.mode_frequency, index),
+            value_cell(sb.detuning, index),
+            sb.role,
+        ]
+        for t in pv.tones
+        for sb in t.sidebands
+    ]
+    spectrum_card = card(
+        "Tones against the modes",
         ft.Column(
             [
-                kv_rows(pulse_rows),
-                ft.Text("tones", size=12, weight=ft.FontWeight.W_600),
-                data_table(
-                    ["tone", "detuning from the carrier", "peak Rabi frequency", "phase at start"], tone_rows
+                _spectrum_strip(pv, max(strip_width, lanes_width * 0.9)),
+                stat_row(tone_tiles[:6]),
+                hint(store, 2, "tone_and_sideband"),
+                details(
+                    "level2.tones",
+                    [
+                        data_table(
+                            ["tone", "detuning from the carrier", "peak Rabi frequency", "phase at start"],
+                            tone_rows,
+                        ),
+                        data_table(
+                            ["tone", "mode", "omega_m", "delta = mu - omega_m", "role"], sideband_rows
+                        ),
+                    ],
+                    store=store,
+                    session=session,
+                    title="Tone and sideband tables",
                 ),
+            ],
+            spacing=8,
+        ),
+        why=lambda e: session.select_concept(2, "tone_and_sideband"),
+        key="spectrum",
+    )
+    pulse_tiles: list[ft.Control] = [
+        stat_tile(pv.stark_shift, index, plain=plain),
+    ]
+    pulse_tiles.extend(stat_tile(c, index, plain=plain) for c in pv.crosstalk[:2])
+    pulse_card = card(
+        f"Pulse {sel}: {pv.pulse.gate_id} on ions {pv.ions}",
+        ft.Column(
+            [
+                status_line(
+                    f"{pv.pulse.kind}, {pv.pulse.t_start_s * 1e6:.2f} to {pv.pulse.t_end_s * 1e6:.2f} µs, beams {tuple(b.detail for b in pv.beams)}"
+                ),
+                stat_row(pulse_tiles),
                 _envelope_chart(pv),
             ],
             spacing=8,
         ),
-        subtitle="the scheduler's own tones, sampled where they were functions",
+        why=lambda e: session.select_concept(2, "pulse"),
         actions=[
             ft.FilledButton(
                 content=ft.Text("Zoom in: inside this pulse"),
                 icon=ft.Icons.ZOOM_IN,
-                on_click=lambda e: page.navigate(zoom_target),
+                on_click=lambda e: page.navigate(f"/job/{key}/dynamics/{sel}/0"),
+                key="zoom-pulse",
             )
         ],
+        key="pulse",
     )
-    spectrum_card = card(
-        "Tones against the mode spectrum",
-        ft.Column(
-            [
-                _spectrum_strip(pv, strip_width),
-                data_table(["tone", "mode", "omega_m", "delta = mu - omega_m", "role"], sideband_rows),
-            ],
-            spacing=8,
-        ),
-        subtitle="which motion each tone talks to (conv.detuning_symbols)",
-    )
-    right: list[ft.Control] = [spectrum_card]
+    right: list[ft.Control] = [pulse_card]
     gate_id = pv.pulse.gate_id.split("/")[0] if pv.pulse.gate_id else None
     if gate_id and any(g.gate_id == gate_id for g in record.schedule.gates):
         cl = closure(record, gate_id)
+        seg_rows: list[list[ft.Control | str]] = [
+            [str(k)] + [value_cell(s, index) for s in row] for k, row in enumerate(cl.segments)
+        ]
+        seg_cols = ["segment"] + ([""] * (len(cl.segments[0]) if cl.segments else 0))
         mode_rows: list[list[ft.Control | str]] = [
             [
                 str(m.mode),
@@ -298,52 +422,71 @@ def Level2Page(store: Store, record: Record, pulse_param: str, index: Provenance
             ]
             for m in cl.modes
         ]
-        seg_rows: list[list[ft.Control | str]] = [
-            [str(k)] + [value_cell(s, index) for s in row] for k, row in enumerate(cl.segments)
-        ]
-        seg_cols = ["segment"] + ([""] * (len(cl.segments[0]) if cl.segments else 0))
         right.append(
             card(
                 f"Loop closure of {gate_id}",
                 ft.Column(
                     [
-                        ft.Row(
-                            [shown(cl.chi_total, index), shown(cl.duration, index)]
-                            + ([shown(cl.beat_phase, index)] if cl.beat_phase is not None else []),
-                            wrap=True,
-                            spacing=12,
+                        ft.Row([_closure_pill(m) for m in cl.modes], wrap=True, spacing=6, run_spacing=6),
+                        stat_row(
+                            [
+                                stat_tile(cl.chi_total, index, plain=plain),
+                                stat_tile(cl.duration, index, plain=plain),
+                            ]
+                            + (
+                                [stat_tile(cl.beat_phase, index, plain=plain)]
+                                if cl.beat_phase is not None
+                                else []
+                            )
                         ),
-                        data_table(
-                            ["mode", "class", "chi_m", "|alpha_m| at closure", "|alpha|^2 (2n+1)", "loop"],
-                            mode_rows,
+                        hint(store, 2, "loop_closure"),
+                        RequestDetuningPanel(store, session, record, gate_id, index),
+                        details(
+                            "level2.closure",
+                            [
+                                data_table(
+                                    [
+                                        "mode",
+                                        "class",
+                                        "chi_m",
+                                        "|alpha_m| at closure",
+                                        "|alpha|^2 (2n+1)",
+                                        "loop",
+                                    ],
+                                    mode_rows,
+                                ),
+                                status_line(
+                                    "the table's values at calibration; a hand-set detuning shows its open loops on Level 3"
+                                ),
+                                data_table(seg_cols, seg_rows)
+                                if seg_rows
+                                else status_line("Fourier-parameterized waveform"),
+                            ],
+                            store=store,
+                            session=session,
+                            title="Closure and segment tables",
                         ),
-                        ft.Text(
-                            "segments (duration, then Omega per ion and leg, then the leg detunings)",
-                            size=12,
-                            weight=ft.FontWeight.W_600,
-                        ),
-                        data_table(seg_cols, seg_rows)
-                        if seg_rows
-                        else ft.Text("Fourier-parameterized waveform", size=12),
                     ],
                     spacing=8,
                 ),
-                subtitle="the played waveform returns the motion it borrowed, mode by mode (Section 4.4.3)",
+                why=lambda e: session.select_concept(2, "loop_closure"),
+                key="closure",
             )
         )
-    note = f"step {step.gate_id}" if step is not None else ""
     return ft.Column(
         [
-            level_header(2, "The schedule", "What light hit which ion, when, and what did it talk to?", note),
+            level_header("The schedule", "What light hit which ion, when, and what did it talk to?"),
+            spectrum_card,
             card(
                 "Time axis",
                 _lanes(record, sel, on_select, lanes_width),
-                subtitle="pulses per ion lane; the readout window at the end; click a pulse",
+                why=lambda e: session.select_concept(2, "pulse"),
+                key="time-axis",
             ),
             ft.ResponsiveRow(
                 [
-                    ft.Column([pulse_card], col={"xs": 12, "lg": 6}, spacing=10),
-                    ft.Column(right, col={"xs": 12, "lg": 6}, spacing=10),
+                    ft.Column(right[:1], col={"xs": 12, "lg": 6}, spacing=10),
+                    ft.Column(right[1:], col={"xs": 12, "lg": 6}, spacing=10),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.START,
                 spacing=12,
@@ -356,4 +499,4 @@ def Level2Page(store: Store, record: Record, pulse_param: str, index: Provenance
     )
 
 
-__all__ = ["Level2Page"]
+__all__ = ["Level2Page", "RequestDetuningPanel"]

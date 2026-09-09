@@ -123,6 +123,24 @@ def test_scoring_is_against_the_record_and_about_the_task() -> None:
     assert math.isclose(score_direction((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)), math.pi / 2)
 
 
+def test_faded_and_free_exercises_and_the_learn_tabs() -> None:
+    """DESIGN.md Section 3: the faded GHZ exercise keeps the tour's six stops (the view withholds the annotations), the free
+    exercise is build, predict, run, explain; the Learn activities are routes."""
+    assert len(learn.GHZ_EXERCISE) == 6 and [s.index for s in learn.GHZ_EXERCISE] == [1, 2, 3, 4, 5, 6]
+    assert all(
+        a.route == b.route and a.concept_id == b.concept_id for a, b in zip(learn.GHZ_EXERCISE, BELL_TOUR)
+    )
+    assert len(learn.FREE_EXERCISE) == 5 and "predict" in learn.FREE_EXERCISE[1].lower()
+    tabs = [t for t, _ in learn.LEARN_TABS]
+    assert tabs[0] == "tour" and {"ghz", "free", "drills", "review", "experiments", "progress"} <= set(tabs)
+    assert route_matches("/learn/drills") and route_matches("/learn/preset/harty_2014")
+    assert not route_matches("/learn/nowhere")
+    assert (
+        learn.CONCEPTS["provenance_tags"].kind == "discrimination"
+        and learn.CONCEPTS["provenance_tags"].level == 0
+    )
+
+
 def test_six_click_tour_covers_the_ladder() -> None:
     assert len(BELL_TOUR) == 6
     assert [s.index for s in BELL_TOUR] == [1, 2, 3, 4, 5, 6]

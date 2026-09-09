@@ -1,10 +1,10 @@
-"""Level 3, the dynamics (PLAN.md Section 14.2 row 3; DESIGN.md Section 5): inside one pulse for one dynamical sample.
+"""Level 3, the dynamics (PLAN.md Section 14.2 row 3; DESIGN.md Sections 5 and 10): inside one pulse for one dynamical sample.
 
-The recorded coarse trace (the run's own stored points inside the step) is shown at once; the one primary action re-simulates
-the step at fine resolution in the worker and the fine trace replaces it (Section 14.7). Secondary actions compute the Fock
-movie (per-time distributions by truncated re-simulation), the process matrix of the finished pulse and the Section 5.5
-convergence re-checks, each a background job with progress and cancel. Before the loops are revealed the learner is asked
-whether they close (predict-then-reveal, DESIGN.md Section 3); the pick is scored against the record, never against a script.
+The focal pair is the phase-space loop beside the qubit populations against time. The recorded coarse trace opens at once;
+the one primary action re-simulates the step at fine resolution in the worker (Section 14.7). The Fock distributions, the
+jumps and the sample's quasi-static values, the process matrix and the convergence re-checks are sections below, each a
+background job with progress and cancel. Before the loops are revealed the learner is asked whether they close
+(predict-then-reveal, DESIGN.md Section 3); the pick is scored against the record, never against a script.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import numpy as np
 from qutip_trap_app import resim
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record, ZoomTrace
+from qutip_trap_app.viewmodel.catalogue import Shown
 from qutip_trap_app.viewmodel.dynamics import (
     PulseDynamics,
     closure_table,
@@ -29,7 +30,19 @@ from qutip_trap_app.viewmodel.dynamics import (
 from qutip_trap_app.viewmodel.learn import CONCEPTS, Attempt, score_closure
 from qutip_trap_app.viewmodel.numerics import NumericsPanel, numerics_panel
 from qutip_trap_app.views import drawing
-from qutip_trap_app.views.common import card, data_table, kv_rows, level_header, shown, value_cell
+from qutip_trap_app.views.common import (
+    card,
+    data_table,
+    details,
+    hint,
+    kv_rows,
+    level_header,
+    shown,
+    stat_row,
+    stat_tile,
+    status_line,
+    value_cell,
+)
 from qutip_trap_app.views.level0 import ProgressRows
 from qutip_trap_app.views.state import Session, Store
 
@@ -84,7 +97,7 @@ def level3_numerics(store: Store, record: Record, pulse_param: str, sample_param
     return numerics_panel(record, zoom=z if fine else None, tolerance_check=tol, truncation_check=trunc)
 
 
-def _series_chart(series: Any, *, y_title: str, height: float = 170.0, markers: Any = ()) -> ft.Control:
+def _series_chart(series: Any, *, y_title: str, height: float = 200.0, markers: Any = ()) -> ft.Control:
     data = [(s.label, np.asarray(s.times_s) * 1e6, np.asarray(s.values)) for s in series]
     return drawing.line_chart(data, x_title="t (us)", y_title=y_title, height=height, markers=markers)
 
@@ -111,7 +124,6 @@ def ClosurePrediction(store: Store, session: Session, key: str, dyn: PulseDynami
         "Before the loops are drawn: do they close?",
         ft.Column(
             [
-                ft.Text(CLOSURE_PROMPT.question, size=13),
                 ft.RadioGroup(
                     content=ft.Column(
                         [ft.Radio(value=o, label=o) for o in CLOSURE_PROMPT.options], spacing=0
@@ -122,7 +134,10 @@ def ClosurePrediction(store: Store, session: Session, key: str, dyn: PulseDynami
                 ft.Row(
                     [
                         ft.FilledButton(
-                            content=ft.Text("Reveal"), on_click=lambda e: commit(pick), disabled=not pick
+                            content=ft.Text("Reveal"),
+                            on_click=lambda e: commit(pick),
+                            disabled=not pick,
+                            key="reveal-loops",
                         ),
                         ft.TextButton(content=ft.Text("Skip"), on_click=lambda e: commit("skipped")),
                     ],
@@ -131,7 +146,9 @@ def ClosurePrediction(store: Store, session: Session, key: str, dyn: PulseDynami
             ],
             spacing=6,
         ),
-        subtitle="retrieval before the reveal; the pick is scored against the played waveform's spin-branch loops on the run's own modes (Section 4.4.1), never against a script",
+        why=lambda e: session.select_concept(3, "spin_dependent_force"),
+        info="the pick is scored against the played waveform's spin-branch loops on the run's own modes (Section 4.4.1), never against a script",
+        key="closure-prediction",
     )
 
 
@@ -145,7 +162,7 @@ def _closure_feedback(store: Store, key: str, dyn: PulseDynamics) -> ft.Control:
     text = (
         f"your pick '{pick}' matches the record"
         if ok
-        else f"your pick was '{pick}'; the played waveform's branch loops end within {worst:.1%} of their largest excursion"
+        else f"your pick was '{pick}'; the loops end within {worst:.1%} of their largest excursion"
     )
     return ft.Container(
         content=ft.Text(text, size=12),
@@ -170,17 +187,17 @@ def Level3Page(
     step, sample, branch = selection(store, record, pulse_param, sample_param)
     st = record.step(step)
     z, fine = current_zoom(record, step, sample, branch)
+    plain = store.learner.plan(3).plain_labels_first
     header = level_header(
-        3,
         "The dynamics",
         "What happened inside one pulse?",
-        f"step {st.gate_id}, sample {sample}, branch {branch}",
+        note=f"step {st.gate_id}, sample {sample}, branch {branch}",
     )
     if z is None:
         why = (
             "this run was made by channel replay (a derived engine): it stores no per-time trace inside a pulse"
             if record.replay is not None
-            else "this GATE_LOCAL run stores no joint trace inside a pulse (core gap: see the device card's notes)"
+            else "this GATE_LOCAL run stores no joint trace inside a pulse (a core gap, listed on the device card)"
         )
         return ft.Column(
             [
@@ -190,9 +207,8 @@ def Level3Page(
                     ft.Column(
                         [
                             ft.Text(why, size=13),
-                            ft.Text(
-                                "Run the circuit with the engine set to 'full simulation' on Level 0; a JOINT_EXACT record can be zoomed into and re-simulated here.",
-                                size=13,
+                            status_line(
+                                "run with the engine set to full simulation on Level 0 to zoom into a pulse"
                             ),
                             ft.FilledButton(
                                 content=ft.Text("Back to the machine"),
@@ -202,6 +218,7 @@ def Level3Page(
                         ],
                         spacing=8,
                     ),
+                    key="no-trace",
                 ),
             ],
             spacing=12,
@@ -222,9 +239,6 @@ def Level3Page(
     def set_branch(e: Any) -> None:
         store.branch = int(e.control.value)
 
-    def resimulate(_e: Any) -> None:
-        session.submit_zoom(key, step, sample, branch)
-
     def open_equation(_e: Any) -> None:
         store.hamiltonian_target = (key, step, sample, branch)
         store.selected_channel = None
@@ -238,15 +252,15 @@ def Level3Page(
     controls = ft.Row(
         [
             ft.Dropdown(
-                label="dynamical sample",
+                label="sample",
                 value=str(sample),
                 options=[ft.DropdownOption(key=str(k), text=f"sample {k}") for k in range(record.n_samples)],
                 on_select=set_sample,
-                width=170,
+                width=130,
                 dense=True,
             ),
             ft.Dropdown(
-                label="initial-mixture branch",
+                label="branch",
                 value=str(branch),
                 options=[
                     ft.DropdownOption(
@@ -259,70 +273,32 @@ def Level3Page(
                 dense=True,
             ),
             ft.FilledButton(
-                content=ft.Text(
-                    "Re-simulate this pulse at fine resolution" if not fine else "Re-simulated (cached)"
-                ),
+                content=ft.Text("Re-simulate at fine resolution" if not fine else "Re-simulated"),
                 icon=ft.Icons.ZOOM_IN,
-                on_click=resimulate,
+                on_click=lambda e: session.submit_zoom(key, step, sample, branch),
                 disabled=zooming or fine,
                 tooltip="one trajectory of this step from its recorded initial state and noise sample, 201 stored points per segment (Section 14.3)",
+                key="resimulate",
             ),
             ft.OutlinedButton(
-                content=ft.Text("Zoom in: the equation being solved"),
+                content=ft.Text("Zoom in: the equation"),
                 icon=ft.Icons.FUNCTIONS,
                 on_click=open_equation,
+                key="open-equation",
             ),
         ],
         wrap=True,
         spacing=10,
     )
     trace_note = (
-        f"fine trace: {dyn.times_s.size} points, re-simulated in {dyn.wall_time.value:.2f} s at dimension {z.engine_dimension} ({', '.join(dyn.engine)})"
+        f"fine trace: {dyn.times_s.size} points at dimension {z.engine_dimension}"
         if fine
-        else f"recorded coarse trace: the {dyn.times_s.size} points the run stored (segment boundaries); re-simulate for the time resolution inside the segments"
+        else f"recorded coarse trace: {dyn.times_s.size} stored points; re-simulate for the time resolution inside the segments"
     )
-    top = card(
-        f"Pulse {st.gate_id}",
-        ft.Column(
-            [
-                ft.Text(
-                    f"{st.t_start_s * 1e6:.2f} to {st.t_end_s * 1e6:.2f} us on ions {st.ions}; {len(st.pulse_indices)} pulse objects (one per ion and segment)",
-                    size=13,
-                ),
-                controls,
-                ft.Text(trace_note, size=12, color=ft.Colors.ON_SURFACE_VARIANT),
-            ],
-            spacing=8,
-        ),
-        subtitle="one dynamical sample of the recorded run (Section 14.1 rule 1: nothing here is an illustration)",
-    )
-    body: list[ft.Control] = [header, top, ProgressRows(store, session)]
+    body: list[ft.Control] = [header, controls, status_line(trace_note), ProgressRows(store, session)]
     if ask:
         body.append(ClosurePrediction(store, session, pred_key, dyn))
-    # ---- qubits ----
-    qubit_series = list(dyn.populations) + list(dyn.coherences)
-    qubit_card = card(
-        "The qubits",
-        ft.Column(
-            [
-                _series_chart(qubit_series, y_title="P1, |rho_01|"),
-                ft.Row([shown(_last(s), index) for s in dyn.populations], wrap=True, spacing=12),
-            ]
-            + (
-                [
-                    _series_chart(
-                        ([dyn.concurrence] if dyn.concurrence is not None else []) + list(dyn.pauli),
-                        y_title="concurrence, <P>",
-                    ),
-                ]
-                if dyn.concurrence is not None
-                else []
-            ),
-            spacing=8,
-        ),
-        subtitle="populations and coherences from the reduced register state at every stored time",
-    )
-    # ---- motion ----
+    # ---- the focal pair: the loops and the qubits ----
     mode_order = sorted({lp.mode for lp in dyn.loops})
     first_ion = min((lp.ion for lp in dyn.loops if lp.ion is not None), default=None)
     loops = [
@@ -335,36 +311,69 @@ def Level3Page(
         )
         for lp in dyn.loops
     ]
-    closure_rows = _loop_table(dyn, first_ion, index)
-    motion_children: list[ft.Control] = [_series_chart(dyn.nbar, y_title="<n_m>")]
+    motion_children: list[ft.Control] = []
     if ask:
         motion_children.append(
-            ft.Text(
-                "the phase-space loops are hidden until you answer or skip the question above",
-                size=12,
-                italic=True,
-            )
+            status_line("the loops are hidden until you answer or skip the question above")
         )
     elif not dyn.loops:
-        motion_children += [
-            ft.Text(
-                "this step plays no entangling waveform: no spin-dependent force, so there is no loop to close",
-                size=12,
-                italic=True,
-            ),
-            closure_rows,
-        ]
+        motion_children.append(
+            status_line("this step plays no entangling waveform: no spin-dependent force, no loop")
+        )
     else:
-        motion_children += [_closure_feedback(store, pred_key, dyn), drawing.phase_space(loops), closure_rows]
+        motion_children += [
+            _closure_feedback(store, pred_key, dyn),
+            drawing.phase_space(loops, width=440, height=320),
+        ]
+    motion_children.append(hint(store, 3, "spin_dependent_force"))
+    motion_children.append(_series_chart(dyn.nbar, y_title="<n_m>", height=150))
+    motion_children.append(
+        details(
+            "level3.loops",
+            [_loop_table(dyn, first_ion, index)],
+            store=store,
+            session=session,
+            title="Closure per loop",
+        )
+    )
     motion_card = card(
         "The motion",
         ft.Column(motion_children, spacing=8),
-        subtitle=(
-            "<n_m>(t) from the exact simulation; the spin-branch loops alpha_im(t) of the played waveform on the run's own "
-            "modes (Section 4.4.1): 2 Im of the integral of conj(alpha_a) d alpha_b over the pair's two loops is the "
-            "entangling angle chi_m (Section 4.4.3); the spin-averaged <a_m>(t) cancels between the branches and is shown "
-            "as a residue"
+        why=lambda e: session.select_concept(3, "spin_dependent_force"),
+        info=(
+            "the loops are the played waveform's spin-branch trajectories alpha_im(t) on the run's own modes (Section 4.4.1); "
+            "2 Im of the integral of conj(alpha_a) d alpha_b over the pair's two loops is the entangling angle (Section 4.4.3); "
+            "the spin-averaged <a_m>(t) cancels between the branches and is listed as a residue"
         ),
+        key="motion",
+    )
+    qubit_series = list(dyn.populations) + list(dyn.coherences)
+    qubit_children: list[ft.Control] = [
+        _series_chart(qubit_series, y_title="P1, |rho_01|", height=220),
+        stat_row([stat_tile(_last(s), index, plain=plain) for s in dyn.populations]),
+    ]
+    if dyn.concurrence is not None:
+        qubit_children.append(
+            _series_chart([dyn.concurrence] + list(dyn.pauli), y_title="concurrence, <P>", height=150)
+        )
+    qubit_children.append(hint(store, 3, "fock_states"))
+    qubit_card = card(
+        "The qubits",
+        ft.Column(qubit_children, spacing=8),
+        why=lambda e: session.select_concept(3, "spin_dependent_force"),
+        info="populations and coherences from the reduced register state at every stored time (Section 14.1 rule 1)",
+        key="qubits",
+    )
+    body.append(
+        ft.ResponsiveRow(
+            [
+                ft.Column([motion_card], col={"xs": 12, "lg": 6}, spacing=10),
+                ft.Column([qubit_card], col={"xs": 12, "lg": 6}, spacing=10),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.START,
+            spacing=12,
+            run_spacing=12,
+        )
     )
     # ---- Fock distributions ----
     movie_key = resim.fock_movie_key(
@@ -384,26 +393,18 @@ def Level3Page(
                         weight=ft.FontWeight.W_600,
                     ),
                     drawing.fock_bars(start, end),
-                    ft.Row(
+                    stat_row(
                         [
-                            shown(_fock_shown(m, start, "start"), index),
-                            shown(_fock_shown(m, end, "end"), index),
-                        ],
-                        wrap=True,
-                        spacing=12,
+                            stat_tile(_fock_shown(m, start, "start"), index, plain=plain),
+                            stat_tile(_fock_shown(m, end, "end"), index, plain=plain),
+                        ]
                     ),
                 ],
                 spacing=4,
             )
         )
     if not fock_children:
-        fock_children.append(
-            ft.Text(
-                "the Fock distributions at the step's boundaries appear once the pulse is re-simulated (the boundary states are chained then)",
-                size=12,
-                italic=True,
-            )
-        )
+        fock_children.append(status_line("the Fock distributions appear once the pulse is re-simulated"))
     moving = store.running_of("fock_movie", **target) is not None
     if movie is not None:
         for hm in fock_heatmaps(movie):
@@ -423,90 +424,71 @@ def Level3Page(
                             y_labels=[str(n) for n in range(top_n + 1)],
                             x_title="t (us)",
                             y_title="n",
-                            tooltip="log colour scale over six decades; hover the table below for exact values",
+                            tooltip="log colour scale over six decades; hover for values",
                         ),
                         ft.Row([shown(s, index, label=False) for s in hm.nbar], wrap=True, spacing=8),
-                        ft.Text(hm.method, size=11, color=ft.Colors.ON_SURFACE_VARIANT),
                     ],
                     spacing=4,
                 )
             )
     else:
         fock_children.append(
-            ft.Row(
-                [
-                    ft.OutlinedButton(
-                        content=ft.Text(f"Compute P(n, t): {resim.DEFAULT_FOCK_FRAMES} frames"),
-                        icon=ft.Icons.GRID_ON,
-                        on_click=lambda e: session.submit_fock_movie(key, step, sample, branch),
-                        disabled=moving,
-                    ),
-                    ft.Text(
-                        "the core stores <n>(t) only; the frames re-simulate the pulse cut at each time (causality), about half the frames' worth of full re-simulations",
-                        size=12,
-                        color=ft.Colors.ON_SURFACE_VARIANT,
-                    ),
-                ],
-                wrap=True,
-                spacing=10,
+            ft.OutlinedButton(
+                content=ft.Text(f"Compute P(n, t): {resim.DEFAULT_FOCK_FRAMES} frames"),
+                icon=ft.Icons.GRID_ON,
+                on_click=lambda e: session.submit_fock_movie(key, step, sample, branch),
+                disabled=moving,
+                tooltip="the core stores <n>(t) only; each frame re-simulates the pulse cut at that time (causality), a background job",
             )
         )
     fock_card = card(
         "Vibration numbers",
         ft.Column(fock_children, spacing=10),
-        subtitle="quanta of vibration per resolved mode (Section 5.3)",
+        why=lambda e: session.select_concept(3, "fock_states"),
+        info="quanta of vibration per resolved mode (Section 5.3)"
+        + (f"; {movie.method}" if movie is not None else ""),
+        key="fock",
     )
     # ---- jumps and the sample ----
-    jump_controls: list[ft.Control] = []
-    for j in dyn.jumps:
-        jump_controls.append(
-            ft.TextButton(
-                content=ft.Text(f"{float(j.value or 0.0) * 1e6:.2f} us: {j.detail}", size=12),
-                icon=ft.Icons.BOLT,
-                on_click=lambda e, ch=str(j.detail): open_channel(ch),
-                tooltip="open this channel's collapse operator on the Hamiltonian page",
-            )
+    jump_controls: list[ft.Control] = [
+        ft.TextButton(
+            content=ft.Text(f"{float(j.value or 0.0) * 1e6:.2f} us: {j.detail}", size=12),
+            icon=ft.Icons.BOLT,
+            on_click=lambda e, ch=str(j.detail): open_channel(ch),
+            tooltip="open this channel's collapse operator on the Hamiltonian page",
         )
-    if not jump_controls:
-        jump_controls.append(
-            ft.Text(
-                "no quantum jump in this sample (a quiet device, or a trajectory without a jump)",
-                size=12,
-                italic=True,
-            )
-        )
+        for j in dyn.jumps
+    ] or [status_line("no quantum jump in this sample")]
     sample_rows: list[tuple[str, ft.Control]] = [
-        (s.detail, shown(s, index, label=False)) for s in dyn.noise_values
-    ] or [("quasi-static values", ft.Text("none drawn: the device is quiet", size=12))]
-    dw_rows = [(s.detail.split(":")[0], shown(s, index, label=False)) for s in dyn.debye_waller]
+        (s.detail, shown(s, index, label=False, size=12)) for s in dyn.noise_values
+    ] or [("quasi-static values", status_line("none drawn: the device is quiet"))]
+    dw_rows = [(s.detail.split(":")[0], shown(s, index, label=False, size=12)) for s in dyn.debye_waller]
     sample_card = card(
         "Jumps and this sample",
         ft.Column(
             [
-                ft.Text("quantum jumps", size=12, weight=ft.FontWeight.W_600),
                 ft.Column(jump_controls, spacing=0),
-                ft.Text("quasi-static values drawn for this sample", size=12, weight=ft.FontWeight.W_600),
-                kv_rows(sample_rows),
-            ]
-            + (
-                [
-                    ft.Text("frozen spectators (Debye-Waller)", size=12, weight=ft.FontWeight.W_600),
-                    kv_rows(dw_rows),
-                ]
-                if dw_rows
-                else []
-            )
-            + [
-                ft.Row(
-                    [shown(dyn.norm_deficit, index), shown(dyn.wall_time, index)]
-                    + [shown(b, index) for b in dyn.boundary_population],
-                    wrap=True,
-                    spacing=12,
-                )
+                stat_row(
+                    [
+                        stat_tile(dyn.norm_deficit, index, plain=plain),
+                        stat_tile(dyn.wall_time, index, plain=plain),
+                    ]
+                    + [stat_tile(b, index, plain=plain) for b in dyn.boundary_population]
+                ),
+                hint(store, 3, "quantum_jumps"),
+                details(
+                    "level3.sample",
+                    [kv_rows(sample_rows)] + ([kv_rows(dw_rows)] if dw_rows else []),
+                    store=store,
+                    session=session,
+                    title="Quasi-static values and frozen spectators",
+                ),
             ],
             spacing=6,
         ),
-        subtitle="what the environment did in this repetition (Section 6.1)",
+        why=lambda e: session.select_concept(3, "quantum_jumps"),
+        info="what the environment did in this repetition (Section 6.1)",
+        key="sample",
     )
     # ---- process matrix ----
     pm_key = resim.process_matrix_key(step, sample, branch)
@@ -517,80 +499,82 @@ def Level3Page(
         n = int(round(np.sqrt(pv.choi_abs.shape[0])))
         labels = [format(k, f"0{max(1, int(np.log2(n)))}b") for k in range(n)]
         pm_children: list[ft.Control] = [
-            ft.Row(
+            stat_row(
                 [
-                    shown(pv.infidelity, index),
-                    shown(pv.entanglement_infidelity, index),
-                    shown(pv.depolarizing_rate, index),
-                ],
-                wrap=True,
-                spacing=12,
+                    stat_tile(pv.infidelity, index, plain=plain),
+                    stat_tile(pv.entanglement_infidelity, index, plain=plain),
+                    stat_tile(pv.depolarizing_rate, index, plain=plain),
+                ]
             ),
-            ft.Row(
-                [shown(pv.cp_residual, index), shown(pv.tp_residual, index), shown(pv.wall_time, index)],
-                wrap=True,
-                spacing=12,
-            ),
-            ft.Text("Pauli twirl (largest terms)", size=12, weight=ft.FontWeight.W_600),
-            ft.Row([shown(p, index, label=False) for p in pv.pauli[:6]], wrap=True, spacing=8),
-            ft.Text(
-                "|Choi| of the simulated channel (left) and of the ideal gate (right), log colour",
-                size=12,
-                weight=ft.FontWeight.W_600,
-            ),
-            ft.Row(
+            details(
+                "level3.process",
                 [
-                    drawing.heatmap(
-                        pv.choi_abs,
-                        x_labels=[f"{a}{b}" for a in labels for b in labels],
-                        y_labels=[f"{a}{b}" for a in labels for b in labels],
-                        x_title="input, output",
-                        y_title="",
-                        cell_w=12,
-                        cell_h=12,
+                    ft.Row(
+                        [
+                            shown(pv.cp_residual, index),
+                            shown(pv.tp_residual, index),
+                            shown(pv.wall_time, index),
+                        ],
+                        wrap=True,
+                        spacing=12,
                     ),
-                    drawing.heatmap(
-                        pv.ideal_choi_abs,
-                        x_labels=[f"{a}{b}" for a in labels for b in labels],
-                        y_labels=[f"{a}{b}" for a in labels for b in labels],
-                        x_title="input, output",
-                        y_title="",
-                        cell_w=12,
-                        cell_h=12,
+                    ft.Row([shown(p, index, label=False) for p in pv.pauli[:6]], wrap=True, spacing=8),
+                    ft.Text(
+                        "|Choi| of the simulated channel (left) and the ideal gate (right)",
+                        size=12,
+                        weight=ft.FontWeight.W_600,
                     ),
+                    ft.Row(
+                        [
+                            drawing.heatmap(
+                                pv.choi_abs,
+                                x_labels=[f"{a}{b}" for a in labels for b in labels],
+                                y_labels=[f"{a}{b}" for a in labels for b in labels],
+                                x_title="input, output",
+                                y_title="",
+                                cell_w=12,
+                                cell_h=12,
+                            ),
+                            drawing.heatmap(
+                                pv.ideal_choi_abs,
+                                x_labels=[f"{a}{b}" for a in labels for b in labels],
+                                y_labels=[f"{a}{b}" for a in labels for b in labels],
+                                x_title="input, output",
+                                y_title="",
+                                cell_w=12,
+                                cell_h=12,
+                            ),
+                        ],
+                        wrap=True,
+                        spacing=16,
+                    ),
+                    status_line(pv.method),
                 ],
-                wrap=True,
-                spacing=16,
+                store=store,
+                session=session,
+                title="Pauli twirl and the Choi matrices",
             ),
-            ft.Text(pv.method, size=11, color=ft.Colors.ON_SURFACE_VARIANT),
         ]
     else:
         pm_children = [
-            ft.Row(
-                [
-                    ft.OutlinedButton(
-                        content=ft.Text("Compute the process matrix"),
-                        icon=ft.Icons.GRID_4X4,
-                        on_click=lambda e: session.submit_tomography(key, step, sample, branch),
-                        disabled=tomo_running,
-                    ),
-                    ft.Text(
-                        "every product input of the register through this step from its recorded motional state (16 inputs for two qubits), then least squares and the CP/TP projection; a background job",
-                        size=12,
-                        color=ft.Colors.ON_SURFACE_VARIANT,
-                    ),
-                ],
-                wrap=True,
-                spacing=10,
+            ft.OutlinedButton(
+                content=ft.Text("Compute the process matrix"),
+                icon=ft.Icons.GRID_4X4,
+                on_click=lambda e: session.submit_tomography(key, step, sample, branch),
+                disabled=tomo_running,
+                tooltip="every product input of the register through this step from its recorded motional state (16 inputs for two qubits), least squares, the CP/TP projection; a background job (Section 5.4)",
+                key="compute-process-matrix",
             )
         ]
     pm_card = card(
-        "The process matrix of the finished pulse",
+        "The gate as a channel",
         ft.Column(pm_children, spacing=8),
-        subtitle="the gate as a channel (Sections 5.4, 6.8)",
+        why=lambda e: session.select_concept(3, "truncation_and_convergence"),
+        info="the process matrix of the finished pulse (Sections 5.4, 6.8)",
+        key="process",
     )
     rechecking = store.running_of("recheck", **target) is not None
-    recheck_row = card(
+    recheck_card = card(
         "Convergence of this zoom",
         ft.Row(
             [
@@ -599,36 +583,31 @@ def Level3Page(
                     icon=ft.Icons.VERIFIED,
                     on_click=lambda e: session.submit_recheck(key, step, sample, branch),
                     disabled=rechecking,
+                    tooltip="the Section 5.5 arms on this step; the badge in the numerics strip turns pass or fail",
                 ),
-                ft.Text(
-                    "the Section 5.5 arms on this step; the badge in the numerics strip below turns pass or fail",
-                    size=12,
-                    color=ft.Colors.ON_SURFACE_VARIANT,
-                ),
+                hint(store, 3, "truncation_and_convergence"),
             ],
             wrap=True,
             spacing=10,
         ),
+        why=lambda e: session.select_concept(3, "truncation_and_convergence"),
+        key="recheck",
     )
-    body += [
+    body.append(
         ft.ResponsiveRow(
             [
-                ft.Column([qubit_card, fock_card], col={"xs": 12, "lg": 6}, spacing=10),
-                ft.Column(
-                    [motion_card, sample_card, pm_card, recheck_row], col={"xs": 12, "lg": 6}, spacing=10
-                ),
+                ft.Column([fock_card, recheck_card], col={"xs": 12, "lg": 6}, spacing=10),
+                ft.Column([sample_card, pm_card], col={"xs": 12, "lg": 6}, spacing=10),
             ],
             vertical_alignment=ft.CrossAxisAlignment.START,
             spacing=12,
             run_spacing=12,
         )
-    ]
+    )
     return ft.Column(body, spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
 
 
-def _last(series: Any) -> Any:
-    from qutip_trap_app.viewmodel.catalogue import Shown
-
+def _last(series: Any) -> Shown:
     return Shown(
         series.quantity,
         float(series.values[-1]) if series.values.size else None,
@@ -638,8 +617,6 @@ def _last(series: Any) -> Any:
 
 def _loop_table(dyn: PulseDynamics, first_ion: int | None, index: ProvenanceIndex) -> ft.Control:
     """One row per spin-branch loop (ion, mode) and one per spin-averaged residue; every value carries its source chip."""
-    from qutip_trap_app.viewmodel.catalogue import Shown
-
     rows: list[list[ft.Control | str]] = []
     for lp in dyn.loops:
         booked: ft.Control | str = "-"
@@ -661,20 +638,11 @@ def _loop_table(dyn: PulseDynamics, first_ion: int | None, index: ProvenanceInde
             ]
         )
     for lp in dyn.mean_alpha:
-        rows.append(
-            [
-                f"<a_{lp.mode}>(t) spin-averaged",
-                value_cell(_mean_alpha_shown(lp), index),
-                "-",
-                "-",
-            ]
-        )
+        rows.append([f"<a_{lp.mode}>(t) spin-averaged", value_cell(_mean_alpha_shown(lp), index), "-", "-"])
     return data_table(("loop", "ends from start", "closed-form angle", "booked angle"), rows)
 
 
-def _closure_shown(lp: Any) -> Any:
-    from qutip_trap_app.viewmodel.catalogue import Shown
-
+def _closure_shown(lp: Any) -> Shown:
     return Shown(
         "branch_closure",
         lp.closes,
@@ -682,32 +650,24 @@ def _closure_shown(lp: Any) -> Any:
     )
 
 
-def _area_shown(lp: Any) -> Any:
-    from qutip_trap_app.viewmodel.catalogue import Shown
-
+def _area_shown(lp: Any) -> Shown:
     return Shown(
         "chi_closed_form",
         lp.chi_closed_form_rad,
-        f"mode {lp.mode}: from the pair's two loops at the played amplitude; the angle the run books is "
-        f"{lp.chi_m_rad:+.4f} rad (the table's exact spot check scaled to the requested gate angle), and the gap is the "
-        "Debye-Waller and beyond-Lamb-Dicke correction of Section 7.8",
+        f"mode {lp.mode}: from the pair's two loops at the played amplitude; the angle the run books is {lp.chi_m_rad:+.4f} rad, "
+        "and the gap is the Debye-Waller and beyond-Lamb-Dicke correction of Section 7.8",
     )
 
 
-def _mean_alpha_shown(lp: Any) -> Any:
-    from qutip_trap_app.viewmodel.catalogue import Shown
-
+def _mean_alpha_shown(lp: Any) -> Shown:
     return Shown(
         "mean_alpha_excursion",
         lp.excursion,
-        f"mode {lp.mode}: the exact simulation's spin-averaged <a_m>(t); the branches' loops cancel in the average, and "
-        "what remains measures the asymmetry between them",
+        f"mode {lp.mode}: the exact simulation's spin-averaged <a_m>(t); the branches' loops cancel in the average, and what remains measures their asymmetry",
     )
 
 
-def _fock_shown(mode: int, dist: np.ndarray, when: str) -> Any:
-    from qutip_trap_app.viewmodel.catalogue import Shown
-
+def _fock_shown(mode: int, dist: np.ndarray, when: str) -> Shown:
     return Shown(
         "fock_population", float(dist[0]) if dist.size else None, f"P(n = 0) of mode {mode} at the {when}"
     )

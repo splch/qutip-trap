@@ -57,3 +57,6 @@ copyright = "Copyright (C) 2026 Spencer Churchill"
 
 [tool.flet.app]
 path = "src"
+# the package is src/qutip_trap_app with src/main.py as the entry point; the tests, the Flutter build tree and the
+# provisioned test host never ship in a bundle (`flet build macos|windows|linux`, PLAN.md Section 14.6 "Packaging")
+exclude = ["tests", "build", ".flet", "__pycache__"]

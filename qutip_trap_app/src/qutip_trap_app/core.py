@@ -51,6 +51,7 @@ from qutip_trap.api import (
     ScatteringOptions,
     Schedule,
     SeedSpec,
+    Segment,
     ShapedPulse,
     SolverOptions,
     Species,
@@ -97,8 +98,11 @@ from qutip_trap.api import (
 
 # ---- names the core does not re-export through qutip_trap.api (each a filed core feature request, Section 14.1) -----------
 from qutip_trap.control.shaping import (
+    CHI_MAXIMAL_RAD,
     SampledEnvelope,
     SegmentedEnvelope,
+    closure_duration_s,
+    closure_rabi_rad_s,
     envelope_of,
     integrals_segmented,
     trajectory_sampled,
@@ -107,8 +111,25 @@ from qutip_trap.dynamics.engine import JointExactEngine
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, BuiltHamiltonian, DriveRecord, build_hamiltonian
 from qutip_trap.hilbert.operators import debye_waller_factor, rabi_matrix_element, rabi_table
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, key_frozen_n, key_mode_offset_hz, key_qubit_offset_hz
+from qutip_trap.prep.closed_forms import (
+    doppler_force_nbar,
+    lamb_dicke_parameter,
+    stenholm_coefficients,
+    x0_m,
+)
 from qutip_trap.prep.sideband import apply_pulses, mean_occupation, thermal_distribution
+from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
+from qutip_trap.trap.crystal import axial_modes_dimensionless, equilibrium_dimensionless
 from qutip_trap.trap.mathieu import is_stable, monodromy
+from qutip_trap.units import ATOMIC_MASS_KG
+from qutip_trap.validation.harty_rb import HartyParameters, simulate_epg_sets
+from qutip_trap.validation.two_qubit_closed_forms import (
+    ballance_thermal_error,
+    kirchmair_populations,
+    ms_alpha,
+    ms_gamma,
+    thermal_debye_waller_infidelity,
+)
 
 CORE_GAPS: tuple[str, ...] = (
     "qutip_trap.api exports the PulseEngine protocol but no concrete engine; the per-pulse evolution entry point Section 14.6 "
@@ -140,6 +161,12 @@ CORE_GAPS: tuple[str, ...] = (
     "trajectory_sampled and the two envelope types) are not re-exported: the Level 3 spin-branch loops alpha_im(t) and the "
     "gate page's closed-form angle at the played amplitude import them from qutip_trap.control.shaping [core feature "
     "request: a public trajectory entry point on Waveform]",
+    "the validation-suite closed forms the published-experiment presets of Section 14.5 run (Harty's randomized-benchmarking "
+    "model of Section 9.2, Kirchmair's thermal populations of Section 9.4, the Doppler force and rate coefficients of "
+    "Section 9.3, James's dimensionless equilibrium and axial modes of Section 9.1, the zero-point length and Lamb-Dicke "
+    "closed form, the closure algebra constants) and the published readout apparatus presets of Section 8.4 (Myerson, "
+    "Crain) and the CODATA atomic mass unit are not re-exported by qutip_trap.api: the app imports them from qutip_trap.validation, "
+    "qutip_trap.prep, qutip_trap.trap, qutip_trap.readout and qutip_trap.units [core feature request: a public validation namespace]",
 )
 """What the core does not expose (or does not re-export) that the application needs; Section 14.6's record of the gaps."""
 
@@ -147,7 +174,10 @@ __all__ = [
     "Beam",
     "BuilderOptions",
     "BuiltHamiltonian",
+    "CHI_MAXIMAL_RAD",
+    "ATOMIC_MASS_KG",
     "CORE_GAPS",
+    "CRAIN_YB171_SNSPD",
     "CalEntry",
     "CalibrationTable",
     "Circuit",
@@ -165,9 +195,11 @@ __all__ = [
     "GateModes",
     "GateStep",
     "GateTarget",
+    "HartyParameters",
     "HilbertSpace",
     "JointExactEngine",
     "KEY_BRANCH_WEIGHT",
+    "MYERSON_CA40_PMT",
     "MathieuParameters",
     "ModeTruncation",
     "MotionalModel",
@@ -186,6 +218,7 @@ __all__ = [
     "ScatteringOptions",
     "Schedule",
     "SeedSpec",
+    "Segment",
     "SegmentedEnvelope",
     "ShapedPulse",
     "SolverOptions",
@@ -197,11 +230,15 @@ __all__ = [
     "Waveform",
     "apply_pulses",
     "average_gate_infidelity",
+    "axial_modes_dimensionless",
+    "ballance_thermal_error",
     "build_hamiltonian",
     "ca40_optical",
     "calibrate",
     "choi_from_unitary",
     "circuit_unitary",
+    "closure_duration_s",
+    "closure_rabi_rad_s",
     "collision_rate_per_ion",
     "compile_with_report",
     "core_version",
@@ -209,8 +246,10 @@ __all__ = [
     "depolarizing_rate",
     "derive_raman_drive",
     "detection_rates_for_ion",
+    "doppler_force_nbar",
     "entanglement_infidelity",
     "envelope_of",
+    "equilibrium_dimensionless",
     "gate_modes",
     "gate_steps",
     "ideal_probabilities",
@@ -220,12 +259,16 @@ __all__ = [
     "key_frozen_n",
     "key_mode_offset_hz",
     "key_qubit_offset_hz",
+    "kirchmair_populations",
     "kraus_operators",
+    "lamb_dicke_parameter",
     "last_record",
     "load_ionq_json",
     "load_openqasm2",
     "mean_occupation",
     "monodromy",
+    "ms_alpha",
+    "ms_gamma",
     "optimize_threshold",
     "pauli_twirl",
     "prepare",
@@ -237,12 +280,16 @@ __all__ = [
     "scattering_channels",
     "schedule",
     "select_space",
+    "simulate_epg_sets",
     "solve_amplitude_modulation",
     "solve_crystal",
     "species_by_name",
     "standard_recipe",
+    "stenholm_coefficients",
+    "thermal_debye_waller_infidelity",
     "thermal_distribution",
     "trajectory_sampled",
     "white_spectrum",
+    "x0_m",
     "yb171_chain",
 ]

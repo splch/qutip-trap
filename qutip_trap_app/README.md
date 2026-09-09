@@ -8,78 +8,82 @@ imports this package.
 
 ## Status
 
-**M11.1 to M11.3 done.** The record layer and all five levels of the ladder exist and run in a native window or a browser
-served from the host. What exists and is tested:
+**M11.1 to M11.4 done.** The record layer and all five levels of the ladder exist and run in a native window or a browser
+served from the host; M11.4 rebuilt every screen as a learning tool (DESIGN.md Section 10) and added the presets, the
+request semantics, the explain drawer's specification text and the navigation tests. What exists and is tested:
 
 - `record.py` - the run record of Section 14.3 (job, compiled circuit, schedule, space, preparation, noise samples,
   branches, per-(sample, branch) traces, readout records, results with the target beside them, diagnostics, device card,
-  calibration table, core gaps) and its storage policy; `execute(job)` runs a job and records it.
+  calibration table, core gaps) and its storage policy; `execute(job)` runs a job and records it; (M11.4) the job's
+  `waveform_overrides` (a beat-note detuning set by hand, applied to the table as written), `requests` and `label`; record
+  format `qutip-trap-app/record/3`.
 - `codec.py`, `storage.py` - export to one zip of JSON plus `.npy` arrays with a digest; bitwise re-import.
 - `resim.py` - the engine as `run()` built it; boundary states by chaining over gate steps; zoom into one pulse with a fine
-  store, cached by key; tolerance and cap re-checks for the convergence badge; (M11.3) the Fock movie by truncated
-  re-simulation, the Hamiltonian record of a step (terms, matrix elements, collapse operators) and the process matrix of a
-  step by state-based tomography from its recorded motional state.
-- `knobs.py`, `device_layer.py` (M11.3) - the Level 4 knobs of Section 14.4 and the rebuild of a preset with overrides
-  (crystal re-solved, recipe re-derived); the device layer every physics page reads, derived in the worker from the public
-  API alone: species, trap with the Mathieu stability boundary, crystal, light with the scattering sweep, noise, cooling,
-  readout with exact count distributions and the threshold scan, the pulse-solver solutions per pair, and the device card of
-  an edited device.
-- `replay.py`, `replay_record.py` (M11.2) - the app-side channel replay of Section 5.4: every gate as the Section 6.8
-  channel the core extracts by GATE_LOCAL tomography, conjugated to the played phase (the frame covariance is measured,
-  not assumed), the register as a density matrix, the table's readout errors; the channel-derivation residual it reports
-  bounds its distance from JOINT_EXACT (Section 9.11, tested cold and, as a slow test, hot).
-- `verify.py` (M11.2) - verify deeper: the same job at the next engine, the register populations compared against the
-  residual or Section 9.8's bound; a JOINT_EXACT record runs the Section 5.5 re-checks instead.
-- `workers.py` (M11.2) - one worker process that holds the live state and streams progress; the UI never blocks.
+  store, cached by key; tolerance and cap re-checks for the convergence badge; the Fock movie by truncated re-simulation, the
+  Hamiltonian record of a step and the process matrix of a step by state-based tomography.
+- `requests.py` (M11.4) - the request semantics of Section 14.4: XX(chi) requested at Level 1 rebuilds the job with that
+  angle (the scheduler rescales the calibrated waveform by sqrt(|chi|/|chi_cal|), the s-squared law) and a detuning set by
+  hand at Level 2 shifts the pair's waveform as written; requests the device cannot satisfy are refused with the reason; the
+  MS angle is read back from a process matrix by a fit over the ideal family, so "the simulated unitary is XX(0.3)" is a number.
+- `presets.py`, `viewmodel/presets.py` (M11.4) - the published-experiment presets of Section 14.5: Harty 2014 microwave RB
+  (Section 9.2), James 1998 positions and axial modes (9.1), Monroe 1995 Doppler cooling (9.3), Roos 2000 Lamb-Dicke
+  parameters (9.3), Kirchmair 2009 thermal MS populations (9.4), Myerson 2008 and Crain 2019 readout (9.5), plus the Bell
+  state and the three-ion GHZ of Section 9.6 as circuit presets that run through the machine; every published number carries a
+  `published.*` ledger record with the Section 9 row's tag, every simulated one the `anchor.*` of the check that recomputed
+  it, and the comparison says when a number is not a first-principles prediction and why (Kirchmair's fidelity, Myerson's
+  optimum).
+- `knobs.py`, `device_layer.py` - the Level 4 knobs of Section 14.4 and the rebuild of a preset with overrides; the device
+  layer every physics page reads, derived in the worker from the public API alone.
+- `replay.py`, `replay_record.py` - the app-side channel replay of Section 5.4 with its measured frame covariance and
+  derivation residual; `verify.py` - verify deeper; `workers.py` - one worker process that holds the live state and streams
+  progress (M11.4: the `request_run` and `preset` requests).
 - `provenance.py` - the index generated from `docs/provenance/ledger.yaml` and `PLAN.md` into
-  `src/assets/provenance_index.json`; chips and Part II sections at run time.
-- `viewmodel/` - `catalogue` (every displayed quantity with its ledger id, 191 of them), `machine` (Level 0), `circuit`
-  (Level 1), `schedule` (Level 2), `dynamics` (Level 3: the recorded trace, the fine trace, Fock heatmaps, the process
-  view, the closure table), `physics` (Level 4: one view per page over the device layer, the Hamiltonian view, the knob rows,
-  the edited device's card), `numerics` (the panel and badge), `learn` (29 concepts, prompts, prior-knowledge plans, spacing,
-  mastery log, the six-click tour, the per-page concept sets).
-- `views/` (M11.2) - the Flet screens: the shell with the navigation rail, the breadcrumb zoom bar with keyboard zoom, the
-  explain drawer and the numerics strip; Level 0 (device card, circuit editor with OpenQASM 2 and IonQ JSON, engine choice,
-  Run, predict-then-reveal, histogram with the target beside it, shots behind a bar, verify deeper); Level 1 (timeline,
-  gate card with target unitary and calibrated parameters, register after the gate, phase register, compile report);
-  Level 2 (time axis, tones against the mode spectrum, waveform segments, closure indicators, crosstalk); the Learn page;
-  (M11.3) Level 3 (sample and branch selectors, the recorded trace at once and Re-simulate, the closure prediction before
-  the loops are drawn, P1 and coherences, concurrence and Pauli correlators, <n_m>(t), the spin-branch loops of the played waveform, Fock bars and
-  the P(n, t) heatmap, jumps linking to their collapse operator, the process matrix, the convergence re-checks) and the
-  eight Level 4 pages with their knob panels, stale badges and Recalibrate, drawn on Flet's canvas and a pure-Python PNG
-  heatmap (`views/drawing.py`; matplotlib is not a dependency). Every level page scrolls; the explain cards and the expandable
-  tiles keep their open state across re-renders; a run shows a live elapsed time and a Cancel button; the prediction is
-  asked before every run of a changed circuit and scored beside that run's histogram; the learner's settings and mastery
-  log are kept on the device through Flet's `SharedPreferences`, so the first-launch question is asked once per device
-  and the review tray can come due across launches.
-- `tests/` - the Section 9.11 rows M11.1 to M11.3 own: coarse-graining identity, record round trip, re-simulation cache,
-  convergence badge, provenance coverage (Levels 0 to 4), channel derivation (cold; the hotter half is `-m slow`), downward
-  propagation (`test_knobs.py`: the rf amplitude scales q at fixed a with beta, nu and eta following Section 4.1, the
-  recalibrated table re-solves the pair's waveform to the layer's own closed-form solution up to the exact spot check's
-  amplitude factor, the device card updates; the layer agrees
-  with the record it describes), plus verify deeper, the worker, the learning layer's integrity, the application state
-  (`test_state.py`, `test_device_state.py`: one derive per knob change, the layer and the recalibration landing in the
-  store, the worker building an edited device once) and Level 3 on demand (`test_level3.py`: the Hamiltonian record's
-  matrix elements against QuTiP's displacement operator, the Fock movie's frames against the boundary states and the fine
-  zoom, the process matrix's normalizations, the recorded trace, the closure scorer).
+  `src/assets/provenance_index.json`; (M11.4) every section's own Markdown, so the explain drawer's
+  Specification tile shows the text that governs the screen and a clicked chip opens the section it cites.
+- `viewmodel/` - `catalogue` (every displayed quantity with its ledger id, 221 of them), `machine`, `circuit`, `schedule`,
+  `dynamics`, `physics`, `numerics`, `learn` (30 concepts, the six-click tour, the faded GHZ exercise, the free exercise, the
+  Learn routes, the spacing rule, the mastery log), `drills` (M11.4: four discriminations generated from the current record and
+  interleaved), `presets`.
+- `views/` - the Flet screens on the information hierarchy of DESIGN.md Section 10: one focal picture per level, numbers as
+  stat tiles, tables behind Details, a why button per card opening its concept in the explain drawer (one concept at a time,
+  the Specification tile beneath), chips that are buttons, a badge-only numerics strip; the request controls on Levels 1
+  and 2 with the actual-versus-requested tiles; Level 1's Bloch discs; the Learn ladder (tour, three ions, your own, drills,
+  review, published experiments, progress) as routes; control keys for the `flet test` flows.
+- `tests/` - the Section 9.11 rows M11.1 to M11.4 own: coarse-graining identity, record round trip, re-simulation cache,
+  convergence badge, provenance coverage (Levels 0 to 4, the presets, the drills), channel derivation (cold; the hotter half is
+  `-m slow`), downward propagation, request semantics (`test_requests.py`: XX(0.3) read back within 5e-3 rad of the request
+  by tomography; a 5 kHz hand-set detuning opens the loops and moves the played gate's channel away from the requested unitary
+  while the target stays the requested one), presets (`test_presets.py`), navigation (`test_navigation.py` over the routing
+  model; `test_main.py` under `flet test`), the text budget (`test_text_budget.py`, an AST walk of every screen), the
+  explain index (`test_explain_index.py`), plus verify deeper, the worker, the learning layer, the application state and
+  Level 3 on demand.
 
 ## Commands
 
 From the repository root:
 
     uv sync --all-packages --extra gui --group dev                 # installs the core, the app and Flet
-    uv run --package qutip-trap-app pytest qutip_trap_app/tests -m 'not slow'   # the view-model tests (about eight minutes)
-    uv run --package qutip-trap-app pytest qutip_trap_app/tests               # with the hotter-state channel test (about thirteen)
+    uv run --package qutip-trap-app pytest qutip_trap_app/tests -m 'not slow'   # the view-model tests (about twelve minutes)
+    uv run --package qutip-trap-app pytest qutip_trap_app/tests               # with the hotter-state channel test
     uv run python -m qutip_trap_app.provenance                     # regenerate src/assets/provenance_index.json
     uv run python -m qutip_trap_app.provenance --check             # CI: the asset is current with the ledger and the plan
     (cd qutip_trap_app && uv run mypy)                              # strict types for src/qutip_trap_app
     uv run ruff check qutip_trap_app && uv run ruff format --check qutip_trap_app
 
-The `flet test` navigation and run-flow tests are milestone M11.4 (the `flet create` counter test that shipped with the
-template was removed: it asserted a screen the app no longer has). `tests/conftest.py` already skips any `flet_app` test
-unless `QUTIP_TRAP_APP_UI_TESTS=1` is set, so adding them needs no plumbing:
+The `flet test` navigation and run-flow tests (`tests/test_main.py`) drive the rendered controls by their keys through
+Flet's `flet_app` fixture. They need the Flutter test host: `flet test` provisions it with the Flutter SDK it installs on
+demand (under `~/flutter`), and on macOS the host is a desktop build that needs the full Xcode, which the Command Line Tools
+do not provide. `tests/conftest.py` skips them unless `QUTIP_TRAP_APP_UI_TESTS=1`:
 
     cd qutip_trap_app && QUTIP_TRAP_APP_UI_TESTS=1 uv run flet test
+
+On the 2026-09-09 development machine (Command Line Tools only, no Xcode, no CocoaPods) `flet build macos` stopped at
+`flutter doctor` with "Xcode installation is incomplete; a full installation is necessary" and the UI tests were not run;
+`test_navigation.py` covers the same six-click path over the routing model without a Flutter client. The packaging
+configuration is in `pyproject.toml` (`[tool.flet]`); with Xcode present the bundles are
+
+    cd qutip_trap_app && uv run --project .. flet build macos      # also windows, linux on those hosts
+    cd qutip_trap_app && uv run --project .. flet pack src/main.py   # the PyInstaller fallback, no Flutter SDK or Xcode needed
 
 Run the app (the first Run derives the channel library for the device, about a minute; a full simulation of the Bell
 circuit takes about 20 s):

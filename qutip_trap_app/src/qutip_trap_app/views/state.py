@@ -23,6 +23,7 @@ from qutip_trap_app.core import Circuit, Operation, SolverOptions
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import DeviceRef, JobSpec, Record, TableRecord, job_for_preset
+from qutip_trap_app.requests import GateRequest
 from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.learn import (
     DEFAULT_RETENTION_DAYS,
@@ -32,6 +33,7 @@ from qutip_trap_app.viewmodel.learn import (
     PriorKnowledge,
     plan_for,
 )
+from qutip_trap_app.viewmodel.presets import PRESETS, PresetResult, PresetSpec
 from qutip_trap_app.workers import Event, SimulationWorker
 
 Engine = Literal["replay", "full"]
@@ -193,6 +195,23 @@ class Store:
     selected_channel: str | None = None
     """A collapse channel opened from a jump marker on Level 3 (highlighted on the Hamiltonian page)."""
     selected_term: int | None = None
+    # ---- M11.4: requests, presets, the explain drawer's selection and the Learn activities ----
+    preset_results: dict[str, PresetResult] = field(default_factory=dict)
+    """Finished published-experiment presets by id (Section 14.5)."""
+    active_preset: str | None = None
+    """The circuit preset the current run was made from (its check-script numbers show beside the histogram), if any."""
+    last_request: GateRequest | None = None
+    """The most recent request made at Level 1 or 2 (accepted or refused), shown where it was made."""
+    explain_concept: dict[int, str] = field(default_factory=dict)
+    """Per level, the concept the explain drawer shows (DESIGN.md Section 10 R7); absent = the level's first."""
+    spec_section: str | None = None
+    """The Part II section the drawer's Specification tile shows, when a chip or a why-button chose one."""
+    details_open: dict[str, bool] = field(default_factory=dict)
+    """Per Details tile id, whether the learner opened it (None = the plan's default)."""
+    revealed_stops: set[int] = field(default_factory=set)
+    """Stops of the faded GHZ exercise whose annotation the learner asked for."""
+    drill_answers: dict[str, str] = field(default_factory=dict)
+    """Per drill id, the answer given (scored against the record, DESIGN.md Section 3)."""
 
     def record(self) -> Record | None:
         return self.records.get(self.current) if self.current else None
@@ -253,6 +272,8 @@ class Session:
         self.preferences = preferences
         """A ``flet.SharedPreferences`` service; None in tests and headless use, where the learner lives in memory only."""
         self._last_beat = time.monotonic()
+        # a clicked provenance chip opens the drawer's Specification tile at its section (DESIGN.md Section 10 R8)
+        provenance.on_open_section = self.open_specification
 
     def start(self) -> None:
         self.worker.start()
@@ -322,7 +343,7 @@ class Session:
             return load_ionq_json(json.loads(text))
         return load_openqasm2(text)
 
-    def build_job(self, *, n_ions: int | None = None, seed: int = 0) -> JobSpec:
+    def build_job(self, *, n_ions: int | None = None, seed: int = 0, label: str = "") -> JobSpec:
         """The job for the current circuit on the current device (the Level 4 overrides included). Nothing is built here:
         the device hash is left for the worker to fill unless a derived layer already knows it."""
         circuit = self.parse_circuit()
@@ -338,15 +359,18 @@ class Session:
             preset_kwargs=self.store.preset_kwargs,
             overrides=self.store.device_overrides,
             build=False,
+            label=label,
         )
         ref = self.store.device_ref(n)
         if ref.hash:
             job = dataclasses.replace(job, device=dataclasses.replace(job.device, hash=ref.hash))
         return job
 
-    def submit_run(self) -> JobStatus | None:
+    def submit_run(self, *, label: str = "") -> JobStatus | None:
         try:
-            job = self.build_job()
+            job = self.build_job(
+                label=label or (f"preset: {self.store.active_preset}" if self.store.active_preset else "")
+            )
         except Exception as exc:  # a syntax error in the circuit text: shown beside the editor, never a crash
             self.store.error = f"the circuit could not be read: {exc}"
             return None
@@ -357,6 +381,79 @@ class Session:
         status = JobStatus(ticket.id, request, job=job, engine=self.store.engine)
         self.store.jobs = {**self.store.jobs, ticket.id: status}
         return status
+
+    def load_circuit_preset(self, preset_id: str) -> PresetSpec:
+        """Put a circuit preset of Section 14.5 (the Bell state, the three-ion GHZ) into the editor: its circuit, shots,
+        device arguments and the full engine; the Results card then shows the check script's numbers beside the run's."""
+        spec = PRESETS[preset_id]
+        if spec.kind != "circuit":
+            raise ValueError(f"{preset_id} is an experiment preset; it runs from the Learn view")
+        self.store.circuit_text = spec.circuit_text
+        self.store.circuit_format = "openqasm2"
+        self.store.shots = int(spec.shots)
+        self.store.engine = "full"
+        self.store.preset_kwargs = dict(spec.preset_kwargs)
+        self.store.active_preset = preset_id
+        self.store.prediction = None
+        return spec
+
+    def load_bell_example(self) -> None:
+        """The worked example back in the editor, on the published preset (no preset arguments, no active circuit preset)."""
+        self.store.circuit_text = BELL_QASM
+        self.store.circuit_format = "openqasm2"
+        self.store.preset_kwargs = {}
+        self.store.active_preset = None
+
+    def submit_preset(self, preset_id: str) -> JobStatus | None:
+        """Run a published-experiment preset in the worker (Section 14.5); a repeat while one runs is skipped."""
+        spec = PRESETS[preset_id]
+        if spec.kind != "experiment":
+            raise ValueError(f"{preset_id} is a circuit preset: load it into the editor and Run")
+        if self.store.running_of("preset", preset_id=preset_id) is not None:
+            return None
+        ticket = self.worker.submit("preset", preset_id=preset_id)
+        status = JobStatus(ticket.id, "preset", target={"preset_id": preset_id})
+        status.message = spec.title
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    def submit_request(self, request: GateRequest) -> JobStatus | None:
+        """Run an accepted request of Section 14.4 as its own job at the full engine, with the requested gate's process matrix
+        computed when the run finishes (the worker's ``request_run``). A refused request is kept for display and not run."""
+        self.store.last_request = request
+        if request.job is None:
+            return None
+        self.store.error = ""
+        self.store.active_preset = None
+        ticket = self.worker.submit("request_run", job=request.job, step=request.step_index)
+        status = JobStatus(
+            ticket.id,
+            "request_run",
+            job=request.job,
+            engine="full",
+            target={"gate_id": request.gate_id, "kind": request.kind},
+        )
+        status.message = request.job.label
+        self.store.jobs = {**self.store.jobs, ticket.id: status}
+        return status
+
+    def toggle_details(self, tile_id: str, open_: bool) -> None:
+        self.store.details_open = {**self.store.details_open, tile_id: open_}
+
+    def select_concept(self, level: int, concept_id: str | None) -> None:
+        """Open the explain drawer at one concept of the level (DESIGN.md Section 10 R7: one concept at a time)."""
+        chosen = dict(self.store.explain_concept)
+        if concept_id is None:
+            chosen.pop(level, None)
+        else:
+            chosen[level] = concept_id
+        self.store.explain_concept = chosen
+        self.set_learner(explain_open=True)
+
+    def open_specification(self, section: str) -> None:
+        """A chip or a why-button asked for a section's text: open the drawer with its Specification tile at that section."""
+        self.store.spec_section = section
+        self.set_learner(explain_open=True)
 
     def submit_verify(self, key: str, shots: int | None = None) -> JobStatus:
         record = self.store.records[key]
@@ -499,6 +596,18 @@ class Session:
             self.store.prediction = None
             if self.page is not None:
                 self.page.navigate(f"/job/{key}")
+        elif status.request == "request_run" and isinstance(payload, Record):
+            key = payload.key()
+            self.store.records = {**self.store.records, key: payload}
+            self.store.current = key
+            self.store.selected_bar = None
+            self.store.selected_shot = None
+            self.store.scored_prediction = None
+            if self.page is not None:
+                gate = str(status.target.get("gate_id", ""))
+                self.page.navigate(f"/job/{key}/circuit/{gate}" if gate else f"/job/{key}")
+        elif status.request == "preset" and isinstance(payload, PresetResult):
+            self.store.preset_results = {**self.store.preset_results, payload.preset_id: payload}
         elif status.request == "verify" and isinstance(payload, dict):
             report: VerifyReport = payload["report"]
             key = status.message
@@ -592,6 +701,7 @@ __all__ = [
     "FAST_OPTIONS",
     "KNOWLEDGE_VALUES",
     "LEARNER_KEY",
+    "PRESETS",
     "Engine",
     "JobStatus",
     "Learner",

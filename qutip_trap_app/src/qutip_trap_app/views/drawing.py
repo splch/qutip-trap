@@ -875,6 +875,7 @@ def fock_bars(start: np.ndarray, end: np.ndarray, *, height: float = 150.0, n_sh
 
 
 __all__ = [
+    "bloch_disc",
     "Axes",
     "PhaseLoop",
     "beam_geometry",
@@ -892,3 +893,50 @@ __all__ = [
     "two_histograms",
     "zeeman_chart",
 ]
+
+
+def bloch_disc(
+    ion: int,
+    vector: tuple[float, float, float],
+    *,
+    size: float = 120.0,
+    target: tuple[float, float, float] | None = None,
+) -> ft.Control:
+    """One ion's Bloch vector as an arrow in the x-z disc (the equator horizontal, |0> up), the y component written beside
+    it, the arrow's length the vector's (a shrunken arrow is mixture or entanglement, DESIGN.md Section 2); an optional
+    target vector is drawn dashed. Computed from the reduced state: (<X>, <Y>, <Z>) (conv.computational_ordering)."""
+    x, y, z = (float(v) for v in vector)
+    r = size / 2.0 - 8.0
+    cx, cy = size / 2.0, size / 2.0
+    shapes: list[cv.Shape] = [
+        cv.Circle(cx, cy, r, paint=_stroke(ft.Colors.OUTLINE_VARIANT, 1.0)),
+        cv.Line(cx - r, cy, cx + r, cy, paint=_stroke(ft.Colors.OUTLINE_VARIANT, 0.6, [3, 3])),
+        cv.Line(cx, cy - r, cx, cy + r, paint=_stroke(ft.Colors.OUTLINE_VARIANT, 0.6, [3, 3])),
+        _label(cx - 6, 0.0, "|0>", size=9),
+        _label(cx - 6, size - 12.0, "|1>", size=9),
+        _label(size - 14.0, cy - 6, "+x", size=9),
+    ]
+    ax = Axes(size, size, (-1.0, 1.0), (-1.0, 1.0), margin=(8.0, 8.0, 8.0, 8.0))
+    if target is not None:
+        tx, _ty, tz = (float(v) for v in target)
+        if math.hypot(tx, tz) > 1e-6:
+            shapes.append(
+                cv.Line(
+                    ax.x(0.0), ax.y(0.0), ax.x(tx), ax.y(tz), paint=_stroke(ft.Colors.TERTIARY, 1.5, [4, 3])
+                )
+            )
+    length = math.sqrt(x * x + y * y + z * z)
+    if math.hypot(x, z) > 1e-6:
+        shapes.extend(ax.arrow(0.0, 0.0, x, z, ft.Colors.PRIMARY, 2.5))
+    shapes.append(cv.Circle(cx, cy, 2.5, paint=_fill(ft.Colors.ON_SURFACE)))
+    canvas = cv.Canvas(shapes, width=size, height=size)
+    return ft.Column(
+        [
+            canvas,
+            ft.Text(f"ion {ion}", size=12, weight=ft.FontWeight.W_600),
+            ft.Text(f"length {length:.3f}, <Y> {y:+.2f}", size=10, color=ft.Colors.ON_SURFACE_VARIANT),
+        ],
+        spacing=0,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        tight=True,
+    )

@@ -10,8 +10,10 @@ from pathlib import Path
 from qutip_trap_app import device_layer, provenance, resim
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel import catalogue, learn
+from qutip_trap_app.viewmodel import presets as presets_vm
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
 from qutip_trap_app.viewmodel.circuit import compile_report, phase_register, register_after, timeline
+from qutip_trap_app.viewmodel.drills import CONCEPT_OF, drills_for
 from qutip_trap_app.viewmodel.dynamics import pulse_dynamics, recorded_zoom
 from qutip_trap_app.viewmodel.machine import device_card_view, histogram, shot
 from qutip_trap_app.viewmodel.numerics import numerics_panel
@@ -40,6 +42,9 @@ def test_every_catalogue_and_concept_id_is_in_the_ledger() -> None:
     idx = provenance.ProvenanceIndex.load()
     assert not idx.missing(catalogue.ledger_ids())
     assert not idx.missing(learn.ledger_ids())
+    assert not idx.missing(presets_vm.ledger_ids())
+    assert presets_vm.catalogue_ids() <= set(CATALOGUE)
+    assert set(CONCEPT_OF.values()) <= set(learn.CONCEPTS)
     for q in CATALOGUE.values():
         chip = idx.chip(q.ledger_id)
         assert chip.tag in provenance.TAGS and chip.label.startswith(chip.glyph)
@@ -99,6 +104,12 @@ def test_every_displayed_quantity_of_the_bell_record_has_a_chip(bell: tuple[Reco
     for s in shown:
         q = CATALOGUE[s.quantity]
         assert idx.has(q.ledger_id), s.quantity
+    # the drills are generated from the same record and answer from it (DESIGN.md Section 3)
+    drills = drills_for(record, idx)
+    assert len(drills) >= 4 and len({d.kind for d in drills}) == 4, "four discriminations, interleaved"
+    assert all(d.answer in d.options and d.concept_id in learn.CONCEPTS for d in drills)
+    assert drills == drills_for(record, idx), "deterministic for one record"
+    assert [d.kind for d in drills[:4]] == ["status", "chip_tag", "mode_class", "bar_within"]
 
 
 def test_every_displayed_quantity_of_levels_3_and_4_has_a_chip(bell: tuple[Record, LiveRun]) -> None:

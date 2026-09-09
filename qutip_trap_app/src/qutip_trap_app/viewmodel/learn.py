@@ -748,6 +748,31 @@ CONCEPTS: dict[str, Concept] = {
             ),
         ),
         _c(
+            "provenance_tags",
+            0,
+            "What the chips say",
+            "provenance tag",
+            "discrimination",
+            (),
+            ("conv.noise_provenance", "conv.frequencies"),
+            "14.5",
+            "Every number wears a small chip that says what checking was done on it: checked against its source, corrected, taken from a source unchecked, or computed here.",
+            "Hover any chip: the glyph and word are the tag, the lines under it the source, the equation and the corrected form; click it to read the section.",
+            "Appendix D's tags: verified, corrected, extracted, background, recomputed here, derived, contested; a tag records what checking was done, never that a value is final.",
+            "tell a verified number from an extracted or derived one and say what each tag promises",
+            Prompt(
+                "provenance_tags.q1",
+                "choose",
+                "A chip reads '❝ extracted'. The number was",
+                (
+                    "taken from a source with a quote, not independently checked",
+                    "checked against its source by verifier agents",
+                    "computed by this machine",
+                ),
+                "taken from a source with a quote, not independently checked",
+            ),
+        ),
+        _c(
             "calibration",
             4,
             "The machine measures itself",
@@ -1066,6 +1091,21 @@ BELL_TOUR: tuple[TourStop, ...] = (
 )
 """Section 10 M11 exit criterion: a Bell-state job followed from a histogram bar to a matrix element in at most six clicks."""
 
+GHZ_EXERCISE: tuple[TourStop, ...] = tuple(
+    TourStop(s.index, s.route, s.title, s.concept_id, s.look_for, s.prompt) for s in BELL_TOUR
+)
+"""The faded version of the worked example (DESIGN.md Section 3): the same six stops on a three-ion GHZ job, the
+annotations (``look_for``) withheld by the view until the learner asks for them."""
+
+FREE_EXERCISE: tuple[str, ...] = (
+    "Build a circuit of your own on Level 0: edit the OpenQASM, or import IonQ JSON.",
+    "Predict its histogram before you run it.",
+    "Run it. Find the bar that sits farthest from its target, in error bars.",
+    "Follow that bar down: the gate on Level 1, the pulse on Level 2, the loop on Level 3, the term of H on Level 4.",
+    "Name the device parameter that would move the bar, then check your sentence against the device card's error budget.",
+)
+"""The free version of the exercise (DESIGN.md Section 3): build, predict, run, explain one off-target bar."""
+
 ROUTE_PATTERNS: tuple[str, ...] = (
     "/job/{id}",
     "/job/{id}/circuit/{gate}",
@@ -1073,8 +1113,21 @@ ROUTE_PATTERNS: tuple[str, ...] = (
     "/job/{id}/dynamics/{pulse}/{sample}",
     "/device/{page}",
     "/learn",
+    "/learn/{tab}",
+    "/learn/preset/{preset}",
 )
-"""The routes of Section 14.6 plus the learning home."""
+"""The routes of Section 14.6 plus the learning home, its activity tabs and the published-experiment pages."""
+
+LEARN_TABS: tuple[tuple[str, str], ...] = (
+    ("tour", "Tour"),
+    ("ghz", "Three ions"),
+    ("free", "Your own"),
+    ("drills", "Drills"),
+    ("review", "Review"),
+    ("experiments", "Published experiments"),
+    ("progress", "Progress"),
+)
+"""The activities of the Learn view, in the order of the ladder (DESIGN.md Section 10)."""
 
 DEVICE_PAGES: tuple[str, ...] = (
     "species",
@@ -1146,6 +1199,8 @@ def route_matches(route: str) -> bool:
         if all(p.startswith("{") or p == g for p, g in zip(parts, given)):
             if pattern == "/device/{page}" and given[1] not in DEVICE_PAGES:
                 continue
+            if pattern == "/learn/{tab}" and given[1] not in {t for t, _ in LEARN_TABS}:
+                continue
             return True
     return False
 
@@ -1155,6 +1210,9 @@ __all__ = [
     "CONCEPTS",
     "DEFAULT_RETENTION_DAYS",
     "DEVICE_PAGES",
+    "FREE_EXERCISE",
+    "GHZ_EXERCISE",
+    "LEARN_TABS",
     "PAGE_CONCEPTS",
     "PAGE_SECTIONS",
     "ROUTE_PATTERNS",

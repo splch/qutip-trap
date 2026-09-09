@@ -203,6 +203,15 @@ class JobSpec:
     stark_compensation: bool = True
     caps: dict[int, int] | None = None
     """Explicit Fock caps per mode (``run(caps=...)``); None lets the Section 5.5 cap rule decide."""
+    waveform_overrides: dict[str, float] = field(default_factory=dict)
+    """Section 14.4's "detuning set by hand at Level 2": per entangling pair ``"a,b"``, the beat-note offset in Hz added to
+    every blue leg and subtracted from every red leg of the pair's calibrated waveform before the run (the symmetric detuning
+    scan of Section 7.5), which the scheduler then plays AS WRITTEN. Empty for a run on the table as calibrated."""
+    requests: tuple[str, ...] = ()
+    """What was requested at a shallower level to make this job (Section 14.4: "a change at a shallower level is a request
+    rather than an edit"), in plain words, so a record says how it differs from the circuit the learner typed."""
+    label: str = ""
+    """A name for the job when a preset or an exercise made it (the published-experiment presets of Section 14.5)."""
 
     def solver_options(self) -> core.SolverOptions:
         # the mapping was produced by dataclasses.asdict on a SolverOptions and carries exactly its fields
@@ -1047,7 +1056,7 @@ class ProcessMatrixRecord:
 
 # ---- the record -----------------------------------------------------------------------------------------------------------------
 
-RECORD_FORMAT = "qutip-trap-app/record/2"
+RECORD_FORMAT = "qutip-trap-app/record/3"
 
 
 @dataclass(frozen=True)
@@ -1900,12 +1909,14 @@ class LiveRun:
 
 
 def calibrate_for(job: JobSpec, preset: core.DevicePreset) -> core.CalibrationTable:
+    """The job's calibration table: the surrogate table of Section 7.5 for the device, with the job's hand-set detunings
+    (``JobSpec.waveform_overrides``) applied to the pairs they name."""
     cal = job.calibration
     if not cal.surrogate:
         raise RecordError(
             "M11.1 records rebuild surrogate tables only; the simulated-experiment path is M11.3's stale-badge job"
         )
-    return core.calibrate(
+    table = core.calibrate(
         preset.device,
         seed=cal.seed,
         pairs=[tuple(p) for p in cal.pairs],
@@ -1913,6 +1924,61 @@ def calibrate_for(job: JobSpec, preset: core.DevicePreset) -> core.CalibrationTa
         detection_windows_s=cal.detection_windows_s,
         **job.run_kwargs(),
     )
+    return table_with_overrides(table, job.waveform_overrides)
+
+
+@dataclass(frozen=True)
+class ShiftedFn:
+    """``tau -> fn(tau) + offset``: a frequency-modulated leg shifted by a hand-set offset (picklable, as every coefficient on
+    the pulse path must be, Section 11.3 item 9)."""
+
+    fn: Callable[[float], float]
+    offset_hz: float
+
+    def __call__(self, tau: float) -> float:
+        return float(self.fn(tau)) + self.offset_hz
+
+
+def shift_detuning(waveform: core.Waveform, offset_hz: float) -> core.Waveform:
+    """The waveform with every blue leg's detuning raised by ``offset_hz`` and every red leg's lowered by it (the symmetric
+    detuning scan of Section 7.5, so the two tones stay mirror images about the carrier). The stored ``chi_m`` and ``alpha_m``
+    are left as the table measured them at closure: the scheduler rescales by them, so the pulse is played AS WRITTEN, with
+    its amplitude unchanged, and what the detuned loops actually do is what the run's own branch loops show (Section 14.4)."""
+    if offset_hz == 0.0 or waveform.segments is None:
+        return waveform
+
+    def shifted(value: object, sign: float) -> float | Callable[[float], float]:
+        if callable(value):
+            return ShiftedFn(cast(Callable[[float], float], value), sign * offset_hz)
+        return float(cast(float, value)) + sign * offset_hz
+
+    segments = tuple(
+        core.Segment(
+            s.duration_s,
+            dict(s.amplitude_hz),
+            dict(s.phase_rad),
+            {leg: shifted(v, 1.0 if leg == "blue" else -1.0) for leg, v in s.detuning_hz.items()},
+        )
+        for s in waveform.segments
+    )
+    return dataclasses.replace(waveform, segments=segments)
+
+
+def table_with_overrides(
+    table: core.CalibrationTable, overrides: Mapping[str, float]
+) -> core.CalibrationTable:
+    """The table with each named pair's waveform shifted (``JobSpec.waveform_overrides``); a pair the table does not carry is
+    an error, never a silent no-op."""
+    if not overrides:
+        return table
+    ms = dict(table.ms)
+    for key, offset in overrides.items():
+        a, b = (int(x) for x in key.split(","))
+        pair = (a, b) if (a, b) in ms else (b, a)
+        if pair not in ms:
+            raise RecordError(f"no entangling waveform for pair {key} in the calibration table to shift")
+        ms[pair] = shift_detuning(ms[pair], float(offset))
+    return dataclasses.replace(table, ms=ms)
 
 
 def execute(
@@ -2013,6 +2079,7 @@ __all__ = [
     "ScheduleRecord",
     "SegmentRecord",
     "SegmentSummary",
+    "ShiftedFn",
     "SpaceRecord",
     "StepRecord",
     "TableRecord",
@@ -2029,4 +2096,6 @@ __all__ = [
     "job_for_preset",
     "options_record",
     "sampled_fn",
+    "shift_detuning",
+    "table_with_overrides",
 ]

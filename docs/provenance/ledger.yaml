@@ -3042,6 +3042,66 @@ records:
     source: "qutip_trap/hilbert/space.py (with_space_dims, applied by identity, embed, embed_many, product_state); tests/test_m9_scaling.py::test_every_joint_operator_and_state_of_an_enr_space_carries_the_spaces_dims"
     equation: "every joint operator and state an ENR space hands out is relabelled with the space's own dims, in which the excitation-number-restricted group is ONE tensor factor of dimension C(M + N_exc, N_exc); QuTiP's enr_identity / enr_destroy / enr_fock / enr_thermal_dm label the group by its per-mode dims (n_exc + 1 each, product C(M+N_exc,N_exc) only by accident of small cases), and a QobjEvo refuses to combine terms whose dims differ. Data is shared, not copied. Marginals of the group remain index sums over the ENR basis (never ptrace)"
     corrected_form: "until 2026-09-08 identity(), number(), annihilation(), embed() and the joint states of an ENR space came back labelled [..., n_exc + 1, n_exc + 1] while the factorized drive term (FactorizedOperator, built on HilbertSpace.dims) said [..., C(M+N_exc,N_exc)], so the first ENR run through run() (the M9 fixer's end-to-end test, 2026-09-08) failed inside QobjEvo with 'has dims [[2, 2, 11, 13, 6], ...] but previous terms had dims [[2, 2, 11, 13, 3, 3], ...]' - after building a 37752-dimensional space that took 20 GB, because an explicit JOINT_EXACT above the Section 11.5 guards was not refused (conv.space_declaration_before_allocation). The unit tests of the ENR construction (tests/test_scaling_modes.py) never combined an ENR motional term with a drive term in one QobjEvo, which is why the mismatch survived M9a and M9b"
+  # ---- Section 9 published numbers the application's presets place beside the simulated ones (Section 14.5, M11.4) ----
+  # Each record transcribes the published value of one Section 9 row with the row's tag for its SOURCE, so that the app's
+  # chip on a published number says what checking the research runs did on it; the simulated number beside it carries the
+  # anchor.* record of the check that recomputed it.
+  - id: published.harty_2014_epg
+    symbol: "EPG (Harty 2014)"
+    tag: verified
+    section: "9.2 Microwave RB; 9.12 Harty budget decomposition"
+    source: "Harty et al., PRL 113, 220501 (2014); arXiv:1403.1524, Fig. 7 and supplement"
+    equation: "measured error per computational gate 1.0(3) x 10^-6 by randomized benchmarking; the paper's own error model (12.1 us pi/2 pulses, 14 us dead time, +4.5 Hz detuning, 5e-4 pulse-area error) 0.81(14) x 10^-6"
+    corrected_form: "delta_eff = delta - delta_ac = +5.5 Hz during pulses (Section 9.2 'ac Zeeman sign'); the identity timing is ambiguous in the paper (anchor.m2.harty_randomized_benchmarking)"
+  - id: published.james_1998_positions
+    symbol: "u_i (James 1998 Table 1)"
+    tag: verified
+    section: "9.1 Equilibrium positions; 9.1 Spacing"
+    source: "James, Appl. Phys. B 66, 181 (1998), Table 1 and Eqs. 3.2-3.4"
+    equation: "u = -+ (1/2)^(2/3) = -+ 0.62996 for N = 2; -+ (5/4)^(1/3) = -+ 1.0772 and 0 for N = 3; Table 1 for N = 2..10 in units of the length scale l = (e^2/(4 pi eps0 m omega_z^2))^(1/3)"
+    corrected_form: ""
+  - id: published.james_1998_axial_modes
+    symbol: "mu_p (James 1998 Table 2)"
+    tag: verified
+    section: "9.1 Axial modes"
+    source: "James, Appl. Phys. B 66, 181 (1998), Table 2 and Eq. 3.5"
+    equation: "nu_p = sqrt(mu_p) nu_z with mu_1 = 1 (centre of mass) and mu_2 = 3 (stretch) for every N; mu_3 = 29/5 = 5.8 at N = 3, and 5.81, 5.818, 5.824, 5.829, 5.834, 5.838, 5.841 for N = 4..10"
+    corrected_form: "the sign gauge of the eigenvectors is the plan's (conv.mode_eigenvector_gauge), not James's"
+  - id: published.monroe_1995_doppler
+    symbol: "nbar_D (Monroe 1995)"
+    tag: verified
+    section: "9.3 Doppler anchors"
+    source: "Monroe et al., PRL 75, 4011 (1995)"
+    equation: "9Be+ Doppler-cooled occupations nbar = 0.47(5), 0.30, 0.18 at the 11.2, 18.2 and 29.8 MHz modes with Gamma/2pi = 19.4 MHz at Delta = -30 MHz; the paper's theoretical value for the 11.2 MHz mode 0.484"
+    corrected_form: "nu/Gamma = 0.58 is outside the semiclassical force model's regime (Section 9.3 'regime [corrected]'); the triple is not reproduced by one beam (anchor.m3.monroe_doppler_triple)"
+  - id: published.roos_2000_lamb_dicke
+    symbol: "eta_729, eta_393 (Roos 2000)"
+    tag: verified
+    section: "9.3 40Ca+ Lamb-Dicke recomputation; 9.14"
+    source: "Roos, PhD thesis, Innsbruck (2000), p. 28"
+    equation: "eta = 0.096 on the 729 nm quadrupole transition and 0.179 on the 393 nm dipole transition of 40Ca+ at 2 pi x 1 MHz"
+    corrected_form: ""
+  - id: published.kirchmair_2009_thermal_ms
+    symbol: "F, parity contrast (Kirchmair 2009)"
+    tag: verified
+    section: "9.4 Thermal populations"
+    source: "Kirchmair et al., New J. Phys. 11, 023002 (2009)"
+    equation: "Bell-state fidelity 0.993(1) at t_g = 50 us and 0.971(2) at 25 us with eta = 0.044 and nu/2pi = 1.232 MHz; parity contrast 0.964 on a thermal mode with nbar = 20(2)"
+    corrected_form: "F is dominated by the paper's technical terms (laser frequency noise 2e-3, heating Gamma_h t_g/2, a 1.4e-2 Rabi error), not by eta and nu (anchor.m4.kirchmair_ca40)"
+  - id: published.myerson_2008_readout
+    symbol: "eps_min (Myerson 2008)"
+    tag: verified
+    section: "9.5 40Ca+ optimum; 9.5 Myerson recursion"
+    source: "Myerson et al., PRL 100, 200502 (2008)"
+    equation: "threshold readout error eps = 1.8(1) x 10^-4 at n_c = 5.5 and t_b = 420 us; maximum-likelihood asymptote 0.87(11) x 10^-4; adaptive 1.0(1) x 10^-4 in 145 us on average"
+    corrected_form: "the measured optimum sits at a higher threshold and a longer window than the ideal-Poisson chain's because the PMT dark counts are non-Poissonian (anchor.m5.myerson_optimum_and_recursion)"
+  - id: published.crain_2019_snspd
+    symbol: "1 - F (Crain 2019)"
+    tag: verified
+    section: "9.5 SNSPD operating point; 9.5 171Yb+ rates"
+    source: "Crain et al., Commun. Phys. 2, 97 (2019)"
+    equation: "171Yb+ readout fidelity 99.931(6) % (1 - F = 6.9 x 10^-4) with the stop-on-first-photon protocol at 11 us average detection time; eps_sys = 4.356 %, 472 kcps detected bright rate, R_d = 341 Hz, R_b = 16.4 Hz, 4.2 cps background"
+    corrected_form: "11 us is the AVERAGE detection time of the protocol, not the record window; the threshold optimum's window is 20 to 25 us (anchor.m5.crain_corrections_and_operating_point)"
 # --- BEGIN species constants (generated by tools/ledger_from_tables.py; do not edit by hand) ---
   - id: "yb171.mass_atomic_u"
     symbol: "mass_atomic_u"

@@ -270,6 +270,34 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
         if report.deep_level is None and deep is not None:
             state.records[key] = deep
         return {"report": report, "deep": deep}
+    if request == "request_run":
+        # Section 14.4: a request made at Level 1 or 2 runs as its own job at the full engine, and the finished pulse's
+        # process matrix is computed at once, so that Level 1 can show the actual unitary beside the requested one
+        job = payload["job"]
+        preset = _preset_for(state, job.device, progress)
+        job = complete_job(job, preset)
+        progress(
+            "calibrating",
+            None,
+            "the surrogate calibration table, with the hand-set detunings applied where requested",
+        )
+        table = rec_mod.calibrate_for(job, preset)
+        state.tables[preset.device.hash()] = table
+        progress("running", None, f"{job.level} run of {job.shots} shots: {job.label or 'the requested job'}")
+        record, live = rec_mod.execute(job, preset)
+        key = record.key()
+        state.lives[key] = live
+        step_i = int(payload.get("step", -1))
+        if step_i >= 0 and record.traces:
+            progress("tomography", 0.8, "the process matrix of the requested gate's step")
+            record, _pm = resim.process_matrix(record, live, step_i, 0, 0, progress=progress)
+        state.records[key] = record
+        progress("recording", 1.0, "record built")
+        return record
+    if request == "preset":
+        from qutip_trap_app import presets as presets_mod
+
+        return presets_mod.run_preset(str(payload["preset_id"]), progress)
     if request == "ping":
         return "pong"
     raise WorkerError(f"unknown request {request!r}")

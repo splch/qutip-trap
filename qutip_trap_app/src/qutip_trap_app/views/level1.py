@@ -1,6 +1,8 @@
-"""Level 1, the circuit (PLAN.md Section 14.2 row 1; DESIGN.md Section 5): the compiled native timeline on ion lanes, the
-selected gate's target unitary and calibrated parameters, the register after that gate (populations, Bloch arrows, Pauli
-expectations, purity, fidelity to the target so far), the phase register and the compile report."""
+"""Level 1, the circuit (PLAN.md Section 14.2 row 1; DESIGN.md Sections 5 and 10): the compiled native timeline on ion
+lanes with the selected gate, the register after that gate as Bloch arrows drawn in discs, the gate's stat tiles, and, for an
+entangling gate, the request control of Section 14.4 (XX(chi) requested, the pulse solver's rescale, the actual unitary from
+tomography beside the requested one). The target unitary, the Pauli expectations, the phase register and the compile report
+are behind Details."""
 
 from __future__ import annotations
 
@@ -10,27 +12,35 @@ import flet as ft
 import flet_charts as fc
 import numpy as np
 
+from qutip_trap_app import resim
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
+from qutip_trap_app.requests import RequestError, request_angle, request_outcome
+from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
 from qutip_trap_app.viewmodel.circuit import (
     GateView,
+    bloch_vectors,
     compile_report,
     phase_register,
     register_after,
     timeline,
 )
+from qutip_trap_app.views import drawing
 from qutip_trap_app.views.common import (
     card,
-    chip,
     content_widths,
     data_table,
-    event_bool,
+    details,
+    hint,
     kv_rows,
     level_header,
     shown,
+    stat_row,
+    stat_tile,
+    status_line,
     value_cell,
 )
-from qutip_trap_app.views.state import Store
+from qutip_trap_app.views.state import Session, Store
 
 GATE_COLORS = {
     "gpi2": ft.Colors.PRIMARY_CONTAINER,
@@ -81,7 +91,7 @@ def _lanes(
                     left=left,
                     top=2,
                     width=w,
-                    height=26,
+                    height=28,
                     bgcolor=GATE_COLORS.get(str(g.name.value), ft.Colors.SURFACE_CONTAINER_HIGHEST),
                     border=ft.Border.all(
                         2 if is_sel else 1, ft.Colors.PRIMARY if is_sel else ft.Colors.OUTLINE_VARIANT
@@ -92,11 +102,12 @@ def _lanes(
                     tooltip=f"{g.gate_id}: {g.name.value} on ions {g.ions}, {g.t_start_s * 1e6:.1f} to {g.t_end_s * 1e6:.1f} µs",
                     on_click=lambda e, gid=g.gate_id: on_select(gid),
                     ink=True,
+                    key=f"gate:{g.gate_id}" if ion == g.ions[0] else None,
                 )
             )
         lanes.append(
             ft.Row(
-                [ft.Text(f"ion {ion}", size=12, width=44), ft.Stack(boxes, width=width, height=30)],
+                [ft.Text(f"ion {ion}", size=12, width=44), ft.Stack(boxes, width=width, height=32)],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
@@ -112,32 +123,6 @@ def _lanes(
         width=width + 50,
     )
     return ft.Column(lanes + [axis], spacing=2)
-
-
-def _bloch_rows(bloch: dict[int, tuple[float, float, float]], index: ProvenanceIndex) -> ft.Control:
-    rows: list[ft.Control] = []
-    for ion, (x, y, z) in sorted(bloch.items()):
-        length = float(np.sqrt(x * x + y * y + z * z))
-        rows.append(
-            ft.Row(
-                [
-                    ft.Text(f"ion {ion}", size=12, width=44),
-                    ft.Text(f"({x:+.3f}, {y:+.3f}, {z:+.3f})", size=12, width=190, tooltip="(<X>, <Y>, <Z>)"),
-                    ft.Container(
-                        width=max(length, 0.0) * 120,
-                        height=8,
-                        bgcolor=ft.Colors.PRIMARY,
-                        border_radius=ft.BorderRadius.all(4),
-                        tooltip=f"arrow length {length:.3f}: 1 is a pure single-qubit state, 0 fully mixed or fully entangled",
-                    ),
-                    ft.Text(f"length {length:.3f}", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
-                    chip("conv.computational_ordering", index),
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-        )
-    return ft.Column(rows, spacing=4)
 
 
 def _populations_chart(pops: dict[str, Any]) -> ft.Control:
@@ -177,17 +162,142 @@ def _populations_chart(pops: dict[str, Any]) -> ft.Control:
 
 
 @ft.component
-def Level1Page(store: Store, record: Record, gate_param: str, index: ProvenanceIndex) -> ft.Control:
+def RequestAnglePanel(
+    store: Store, session: Session, record: Record, gate: GateView, index: ProvenanceIndex
+) -> ft.Control:
+    """Section 14.4 at Level 1: request XX(chi) of this MS gate. The request is a new job at the full engine; a refusal shows
+    its reason here."""
     ft.use_state(store)
-    # the two tiles own their open state (hooks before the early return, so their order never changes)
-    unitary_open, set_unitary_open = ft.use_state(False)
-    pauli_open, set_pauli_open = ft.use_state(False)
+    text, set_text = ft.use_state("0.3")
+    running = store.running_of("request_run", gate_id=gate.gate_id) is not None
+
+    def submit(_e: Any) -> None:
+        try:
+            chi = float(text)
+        except ValueError:
+            store.error = "the requested angle must be a number in radians"
+            return
+        try:
+            req = request_angle(record, gate.gate_id, chi)
+        except RequestError as exc:
+            store.error = str(exc)
+            return
+        session.submit_request(req)
+
+    controls: list[ft.Control] = [
+        ft.Row(
+            [
+                ft.TextField(
+                    label="chi (rad)",
+                    value=text,
+                    width=110,
+                    dense=True,
+                    text_size=13,
+                    on_change=lambda e: set_text(str(e.control.value)),
+                    key="request-angle-value",
+                ),
+                ft.FilledTonalButton(
+                    content=ft.Text("Request XX(chi)"),
+                    icon=ft.Icons.TUNE,
+                    on_click=submit,
+                    disabled=running,
+                    tooltip="a request, not an edit: the job is rebuilt with this angle and run at the full engine (Section 14.4)",
+                    key="request-angle",
+                ),
+            ],
+            spacing=8,
+            wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+    ]
+    last = store.last_request
+    if last is not None and last.kind == "angle" and last.gate_id == gate.gate_id:
+        if last.refusal:
+            controls.append(
+                ft.Text(f"refused: {last.refusal}", size=12, color=ft.Colors.ERROR, key="request-refusal")
+            )
+        else:
+            controls.append(status_line(last.note))
+    return ft.Column(controls, spacing=6)
+
+
+@ft.component
+def RequestOutcomeView(
+    store: Store, session: Session, record: Record, gate: GateView, index: ProvenanceIndex
+) -> ft.Control:
+    """The actual unitary of the played gate beside the requested one: from the step's process matrix when the record has it
+    (a request run computes it at once), else a button to compute it."""
+    ft.use_state(store)
+    key = record.key()
+    step = gate.step_index
+    pm = record.process_matrix(resim.process_matrix_key(step, 0, 0))
+    if pm is None:
+        running = store.running_of("tomography", key=key, step=step) is not None
+        if record.replay is not None or not record.traces:
+            return status_line("actual unitary: needs a full-simulation run (this record is derived)")
+        return ft.Row(
+            [
+                ft.OutlinedButton(
+                    content=ft.Text("Actual unitary (tomography)"),
+                    icon=ft.Icons.GRID_4X4,
+                    on_click=lambda e: session.submit_tomography(key, step, 0, store.branch),
+                    disabled=running,
+                    tooltip="process tomography of this gate's pulses from the recorded motional state (Section 5.4)",
+                    key="compute-actual",
+                ),
+                status_line("running" if running else ""),
+            ],
+            spacing=8,
+        )
+    try:
+        out = request_outcome(record, gate.gate_id, pm)
+    except RequestError:
+        return ft.Container()
+    tiles = [
+        stat_tile(
+            Shown("entangling_angle", out.requested_chi_rad, "chi of the requested unitary (theta/2)"),
+            index,
+            label="requested chi",
+        ),
+        stat_tile(
+            Shown(
+                "entangling_angle",
+                out.fitted_chi_rad,
+                f"the MS angle closest to the measured channel (fidelity {out.fitted_fidelity:.5f})",
+            ),
+            index,
+            label="actual chi (tomography)",
+        ),
+        stat_tile(
+            Shown(
+                "channel_infidelity",
+                out.infidelity_to_requested,
+                "average gate infidelity of the played gate against the requested unitary",
+            ),
+            index,
+            label="actual vs requested",
+        ),
+    ]
+    lines: list[ft.Control] = [stat_row(tiles)]
+    if out.hand_set_detuning_hz is not None:
+        lines.append(
+            status_line(f"beat-note detuning set by hand: {out.hand_set_detuning_hz / 1e3:+.3g} kHz")
+        )
+    return ft.Column(lines, spacing=6, key="request-outcome")
+
+
+@ft.component
+def Level1Page(
+    store: Store, session: Session, record: Record, gate_param: str, index: ProvenanceIndex
+) -> ft.Control:
+    ft.use_state(store)
     gates = timeline(record)
     if not gates:
         return ft.Text("this circuit compiled to no gate pieces", size=13)
     selected = next((g for g in gates if g.gate_id == gate_param), gates[0])
     page = ft.context.page
     key = record.key()
+    plain = store.learner.plan(1).plain_labels_first
 
     def on_select(gid: str) -> None:
         page.navigate(f"/job/{key}/circuit/{gid}")
@@ -196,173 +306,183 @@ def Level1Page(store: Store, record: Record, gate_param: str, index: ProvenanceI
     lanes_width, _strip = content_widths(store, page, 1)
     frame = phase_register(record)
     residuals = compile_report(record)
-    detail_rows: list[tuple[str, ft.Control]] = [
-        (
-            "gate",
-            ft.Row(
-                [
-                    shown(selected.name, index, label=False),
-                    ft.Text(f"params {tuple(round(p, 4) for p in selected.params_rad)} rad", size=12),
-                ],
-                spacing=8,
-            ),
-        ),
-        ("ions", ft.Text(str(selected.ions))),
-        ("duration", shown(selected.duration, index, label=False)),
-    ]
-    for s in selected.calibrated:
-        detail_rows.append(("calibrated from", shown(s, index, label=True)))
-    if selected.error_estimate is not None:
-        detail_rows.append(("error estimate", shown(selected.error_estimate, index, label=False)))
-    if selected.channel is not None:
-        detail_rows.append(
-            (
-                "channel infidelity",
+    n = record.n_qubits
+    ket = reg.target_ket
+    target_bloch = bloch_vectors(np.outer(ket, ket.conj()), n) if ket is not None and ket.size == 2**n else {}
+    discs = ft.Row(
+        [
+            drawing.bloch_disc(ion, vec, target=target_bloch.get(ion))
+            for ion, vec in sorted(reg.bloch.items())
+        ],
+        wrap=True,
+        spacing=12,
+    )
+    register_card = card(
+        f"Register after {selected.gate_id}",
+        ft.Column(
+            [
                 ft.Row(
-                    [
-                        ft.Text(f"{selected.channel.average_gate_infidelity:.2e}", size=13),
-                        chip("conv.gate_fidelity_measure", index),
-                    ],
-                    spacing=4,
+                    [discs, _populations_chart(reg.populations)],
+                    wrap=True,
+                    spacing=20,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
+                stat_row(
+                    [stat_tile(reg.purity, index, plain=plain), stat_tile(reg.fidelity, index, plain=plain)]
+                ),
+                hint(store, 1, "bloch_vector"),
+                details(
+                    "level1.register",
+                    [
+                        status_line(reg.weights_note),
+                        status_line("dashed arrow: the ideal state's; solid: the recorded reduced state's"),
+                        data_table(
+                            ["operator", "<P>"],
+                            [[k, value_cell(v, index)] for k, v in sorted(reg.pauli.items())],
+                            numeric=[False, True],
+                        ),
+                    ],
+                    store=store,
+                    session=session,
+                    title="Pauli expectations and details",
+                ),
+            ],
+            spacing=8,
+        ),
+        why=lambda e: session.select_concept(
+            1, "entanglement_by_ms" if selected.name.value in ("ms", "zz") else "bloch_vector"
+        ),
+        key="register",
+    )
+    tiles: list[ft.Control] = [stat_tile(selected.duration, index, plain=plain)]
+    for s in selected.calibrated:
+        tiles.append(
+            stat_tile(
+                s, index, plain=plain, label=f"{CATALOGUE[s.quantity].label}, the table's calibrated value"
             )
         )
-        detail_rows.append(
-            (
-                "depolarizing rate",
-                ft.Row(
-                    [
-                        ft.Text(f"{selected.channel.depolarizing_rate:.2e}", size=13),
-                        chip("conv.depolarizing_normalization", index),
-                    ],
-                    spacing=4,
+    if selected.error_estimate is not None:
+        tiles.append(stat_tile(selected.error_estimate, index, plain=plain, status="estimate"))
+    if selected.channel is not None:
+        tiles.append(
+            stat_tile(
+                Shown(
+                    "channel_infidelity",
+                    selected.channel.average_gate_infidelity,
+                    "the extracted channel of this gate kind",
                 ),
+                index,
+                label="channel infidelity",
+                status="calibrated",
             )
         )
     for s in selected.stark_frame:
-        detail_rows.append(("Stark frame increment", shown(s, index, label=False)))
+        tiles.append(stat_tile(s, index, plain=plain, label=f"{CATALOGUE[s.quantity].label}, {s.detail}"))
     first_pulse = (
         record.step(selected.step_index).pulse_indices[0]
         if record.step(selected.step_index).pulse_indices
         else 0
     )
     zoom_btn = ft.FilledButton(
-        content=ft.Text("Zoom in: the pulses of this gate"),
+        content=ft.Text("Zoom in: the pulses"),
         icon=ft.Icons.ZOOM_IN,
         on_click=lambda e: page.navigate(f"/job/{key}/schedule/{first_pulse}"),
+        key="zoom-gate",
     )
-    unitary_tile = ft.ExpansionTile(
-        title=ft.Row(
-            [ft.Text("target unitary", size=13), shown(selected.unitary, index, label=False)], spacing=6
-        ),
-        controls=[
-            ft.Container(
-                content=_matrix_table(
-                    record.schedule.targets[
-                        [t.gate_id for t in record.schedule.targets].index(selected.gate_id)
-                    ].unitary
-                ),
-                padding=ft.Padding.all(8),
-            )
-        ],
-        dense=True,
-        expanded=unitary_open,
-        on_change=lambda e: set_unitary_open(event_bool(e)),
-    )
-    gate_card = card(
-        f"Gate {selected.gate_id}",
-        ft.Column([kv_rows(detail_rows), unitary_tile], spacing=8),
-        subtitle="the compiler's target and what the calibration table gave it",
-        actions=[zoom_btn],
-    )
-    pauli_rows: list[list[ft.Control | str]] = [
-        [k, value_cell(v, index)] for k, v in sorted(reg.pauli.items())
-    ]
-    register_card = card(
-        f"Register after {selected.gate_id}",
-        ft.Column(
+    unitary = record.schedule.targets[
+        [t.gate_id for t in record.schedule.targets].index(selected.gate_id)
+    ].unitary
+    gate_body: list[ft.Control] = [
+        ft.Row(
             [
-                ft.Text(reg.weights_note, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-                ft.Row(
-                    [
-                        ft.Column(
-                            [
-                                ft.Text("populations", size=12, weight=ft.FontWeight.W_600),
-                                _populations_chart(reg.populations),
-                            ],
-                            spacing=4,
-                        ),
-                        ft.Column(
-                            [
-                                ft.Text("Bloch arrows", size=12, weight=ft.FontWeight.W_600),
-                                _bloch_rows(reg.bloch, index),
-                                ft.Row(
-                                    [shown(reg.purity, index), shown(reg.fidelity, index)],
-                                    wrap=True,
-                                    spacing=12,
-                                ),
-                            ],
-                            spacing=6,
-                        ),
-                    ],
-                    spacing=24,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
-                    wrap=True,
-                ),
-                ft.ExpansionTile(
-                    title=ft.Text("Pauli expectations", size=13),
-                    controls=[
-                        ft.Container(
-                            content=data_table(["operator", "<P>"], pauli_rows, numeric=[False, True]),
-                            padding=ft.Padding.all(8),
-                        )
-                    ],
-                    dense=True,
-                    expanded=pauli_open,
-                    on_change=lambda e: set_pauli_open(event_bool(e)),
+                shown(selected.name, index, label=False, plain=plain, size=16),
+                ft.Text(
+                    f"on ions {selected.ions}, phases {tuple(round(p, 4) for p in selected.params_rad)} rad",
+                    size=12,
+                    color=ft.Colors.ON_SURFACE_VARIANT,
                 ),
             ],
             spacing=8,
+            wrap=True,
         ),
-        subtitle="the reduced density matrix of the recorded state (Section 14.1 rule 1)",
+        stat_row(tiles),
+    ]
+    if selected.name.value == "ms" and len(selected.ions) == 2:
+        gate_body.append(RequestOutcomeView(store, session, record, selected, index))
+        gate_body.append(RequestAnglePanel(store, session, record, selected, index))
+    gate_body.append(
+        details(
+            "level1.gate",
+            [
+                ft.Row(
+                    [
+                        ft.Text("target unitary", size=12, weight=ft.FontWeight.W_600),
+                        shown(selected.unitary, index, label=False),
+                    ],
+                    spacing=6,
+                ),
+                _matrix_table(unitary),
+            ]
+            + (
+                [ft.Column([status_line(r) for r in record.job.requests], spacing=2)]
+                if record.job.requests
+                else []
+            ),
+            store=store,
+            session=session,
+            title="Target unitary and details",
+        )
+    )
+    gate_card = card(
+        f"Gate {selected.gate_id}",
+        ft.Column(gate_body, spacing=8),
+        why=lambda e: session.select_concept(1, "native_gate"),
+        actions=[zoom_btn],
+        key="gate",
     )
     frame_rows = [
-        (f"ion {q} final frame", shown(v, index, label=False)) for q, v in frame.final_frame.items()
+        (f"ion {q} final frame", shown(v, index, label=False, size=12)) for q, v in frame.final_frame.items()
     ]
-    frame_rows += [(f"{gid} ion {q}", shown(v, index, label=False)) for gid, q, v in frame.stark_increments]
-    frame_card = card(
-        "Phase register",
-        ft.Column(
+    frame_rows += [
+        (f"{gid} ion {q}", shown(v, index, label=False, size=12)) for gid, q, v in frame.stark_increments
+    ]
+    extras = card(
+        "Phase register and compile report",
+        details(
+            "level1.frame",
             [
                 kv_rows(frame_rows),
-                ft.Text(frame.rule, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
+                status_line(frame.rule),
+                ft.Row([shown(r, index, size=12) for r in residuals], wrap=True, spacing=12),
             ],
-            spacing=6,
+            store=store,
+            session=session,
+            title="Show",
         ),
-        subtitle="virtual Z rotations the machine remembers instead of playing",
-    )
-    compile_card = card(
-        "Compile report",
-        ft.Row([shown(r, index) for r in residuals], wrap=True, spacing=12),
-        subtitle="how closely the native sequence reproduces each requested gate",
+        why=lambda e: session.select_concept(1, "virtual_z"),
+        key="frame",
     )
     return ft.Column(
         [
             level_header(
-                1,
-                "The circuit",
-                "What did each gate do to the qubits?",
-                f"{len(gates)} native gate pieces; click a box to select",
+                "The circuit", "What did each gate do to the qubits?", note=f"{len(gates)} native gate pieces"
             ),
             card(
                 "Timeline",
-                _lanes(record, gates, selected.gate_id, on_select),
-                subtitle="native gates as played, on ion lanes; the selected gate is outlined",
+                ft.Column(
+                    [
+                        _lanes(record, gates, selected.gate_id, on_select, lanes_width),
+                        hint(store, 1, "native_gate"),
+                    ],
+                    spacing=6,
+                ),
+                why=lambda e: session.select_concept(1, "compile"),
+                key="timeline",
             ),
             ft.ResponsiveRow(
                 [
-                    ft.Column([gate_card, frame_card, compile_card], col={"xs": 12, "lg": 5}, spacing=10),
                     ft.Column([register_card], col={"xs": 12, "lg": 7}, spacing=10),
+                    ft.Column([gate_card, extras], col={"xs": 12, "lg": 5}, spacing=10),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.START,
                 spacing=12,
@@ -375,4 +495,4 @@ def Level1Page(store: Store, record: Record, gate_param: str, index: ProvenanceI
     )
 
 
-__all__ = ["Level1Page"]
+__all__ = ["Level1Page", "RequestAnglePanel", "RequestOutcomeView"]

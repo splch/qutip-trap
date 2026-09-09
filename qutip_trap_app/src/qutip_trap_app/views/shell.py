@@ -1,6 +1,6 @@
 """The application shell: the router whose routes mirror the zoom ladder, the navigation rail, the breadcrumb zoom bar with
 keyboard zoom, the explain drawer, the numerics strip, and the first-launch prior-knowledge question (PLAN.md Section 14.6;
-DESIGN.md Sections 4 and 5)."""
+DESIGN.md Sections 4, 5 and 10)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ import flet as ft
 
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
-from qutip_trap_app.viewmodel.learn import DEVICE_PAGES, PAGE_CONCEPTS, PAGE_SECTIONS
+from qutip_trap_app.viewmodel.learn import DEVICE_PAGES, LEARN_TABS, PAGE_CONCEPTS, PAGE_SECTIONS
 from qutip_trap_app.viewmodel.numerics import NumericsPanel, numerics_panel
-from qutip_trap_app.views.common import ExplainDrawer, card, event_bool, numerics_strip
+from qutip_trap_app.viewmodel.presets import PRESETS
+from qutip_trap_app.views.common import ExplainDrawer, badge_view, card, event_bool, numerics_strip
 from qutip_trap_app.views.learn import KNOWLEDGE_LABELS, LearnPage
 from qutip_trap_app.views.level0 import Level0Page
 from qutip_trap_app.views.level1 import Level1Page
@@ -24,6 +25,9 @@ from qutip_trap_app.views.state import Session, Store
 LEVEL_SECTIONS = {0: "8.6", 1: "7.6", 2: "7.3", 3: "4.4.1", 4: "4.3.1"}
 """The Part II subsection the explain drawer opens per level (Section 14.5 'Explain panel'); a Level 4 page opens its own
 (``PAGE_SECTIONS``)."""
+
+LEVEL_NAMES = {0: "Machine", 1: "Circuit", 2: "Schedule", 3: "Dynamics", 4: "Physics"}
+LEARN_TAB_IDS = tuple(t for t, _ in LEARN_TABS)
 
 
 def level_of(path: str) -> int:
@@ -108,56 +112,55 @@ def child_route(store: Store, path: str) -> str | None:
     return None
 
 
+def learn_route_parts(path: str) -> tuple[str, str | None]:
+    """(tab, preset id) of a Learn route: ``/learn`` -> ("tour", None), ``/learn/drills`` -> ("drills", None),
+    ``/learn/preset/harty_2014`` -> ("experiments", "harty_2014")."""
+    parts = [p for p in path.split("/") if p]
+    if len(parts) >= 3 and parts[1] == "preset":
+        return "experiments", parts[2]
+    if len(parts) >= 2 and parts[1] in LEARN_TAB_IDS:
+        return parts[1], None
+    return "tour", None
+
+
 @ft.component
-def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
+def ZoomBar(store: Store, session: Session, path: str, badge: ft.Control | None) -> ft.Control:
+    """Crumbs (job, gate, pulse, sample), the zoom buttons, the level name, the convergence badge and the explain toggle."""
     ft.use_state(store)
     page = ft.context.page
     parts = [p for p in path.split("/") if p]
     crumbs: list[ft.Control] = []
-    record = store.record()
+
+    def crumb(text: str, route: str | None) -> ft.Control:
+        return ft.TextButton(
+            content=ft.Text(text, size=12),
+            on_click=(lambda e, r=route: page.navigate(r)) if route else None,
+            style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=6)),
+        )
+
     if parts and parts[0] == "job" and len(parts) >= 2:
         key = parts[1]
-        crumbs.append(
-            ft.TextButton(
-                content=ft.Text(f"job {key[:8]}", size=12), on_click=lambda e: page.navigate(f"/job/{key}")
-            )
-        )
+        crumbs.append(crumb(f"job {key[:8]}", f"/job/{key}"))
         if len(parts) >= 4:
             if parts[2] == "circuit":
-                crumbs.append(
-                    ft.TextButton(
-                        content=ft.Text(f"gate {parts[3]}", size=12),
-                        on_click=lambda e: page.navigate(f"/job/{key}/circuit/{parts[3]}"),
-                    )
-                )
+                crumbs.append(crumb(f"gate {parts[3]}", f"/job/{key}/circuit/{parts[3]}"))
             else:
                 gate = _gate_of_pulse(store.records.get(key), parts[3])
-                crumbs.append(
-                    ft.TextButton(
-                        content=ft.Text(f"gate {gate}", size=12),
-                        on_click=lambda e: page.navigate(f"/job/{key}/circuit/{gate}"),
-                    )
-                )
-                crumbs.append(
-                    ft.TextButton(
-                        content=ft.Text(f"pulse {parts[3]}", size=12),
-                        on_click=lambda e: page.navigate(f"/job/{key}/schedule/{parts[3]}"),
-                    )
-                )
+                crumbs.append(crumb(f"gate {gate}", f"/job/{key}/circuit/{gate}"))
+                crumbs.append(crumb(f"pulse {parts[3]}", f"/job/{key}/schedule/{parts[3]}"))
                 if parts[2] == "dynamics" and len(parts) >= 5:
-                    crumbs.append(
-                        ft.TextButton(content=ft.Text(f"sample {parts[4]}", size=12), on_click=None)
-                    )
+                    crumbs.append(crumb(f"sample {parts[4]}", None))
     elif parts and parts[0] == "device":
-        crumbs.append(
-            ft.TextButton(
-                content=ft.Text(f"device · {parts[1] if len(parts) > 1 else ''}", size=12), on_click=None
-            )
-        )
+        crumbs.append(crumb(f"device · {parts[1] if len(parts) > 1 else ''}", None))
     elif parts and parts[0] == "learn":
-        crumbs.append(ft.TextButton(content=ft.Text("learn", size=12), on_click=None))
+        tab, preset = learn_route_parts(path)
+        crumbs.append(crumb("learn", "/learn"))
+        if tab != "tour" or preset:
+            crumbs.append(crumb(dict(LEARN_TABS).get(tab, tab), f"/learn/{tab}"))
+        if preset:
+            crumbs.append(crumb(preset, None))
     else:
-        crumbs.append(ft.TextButton(content=ft.Text("home", size=12), on_click=None))
+        crumbs.append(crumb("home", None))
     sep: list[ft.Control] = []
     for k, c in enumerate(crumbs):
         if k:
@@ -171,6 +174,22 @@ def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
     def toggle_explain(_e: Any) -> None:
         session.set_learner(explain_open=not store.learner.explain_is_open(level))
 
+    right: list[ft.Control] = []
+    if lvl >= 0:
+        right.append(
+            ft.Text(f"level {lvl} · {LEVEL_NAMES[lvl]}", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+        )
+    if badge is not None:
+        right.append(badge)
+    right.append(
+        ft.IconButton(
+            icon=ft.Icons.MENU_BOOK,
+            tooltip="explain: this level's concepts, one at a time, at your depth",
+            selected=store.learner.explain_is_open(level),
+            on_click=toggle_explain,
+            key="explain-toggle",
+        )
+    )
     return ft.Row(
         [
             ft.IconButton(
@@ -178,30 +197,19 @@ def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
                 tooltip="zoom out (Esc, or Cmd/Ctrl and minus)",
                 on_click=(lambda e: page.navigate(up)) if up else None,
                 disabled=up is None,
+                key="zoom-out",
             ),
             ft.IconButton(
                 icon=ft.Icons.ZOOM_IN,
                 tooltip="zoom in (Cmd/Ctrl and plus)",
                 on_click=(lambda e: page.navigate(down)) if down else None,
                 disabled=down is None,
+                key="zoom-in",
             ),
             ft.Row(sep, spacing=2),
             ft.Container(expand=True),
-            ft.Text(f"level {lvl}" if lvl >= 0 else "", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
-            ft.Text(
-                ""
-                if record is None
-                else (record.diagnostics.level + (" (derived)" if record.replay is not None else "")),
-                size=12,
-                color=ft.Colors.ON_SURFACE_VARIANT,
-            ),
-            ft.IconButton(
-                icon=ft.Icons.MENU_BOOK,
-                tooltip="explain: the concepts of this level, at your depth",
-                selected=store.learner.explain_is_open(level),
-                on_click=toggle_explain,
-            ),
-        ],
+        ]
+        + right,
         spacing=4,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
@@ -213,7 +221,8 @@ def RoutedContent(store: Store, session: Session, index: ProvenanceIndex, path: 
     ft.use_state(store)
     parts = [p for p in path.split("/") if p]
     if parts and parts[0] == "learn":
-        return LearnPage(store, session, index)
+        tab, preset = learn_route_parts(path)
+        return LearnPage(store, session, index, tab, preset)
     if parts and parts[0] == "device":
         return Level4Page(store, session, parts[1] if len(parts) > 1 else "hamiltonian", index)
     if parts and parts[0] == "job" and len(parts) >= 2:
@@ -226,9 +235,9 @@ def RoutedContent(store: Store, session: Session, index: ProvenanceIndex, path: 
         if store.current != key:
             store.current = key
         if len(parts) >= 4 and parts[2] == "circuit":
-            return Level1Page(store, record, parts[3], index)
+            return Level1Page(store, session, record, parts[3], index)
         if len(parts) >= 4 and parts[2] == "schedule":
-            return Level2Page(store, record, parts[3], index)
+            return Level2Page(store, session, record, parts[3], index)
         if len(parts) >= 5 and parts[2] == "dynamics":
             return Level3Page(store, session, record, parts[3], parts[4], index)
         return Level0Page(store, session, index)
@@ -266,8 +275,12 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     def on_key(e: ft.KeyboardEvent) -> None:
         up = parent_route(store, path)
         down = child_route(store, path)
-        if e.key == "Escape" and up:
-            page.navigate(up)
+        if e.key == "Escape":
+            # Escape closes the drawer first, then zooms out (DESIGN.md Section 4)
+            if lvl >= 0 and store.learner.explain_is_open(level) and store.learner.explain_open is not None:
+                session.set_learner(explain_open=False)
+            elif up:
+                page.navigate(up)
         elif (e.meta or e.ctrl) and e.key in ("-", "Minus", "Numpad Subtract") and up:
             page.navigate(up)
         elif (e.meta or e.ctrl) and e.key in ("=", "+", "Equal", "Numpad Add") and down:
@@ -304,6 +317,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         store.numerics_open = event_bool(e)
 
     strip: ft.Control = ft.Container()
+    badge: ft.Control | None = None
     parts = [p for p in path.split("/") if p]
     if record is not None and lvl >= 0:
         plan = store.learner.plan(level)
@@ -321,14 +335,20 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             expanded=plan.numerics_open if store.numerics_open is None else store.numerics_open,
             on_change=toggle_numerics,
         )
-    explain_open = lvl >= 0 and store.learner.explain_is_open(level)
+        badge = badge_view(panel.badge, extra=str(panel.level.value or ""))
+    # on the five levels the drawer follows the learner's plan; on Learn it opens only when asked (a chip, a why button)
+    explain_open = (
+        store.learner.explain_is_open(level)
+        if lvl >= 0
+        else bool(store.learner.explain_open) or store.spec_section is not None
+    )
     device_page = parts[1] if lvl == 4 and len(parts) > 1 and parts[1] in DEVICE_PAGES else None
     columns: list[ft.Control] = [
         rail,
         ft.VerticalDivider(width=1),
         ft.Column(
             [
-                ZoomBar(store, session, path),
+                ZoomBar(store, session, path, badge),
                 ft.Container(content=content, expand=True, padding=ft.Padding.symmetric(horizontal=8)),
                 strip,
             ],
@@ -348,6 +368,12 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
                     concepts=PAGE_CONCEPTS[device_page],
                 )
             )
+        elif lvl == -1:
+            _tab, preset_id = learn_route_parts(path)
+            spec = PRESETS.get(preset_id or "")
+            concepts = (spec.concept_id,) if spec is not None else None
+            section = spec.section if spec is not None else "14.5"
+            columns.append(ExplainDrawer(store, session, 0, index, section, concepts=concepts))
         else:
             columns.append(ExplainDrawer(store, session, level, index, LEVEL_SECTIONS.get(level, "4.3.1")))
     dialog = None
@@ -357,24 +383,25 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         def choose(k: str) -> None:
             session.set_learner(knowledge=k, asked=True)
 
+        choices: list[ft.Control] = [
+            ft.Text("The app adapts its explanations to you; change this in Learn.", size=13)
+        ]
+        choices.extend(
+            ft.FilledButton(content=ft.Text(v), on_click=lambda e, k=k: choose(k), key=f"knowledge-{k}")
+            for k, v in KNOWLEDGE_LABELS.items()
+            if k != "unknown"
+        )
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("Who is learning?"),
-            content=ft.Column(
-                [
-                    ft.Text(
-                        "The app adapts how much it explains. You can change this any time in Learn.", size=13
-                    )
-                ]
-                + [
-                    ft.FilledButton(content=ft.Text(v), on_click=lambda e, k=k: choose(k))
-                    for k, v in KNOWLEDGE_LABELS.items()
-                    if k != "unknown"
-                ],
-                tight=True,
-                spacing=8,
-            ),
-            actions=[ft.TextButton(content=ft.Text("Skip: assist me"), on_click=lambda e: choose("unknown"))],
+            content=ft.Column(choices, tight=True, spacing=8),
+            actions=[
+                ft.TextButton(
+                    content=ft.Text("Skip: assist me"),
+                    on_click=lambda e: choose("unknown"),
+                    key="knowledge-skip",
+                )
+            ],
         )
     ft.use_dialog(dialog)
     return ft.Row(columns, expand=True, spacing=0, vertical_alignment=ft.CrossAxisAlignment.STRETCH)
@@ -394,6 +421,8 @@ def App(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             ft.Route(path="job/:id/dynamics/:pulse/:sample", component=layout),
             ft.Route(path="device/:page", component=layout),
             ft.Route(path="learn", component=layout),
+            ft.Route(path="learn/:tab", component=layout),
+            ft.Route(path="learn/preset/:preset", component=layout),
         ],
         not_found=layout,
     )
@@ -402,9 +431,11 @@ def App(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
 __all__ = [
     "App",
     "DEVICE_PAGES",
+    "LEVEL_NAMES",
     "LEVEL_SECTIONS",
     "Shell",
     "child_route",
+    "learn_route_parts",
     "level_of",
     "parent_route",
     "pulse_of_path",

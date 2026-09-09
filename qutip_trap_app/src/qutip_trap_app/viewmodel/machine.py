@@ -50,6 +50,8 @@ class Histogram:
     total_variation_to_target: float
     """(1/2) sum_x |p_x - t_x|: how far the simulated distribution sits from the compiler's target."""
     largest_deviation_in_error_bars: float
+    target_distance: Shown
+    largest_deviation: Shown
     discarded_shots: int
     bit_order_note: str
     level_note: str
@@ -87,6 +89,10 @@ def histogram(record: Record) -> Histogram:
         n_qubits=n,
         total_variation_to_target=tv,
         largest_deviation_in_error_bars=worst,
+        target_distance=Shown("target_distance", tv),
+        largest_deviation=Shown(
+            "largest_deviation", worst, "the bar farthest from its target, in its own error bars"
+        ),
         discarded_shots=res.discarded_shots,
         bit_order_note="keys read qubit 0 rightmost (the IonQ decimal key is the same integer)",
         level_note=f"simulated at fidelity level {record.diagnostics.level}",

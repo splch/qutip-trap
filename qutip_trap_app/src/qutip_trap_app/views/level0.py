@@ -1,8 +1,8 @@
-"""Level 0, the machine (PLAN.md Section 14.2 row 0; DESIGN.md Section 5).
+"""Level 0, the machine (PLAN.md Section 14.2 row 0; DESIGN.md Sections 5 and 10).
 
-Left: the device card. Centre: the circuit editor with OpenQASM 2 and IonQ JSON import, the shot count, the engine, and Run,
-the one primary action. Right, after Run: the histogram with the target beside it, the bars that open their shots, the
-verify-deeper action and its report. Before a run, the predict-then-reveal card asks what the learner expects.
+Before a run the focal object is Run: the circuit editor, then the predict-then-reveal card. After a run the focal picture is
+the histogram with the target beside it, first on the screen, with three stat tiles under it and the shots, the table and the
+verify-deeper report behind disclosure; the editor follows. The device card is six stat tiles with every row behind Details.
 """
 
 from __future__ import annotations
@@ -16,15 +16,22 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
 from qutip_trap_app.viewmodel.learn import score_histogram_prediction
 from qutip_trap_app.viewmodel.machine import Histogram, device_card_view, histogram, shot
+from qutip_trap_app.viewmodel.presets import PRESETS, circuit_comparisons, circuit_presets
 from qutip_trap_app.views.common import (
     card,
     data_table,
+    details,
+    hint,
     kv_rows,
     level_header,
     shown,
+    stat_row,
+    stat_tile,
+    status_line,
     value_cell,
 )
-from qutip_trap_app.views.state import BELL_QASM, Session, Store
+from qutip_trap_app.views.presets import comparison_table
+from qutip_trap_app.views.state import Session, Store
 
 SKETCHES: dict[str, str] = {
     "ideal": "the ideal machine's distribution",
@@ -43,12 +50,13 @@ def _sketch_distribution(kind: str, target: dict[str, float], n: int) -> dict[st
 
 
 @ft.component
-def CircuitEditor(store: Store, session: Session) -> ft.Control:
+def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     ft.use_state(store)
     running = bool(store.running())
 
     def set_text(e: Any) -> None:
         store.circuit_text = str(e.control.value)
+        store.active_preset = None
 
     def set_format(e: Any) -> None:
         store.circuit_format = str(e.control.value)  # type: ignore[assignment]
@@ -62,21 +70,22 @@ def CircuitEditor(store: Store, session: Session) -> ft.Control:
     def set_engine(e: Any) -> None:
         store.engine = str(e.control.value)  # type: ignore[assignment]
 
-    def load_bell(_e: Any) -> None:
-        store.circuit_text = BELL_QASM
-        store.circuit_format = "openqasm2"
-
-    def run(_e: Any) -> None:
-        session.submit_run()
+    def load(e: Any) -> None:
+        choice = str(e.control.value)
+        if choice == "bell":
+            session.load_bell_example()
+        else:
+            session.load_circuit_preset(choice)
 
     editor = ft.TextField(
         value=store.circuit_text,
         label="circuit (OpenQASM 2 or IonQ JSON)",
         multiline=True,
-        min_lines=6,
-        max_lines=12,
+        min_lines=5,
+        max_lines=10,
         on_change=set_text,
         text_size=13,
+        key="circuit-text",
     )
     controls = ft.Row(
         [
@@ -88,13 +97,13 @@ def CircuitEditor(store: Store, session: Session) -> ft.Control:
                     ft.DropdownOption(key="ionq_json", text="IonQ JSON"),
                 ],
                 on_select=set_format,
-                width=160,
+                width=150,
                 dense=True,
             ),
             ft.TextField(
                 label="shots",
                 value=str(store.shots),
-                width=110,
+                width=100,
                 on_change=set_shots,
                 dense=True,
                 text_size=13,
@@ -103,35 +112,48 @@ def CircuitEditor(store: Store, session: Session) -> ft.Control:
                 label="engine",
                 value=store.engine,
                 options=[
-                    ft.DropdownOption(key="replay", text="channel replay (derived, seconds)"),
-                    ft.DropdownOption(key="full", text="full simulation (JOINT_EXACT or GATE_LOCAL)"),
+                    ft.DropdownOption(key="replay", text="channel replay (seconds, derived)"),
+                    ft.DropdownOption(key="full", text="full simulation"),
                 ],
                 on_select=set_engine,
-                width=330,
+                width=250,
+                dense=True,
+                tooltip="channel replay applies each gate's extracted channel (Section 14.2 row 0); the full simulation integrates the Hamiltonian",
+            ),
+            ft.Dropdown(
+                label="load",
+                value=store.active_preset or "bell",
+                options=[ft.DropdownOption(key="bell", text="Bell example")]
+                + [ft.DropdownOption(key=p.id, text=p.title) for p in circuit_presets()],
+                on_select=load,
+                width=250,
                 dense=True,
             ),
         ],
         wrap=True,
         spacing=10,
     )
-    actions = ft.Row(
-        [
-            ft.FilledButton(
-                content=ft.Text("Run"),
-                icon=ft.Icons.PLAY_ARROW,
-                on_click=run,
-                disabled=running,
-                tooltip="the one primary action of this level",
-            ),
-            ft.TextButton(content=ft.Text("Load the Bell example"), on_click=load_bell),
-        ],
-        spacing=8,
-    )
-    error = ft.Text(store.error, color=ft.Colors.ERROR, size=12) if store.error else ft.Container()
+    actions: list[ft.Control] = [
+        ft.FilledButton(
+            content=ft.Text("Run"),
+            icon=ft.Icons.PLAY_ARROW,
+            on_click=lambda e: session.submit_run(),
+            disabled=running,
+            key="run",
+        )
+    ]
+    if store.active_preset:
+        spec = PRESETS[store.active_preset]
+        actions.append(status_line(f"{spec.title}: {spec.duration}"))
+    body: list[ft.Control] = [editor, controls]
+    if store.error:
+        body.append(ft.Text(store.error, color=ft.Colors.ERROR, size=12, key="error"))
     return card(
         "Circuit",
-        ft.Column([editor, controls, actions, error], spacing=10),
-        subtitle="what you ask the machine to do",
+        ft.Column(body, spacing=10),
+        why=lambda e: session.select_concept(0, "shot"),
+        actions=actions,
+        key="circuit",
     )
 
 
@@ -143,8 +165,15 @@ def ProgressRows(store: Store, session: Session) -> ft.Control:
         label = {
             "replay": "channel replay",
             "run_job": "full simulation",
+            "request_run": "the requested run",
             "verify": "verify deeper",
             "zoom": "re-simulation",
+            "preset": "published experiment",
+            "derive": "deriving the device",
+            "recalibrate": "recalibration",
+            "fock_movie": "Fock movie",
+            "tomography": "process tomography",
+            "recheck": "convergence re-check",
         }.get(status.request, status.request)
         rows.append(
             ft.Column(
@@ -158,7 +187,7 @@ def ProgressRows(store: Store, session: Session) -> ft.Control:
                         spacing=8,
                     ),
                     ft.ProgressBar(value=status.fraction, bar_height=4),
-                    ft.Text(status.message, size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                    status_line(status.message),
                 ],
                 spacing=4,
             )
@@ -171,12 +200,7 @@ def ProgressRows(store: Store, session: Session) -> ft.Control:
         on_click=lambda e: session.cancel_all(),
         tooltip="stop every running job: the worker process restarts, and the next Run rebuilds its channel library",
     )
-    return card(
-        "Working",
-        ft.Column(rows, spacing=10),
-        subtitle="the solver runs in a worker process; the screen stays live",
-        actions=[cancel],
-    )
+    return card("Working", ft.Column(rows, spacing=10), actions=[cancel], key="working")
 
 
 @ft.component
@@ -187,19 +211,14 @@ def PredictionCard(store: Store, session: Session) -> ft.Control:
         from qutip_trap_app.core import ideal_probabilities
 
         target = {str(k): float(v) for k, v in ideal_probabilities(circuit).items()}
-        n = circuit.n_qubits
     except Exception:
         return ft.Container()
     top = ", ".join(f"{k}: {v:.2f}" for k, v in sorted(target.items(), key=lambda kv: -kv[1])[:4])
     labels = {"ideal": f"the outcomes {top}", "uniform": SKETCHES["uniform"], "zero": SKETCHES["zero"]}
     return card(
-        "Before you run: what do you expect?",
+        "Before you run: which histogram do you expect?",
         ft.Column(
             [
-                ft.Text(
-                    "Pick the histogram you expect. The run then shows you how far the physics landed from your pick (this is a prompt, not a test).",
-                    size=13,
-                ),
                 ft.RadioGroup(
                     content=ft.Column([ft.Radio(value=k, label=v) for k, v in labels.items()], spacing=0),
                     value=store.prediction,
@@ -211,11 +230,13 @@ def PredictionCard(store: Store, session: Session) -> ft.Control:
             ],
             spacing=6,
         ),
-        subtitle=f"{n} qubits; retrieval before the reveal",
+        why=lambda e: session.select_concept(0, "histogram"),
+        info="a prompt, not a test: the run scores your pick against the recorded histogram and never against a script",
+        key="prediction",
     )
 
 
-def _histogram_chart(h: Histogram, on_bar: Any) -> ft.Control:
+def _histogram_chart(h: Histogram, on_bar: Any, *, height: float = 300.0) -> ft.Control:
     groups = []
     labels = []
     for k, bar in enumerate(h.bars):
@@ -229,15 +250,15 @@ def _histogram_chart(h: Histogram, on_bar: Any) -> ft.Control:
                     fc.BarChartRod(
                         from_y=0.0,
                         to_y=p,
-                        width=22,
+                        width=26,
                         color=ft.Colors.PRIMARY,
-                        tooltip=f"simulated {p:.3f} ± {eb:.3f} ({bar.count.value} shots)",
+                        tooltip=f"simulated {p:.3f} ± {eb:.3f} ({bar.count.value} shots); click to open them",
                         border_radius=2,
                     ),
                     fc.BarChartRod(
                         from_y=0.0,
                         to_y=t,
-                        width=22,
+                        width=26,
                         color=ft.Colors.with_opacity(0.25, ft.Colors.TERTIARY),
                         border_side=ft.BorderSide(1.5, ft.Colors.TERTIARY),
                         tooltip=f"target {t:.3f} (ideal circuit)",
@@ -272,10 +293,31 @@ def _histogram_chart(h: Histogram, on_bar: Any) -> ft.Control:
         horizontal_grid_lines=fc.ChartGridLines(interval=0.25, color=ft.Colors.OUTLINE_VARIANT, width=1),
         interactive=True,
         on_event=on_event,
-        height=240,
+        height=height,
         expand=True,
     )
     return chart
+
+
+def _legend() -> ft.Control:
+    return ft.Row(
+        [
+            ft.Container(
+                width=14, height=14, bgcolor=ft.Colors.PRIMARY, border_radius=ft.BorderRadius.all(2)
+            ),
+            ft.Text("simulated", size=12),
+            ft.Container(
+                width=14,
+                height=14,
+                bgcolor=ft.Colors.with_opacity(0.25, ft.Colors.TERTIARY),
+                border=ft.Border.all(1.5, ft.Colors.TERTIARY),
+                border_radius=ft.BorderRadius.all(2),
+            ),
+            ft.Text("ideal (target)", size=12),
+        ],
+        spacing=6,
+        wrap=True,
+    )
 
 
 @ft.component
@@ -283,12 +325,7 @@ def ShotsPanel(store: Store, record: Record, h: Histogram, index: ProvenanceInde
     ft.use_state(store)
     key = store.selected_bar
     if key is None:
-        return ft.Text(
-            "click a bar to open the shots stacked inside it",
-            size=12,
-            italic=True,
-            color=ft.Colors.ON_SURFACE_VARIANT,
-        )
+        return ft.Container()
     bar = next((b for b in h.bars if b.key == key), None)
     if bar is None:
         return ft.Container()
@@ -308,33 +345,46 @@ def ShotsPanel(store: Store, record: Record, h: Histogram, index: ProvenanceInde
     detail: ft.Control = ft.Container()
     if store.selected_shot is not None and store.selected_shot in bar.shots:
         sv = shot(record, store.selected_shot)
-        rows: list[tuple[str, ft.Control]] = [
-            ("outcome", shown(sv.bitstring, index, label=False)),
-            ("sampled levels (ion 0 first)", ft.Text(str(sv.levels))),
-            ("flags", ft.Text(", ".join(sv.heralds) or "none")),
-            ("dynamical sample", ft.Text(str(sv.sample_index))),
-            ("detection window", shown(sv.detection_window, index, label=False)),
+        tiles: list[ft.Control] = [
+            stat_tile(sv.bitstring, index),
+            stat_tile(sv.detection_window, index),
         ]
         if sv.threshold is not None:
-            rows.append(("threshold", shown(sv.threshold, index, label=False)))
+            tiles.append(stat_tile(sv.threshold, index))
         if sv.photon_counts is not None:
-            rows.append(
-                (
-                    "photon counts",
-                    ft.Row([shown(c, index, label=False) for c in sv.photon_counts], spacing=10),
-                )
+            tiles.extend(
+                stat_tile(c, index, label=f"photons, ion {i}") for i, c in enumerate(sv.photon_counts)
             )
-        detail = ft.Column(
-            [kv_rows(rows), ft.Text(sv.note, size=12, italic=True, color=ft.Colors.ON_SURFACE_VARIANT)],
+        rows: list[tuple[str, ft.Control]] = [
+            ("sampled levels (ion 0 first)", ft.Text(str(sv.levels), size=12)),
+            ("flags", ft.Text(", ".join(sv.heralds) or "none", size=12)),
+            ("dynamical sample", ft.Text(str(sv.sample_index), size=12)),
+        ]
+        detail = ft.Column([stat_row(tiles), kv_rows(rows), status_line(sv.note)], spacing=6)
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text(f"{len(bar.shots)} shots gave {key}", size=13, weight=ft.FontWeight.W_500),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            icon_size=14,
+                            tooltip="close the shots",
+                            on_click=lambda e: setattr(store, "selected_bar", None),
+                        ),
+                    ],
+                    spacing=4,
+                ),
+                shots_list,
+                detail,
+            ],
             spacing=6,
-        )
-    return ft.Column(
-        [
-            ft.Text(f"{len(bar.shots)} shots gave {key}; click one", size=13, weight=ft.FontWeight.W_500),
-            shots_list,
-            detail,
-        ],
-        spacing=8,
+        ),
+        padding=ft.Padding.all(8),
+        border_radius=ft.BorderRadius.all(8),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+        key="shots",
     )
 
 
@@ -353,62 +403,55 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
     def verify(_e: Any) -> None:
         session.submit_verify(key, shots=min(store.shots, 200))
 
-    feedback: ft.Control = ft.Container()
+    body: list[ft.Control] = []
     if store.scored_prediction and store.scored_prediction != "skipped":
         sim = {b.key: float(b.probability.value or 0.0) for b in h.bars}
         bars = {b.key: float(b.error_bar.value or 0.0) for b in h.bars}
         target = {b.key: float(b.target_probability.value or 0.0) for b in h.bars}
         pred = _sketch_distribution(store.scored_prediction, target, h.n_qubits)
         score = score_histogram_prediction(pred, sim, bars)
-        feedback = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text(
-                        f"your pick against the simulated histogram: total variation {score.total_variation:.2f}",
-                        size=13,
-                        weight=ft.FontWeight.W_500,
-                    ),
-                    ft.Text(score.feedback, size=12),
-                ],
-                spacing=2,
-            ),
-            bgcolor=ft.Colors.SECONDARY_CONTAINER,
-            padding=ft.Padding.all(10),
-            border_radius=ft.BorderRadius.all(8),
+        body.append(
+            ft.Container(
+                content=ft.Text(
+                    f"your pick against the histogram: total variation {score.total_variation:.2f}; {score.feedback}",
+                    size=12,
+                ),
+                bgcolor=ft.Colors.SECONDARY_CONTAINER,
+                padding=ft.Padding.all(8),
+                border_radius=ft.BorderRadius.all(8),
+            )
         )
-    stats = ft.Row(
-        [
-            shown(h.shots, index),
-            ft.Text(
-                f"distance to the target {h.total_variation_to_target:.3f}",
-                size=13,
-                tooltip="(1/2) sum |p - target|",
-            ),
-            ft.Text(f"largest deviation {h.largest_deviation_in_error_bars:.1f} error bars", size=13),
-            ft.Text(h.level_note, size=12, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-        ],
-        wrap=True,
-        spacing=16,
+    body.append(_histogram_chart(h, on_bar))
+    body.append(
+        ft.Row(
+            [
+                stat_tile(h.shots, index),
+                stat_tile(h.target_distance, index),
+                stat_tile(h.largest_deviation, index),
+                _legend(),
+            ],
+            wrap=True,
+            spacing=8,
+            run_spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
     )
-    legend = ft.Row(
-        [
-            ft.Container(
-                width=14, height=14, bgcolor=ft.Colors.PRIMARY, border_radius=ft.BorderRadius.all(2)
-            ),
-            ft.Text("simulated", size=12),
-            ft.Container(
-                width=14,
-                height=14,
-                bgcolor=ft.Colors.with_opacity(0.25, ft.Colors.TERTIARY),
-                border=ft.Border.all(1.5, ft.Colors.TERTIARY),
-                border_radius=ft.BorderRadius.all(2),
-            ),
-            ft.Text("target (ideal circuit), beside, never in place", size=12),
-            ft.Text(h.bit_order_note, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-        ],
-        spacing=6,
-        wrap=True,
-    )
+    body.append(hint(store, 0, "histogram"))
+    body.append(ShotsPanel(store, record, h, index))
+    if store.active_preset and record.job.label == f"preset: {store.active_preset}":
+        spec = PRESETS[store.active_preset]
+        comps = circuit_comparisons(
+            spec, record.results.probabilities, record.results.error_bars, record.results.register_fidelity
+        )
+        body.append(
+            ft.Column(
+                [
+                    ft.Text(f"{spec.source}: {spec.row}", size=12, weight=ft.FontWeight.W_600),
+                    comparison_table(comps, index),
+                ],
+                spacing=4,
+            )
+        )
     table = data_table(
         ["outcome", "count", "probability", "error bar", "target"],
         [
@@ -423,20 +466,21 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
         ],
         numeric=[False, True, True, True, True],
     )
-    verify_body: list[ft.Control] = []
+    detail_controls: list[ft.Control] = [table, status_line(h.bit_order_note), status_line(h.level_note)]
     if report is not None:
         lines = [
             f"{report.shallow_level} against {report.deep_level or 'the Section 5.5 re-checks'} on {report.shots} shots ({report.wall_time_s:.0f} s)",
         ]
         if report.discrepancy_populations is not None and report.bound is not None:
             lines.append(
-                f"register populations differ by {report.discrepancy_populations:.2e}; the bound is {report.bound:.2e}: {'within' if report.within_bound else 'OUTSIDE'}"
+                f"register populations differ by {report.discrepancy_populations:.2e}; the bound is {report.bound:.2e}: "
+                f"{'within' if report.within_bound else 'OUTSIDE'}"
             )
         lines.append(
             f"histograms differ by {report.discrepancy_histogram:.3f} against a shot-noise scale of {report.statistical_scale:.3f}"
         )
         lines.extend(report.notes)
-        verify_body.append(ft.Column([ft.Text(x, size=12) for x in lines], spacing=2))
+        detail_controls.append(ft.Column([ft.Text(x, size=12) for x in lines], spacing=2))
         if report.deep_record_key and report.deep_record_key in store.records:
             deep_key = report.deep_record_key
 
@@ -444,121 +488,100 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
                 store.current = k
                 ft.context.page.navigate(f"/job/{k}")
 
-            verify_body.append(ft.TextButton(content=ft.Text("open the deeper run"), on_click=open_deep))
-    verify_row = ft.Row(
-        [
+            detail_controls.append(ft.TextButton(content=ft.Text("open the deeper run"), on_click=open_deep))
+    body.append(details("level0.results", detail_controls, store=store, session=session))
+    verified_line = (
+        status_line(
+            f"verify deeper: {'within' if report.within_bound else 'OUTSIDE'} the bound"
+            if report is not None and report.within_bound is not None
+            else "verify deeper: done"
+        )
+        if report is not None
+        else ft.Container()
+    )
+    return card(
+        "Results",
+        ft.Column(body, spacing=10),
+        why=lambda e: session.select_concept(0, "target_vs_simulated"),
+        info=(
+            "every bar is the count of recorded shots (Section 14.1 rule 1); the outlined bars are the ideal circuit's "
+            "distribution, shown beside the simulated one and never in its place (Section 14.5)"
+        ),
+        actions=[
             ft.OutlinedButton(
                 content=ft.Text("Verify deeper"),
                 icon=ft.Icons.VERIFIED,
                 on_click=verify,
                 disabled=verifying,
-                tooltip="run the same job at the next-deeper engine and compare (Section 14.5)",
+                tooltip="run the same job at the next-deeper engine on a subset of shots and compare (Section 14.5)",
+                key="verify-deeper",
             ),
-            ft.Text(
-                "checks this result against the next engine, on a subset of shots",
-                size=12,
-                color=ft.Colors.ON_SURFACE_VARIANT,
-            ),
+            verified_line,
         ],
-        spacing=10,
-        wrap=True,
-    )
-    return card(
-        "Results",
-        ft.Column(
-            [
-                feedback,
-                _histogram_chart(h, on_bar),
-                legend,
-                stats,
-                table,
-                ShotsPanel(store, record, h, index),
-                ft.Divider(height=8),
-                verify_row,
-            ]
-            + verify_body,
-            spacing=10,
-        ),
-        subtitle="the count of recorded shots per outcome (Section 14.1 rule 1)",
+        key="results",
     )
 
 
 @ft.component
-def DeviceCardView(record: Record, index: ProvenanceIndex) -> ft.Control:
+def DeviceCardView(store: Store, session: Session, record: Record, index: ProvenanceIndex) -> ft.Control:
+    ft.use_state(store)
     cv = device_card_view(record)
+    page = ft.context.page
+    plain = store.learner.plan(0).plain_labels_first
+    tiles: list[ft.Control] = []
+    for r in cv.spam:
+        if r.label.startswith("q0"):
+            tiles.append(stat_tile(r.value, index, plain=plain, status=r.status))
+    for r in cv.gate_errors[:3]:
+        tiles.append(stat_tile(r.value, index, plain=plain, label=f"{r.label} error", status=r.status))
+    modes = ", ".join(f"{float(m.value or 0.0) / 1e6:.3f}" for m in cv.modes)
     rows: list[tuple[str, ft.Control]] = [
-        ("species", ft.Text(", ".join(cv.species))),
-        ("ions", ft.Text(str(cv.n_ions))),
-        ("native gates", shown(cv.native_gates, index, label=False)),
+        ("species", ft.Text(", ".join(cv.species), size=12)),
+        ("ions", ft.Text(str(cv.n_ions), size=12)),
+        ("native gates", shown(cv.native_gates, index, label=False, size=12)),
     ]
     rows += [
-        (
-            r.label,
-            ft.Row(
-                [
-                    shown(r.value, index, label=False),
-                    ft.Text(r.status, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-                ],
-                spacing=6,
-            ),
-        )
-        for r in cv.rows
+        (r.label, ft.Row([shown(r.value, index, label=False, size=12), status_line(r.status)], spacing=6))
+        for r in list(cv.rows) + list(cv.spam) + list(cv.gate_errors)
     ]
-    spam = [
-        (
-            r.label,
-            ft.Row(
-                [
-                    shown(r.value, index, label=False),
-                    ft.Text(r.status, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-                ],
-                spacing=6,
-            ),
-        )
-        for r in cv.spam
+    rows += [(m.detail or "mode", shown(m, index, label=False, size=12)) for m in cv.modes]
+    detail_controls: list[ft.Control] = [
+        kv_rows(rows, label_width=190),
+        ft.Row(
+            [
+                shown(cv.device_hash, index, size=12),
+                shown(cv.seed, index, size=12),
+                shown(cv.fidelity_level, index, size=12),
+            ],
+            wrap=True,
+            spacing=12,
+        ),
+        ft.Column([status_line(n) for n in cv.notes], spacing=2),
     ]
-    errors = [
-        (
-            r.label,
-            ft.Row(
-                [
-                    shown(r.value, index, label=False),
-                    ft.Text(r.status, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-                ],
-                spacing=6,
-            ),
-        )
-        for r in cv.gate_errors
-    ]
-    modes = ft.Column(
-        [
-            ft.Row([ft.Text(m.detail, size=12, width=110), shown(m, index, label=False)], spacing=4)
-            for m in cv.modes
-        ],
-        spacing=2,
-    )
     body = ft.Column(
         [
-            kv_rows(rows),
-            ft.Text("modes", weight=ft.FontWeight.W_600, size=13),
-            modes,
-            ft.Text("readout and preparation", weight=ft.FontWeight.W_600, size=13),
-            kv_rows(spam),
-            ft.Text("gate errors", weight=ft.FontWeight.W_600, size=13),
-            kv_rows(errors) if errors else ft.Text("none reported for this run", size=12, italic=True),
-            ft.Row(
-                [shown(cv.device_hash, index), shown(cv.seed, index), shown(cv.fidelity_level, index)],
-                wrap=True,
-                spacing=12,
+            ft.Text(
+                f"{', '.join(sorted(set(cv.species)))}, {cv.n_ions} ions", size=13, weight=ft.FontWeight.W_500
             ),
-            ft.Column([ft.Text(n, size=11, color=ft.Colors.ON_SURFACE_VARIANT) for n in cv.notes], spacing=2),
+            stat_row(tiles),
+            status_line(f"modes: {modes} MHz"),
+            details("level0.device", detail_controls, store=store, session=session),
         ],
         spacing=8,
     )
     return card(
         "Device",
         body,
-        subtitle="what a cloud customer is told about the machine; click a number's chip for its source",
+        why=lambda e: session.select_concept(0, "spam"),
+        info="what a cloud customer is told about the machine; estimate = a closed form, calibrated = the table's process tomography",
+        actions=[
+            ft.TextButton(
+                content=ft.Text("Change the device"),
+                icon=ft.Icons.FUNCTIONS,
+                on_click=lambda e: page.navigate("/device/trap"),
+            )
+        ],
+        key="device",
     )
 
 
@@ -566,59 +589,61 @@ def DeviceCardView(record: Record, index: ProvenanceIndex) -> ft.Control:
 def Level0Page(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     ft.use_state(store)
     record = store.record()
-    header = level_header(
-        0,
-        "The machine",
-        "What did the machine return, and how does it compare with a perfect one?",
+    note = (
         ""
         if record is None
-        else f"job {record.key()[:10]} · {record.diagnostics.level}{' (derived)' if record.replay is not None else ''}",
+        else f"job {record.key()[:10]} · {record.diagnostics.level}{' (derived)' if record.replay is not None else ''}"
+        + (f" · {record.job.label}" if record.job.label else "")
     )
-    left: list[ft.Control] = (
-        [DeviceCardView(record, index)]
-        if record is not None
-        else [
-            card(
-                "Device",
-                ft.Text(
-                    "The device card fills in from the run's record: species, modes, readout errors, gate errors, each with its provenance chip.",
-                    size=13,
-                ),
-            )
-        ]
+    header = level_header(
+        "The machine", "What did the machine return, and how does it compare with a perfect one?", note=note
     )
-    # Section 14.4: a device edited on the Physics pages shows its re-derived card here, stale badge and Recalibrate included
+    right: list[ft.Control] = []
     layer = store.layer()
     if store.device_overrides or (
         layer is not None and record is not None and layer.device_hash != record.device_hash
     ):
         from qutip_trap_app.views.level4 import CurrentDeviceCard
 
-        left = [CurrentDeviceCard(store, session, index)] + left
-    centre: list[ft.Control] = [CircuitEditor(store, session), ProgressRows(store, session)]
-    plan = store.learner.plan(0)
-    # asked before every reveal: the first run, and every run of a circuit edited since the last one
-    if plan.prompt_before_reveal and store.prediction != "skipped" and store.prediction_pending():
-        centre.append(PredictionCard(store, session))
+        right.append(CurrentDeviceCard(store, session, index))
     if record is not None:
-        centre.append(ResultsPanel(store, session, record, index))
-    elif not store.running():
-        centre.append(
-            card(
-                "No result yet",
-                ft.Text(
-                    "Press Run. The Bell circuit is loaded: two ions, one entangling gate, two bars you can open down to the matrix element that made them.",
-                    size=13,
-                ),
+        right.append(DeviceCardView(store, session, record, index))
+    plan = store.learner.plan(0)
+    ask = plan.prompt_before_reveal and store.prediction != "skipped" and store.prediction_pending()
+    centre: list[ft.Control]
+    if record is not None:
+        centre = [
+            ResultsPanel(store, session, record, index),
+            ProgressRows(store, session),
+            CircuitEditor(store, session, index),
+        ]
+        if ask:
+            centre.append(PredictionCard(store, session))
+    else:
+        centre = [CircuitEditor(store, session, index), ProgressRows(store, session)]
+        if ask:
+            centre.append(PredictionCard(store, session))
+        if not store.running():
+            centre.append(
+                card(
+                    "No result yet",
+                    ft.Column(
+                        [
+                            ft.Text("Press Run.", size=13),
+                            hint(store, 0, "shot"),
+                        ],
+                        spacing=4,
+                    ),
+                    key="empty",
+                )
             )
-        )
     return ft.Column(
         [
             header,
             ft.ResponsiveRow(
                 [
-                    ft.Column(centre, col={"xs": 12, "lg": 7}, spacing=10),
-                    ft.Column(left, col={"xs": 12, "lg": 4}, spacing=10),
+                    ft.Column(centre, col={"xs": 12, "lg": 8}, spacing=10),
+                    ft.Column(right, col={"xs": 12, "lg": 4}, spacing=10),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.START,
                 spacing=16,
