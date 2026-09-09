@@ -692,12 +692,12 @@ M10: simultaneous RB reported the joint P(00) decay with the n-qubit-group formu
 | `docs/` | the release documentation (M10): `physics_notes.md` (the equations with their plan sections, modules and ledger records), `conventions.md`, `examples.md` (executed by `tests/test_docs.py`), `limits.md`, with tables generated from the ledger by `tools/docs_from_ledger.py`; `provenance/ledger.yaml` is the provenance ledger of Section 14.5 (one record per quantity) |
 | `validation/scripts/` | the check and benchmark scripts of Appendix D with their committed outputs; `run_checks.py` re-runs and compares them |
 | `tests/` | pytest suite (API freeze against Appendix E, units, species tables, hashing, seeds, IonQ formats, the atomic anchors of Sections 9.13/9.14/9.16, the trap and crystal anchors of Sections 9.1/9.10/9.12/9.13/9.17, the M2 spin-motion, composite-pulse, comb, native-pulse, Harty RB and experiment tests, the M3a Bloch and recoil tests, the M3 cooling and preparation tests, the M4 shaping, two-qubit gate, scheduler, light-shift and calibration tests, the M8 calibration-layer, experiment and end-to-end calibration tests, the M9a tomography, GATE_LOCAL and scaling-mode tests, the M10 Clifford, KAK, preset, benchmark and documentation tests) |
-| `qutip_trap_app/` | the separate Flet application package of Section 14 (scaffold only until M11) |
+| `qutip_trap_app/` | the separate Flet application package of Section 14 (M11). M11.1 done: the run record and its bitwise export (`record.py`, `codec.py`, `storage.py`), on-demand re-simulation of a zoomed pulse with caching (`resim.py`), the provenance index generated from the ledger and Part II (`provenance.py`, `src/assets/provenance_index.json`), the pure-Python view-models of Levels 0 to 3 with the numerics panel and the learning layer (`viewmodel/`), and the Section 9.11 tests it owns; the learning-tool design is `qutip_trap_app/DESIGN.md`; the screens are M11.2 to M11.4 |
 | `.github/workflows/ci.yml` | CI: validation scripts first, then lint, type-check, tests, `flet doctor`, convergence-report artifact |
 
 ## Commands
 
-    uv sync --all-extras                       # Python 3.13 (see .python-version), pinned in uv.lock
+    uv sync --all-packages --all-extras --group dev   # Python 3.13 (see .python-version), pinned in uv.lock; the app package too
     uv run ruff check . && uv run ruff format --check .
     uv run mypy
     uv run pytest

@@ -1030,8 +1030,8 @@ dev = [
 
 [[package]]
 name = "qutip-trap-app"
-version = "0.0.1"
-source = { virtual = "qutip_trap_app" }
+version = "0.1.0"
+source = { editable = "qutip_trap_app" }
 dependencies = [
     { name = "flet", extra = ["all"] },
     { name = "flet-charts" },

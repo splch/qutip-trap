@@ -83,3 +83,25 @@ jobs:
           enable-cache: true
       - run: uv sync --extra gui
       - run: uv run flet doctor
+
+  app:
+    name: the application package (Section 14 / M11): lint, types, provenance index, view-model tests
+    needs: validation-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --extra gui --group dev
+      - name: ruff (lint and format) on the app
+        run: |
+          uv run ruff check qutip_trap_app
+          uv run ruff format --check qutip_trap_app
+      - name: mypy --strict on src/qutip_trap_app
+        run: uv run mypy
+        working-directory: qutip_trap_app
+      - name: the provenance index asset is current with the ledger and PLAN.md
+        run: uv run python -m qutip_trap_app.provenance --check
+      - name: view-model tests (Section 9.11 rows of M11.1; the Flet UI tests are skipped without the Flutter client)
+        run: uv run --package qutip-trap-app pytest qutip_trap_app/tests -q
