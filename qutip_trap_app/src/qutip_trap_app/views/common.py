@@ -1,11 +1,11 @@
-"""Shared Flet pieces (DESIGN.md Sections 3 to 5 and the information hierarchy of Section 10).
+"""Shared Flet pieces (DESIGN.md Sections 3 to 5 and the information hierarchy of Section 10), on the tokens of ``theme``.
 
 Rules carried here: a number is a stat tile (value large, plain label small, chip) and never a sentence; a card has a noun
 for a title, a why button that opens its concept in the explain drawer, and no subtitle; everything beyond six numbers goes
 behind a Details disclosure; a provenance chip is a focusable button whose click opens the section it cites; meaning is never
-carried by colour alone (every tag has a glyph and a word, every badge its word); the explain drawer shows one concept at a
-time with the Part II text behind a Specification tile. Plain label first, the physics term on hover, the unit always
-printed, Hz with the 2 pi conversion on hover (Section 14.5).
+carried by colour alone (every tag has a glyph and a word, every badge its word and an icon); the explain drawer shows one
+concept at a time with the Part II text behind a Specification tile. Plain label first, the physics term on hover, the unit
+always printed, Hz with the 2 pi conversion on hover (Section 14.5).
 """
 
 from __future__ import annotations
@@ -21,6 +21,10 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
 from qutip_trap_app.viewmodel.learn import CONCEPTS, Attempt, ExplainCard, Prompt, explain, score_choice
 from qutip_trap_app.viewmodel.numerics import Badge, NumericsPanel
+from qutip_trap_app.views import theme
+
+MUTED = ft.Colors.ON_SURFACE_VARIANT
+HAIRLINE = ft.Colors.OUTLINE_VARIANT
 
 # ---- formatting ---------------------------------------------------------------------------------------------------------------------
 
@@ -78,9 +82,9 @@ def hover_text(s: Shown) -> str:
 
 
 def chip(ledger_id: str, index: ProvenanceIndex, *, compact: bool = True) -> ft.Control:
-    """A provenance chip: the tag's glyph (and word when not compact) on a small button, with the record's section, source,
-    equation and corrected form on hover and focus; a click opens the explain drawer's Specification tile at the chip's
-    section (R8). A button, so Tab reaches it."""
+    """A provenance chip: the tag's glyph (and word when not compact) on a small quiet pill, with the record's section,
+    source, equation and corrected form on hover and focus; a click opens the explain drawer's Specification tile at the
+    chip's section (R8). A button, so Tab reaches it; muted, so it never competes with the number it certifies."""
     c = index.chip(ledger_id)
     lines = [f"{c.label}: {c.meaning}", f"ledger {c.id}", f"section {c.section}", f"source: {c.source}"]
     if c.equation:
@@ -96,22 +100,30 @@ def chip(ledger_id: str, index: ProvenanceIndex, *, compact: bool = True) -> ft.
             opener(section)
 
     return ft.TextButton(
-        content=ft.Text(c.glyph if compact else c.label, size=11, no_wrap=True),
+        content=ft.Text(
+            c.glyph if compact else c.label,
+            size=theme.SIZE_MICRO,
+            weight=ft.FontWeight.W_600,
+            no_wrap=True,
+            color=MUTED,
+        ),
         tooltip="\n".join(lines),
         on_click=on_click if opener is not None else None,
         style=ft.ButtonStyle(
-            padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-            bgcolor=ft.Colors.SECONDARY_CONTAINER,
-            color=ft.Colors.ON_SECONDARY_CONTAINER,
-            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=ft.Padding.symmetric(horizontal=0 if compact else 8, vertical=0),
+            color=MUTED,
+            shape=ft.StadiumBorder(side=ft.BorderSide(1, HAIRLINE)),
             visual_density=ft.VisualDensity.COMPACT,
+            overlay_color=ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE),
         ),
-        height=22,
+        # a button's Material minimum width is 64 px; a lone glyph wants a 24 px pill
+        width=24 if compact else None,
+        height=18 if compact else 20,
     )
 
 
 def shown(
-    s: Shown, index: ProvenanceIndex, *, label: bool = True, plain: bool = True, size: int = 14
+    s: Shown, index: ProvenanceIndex, *, label: bool = True, plain: bool = True, size: int = theme.SIZE_BODY
 ) -> ft.Control:
     """One displayed value inline: its plain label (or the physics term), the formatted value and the chip."""
     q = CATALOGUE[s.quantity]
@@ -119,10 +131,7 @@ def shown(
     if label:
         controls.append(
             ft.Text(
-                q.label if plain else q.term,
-                size=size - 1,
-                color=ft.Colors.ON_SURFACE_VARIANT,
-                tooltip=q.term if plain else q.label,
+                q.label if plain else q.term, size=size - 1, color=MUTED, tooltip=q.term if plain else q.label
             )
         )
     controls.append(
@@ -135,10 +144,11 @@ def shown(
 def value_cell(s: Shown, index: ProvenanceIndex) -> ft.Control:
     return ft.Row(
         [
-            ft.Text(fmt_shown(s), tooltip=hover_text(s), selectable=True, size=12),
+            ft.Text(fmt_shown(s), tooltip=hover_text(s), selectable=True, size=theme.SIZE_SMALL),
             chip(CATALOGUE[s.quantity].ledger_id, index),
         ],
         spacing=4,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
 
@@ -152,78 +162,98 @@ def stat_tile(
     on_click: Callable[[Any], None] | None = None,
     width: float | None = None,
 ) -> ft.Control:
-    """A number as a stat tile (R3): the value large, the plain label (or the term) small beneath, the chip beside the
-    value, an optional status word (estimate, calibrated, stale) and an optional click (a zoom-in target)."""
+    """A number as a stat tile (R3): the value large with its chip beside it, the plain label (or the term) small beneath,
+    an optional status word (estimate, calibrated, stale) and an optional click (a zoom-in target, drawn as a button). The
+    tile is as wide as its value needs; the label wraps within a reading width beneath it."""
     q = CATALOGUE[s.quantity]
     head = ft.Row(
         [
             ft.Text(
-                fmt_shown(s), size=20, weight=ft.FontWeight.W_600, tooltip=hover_text(s), selectable=True
+                fmt_shown(s),
+                size=theme.SIZE_VALUE,
+                weight=ft.FontWeight.W_600,
+                tooltip=hover_text(s),
+                selectable=True,
             ),
             chip(q.ledger_id, index),
         ],
-        spacing=4,
+        spacing=6,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
         tight=True,
     )
     caption = label if label is not None else (q.label if plain else q.term)
     below: list[ft.Control] = [
-        ft.Text(caption, size=11, color=ft.Colors.ON_SURFACE_VARIANT, tooltip=q.term if plain else q.label)
+        ft.Text(
+            caption,
+            size=theme.SIZE_SMALL,
+            color=MUTED,
+            tooltip=q.term if plain else q.label,
+            width=TILE_LABEL_WIDTH,
+        )
     ]
     if status:
-        below.append(ft.Text(status, size=10, italic=True, color=ft.Colors.ON_SURFACE_VARIANT))
+        below.append(ft.Text(status, size=theme.SIZE_CAPTION, italic=True, color=MUTED))
     return ft.Container(
-        content=ft.Column([head] + below, spacing=0, tight=True),
-        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-        border_radius=ft.BorderRadius.all(8),
-        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+        content=ft.Column([head] + below, spacing=2, tight=True),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW if on_click is not None else None,
         on_click=on_click,
         ink=on_click is not None,
         width=width,
     )
 
 
+TILE_LABEL_WIDTH = 150.0
+"""A stat tile's label wraps at this width, so a row of tiles keeps an even rhythm whatever the values' lengths."""
+
+
 def stat_row(tiles: Sequence[ft.Control]) -> ft.Control:
-    return ft.Row(list(tiles), wrap=True, spacing=8, run_spacing=8)
+    return ft.Row(list(tiles), wrap=True, spacing=theme.GAP * 2, run_spacing=theme.GAP)
 
 
-# ---- badges and the numerics strip --------------------------------------------------------------------------------------------------
+# ---- pills, badges and the numerics strip --------------------------------------------------------------------------------------------
 
-_BADGE_ICON = {
+_BADGE_ICON: dict[str, ft.IconData] = {
     "pass": ft.Icons.CHECK_CIRCLE,
     "not checked": ft.Icons.HELP_OUTLINE,
     "fail": ft.Icons.ERROR_OUTLINE,
+    "stale": ft.Icons.HISTORY,
+    "info": ft.Icons.INFO_OUTLINE,
 }
-_BADGE_BG = {
-    "pass": ft.Colors.PRIMARY_CONTAINER,
-    "not checked": ft.Colors.SECONDARY_CONTAINER,
-    "fail": ft.Colors.ERROR_CONTAINER,
-}
-_BADGE_FG = {
-    "pass": ft.Colors.ON_PRIMARY_CONTAINER,
-    "not checked": ft.Colors.ON_SECONDARY_CONTAINER,
-    "fail": ft.Colors.ON_ERROR_CONTAINER,
-}
+
+
+def pill(
+    text: str,
+    kind: str,
+    *,
+    icon: ft.IconData | None = None,
+    tooltip: str | None = None,
+    key: str | None = None,
+) -> ft.Control:
+    """A status pill: an icon and a word on the status colour of ``kind`` (pass, fail, not checked, stale, info); the word
+    carries the meaning, the colour only echoes it."""
+    bg, fg = theme.status(kind)
+    items: list[ft.Control] = []
+    icon_name = icon if icon is not None else _BADGE_ICON.get(kind)
+    if icon_name:
+        items.append(ft.Icon(icon_name, size=14, color=fg))
+    items.append(ft.Text(text, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_500, color=fg, no_wrap=True))
+    return ft.Container(
+        content=ft.Row(items, spacing=5, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        bgcolor=bg,
+        border_radius=ft.BorderRadius.all(999),
+        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+        tooltip=tooltip,
+        key=key,
+    )
 
 
 def badge_view(badge: Badge, *, extra: str = "") -> ft.Control:
     """The convergence badge: an icon, the word (never colour alone), the reasons on hover (Section 14.5)."""
     reasons = [badge.label] + list(badge.reasons) + [f"not run: {r}" for r in badge.checks_not_run]
     text = badge.status if not extra else f"{badge.status} · {extra}"
-    return ft.Container(
-        content=ft.Row(
-            [
-                ft.Icon(_BADGE_ICON[badge.status], size=16, color=_BADGE_FG[badge.status]),
-                ft.Text(text, size=12, color=_BADGE_FG[badge.status]),
-            ],
-            spacing=6,
-            tight=True,
-        ),
-        bgcolor=_BADGE_BG[badge.status],
-        border_radius=ft.BorderRadius.all(12),
-        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
-        tooltip="\n".join(reasons) if reasons else "every check run and passed",
-    )
+    return pill(text, badge.status, tooltip="\n".join(reasons) if reasons else "every check run and passed")
 
 
 def numerics_strip(
@@ -236,29 +266,23 @@ def numerics_strip(
     """The numerics panel of every level (Section 14.2) as a strip whose collapsed form is the badge, the engine and the
     joint dimension (R6); everything else inside."""
     rows: list[ft.Control] = [
-        ft.Text(panel.engine_note, size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+        status_line(panel.engine_note),
         stat_row(
             [
                 stat_tile(panel.level, index),
                 stat_tile(panel.dimension, index),
                 stat_tile(panel.integrator, index),
-            ]
-            + [stat_tile(panel.tolerances, index), stat_tile(panel.samples, index)]
-            + [
+                stat_tile(panel.tolerances, index),
+                stat_tile(panel.samples, index),
                 stat_tile(panel.trajectories, index),
                 stat_tile(panel.branches, index),
                 stat_tile(panel.wall_time, index),
             ]
         ),
     ]
-    if panel.caps:
-        rows.append(ft.Row([shown(c, index) for c in panel.caps], wrap=True, spacing=18))
-    if panel.boundary:
-        rows.append(ft.Row([shown(b, index) for b in panel.boundary], wrap=True, spacing=18))
-    if panel.margins:
-        rows.append(ft.Row([shown(m, index) for m in panel.margins], wrap=True, spacing=18))
-    if panel.mode_classes:
-        rows.append(ft.Row([shown(m, index) for m in panel.mode_classes], wrap=True, spacing=12))
+    for group in (panel.caps, panel.boundary, panel.margins, panel.mode_classes):
+        if group:
+            rows.append(ft.Row([shown(c, index) for c in group], wrap=True, spacing=18, run_spacing=6))
     if panel.derivation_residual is not None:
         rows.append(shown(panel.derivation_residual, index))
     if panel.norm_deficit is not None:
@@ -266,82 +290,150 @@ def numerics_strip(
     for c in (panel.convergence, panel.tolerance_check):
         if c is not None:
             rows.append(
-                ft.Text(
+                status_line(
                     f"tolerances {c.tolerances} against {c.tightened_tolerances}: max change {c.max_change:.2e} "
-                    f"({'converged' if c.converged else 'NOT converged'})",
-                    size=12,
+                    f"({'converged' if c.converged else 'NOT converged'})"
                 )
             )
     if panel.truncation_check is not None:
         t = panel.truncation_check
         rows.append(
-            ft.Text(
+            status_line(
                 f"caps {t.caps} against {t.grown_caps}: max change {t.max_change:.2e} "
-                f"({'converged' if t.converged else 'NOT converged'})",
-                size=12,
+                f"({'converged' if t.converged else 'NOT converged'})"
             )
         )
     if panel.badge.reasons:
         rows.append(
             ft.Column(
-                [ft.Text(r, size=12, color=ft.Colors.ON_ERROR_CONTAINER) for r in panel.badge.reasons],
+                [ft.Text(r, size=theme.SIZE_SMALL, color=ft.Colors.ERROR) for r in panel.badge.reasons],
                 spacing=2,
             )
         )
     level = str(panel.level.value or "")
     dim = panel.dimension.value
     extra = f"{level}, dimension {dim}" if dim is not None else level
-    return ft.ExpansionTile(
+    tile = ft.ExpansionTile(
         title=ft.Row(
-            [ft.Text("Numerics", weight=ft.FontWeight.W_600, size=13), badge_view(panel.badge, extra=extra)],
+            [
+                ft.Text("Numerics", weight=ft.FontWeight.W_600, size=theme.SIZE_SMALL + 1),
+                badge_view(panel.badge, extra=extra),
+            ],
             spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        controls=[ft.Container(content=ft.Column(rows, spacing=8), padding=ft.Padding.all(12))],
+        controls=[ft.Container(content=ft.Column(rows, spacing=10), padding=ft.Padding.all(12))],
         expanded=expanded,
         on_change=on_change,
         dense=True,
+        tile_padding=ft.Padding.symmetric(horizontal=theme.PAGE_PADDING - theme.GAP),
     )
+    return ft.Container(content=tile, border=ft.Border.only(top=ft.BorderSide(1, HAIRLINE)))
 
 
 # ---- headers, cards, disclosure, empty states -------------------------------------------------------------------------------------------
 
 
-def content_widths(store: Any, page: Any, level: int = 0) -> tuple[float, float]:
-    """(lane width, spectrum strip width) from the window: the content column is the window less the rail, the explain
-    drawer when open, and the margins; absolute-positioned drawings must know their width."""
+def content_width(store: Any, page: Any, level: int = 0) -> float:
+    """The width of the content column: the window less the rail, the explain drawer when open and the page margins,
+    capped at the reading width. Every layout decision that depends on the room available reads this one number."""
     total = float(getattr(page, "width", None) or 1200.0)
-    drawer = 360.0 if store.learner.explain_is_open(level) else 0.0
-    content = max(total - 80.0 - drawer - 120.0, 360.0)
-    return content - 60.0, max(content * 0.5 - 60.0, 240.0)
+    drawer = theme.DRAWER_WIDTH if store.learner.explain_is_open(level) else 0.0
+    return min(
+        max(total - theme.RAIL_WIDTH - drawer - 2 * theme.PAGE_PADDING, 360.0), theme.CONTENT_MAX_WIDTH
+    )
+
+
+def content_widths(store: Any, page: Any, level: int = 0) -> tuple[float, float]:
+    """(lane width, spectrum strip width): absolute-positioned drawings must know the room they have."""
+    content = content_width(store, page, level)
+    lane = content - 2 * theme.CARD_PADDING - 64.0
+    return lane, max(content * 0.5 - 60.0, 240.0)
+
+
+TWO_COLUMN_MIN_WIDTH = 960.0
+"""Below this content width two stacks of cards go one above the other; above it they sit side by side."""
+
+
+def columns(
+    store: Any,
+    page: Any,
+    level: int,
+    left: Sequence[ft.Control],
+    right: Sequence[ft.Control],
+    *,
+    split: tuple[int, int] = (1, 1),
+) -> ft.Control:
+    """Two stacks of cards side by side (in the proportion ``split``) when the content column is wide enough, else one
+    stack with the left cards first. Decided from the actual content width, so an open drawer narrows the layout."""
+    stacks = [list(left), list(right)]
+    if content_width(store, page, level) < TWO_COLUMN_MIN_WIDTH or not all(stacks):
+        return ft.Column(
+            stacks[0] + stacks[1], spacing=16, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+        )
+    return ft.Row(
+        [
+            ft.Column(stack, spacing=16, expand=weight, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+            for stack, weight in zip(stacks, split)
+        ],
+        spacing=16,
+        vertical_alignment=ft.CrossAxisAlignment.START,
+    )
+
+
+def content_margin(page: Any, drawer_open: bool) -> float:
+    """The side margin that centres the content column once the window is wider than the reading width."""
+    total = float(getattr(page, "width", None) or 1200.0)
+    avail = total - theme.RAIL_WIDTH - (theme.DRAWER_WIDTH if drawer_open else 0.0) - 2 * theme.PAGE_PADDING
+    return max(0.0, (avail - theme.CONTENT_MAX_WIDTH) / 2.0)
 
 
 def level_header(
     title: str, question: str, *, note: str = "", trailing: Sequence[ft.Control] = ()
 ) -> ft.Control:
-    """The level's title and the one question it answers (R1); an optional muted note (the job) and trailing controls."""
-    items: list[ft.Control] = [
+    """The level's title with the one question it answers beneath (R1), an optional muted note under the question (the
+    selection the level looks at) and trailing controls on the right."""
+    lines: list[ft.Control] = [
         ft.Text(title, theme_style=ft.TextThemeStyle.HEADLINE_SMALL),
-        ft.Text(question, size=14, color=ft.Colors.ON_SURFACE_VARIANT, expand=True),
+        ft.Text(question, size=theme.SIZE_BODY, color=MUTED),
     ]
     if note:
-        items.append(ft.Text(note, size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT))
+        lines.append(ft.Text(note, size=theme.SIZE_CAPTION, color=MUTED))
+    items: list[ft.Control] = [ft.Column(lines, spacing=2, expand=True)]
     items.extend(trailing)
-    return ft.Row(items, spacing=12, vertical_alignment=ft.CrossAxisAlignment.END)
+    return ft.Container(
+        content=ft.Row(items, spacing=16, vertical_alignment=ft.CrossAxisAlignment.START),
+        padding=ft.Padding.only(top=4, bottom=4),
+    )
+
+
+def small_icon_button(
+    icon: ft.IconData, tooltip: str, on_click: Callable[[Any], None] | None = None
+) -> ft.Control:
+    return ft.IconButton(
+        icon=icon,
+        icon_size=16,
+        icon_color=MUTED,
+        tooltip=tooltip,
+        on_click=on_click,
+        width=28,
+        height=28,
+        padding=0,
+        visual_density=ft.VisualDensity.COMPACT,
+    )
 
 
 def why_button(
     on_click: Callable[[Any], None], *, tooltip: str = "why: open this card's concept in the explain drawer"
 ) -> ft.Control:
-    return ft.IconButton(icon=ft.Icons.HELP_OUTLINE, icon_size=16, tooltip=tooltip, on_click=on_click)
+    return small_icon_button(ft.Icons.HELP_OUTLINE, tooltip, on_click)
 
 
 def info_button(text: str | Sequence[str], *, tooltip_title: str = "notes") -> ft.Control:
     """Notes, approximations and methods as one info icon with the text on hover (R4)."""
     lines = [text] if isinstance(text, str) else list(text)
-    return ft.IconButton(
-        icon=ft.Icons.INFO_OUTLINE,
-        icon_size=16,
-        tooltip=f"{tooltip_title}:\n" + "\n".join(f"· {ln}" for ln in lines),
+    return small_icon_button(
+        ft.Icons.INFO_OUTLINE, f"{tooltip_title}:\n" + "\n".join(f"· {ln}" for ln in lines)
     )
 
 
@@ -355,8 +447,9 @@ def card(
     trailing: Sequence[ft.Control] = (),
     key: str | None = None,
 ) -> ft.Control:
-    """A card with a noun for a title, a why button and an info button in its title row, and no subtitle (R2, R4)."""
-    head: list[ft.Control] = [ft.Text(title, weight=ft.FontWeight.W_600, size=15)]
+    """A card with a noun for a title, a why button and an info button in its title row, and no subtitle (R2, R4): a
+    hairline-bordered surface on the page, never a shadow."""
+    head: list[ft.Control] = [ft.Text(title, weight=ft.FontWeight.W_600, size=theme.SIZE_CARD_TITLE)]
     if why is not None:
         head.append(why_button(why))
     if info:
@@ -364,14 +457,22 @@ def card(
     head.append(ft.Container(expand=True))
     head.extend(trailing)
     content: list[ft.Control] = [
-        ft.Row(head, spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ft.Row(head, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         body,
     ]
     if actions:
-        content.append(ft.Row(list(actions), spacing=8, wrap=True))
-    return ft.Card(
-        content=ft.Container(content=ft.Column(content, spacing=10), padding=ft.Padding.all(14)),
-        key=key if key else None,
+        content.append(
+            ft.Row(
+                list(actions), spacing=theme.GAP, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER
+            )
+        )
+    return ft.Container(
+        content=ft.Column(content, spacing=12),
+        padding=ft.Padding.all(theme.CARD_PADDING),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
+        border=ft.Border.all(1, HAIRLINE),
+        border_radius=ft.BorderRadius.all(theme.RADIUS_CARD),
+        key=key,
     )
 
 
@@ -388,8 +489,13 @@ def details(
     plan_default = bool(store.learner.plan(0).chips_expanded) if default_open is None else default_open
     expanded = store.details_open.get(tile_id, plan_default)
     return ft.ExpansionTile(
-        title=ft.Text(title, size=13, color=ft.Colors.ON_SURFACE_VARIANT),
-        controls=[ft.Container(content=ft.Column(list(controls), spacing=10), padding=ft.Padding.all(8))],
+        title=ft.Text(title, size=theme.SIZE_SMALL + 1, color=MUTED),
+        controls=[
+            ft.Container(
+                content=ft.Column(list(controls), spacing=12),
+                padding=ft.Padding.symmetric(horizontal=theme.GAP, vertical=4),
+            )
+        ],
         expanded=expanded,
         on_change=lambda e: session.toggle_details(tile_id, event_bool(e)),
         dense=True,
@@ -403,31 +509,55 @@ def hint(store: Any, level: int, concept_id: str) -> ft.Control:
     plan = store.learner.plan(level)
     if plan.explain_depth == "equation":
         return ft.Container()
-    return ft.Text(
-        CONCEPTS[concept_id].explain.sentence, size=12, italic=True, color=ft.Colors.ON_SURFACE_VARIANT
+    return ft.Row(
+        [
+            ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=14, color=MUTED),
+            ft.Text(CONCEPTS[concept_id].explain.sentence, size=theme.SIZE_SMALL, color=MUTED, expand=True),
+        ],
+        spacing=6,
+        vertical_alignment=ft.CrossAxisAlignment.START,
     )
 
 
 def status_line(text: str) -> ft.Control:
     """A status line under twelve words (R5)."""
-    return ft.Text(text, size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+    return ft.Text(text, size=theme.SIZE_SMALL, color=MUTED)
 
 
-def empty_state(title: str, why: str, action_label: str, on_click: Callable[[Any], None]) -> ft.Control:
-    """Never a dead end: what belongs here, why it is empty, one clear next action."""
+def ions_text(ions: Sequence[int]) -> str:
+    """'ion 0', 'ions 0 and 1', 'ions 0, 1 and 2': the ions a gate or pulse touches, in words rather than a tuple."""
+    items = [str(i) for i in ions]
+    if len(items) == 1:
+        return f"ion {items[0]}"
+    return "ions " + ", ".join(items[:-1]) + f" and {items[-1]}"
+
+
+def empty_state(
+    title: str,
+    why: str,
+    action_label: str | None = None,
+    on_click: Callable[[Any], None] | None = None,
+    *,
+    icon: ft.IconData = ft.Icons.BAR_CHART_OUTLINED,
+    key: str | None = None,
+) -> ft.Control:
+    """Never a dead end: what belongs here, why it is empty, and one clear next action when there is one."""
+    items: list[ft.Control] = [
+        ft.Icon(icon, size=32, color=MUTED),
+        ft.Text(title, size=theme.SIZE_CARD_TITLE, weight=ft.FontWeight.W_600),
+        ft.Text(why, size=theme.SIZE_SMALL, color=MUTED, text_align=ft.TextAlign.CENTER),
+    ]
+    if action_label and on_click is not None:
+        items.append(
+            ft.FilledButton(content=ft.Text(action_label), icon=ft.Icons.PLAY_ARROW, on_click=on_click)
+        )
     return ft.Container(
-        content=ft.Column(
-            [
-                ft.Icon(ft.Icons.SCIENCE, size=40, color=ft.Colors.PRIMARY),
-                ft.Text(title, theme_style=ft.TextThemeStyle.TITLE_MEDIUM),
-                ft.Text(why, size=13, color=ft.Colors.ON_SURFACE_VARIANT, text_align=ft.TextAlign.CENTER),
-                ft.FilledButton(content=ft.Text(action_label), icon=ft.Icons.PLAY_ARROW, on_click=on_click),
-            ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
-        ),
-        padding=ft.Padding.all(32),
+        content=ft.Column(items, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, tight=True),
+        padding=ft.Padding.symmetric(horizontal=24, vertical=40),
         alignment=ft.Alignment.CENTER,
+        border=ft.Border.all(1, HAIRLINE),
+        border_radius=ft.BorderRadius.all(theme.RADIUS_CARD),
+        key=key,
     )
 
 
@@ -435,7 +565,7 @@ def kv_rows(pairs: Sequence[tuple[str, ft.Control]], *, label_width: float = 150
     return ft.Column(
         [
             ft.Row(
-                [ft.Text(k, size=12, color=ft.Colors.ON_SURFACE_VARIANT, width=label_width), v],
+                [ft.Text(k, size=theme.SIZE_SMALL, color=MUTED, width=label_width), v],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 wrap=True,
                 spacing=6,
@@ -456,24 +586,69 @@ def data_table(
     num = list(numeric) if numeric else [False] * len(columns)
     return ft.DataTable(
         columns=[
-            ft.DataColumn(label=ft.Text(c, weight=ft.FontWeight.W_600, size=12), numeric=n)
+            ft.DataColumn(
+                label=ft.Text(c, weight=ft.FontWeight.W_600, size=theme.SIZE_CAPTION, color=MUTED), numeric=n
+            )
             for c, n in zip(columns, num)
         ],
         rows=[
             ft.DataRow(
                 cells=[
                     ft.DataCell(
-                        content=(cell if isinstance(cell, ft.Control) else ft.Text(str(cell), size=12))
+                        content=(
+                            cell
+                            if isinstance(cell, ft.Control)
+                            else ft.Text(str(cell), size=theme.SIZE_SMALL)
+                        )
                     )
                     for cell in row
                 ]
             )
             for row in rows
         ],
-        column_spacing=18,
+        column_spacing=20,
+        horizontal_margin=theme.GAP,
         heading_row_height=32,
-        data_row_min_height=28,
+        data_row_min_height=30,
         data_row_max_height=44,
+        horizontal_lines=ft.BorderSide(1, HAIRLINE),
+        divider_thickness=1,
+    )
+
+
+def page_tabs(
+    items: Sequence[tuple[str, str]],
+    selected: str,
+    on_select: Callable[[str], None],
+    *,
+    key_prefix: str,
+) -> ft.Control:
+    """A row of secondary tabs for sibling pages (the eight physics pages, the Learn activities): one line that scrolls
+    sideways when narrow, the selected tab underlined and in ink, the others muted."""
+    tabs: list[ft.Control] = []
+    for i, label in items:
+        active = i == selected
+        tabs.append(
+            ft.Container(
+                content=ft.Text(
+                    label,
+                    size=theme.SIZE_SMALL + 1,
+                    weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400,
+                    color=ft.Colors.ON_SURFACE if active else MUTED,
+                    no_wrap=True,
+                ),
+                padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                border=ft.Border.only(
+                    bottom=ft.BorderSide(2, ft.Colors.PRIMARY if active else ft.Colors.TRANSPARENT)
+                ),
+                on_click=(lambda e, ii=i: on_select(ii)) if not active else None,
+                ink=not active,
+                key=f"{key_prefix}:{i}",
+            )
+        )
+    return ft.Container(
+        content=ft.Row(tabs, spacing=0, scroll=ft.ScrollMode.HIDDEN),
+        border=ft.Border.only(bottom=ft.BorderSide(1, HAIRLINE)),
     )
 
 
@@ -513,7 +688,7 @@ def _choices(options: Sequence[str], answer: str, set_answer: Callable[[str], No
     rows: list[ft.Control] = [
         ft.Container(
             content=ft.Row(
-                [ft.Radio(value=o), ft.Text(o, size=13, expand=True)],
+                [ft.Radio(value=o), ft.Text(o, size=theme.SIZE_SMALL + 1, expand=True)],
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -561,7 +736,9 @@ def ExplainCardView(
         attempt(None)
         set_feedback("skipped, not counted as wrong; it returns in the review tray")
 
-    prompt_controls: list[ft.Control] = [ft.Text(prompt.question, size=13, weight=ft.FontWeight.W_500)]
+    prompt_controls: list[ft.Control] = [
+        ft.Text(prompt.question, size=theme.SIZE_SMALL + 1, weight=ft.FontWeight.W_500)
+    ]
     if prompt.kind == "choose":
         prompt_controls.append(_choices(prompt.options, answer, set_answer))
     elif prompt.kind == "free_text":
@@ -573,17 +750,23 @@ def ExplainCardView(
                 max_lines=4,
                 on_change=lambda e: set_answer(str(e.control.value)),
                 dense=True,
-                text_size=13,
+                text_size=theme.SIZE_SMALL + 1,
+                border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
             )
         )
     else:
         prompt_controls.append(
-            ft.Text(f"answer in your head, then look at {prompt.where}", size=12, italic=True)
+            ft.Text(
+                f"answer in your head, then look at {prompt.where}",
+                size=theme.SIZE_SMALL,
+                italic=True,
+                color=MUTED,
+            )
         )
     prompt_controls.append(
         ft.Row(
             [
-                ft.FilledButton(
+                ft.FilledTonalButton(
                     content=ft.Text("Check"),
                     on_click=check,
                     disabled=(prompt.kind == "choose" and not answer),
@@ -594,20 +777,20 @@ def ExplainCardView(
         )
     )
     if feedback:
-        prompt_controls.append(ft.Text(feedback, size=12, color=ft.Colors.ON_SURFACE_VARIANT))
+        prompt_controls.append(ft.Text(feedback, size=theme.SIZE_SMALL, color=MUTED))
     body: list[ft.Control] = [
-        ft.Text(concept.title, weight=ft.FontWeight.W_600, size=15),
-        ft.Text(concept.term, size=12, italic=True, color=ft.Colors.ON_SURFACE_VARIANT),
-        ft.Text(card_data.text, size=13, selectable=True),
+        ft.Text(concept.title, weight=ft.FontWeight.W_600, size=theme.SIZE_CARD_TITLE),
+        ft.Text(concept.term, size=theme.SIZE_SMALL, italic=True, color=MUTED),
+        ft.Text(card_data.text, size=theme.SIZE_BODY, selectable=True),
         ft.Row(
             [chip(i, index, compact=False) for i in concept.ledger_ids]
-            + [ft.Text(f"Section {concept.section}", size=11, color=ft.Colors.ON_SURFACE_VARIANT)],
+            + [ft.Text(f"Section {concept.section}", size=theme.SIZE_CAPTION, color=MUTED)],
             wrap=True,
             spacing=4,
+            run_spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        ft.Text(
-            f"you will be able to {concept.can_do}", size=11, italic=True, color=ft.Colors.ON_SURFACE_VARIANT
-        ),
+        ft.Text(f"you will be able to {concept.can_do}", size=theme.SIZE_CAPTION, italic=True, color=MUTED),
     ]
     if card_data.deeper is not None:
         body.append(
@@ -618,12 +801,13 @@ def ExplainCardView(
             )
         )
     body.append(ft.Divider(height=8))
-    body.append(ft.Column(prompt_controls, spacing=6))
+    body.append(ft.Column(prompt_controls, spacing=8))
     return ft.Container(
         content=ft.Column(body, spacing=8),
-        padding=ft.Padding.all(10),
-        border_radius=ft.BorderRadius.all(10),
-        bgcolor=ft.Colors.SURFACE,
+        padding=ft.Padding.all(14),
+        border_radius=ft.BorderRadius.all(theme.RADIUS_CARD),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
+        border=ft.Border.all(1, HAIRLINE),
     )
 
 
@@ -662,7 +846,7 @@ def SpecificationTile(
         body = ft.Column(
             [
                 ft.TextButton(
-                    content=ft.Text(c.heading, size=12),
+                    content=ft.Text(c.heading, size=theme.SIZE_SMALL),
                     on_click=(lambda e, n=c.number: on_open(n)) if on_open is not None else None,
                 )
                 for c in children
@@ -670,10 +854,10 @@ def SpecificationTile(
             spacing=0,
         )
     else:
-        body = ft.Text("this section's text is not in the index", size=12, italic=True)
+        body = ft.Text("this section's text is not in the index", size=theme.SIZE_SMALL, italic=True)
     return ft.ExpansionTile(
-        title=ft.Text(title, size=13, weight=ft.FontWeight.W_500),
-        subtitle=ft.Text(sub, size=11, color=ft.Colors.ON_SURFACE_VARIANT) if sub else None,
+        title=ft.Text(title, size=theme.SIZE_SMALL + 1, weight=ft.FontWeight.W_500),
+        subtitle=ft.Text(sub, size=theme.SIZE_CAPTION, color=MUTED) if sub else None,
         controls=[body],
         expanded=expanded,
         on_change=on_change,
@@ -714,41 +898,38 @@ def ExplainDrawer(
     chips_row = ft.Row(
         [
             ft.Chip(
-                label=ft.Text(CONCEPTS[cid].title, size=11),
+                label=ft.Text(CONCEPTS[cid].title, size=theme.SIZE_SMALL),
                 selected=cid == chosen,
                 on_click=lambda e, c=cid: session.select_concept(level, c),
                 show_checkmark=False,
-                padding=ft.Padding.symmetric(horizontal=4, vertical=0),
             )
             for cid in ids
         ],
         wrap=True,
-        spacing=4,
-        run_spacing=4,
+        spacing=6,
+        run_spacing=6,
     )
-    body: list[ft.Control] = [
-        ft.Row(
-            [
-                ft.Icon(ft.Icons.MENU_BOOK, size=18),
-                ft.Text("Explain", weight=ft.FontWeight.W_600),
-                ft.Container(expand=True),
-                ft.SegmentedButton(
-                    segments=[ft.Segment(value=d, label=ft.Text(d, size=10)) for d in order],
-                    selected=[depth],
-                    on_change=set_depth,
-                ),
-                ft.IconButton(
-                    icon=ft.Icons.CLOSE,
-                    icon_size=16,
-                    tooltip="close the drawer (Esc)",
-                    on_click=lambda e: session.set_learner(explain_open=False),
-                ),
-            ],
-            spacing=6,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        chips_row,
-    ]
+    header = ft.Row(
+        [
+            ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=18, color=MUTED),
+            ft.Text("Explain", theme_style=ft.TextThemeStyle.TITLE_MEDIUM),
+            ft.Container(expand=True),
+            ft.IconButton(
+                icon=ft.Icons.CLOSE,
+                icon_size=18,
+                tooltip="close the drawer (Esc)",
+                on_click=lambda e: session.set_learner(explain_open=False),
+            ),
+        ],
+        spacing=8,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+    depth_control = ft.SegmentedButton(
+        segments=[ft.Segment(value=d, label=ft.Text(d, size=theme.SIZE_SMALL)) for d in order],
+        selected=[depth],
+        on_change=set_depth,
+    )
+    body: list[ft.Control] = [header, depth_control, chips_row]
     if chosen is not None:
         body.append(ExplainCardView(session, explain(chosen, depth), index, deeper))
     spec = store.spec_section or section_number
@@ -766,11 +947,11 @@ def ExplainDrawer(
         )
     )
     return ft.Container(
-        content=ft.Column(body, spacing=8, scroll=ft.ScrollMode.AUTO, expand=True),
-        width=360,
-        padding=ft.Padding.all(12),
-        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-        border_radius=ft.BorderRadius.all(12),
+        content=ft.Column(body, spacing=12, scroll=ft.ScrollMode.AUTO, expand=True),
+        width=theme.DRAWER_WIDTH,
+        padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+        border=ft.Border.only(left=ft.BorderSide(1, HAIRLINE)),
     )
 
 
@@ -779,14 +960,19 @@ def concept_titles(level: int) -> list[str]:
 
 
 __all__ = [
+    "HAIRLINE",
     "LEVEL_CONCEPTS",
+    "MUTED",
     "ExplainCardView",
     "ExplainDrawer",
     "SpecificationTile",
     "badge_view",
     "card",
     "chip",
+    "columns",
     "concept_titles",
+    "content_margin",
+    "content_width",
     "content_widths",
     "data_table",
     "details",
@@ -797,10 +983,14 @@ __all__ = [
     "hint",
     "hover_text",
     "info_button",
+    "ions_text",
     "kv_rows",
     "level_header",
     "numerics_strip",
+    "page_tabs",
+    "pill",
     "shown",
+    "small_icon_button",
     "stat_row",
     "stat_tile",
     "status_line",

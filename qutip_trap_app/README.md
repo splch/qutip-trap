@@ -49,12 +49,18 @@ request semantics, the explain drawer's specification text and the navigation te
   the Specification tile beneath), chips that are buttons, a badge-only numerics strip; the request controls on Levels 1
   and 2 with the actual-versus-requested tiles; Level 1's Bloch discs; the Learn ladder (tour, three ions, your own, drills,
   review, published experiments, progress) as routes; control keys for the `flet test` flows.
+- `views/theme.py` - the visual system of DESIGN.md Section 11: the light and dark colour schemes (every text/background
+  pair checked at or above 4.5:1, outlines at 3:1), the type scale, the 8 pt grid and shapes, the component themes, the
+  status colours of the pills and the categorical chart palette (validated for colour-vision deficiency in both modes).
+  `views/common.py` builds every shared piece on it (cards, tiles, chips, pills, the tab strip, the width-aware two-column
+  layout, the explain drawer); the shell adds the rail with the app mark and a system/light/dark toggle that persists with
+  the learner.
 - `tests/` - the Section 9.11 rows M11.1 to M11.4 own: coarse-graining identity, record round trip, re-simulation cache,
   convergence badge, provenance coverage (Levels 0 to 4, the presets, the drills), channel derivation (cold; the hotter half is
   `-m slow`), downward propagation, request semantics (`test_requests.py`: XX(0.3) read back within 5e-3 rad of the request
   by tomography; a 5 kHz hand-set detuning opens the loops and moves the played gate's channel away from the requested unitary
   while the target stays the requested one), presets (`test_presets.py`), navigation (`test_navigation.py` over the routing
-  model; `test_main.py` under `flet test`), the text budget (`test_text_budget.py`, an AST walk of every screen), the
+  model; `test_main.py` under `flet test`), the text budget (`test_text_budget.py`, an AST walk of every screen's `ft.Text` and `status_line` literals), the
   explain index (`test_explain_index.py`), plus verify deeper, the worker, the learning layer, the application state and
   Level 3 on demand.
 

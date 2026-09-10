@@ -29,9 +29,10 @@ from qutip_trap_app.viewmodel.dynamics import (
 )
 from qutip_trap_app.viewmodel.learn import CONCEPTS, Attempt, score_closure
 from qutip_trap_app.viewmodel.numerics import NumericsPanel, numerics_panel
-from qutip_trap_app.views import drawing
+from qutip_trap_app.views import drawing, theme
 from qutip_trap_app.views.common import (
     card,
+    columns,
     data_table,
     details,
     hint,
@@ -102,6 +103,16 @@ def _series_chart(series: Any, *, y_title: str, height: float = 200.0, markers: 
     return drawing.line_chart(data, x_title="t (us)", y_title=y_title, height=height, markers=markers)
 
 
+def _section_title(text: str) -> ft.Control:
+    return ft.Text(text, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600)
+
+
+def _field(**kwargs: Any) -> ft.Dropdown:
+    return ft.Dropdown(
+        dense=True, text_size=13, border_radius=ft.BorderRadius.all(theme.RADIUS_TILE), **kwargs
+    )
+
+
 @ft.component
 def ClosurePrediction(store: Store, session: Session, key: str, dyn: PulseDynamics) -> ft.Control:
     ft.use_state(store)
@@ -165,10 +176,10 @@ def _closure_feedback(store: Store, key: str, dyn: PulseDynamics) -> ft.Control:
         else f"your pick was '{pick}'; the loops end within {worst:.1%} of their largest excursion"
     )
     return ft.Container(
-        content=ft.Text(text, size=12),
+        content=ft.Text(text, size=theme.SIZE_SMALL),
         bgcolor=ft.Colors.SECONDARY_CONTAINER,
-        padding=ft.Padding.all(8),
-        border_radius=ft.BorderRadius.all(8),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
     )
 
 
@@ -206,22 +217,22 @@ def Level3Page(
                     "No trace to open",
                     ft.Column(
                         [
-                            ft.Text(why, size=13),
-                            status_line(
-                                "run with the engine set to full simulation on Level 0 to zoom into a pulse"
-                            ),
-                            ft.FilledButton(
-                                content=ft.Text("Back to the machine"),
-                                icon=ft.Icons.ARROW_BACK,
-                                on_click=lambda e: page.navigate(f"/job/{key}"),
-                            ),
+                            ft.Text(why, size=theme.SIZE_BODY),
+                            status_line("set the engine to full simulation on Level 0, then zoom in"),
                         ],
-                        spacing=8,
+                        spacing=theme.GAP,
                     ),
+                    actions=[
+                        ft.FilledTonalButton(
+                            content=ft.Text("Back to the machine"),
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda e: page.navigate(f"/job/{key}"),
+                        )
+                    ],
                     key="no-trace",
                 ),
             ],
-            spacing=12,
+            spacing=16,
             expand=True,
             scroll=ft.ScrollMode.AUTO,
         )
@@ -251,15 +262,14 @@ def Level3Page(
 
     controls = ft.Row(
         [
-            ft.Dropdown(
+            _field(
                 label="sample",
                 value=str(sample),
                 options=[ft.DropdownOption(key=str(k), text=f"sample {k}") for k in range(record.n_samples)],
                 on_select=set_sample,
                 width=130,
-                dense=True,
             ),
-            ft.Dropdown(
+            _field(
                 label="branch",
                 value=str(branch),
                 options=[
@@ -270,7 +280,6 @@ def Level3Page(
                 ],
                 on_select=set_branch,
                 width=300,
-                dense=True,
             ),
             ft.FilledButton(
                 content=ft.Text("Re-simulate at fine resolution" if not fine else "Re-simulated"),
@@ -288,7 +297,9 @@ def Level3Page(
             ),
         ],
         wrap=True,
-        spacing=10,
+        spacing=theme.GAP,
+        run_spacing=theme.GAP,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
     trace_note = (
         f"fine trace: {dyn.times_s.size} points at dimension {z.engine_dimension}"
@@ -338,7 +349,7 @@ def Level3Page(
     )
     motion_card = card(
         "The motion",
-        ft.Column(motion_children, spacing=8),
+        ft.Column(motion_children, spacing=12),
         why=lambda e: session.select_concept(3, "spin_dependent_force"),
         info=(
             "the loops are the played waveform's spin-branch trajectories alpha_im(t) on the run's own modes (Section 4.4.1); "
@@ -359,22 +370,12 @@ def Level3Page(
     qubit_children.append(hint(store, 3, "fock_states"))
     qubit_card = card(
         "The qubits",
-        ft.Column(qubit_children, spacing=8),
+        ft.Column(qubit_children, spacing=12),
         why=lambda e: session.select_concept(3, "spin_dependent_force"),
         info="populations and coherences from the reduced register state at every stored time (Section 14.1 rule 1)",
         key="qubits",
     )
-    body.append(
-        ft.ResponsiveRow(
-            [
-                ft.Column([motion_card], col={"xs": 12, "lg": 6}, spacing=10),
-                ft.Column([qubit_card], col={"xs": 12, "lg": 6}, spacing=10),
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
-            spacing=12,
-            run_spacing=12,
-        )
-    )
+    body.append(columns(store, page, 3, [motion_card], [qubit_card]))
     # ---- Fock distributions ----
     movie_key = resim.fock_movie_key(
         step, sample, branch, resim.DEFAULT_FOCK_FRAMES, record.job.solver_options()
@@ -387,11 +388,7 @@ def Level3Page(
         fock_children.append(
             ft.Column(
                 [
-                    ft.Text(
-                        f"mode {m}: P(n) at the start (outlined) and the end (filled)",
-                        size=12,
-                        weight=ft.FontWeight.W_600,
-                    ),
+                    _section_title(f"mode {m}: P(n) at the start (outlined) and the end (filled)"),
                     drawing.fock_bars(start, end),
                     stat_row(
                         [
@@ -400,7 +397,7 @@ def Level3Page(
                         ]
                     ),
                 ],
-                spacing=4,
+                spacing=6,
             )
         )
     if not fock_children:
@@ -413,10 +410,8 @@ def Level3Page(
             fock_children.append(
                 ft.Column(
                     [
-                        ft.Text(
-                            f"mode {hm.mode}: P(n, t) from {movie.times_s.size - 1} truncated re-simulations",
-                            size=12,
-                            weight=ft.FontWeight.W_600,
+                        _section_title(
+                            f"mode {hm.mode}: P(n, t) from {movie.times_s.size - 1} truncated re-simulations"
                         ),
                         drawing.heatmap(
                             vals,
@@ -428,7 +423,7 @@ def Level3Page(
                         ),
                         ft.Row([shown(s, index, label=False) for s in hm.nbar], wrap=True, spacing=8),
                     ],
-                    spacing=4,
+                    spacing=6,
                 )
             )
     else:
@@ -443,7 +438,7 @@ def Level3Page(
         )
     fock_card = card(
         "Vibration numbers",
-        ft.Column(fock_children, spacing=10),
+        ft.Column(fock_children, spacing=12),
         why=lambda e: session.select_concept(3, "fock_states"),
         info="quanta of vibration per resolved mode (Section 5.3)"
         + (f"; {movie.method}" if movie is not None else ""),
@@ -452,7 +447,7 @@ def Level3Page(
     # ---- jumps and the sample ----
     jump_controls: list[ft.Control] = [
         ft.TextButton(
-            content=ft.Text(f"{float(j.value or 0.0) * 1e6:.2f} us: {j.detail}", size=12),
+            content=ft.Text(f"{float(j.value or 0.0) * 1e6:.2f} us: {j.detail}", size=theme.SIZE_SMALL),
             icon=ft.Icons.BOLT,
             on_click=lambda e, ch=str(j.detail): open_channel(ch),
             tooltip="open this channel's collapse operator on the Hamiltonian page",
@@ -460,9 +455,12 @@ def Level3Page(
         for j in dyn.jumps
     ] or [status_line("no quantum jump in this sample")]
     sample_rows: list[tuple[str, ft.Control]] = [
-        (s.detail, shown(s, index, label=False, size=12)) for s in dyn.noise_values
+        (s.detail, shown(s, index, label=False, size=theme.SIZE_SMALL)) for s in dyn.noise_values
     ] or [("quasi-static values", status_line("none drawn: the device is quiet"))]
-    dw_rows = [(s.detail.split(":")[0], shown(s, index, label=False, size=12)) for s in dyn.debye_waller]
+    dw_rows = [
+        (s.detail.split(":")[0], shown(s, index, label=False, size=theme.SIZE_SMALL))
+        for s in dyn.debye_waller
+    ]
     sample_card = card(
         "Jumps and this sample",
         ft.Column(
@@ -484,7 +482,7 @@ def Level3Page(
                     title="Quasi-static values and frozen spectators",
                 ),
             ],
-            spacing=6,
+            spacing=theme.GAP,
         ),
         why=lambda e: session.select_concept(3, "quantum_jumps"),
         info="what the environment did in this repetition (Section 6.1)",
@@ -519,11 +517,7 @@ def Level3Page(
                         spacing=12,
                     ),
                     ft.Row([shown(p, index, label=False) for p in pv.pauli[:6]], wrap=True, spacing=8),
-                    ft.Text(
-                        "|Choi| of the simulated channel (left) and the ideal gate (right)",
-                        size=12,
-                        weight=ft.FontWeight.W_600,
-                    ),
+                    _section_title("|Choi| of the simulated channel (left) and the ideal gate (right)"),
                     ft.Row(
                         [
                             drawing.heatmap(
@@ -568,7 +562,7 @@ def Level3Page(
         ]
     pm_card = card(
         "The gate as a channel",
-        ft.Column(pm_children, spacing=8),
+        ft.Column(pm_children, spacing=12),
         why=lambda e: session.select_concept(3, "truncation_and_convergence"),
         info="the process matrix of the finished pulse (Sections 5.4, 6.8)",
         key="process",
@@ -576,35 +570,25 @@ def Level3Page(
     rechecking = store.running_of("recheck", **target) is not None
     recheck_card = card(
         "Convergence of this zoom",
-        ft.Row(
+        ft.Column(
             [
                 ft.OutlinedButton(
                     content=ft.Text("Re-check: tolerances x0.1 and caps +2"),
-                    icon=ft.Icons.VERIFIED,
+                    icon=ft.Icons.VERIFIED_OUTLINED,
                     on_click=lambda e: session.submit_recheck(key, step, sample, branch),
                     disabled=rechecking,
                     tooltip="the Section 5.5 arms on this step; the badge in the numerics strip turns pass or fail",
                 ),
                 hint(store, 3, "truncation_and_convergence"),
             ],
-            wrap=True,
-            spacing=10,
+            spacing=theme.GAP,
+            horizontal_alignment=ft.CrossAxisAlignment.START,
         ),
         why=lambda e: session.select_concept(3, "truncation_and_convergence"),
         key="recheck",
     )
-    body.append(
-        ft.ResponsiveRow(
-            [
-                ft.Column([fock_card, recheck_card], col={"xs": 12, "lg": 6}, spacing=10),
-                ft.Column([sample_card, pm_card], col={"xs": 12, "lg": 6}, spacing=10),
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
-            spacing=12,
-            run_spacing=12,
-        )
-    )
-    return ft.Column(body, spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+    body.append(columns(store, page, 3, [fock_card, recheck_card], [sample_card, pm_card]))
+    return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
 
 
 def _last(series: Any) -> Shown:

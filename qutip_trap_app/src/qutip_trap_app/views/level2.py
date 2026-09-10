@@ -14,26 +14,26 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
 from qutip_trap_app.requests import RequestError, request_detuning
 from qutip_trap_app.viewmodel.schedule import closure, pulse_view, time_axis
+from qutip_trap_app.views import theme
 from qutip_trap_app.views.common import (
+    HAIRLINE,
+    MUTED,
     card,
+    columns,
     content_widths,
     data_table,
     details,
     hint,
+    ions_text,
     level_header,
+    pill,
     stat_row,
     stat_tile,
     status_line,
     value_cell,
 )
+from qutip_trap_app.views.level1 import lane_label, time_axis_row
 from qutip_trap_app.views.state import Session, Store
-
-ROLE_COLORS = {
-    "red": ft.Colors.ERROR_CONTAINER,
-    "blue": ft.Colors.PRIMARY_CONTAINER,
-    "carrier": ft.Colors.TERTIARY_CONTAINER,
-    "far": ft.Colors.SURFACE_CONTAINER_HIGHEST,
-}
 
 
 def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Control:
@@ -41,13 +41,16 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
     t0, t1 = axis.t0_s, max(axis.duration_s, axis.t0_s + 1e-9)
     scale = width / (t1 - t0)
     lanes: list[ft.Control] = []
+    first_ion = min(lane.ion for lane in axis.lanes) if axis.lanes else 0
     for lane in axis.lanes:
-        boxes: list[ft.Control] = []
+        boxes: list[ft.Control] = [ft.Container(left=0, top=14, width=width, height=1, bgcolor=HAIRLINE)]
         for span in lane.spans:
             is_sel = span.pulse_index == selected
             boxes.append(
                 ft.Container(
-                    content=ft.Text(span.gate_id or "", size=9, no_wrap=True, overflow=ft.TextOverflow.CLIP),
+                    content=ft.Text(
+                        span.gate_id or "", size=theme.SIZE_MICRO, no_wrap=True, overflow=ft.TextOverflow.CLIP
+                    ),
                     left=(span.t_start_s - t0) * scale,
                     top=2,
                     width=max((span.t_end_s - span.t_start_s) * scale, 12.0),
@@ -55,23 +58,19 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
                     bgcolor=ft.Colors.PRIMARY_CONTAINER
                     if span.kind == "raman"
                     else ft.Colors.TERTIARY_CONTAINER,
-                    border=ft.Border.all(
-                        2 if is_sel else 1, ft.Colors.PRIMARY if is_sel else ft.Colors.OUTLINE_VARIANT
-                    ),
-                    border_radius=ft.BorderRadius.all(3),
-                    padding=ft.Padding.symmetric(horizontal=3),
+                    border=ft.Border.all(2 if is_sel else 1, ft.Colors.PRIMARY if is_sel else HAIRLINE),
+                    border_radius=ft.BorderRadius.all(5),
+                    padding=ft.Padding.symmetric(horizontal=4),
                     alignment=ft.Alignment.CENTER_LEFT,
                     tooltip=f"pulse {span.pulse_index} ({span.kind}) {span.t_start_s * 1e6:.2f} to {span.t_end_s * 1e6:.2f} µs; gate {span.gate_id}",
                     on_click=lambda e, k=span.pulse_index: on_select(k),
                     ink=True,
-                    key=f"pulse:{span.pulse_index}"
-                    if lane.ion == min(lane.ion for lane in axis.lanes)
-                    else None,
+                    key=f"pulse:{span.pulse_index}" if lane.ion == first_ion else None,
                 )
             )
         lanes.append(
             ft.Row(
-                [ft.Text(f"ion {lane.ion}", size=12, width=44), ft.Stack(boxes, width=width, height=30)],
+                [lane_label(f"ion {lane.ion}"), ft.Stack(boxes, width=width, height=30)],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
@@ -85,26 +84,27 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
                 top=0,
                 width=max((t1 - t_m) * scale, 4.0),
                 height=14,
-                bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.TERTIARY),
+                bgcolor=ft.Colors.with_opacity(0.35, ft.Colors.TERTIARY),
+                border_radius=ft.BorderRadius.all(3),
                 tooltip="detection window (measure event)",
             )
         )
     lanes.append(
-        ft.Row([ft.Text("readout", size=12, width=44), ft.Stack(marks, width=width, height=16)], spacing=6)
-    )
-    lanes.append(
         ft.Row(
-            [
-                ft.Text("", width=44),
-                ft.Text(f"{t0 * 1e6:.0f} µs", size=10),
-                ft.Container(expand=True),
-                ft.Text(f"{t1 * 1e6:.1f} µs", size=10),
-            ],
+            [lane_label("readout"), ft.Stack(marks, width=width, height=16)],
             spacing=6,
-            width=width + 50,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
     )
+    lanes.append(time_axis_row(t0, t1, width))
     return ft.Column(lanes, spacing=2)
+
+
+def _tone_role(tone: Any, mu: float) -> str:
+    return next(
+        (sb.role for sb in tone.sidebands if sb.role in ("red", "blue")),
+        "carrier" if mu < 1e5 else "far",
+    )
 
 
 def _spectrum_strip(pv: Any, width: float) -> ft.Control:
@@ -134,7 +134,7 @@ def _spectrum_strip(pv: Any, width: float) -> ft.Control:
         if x - 22.0 >= label_right + 2.0:
             controls.append(
                 ft.Container(
-                    content=ft.Text(f"{f / 1e6:.3f}", size=10),
+                    content=ft.Text(f"{f / 1e6:.3f}", size=theme.SIZE_MICRO, color=MUTED),
                     left=x - 22,
                     top=48,
                     width=44,
@@ -146,10 +146,7 @@ def _spectrum_strip(pv: Any, width: float) -> ft.Control:
         # the 14 px dot stays inside the strip (a carrier tone sits at the far left edge)
         x = min(max((mu - lo) * scale, 7.0), width - 7.0)
         sign = "+" if float(pv.tones[k].detuning.value or 0.0) >= 0 else "-"
-        role = next(
-            (sb.role for sb in pv.tones[k].sidebands if sb.role in ("red", "blue")),
-            "carrier" if mu < 1e5 else "far",
-        )
+        role = _tone_role(pv.tones[k], mu)
         controls.append(
             ft.Container(
                 left=x - 7,
@@ -157,39 +154,33 @@ def _spectrum_strip(pv: Any, width: float) -> ft.Control:
                 width=14,
                 height=14,
                 border_radius=ft.BorderRadius.all(7),
-                bgcolor=ROLE_COLORS.get(role, ft.Colors.PRIMARY),
-                border=ft.Border.all(1.5, ft.Colors.ON_SURFACE),
+                bgcolor=theme.tone_color(role),
+                border=ft.Border.all(2, ft.Colors.SURFACE_CONTAINER_LOWEST),
                 tooltip=f"tone {k}: mu = {sign}{mu / 1e6:.4f} MHz from the carrier ({role} sideband)",
             )
         )
+
+    def dot(role: str) -> ft.Control:
+        return ft.Container(width=12, height=12, bgcolor=theme.tone_color(role), border_radius=6)
+
     legend = ft.Row(
         [
-            ft.Container(
-                width=12,
-                height=12,
-                bgcolor=ROLE_COLORS["red"],
-                border=ft.Border.all(1, ft.Colors.ON_SURFACE),
-                border_radius=6,
-            ),
-            ft.Text("red tone", size=11),
-            ft.Container(
-                width=12,
-                height=12,
-                bgcolor=ROLE_COLORS["blue"],
-                border=ft.Border.all(1, ft.Colors.ON_SURFACE),
-                border_radius=6,
-            ),
-            ft.Text("blue tone", size=11),
+            dot("red"),
+            ft.Text("red tone", size=theme.SIZE_CAPTION, color=MUTED),
+            dot("blue"),
+            ft.Text("blue tone", size=theme.SIZE_CAPTION, color=MUTED),
             ft.Container(width=2, height=14, bgcolor=ft.Colors.ON_SURFACE),
-            ft.Text("mode (|detuning| in MHz)", size=11),
+            ft.Text("mode (|detuning| in MHz)", size=theme.SIZE_CAPTION, color=MUTED),
         ],
         spacing=6,
         wrap=True,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
-    return ft.Column([ft.Stack(controls, width=width, height=66), legend], spacing=4)
+    return ft.Column([ft.Stack(controls, width=width, height=66), legend], spacing=6)
 
 
 def _envelope_chart(pv: Any) -> ft.Control:
+    palette = theme.series()
     series = []
     for k, t in enumerate(pv.tones):
         pts = [
@@ -198,7 +189,7 @@ def _envelope_chart(pv: Any) -> ft.Control:
         ]
         series.append(
             fc.LineChartData(
-                points=pts, stroke_width=2, color=ft.Colors.PRIMARY if k == 0 else ft.Colors.TERTIARY
+                points=pts, stroke_width=2, color=palette[k % len(palette)], rounded_stroke_cap=True
             )
         )
     if not series:
@@ -207,8 +198,11 @@ def _envelope_chart(pv: Any) -> ft.Control:
         data_series=series,
         height=130,
         expand=True,
-        left_axis=fc.ChartAxis(title=ft.Text("Omega/2pi (kHz)", size=10), label_size=40),
-        bottom_axis=fc.ChartAxis(title=ft.Text("t (µs)", size=10), label_size=24),
+        left_axis=fc.ChartAxis(
+            title=ft.Text("Omega/2pi (kHz)", size=theme.SIZE_MICRO, color=MUTED), label_size=40
+        ),
+        bottom_axis=fc.ChartAxis(title=ft.Text("t (µs)", size=theme.SIZE_MICRO, color=MUTED), label_size=24),
+        horizontal_grid_lines=fc.ChartGridLines(color=ft.Colors.OUTLINE_VARIANT, width=1),
         interactive=False,
     )
     return chart
@@ -216,18 +210,10 @@ def _envelope_chart(pv: Any) -> ft.Control:
 
 def _closure_pill(m: Any) -> ft.Control:
     ok = m.closed
-    return ft.Container(
-        content=ft.Row(
-            [
-                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE if ok else ft.Icons.RADIO_BUTTON_UNCHECKED, size=14),
-                ft.Text(f"mode {m.mode}: {'closed' if ok else 'open'}", size=12),
-            ],
-            spacing=4,
-            tight=True,
-        ),
-        bgcolor=ft.Colors.PRIMARY_CONTAINER if ok else ft.Colors.ERROR_CONTAINER,
-        border_radius=ft.BorderRadius.all(12),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+    return pill(
+        f"mode {m.mode}: {'closed' if ok else 'open'}",
+        "pass" if ok else "fail",
+        icon=ft.Icons.CHECK_CIRCLE_OUTLINE if ok else ft.Icons.RADIO_BUTTON_UNCHECKED,
         tooltip=f"|alpha_{m.mode}|^2 (2 nbar + 1) = {m.residual:.2e} against 1e-6 (Section 5.2); mode class {m.mode_class}",
     )
 
@@ -263,6 +249,7 @@ def RequestDetuningPanel(
                     width=120,
                     dense=True,
                     text_size=13,
+                    border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
                     on_change=lambda e: set_text(str(e.control.value)),
                     key="request-detuning-value",
                 ),
@@ -275,7 +262,7 @@ def RequestDetuningPanel(
                     key="request-detuning",
                 ),
             ],
-            spacing=8,
+            spacing=theme.GAP,
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
@@ -284,7 +271,12 @@ def RequestDetuningPanel(
     if last is not None and last.kind == "detuning" and last.gate_id == gate_id:
         if last.refusal:
             controls.append(
-                ft.Text(f"refused: {last.refusal}", size=12, color=ft.Colors.ERROR, key="request-refusal")
+                ft.Text(
+                    f"refused: {last.refusal}",
+                    size=theme.SIZE_SMALL,
+                    color=ft.Colors.ERROR,
+                    key="request-refusal",
+                )
             )
         else:
             controls.append(status_line(last.note))
@@ -305,7 +297,7 @@ def Level2Page(
     ft.use_state(store)
     pulses = record.schedule.pulses
     if not pulses:
-        return ft.Text("this schedule has no pulses", size=13)
+        return status_line("this schedule has no pulses")
     try:
         sel = int(pulse_param)
     except ValueError:
@@ -371,7 +363,7 @@ def Level2Page(
                     title="Tone and sideband tables",
                 ),
             ],
-            spacing=8,
+            spacing=12,
         ),
         why=lambda e: session.select_concept(2, "tone_and_sideband"),
         key="spectrum",
@@ -381,16 +373,19 @@ def Level2Page(
     ]
     pulse_tiles.extend(stat_tile(c, index, plain=plain) for c in pv.crosstalk[:2])
     pulse_card = card(
-        f"Pulse {sel}: {pv.pulse.gate_id} on ions {pv.ions}",
+        f"Pulse {sel}: {pv.pulse.gate_id} on {ions_text(pv.ions)}",
         ft.Column(
             [
                 status_line(
-                    f"{pv.pulse.kind}, {pv.pulse.t_start_s * 1e6:.2f} to {pv.pulse.t_end_s * 1e6:.2f} µs, beams {tuple(b.detail for b in pv.beams)}"
+                    " · ".join(
+                        [pv.pulse.kind, f"{pv.pulse.t_start_s * 1e6:.2f} to {pv.pulse.t_end_s * 1e6:.2f} µs"]
+                        + [str(b.detail) for b in pv.beams]
+                    )
                 ),
                 stat_row(pulse_tiles),
                 _envelope_chart(pv),
             ],
-            spacing=8,
+            spacing=12,
         ),
         why=lambda e: session.select_concept(2, "pulse"),
         actions=[
@@ -456,7 +451,7 @@ def Level2Page(
                                     mode_rows,
                                 ),
                                 status_line(
-                                    "the table's values at calibration; a hand-set detuning shows its open loops on Level 3"
+                                    "values at calibration; a hand-set detuning opens the loops on Level 3"
                                 ),
                                 data_table(seg_cols, seg_rows)
                                 if seg_rows
@@ -467,7 +462,7 @@ def Level2Page(
                             title="Closure and segment tables",
                         ),
                     ],
-                    spacing=8,
+                    spacing=12,
                 ),
                 why=lambda e: session.select_concept(2, "loop_closure"),
                 key="closure",
@@ -483,17 +478,9 @@ def Level2Page(
                 why=lambda e: session.select_concept(2, "pulse"),
                 key="time-axis",
             ),
-            ft.ResponsiveRow(
-                [
-                    ft.Column(right[:1], col={"xs": 12, "lg": 6}, spacing=10),
-                    ft.Column(right[1:], col={"xs": 12, "lg": 6}, spacing=10),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.START,
-                spacing=12,
-                run_spacing=12,
-            ),
+            columns(store, page, 2, right[:1], right[1:]),
         ],
-        spacing=12,
+        spacing=16,
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )

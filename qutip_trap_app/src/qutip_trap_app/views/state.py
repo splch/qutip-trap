@@ -37,6 +37,7 @@ from qutip_trap_app.viewmodel.presets import PRESETS, PresetResult, PresetSpec
 from qutip_trap_app.workers import Event, SimulationWorker
 
 Engine = Literal["replay", "full"]
+ThemeChoice = Literal["system", "light", "dark"]
 
 BELL_QASM = (
     'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg c[2];\nh q[0];\ncx q[0],q[1];\nmeasure q -> c;\n'
@@ -51,6 +52,7 @@ LEARNER_KEY = "qutip_trap_app.learner.v1"
 
 KNOWLEDGE_VALUES: tuple[PriorKnowledge, ...] = ("newcomer", "circuits", "physicist", "unknown")
 DEPTH_VALUES: tuple[Depth, ...] = ("sentence", "picture", "equation")
+THEME_VALUES: tuple[ThemeChoice, ...] = ("system", "light", "dark")
 
 
 @dataclass
@@ -81,6 +83,8 @@ class Learner:
     """Whether the first-launch prior-knowledge question was answered or dismissed."""
     depth_override: Depth | None = None
     explain_open: bool | None = None
+    theme: ThemeChoice = "system"
+    """The colour scheme the learner chose: the platform's, or light or dark regardless of it (DESIGN.md Section 4)."""
     log: MasteryLog = field(default_factory=MasteryLog)
 
     def plan(self, level: int) -> Any:
@@ -101,6 +105,7 @@ def learner_document(learner: Learner) -> dict[str, Any]:
         "asked": bool(learner.asked),
         "depth_override": learner.depth_override,
         "explain_open": learner.explain_open,
+        "theme": learner.theme,
         "attempts": [dataclasses.asdict(a) for a in learner.log.attempts],
     }
 
@@ -114,6 +119,9 @@ def learner_from_document(doc: Mapping[str, Any]) -> Learner:
     depth = doc.get("depth_override")
     if depth is not None and depth not in DEPTH_VALUES:
         raise ValueError(f"unknown explanation depth {depth!r}; expected one of {DEPTH_VALUES} or null")
+    theme_choice = doc.get("theme", "system")
+    if theme_choice not in THEME_VALUES:
+        raise ValueError(f"unknown theme {theme_choice!r}; expected one of {THEME_VALUES}")
     retention = float(doc.get("retention_days", DEFAULT_RETENTION_DAYS))
     if not retention > 0.0:
         raise ValueError(f"the retention target must be positive, not {retention}")
@@ -138,6 +146,7 @@ def learner_from_document(doc: Mapping[str, Any]) -> Learner:
         asked=bool(doc.get("asked", False)),
         depth_override=cast("Depth | None", depth),
         explain_open=None if explain_open is None else bool(explain_open),
+        theme=cast(ThemeChoice, theme_choice),
         log=log,
     )
 
@@ -311,7 +320,7 @@ class Session:
         ) as exc:  # the settings stay in memory for this session; the failure is shown, not swallowed
             self.store.error = f"the learner settings could not be saved on this device: {exc}"
 
-    async def restore_learner(self, timeout_s: float = 3.0) -> None:
+    async def restore_learner(self, timeout_s: float = 8.0) -> None:
         """Read the saved learner at start-up. The first-launch question waits for ``learner_loaded``, so it is asked
         once per device rather than once per launch; the read is bounded so a slow or not-yet-ready storage service can
         never leave the question permanently gated off (a new device is then asked, and the settings still save)."""
@@ -702,11 +711,13 @@ __all__ = [
     "KNOWLEDGE_VALUES",
     "LEARNER_KEY",
     "PRESETS",
+    "THEME_VALUES",
     "Engine",
     "JobStatus",
     "Learner",
     "Session",
     "Store",
+    "ThemeChoice",
     "bell_circuit",
     "learner_document",
     "learner_from_document",

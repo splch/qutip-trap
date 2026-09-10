@@ -25,13 +25,17 @@ from qutip_trap_app.viewmodel.circuit import (
     register_after,
     timeline,
 )
-from qutip_trap_app.views import drawing
+from qutip_trap_app.views import drawing, theme
 from qutip_trap_app.views.common import (
+    HAIRLINE,
+    MUTED,
     card,
+    columns,
     content_widths,
     data_table,
     details,
     hint,
+    ions_text,
     kv_rows,
     level_header,
     shown,
@@ -48,6 +52,8 @@ GATE_COLORS = {
     "ms": ft.Colors.SECONDARY_CONTAINER,
     "zz": ft.Colors.SECONDARY_CONTAINER,
 }
+
+LANE_LABEL_WIDTH = 48.0
 
 
 def _fmt_complex(z: complex) -> str:
@@ -66,6 +72,24 @@ def _matrix_table(u: np.ndarray) -> ft.Control:
     )
 
 
+def lane_label(text: str) -> ft.Control:
+    return ft.Text(text, size=theme.SIZE_SMALL, color=MUTED, width=LANE_LABEL_WIDTH)
+
+
+def time_axis_row(t0_s: float, t1_s: float, width: float) -> ft.Control:
+    """The start and end of a time axis under a set of lanes, in microseconds."""
+    return ft.Row(
+        [
+            ft.Text("", width=LANE_LABEL_WIDTH),
+            ft.Text(f"{t0_s * 1e6:.0f} µs", size=theme.SIZE_MICRO, color=MUTED),
+            ft.Container(expand=True),
+            ft.Text(f"{t1_s * 1e6:.1f} µs", size=theme.SIZE_MICRO, color=MUTED),
+        ],
+        spacing=6,
+        width=width + LANE_LABEL_WIDTH + 6,
+    )
+
+
 def _lanes(
     record: Record, gates: tuple[GateView, ...], selected: str, on_select: Any, width: float = 760.0
 ) -> ft.Control:
@@ -76,7 +100,9 @@ def _lanes(
     n_ions = record.device_card.n_ions
     lanes: list[ft.Control] = []
     for ion in range(n_ions):
-        boxes: list[ft.Control] = []
+        boxes: list[ft.Control] = [
+            ft.Container(left=0, top=15, width=width, height=1, bgcolor=HAIRLINE),
+        ]
         for g in gates:
             if ion not in g.ions:
                 continue
@@ -86,18 +112,19 @@ def _lanes(
             boxes.append(
                 ft.Container(
                     content=ft.Text(
-                        g.gate_id if w > 44 else "", size=10, no_wrap=True, overflow=ft.TextOverflow.CLIP
+                        g.gate_id if w > 44 else "",
+                        size=theme.SIZE_CAPTION,
+                        no_wrap=True,
+                        overflow=ft.TextOverflow.CLIP,
                     ),
                     left=left,
                     top=2,
                     width=w,
                     height=28,
                     bgcolor=GATE_COLORS.get(str(g.name.value), ft.Colors.SURFACE_CONTAINER_HIGHEST),
-                    border=ft.Border.all(
-                        2 if is_sel else 1, ft.Colors.PRIMARY if is_sel else ft.Colors.OUTLINE_VARIANT
-                    ),
-                    border_radius=ft.BorderRadius.all(4),
-                    padding=ft.Padding.symmetric(horizontal=4),
+                    border=ft.Border.all(2 if is_sel else 1, ft.Colors.PRIMARY if is_sel else HAIRLINE),
+                    border_radius=ft.BorderRadius.all(6),
+                    padding=ft.Padding.symmetric(horizontal=6),
                     alignment=ft.Alignment.CENTER_LEFT,
                     tooltip=f"{g.gate_id}: {g.name.value} on ions {g.ions}, {g.t_start_s * 1e6:.1f} to {g.t_end_s * 1e6:.1f} µs",
                     on_click=lambda e, gid=g.gate_id: on_select(gid),
@@ -107,22 +134,12 @@ def _lanes(
             )
         lanes.append(
             ft.Row(
-                [ft.Text(f"ion {ion}", size=12, width=44), ft.Stack(boxes, width=width, height=32)],
+                [lane_label(f"ion {ion}"), ft.Stack(boxes, width=width, height=32)],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
         )
-    axis = ft.Row(
-        [
-            ft.Text("", width=44),
-            ft.Text(f"{t0 * 1e6:.0f} µs", size=10),
-            ft.Container(expand=True),
-            ft.Text(f"{t1 * 1e6:.1f} µs", size=10),
-        ],
-        spacing=6,
-        width=width + 50,
-    )
-    return ft.Column(lanes + [axis], spacing=2)
+    return ft.Column(lanes + [time_axis_row(t0, t1, width)], spacing=2)
 
 
 def _populations_chart(pops: dict[str, Any]) -> ft.Control:
@@ -134,9 +151,10 @@ def _populations_chart(pops: dict[str, Any]) -> ft.Control:
                 fc.BarChartRod(
                     from_y=0.0,
                     to_y=float(pops[key].value or 0.0),
-                    width=18,
+                    width=14,
                     color=ft.Colors.PRIMARY,
                     tooltip=f"{key}: {float(pops[key].value or 0.0):.4f}",
+                    border_radius=ft.BorderRadius.only(top_left=3, top_right=3),
                 )
             ],
         )
@@ -145,13 +163,20 @@ def _populations_chart(pops: dict[str, Any]) -> ft.Control:
     chart: ft.Control = fc.BarChart(
         groups=groups,
         bottom_axis=fc.ChartAxis(
-            labels=[fc.ChartAxisLabel(value=k, label=ft.Text(key, size=11)) for k, key in enumerate(keys)],
+            labels=[
+                fc.ChartAxisLabel(value=k, label=ft.Text(key, size=theme.SIZE_CAPTION, color=MUTED))
+                for k, key in enumerate(keys)
+            ],
             label_size=24,
         ),
         left_axis=fc.ChartAxis(
-            labels=[fc.ChartAxisLabel(value=v, label=ft.Text(f"{v:.1f}", size=10)) for v in (0.0, 0.5, 1.0)],
+            labels=[
+                fc.ChartAxisLabel(value=v, label=ft.Text(f"{v:.1f}", size=theme.SIZE_MICRO, color=MUTED))
+                for v in (0.0, 0.5, 1.0)
+            ],
             label_size=30,
         ),
+        horizontal_grid_lines=fc.ChartGridLines(interval=0.5, color=ft.Colors.OUTLINE_VARIANT, width=1),
         max_y=1.0,
         min_y=0.0,
         height=150,
@@ -193,6 +218,7 @@ def RequestAnglePanel(
                     width=110,
                     dense=True,
                     text_size=13,
+                    border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
                     on_change=lambda e: set_text(str(e.control.value)),
                     key="request-angle-value",
                 ),
@@ -205,7 +231,7 @@ def RequestAnglePanel(
                     key="request-angle",
                 ),
             ],
-            spacing=8,
+            spacing=theme.GAP,
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
@@ -214,7 +240,12 @@ def RequestAnglePanel(
     if last is not None and last.kind == "angle" and last.gate_id == gate.gate_id:
         if last.refusal:
             controls.append(
-                ft.Text(f"refused: {last.refusal}", size=12, color=ft.Colors.ERROR, key="request-refusal")
+                ft.Text(
+                    f"refused: {last.refusal}",
+                    size=theme.SIZE_SMALL,
+                    color=ft.Colors.ERROR,
+                    key="request-refusal",
+                )
             )
         else:
             controls.append(status_line(last.note))
@@ -247,7 +278,8 @@ def RequestOutcomeView(
                 ),
                 status_line("running" if running else ""),
             ],
-            spacing=8,
+            spacing=theme.GAP,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
     try:
         out = request_outcome(record, gate.gate_id, pm)
@@ -293,7 +325,7 @@ def Level1Page(
     ft.use_state(store)
     gates = timeline(record)
     if not gates:
-        return ft.Text("this circuit compiled to no gate pieces", size=13)
+        return status_line("this circuit compiled to no gate pieces")
     selected = next((g for g in gates if g.gate_id == gate_param), gates[0])
     page = ft.context.page
     key = record.key()
@@ -315,7 +347,8 @@ def Level1Page(
             for ion, vec in sorted(reg.bloch.items())
         ],
         wrap=True,
-        spacing=12,
+        spacing=16,
+        run_spacing=12,
     )
     register_card = card(
         f"Register after {selected.gate_id}",
@@ -324,7 +357,8 @@ def Level1Page(
                 ft.Row(
                     [discs, _populations_chart(reg.populations)],
                     wrap=True,
-                    spacing=20,
+                    spacing=24,
+                    run_spacing=12,
                     vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
                 stat_row(
@@ -347,7 +381,7 @@ def Level1Page(
                     title="Pauli expectations and details",
                 ),
             ],
-            spacing=8,
+            spacing=12,
         ),
         why=lambda e: session.select_concept(
             1, "entanglement_by_ms" if selected.name.value in ("ms", "zz") else "bloch_vector"
@@ -397,13 +431,17 @@ def Level1Page(
             [
                 shown(selected.name, index, label=False, plain=plain, size=16),
                 ft.Text(
-                    f"on ions {selected.ions}, phases {tuple(round(p, 4) for p in selected.params_rad)} rad",
-                    size=12,
-                    color=ft.Colors.ON_SURFACE_VARIANT,
+                    f"on {ions_text(selected.ions)}, phase"
+                    + ("s " if len(selected.params_rad) != 1 else " ")
+                    + ", ".join(f"{p:.4f}" for p in selected.params_rad)
+                    + " rad",
+                    size=theme.SIZE_SMALL,
+                    color=MUTED,
                 ),
             ],
-            spacing=8,
+            spacing=theme.GAP,
             wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         stat_row(tiles),
     ]
@@ -416,10 +454,11 @@ def Level1Page(
             [
                 ft.Row(
                     [
-                        ft.Text("target unitary", size=12, weight=ft.FontWeight.W_600),
+                        ft.Text("target unitary", size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600),
                         shown(selected.unitary, index, label=False),
                     ],
                     spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 _matrix_table(unitary),
             ]
@@ -435,16 +474,18 @@ def Level1Page(
     )
     gate_card = card(
         f"Gate {selected.gate_id}",
-        ft.Column(gate_body, spacing=8),
+        ft.Column(gate_body, spacing=12),
         why=lambda e: session.select_concept(1, "native_gate"),
         actions=[zoom_btn],
         key="gate",
     )
     frame_rows = [
-        (f"ion {q} final frame", shown(v, index, label=False, size=12)) for q, v in frame.final_frame.items()
+        (f"ion {q} final frame", shown(v, index, label=False, size=theme.SIZE_SMALL))
+        for q, v in frame.final_frame.items()
     ]
     frame_rows += [
-        (f"{gid} ion {q}", shown(v, index, label=False, size=12)) for gid, q, v in frame.stark_increments
+        (f"{gid} ion {q}", shown(v, index, label=False, size=theme.SIZE_SMALL))
+        for gid, q, v in frame.stark_increments
     ]
     extras = card(
         "Phase register and compile report",
@@ -453,7 +494,7 @@ def Level1Page(
             [
                 kv_rows(frame_rows),
                 status_line(frame.rule),
-                ft.Row([shown(r, index, size=12) for r in residuals], wrap=True, spacing=12),
+                ft.Row([shown(r, index, size=theme.SIZE_SMALL) for r in residuals], wrap=True, spacing=12),
             ],
             store=store,
             session=session,
@@ -474,25 +515,24 @@ def Level1Page(
                         _lanes(record, gates, selected.gate_id, on_select, lanes_width),
                         hint(store, 1, "native_gate"),
                     ],
-                    spacing=6,
+                    spacing=theme.GAP,
                 ),
                 why=lambda e: session.select_concept(1, "compile"),
                 key="timeline",
             ),
-            ft.ResponsiveRow(
-                [
-                    ft.Column([register_card], col={"xs": 12, "lg": 7}, spacing=10),
-                    ft.Column([gate_card, extras], col={"xs": 12, "lg": 5}, spacing=10),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.START,
-                spacing=12,
-                run_spacing=12,
-            ),
+            columns(store, page, 1, [register_card], [gate_card, extras], split=(7, 5)),
         ],
-        spacing=12,
+        spacing=16,
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
 
 
-__all__ = ["Level1Page", "RequestAnglePanel", "RequestOutcomeView"]
+__all__ = [
+    "LANE_LABEL_WIDTH",
+    "Level1Page",
+    "RequestAnglePanel",
+    "RequestOutcomeView",
+    "lane_label",
+    "time_axis_row",
+]

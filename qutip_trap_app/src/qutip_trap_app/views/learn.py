@@ -30,7 +30,18 @@ from qutip_trap_app.viewmodel.learn import (
     review_gap_days,
     score_choice,
 )
-from qutip_trap_app.views.common import card, chip, data_table, hint, level_header, status_line
+from qutip_trap_app.views import theme
+from qutip_trap_app.views.common import (
+    HAIRLINE,
+    MUTED,
+    card,
+    chip,
+    data_table,
+    hint,
+    level_header,
+    page_tabs,
+    status_line,
+)
 from qutip_trap_app.views.presets import PresetList, PresetPage
 from qutip_trap_app.views.state import Session, Store, learner_document
 
@@ -46,6 +57,13 @@ KNOWLEDGE_SHORT: dict[str, str] = {
     "physicist": "Physicist",
     "unknown": "Not saying",
 }
+KNOWLEDGE_DESCRIPTIONS: dict[str, str] = {
+    "newcomer": "Plain words first, explanations open, the worked example first",
+    "circuits": "Circuit levels brief, the hardware levels explained",
+    "physicist": "Symbols first, explanations closed, every table open",
+    "unknown": "The app assists, as for a newcomer",
+}
+"""What each answer to the first-launch question changes (DESIGN.md Section 1), in one short line."""
 
 
 def _fill_route(route: str, key: str | None, gate: str, pulse: str) -> str:
@@ -71,6 +89,17 @@ def _day_clock() -> float:
     return time.time() / 86400.0
 
 
+def _panel(controls: list[ft.Control]) -> ft.Control:
+    """A quiet inset panel for one prompt or drill inside a card."""
+    return ft.Container(
+        content=ft.Column(controls, spacing=8),
+        padding=ft.Padding.all(12),
+        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+        border=ft.Border.all(1, HAIRLINE),
+    )
+
+
 # ---- the settings row ------------------------------------------------------------------------------------------------------------------
 
 
@@ -88,21 +117,25 @@ def SettingsRow(store: Store, session: Session) -> ft.Control:
     def set_retention(e: Any) -> None:
         session.set_learner(retention_days=float(e.control.value))
 
-    return ft.Row(
+    who = ft.Row(
         [
-            ft.Text("who", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+            ft.Text("Who", size=theme.SIZE_SMALL, color=MUTED),
             ft.SegmentedButton(
                 segments=[
-                    ft.Segment(value=k, label=ft.Text(v, size=11), tooltip=KNOWLEDGE_LABELS[k])
+                    ft.Segment(value=k, label=ft.Text(v, size=theme.SIZE_SMALL), tooltip=KNOWLEDGE_LABELS[k])
                     for k, v in KNOWLEDGE_SHORT.items()
                 ],
                 selected=[learner.knowledge],
                 on_change=set_knowledge,
             ),
-            ft.Container(width=16),
-            ft.Text(
-                f"keep it for {learner.retention_days:.0f} days", size=12, color=ft.Colors.ON_SURFACE_VARIANT
-            ),
+        ],
+        spacing=10,
+        tight=True,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+    keep = ft.Row(
+        [
+            ft.Text(f"Keep it for {learner.retention_days:.0f} days", size=theme.SIZE_SMALL, color=MUTED),
             ft.Slider(
                 min=7,
                 max=365,
@@ -117,9 +150,12 @@ def SettingsRow(store: Store, session: Session) -> ft.Control:
                 ),
             ),
         ],
-        wrap=True,
-        spacing=8,
+        spacing=4,
+        tight=True,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+    return ft.Row(
+        [who, keep], wrap=True, spacing=24, run_spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER
     )
 
 
@@ -148,13 +184,19 @@ def _stop_tile(
             ),
         )
     return ft.ListTile(
-        leading=ft.Text(str(stop.index), weight=ft.FontWeight.W_700),
-        title=ft.Text(stop.title, size=14),
-        subtitle=ft.Text(f"look for: {look_for}", size=12) if look_for else None,
-        trailing=ft.Row(trailing, tight=True, spacing=2),
+        leading=ft.Container(
+            content=ft.Text(str(stop.index), weight=ft.FontWeight.W_700, size=theme.SIZE_SMALL),
+            width=28,
+            height=28,
+            alignment=ft.Alignment.CENTER,
+            border_radius=ft.BorderRadius.all(14),
+            bgcolor=ft.Colors.SECONDARY_CONTAINER,
+        ),
+        title=ft.Text(stop.title, size=theme.SIZE_BODY, weight=ft.FontWeight.W_500),
+        subtitle=ft.Text(f"look for: {look_for}", size=theme.SIZE_SMALL, color=MUTED) if look_for else None,
+        trailing=ft.Row(trailing, tight=True, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         on_click=(lambda e, r=route: page.navigate(r)) if enabled else None,
         disabled=not enabled,
-        dense=True,
         key=f"stop:{stop.index}",
     )
 
@@ -186,7 +228,7 @@ def TourActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.C
 
     return card(
         "The tour: a Bell state in six stops",
-        ft.Column(stops + [hint(store, 0, "target_vs_simulated")], spacing=0),
+        ft.Column(stops + [hint(store, 0, "target_vs_simulated")], spacing=2),
         why=lambda e: session.select_concept(0, "target_vs_simulated"),
         info="the worked example (full guidance first, then faded): six clicks from a histogram bar to a matrix element, each stop ending in a prompt",
         actions=[
@@ -238,7 +280,7 @@ def GhzActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Co
         "Three ions, one GHZ state: the same six stops, unannotated",
         ft.Column(
             stops + [status_line("the annotations are withheld; the bulb reveals one when you ask")],
-            spacing=0,
+            spacing=2,
         ),
         why=lambda e: session.select_concept(1, "entanglement_by_ms"),
         info="the faded version of the worked example: the guidance is withheld until asked (DESIGN.md Section 3); the job is the three-ion GHZ circuit preset of Section 9.6, which takes minutes at the full engine",
@@ -260,13 +302,21 @@ def FreeActivity(store: Store, session: Session) -> ft.Control:
     page = ft.context.page
     steps: list[ft.Control] = [
         ft.ListTile(
-            leading=ft.Text(str(k + 1), weight=ft.FontWeight.W_700), title=ft.Text(text, size=13), dense=True
+            leading=ft.Container(
+                content=ft.Text(str(k + 1), weight=ft.FontWeight.W_700, size=theme.SIZE_SMALL),
+                width=28,
+                height=28,
+                alignment=ft.Alignment.CENTER,
+                border_radius=ft.BorderRadius.all(14),
+                bgcolor=ft.Colors.SECONDARY_CONTAINER,
+            ),
+            title=ft.Text(text, size=theme.SIZE_BODY),
         )
         for k, text in enumerate(FREE_EXERCISE)
     ]
     return card(
         "Your own circuit: build, predict, run, explain",
-        ft.Column(steps, spacing=0),
+        ft.Column(steps, spacing=2),
         why=lambda e: session.select_concept(0, "histogram"),
         info="the free version of the exercise; the delayed, unaided task of DESIGN.md Section 1 is this, one review gap later, with the drawer closed",
         actions=[
@@ -299,35 +349,30 @@ def DrillView(store: Store, session: Session, drill: Drill) -> ft.Control:
         ok = score_drill(drill, given)
         feedback = ft.Text(
             "that matches the record" if ok else f"the record says: {drill.answer}; check {drill.where}",
-            size=12,
-            color=ft.Colors.ON_SURFACE_VARIANT,
+            size=theme.SIZE_SMALL,
+            color=MUTED,
         )
-    return ft.Container(
-        content=ft.Column(
-            [
-                ft.Text(drill.question, size=13, weight=ft.FontWeight.W_500),
-                ft.RadioGroup(
-                    content=ft.Row([ft.Radio(value=o, label=o) for o in drill.options], wrap=True, spacing=0),
-                    value=given or None,
-                    on_change=pick,
-                    disabled=checked,
-                ),
-                ft.Row(
-                    [
-                        ft.FilledTonalButton(
-                            content=ft.Text("Check"), on_click=check, disabled=checked or not given
-                        ),
-                        feedback,
-                    ],
-                    spacing=10,
-                    wrap=True,
-                ),
-            ],
-            spacing=6,
-        ),
-        padding=ft.Padding.all(10),
-        border_radius=ft.BorderRadius.all(8),
-        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+    return _panel(
+        [
+            ft.Text(drill.question, size=theme.SIZE_SMALL + 1, weight=ft.FontWeight.W_500),
+            ft.RadioGroup(
+                content=ft.Row([ft.Radio(value=o, label=o) for o in drill.options], wrap=True, spacing=0),
+                value=given or None,
+                on_change=pick,
+                disabled=checked,
+            ),
+            ft.Row(
+                [
+                    ft.FilledTonalButton(
+                        content=ft.Text("Check"), on_click=check, disabled=checked or not given
+                    ),
+                    feedback,
+                ],
+                spacing=10,
+                wrap=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        ]
     )
 
 
@@ -337,7 +382,7 @@ def DrillsActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft
     record = store.record()
     body: list[ft.Control]
     if record is None:
-        body = [status_line("run a job on Level 0: the drills are generated from its record")]
+        body = [status_line("run a job on Level 0: the drills come from its record")]
     else:
         drills = drills_for(record, index)
         body = [DrillView(store, session, d) for d in drills] or [status_line("this record offers no drill")]
@@ -347,7 +392,7 @@ def DrillsActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft
 
     return card(
         "Drills: tell them apart",
-        ft.Column(body, spacing=8),
+        ft.Column(body, spacing=theme.GAP),
         why=lambda e: session.select_concept(0, "provenance_tags"),
         info="four discriminations interleaved in immediate succession (estimate or calibrated; what a chip records; resolved, frozen or dropped; inside or outside two error bars), every answer read from the current record",
         actions=[ft.TextButton(content=ft.Text("Reset the answers"), on_click=reset)],
@@ -371,7 +416,9 @@ def ReviewPrompt(store: Store, session: Session, prompt: Prompt, concept_id: str
             set_feedback(f"compare with the simulator's account: {prompt.rubric or prompt.where}")
             session.record_attempt(Attempt(concept_id, prompt.id, _day_clock(), None, unaided=True))
 
-    controls: list[ft.Control] = [ft.Text(prompt.question, size=13, weight=ft.FontWeight.W_500)]
+    controls: list[ft.Control] = [
+        ft.Text(prompt.question, size=theme.SIZE_SMALL + 1, weight=ft.FontWeight.W_500)
+    ]
     if prompt.kind == "choose":
         controls.append(
             ft.RadioGroup(
@@ -388,7 +435,8 @@ def ReviewPrompt(store: Store, session: Session, prompt: Prompt, concept_id: str
                 min_lines=2,
                 max_lines=4,
                 dense=True,
-                text_size=13,
+                text_size=theme.SIZE_SMALL + 1,
+                border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
                 on_change=lambda e: set_answer(str(e.control.value)),
             )
         )
@@ -398,20 +446,14 @@ def ReviewPrompt(store: Store, session: Session, prompt: Prompt, concept_id: str
                 ft.FilledTonalButton(
                     content=ft.Text("Answer"), on_click=check, disabled=prompt.kind == "choose" and not answer
                 ),
-                ft.Text(feedback, size=12, color=ft.Colors.ON_SURFACE_VARIANT)
-                if feedback
-                else ft.Container(),
+                ft.Text(feedback, size=theme.SIZE_SMALL, color=MUTED) if feedback else ft.Container(),
             ],
             spacing=10,
             wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
     )
-    return ft.Container(
-        content=ft.Column(controls, spacing=6),
-        padding=ft.Padding.all(10),
-        border_radius=ft.BorderRadius.all(8),
-        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-    )
+    return _panel(controls)
 
 
 @ft.component
@@ -423,11 +465,11 @@ def ReviewActivity(store: Store, session: Session) -> ft.Control:
     body: list[ft.Control] = (
         [ReviewPrompt(store, session, p, concept_of.get(p.id, "histogram")) for p in due]
         if due
-        else [status_line("nothing is due: prompts return here one review gap after you last met them")]
+        else [status_line("nothing is due: prompts return one review gap after you met them")]
     )
     return card(
         "Review tray",
-        ft.Column(body, spacing=8),
+        ft.Column(body, spacing=theme.GAP),
         why=lambda e: session.select_concept(0, "histogram"),
         info="spaced re-asks with the explanation closed: the delayed, unaided attempts are the only ones the log calls evidence (DESIGN.md Section 3); the tray is a place you visit, never a notification",
         key="review",
@@ -465,9 +507,7 @@ def ProgressActivity(store: Store, session: Session) -> ft.Control:
         )
         if rows
         else status_line("no attempts yet"),
-        status_line(
-            "in-session accuracy is shown as such and never called learning; the delayed unaided column is the evidence"
-        ),
+        status_line("in-session accuracy is not learning; the delayed unaided column is the evidence"),
     ]
     if show_json:
         body.append(
@@ -477,12 +517,13 @@ def ProgressActivity(store: Store, session: Session) -> ft.Control:
                 read_only=True,
                 min_lines=4,
                 max_lines=12,
-                text_size=11,
+                text_size=theme.SIZE_CAPTION,
+                border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
             )
         )
     return card(
         "Progress",
-        ft.Column(body, spacing=8),
+        ft.Column(body, spacing=theme.GAP),
         why=lambda e: session.select_concept(0, "histogram"),
         info="the mastery log lives on this device and is never uploaded (DESIGN.md Section 3); copy it as JSON to keep it",
         actions=[
@@ -508,17 +549,14 @@ def LearnPage(
     if preset_id is not None:
         return PresetPage(store, session, index, preset_id)
     due_count = len(due_prompts(store.learner.log, _day_clock()))
-    nav = ft.Row(
-        [
-            (ft.FilledTonalButton if t == tab else ft.TextButton)(
-                content=ft.Text(label + (f" ({due_count})" if t == "review" and due_count else ""), size=12),
-                on_click=lambda e, tt=t: page.navigate("/learn" if tt == "tour" else f"/learn/{tt}"),
-                key=f"learn-tab:{t}",
-            )
-            for t, label in LEARN_TABS
-        ],
-        wrap=True,
-        spacing=4,
+    items = [
+        (t, label + (f" ({due_count})" if t == "review" and due_count else "")) for t, label in LEARN_TABS
+    ]
+    nav = page_tabs(
+        items,
+        tab,
+        lambda t: page.navigate("/learn" if t == "tour" else f"/learn/{t}"),
+        key_prefix="learn-tab",
     )
     activity: ft.Control
     if tab == "ghz":
@@ -548,10 +586,10 @@ def LearnPage(
             nav,
             activity,
         ],
-        spacing=12,
+        spacing=16,
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
 
 
-__all__ = ["KNOWLEDGE_LABELS", "KNOWLEDGE_SHORT", "LearnPage"]
+__all__ = ["KNOWLEDGE_DESCRIPTIONS", "KNOWLEDGE_LABELS", "KNOWLEDGE_SHORT", "LearnPage"]

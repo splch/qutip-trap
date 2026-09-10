@@ -13,8 +13,9 @@ import numpy as np
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE
 from qutip_trap_app.viewmodel.presets import PRESETS, ChartRecord, Comparison, PresetSpec, compare
-from qutip_trap_app.views import drawing
+from qutip_trap_app.views import drawing, theme
 from qutip_trap_app.views.common import (
+    MUTED,
     card,
     chip,
     data_table,
@@ -35,15 +36,19 @@ def _with_uncertainty(value: float, unc: float | None, unit: str, scale: float) 
 
 
 def _verdict_cell(c: Comparison) -> ft.Control:
+    color: ft.ColorValue
     if not c.expect_agreement:
-        icon, word, color = ft.Icons.INFO_OUTLINE, "not predicted", ft.Colors.ON_SURFACE_VARIANT
+        icon, word, color = ft.Icons.INFO_OUTLINE, "not predicted", MUTED
     elif c.within:
-        icon, word, color = ft.Icons.CHECK_CIRCLE_OUTLINE, "within", ft.Colors.PRIMARY
+        icon, word, color = ft.Icons.CHECK_CIRCLE_OUTLINE, "within", theme.status("pass")[1]
     else:
         icon, word, color = ft.Icons.ERROR_OUTLINE, "outside", ft.Colors.ERROR
     tip = c.verdict + (f"\n{c.why_not}" if c.why_not else "")
     return ft.Row(
-        [ft.Icon(icon, size=16, color=color), ft.Text(word, size=12, color=color)], spacing=4, tooltip=tip
+        [ft.Icon(icon, size=16, color=color), ft.Text(word, size=theme.SIZE_SMALL, color=color)],
+        spacing=4,
+        tooltip=tip,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
 
@@ -64,12 +69,13 @@ def comparison_table(comparisons: tuple[Comparison, ...], index: ProvenanceIndex
                             _with_uncertainty(
                                 float(c.published.value or 0.0), c.published_uncertainty, c.unit, c.scale
                             ),
-                            size=12,
+                            size=theme.SIZE_SMALL,
                             tooltip=c.published.detail,
                         ),
                         chip(CATALOGUE[c.published.quantity].ledger_id, index),
                     ],
                     spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Row(
                     [
@@ -77,12 +83,13 @@ def comparison_table(comparisons: tuple[Comparison, ...], index: ProvenanceIndex
                             _with_uncertainty(
                                 float(c.simulated.value or 0.0), c.simulated_uncertainty, c.unit, c.scale
                             ),
-                            size=12,
+                            size=theme.SIZE_SMALL,
                             tooltip=c.simulated.detail,
                         ),
                         chip(CATALOGUE[c.simulated.quantity].ledger_id, index),
                     ],
                     spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 _verdict_cell(c),
             ]
@@ -91,6 +98,7 @@ def comparison_table(comparisons: tuple[Comparison, ...], index: ProvenanceIndex
 
 
 def preset_chart(chart: ChartRecord) -> ft.Control:
+    title = ft.Text(chart.title, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600)
     if chart.bars and chart.series:
         s = chart.series[0]
         groups = [
@@ -103,7 +111,7 @@ def preset_chart(chart: ChartRecord) -> ft.Control:
                         width=14,
                         color=ft.Colors.PRIMARY,
                         tooltip=f"{y:.3g}",
-                        border_radius=2,
+                        border_radius=ft.BorderRadius.only(top_left=3, top_right=3),
                     )
                 ],
             )
@@ -112,18 +120,23 @@ def preset_chart(chart: ChartRecord) -> ft.Control:
         top = float(np.max(s.y)) if s.y.size else 1.0
         chart_ctl: ft.Control = fc.BarChart(
             groups=groups,
-            bottom_axis=fc.ChartAxis(title=ft.Text(chart.x_title, size=10), label_size=24),
-            left_axis=fc.ChartAxis(title=ft.Text(chart.y_title, size=10), label_size=40),
+            bottom_axis=fc.ChartAxis(
+                title=ft.Text(chart.x_title, size=theme.SIZE_MICRO, color=MUTED), label_size=24
+            ),
+            left_axis=fc.ChartAxis(
+                title=ft.Text(chart.y_title, size=theme.SIZE_MICRO, color=MUTED), label_size=40
+            ),
+            horizontal_grid_lines=fc.ChartGridLines(color=ft.Colors.OUTLINE_VARIANT, width=1),
             max_y=top * 1.15,
             min_y=0.0,
             height=200,
             expand=True,
             interactive=True,
         )
-        return ft.Column([ft.Text(chart.title, size=12, weight=ft.FontWeight.W_600), chart_ctl], spacing=4)
+        return ft.Column([title, chart_ctl], spacing=4)
     return ft.Column(
         [
-            ft.Text(chart.title, size=12, weight=ft.FontWeight.W_600),
+            title,
             drawing.line_chart(
                 [(s.label, np.asarray(s.x, dtype=float), np.asarray(s.y, dtype=float)) for s in chart.series],
                 x_title=chart.x_title,
@@ -148,14 +161,17 @@ def PresetList(store: Store, session: Session, index: ProvenanceIndex) -> ft.Con
         running = store.running_of("preset", preset_id=spec.id) is not None
         done = spec.id in store.preset_results
         if spec.kind == "circuit":
-            trailing: ft.Control = ft.Icon(ft.Icons.PLAY_CIRCLE_OUTLINE, size=18)
+            trailing: ft.Control = ft.Icon(ft.Icons.PLAY_CIRCLE_OUTLINE, size=18, color=MUTED)
             state = "runs on Level 0"
         elif running:
             trailing, state = ft.ProgressRing(width=16, height=16, stroke_width=2), "running"
         elif done:
-            trailing, state = ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=18, color=ft.Colors.PRIMARY), "done"
+            trailing, state = (
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=18, color=theme.status("pass")[1]),
+                "done",
+            )
         else:
-            trailing, state = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=18), spec.duration
+            trailing, state = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=18, color=MUTED), spec.duration
 
         def open_preset(_e: Any, s: PresetSpec = spec) -> None:
             if s.kind == "circuit":
@@ -166,15 +182,18 @@ def PresetList(store: Store, session: Session, index: ProvenanceIndex) -> ft.Con
 
         tiles.append(
             ft.ListTile(
-                title=ft.Text(spec.title, size=14),
-                subtitle=ft.Text(f"Section {spec.section}, {spec.row} · {spec.source} · {state}", size=11),
+                title=ft.Text(spec.title, size=theme.SIZE_BODY, weight=ft.FontWeight.W_500),
+                subtitle=ft.Text(
+                    f"Section {spec.section}, {spec.row} · {spec.source} · {state}",
+                    size=theme.SIZE_CAPTION,
+                    color=MUTED,
+                ),
                 trailing=trailing,
                 on_click=open_preset,
-                dense=True,
                 key=f"preset:{spec.id}",
             )
         )
-    return ft.Column(tiles, spacing=0)
+    return ft.Column(tiles, spacing=2)
 
 
 @ft.component
@@ -183,7 +202,7 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
     page = ft.context.page
     spec = PRESETS.get(preset_id)
     if spec is None:
-        return card("Unknown experiment", ft.Text(f"no preset {preset_id!r}", size=13))
+        return card("Unknown experiment", status_line(f"no preset {preset_id!r}"))
     result = store.preset_results.get(preset_id)
     running = store.running_of("preset", preset_id=preset_id)
     header = level_header(spec.title, f"You will be able to explain {spec.question}.")
@@ -203,10 +222,13 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
                 ],
                 spacing=10,
                 wrap=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
         )
         if running is not None:
-            body.append(ft.ProgressBar(value=running.fraction, bar_height=4))
+            body.append(
+                ft.ProgressBar(value=running.fraction, bar_height=4, border_radius=ft.BorderRadius.all(2))
+            )
     else:
         comps = compare(spec, result)
         body.append(comparison_table(comps, index))
@@ -214,14 +236,14 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
             body.append(preset_chart(ch))
         why_nots = [f"{c.label}: {c.why_not}" for c in comps if c.why_not]
         detail_controls: list[ft.Control] = [
-            ft.Text(spec.method, size=12),
-            ft.Text(f"Section {spec.section}, row '{spec.row}'; source {spec.source}", size=12),
+            ft.Text(spec.method, size=theme.SIZE_SMALL),
+            ft.Text(f"Section {spec.section}, row '{spec.row}'; source {spec.source}", size=theme.SIZE_SMALL),
             data_table(
                 ["parameter", "value"], [[k, f"{v:.6g}"] for k, v in sorted(result.parameters.items())]
             ),
         ]
-        detail_controls.extend(ft.Text(n, size=12) for n in result.notes)
-        detail_controls.extend(ft.Text(w, size=12) for w in why_nots)
+        detail_controls.extend(ft.Text(n, size=theme.SIZE_SMALL) for n in result.notes)
+        detail_controls.extend(ft.Text(w, size=theme.SIZE_SMALL) for w in why_nots)
         detail_controls.append(status_line(f"computed in {result.wall_time_s:.1f} s"))
         body.append(details(f"preset.{preset_id}", detail_controls, store=store, session=session))
     return ft.Column(
@@ -229,7 +251,7 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
             header,
             card(
                 "Published beside simulated",
-                ft.Column(body, spacing=10),
+                ft.Column(body, spacing=12),
                 why=lambda e: session.select_concept(spec.level, spec.concept_id),
                 info=(
                     "the published value's chip is the Section 9 row's tag for the source; the simulated value's chip is the "
@@ -245,7 +267,7 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
                 key="preset-result",
             ),
         ],
-        spacing=12,
+        spacing=16,
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )

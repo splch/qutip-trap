@@ -1,8 +1,9 @@
 """The text budget of DESIGN.md Section 10 (R2, R4, R5): prose lives in the explain drawer, the tooltips and the info
 buttons, never in the body of a screen.
 
-A static check over the view modules: every literal string handed to ``ft.Text`` outside the drawer's own components must be
-short (a label, a title, a question, a status line under twelve words), and the ``card`` helper takes no subtitle. Tooltips and
+A static check over the view modules: every literal string handed to ``ft.Text`` or to the ``status_line`` helper outside the
+drawer's own components must be short (a label, a title, a question, a status line under twelve words), and the ``card``
+helper takes no subtitle. Tooltips and
 ``info=`` arguments are where the sentences go, so they are not counted. The check is by the AST, so a rendered Flutter client
 is not needed; the same rule the live review applied by eye is applied by machine to every screen on every commit."""
 
@@ -62,6 +63,7 @@ def _enclosing_functions(tree: ast.Module) -> dict[int, str]:
 
 
 def _text_calls(tree: ast.Module) -> list[ast.Call]:
+    """Every ``ft.Text(...)`` call and every ``status_line(...)`` call: the two ways a screen puts words on itself."""
     calls: list[ast.Call] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -71,7 +73,7 @@ def _text_calls(tree: ast.Module) -> list[ast.Call]:
                 and f.attr == "Text"
                 and isinstance(f.value, ast.Name)
                 and f.value.id == "ft"
-            ):
+            ) or (isinstance(f, ast.Name) and f.id == "status_line"):
                 calls.append(node)
     return calls
 

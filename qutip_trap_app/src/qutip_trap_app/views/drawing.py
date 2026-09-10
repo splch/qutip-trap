@@ -23,6 +23,8 @@ import flet.canvas as cv
 import flet_charts as fc
 import numpy as np
 
+from qutip_trap_app.views import theme
+
 # ---- PNG heatmaps ---------------------------------------------------------------------------------------------------------------------
 
 _SEQUENTIAL: tuple[tuple[float, float, float], ...] = (
@@ -189,6 +191,15 @@ def _label(
     return cv.Text(x, y, text, style=ft.TextStyle(size=size, color=color))
 
 
+def _axis_title(text: str) -> ft.Text:
+    return ft.Text(text, size=10, color=ft.Colors.ON_SURFACE_VARIANT)
+
+
+def _grid() -> fc.ChartGridLines:
+    """Hairline gridlines one step off the surface, solid (the dataviz rule for recessive chart chrome)."""
+    return fc.ChartGridLines(color=ft.Colors.OUTLINE_VARIANT, width=1)
+
+
 class Axes:
     """A data-to-pixel map for one canvas with margins, drawing its own frame and a few ticks."""
 
@@ -353,14 +364,17 @@ def level_diagram(
             else f"{name}  ({life * 1e9:.2f} ns)"
         )
         shapes.append(_label(ax.x(x0), ax.y(y) - 13, text, size=9, color=color))
-    for _label_text, lower, upper, lam in transitions:
+    for k, (_label_text, lower, upper, lam) in enumerate(transitions):
         if lower not in col_of or upper not in col_of:
             continue
         i_lo, i_up = names.index(lower), names.index(upper)
         x_lo, x_up = col_of[lower], col_of[upper]
         color = ft.Colors.TERTIARY if lam < 500e-9 else ft.Colors.SECONDARY
         shapes.extend(ax.arrow(x_lo, float(scaled[i_lo]), x_up, float(scaled[i_up]), color, 1.2))
-        mx, my = ax.x(0.5 * (x_lo + x_up)), ax.y(0.5 * (scaled[i_lo] + scaled[i_up]))
+        # the label sits at a different fraction of each arrow so that neighbouring lines do not pile their labels up
+        frac = (0.35, 0.55, 0.75)[k % 3]
+        mx = ax.x(x_lo + frac * (x_up - x_lo))
+        my = ax.y(float(scaled[i_lo]) + frac * float(scaled[i_up] - scaled[i_lo]))
         shapes.append(_label(mx + 3, my - 6, f"{lam * 1e9:.1f} nm", size=8, color=color))
     shapes.append(
         _label(
@@ -396,26 +410,24 @@ def zeeman_chart(
     b_gauss: np.ndarray, energies_hz: np.ndarray, labels: Sequence[str], *, height: float = 200.0
 ) -> ft.Control:
     """Sublevel energies (relative to the level's zero-field energy) against the field, from the diagonalization."""
-    palette = [
-        ft.Colors.PRIMARY,
-        ft.Colors.TERTIARY,
-        ft.Colors.SECONDARY,
-        ft.Colors.ERROR,
-        ft.Colors.ON_SURFACE_VARIANT,
-        ft.Colors.OUTLINE,
-    ]
+    palette = list(theme.series())
     series = []
     for j in range(len(labels)):
         pts = [
             fc.LineChartDataPoint(x=float(b), y=float(e) / 1e6) for b, e in zip(b_gauss, energies_hz[:, j])
         ]
-        series.append(fc.LineChartData(points=pts, stroke_width=2, color=palette[j % len(palette)]))
+        series.append(
+            fc.LineChartData(
+                points=pts, stroke_width=2, color=palette[j % len(palette)], rounded_stroke_cap=True
+            )
+        )
     chart: ft.Control = fc.LineChart(
         data_series=series,
         height=height,
         expand=True,
-        left_axis=fc.ChartAxis(title=ft.Text("E/h (MHz)", size=10), label_size=56),
-        bottom_axis=fc.ChartAxis(title=ft.Text("B (G)", size=10), label_size=24),
+        left_axis=fc.ChartAxis(title=_axis_title("E/h (MHz)"), label_size=56),
+        bottom_axis=fc.ChartAxis(title=_axis_title("B (G)"), label_size=24),
+        horizontal_grid_lines=_grid(),
         interactive=True,
     )
     legend = ft.Row(
@@ -423,7 +435,7 @@ def zeeman_chart(
             ft.Row(
                 [
                     ft.Container(width=12, height=3, bgcolor=palette[j % len(palette)]),
-                    ft.Text(str(label), size=10),
+                    ft.Text(str(label), size=10, color=ft.Colors.ON_SURFACE_VARIANT),
                 ],
                 spacing=4,
             )
@@ -550,9 +562,10 @@ def stability_diagram(
         )
     for name, qv, av in points:
         px, py = ax.x(qv), ax.y(av)
-        shapes.append(cv.Circle(px, py, 5, paint=_fill(ft.Colors.ERROR)))
+        shapes.append(cv.Circle(px, py, 6, paint=_fill(ft.Colors.SURFACE_CONTAINER_LOWEST)))
+        shapes.append(cv.Circle(px, py, 4.5, paint=_fill(ft.Colors.TERTIARY)))
         shapes.append(
-            _label(px + 7, py - 6, f"{name}: q = {qv:.3f}, a = {av:.4f}", size=9, color=ft.Colors.ERROR)
+            _label(px + 8, py - 6, f"{name}: q = {qv:.3f}, a = {av:.4f}", size=9, color=ft.Colors.TERTIARY)
         )
     return cv.Canvas(shapes, width=width, height=height)
 
@@ -640,7 +653,7 @@ def phase_space(loops: Sequence[PhaseLoop], *, width: float = 420.0, height: flo
     """Spin-branch loops alpha_im(t) in the complex plane: a closed loop returns to its start (the filled dot); the end is a
     ring. One colour per mode; the pair's second ion dashed (its loop coincides with the first ion's on an in-phase mode and
     mirrors it on an out-of-phase one)."""
-    palette = [ft.Colors.PRIMARY, ft.Colors.TERTIARY, ft.Colors.SECONDARY, ft.Colors.ERROR]
+    palette = list(theme.series())
     allv = (
         np.concatenate([np.asarray(lp.alpha, dtype=complex) for lp in loops])
         if loops
@@ -684,6 +697,9 @@ def phase_space(loops: Sequence[PhaseLoop], *, width: float = 420.0, height: flo
 
 # ---- charts with flet-charts -------------------------------------------------------------------------------------------------------------
 
+_cap = ft.BorderRadius.only(top_left=3, top_right=3)
+"""A bar's rounded data-end, square at the baseline (the dataviz mark spec)."""
+
 
 def line_chart(
     series: Sequence[tuple[str, np.ndarray, np.ndarray]],
@@ -696,14 +712,7 @@ def line_chart(
     markers: Sequence[tuple[float, str]] = (),
 ) -> ft.Control:
     """Time series or curves; a log axis is drawn as log10 values with a title saying so (the chart library has none)."""
-    palette = [
-        ft.Colors.PRIMARY,
-        ft.Colors.TERTIARY,
-        ft.Colors.SECONDARY,
-        ft.Colors.ERROR,
-        ft.Colors.ON_SURFACE_VARIANT,
-        ft.Colors.OUTLINE,
-    ]
+    palette = list(theme.series())
     prepared: list[tuple[np.ndarray, np.ndarray]] = []
     for _label, x, y in series:
         xs = np.asarray(x, dtype=float)
@@ -728,30 +737,36 @@ def line_chart(
             points=[fc.LineChartDataPoint(x=float(a), y=float(b)) for a, b in zip(xs, ys)],
             stroke_width=2,
             color=palette[k % len(palette)],
+            rounded_stroke_cap=True,
         )
         for k, (xs, ys) in enumerate(prepared)
     ]
     if not data:
-        return ft.Text("nothing to plot", size=12, italic=True)
+        return ft.Text("nothing to plot", size=12, italic=True, color=ft.Colors.ON_SURFACE_VARIANT)
     chart: ft.Control = fc.LineChart(
         data_series=data,
         height=height,
         expand=True,
         left_axis=fc.ChartAxis(
-            title=ft.Text(("log10 " if log_y else "") + y_title + scale_note, size=10), label_size=48
+            title=_axis_title(("log10 " if log_y else "") + y_title + scale_note), label_size=48
         ),
         bottom_axis=fc.ChartAxis(
-            title=ft.Text(("log10 " if log_x else "") + x_title, size=10),
+            title=_axis_title(("log10 " if log_x else "") + x_title),
             label_size=24,
             show_min=False,
             show_max=False,
         ),
+        horizontal_grid_lines=_grid(),
         interactive=True,
     )
     legend_items: list[ft.Control] = [
         ft.Row(
-            [ft.Container(width=12, height=3, bgcolor=palette[k % len(palette)]), ft.Text(label, size=10)],
+            [
+                ft.Container(width=12, height=3, bgcolor=palette[k % len(palette)], border_radius=2),
+                ft.Text(label, size=10, color=ft.Colors.ON_SURFACE_VARIANT),
+            ],
             spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         for k, (label, _x, _y) in enumerate(series)
     ]
@@ -783,6 +798,7 @@ def two_histograms(
                         width=9,
                         color=ft.Colors.PRIMARY,
                         tooltip=f"bright: P({k}) = {pb:.3e}",
+                        border_radius=_cap,
                     ),
                     fc.BarChartRod(
                         from_y=0.0,
@@ -790,6 +806,7 @@ def two_histograms(
                         width=9,
                         color=ft.Colors.TERTIARY,
                         tooltip=f"dark: P({k}) = {pd:.3e}",
+                        border_radius=_cap,
                     ),
                 ],
                 spacing=1,
@@ -799,22 +816,23 @@ def two_histograms(
         groups=groups,
         bottom_axis=fc.ChartAxis(
             labels=[
-                fc.ChartAxisLabel(value=k, label=ft.Text(str(k), size=9))
+                fc.ChartAxisLabel(value=k, label=ft.Text(str(k), size=9, color=ft.Colors.ON_SURFACE_VARIANT))
                 for k in range(0, n_show, max(1, n_show // 10))
             ],
             label_size=20,
         ),
         left_axis=fc.ChartAxis(label_size=40),
+        horizontal_grid_lines=_grid(),
         height=height,
         expand=True,
         interactive=True,
     )
     legend = ft.Row(
         [
-            ft.Container(width=12, height=12, bgcolor=ft.Colors.PRIMARY),
-            ft.Text("bright ion", size=11),
-            ft.Container(width=12, height=12, bgcolor=ft.Colors.TERTIARY),
-            ft.Text("dark ion", size=11),
+            ft.Container(width=12, height=12, bgcolor=ft.Colors.PRIMARY, border_radius=3),
+            ft.Text("bright ion", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
+            ft.Container(width=12, height=12, bgcolor=ft.Colors.TERTIARY, border_radius=3),
+            ft.Text("dark ion", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
             ft.Text(
                 "" if threshold is None else f"| bright declared above n_c = {threshold:g}",
                 size=11,
@@ -840,9 +858,10 @@ def fock_bars(start: np.ndarray, end: np.ndarray, *, height: float = 150.0, n_sh
                         from_y=0.0,
                         to_y=a,
                         width=10,
-                        color=ft.Colors.with_opacity(0.35, ft.Colors.TERTIARY),
-                        border_side=ft.BorderSide(1.0, ft.Colors.TERTIARY),
+                        color=ft.Colors.with_opacity(0.12, ft.Colors.TERTIARY),
+                        border_side=ft.BorderSide(1.5, ft.Colors.TERTIARY),
                         tooltip=f"start: P({k}) = {a:.3e}",
+                        border_radius=_cap,
                     ),
                     fc.BarChartRod(
                         from_y=0.0,
@@ -850,6 +869,7 @@ def fock_bars(start: np.ndarray, end: np.ndarray, *, height: float = 150.0, n_sh
                         width=10,
                         color=ft.Colors.PRIMARY,
                         tooltip=f"end: P({k}) = {b:.3e}",
+                        border_radius=_cap,
                     ),
                 ],
                 spacing=1,
@@ -859,12 +879,13 @@ def fock_bars(start: np.ndarray, end: np.ndarray, *, height: float = 150.0, n_sh
         groups=groups,
         bottom_axis=fc.ChartAxis(
             labels=[
-                fc.ChartAxisLabel(value=k, label=ft.Text(str(k), size=9))
+                fc.ChartAxisLabel(value=k, label=ft.Text(str(k), size=9, color=ft.Colors.ON_SURFACE_VARIANT))
                 for k in range(min(n_show, max(start.size, end.size)))
             ],
             label_size=20,
         ),
         left_axis=fc.ChartAxis(label_size=40),
+        horizontal_grid_lines=_grid(),
         max_y=1.0,
         min_y=0.0,
         height=height,

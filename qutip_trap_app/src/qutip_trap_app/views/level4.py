@@ -1,7 +1,7 @@
 """Level 4, the physics (PLAN.md Section 14.2 row 4, Section 14.4; DESIGN.md Sections 5 and 10): the species, trap, crystal,
 light, noise, cooling and readout pages and the Hamiltonian builder, every drawn element computed by the worker into the
 device layer. Each page puts its computed drawing first, its numbers as stat tiles, and its tables behind Details; the knobs
-of the page sit behind one tile at the bottom while the stale badge and Recalibrate stay visible under the page navigation.
+of the page sit behind one tile at the bottom while the stale badge and Recalibrate stay visible under the page tabs.
 A knob change re-derives the analytic layer at once (a "derive" request) and marks the calibration table stale; the one
 primary action while the table is stale is Recalibrate, the user-initiated background job of Section 14.4.
 """
@@ -35,23 +35,28 @@ from qutip_trap_app.viewmodel.physics import (
     stale_status,
     trap_view,
 )
-from qutip_trap_app.views import drawing
+from qutip_trap_app.views import drawing, theme
 from qutip_trap_app.views.common import (
+    MUTED,
     card,
     chip,
+    columns,
     data_table,
     details,
     fmt_number,
     hint,
+    ions_text,
     kv_rows,
     level_header,
+    page_tabs,
+    pill,
     shown,
     stat_row,
     stat_tile,
     status_line,
     value_cell,
 )
-from qutip_trap_app.views.level0 import ProgressRows
+from qutip_trap_app.views.level0 import CODE_FONT, CODE_FONT_FALLBACK, ProgressRows
 from qutip_trap_app.views.state import Session, Store
 
 PAGE_TITLES: dict[str, tuple[str, str]] = {
@@ -76,6 +81,11 @@ PAGE_WHY: dict[str, str] = {
     "hamiltonian": "hamiltonian",
 }
 
+FORMULA = (
+    "H/hbar = sum_m omega_m a_m^dag a_m + sum_i (Delta_i/2) sigma_z^i + sum drives (Omega/2) e^{-i(mu t - phi)} sigma_+ "
+    "prod_m D_m(i eta) + h.c. + Stark"
+)
+
 
 def _tiles(rows: tuple[Row, ...], index: ProvenanceIndex, *, plain: bool, limit: int = 6) -> ft.Control:
     return stat_row(
@@ -89,7 +99,9 @@ def _rows_table(rows: tuple[Row, ...], index: ProvenanceIndex) -> ft.Control:
             (
                 r.label,
                 ft.Row(
-                    [shown(r.value, index, label=False, size=12), status_line(r.status)], spacing=6, wrap=True
+                    [shown(r.value, index, label=False, size=theme.SIZE_SMALL), status_line(r.status)],
+                    spacing=6,
+                    wrap=True,
                 ),
             )
             for r in rows
@@ -107,23 +119,20 @@ def _direction(e_hat: tuple[float, float, float]) -> str:
     return " ".join(f"{v:+.2f}{letters[i]}" for i, v in enumerate(e_hat) if abs(v) > 0.005)
 
 
+def _section_title(text: str) -> ft.Control:
+    return ft.Text(text, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600)
+
+
 def _stale_badge(layer: DeviceLayer) -> ft.Control:
+    """The calibration's state as a pill: stale (amber, a clock), no table yet (neutral), or calibrated (a check)."""
     text = stale_status(layer)
     if layer.stale:
-        bg, fg, icon = ft.Colors.ERROR_CONTAINER, ft.Colors.ON_ERROR_CONTAINER, ft.Icons.HISTORY
+        kind, icon = "stale", ft.Icons.HISTORY
     elif layer.table_hash is None:
-        bg, fg, icon = ft.Colors.SECONDARY_CONTAINER, ft.Colors.ON_SECONDARY_CONTAINER, ft.Icons.HELP_OUTLINE
+        kind, icon = "not checked", ft.Icons.HELP_OUTLINE
     else:
-        bg, fg, icon = ft.Colors.PRIMARY_CONTAINER, ft.Colors.ON_PRIMARY_CONTAINER, ft.Icons.CHECK_CIRCLE
-    return ft.Container(
-        content=ft.Row(
-            [ft.Icon(icon, size=16, color=fg), ft.Text(text, size=12, color=fg)], spacing=6, tight=True
-        ),
-        bgcolor=bg,
-        border_radius=ft.BorderRadius.all(12),
-        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
-        key="stale-badge",
-    )
+        kind, icon = "pass", ft.Icons.CHECK_CIRCLE
+    return pill(text, kind, icon=icon, key="stale-badge")
 
 
 # ---- knobs -----------------------------------------------------------------------------------------------------------------------------
@@ -149,14 +158,16 @@ def DeviceStatusStrip(store: Store, session: Session, layer: DeviceLayer) -> ft.
     """The stale badge, Recalibrate (the primary action while the table is stale) and Reset, always visible (Section 14.4)."""
     ft.use_state(store)
     recalibrating = store.running_of("recalibrate") is not None
+    needs_table = layer.stale or layer.table_hash is None
+    recalibrate_cls = ft.FilledButton if layer.stale else ft.FilledTonalButton
     return ft.Row(
         [
             _stale_badge(layer),
-            ft.FilledButton(
-                content=ft.Text("Recalibrate (about 15 s)"),
+            recalibrate_cls(
+                content=ft.Text("Recalibrate · about 15 s"),
                 icon=ft.Icons.TUNE,
                 on_click=lambda e: session.submit_recalibrate(),
-                disabled=(not layer.stale and layer.table_hash is not None) or recalibrating,
+                disabled=not needs_table or recalibrating,
                 tooltip="the surrogate table for this device: closed forms, exact spot checks, detection records (Section 7.5); the next Run uses it",
                 key="recalibrate",
             ),
@@ -173,6 +184,7 @@ def DeviceStatusStrip(store: Store, session: Session, layer: DeviceLayer) -> ft.
         ],
         spacing=10,
         wrap=True,
+        run_spacing=theme.GAP,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
@@ -199,14 +211,20 @@ def KnobPanel(
                 [
                     ft.Column(
                         [
-                            ft.Text(k.knob.label, size=12, weight=ft.FontWeight.W_500, tooltip=k.knob.term),
+                            ft.Text(
+                                k.knob.label,
+                                size=theme.SIZE_SMALL,
+                                weight=ft.FontWeight.W_500,
+                                tooltip=k.knob.term,
+                            ),
                             ft.Row(
                                 [
                                     ft.Text(
                                         fmt_number(k.value, k.knob.unit)
                                         if not k.knob.relative
                                         else f"x {k.value:.3g}",
-                                        size=13,
+                                        size=theme.SIZE_SMALL + 1,
+                                        weight=ft.FontWeight.W_600,
                                         tooltip=f"{k.knob.term}; Section {k.knob.section}",
                                     ),
                                     chip(k.knob.ledger_id, index),
@@ -216,10 +234,14 @@ def KnobPanel(
                                         on_click=reset,
                                         visible=k.is_override,
                                         icon_size=14,
+                                        width=24,
+                                        height=24,
+                                        padding=0,
                                     ),
                                 ],
-                                spacing=4,
+                                spacing=6,
                                 tight=True,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             ),
                         ],
                         spacing=0,
@@ -240,28 +262,37 @@ def KnobPanel(
                     ),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=8,
+                spacing=theme.GAP,
             )
         )
     if not controls:
         return ft.Container()
     return card(
-        f"Knobs of this page ({len(rows)})",
+        "Knobs",
         details(
             f"level4.knobs.{page_name}",
             controls,
             store=store,
             session=session,
-            title="Move a slider: the analytic layer re-derives at once, the calibration goes stale",
+            title=f"{len(rows)} slider{'s' if len(rows) != 1 else ''} of this page",
             default_open=bool(layer.overrides) or store.learner.plan(4).chips_expanded,
         ),
         why=lambda e: session.select_concept(4, "calibration"),
-        info="Section 14.4: the device model is the single source of truth; a change here re-derives every level above and invalidates the calibration table until you recalibrate; hover a slider for what it changes downstream",
+        info=[
+            "Section 14.4: the device model is the single source of truth; moving a slider re-derives the analytic layer at once and marks the calibration table stale until you recalibrate",
+            "hover a slider for what it changes downstream",
+        ],
         key="knobs",
     )
 
 
 # ---- the pages -------------------------------------------------------------------------------------------------------------------------
+
+
+def _two_columns(
+    store: Store, left: list[ft.Control], right: list[ft.Control], split: tuple[int, int] = (1, 1)
+) -> ft.Control:
+    return columns(store, ft.context.page, 4, left, right, split=split)
 
 
 def _species_page(
@@ -292,109 +323,66 @@ def _species_page(
     clock_rows: list[list[ft.Control | str]] = [
         [value_cell(b, index), value_cell(f, index), value_cell(c, index)] for b, f, c in v.clock_points
     ]
-    return [
-        ft.ResponsiveRow(
+    levels_card = card(
+        "The level diagram",
+        ft.Column(
             [
-                ft.Column(
+                drawing.level_diagram(levels, transitions, qubit_level),
+                hint(store, 4, "atomic_structure"),
+                details(
+                    "level4.species.levels",
                     [
-                        card(
-                            "The level diagram",
-                            ft.Column(
-                                [
-                                    drawing.level_diagram(levels, transitions, qubit_level),
-                                    hint(store, 4, "atomic_structure"),
-                                    details(
-                                        "level4.species.levels",
-                                        [
-                                            _rows_table(v.identity, index),
-                                            data_table(
-                                                [
-                                                    "level",
-                                                    "energy",
-                                                    "lifetime",
-                                                    "linewidth",
-                                                    "A_hfs",
-                                                    "B_hfs",
-                                                    "g_J",
-                                                ],
-                                                level_rows,
-                                            ),
-                                            data_table(
-                                                ["line", "wavelength", "linewidth", "branching", "I_sat"],
-                                                tr_rows,
-                                            ),
-                                        ],
-                                        store=store,
-                                        session=session,
-                                        title="Identity, levels and transitions",
-                                    ),
-                                ],
-                                spacing=8,
-                            ),
-                            why=lambda e: session.select_concept(4, "atomic_structure"),
-                            info="fine-structure levels from the species table; the vertical spacing is compressed and labelled not to scale",
-                            key="levels",
+                        _rows_table(v.identity, index),
+                        data_table(
+                            ["level", "energy", "lifetime", "linewidth", "A_hfs", "B_hfs", "g_J"], level_rows
                         ),
+                        data_table(["line", "wavelength", "linewidth", "branching", "I_sat"], tr_rows),
                     ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
-                ),
-                ft.Column(
-                    [
-                        card(
-                            "The qubit pair",
-                            ft.Column(
-                                [
-                                    _tiles(v.qubit, index, plain=plain),
-                                    drawing.sublevel_fan(
-                                        qubit_fan,
-                                        title=f"{qubit_level} at {layer.species.field_gauss:g} G (to scale within the level)",
-                                    ),
-                                    drawing.zeeman_chart(
-                                        v.sweep_b_gauss, v.sweep_energies_hz, v.sweep_labels
-                                    ),
-                                    details(
-                                        "level4.species.sublevels",
-                                        [
-                                            data_table(
-                                                [
-                                                    "level",
-                                                    "sublevel",
-                                                    "energy in the level",
-                                                    "dE/dB",
-                                                    "d2E/dB2",
-                                                ],
-                                                sub_rows,
-                                            ),
-                                            data_table(
-                                                ["clock point B0", "|nu| there", "Taylor c2"], clock_rows
-                                            )
-                                            if clock_rows
-                                            else status_line(
-                                                f"no field-independent point of the qubit pair between {v.clock_scan[0]:g} and {v.clock_scan[1]:g} G"
-                                            ),
-                                        ],
-                                        store=store,
-                                        session=session,
-                                        title="Sublevels and clock points",
-                                    ),
-                                ],
-                                spacing=8,
-                            ),
-                            why=lambda e: session.select_concept(4, "atomic_structure"),
-                            info="two hyperfine levels chosen so that the field barely moves their splitting (Section 4.5.1); the sublevels from the hyperfine-plus-Zeeman Hamiltonian diagonalized at the field, the slopes by Hellmann-Feynman",
-                            key="qubit-pair",
-                        ),
-                    ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
+                    store=store,
+                    session=session,
+                    title="Identity, levels and transitions",
                 ),
             ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
             spacing=12,
-            run_spacing=12,
-        )
-    ]
+        ),
+        why=lambda e: session.select_concept(4, "atomic_structure"),
+        info="fine-structure levels from the species table; the vertical spacing is compressed and labelled not to scale",
+        key="levels",
+    )
+    qubit_card = card(
+        "The qubit pair",
+        ft.Column(
+            [
+                _tiles(v.qubit, index, plain=plain),
+                drawing.sublevel_fan(
+                    qubit_fan,
+                    title=f"{qubit_level} at {layer.species.field_gauss:g} G (to scale within the level)",
+                ),
+                drawing.zeeman_chart(v.sweep_b_gauss, v.sweep_energies_hz, v.sweep_labels),
+                details(
+                    "level4.species.sublevels",
+                    [
+                        data_table(
+                            ["level", "sublevel", "energy in the level", "dE/dB", "d2E/dB2"], sub_rows
+                        ),
+                        data_table(["clock point B0", "|nu| there", "Taylor c2"], clock_rows)
+                        if clock_rows
+                        else status_line(
+                            f"no field-independent point of the qubit pair between {v.clock_scan[0]:g} and {v.clock_scan[1]:g} G"
+                        ),
+                    ],
+                    store=store,
+                    session=session,
+                    title="Sublevels and clock points",
+                ),
+            ],
+            spacing=12,
+        ),
+        why=lambda e: session.select_concept(4, "atomic_structure"),
+        info="two hyperfine levels chosen so that the field barely moves their splitting (Section 4.5.1); the sublevels from the hyperfine-plus-Zeeman Hamiltonian diagonalized at the field, the slopes by Hellmann-Feynman",
+        key="qubit-pair",
+    )
+    return [_two_columns(store, [levels_card], [qubit_card])]
 
 
 def _trap_page(
@@ -416,84 +404,52 @@ def _trap_page(
         notes.append(
             "no operating point yet: declare the rf drive frequency (knob) to place this trap on the diagram"
         )
-    return [
-        ft.ResponsiveRow(
+    stability_card = card(
+        "Stability diagram",
+        ft.Column(
             [
-                ft.Column(
+                stability,
+                _tiles(v.secular, index, plain=plain),
+                hint(store, 4, "trap_and_mathieu"),
+                details(
+                    "level4.trap.mathieu",
                     [
-                        card(
-                            "Stability diagram",
-                            ft.Column(
-                                [
-                                    stability,
-                                    _tiles(v.secular, index, plain=plain),
-                                    hint(store, 4, "trap_and_mathieu"),
-                                    details(
-                                        "level4.trap.mathieu",
-                                        [
-                                            status_line(v.mathieu_note),
-                                            data_table(
-                                                ["axis", "a", "q", "beta", "nu = beta Omega/2", "C0"],
-                                                mathieu_rows,
-                                            )
-                                            if mathieu_rows
-                                            else ft.Container(),
-                                            _rows_table(v.rf, index),
-                                        ]
-                                        + (
-                                            [shown(v.stability_edge, index)]
-                                            if v.stability_edge is not None
-                                            else []
-                                        ),
-                                        store=store,
-                                        session=session,
-                                        title="Mathieu parameters and the rf record",
-                                    ),
-                                ],
-                                spacing=8,
-                            ),
-                            why=lambda e: session.select_concept(4, "trap_and_mathieu"),
-                            info=[
-                                "the first stability region of x'' + (a - 2q cos 2xi) x = 0 with this device's operating point per radial axis (the axial axis has q_z = 0); the boundary is the monodromy bisected per q (Section 4.1.1)",
-                                f"trap path: {v.path}",
-                            ]
-                            + notes,
-                            key="stability",
-                        )
-                    ],
-                    col={"xs": 12, "lg": 7},
-                    spacing=10,
-                ),
-                ft.Column(
-                    [
-                        card(
-                            "Stray field and micromotion",
-                            ft.Column(
-                                [
-                                    _tiles(v.fields, index, plain=plain),
-                                    details(
-                                        "level4.trap.fields",
-                                        [_rows_table(v.fields, index)],
-                                        store=store,
-                                        session=session,
-                                    ),
-                                ],
-                                spacing=8,
-                            ),
-                            why=lambda e: session.select_concept(4, "trap_and_mathieu"),
-                            info="a stray field parks the ion off the rf null, where it is dragged at the rf frequency (Berkeland, Section 4.1.1)",
-                            key="micromotion",
-                        )
-                    ],
-                    col={"xs": 12, "lg": 5},
-                    spacing=10,
+                        status_line(v.mathieu_note),
+                        data_table(["axis", "a", "q", "beta", "nu = beta Omega/2", "C0"], mathieu_rows)
+                        if mathieu_rows
+                        else ft.Container(),
+                        _rows_table(v.rf, index),
+                    ]
+                    + ([shown(v.stability_edge, index)] if v.stability_edge is not None else []),
+                    store=store,
+                    session=session,
+                    title="Mathieu parameters and the rf record",
                 ),
             ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
             spacing=12,
-            run_spacing=12,
-        )
-    ]
+        ),
+        why=lambda e: session.select_concept(4, "trap_and_mathieu"),
+        info=[
+            "the first stability region of x'' + (a - 2q cos 2xi) x = 0 with this device's operating point per radial axis (the axial axis has q_z = 0); the boundary is the monodromy bisected per q (Section 4.1.1)",
+            f"trap path: {v.path}",
+        ]
+        + notes,
+        key="stability",
+    )
+    fields_card = card(
+        "Stray field and micromotion",
+        ft.Column(
+            [
+                _tiles(v.fields, index, plain=plain),
+                details("level4.trap.fields", [_rows_table(v.fields, index)], store=store, session=session),
+            ],
+            spacing=12,
+        ),
+        why=lambda e: session.select_concept(4, "trap_and_mathieu"),
+        info="a stray field parks the ion off the rf null, where it is dragged at the rf frequency (Berkeland, Section 4.1.1)",
+        key="micromotion",
+    )
+    return [_two_columns(store, [stability_card], [fields_card], split=(7, 5))]
 
 
 @ft.component
@@ -540,74 +496,65 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         on_select=lambda e: set_mode(int(e.control.value)),
         width=260,
         dense=True,
+        text_size=13,
+        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
     )
     mode_tiles = [
         stat_tile(mr.frequency, index, plain=plain, label=f"mode {mr.index}: {mr.family} {mr.family_index}")
         for mr in v.modes[:6]
     ]
-    return ft.Column(
-        [
-            card(
-                "Positions and modes",
-                ft.Column(
-                    [
-                        picture,
-                        ft.Row(
-                            [selector]
-                            + ([shown(c, index, label=False) for c in m.components] if m is not None else []),
-                            wrap=True,
-                            spacing=8,
-                        ),
-                        stat_row(mode_tiles),
-                        hint(store, 4, "mode"),
-                        details(
-                            "level4.crystal.modes",
-                            [
-                                _rows_table(v.geometry + v.zigzag, index),
-                                data_table(
-                                    [
-                                        "mode",
-                                        "family",
-                                        "#",
-                                        "frequency",
-                                        "e_hat",
-                                        "uniform-field weight",
-                                        "heating",
-                                    ],
-                                    mode_rows,
-                                ),
-                                ft.Row(
-                                    ([shown(v.delta_k, index)] if v.delta_k is not None else [])
-                                    + [
-                                        status_line(
-                                            "C0 applied (rf record present)"
-                                            if v.c0_applied
-                                            else "C0 = 1: no rf record on this trap"
-                                        )
-                                    ],
-                                    wrap=True,
-                                    spacing=12,
-                                ),
-                                data_table(eta_cols, eta_rows)
-                                if eta_rows
-                                else status_line("no entangling Raman pair on this device"),
-                            ],
-                            store=store,
-                            session=session,
-                            title="Geometry, mode table and Lamb-Dicke parameters",
-                        ),
-                    ],
-                    spacing=8,
+    return card(
+        "Positions and modes",
+        ft.Column(
+            [
+                picture,
+                ft.Row(
+                    [selector]
+                    + ([shown(c, index, label=False) for c in m.components] if m is not None else []),
+                    wrap=True,
+                    spacing=theme.GAP,
+                    run_spacing=theme.GAP,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                why=lambda e: session.select_concept(4, "mode"),
-                info=[
-                    "equilibrium positions from the Coulomb-plus-trap potential; modes from its Hessian (Sections 4.1.2, 4.1.3); eta_{i,m} = (Delta k . e_m) c_{i,m} sqrt(hbar/(2 m_i omega_m)) for the entangling pair's Delta k (conv.lamb_dicke)"
-                ]
-                + list(v.notes),
-                key="crystal",
-            )
-        ],
-        spacing=12,
+                stat_row(mode_tiles),
+                hint(store, 4, "mode"),
+                details(
+                    "level4.crystal.modes",
+                    [
+                        _rows_table(v.geometry + v.zigzag, index),
+                        data_table(
+                            ["mode", "family", "#", "frequency", "e_hat", "uniform-field weight", "heating"],
+                            mode_rows,
+                        ),
+                        ft.Row(
+                            ([shown(v.delta_k, index)] if v.delta_k is not None else [])
+                            + [
+                                status_line(
+                                    "C0 applied (rf record present)"
+                                    if v.c0_applied
+                                    else "C0 = 1: no rf record on this trap"
+                                )
+                            ],
+                            wrap=True,
+                            spacing=12,
+                        ),
+                        data_table(eta_cols, eta_rows)
+                        if eta_rows
+                        else status_line("no entangling Raman pair on this device"),
+                    ],
+                    store=store,
+                    session=session,
+                    title="Geometry, mode table and Lamb-Dicke parameters",
+                ),
+            ],
+            spacing=12,
+        ),
+        why=lambda e: session.select_concept(4, "mode"),
+        info=[
+            "equilibrium positions from the Coulomb-plus-trap potential; modes from its Hessian (Sections 4.1.2, 4.1.3); eta_{i,m} = (Delta k . e_m) c_{i,m} sqrt(hbar/(2 m_i omega_m)) for the entangling pair's Delta k (conv.lamb_dicke)"
+        ]
+        + list(v.notes),
+        key="crystal",
     )
 
 
@@ -631,9 +578,9 @@ def _light_page(
     beams_geo = []
     for b in v.beams:
         role = b.roles[0] if b.roles else "unused"
-        color = ROLE_COLORS.get(role, ft.Colors.ON_SURFACE_VARIANT)
+        color: ft.ColorValue = ROLE_COLORS.get(role, ft.Colors.ON_SURFACE_VARIANT)
         if role.startswith("single-qubit"):
-            color = ft.Colors.ERROR
+            color = theme.series()[1]
         beams_geo.append((b.index, b.k_hat, b.pointing_m, color, f"beam {b.index}: {role}"))
     geometry = drawing.beam_geometry(layer.crystal.positions_m, beams_geo, _field_direction(layer))
     beam_rows: list[list[ft.Control | str]] = [
@@ -701,94 +648,73 @@ def _light_page(
                     height=150,
                 ),
             ],
-            spacing=6,
+            spacing=theme.GAP,
         )
-    return [
-        ft.ResponsiveRow(
+    beams_card = card(
+        "Beam geometry",
+        ft.Column(
             [
-                ft.Column(
+                geometry,
+                stat_row(drive_tiles),
+                hint(store, 4, "light_coupling"),
+                details(
+                    "level4.light.tables",
                     [
-                        card(
-                            "Beam geometry",
-                            ft.Column(
-                                [
-                                    geometry,
-                                    stat_row(drive_tiles),
-                                    hint(store, 4, "light_coupling"),
-                                    details(
-                                        "level4.light.tables",
-                                        [
-                                            data_table(
-                                                [
-                                                    "beam",
-                                                    "role",
-                                                    "wavelength",
-                                                    "power",
-                                                    "waist",
-                                                    "k_hat",
-                                                    "angle to B",
-                                                    "I at ion 0",
-                                                ],
-                                                beam_rows,
-                                            ),
-                                            data_table(
-                                                [
-                                                    "ion",
-                                                    "role",
-                                                    "beams",
-                                                    "Rabi frequency",
-                                                    "pi time",
-                                                    "light shift",
-                                                    "residual excited",
-                                                    "scatter per pi",
-                                                    "Rayleigh dephasing",
-                                                ],
-                                                drive_rows,
-                                            ),
-                                            ft.Row(
-                                                [shown(x, index) for x in v.crosstalk]
-                                                or [status_line("no addressing beams")],
-                                                wrap=True,
-                                                spacing=12,
-                                            ),
-                                        ],
-                                        store=store,
-                                        session=session,
-                                        title="Beams, drives and crosstalk",
-                                    ),
-                                ],
-                                spacing=8,
-                            ),
-                            why=lambda e: session.select_concept(4, "light_coupling"),
-                            info=[
-                                "beams as fields with their k-vectors through the ions; the quantization axis is the magnetic field (Section 4.5.3); the two-photon Rabi frequency, the differential light shift and the scattering budget from the level structure (Sections 4.5.4, 4.5.5); crosstalk is the Rabi ratio of an addressing pair's light on the neighbour (conv.crosstalk_ratio)"
-                            ]
-                            + list(v.notes),
-                            key="beams",
-                        )
+                        data_table(
+                            [
+                                "beam",
+                                "role",
+                                "wavelength",
+                                "power",
+                                "waist",
+                                "k_hat",
+                                "angle to B",
+                                "I at ion 0",
+                            ],
+                            beam_rows,
+                        ),
+                        data_table(
+                            [
+                                "ion",
+                                "role",
+                                "beams",
+                                "Rabi frequency",
+                                "pi time",
+                                "light shift",
+                                "residual excited",
+                                "scatter per pi",
+                                "Rayleigh dephasing",
+                            ],
+                            drive_rows,
+                        ),
+                        ft.Row(
+                            [shown(x, index) for x in v.crosstalk] or [status_line("no addressing beams")],
+                            wrap=True,
+                            spacing=12,
+                        ),
                     ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
-                ),
-                ft.Column(
-                    [
-                        card(
-                            "Scattering against detuning",
-                            curve,
-                            why=lambda e: session.select_concept(4, "light_coupling"),
-                            info="the same Raman pair swept in wavelength between the fine-structure lines: the coupling and the scattering both fall, the error per pulse least far from the lines (Ozeri, Section 4.3.2)",
-                            key="scattering",
-                        )
-                    ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
+                    store=store,
+                    session=session,
+                    title="Beams, drives and crosstalk",
                 ),
             ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
             spacing=12,
-            run_spacing=12,
-        )
-    ]
+        ),
+        why=lambda e: session.select_concept(4, "light_coupling"),
+        info=[
+            "beams as fields with their k-vectors through the ions; the quantization axis is the magnetic field (Section 4.5.3); the two-photon Rabi frequency, the differential light shift and the scattering budget from the level structure (Sections 4.5.4, 4.5.5); crosstalk is the Rabi ratio of an addressing pair's light on the neighbour (conv.crosstalk_ratio)"
+        ]
+        + list(v.notes),
+        key="beams",
+    )
+    scattering_card = card(
+        "Scattering against detuning",
+        curve,
+        why=lambda e: session.select_concept(4, "light_coupling"),
+        info="the same Raman pair swept in wavelength between the fine-structure lines: the coupling and the scattering both fall, the error per pulse least far from the lines (Ozeri, Section 4.3.2)",
+        key="scattering",
+    )
+    return [_two_columns(store, [beams_card], [scattering_card])]
 
 
 def _noise_page(
@@ -805,12 +731,10 @@ def _noise_page(
             ft.Column(
                 [
                     ft.Row(
-                        [
-                            ft.Text(f"{sp.name} ({sp.unit})", size=12, weight=ft.FontWeight.W_600),
-                            shown(sp.level, index),
-                        ],
+                        [_section_title(f"{sp.name} ({sp.unit})"), shown(sp.level, index)],
                         wrap=True,
-                        spacing=8,
+                        spacing=theme.GAP,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     drawing.line_chart(
                         [(sp.name, sp.omega_rad_s / (2 * np.pi), sp.S)],
@@ -822,7 +746,7 @@ def _noise_page(
                     ),
                     status_line("apparatus: " + (", ".join(sp.apparatus) or "undeclared")),
                 ],
-                spacing=4,
+                spacing=6,
             )
         )
     if zero_names:
@@ -843,89 +767,62 @@ def _noise_page(
     rates: list[ft.Control] = (
         [stat_row(rate_tiles)]
         if rate_tiles
-        else [
-            status_line(
-                "every rate is zero: this device is quiet; raise the field-noise density (knob) to see the heating operators appear"
-            )
-        ]
+        else [status_line("every rate is zero: raise the field-noise density knob to see heating")]
     )
-    return [
-        ft.ResponsiveRow(
-            [
-                ft.Column(
-                    [
-                        card(
-                            "Spectra and the rates they imply",
-                            ft.Column(
-                                spectra
-                                + rates
-                                + [hint(store, 4, "noise_as_physics")]
-                                + (
-                                    [
-                                        details(
-                                            "level4.noise.correlation",
-                                            [_rows_table((v.correlation,), index)],
-                                            store=store,
-                                            session=session,
-                                            title="Correlation length",
-                                        )
-                                    ]
-                                    if v.correlation is not None
-                                    else []
-                                ),
-                                spacing=10,
-                            ),
-                            why=lambda e: session.select_concept(4, "noise_as_physics"),
-                            info="two-sided densities as the noise model stores them; a heating rate is e^2 S_E/(4 m hbar omega) (Section 4.1.5)",
-                            key="spectra",
-                        )
-                    ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
-                ),
-                ft.Column(
-                    [
-                        card(
-                            "Slow drifts, mains and collisions",
-                            ft.Column(
-                                [
-                                    data_table(["parameter", "rms", "correlation time", "servo"], drift_rows),
-                                    ft.Row(
-                                        [shown(m, index) for m in v.mains]
-                                        or [status_line("no mains harmonics declared")],
-                                        wrap=True,
-                                        spacing=12,
-                                    ),
-                                    ft.Row(
-                                        [shown(c, index) for c in v.collisions]
-                                        or [status_line("no background-gas collisions declared")],
-                                        wrap=True,
-                                        spacing=12,
-                                    ),
-                                    status_line(
-                                        v.provenance_sentence or "no apparatus named: every rate is zero"
-                                    ),
-                                ],
-                                spacing=6,
-                            ),
-                            why=lambda e: session.select_concept(4, "quantum_jumps"),
-                            info=[
-                                "each drift is drawn once per dynamical sample (Section 6.1 route (c)); a servo high-passes it",
-                                f"undeclared rates: {v.undeclared_rates}; apparatus: {', '.join(v.apparatus) or 'none'}",
-                            ]
-                            + list(v.notes),
-                            key="drifts",
-                        )
-                    ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
-                ),
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
+    spectra_card = card(
+        "Spectra and the rates they imply",
+        ft.Column(
+            spectra
+            + rates
+            + [hint(store, 4, "noise_as_physics")]
+            + (
+                [
+                    details(
+                        "level4.noise.correlation",
+                        [_rows_table((v.correlation,), index)],
+                        store=store,
+                        session=session,
+                        title="Correlation length",
+                    )
+                ]
+                if v.correlation is not None
+                else []
+            ),
             spacing=12,
-            run_spacing=12,
-        )
-    ]
+        ),
+        why=lambda e: session.select_concept(4, "noise_as_physics"),
+        info="two-sided densities as the noise model stores them; a heating rate is e^2 S_E/(4 m hbar omega) (Section 4.1.5)",
+        key="spectra",
+    )
+    drifts_card = card(
+        "Slow drifts, mains and collisions",
+        ft.Column(
+            [
+                data_table(["parameter", "rms", "correlation time", "servo"], drift_rows),
+                ft.Row(
+                    [shown(m, index) for m in v.mains] or [status_line("no mains harmonics declared")],
+                    wrap=True,
+                    spacing=12,
+                ),
+                ft.Row(
+                    [shown(c, index) for c in v.collisions]
+                    or [status_line("no background-gas collisions declared")],
+                    wrap=True,
+                    spacing=12,
+                ),
+                status_line(v.provenance_sentence or "no apparatus named: every rate is zero"),
+            ],
+            spacing=theme.GAP,
+        ),
+        why=lambda e: session.select_concept(4, "quantum_jumps"),
+        info=[
+            "each drift is drawn once per dynamical sample (Section 6.1 route (c)); a servo high-passes it",
+            f"undeclared rates: {v.undeclared_rates}; apparatus: {', '.join(v.apparatus) or 'none'}",
+        ]
+        + list(v.notes),
+        key="drifts",
+    )
+    return [_two_columns(store, [spectra_card], [drifts_card])]
 
 
 def _cooling_page(
@@ -936,7 +833,7 @@ def _cooling_page(
         return [
             card(
                 "Cooling unavailable",
-                ft.Text(layer.cooling_error or "the recipe could not run on this device", size=13),
+                status_line(layer.cooling_error or "the recipe could not run on this device"),
             )
         ]
     stage_rows: list[list[ft.Control | str]] = [
@@ -962,16 +859,13 @@ def _cooling_page(
                 [
                     ft.Row(
                         [
-                            ft.Text(
-                                f"mode {sb.mode}, cooled through ion {sb.ion}",
-                                size=12,
-                                weight=ft.FontWeight.W_600,
-                            ),
+                            _section_title(f"mode {sb.mode}, cooled through ion {sb.ion}"),
                             shown(sb.eta, index),
                             shown(sb.omega0, index),
                         ],
                         wrap=True,
                         spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     drawing.line_chart(
                         [(f"<n> of mode {sb.mode} after each pulse", sb.times_s * 1e6, sb.nbar_after_pulse)],
@@ -995,7 +889,7 @@ def _cooling_page(
                         )
                     ),
                 ],
-                spacing=4,
+                spacing=6,
             )
         )
     if not sideband_children:
@@ -1008,7 +902,7 @@ def _cooling_page(
         pump_children.append(
             ft.Column(
                 [
-                    ft.Row([ft.Text(f"ion {p.ion}", size=12, weight=ft.FontWeight.W_600)], spacing=10),
+                    _section_title(f"ion {p.ion}"),
                     drawing.line_chart(series, x_title="t (us)", y_title="population", height=150)
                     if series
                     else ft.Container(),
@@ -1025,92 +919,69 @@ def _cooling_page(
                     ),
                     ft.Row([shown(h, index, label=False) for h in p.heating], wrap=True, spacing=8),
                 ],
-                spacing=4,
+                spacing=6,
             )
         )
-    return [
-        ft.ResponsiveRow(
-            [
-                ft.Column(
+    sideband_card = card(
+        "Sideband cooling, pulse by pulse",
+        ft.Column(
+            sideband_children
+            + [
+                hint(store, 4, "cooling_ladder"),
+                details(
+                    "level4.cooling.stages",
                     [
-                        card(
-                            "Sideband cooling, pulse by pulse",
-                            ft.Column(
-                                sideband_children
-                                + [
-                                    hint(store, 4, "cooling_ladder"),
-                                    details(
-                                        "level4.cooling.stages",
-                                        [
-                                            _rows_table(v.recipe, index),
-                                            data_table(["stage", "provenance", "nbar per mode"], stage_rows),
-                                            data_table(
-                                                [
-                                                    "mode",
-                                                    "frequency",
-                                                    "A+ heating",
-                                                    "A- cooling",
-                                                    "rate",
-                                                    "nbar",
-                                                    "participation",
-                                                ],
-                                                doppler_rows,
-                                            ),
-                                            ft.Column(
-                                                [status_line(n) for n in layer.cooling.recipe_notes],
-                                                spacing=2,
-                                            )
-                                            if layer.cooling is not None
-                                            else ft.Container(),
-                                        ],
-                                        store=store,
-                                        session=session,
-                                        title=f"The recipe, the stages and the Doppler stage ({v.doppler_method} rate equations)",
-                                    ),
-                                ],
-                                spacing=10,
-                            ),
-                            why=lambda e: session.select_concept(4, "cooling_ladder"),
-                            info=[
-                                "Doppler, then sideband, then the pump last: a pump done first would be erased (Section 4.2.6); p -> W_k(t) p per pulse with the exact Omega_{n,n-k}, drawn without the repump recoil (a core gap), whose effect is the gap to the run's own value; A_pm = W(Delta -/+ nu) + (eta~/eta)^2 W(Delta), one detuning shared by every mode (Sections 4.2.1, 4.2.2)"
-                            ]
-                            + list(v.approximations)
-                            + list(v.notes),
-                            key="sideband",
-                        )
+                        _rows_table(v.recipe, index),
+                        data_table(["stage", "provenance", "nbar per mode"], stage_rows),
+                        data_table(
+                            [
+                                "mode",
+                                "frequency",
+                                "A+ heating",
+                                "A- cooling",
+                                "rate",
+                                "nbar",
+                                "participation",
+                            ],
+                            doppler_rows,
+                        ),
+                        ft.Column([status_line(n) for n in layer.cooling.recipe_notes], spacing=2)
+                        if layer.cooling is not None
+                        else ft.Container(),
                     ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
-                ),
-                ft.Column(
-                    [
-                        card(
-                            "Optical pumping",
-                            ft.Column(
-                                pump_children
-                                + [
-                                    stat_row(
-                                        [stat_tile(s, index, plain=plain) for s in v.final_nbar[:4]]
-                                        + [stat_tile(v.duration, index, plain=plain)]
-                                    ),
-                                    status_line("provenance: " + ", ".join(v.provenance)),
-                                ],
-                                spacing=10,
-                            ),
-                            why=lambda e: session.select_concept(4, "cooling_ladder"),
-                            info="the multi-level master equation of the pump beams (Section 4.2.8); the residual population outside |0> is the preparation error; the last tiles are what the recipe hands to the circuit",
-                            key="pumping",
-                        )
-                    ],
-                    col={"xs": 12, "lg": 6},
-                    spacing=10,
+                    store=store,
+                    session=session,
+                    title=f"The recipe, the stages and the Doppler stage ({v.doppler_method} rate equations)",
                 ),
             ],
-            vertical_alignment=ft.CrossAxisAlignment.START,
             spacing=12,
-            run_spacing=12,
-        )
-    ]
+        ),
+        why=lambda e: session.select_concept(4, "cooling_ladder"),
+        info=[
+            "Doppler, then sideband, then the pump last: a pump done first would be erased (Section 4.2.6); p -> W_k(t) p per pulse with the exact Omega_{n,n-k}, drawn without the repump recoil (a core gap), whose effect is the gap to the run's own value; A_pm = W(Delta -/+ nu) + (eta~/eta)^2 W(Delta), one detuning shared by every mode (Sections 4.2.1, 4.2.2)"
+        ]
+        + list(v.approximations)
+        + list(v.notes),
+        key="sideband",
+    )
+    pump_card = card(
+        "Optical pumping",
+        ft.Column(
+            pump_children
+            + [
+                stat_row(
+                    [stat_tile(s, index, plain=plain) for s in v.final_nbar[:4]]
+                    + [stat_tile(v.duration, index, plain=plain)]
+                ),
+                status_line("provenance: " + ", ".join(v.provenance)),
+            ],
+            spacing=12,
+        ),
+        why=lambda e: session.select_concept(4, "cooling_ladder"),
+        info="the multi-level master equation of the pump beams (Section 4.2.8); the residual population outside |0> is the preparation error; the last tiles are what the recipe hands to the circuit",
+        key="pumping",
+    )
+    return [_two_columns(store, [sideband_card], [pump_card])]
 
 
 def _readout_page(
@@ -1196,7 +1067,7 @@ def _readout_page(
                             title="Rates, the best window, the error budget, the saturation curves",
                         ),
                     ],
-                    spacing=8,
+                    spacing=12,
                 ),
                 why=lambda e: session.select_concept(4, "readout_rates"),
                 info="count histograms at the device window, then the error against the window length (best threshold at each); R_o saturates at the manifold's ceiling while R_d and R_b never do, so the light level stays near saturation (Section 8.1)",
@@ -1208,22 +1079,18 @@ def _readout_page(
         ft.Column(
             [_tiles(v.detector, index, plain=plain)]
             + ([_tiles(v.table, index, plain=plain)] if v.table else []),
-            spacing=8,
+            spacing=12,
         ),
         why=lambda e: session.select_concept(4, "readout_rates"),
         info=["the apparatus, and the table's calibrated threshold and window where a table exists"]
         + list(v.notes),
         key="detector",
     )
-    return [
-        ft.ResponsiveRow(
-            [ft.Column([c], col={"xs": 12, "lg": 6}, spacing=10) for c in ion_cards],
-            vertical_alignment=ft.CrossAxisAlignment.START,
-            spacing=12,
-            run_spacing=12,
-        ),
-        detector,
+    pairs = [
+        _two_columns(store, ion_cards[k : k + 1], ion_cards[k + 1 : k + 2])
+        for k in range(0, len(ion_cards), 2)
     ]
+    return pairs + [detector]
 
 
 def _gates_card(
@@ -1247,8 +1114,10 @@ def _gates_card(
         children.append(
             ft.Column(
                 [
-                    ft.Text(f"pair {g.pair}", size=13, weight=ft.FontWeight.W_600),
-                    ft.Text(g.error, size=12, color=ft.Colors.ERROR) if g.error else ft.Container(),
+                    _section_title(f"pair: {ions_text(g.pair)}"),
+                    ft.Text(g.error, size=theme.SIZE_SMALL, color=ft.Colors.ERROR)
+                    if g.error
+                    else ft.Container(),
                     _tiles(g.summary, index, plain=plain),
                     details(
                         f"level4.gates.{g.pair}",
@@ -1271,12 +1140,12 @@ def _gates_card(
                         title="Per-mode angles, the table's waveform and its closed form",
                     ),
                 ],
-                spacing=6,
+                spacing=theme.GAP,
             )
         )
     return card(
         "Entangling pulse solutions",
-        ft.Column(children, spacing=12),
+        ft.Column(children, spacing=16),
         why=lambda e: session.select_concept(4, "calibration"),
         info="re-solved at once from the current modes and eta (Sections 4.4.3, 14.4); the table's calibrated waveform beside it, stale when the device changed; the closed form beside the exact spot check is the Debye-Waller gap of Section 7.8 as a number",
         key="gates",
@@ -1310,7 +1179,7 @@ def _hamiltonian_page(
         out.append(
             card(
                 "No pulse yet",
-                status_line("run a job on Level 0 and zoom into a pulse on Level 3 to list its terms here"),
+                status_line("run a job, then zoom into a pulse on Level 3"),
                 key="no-pulse",
             )
         )
@@ -1351,10 +1220,11 @@ def _hamiltonian_page(
                             ],
                             wrap=True,
                             spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         ProgressRows(store, session),
                     ],
-                    spacing=8,
+                    spacing=theme.GAP,
                 ),
                 why=lambda e: session.select_concept(4, "hamiltonian"),
                 key="build",
@@ -1377,10 +1247,8 @@ def _hamiltonian_page(
                 matrices.append(
                     ft.Column(
                         [
-                            ft.Text(
-                                f"mode {m}: Omega_(n',n)/Omega = |<n'|D(i eta)|n>| (first {n_show} of {d} levels)",
-                                size=12,
-                                weight=ft.FontWeight.W_600,
+                            _section_title(
+                                f"mode {m}: Omega_(n',n)/Omega = |<n'|D(i eta)|n>| (first {n_show} of {d} levels)"
                             ),
                             ft.Row(
                                 [
@@ -1403,6 +1271,7 @@ def _hamiltonian_page(
                                 ],
                                 wrap=True,
                                 spacing=16,
+                                run_spacing=12,
                                 vertical_alignment=ft.CrossAxisAlignment.START,
                             ),
                             stat_row(
@@ -1428,7 +1297,7 @@ def _hamiltonian_page(
                                 ]
                             ),
                         ],
-                        spacing=4,
+                        spacing=6,
                         key=f"matrix-elements:{t.index}:{m}",
                     )
                 )
@@ -1437,11 +1306,11 @@ def _hamiltonian_page(
                 ft.ExpansionTile(
                     title=ft.Text(
                         f"drive term {t.index}: {'crosstalk onto' if t.is_crosstalk else 'addressed'} ion {t.ion} ({t.pulse})",
-                        size=13,
+                        size=theme.SIZE_SMALL + 1,
                         weight=ft.FontWeight.W_600,
                         color=ft.Colors.PRIMARY if highlighted else None,
                     ),
-                    subtitle=ft.Text(t.operator_text, size=11, color=ft.Colors.ON_SURFACE_VARIANT),
+                    subtitle=ft.Text(t.operator_text, size=theme.SIZE_CAPTION, color=MUTED),
                     controls=[
                         ft.Container(
                             content=ft.Column(
@@ -1466,13 +1335,13 @@ def _hamiltonian_page(
                                     if t.frozen
                                     else ft.Container(),
                                     status_line(
-                                        "coefficient (hbar Omega(t)/2) e^{-i(mu t - phi(t))} summed over the tones; the operator is time independent (Section 5.2)"
+                                        "coefficient (hbar Omega(t)/2) e^{-i(mu t - phi(t))}, summed over tones; time-independent operator"
                                     ),
                                 ]
                                 + matrices,
-                                spacing=8,
+                                spacing=12,
                             ),
-                            padding=ft.Padding.all(10),
+                            padding=ft.Padding.symmetric(horizontal=theme.GAP, vertical=4),
                         )
                     ],
                     dense=True,
@@ -1504,15 +1373,15 @@ def _hamiltonian_page(
                 ft.ExpansionTile(
                     title=ft.Text(
                         f"{name}: {len(items)} operator(s), {'integrated in this run' if active else 'listed, not integrated'}",
-                        size=13,
+                        size=theme.SIZE_SMALL + 1,
                         weight=ft.FontWeight.W_600,
                         color=ft.Colors.PRIMARY if hit else None,
                     ),
-                    subtitle=ft.Text(items[0].note, size=11, color=ft.Colors.ON_SURFACE_VARIANT),
+                    subtitle=ft.Text(items[0].note, size=theme.SIZE_CAPTION, color=MUTED),
                     controls=[
                         ft.Container(
                             content=data_table(["channel", "rate", "ion", "mode", "active", "L_k"], rows),
-                            padding=ft.Padding.all(8),
+                            padding=ft.Padding.symmetric(horizontal=theme.GAP, vertical=4),
                         )
                     ],
                     dense=True,
@@ -1528,10 +1397,17 @@ def _hamiltonian_page(
                 f"H(t) of {v.gate_id}",
                 ft.Column(
                     [
-                        ft.Text(
-                            "H/hbar = sum_m omega_m a_m^dag a_m + sum_i (Delta_i/2) sigma_z^i + sum drives (Omega/2) e^{-i(mu t - phi)} sigma_+ prod_m D_m(i eta) + h.c. + Stark",
-                            size=13,
-                            selectable=True,
+                        ft.Container(
+                            content=ft.Text(
+                                FORMULA,
+                                size=theme.SIZE_SMALL + 1,
+                                selectable=True,
+                                font_family=CODE_FONT,
+                                font_family_fallback=CODE_FONT_FALLBACK,
+                            ),
+                            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+                            border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
                         ),
                         _tiles(v.header, index, plain=plain),
                         hint(store, 4, "hamiltonian"),
@@ -1560,7 +1436,7 @@ def _hamiltonian_page(
                             title="Free terms, offsets, caps, segments and approximations",
                         ),
                     ],
-                    spacing=8,
+                    spacing=12,
                 ),
                 why=lambda e: session.select_concept(4, "hamiltonian"),
                 info="the terms the engine assembled for this step, with the numbers of this device and this sample (Section 5.7); the step is cut at every pulse boundary, as the engine integrates it",
@@ -1648,8 +1524,8 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
                         [
                             ft.Row(
                                 [
-                                    ft.Text(m.detail, size=12, width=110),
-                                    shown(m, index, label=False, size=12),
+                                    ft.Text(m.detail, size=theme.SIZE_SMALL, color=MUTED, width=110),
+                                    shown(m, index, label=False, size=theme.SIZE_SMALL),
                                 ],
                                 spacing=4,
                             )
@@ -1661,13 +1537,13 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
                     _rows_table(v.gate_errors, index)
                     if v.gate_errors
                     else status_line("no gate error estimated"),
-                    shown(v.device_hash, index, size=12),
+                    shown(v.device_hash, index, size=theme.SIZE_SMALL),
                 ],
                 store=store,
                 session=session,
             ),
         ],
-        spacing=8,
+        spacing=12,
     )
     return card(
         "Current device (edited)" if layer.overrides else "Current device",
@@ -1711,17 +1587,11 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
     layer = store.layers.get(ck)
     title, question = PAGE_TITLES[name]
     plain = store.learner.plan(4).plain_labels_first
-    nav = ft.Row(
-        [
-            (ft.FilledTonalButton if p == name else ft.TextButton)(
-                content=ft.Text(PAGE_TITLES[p][0], size=12),
-                on_click=lambda e, pp=p: page.navigate(f"/device/{pp}"),
-                key=f"device-page:{p}",
-            )
-            for p in DEVICE_PAGES
-        ],
-        wrap=True,
-        spacing=4,
+    nav = page_tabs(
+        [(p, PAGE_TITLES[p][0]) for p in DEVICE_PAGES],
+        name,
+        lambda p: page.navigate(f"/device/{p}"),
+        key_prefix="device-page",
     )
     body: list[ft.Control] = [level_header(title, question), nav]
     if layer is None:
@@ -1730,9 +1600,7 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
                 "Deriving the device",
                 ft.Column(
                     [
-                        status_line(
-                            "species, trap, crystal, light, noise, cooling, readout and the pulse solver, from the device model alone"
-                        ),
+                        status_line("the eight pages, derived from the device model alone"),
                         ProgressRows(store, session),
                     ],
                     spacing=6,
@@ -1740,7 +1608,7 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
                 key="deriving",
             )
         )
-        return ft.Column(body, spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+        return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
     table = store.table_for(layer.device_hash)
     current = store.record()
     if table is None and current is not None:
@@ -1768,10 +1636,11 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
             f"derived in {layer.wall_time_s:.1f} s" + (f"; {'; '.join(layer.notes)}" if layer.notes else "")
         )
     )
-    return ft.Column(body, spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+    return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
 
 
 __all__ = [
+    "FORMULA",
     "PAGE_TITLES",
     "PAGE_WHY",
     "CrystalPage",
