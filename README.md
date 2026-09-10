@@ -666,7 +666,15 @@ ten qubits), one engine serves the whole walk, and the one-ion idle channels are
 cache). `SolverOptions(tomography_isometry=False)` is the sixteen-input reference, which the dissipative steps keep anyway (ledger
 `anchor.perf.tomography_isometry`, `validation/scripts/bench_tomography.py`). End to end on the two-ion example
 device: the surrogate table 19 -> 6 s, `run()` of the Bell circuit with 2000 shots 16 -> 3.5 s, the same circuit through
-`level="GATE_LOCAL"` 17 -> 5 s. Also fixed: `rhs_evaluations`
+`level="GATE_LOCAL"` 17 -> 5 s. (8) Three GATE_LOCAL relaxations keyed to the map accuracy, each with a reported term in
+`GateLocalReport.discrepancy_bound`: the lightest motional branches of a step are dropped inside a weight budget of eps_map/4
+(the channel of a convex mixture moves by at most 2w, the term), a unitary step with resolved modes integrates at 1e-5 and 1e-3
+of eps_map instead of 1e-10 and 1e-8 (the dominant branch re-integrated ten times tighter measures the change, the term), and
+the step space's cap keeps the margin derived for interior elements exact to 1e-5 eps_map instead of the Section 5.1.1 fixture
+(the oracle asserts it; two to three levels per resolved mode). The four-qubit GHZ circuit runs in 24 s (205 s after item 7,
+856 s before the pass) with its register fidelity moved by 9e-5 against a reported bound of 0.054, and the Bell circuit
+through `level="GATE_LOCAL"` in 3.2 s; `SolverOptions(tomography_dropped_weight_max=0.0, tomography_tolerance_keyed=False)`
+and `margin_element_tol=None` are the reference (ledger `anchor.perf.gate_local_accuracy_keyed`). Also fixed: `rhs_evaluations`
 on `mesolve` segments counted twice per evaluation (the Liouvillian's spre and spost elements), and the Section 5.3 step-density
 test now checks its band on the Schroedinger-picture integration it was measured in.
 

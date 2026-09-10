@@ -366,11 +366,16 @@ def motional_branches(
     model: MotionalModel,
     coupled_frozen: Iterable[int],
     weight_min: float,
+    *,
+    dropped_weight_max: float | None = None,
 ) -> tuple[list[MotionalBranch], float, tuple[str, ...]]:
     """The motional input of a gate-local space as weighted pure branches (Section 5.3's Fock-sum path made general):
     every resolved mode's tracked reduced density matrix (thermal at its nbar when none is tracked) in its eigenbasis, every
     coupled frozen mode's Fock populations (the diagonal of its tracked state, else thermal); products of weight >= ``weight_min``
-    kept and renormalized, the dropped weight reported."""
+    kept and renormalized, the dropped weight reported. With ``dropped_weight_max`` the lightest of the kept branches are dropped
+    too, one at a time, while the total dropped weight stays at or below it (``SolverOptions.tomography_dropped_weight_max``,
+    the tail rule of the performance pass 2026-09-09): the channel is a convex mixture over the branches, so dropping weight w
+    and renormalizing changes it by at most 2w in diamond norm, the bound the caller reports."""
     notes: list[str] = []
     per_mode: list[tuple[int, str, list[tuple[float, object]]]] = []
     for tr in space.resolved:
@@ -433,9 +438,23 @@ def motional_branches(
         total += weight
     if not branches:
         raise ValueError("no motional branch survives the weight threshold")
-    branches = [MotionalBranch(b.weight / total, b.kets, b.frozen_n) for b in branches]
     branches.sort(key=lambda b: -b.weight)
-    return branches, float(max(1.0 - total, 0.0)), tuple(notes)
+    dropped = float(max(1.0 - total, 0.0))
+    if dropped_weight_max is not None and dropped_weight_max > 0.0:
+        # the tail rule: the lightest branches go while the total dropped weight stays inside the budget (always one branch left)
+        n_tail = 0
+        while len(branches) - n_tail > 1 and dropped + branches[-1 - n_tail].weight <= dropped_weight_max:
+            dropped += branches[-1 - n_tail].weight
+            n_tail += 1
+        if n_tail:
+            branches = branches[: len(branches) - n_tail]
+            total = sum(b.weight for b in branches)
+            notes.append(
+                f"{n_tail} light motional branch(es) dropped by the tail rule (total dropped weight {dropped:.3e} within "
+                f"tomography_dropped_weight_max = {dropped_weight_max:.3g}; channel error bound 2w = {2.0 * dropped:.3e})"
+            )
+    branches = [MotionalBranch(b.weight / total, b.kets, b.frozen_n) for b in branches]
+    return branches, dropped, tuple(notes)
 
 
 # ---- the record ------------------------------------------------------------------------------------------------------------------
@@ -485,6 +504,17 @@ class TomographyRecord:
     every dissipative step), "isometry" the internal basis per branch (Stinespring), "propagator" reads the branch's Kraus
     operator off the segment propagator of an internal-state-only space. ``choi_raw`` is the least-squares fit on the first
     route and the isometries' Choi matrix, completely positive by construction, on the other two."""
+    branch_error_bound: float = 0.0
+    """2 x ``dropped_branch_weight``: the diamond-norm bound on the channel error of dropping and renormalizing the motional
+    branches (the floor ``branch_weight_min`` and the tail rule ``tomography_dropped_weight_max``); a term of
+    ``GateLocalReport.discrepancy_bound``."""
+    tolerances: tuple[float, float] = (SolverOptions.atol, SolverOptions.rtol)
+    """(atol, rtol) the engine runs integrated at: the caller's, or the map-accuracy-keyed pair of
+    ``SolverOptions.tomography_tolerance_keyed`` on a unitary step with resolved modes."""
+    tolerance_change: float | None = None
+    """The Section 5.5 convergence statement for the keyed tolerance: d times the trace norm of the change in the Choi matrix
+    when the dominant branch's columns are re-integrated ten times tighter (a bound on the diamond-norm change), weighted by
+    that branch's share of the mixture; None when the tolerance was not keyed (the caller's tolerance is the caller's contract)."""
 
     @property
     def dimension(self) -> int:
@@ -970,15 +1000,26 @@ def tomography(
     labels = tuple(lab for lab, _k in labels_kets)
     inputs = tuple(np.outer(k, k.conj()) for _l, k in labels_kets)
     frozen_coupled = coupled_frozen_modes(device, space, sched.pulses)
+    # the tail rule's budget (Section 5.4, performance pass 2026-09-09): the bound 2w on the dropped weight stays inside half the
+    # map accuracy unless the caller set the budget (0.0 keeps every branch above the floor)
+    tail_budget = (
+        options.map_accuracy / 4.0
+        if options.tomography_dropped_weight_max is None
+        else float(options.tomography_dropped_weight_max)
+    )
     current = space
     for _attempt in range(engine.max_growth_retries + 2):
         branches, dropped, branch_notes = motional_branches(
-            current, motional_model, frozen_coupled, opts.branch_weight_min
+            current, motional_model, frozen_coupled, opts.branch_weight_min, dropped_weight_max=tail_budget
         )
         thermal_frozen = {m: float(motional_model.nbar.get(m, 0.0)) for m in current.frozen}
         route: TomographyRoute = "states"
         if opts.tomography_isometry and engine.is_unitary(device, current, opts):
             route = "propagator" if (not current.resolved and current.enr_group is None) else "isometry"
+        # the map-accuracy-keyed tolerance of a unitary step with resolved modes (never a tolerance the caller chose, never a
+        # propagator at dimension 4 to 16, never a dissipative step): the ten-times-tighter probe below reports its effect
+        keyed = keyed_tolerances(options) if route == "isometry" else None
+        run_opts = replace(opts, atol=keyed[0], rtol=keyed[1]) if keyed is not None else opts
         if route == "states":
             ext = _extract_from_states(
                 engine, device, sched, current, branches, thermal_frozen, labels_kets, sample, seeds, opts
@@ -990,7 +1031,7 @@ def tomography(
             ext = _extract_from_columns(current, branches, columns, reports, labels_kets, {}, 1, route)
         else:
             columns, reports, seen, map_workers, grown = _isometry_columns(
-                engine, device, sched, current, branches, thermal_frozen, sample, seeds, opts
+                engine, device, sched, current, branches, thermal_frozen, sample, seeds, run_opts
             )
             if grown is not None:
                 current = grown
@@ -1001,6 +1042,27 @@ def tomography(
         if ext.grown is not None:
             current = ext.grown
             continue
+        tolerance_change: float | None = None
+        probe_notes: list[str] = []
+        if keyed is not None and route == "isometry":
+            # the Section 5.5 statement for the keyed tolerance: the dominant branch's columns ten times tighter, the change in
+            # the branch's Choi matrix (d times its trace norm bounds the diamond norm) weighted by the branch's share
+            tight = replace(run_opts, atol=run_opts.atol / 10.0, rtol=run_opts.rtol / 10.0)
+            probe_cols, probe_reports, _seen, _w, probe_grown = _isometry_columns(
+                engine, device, sched, current, branches[:1], thermal_frozen, sample, seeds, tight
+            )
+            if probe_grown is None and probe_cols:
+                d_int = int(np.prod(current.ion_dims))
+                c_probe = choi_from_isometry(probe_cols[0], d_int)
+                c_run = choi_from_isometry(columns[0], d_int)
+                tolerance_change = float(branches[0].weight) * d_int * _trace_norm(c_probe - c_run)
+                ext = replace(ext, reports=ext.reports + probe_reports, runs=ext.runs + len(probe_reports))
+                probe_notes.append(
+                    f"tolerances keyed to the map accuracy: atol {keyed[0]:.0e}, rtol {keyed[1]:.0e} (engine defaults "
+                    f"{options.atol:.0e}, {options.rtol:.0e}); the dominant branch (weight {branches[0].weight:.3f}) "
+                    f"re-integrated ten times tighter moves the channel by {tolerance_change:.2e} (d x trace norm of the Choi "
+                    "change; Section 5.5)"
+                )
         choi_raw = ext.choi_raw if ext.choi_raw is not None else choi_least_squares(inputs, ext.outputs)
         choi, cp_res, tp_res, its = project_cptp(choi_raw)
         approximations: list[str] = []
@@ -1012,10 +1074,11 @@ def tomography(
             for seg in rep.segments:
                 if seg.integrator not in integrators:
                     integrators.append(seg.integrator)
-        notes = list(branch_notes) + list(ext.notes)
+        notes = list(branch_notes) + list(ext.notes) + probe_notes
         if dropped > 0.0:
             notes.append(
-                f"motional branches below branch_weight_min = {opts.branch_weight_min:g} dropped: weight {dropped:.3e} (renormalized)"
+                f"motional branches dropped (below branch_weight_min = {opts.branch_weight_min:g}, and the tail rule): weight "
+                f"{dropped:.3e} (renormalized); channel error bound 2w = {2.0 * dropped:.3e} (Section 5.4)"
             )
         if current != space:
             notes.append(
@@ -1048,8 +1111,32 @@ def tomography(
             reports=tuple(ext.reports),
             workers=max([ext.workers] + [rep.workers for rep in ext.reports]),
             route=ext.route,
+            branch_error_bound=2.0 * dropped,
+            tolerances=(float(run_opts.atol), float(run_opts.rtol)),
+            tolerance_change=tolerance_change,
         )
     raise RuntimeError("the gate-local space kept growing beyond the engine's retry budget")
+
+
+def keyed_tolerances(options: SolverOptions) -> tuple[float, float] | None:
+    """(atol, rtol) the GATE_LOCAL tomography integrates a unitary step with resolved modes at under
+    ``SolverOptions.tomography_tolerance_keyed``: 1e-5 and 1e-3 of the map accuracy where the caller left the engine defaults,
+    the caller's own value where not (a chosen tolerance is never overridden, the Section 5.3 precedent); None when the switch
+    is off or neither tolerance would move."""
+    if not options.tomography_tolerance_keyed:
+        return None
+    defaults = SolverOptions()
+    atol = options.map_accuracy * 1e-5 if options.atol == defaults.atol else options.atol
+    rtol = options.map_accuracy * 1e-3 if options.rtol == defaults.rtol else options.rtol
+    if atol == options.atol and rtol == options.rtol:
+        return None
+    return float(atol), float(rtol)
+
+
+def _trace_norm(h: np.ndarray) -> float:
+    """The trace norm of a Hermitian matrix (the sum of |eigenvalues|); the difference of two Choi matrices is Hermitian."""
+    sym = 0.5 * (h + h.conj().T)
+    return float(np.sum(np.abs(np.linalg.eigvalsh(sym))))
 
 
 def ideal_unitary_on(
@@ -1136,6 +1223,10 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "margin_check": options.margin_check,
         # the routes agree to the solver tolerance, but a record extracted by one must not answer for the other's report
         "tomography_isometry": options.tomography_isometry,
+        # the Tier 2 relaxations change the branches kept, the tolerance integrated at and the caps built (Section 5.4)
+        "tomography_dropped_weight_max": options.tomography_dropped_weight_max,
+        "tomography_tolerance_keyed": options.tomography_tolerance_keyed,
+        "margin_element_tol": options.margin_element_tol,
     }
 
 
@@ -1159,6 +1250,7 @@ __all__ = [
     "ideal_unitary_on",
     "input_states",
     "internal_basis",
+    "keyed_tolerances",
     "kraus_operators",
     "kraus_superoperator",
     "local_ideal",

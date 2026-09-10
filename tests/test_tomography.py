@@ -17,6 +17,7 @@ from qutip_trap.control.schedule import GateTarget
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
 from qutip_trap.dynamics.tomography import (
+    MotionalBranch,
     apply_kraus_dm,
     apply_kraus_ket,
     choi_from_isometry,
@@ -27,8 +28,10 @@ from qutip_trap.dynamics.tomography import (
     ideal_unitary_on,
     input_states,
     internal_basis,
+    keyed_tolerances,
     kraus_operators,
     kraus_superoperator,
+    motional_branches,
     project_cptp,
     regrid_reduced,
     single_qudit_inputs,
@@ -290,10 +293,17 @@ def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_ent
     recs = {}
     for flag in (True, False):
         eng = JointExactEngine()
-        opts = SolverOptions(branch_weight_min=0.02, map="serial", tomography_isometry=flag)
+        opts = SolverOptions(
+            branch_weight_min=0.02,
+            map="serial",
+            tomography_isometry=flag,
+            tomography_dropped_weight_max=0.0,
+            tomography_tolerance_keyed=False,
+        )
         recs[flag] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
     iso, ref = recs[True], recs[False]
     assert iso.route == "isometry" and ref.route == "states"
+    assert iso.tolerances == ref.tolerances == (1e-10, 1e-8) and iso.tolerance_change is None
     assert iso.branches == ref.branches == 3
     assert iso.engine_runs == 4 * iso.branches and ref.engine_runs == 16 * ref.branches
     assert iso.space == ref.space == space, "the same space: no growth on either route"
@@ -369,3 +379,110 @@ def test_a_dissipative_step_keeps_the_state_route_whatever_the_switch_says() -> 
     assert not heating.is_unitary(noisy, resolved, opts)
     with pytest.raises(ValueError, match="internal-state-only"):
         heating.propagator(noisy, sched, resolved, quiet_sample(), SeedSpec(0), opts)
+
+
+# ---- the declared relaxations of the performance pass 2026-09-09 (Tier 2) --------------------------------------------------------
+
+
+def test_the_tail_rule_drops_the_lightest_branches_inside_its_budget_and_reports_twice_the_weight() -> None:
+    """``motional_branches`` with ``dropped_weight_max``: the lightest branches go one at a time while the total dropped weight
+    stays inside the budget, the survivors are renormalized, the dropped weight is what the record turns into the bound 2w, a
+    budget of zero changes nothing, and one branch always survives."""
+    space = HilbertSpace((2, 2), (ModeTruncation(2, 8, (0, 3), 0.13),), None, (0, 1, 3))
+    model = MotionalModel(
+        reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.3, 3: 0.4}, frozen=(0, 1, 3)
+    )  # a warm resolved mode and a warm frozen coupled mode: many branches
+    full, dropped_full, _ = motional_branches(space, model, [3], 1e-6)
+    same, dropped_same, _ = motional_branches(space, model, [3], 1e-6, dropped_weight_max=0.0)
+    assert len(same) == len(full) and dropped_same == dropped_full
+    tail, dropped_tail, notes = motional_branches(space, model, [3], 1e-6, dropped_weight_max=2.5e-4)
+    assert len(tail) < len(full) and dropped_full <= dropped_tail <= 2.5e-4
+    assert abs(sum(b.weight for b in tail) - 1.0) < 1e-12
+    assert all(isinstance(b, MotionalBranch) for b in tail)
+    # the survivors are the heaviest of the full set, renormalized by the kept weight
+    kept = sum(b.weight for b in full[: len(tail)])
+    for a, b in zip(tail, full[: len(tail)]):
+        assert a.frozen_n == b.frozen_n and a.weight == pytest.approx(b.weight / kept, rel=1e-12)
+    assert any("tail rule" in n and "2w" in n for n in notes)
+    # the budget is honoured exactly: adding the next-lightest dropped branch would exceed it
+    # the rule drops from the lightest up, so the branch it refused is the lightest survivor
+    next_weight = full[len(tail) - 1].weight * (1.0 - dropped_full)
+    assert dropped_tail + next_weight > 2.5e-4
+    # an enormous budget still leaves one branch
+    one, dropped_one, _ = motional_branches(space, model, [3], 1e-6, dropped_weight_max=0.999)
+    assert len(one) == 1 and one[0].weight == 1.0 and dropped_one < 1.0
+
+
+def test_keyed_tolerances_follow_the_map_accuracy_and_never_override_a_chosen_tolerance() -> None:
+    assert keyed_tolerances(SolverOptions()) == pytest.approx((1e-8, 1e-6))
+    assert keyed_tolerances(SolverOptions(map_accuracy=1e-4)) == pytest.approx((1e-9, 1e-7))
+    assert keyed_tolerances(SolverOptions(tomography_tolerance_keyed=False)) is None
+    # a caller's atol is kept, the default rtol still keyed; both chosen: nothing moves
+    assert keyed_tolerances(SolverOptions(atol=1e-12)) == (1e-12, 1e-6)
+    assert keyed_tolerances(SolverOptions(atol=1e-12, rtol=1e-9)) is None
+    assert keyed_tolerances(SolverOptions(atol=1e-8, rtol=1e-6)) is None
+
+
+def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_inside_the_map_accuracy(
+    one_mode_entangling,
+) -> None:  # type: ignore[no-untyped-def]
+    """The default extraction of a unitary step with a resolved mode integrates at the map-accuracy-keyed tolerance, reports the
+    pair and the ten-times-tighter change of the dominant branch (a bound on the diamond-norm change), agrees with the
+    engine-tolerance extraction to well inside the map accuracy, costs fewer right-hand sides, and the reported change bounds the
+    realized difference of the dominant branch; the tail rule reports 2w and every term is in the record."""
+    dev, sched, space, model = one_mode_entangling
+    eng = JointExactEngine()
+    keyed = eng.tomography(
+        dev,
+        sched,
+        space,
+        model,
+        quiet_sample(),
+        SeedSpec(0),
+        # the default floor: the tail rule is what limits the branches here (a floor of 0.02 would drop more than the budget
+        # on its own and the rule would then add nothing)
+        SolverOptions(map="serial"),
+    )
+    ref = JointExactEngine().tomography(
+        dev,
+        sched,
+        space,
+        model,
+        quiet_sample(),
+        SeedSpec(0),
+        SolverOptions(map="serial", tomography_tolerance_keyed=False),
+    )
+    assert keyed.route == ref.route == "isometry"
+    assert keyed.tolerances == (1e-8, 1e-6) and ref.tolerances == (1e-10, 1e-8)
+    assert keyed.tolerance_change is not None and 0.0 < keyed.tolerance_change < 1e-3 / 4
+    assert ref.tolerance_change is None
+    assert keyed.engine_runs == ref.engine_runs + 4, "the probe adds the dominant branch's four columns"
+    assert len(keyed.reports) == keyed.engine_runs
+
+    def rhs(rec) -> int:  # type: ignore[no-untyped-def]
+        return sum((s.rhs_evaluations or 0) for r in rec.reports[: 4 * rec.branches] for s in r.segments)
+
+    assert rhs(keyed) < 0.8 * rhs(ref)
+    assert np.max(np.abs(keyed.choi - ref.choi)) < 1e-4
+    assert max(np.max(np.abs(a - b)) for a, b in zip(keyed.outputs, ref.outputs)) < 1e-4
+    assert any("keyed to the map accuracy" in n for n in keyed.notes)
+    # the branch terms: the tail rule at the default budget (map_accuracy / 4) and the reported 2w
+    assert keyed.branch_error_bound == pytest.approx(2.0 * keyed.dropped_branch_weight)
+    assert keyed.dropped_branch_weight <= 1e-3 / 4
+    assert any("channel error bound 2w" in n for n in keyed.notes)
+    zero = JointExactEngine().tomography(
+        dev,
+        sched,
+        space,
+        model,
+        quiet_sample(),
+        SeedSpec(0),
+        SolverOptions(map="serial", tomography_dropped_weight_max=0.0),
+    )
+    assert zero.branches > keyed.branches and zero.dropped_branch_weight < keyed.dropped_branch_weight
+    assert (
+        zero.branch_error_bound == pytest.approx(2.0 * zero.dropped_branch_weight)
+        and zero.branch_error_bound < 1e-5
+    )
+    assert any("dropped by the tail rule" in n for n in keyed.notes)
+    assert not any("dropped by the tail rule" in n for n in zero.notes)

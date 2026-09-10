@@ -13,7 +13,11 @@ branch's Kraus operator. This script runs the routes side by side on the fixture
           outputs, the reduced motional states and the residual displacements, the raw Choi matrix's TP residual and the Dykstra
           iteration counts;
   part 3: the register update sum_a K_a rho K_a^dag on a ten-qubit density matrix: the superoperator product of apply_kraus_dm
-          against the per-operator einsum it replaced, and Register.marginal on the strided view against the copying form.
+          against the per-operator einsum it replaced, and Register.marginal on the strided view against the copying form;
+  part 4: the three declared relaxations keyed to the map accuracy (Tier 2 of the same pass) on the part 2 step: the branch
+          tail rule (branches kept, dropped weight, the reported bound 2w), the keyed tolerance (right-hand sides, wall time,
+          the reported ten-times-tighter change against the realized difference from the engine-tolerance extraction) and the
+          derived cap margin (the cap, the measured interior element error and the leakage), each against the reference.
 
 Wall times are never compared by run_checks.py (bench_ scripts are timed only); the agreement figures are the point.
 
@@ -160,6 +164,49 @@ def part3() -> None:
           f"max |difference| {maxdiff(m, m_ref):.2e}")
 
 
+def part4(dev, drives, rabi, stark):  # type: ignore[no-untyped-def]
+    from dataclasses import replace
+
+    from qutip_trap.dynamics.engine import required_margin_under
+    from qutip_trap.dynamics.tomography import motional_branches
+    from qutip_trap.hilbert.operators import displacement_leakage, interior_element_error, required_margin
+
+    print("== Part 4: the declared relaxations keyed to the map accuracy (the part 2 step, three branches at the reference)")
+    modes = two_ion_modes(dev)
+    wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=100e3, all_modes=True)
+    table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
+    sched = ms_schedule(wf, (0, 1), drives, table)
+    space = HilbertSpace((2, 2), (ModeTruncation(2, 15, (0, 3), 0.13),), None, (0, 1, 3, 4, 5))
+    model = MotionalModel(reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.3, 3: 0.3, 4: 0.0, 5: 0.0}, frozen=(0, 1, 3, 4, 5))
+    # (a) the tail rule on a warm input (nbar 0.3 on the resolved mode and on the frozen coupled one)
+    full, dropped_full, _ = motional_branches(space, model, [3], 1e-6)
+    for budget in (0.0, 1e-4, 2.5e-4, 1e-3):
+        kept, dropped, _ = motional_branches(space, model, [3], 1e-6, dropped_weight_max=budget)
+        print(f"  tail rule budget {budget:.1e}: {len(kept)} of {len(full)} branches kept, dropped weight {dropped:.3e}, bound 2w {2 * dropped:.3e}")
+    # (b) the keyed tolerance against the engine tolerance, both without the tail rule
+    reference = SolverOptions(branch_weight_min=0.02, map="serial", tomography_dropped_weight_max=0.0, tomography_tolerance_keyed=False)
+    keyed = replace(reference, tomography_tolerance_keyed=True)
+    recs = {}
+    for label, o in (("engine tolerance", reference), ("keyed tolerance", keyed)):
+        eng = JointExactEngine()
+        t0 = time.perf_counter()
+        rec = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), o)
+        wall = time.perf_counter() - t0
+        recs[label] = rec
+        rhs = sum((s.rhs_evaluations or 0) for r in rec.reports[: 4 * rec.branches] for s in r.segments)
+        print(f"  {label}: atol/rtol {rec.tolerances[0]:.0e}/{rec.tolerances[1]:.0e}, engine runs {rec.engine_runs}, right-hand sides {rhs}, "
+              f"wall {wall:.2f} s, reported tolerance change {rec.tolerance_change}")
+    a, b = recs["keyed tolerance"], recs["engine tolerance"]
+    print(f"  realized difference keyed - engine: choi {maxdiff(a.choi, b.choi):.2e}, outputs {max(maxdiff(x, y) for x, y in zip(a.outputs, b.outputs)):.2e}, "
+          f"d x trace norm {4 * float(np.sum(np.abs(np.linalg.eigvalsh(0.5 * ((a.choi - b.choi) + (a.choi - b.choi).conj().T))))):.2e}")
+    # (c) the derived margin at the map accuracy's element tolerance, against the fixture
+    for eta, n_hi in ((0.1, 2), (0.1, 5), (0.1, 10), (0.3, 5)):
+        opts = SolverOptions(margin_element_tol=1e-8)
+        m = required_margin_under(eta, opts, n_hi)
+        print(f"  eta {eta}, top populated level {n_hi}: derived margin {m} (fixture {required_margin(eta)}), interior element error "
+              f"{interior_element_error(n_hi + 1 + m, eta, n_hi):.1e} <= 1e-8, leakage past the cap {displacement_leakage(eta, n_hi, m):.1e} < 1e-7")
+
+
 def main() -> None:
     dev = chain_device(2)
     drives = raman_gate_drives(2)
@@ -167,6 +214,7 @@ def main() -> None:
     part1(dev, drives, rabi)
     part2(dev, drives, rabi, stark)
     part3()
+    part4(dev, drives, rabi, stark)
 
 
 if __name__ == "__main__":

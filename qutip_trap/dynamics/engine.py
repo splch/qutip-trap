@@ -216,6 +216,34 @@ class SolverOptions:
     propagated); the prod_i d_i^2 input states the map is stated on follow by linearity. False propagates every input state and fits the
     Choi matrix by least squares (the M9a reference); the two agree to the solver tolerance (``tests/test_tomography.py``). A
     dissipative step takes the reference route whatever this says, because a trajectory is not linear in its initial ket."""
+    tomography_dropped_weight_max: float | None = None
+    """GATE_LOCAL tomography (Section 5.4; performance pass 2026-09-09): the total weight of motional branches a step may drop,
+    lightest first, beyond the per-branch floor ``branch_weight_min``. A channel that is a convex mixture over branches changes by
+    at most 2w in diamond norm when weight w is dropped and the rest renormalized, so None derives ``map_accuracy / 4`` (the bound
+    2w stays at or below half the map accuracy) and 0.0 keeps every branch above the floor. The bound is reported per step
+    (``TomographyRecord.branch_error_bound``, ``GateLocalStep.branch_error_bound``) and summed into
+    ``GateLocalReport.discrepancy_bound``; the realized error is far below it (the dropped branches are high Fock states whose
+    only effect is a slightly different Debye-Waller factor: 4e-5 measured against a 4e-4 bound on the four-qubit GHZ step)."""
+    tomography_tolerance_keyed: bool = True
+    """GATE_LOCAL tomography: integrate a unitary step with resolved modes at the tolerance the map accuracy warrants, atol =
+    1e-5 map_accuracy and rtol = 1e-3 map_accuracy (1e-8 and 1e-6 at the default), instead of the engine's 1e-10 and 1e-8, when
+    the caller left those at their defaults (a tolerance the caller chose is never overridden, the Section 5.3 precedent). The
+    change the step's channel makes when the dominant branch is re-integrated ten times tighter is measured and reported
+    (``TomographyRecord.tolerance_change``, the Section 5.5 convergence statement, d times the trace norm of the Choi
+    difference, a bound on the diamond norm) and summed into ``GateLocalReport.discrepancy_bound``; measured 1.3e-4 for 1.8
+    times fewer right-hand sides on the example device's entangling step, where the next loosening exceeds the map accuracy.
+    False keeps the engine tolerances everywhere. Internal-state-only steps (propagators at dimension 4 to 16) and dissipative
+    steps are never loosened."""
+    margin_element_tol: float | None = None
+    """The interior-element tolerance the Section 5.1.1 margin of a resolved mode is derived from
+    (``hilbert.operators.required_margin``): None keeps the fixture (6 levels at |eta| <= 0.1, 10 at 0.5, 20 at 1, the
+    margins at which the exponential's elements reach 10^-12), which every JOINT_EXACT run and every Section 9 validation case
+    uses. The GATE_LOCAL walk derives ``map_accuracy * 1e-5`` for its step spaces when the caller leaves None (1e-8 at the
+    default): the cap keeps the smallest margin at which the exponential's interior elements over the populated range are exact
+    to it and one displacement from the top populated level leaks less than a tenth of ``boundary_population_max`` past the cap,
+    never more than the fixture; the same rule is what the engine's margin check (Section 5.5) reads on those runs, the rule (ii)
+    oracle asserts the declared tolerance at construction, and the step reports the measured element error
+    (``GateLocalStep.element_error``). Two to three levels per resolved mode on the four-qubit GHZ circuit's entangling steps."""
     rotating_frame: bool = True
     """Integrate every ket segment (``sesolve`` and ``mcsolve``) in the exact rotating frame of its diagonal H_0 = H_mot + H_int
     (``dynamics.rotating``; Sections 5.2, 5.3): psi = e^{-i H_0 t} phi with the phases applied to the STATE and undone on the
@@ -241,6 +269,13 @@ class SolverOptions:
             raise ValueError("register_dm_max_qubits and register_ensemble are positive")
         if not 0.0 < self.freeze_alpha_max < 1.0 or not 0.0 < self.branch_weight_min < 1.0:
             raise ValueError("freeze_alpha_max and branch_weight_min are fractions in (0, 1)")
+        if (
+            self.tomography_dropped_weight_max is not None
+            and not 0.0 <= self.tomography_dropped_weight_max < 1.0
+        ):
+            raise ValueError("tomography_dropped_weight_max is a weight fraction in [0, 1) or None")
+        if self.margin_element_tol is not None and self.margin_element_tol <= 0.0:
+            raise ValueError("margin_element_tol is a positive tolerance or None")
         if not self.integrators:
             raise ValueError("at least one integrator is required")
         bad = [name for name in self.integrators if name in MULTISTEP_INTEGRATORS]
@@ -1434,7 +1469,7 @@ class JointExactEngine:
                         populated_max[m] = max(populated_max.get(m, 0), n_pop)
                         margin = tr.d - 1 - n_pop
                         margin_reached[m] = min(margin_reached.get(m, margin), margin)
-                        need = required_margin(eta_seg[m])
+                        need = required_margin_under(eta_seg[m], options, n_pop)
                         if margin < need:
                             raise _BoundaryTrip(m, bpop.get(m, 0.0), add=need - margin, reason="margin")
         if method_used == "mcsolve" and kets is not None:
@@ -1552,6 +1587,26 @@ class _Propagator:
     atol: float
     rhs_evaluations: int | None
     retries: tuple[str, ...]
+
+
+MARGIN_LEAKAGE_FRACTION = 0.1
+"""The derived margin (``SolverOptions.margin_element_tol``) keeps one displacement's leakage from the top populated level below
+this fraction of ``boundary_population_max``, so that the boundary monitor's own trip is not the first thing a derived cap meets."""
+
+
+def required_margin_under(eta: float, options: SolverOptions, n_hi: int) -> int:
+    """The Section 5.1.1 margin a run under ``options`` keeps above the top populated level ``n_hi`` at |eta|: the fixture
+    (``hilbert.operators.required_margin``) unless ``margin_element_tol`` is declared, in which case the margin is derived from
+    the declared element tolerance and a tenth of the boundary threshold. The cap rule of ``run.gate_local.step_space`` and the
+    engine's margin check read this one function, so a first attempt does not trip."""
+    if options.margin_element_tol is None:
+        return required_margin(eta)
+    return required_margin(
+        eta,
+        tail=float(options.boundary_population_max) * MARGIN_LEAKAGE_FRACTION,
+        n_hi=int(n_hi),
+        element_tol=float(options.margin_element_tol),
+    )
 
 
 def _steps_per_period(rhs_evals: int | None, omega_max_rad_s: float, duration_s: float) -> float | None:
@@ -1849,4 +1904,11 @@ class TruncationLimit(RuntimeError):
     """The cap-raising retries of Section 5.5 were exhausted."""
 
 
-__all__ += ["EngineReport", "JointExactEngine", "SegmentReport", "TruncationLimit"]
+__all__ += [
+    "MARGIN_LEAKAGE_FRACTION",
+    "EngineReport",
+    "JointExactEngine",
+    "SegmentReport",
+    "TruncationLimit",
+    "required_margin_under",
+]

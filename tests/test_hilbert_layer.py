@@ -18,8 +18,10 @@ from qutip_trap.hilbert.operators import (
     debye_waller_factor,
     debye_waller_rms_fraction,
     displacement_element_analytic,
+    displacement_leakage,
     displacement_matrix_analytic,
     displacement_operator,
+    interior_element_error,
     interior_tolerance,
     probability_within,
     rabi_matrix_element,
@@ -303,3 +305,62 @@ def test_rabi_table_is_the_analytic_modulus() -> None:
     assert t[0, 0] == pytest.approx(math.exp(-0.045))
     assert t[1, 0] == pytest.approx(0.3 * math.exp(-0.045))
     assert np.all(t >= 0.0)
+
+
+# ---- the derived margin (performance pass 2026-09-09) ----------------------------------------------------------------------------
+
+
+@pytest.mark.convergence
+def test_derived_margin_holds_the_element_tolerance_and_the_leakage_and_never_exceeds_the_fixture() -> None:
+    """``required_margin`` with a declared element tolerance and a leakage tail: the smallest margin at which the exponential's
+    interior elements over n <= n_hi agree with the analytic ones to the tolerance and one displacement from n_hi leaks less than
+    the tail past the cap, measured directly; smaller than the fixture at small eta, growing with n_hi (the element error at a
+    fixed margin does), and never above the fixture."""
+    for eta, n_hi, expected in ((0.1, 2, 3), (0.1, 5, 3), (0.05, 2, 2), (0.3, 5, 6)):
+        m = required_margin(eta, tail=1e-7, n_hi=n_hi, element_tol=1e-8)
+        assert m == expected, (eta, n_hi, m)
+        assert interior_element_error(n_hi + 1 + m, eta, n_hi) <= 1e-8
+        assert displacement_leakage(eta, n_hi, m) < 1e-7
+        assert m <= required_margin(eta)
+        if m > 1:
+            assert (
+                interior_element_error(n_hi + m, eta, n_hi) > 1e-8
+                or displacement_leakage(eta, n_hi, m - 1) >= 1e-7
+            )
+    # the element error at a fixed margin grows with the populated range, so the derived margin does too
+    assert required_margin(0.1, n_hi=20, element_tol=1e-8) > required_margin(0.1, n_hi=2, element_tol=1e-8)
+    # the fixture is the ceiling: an absurdly tight tolerance falls back to it
+    assert required_margin(0.1, n_hi=2, element_tol=1e-30) == required_margin(0.1) == 6
+    assert required_margin(0.5, n_hi=2, element_tol=1e-30, tail=1e-30) == 10
+    # the analytic leakage decays with the margin and grows with eta and n_hi
+    assert displacement_leakage(0.1, 2, 3) < displacement_leakage(0.1, 2, 2) < displacement_leakage(0.1, 2, 1)
+    assert displacement_leakage(0.1, 10, 3) > displacement_leakage(0.1, 2, 3)
+    assert displacement_leakage(0.3, 2, 3) > displacement_leakage(0.1, 2, 3)
+    assert displacement_leakage(0.1, 2, 3) == pytest.approx(6.2e-9, rel=0.1)
+    with pytest.raises(ValueError):
+        required_margin(0.1, n_hi=2, element_tol=-1.0)
+    with pytest.raises(ValueError):
+        required_margin(0.1, n_hi=2, tail=2.0)
+
+
+def test_a_declared_element_tolerance_is_asserted_at_construction_and_reported() -> None:
+    """A ``ModeTruncation`` that carries ``element_tol`` asserts the rule (ii) oracle to that number at any margin (the table
+    asserts margins of four and more only), ``oracle_status`` reports it, and growth keeps the declaration."""
+    m = required_margin(0.1, tail=1e-7, n_hi=2, element_tol=1e-8)
+    derived = HilbertSpace((2,), (ModeTruncation(0, 3 + m, (0, 2), 0.15, element_tol=1e-8),), None, (1, 2))
+    op = derived.displacement_factor(0, 0.1)
+    assert op.shape == (3 + m, 3 + m)
+    asserted, diff, tol = derived.oracle_status(0, 0.1)
+    assert asserted and tol == 1e-8 and diff <= tol
+    grown = derived.grown(0, 2)
+    assert grown.truncation(0).element_tol == 1e-8 and grown.truncation(0).d == 5 + m
+    # the same cap without the declaration is below the table's smallest row: reported, not asserted
+    plain = HilbertSpace((2,), (ModeTruncation(0, 3 + m, (0, 2), 0.15),), None, (1, 2))
+    asserted_plain, diff_plain, _tol = plain.oracle_status(0, 0.1)
+    assert (not asserted_plain) and diff_plain == pytest.approx(diff)
+    # a tolerance the cap cannot meet is refused at construction of the operator, not silently passed
+    tight = HilbertSpace((2,), (ModeTruncation(0, 4, (0, 2), 0.3, element_tol=1e-12),), None, (1, 2))
+    with pytest.raises(ValueError, match="raise the cap"):
+        tight.displacement_factor(0, 0.3)
+    with pytest.raises(ValueError):
+        ModeTruncation(0, 6, (0, 2), 0.1, element_tol=0.0)

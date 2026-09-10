@@ -171,7 +171,10 @@ def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> 
         opts = SolverOptions(map=mp, workers=min(N_WORKERS, 8))  # type: ignore[arg-type]
         recs[mp] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
     assert recs["serial"].route == recs["parallel"].route == "isometry"
-    assert recs["serial"].engine_runs == recs["parallel"].engine_runs == 4
+    # four basis columns plus the four of the keyed tolerance's ten-times-tighter probe on the (only) branch
+    assert recs["serial"].engine_runs == recs["parallel"].engine_runs == 8
+    assert recs["serial"].tolerances == recs["parallel"].tolerances == (1e-8, 1e-6)
+    assert recs["serial"].tolerance_change == pytest.approx(recs["parallel"].tolerance_change, rel=1e-6)
     assert recs["serial"].workers == 1 and 1 <= recs["parallel"].workers <= 4, (
         "four columns, at most four processes"
     )

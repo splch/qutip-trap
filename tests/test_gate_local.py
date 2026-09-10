@@ -102,8 +102,10 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     fx, sur, kw = two_ion
     clear_gate_local_cache()
     # the register of GATE_LOCAL is the pumped density matrix itself; JOINT_EXACT enumerates it into branches, so the comparison
-    # keeps every branch (the preparation error is 2.5e-6, below the default cutoff) on this cheap all-frozen space
-    exact = {**kw, "options": SolverOptions(branch_weight_min=1e-9)}
+    # keeps every branch (the preparation error is 2.5e-6, below the default cutoff) on this cheap all-frozen space, and the
+    # tomography's tail rule is switched off for the same reason (the keyed tolerance and the derived margin never touch a
+    # carrier step: no resolved mode)
+    exact = {**kw, "options": SolverOptions(branch_weight_min=1e-9, tomography_dropped_weight_max=0.0)}
     a = run(GPI2, fx.device, 100, level="JOINT_EXACT", **exact)  # type: ignore[arg-type]
     b = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)  # type: ignore[arg-type]
     assert a.diagnostics.level == "JOINT_EXACT" and b.diagnostics.level == "GATE_LOCAL"
@@ -123,6 +125,9 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     assert s.method == "sesolve" and s.n_traj == 1 and not s.cache_hit and s.engine_runs == s.n_branches
     assert s.route == "propagator" and all(st.route == "propagator" for st in gl.steps)
     assert gl.idle_cache_hits == 0, "the first idle of a fresh cache computes both ions' channels"
+    # the floor at 1e-9 drops a few 1e-10 of weight (reported as 2w); no tail rule here, no keyed tolerance on a carrier step
+    assert 0.0 <= s.branch_error_bound < 1e-8 and s.tolerance_change == 0.0 and s.tolerances == (1e-10, 1e-8)
+    assert gl.branch_error_total < 1e-8 and gl.tolerance_change_total == 0.0 and s.element_error == {}
     assert s.tp_residual < 1e-10 and s.cp_residual < 1e-10, "Section 9.17: both residuals reported and tiny"
     assert s.summary is not None
     eps = sur.table.crosstalk[(0, 1)].value
@@ -136,7 +141,7 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     # nearest sidebands (Section 5.2), a few 1e-5: JOINT_EXACT freezes the same modes, so the two registers agree far inside it
     assert gl.residual_bound_total == 0.0 and gl.dropped_crosstalk_total < 1e-6
     assert 1e-6 < gl.frozen_excitation_total < 1e-4 and gl.discrepancy_bound == pytest.approx(
-        gl.frozen_excitation_total
+        gl.frozen_excitation_total + gl.branch_error_total
     )
     assert any("GATE_LOCAL" in x for x in b.diagnostics.approximations)
     assert (
@@ -175,6 +180,24 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
     s = ms[0]
     assert s.resolved == (2, 3) and s.space_dims[:2] == (2, 2) and s.n_inputs == 16 and s.n_branches >= 1
     assert s.tp_residual < 1e-10 and s.cp_residual < 1e-8
+    # the Tier 2 relaxations of the performance pass 2026-09-09, each with its reported term in the bound
+    assert s.route == "isometry" and s.tolerances == (1e-8, 1e-6) and s.tolerance_change > 0.0
+    assert s.branch_error_bound >= 0.0 and s.branch_error_bound <= 2.0 * 1e-3 / 4 + 2.0 * 1e-3
+    assert set(s.element_error) == {2, 3} and all(0.0 <= v <= 1e-8 for v in s.element_error.values())
+    assert (
+        gl.tolerance_change_total == pytest.approx(s.tolerance_change)
+        and gl.branch_error_total >= s.branch_error_bound
+    )
+    assert gl.discrepancy_bound == pytest.approx(
+        gl.residual_bound_total
+        + gl.frozen_excitation_total
+        + gl.dropped_crosstalk_total
+        + gl.branch_error_total
+        + gl.tolerance_change_total
+    )
+    # the derived margin: caps two to three levels below the fixture's, at the declared element tolerance 1e-8
+    assert all(d <= 11 for d in s.space_dims[2:]), s.space_dims
+    assert any("derived for interior elements exact to 1e-08" in n for n in s.notes)
     assert (
         s.summary is not None
         and 0.0 < s.summary.average_gate_infidelity < b.diagnostics.intrinsic_budget["total"]

@@ -70,6 +70,11 @@ class ModeTruncation:
     """d = n_max + 1 Fock levels."""
     expected_n_range: tuple[int, int]
     eta_max: float
+    element_tol: float | None = None
+    """The interior-element tolerance this cap was DERIVED for (``hilbert.operators.required_margin`` with ``element_tol``;
+    performance pass 2026-09-09): the rule (ii) oracle then asserts the exponential's elements over the declared range against
+    the analytic ones to this number at every margin, instead of to the Section 5.1.1 table's value at margins of four and
+    more. None is the fixture cap of every JOINT_EXACT space."""
 
     def __post_init__(self) -> None:
         if self.d < 2:
@@ -81,6 +86,8 @@ class ModeTruncation:
             raise ValueError(f"expected occupation up to n = {hi} exceeds n_max = {self.d - 1}")
         if self.eta_max < 0.0:
             raise ValueError("eta_max is a magnitude")
+        if self.element_tol is not None and self.element_tol <= 0.0:
+            raise ValueError("element_tol is a positive tolerance")
 
     @property
     def n_max(self) -> int:
@@ -100,7 +107,7 @@ class ModeTruncation:
         """The same declaration with ``add`` more Fock levels (Section 5.5 adaptive growth)."""
         if add <= 0:
             raise ValueError("grow by a positive number of levels")
-        return ModeTruncation(self.mode, self.d + add, self.expected_n_range, self.eta_max)
+        return ModeTruncation(self.mode, self.d + add, self.expected_n_range, self.eta_max, self.element_tol)
 
 
 @dataclass(frozen=True)
@@ -391,8 +398,11 @@ class HilbertSpace:
 
         def build() -> qt.Qobj:
             # rule (ii) of Section 5.1.1: assert the interior elements against the analytic oracle to the table's tolerance;
-            # a margin below the table's smallest row (4 levels) is not tabulated and is left to the boundary monitor
-            if tr.margin_levels >= ORACLE_MIN_MARGIN:
+            # a margin below the table's smallest row (4 levels) is not tabulated and is left to the boundary monitor, unless
+            # the cap was derived for a declared element tolerance, which is then asserted at any margin
+            if tr.element_tol is not None:
+                oracle_check(tr.d, 1j * eta, tr.expected_n_range[1], tr.element_tol)
+            elif tr.margin_levels >= ORACLE_MIN_MARGIN:
                 oracle_check(
                     tr.d, 1j * eta, tr.expected_n_range[1], interior_tolerance(tr.margin_levels, eta)
                 )
@@ -409,6 +419,8 @@ class HilbertSpace:
         ana = displacement_matrix_analytic(tr.d, 1j * eta)
         hi = tr.expected_n_range[1] + 1
         diff = float(np.max(np.abs(exp_[:hi, :hi] - ana[:hi, :hi])))
+        if tr.element_tol is not None:
+            return True, diff, tr.element_tol
         asserted = tr.margin_levels >= ORACLE_MIN_MARGIN
         return asserted, diff, interior_tolerance(max(tr.margin_levels, 1), eta)
 

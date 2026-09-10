@@ -23,6 +23,7 @@ Conventions restated here (Section 13 rows "Ladder operators", "Rabi frequency";
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Sequence
 from typing import Final
@@ -160,8 +161,27 @@ def interior_tolerance(margin_levels: int, eta: float) -> float:
     return max(val, ORACLE_FLOOR)
 
 
-def required_margin(eta: float) -> int:
-    """Levels above the populated range the Section 5.1.1 table requires: 6 at |eta| <= 0.1, 10 at 0.5, 20 at 1.0, interpolated."""
+def required_margin(
+    eta: float, *, tail: float | None = None, n_hi: int = 0, element_tol: float | None = None
+) -> int:
+    """Levels above the populated range a resolved mode's cap keeps (Section 5.1.1 rule ii).
+
+    Without keywords, the fixture the plan stores: 6 at |eta| <= 0.1, 10 at 0.5, 20 at 1.0, interpolated (the margins at which
+    the table's interior elements reach the 10^-12 floor); this is what every JOINT_EXACT run and every Section 9 validation
+    case uses. With ``element_tol`` and/or ``tail`` the margin is DERIVED for the declared accuracy instead (performance pass
+    2026-09-09, the GATE_LOCAL step spaces): the smallest margin m at which (a) the interior elements of the matrix exponential
+    over the block n, n' <= ``n_hi`` agree with the analytic elements to ``element_tol`` (measured directly, since the error at a
+    fixed margin grows with the populated range: 9e-11 at n_hi = 2 but 6e-8 at n_hi = 20 for margin 3 at eta = 0.1) and (b) one
+    displacement from the top populated level ``n_hi`` leaks less than ``tail`` past the cap (``displacement_leakage``, the
+    analytic elements); never more than the fixture, which is the 10^-12 rule and always sufficient. Memoized: the engine's
+    margin check asks once per segment."""
+    fixture = _fixture_margin(eta)
+    if tail is None and element_tol is None:
+        return fixture
+    return _derived_margin(round(abs(float(eta)), 9), tail, int(n_hi), element_tol, fixture)
+
+
+def _fixture_margin(eta: float) -> int:
     e = abs(eta)
     xs = [p[0] for p in MARGIN_POINTS]
     ys = [float(p[1]) for p in MARGIN_POINTS]
@@ -172,6 +192,50 @@ def required_margin(eta: float) -> int:
         slope = (ys[-1] - ys[-2]) / (xs[-1] - xs[-2])
         return int(math.ceil(ys[-1] + slope * (e - xs[-1])))
     return int(math.ceil(float(np.interp(e, xs, ys)) - 1e-9))
+
+
+@functools.lru_cache(maxsize=4096)
+def _derived_margin(
+    eta: float, tail: float | None, n_hi: int, element_tol: float | None, fixture: int
+) -> int:
+    if n_hi < 0:
+        raise ValueError("the populated range is non-negative")
+    if tail is not None and not 0.0 < tail < 1.0:
+        raise ValueError("tail is a population fraction in (0, 1)")
+    if element_tol is not None and element_tol <= 0.0:
+        raise ValueError("element_tol is a positive tolerance")
+    for m in range(1, fixture):
+        if tail is not None and displacement_leakage(eta, n_hi, m) >= tail:
+            continue
+        if element_tol is not None and interior_element_error(n_hi + 1 + m, eta, n_hi) > element_tol:
+            continue
+        return m
+    return fixture
+
+
+def displacement_leakage(eta: float, n_hi: int, margin: int, *, terms: int = 60) -> float:
+    """sum_{dn > margin} |<n_hi + dn|D(i eta)|n_hi>|^2: the population one displacement moves from the top populated level to
+    more than ``margin`` levels above it, from the analytic elements (Section 5.1.1 rule iii); what the derived margin holds
+    below the boundary threshold."""
+    if n_hi < 0 or margin < 0:
+        raise ValueError("n_hi and margin are non-negative")
+    alpha = 1j * abs(float(eta))
+    return float(
+        sum(
+            abs(displacement_element_analytic(n_hi + dn, n_hi, alpha)) ** 2
+            for dn in range(margin + 1, margin + 1 + terms)
+        )
+    )
+
+
+def interior_element_error(d: int, eta: float, n_hi: int) -> float:
+    """max |D_expm - D_analytic| over the block n, n' <= n_hi in a space of ``d`` levels at alpha = i eta: what rule (ii)'s oracle
+    measures, evaluated directly (the table of Section 5.1.1 tabulates it for the block below d/2 only)."""
+    if not 0 <= n_hi < d:
+        raise ValueError("the populated range must lie inside the truncated space")
+    exp_ = displacement_operator(d, 1j * abs(float(eta))).full()
+    ana = displacement_matrix_analytic(d, 1j * abs(float(eta)))
+    return float(np.max(np.abs(exp_[: n_hi + 1, : n_hi + 1] - ana[: n_hi + 1, : n_hi + 1])))
 
 
 # ---- Rabi table and Debye-Waller factors (Section 4.3.1) -----------------------------------------------------------------
@@ -327,8 +391,10 @@ __all__ = [
     "debye_waller_rms_fraction",
     "displaced_thermal_populations",
     "displacement_element_analytic",
+    "displacement_leakage",
     "displacement_matrix_analytic",
     "displacement_operator",
+    "interior_element_error",
     "interior_tolerance",
     "oracle_check",
     "populated_range",

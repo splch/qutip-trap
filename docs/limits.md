@@ -41,7 +41,13 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
 - **Fock truncation.** Every resolved mode has a cap sized from the pulse's closed-form coherent excursion at the 10⁻⁶ tail
   plus the Section 5.1.1 margin; the boundary population is monitored after every pulse and a cap that loses its margin is
   raised and the run repeated (`Diagnostics.boundary_population`, `margin_reached`, `cap_growth`). The displacement
-  operators are exact matrix exponentials asserted against the analytic Laguerre elements over the populated range.
+  operators are exact matrix exponentials asserted against the analytic Laguerre elements over the populated range. A
+  JOINT_EXACT run keeps the plan's fixture margin (6 levels at |η| ≤ 0.1, 10 at 0.5, 20 at 1: the exponential's interior
+  elements exact to 10⁻¹²); a GATE_LOCAL step space derives its margin instead (`SolverOptions.margin_element_tol`, 10⁻⁵ of
+  the map accuracy unless set): the smallest margin at which the interior elements over the populated range are exact to that
+  tolerance, measured directly, and one displacement from the top populated level leaks less than a tenth of the boundary
+  threshold past the cap, never more than the fixture. The engine's margin check reads the same rule, the oracle asserts the
+  declared tolerance at construction, and the step reports the measured element error (`GateLocalStep.element_error`).
 - **Mode classes.** A mode is *resolved* (in the joint space), *frozen* (removed from the space, entering through per-shot
   Debye-Waller factors, with its off-resonant excitation bound and its entangling-angle loss χ_m reported) or *dropped*
   (contribution below 10⁻⁶ in |α|²(2n̄ + 1) and 10⁻⁴ rad in |χ|, the summed dropped contribution reported), by the
@@ -68,7 +74,16 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
   propagates every one of the Π d_i² input states and fits the Choi matrix by least squares, the reference route that
   `SolverOptions(tomography_isometry=False)` forces everywhere. The routes agree to the solver tolerance. One thing does
   change: the truncation monitor of Section 5.5 runs on the propagated basis kets, so a superposition input's boundary
-  population is bounded by Π d_i times the maximum it reports (Cauchy-Schwarz), which the step's notes say.
+  population is bounded by Π d_i times the maximum it reports (Cauchy-Schwarz), which the step's notes say. Two declared
+  relaxations keyed to the map accuracy ε_map (default 10⁻³) each add a reported term to `discrepancy_bound`: the tail rule
+  drops the lightest motional branches of a step while the total dropped weight stays inside `tomography_dropped_weight_max`
+  (ε_map/4 unless set; 0 keeps every branch above `branch_weight_min`), and the channel of a convex mixture changes by at most
+  2w in diamond norm when weight w is dropped, which is the term (`GateLocalStep.branch_error_bound`); a unitary step with
+  resolved modes integrates at atol = 10⁻⁵ ε_map and rtol = 10⁻³ ε_map instead of the engine's 10⁻¹⁰ and 10⁻⁸ when the
+  caller left those at their defaults (`tomography_tolerance_keyed`), and the change its channel makes when the dominant
+  branch is re-integrated ten times tighter, d times the trace norm of the Choi difference, is the Section 5.5 convergence
+  statement for it and the term (`GateLocalStep.tolerance_change`). Dissipative steps and internal-state-only steps are never
+  loosened, and `SolverOptions(tomography_dropped_weight_max=0.0, tomography_tolerance_keyed=False)` is the reference.
 - **Scattering at d = 2.** A run on two-level register factors reports the photon-scattering probabilities of every pulse as
   estimates in the intrinsic budget (Raman, leakage, Rayleigh); `internal_levels > 2` and `SolverOptions.scattering_channels`
   simulate them as collapse operators with recoil and read the leaked levels out by their manifold's class.

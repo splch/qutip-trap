@@ -1183,8 +1183,10 @@ def run(
             f"GATE_LOCAL: {len([s for s in gl_report.steps if s.kind == 'gate'])} gate steps and "
             f"{len([s for s in gl_report.steps if s.kind == 'idle'])} idle steps through exact gate-local spaces (largest dimension "
             f"{gl_report.largest_local_dimension}); spin-motion and mode-mode correlations traced out between steps, the residual "
-            f"displacement bound {gl_report.residual_bound_total:.2e}, the frozen excitation bound {gl_report.frozen_excitation_total:.2e} "
-            f"and the dropped crosstalk {gl_report.dropped_crosstalk_total:.2e} reported (Section 5.4)"
+            f"displacement bound {gl_report.residual_bound_total:.2e}, the frozen excitation bound {gl_report.frozen_excitation_total:.2e}, "
+            f"the dropped crosstalk {gl_report.dropped_crosstalk_total:.2e}, the dropped motional branches' bound "
+            f"{gl_report.branch_error_total:.2e} and the keyed tolerance's convergence change {gl_report.tolerance_change_total:.2e} "
+            "reported (Section 5.4)"
         )
     cap_growth = {
         t.mode: t.d - space_initial.truncation(t.mode).d

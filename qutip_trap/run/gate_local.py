@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -46,11 +46,13 @@ import qutip as qt
 
 from qutip_trap.control.schedule import GateTarget, PlayedGate, Schedule
 from qutip_trap.dynamics.engine import (
+    MARGIN_LEAKAGE_FRACTION,
     ChannelSummary,
     JointExactEngine,
     MotionalModel,
     SeedSpec,
     SolverOptions,
+    required_margin_under,
 )
 from qutip_trap.dynamics.tomography import (
     TomographyRecord,
@@ -64,7 +66,7 @@ from qutip_trap.dynamics.tomography import (
     local_ideal,
 )
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.hilbert.operators import required_margin
+from qutip_trap.hilbert.operators import displacement_leakage
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.run.space import (
     ModeClass3,
@@ -406,7 +408,10 @@ def step_space(
             n_tracked = _populated_of(tracked, options.boundary_population_max)
             excursion = int(math.ceil(c.radius**2 + 2.0 * c.radius)) if c.radius > 0.0 else 0
             n_hi = max(n_hi, n_tracked + excursion)
-        d_want = max(tr.d, n_hi + 1 + required_margin(c.eta_max), d_min)
+        # the margin above the populated range: the Section 5.1.1 fixture, or the margin derived for the declared element
+        # tolerance (SolverOptions.margin_element_tol; the engine's margin check reads the same rule)
+        margin = required_margin_under(c.eta_max, options, n_hi)
+        d_want = max(n_hi + 1 + margin, d_min)
         d = min(d_want, d_ceiling)
         if caps is not None and m in caps:
             d = int(caps[m])
@@ -416,11 +421,21 @@ def step_space(
                 f"mode_dimension_max = {d_ceiling} clamps it to d = {d} (declared range up to n = {min(n_hi, d - 1)}); the "
                 "Section 5.1.1 oracle check and the Section 5.5 margin check are evaluated over the clamped range"
             )
-        resolved.append(ModeTruncation(m, d, (0, min(n_hi, d - 1)), tr.eta_max))
+        resolved.append(
+            ModeTruncation(m, d, (0, min(n_hi, d - 1)), tr.eta_max, element_tol=options.margin_element_tol)
+        )
         notes.append(
             f"mode {m}: resolved at d = {d} (|alpha|^2(2n+1) = {c.alpha2_weighted:.2e}, |chi| = {c.chi_rad:.3e} rad, radius "
             f"{c.radius:.3f}, nbar {nbar_now[m]:.3g})"
         )
+        if options.margin_element_tol is not None:
+            leak = displacement_leakage(c.eta_max, n_hi, d - 1 - min(n_hi, d - 1))
+            notes.append(
+                f"mode {m}: margin {d - 1 - min(n_hi, d - 1)} above n = {min(n_hi, d - 1)} derived for interior elements exact "
+                f"to {options.margin_element_tol:.0e} (the Section 5.1.1 fixture is {required_margin_under(c.eta_max, SolverOptions(), n_hi)}); "
+                f"one displacement from n = {min(n_hi, d - 1)} leaks {leak:.1e} past the cap, below "
+                f"{tail * MARGIN_LEAKAGE_FRACTION:.0e}"
+            )
     frozen = tuple(m for m in range(n_modes) if classes[m] != "resolved")
     space = HilbertSpace(
         tuple(int(ion_dims[i]) for i in ions_local), tuple(resolved), None, frozen, ions=ions_local
@@ -482,6 +497,19 @@ class GateLocalStep:
     """How the step's channel was extracted (``TomographyRecord.route``; performance pass 2026-09-09): "propagator" on an
     internal-state-only space, "isometry" on a unitary step with resolved modes, "states" on a dissipative step. An idle step
     reports the route of its one-ion channels ("propagator" when they came from the idle cache too)."""
+    branch_error_bound: float = 0.0
+    """2 x the dropped motional-branch weight of the step's tomography: the diamond-norm bound on the channel error of the
+    branch floor and the tail rule (``SolverOptions.tomography_dropped_weight_max``); summed into ``discrepancy_bound``."""
+    tolerance_change: float = 0.0
+    """The change the step's channel makes when its dominant branch is re-integrated ten times tighter than the map-accuracy-keyed
+    tolerance (``SolverOptions.tomography_tolerance_keyed``; d x trace norm of the Choi change, weighted by the branch's share);
+    0 where the tolerance was not keyed. Summed into ``discrepancy_bound``."""
+    tolerances: tuple[float, float] = (SolverOptions.atol, SolverOptions.rtol)
+    """(atol, rtol) the step's engine runs integrated at."""
+    element_error: dict[int, float] = field(default_factory=dict)
+    """Per resolved mode, the measured maximum difference between the exponential's interior elements and the analytic ones over
+    the declared range (the Section 5.1.1 oracle), at the eta the cap was derived for; the number ``SolverOptions.margin_element_tol``
+    bounds when the margin is derived."""
 
 
 @dataclass(frozen=True)
@@ -512,12 +540,25 @@ class GateLocalReport:
     says so), so a run whose every step is a carrier reports 1 however many workers were configured."""
     idle_cache_hits: int = 0
     """One-ion idle channels served from the cache over every sample and idle step (performance pass 2026-09-09)."""
+    branch_error_total: float = 0.0
+    """sum over the gate steps of ``GateLocalStep.branch_error_bound`` (the first sample): the diamond-norm bound of the dropped
+    motional branches (Section 5.4; performance pass 2026-09-09)."""
+    tolerance_change_total: float = 0.0
+    """sum over the gate steps of ``GateLocalStep.tolerance_change`` (the first sample): the measured convergence change of the
+    map-accuracy-keyed tolerance (Section 5.5; performance pass 2026-09-09)."""
 
     @property
     def discrepancy_bound(self) -> float:
         """The bound a JOINT_EXACT comparison of the final probabilities is held to (Section 9.8): the residual displacement,
-        the frozen spectators' off-resonant excitation and the dropped crosstalk, summed over the steps."""
-        return self.residual_bound_total + self.frozen_excitation_total + self.dropped_crosstalk_total
+        the frozen spectators' off-resonant excitation, the dropped crosstalk, the dropped motional branches' 2w and the keyed
+        tolerance's measured change, summed over the steps."""
+        return (
+            self.residual_bound_total
+            + self.frozen_excitation_total
+            + self.dropped_crosstalk_total
+            + self.branch_error_total
+            + self.tolerance_change_total
+        )
 
 
 # ---- the executor ---------------------------------------------------------------------------------------------------------------
@@ -817,6 +858,14 @@ def _gate_step(
     ideal = local_ideal(space.ion_labels, space.ion_dims, step.targets)
     summary = rec.summary(ideal)
     notes = list(sel.notes) + list(rec.notes) + list(guard)
+    # the Section 5.1.1 oracle's measured element error per resolved mode, at the eta the cap was derived for (a declared
+    # element tolerance asserts it at construction; the fixture reports it)
+    element_error: dict[int, float] = {}
+    for tr in rec.space.resolved:
+        c_m = sel.contribution.get(tr.mode)
+        eta_m = min(c_m.eta_max, tr.eta_max) if c_m is not None else tr.eta_max
+        _asserted, diff, _tol = rec.space.oracle_status(tr.mode, eta_m)
+        element_error[tr.mode] = float(diff)
     if ideal is None:
         notes.append(
             "no GateTarget covers this step's pulses: the channel summary has no ideal (infidelities NaN)"
@@ -855,6 +904,10 @@ def _gate_step(
         # a cache hit ran nothing, so it used no worker (M9b audit B10)
         workers=1 if hit else rec.workers,
         route=rec.route,
+        branch_error_bound=float(rec.branch_error_bound),
+        tolerance_change=float(rec.tolerance_change or 0.0),
+        tolerances=rec.tolerances,
+        element_error=element_error,
     )
     return new_model, report, (0 if hit else rec.engine_runs), hit, rec.space
 
@@ -877,6 +930,10 @@ def evolve_gate_local(
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
     steps = gate_steps(sched)
+    # the step spaces' margin is derived for the map accuracy unless the caller declared an element tolerance (Section 5.4;
+    # performance pass 2026-09-09): the cap rule, the tomography's engine and the extraction cache all read the same options
+    if options.margin_element_tol is None:
+        options = replace(options, margin_element_tol=options.map_accuracy * 1e-5)
     # one engine for the whole walk: its propagator cache (Section 11.3 item 5) outlives the step that filled it
     engine = setup.engine()
     heating = device.noise.heating_rates_quanta_per_s(device) if setup.device_channels else {}
@@ -895,6 +952,8 @@ def evolve_gate_local(
     bound_total = 0.0
     frozen_total = 0.0
     xt_total = 0.0
+    branch_total = 0.0
+    tolerance_total = 0.0
     notes: list[str] = []
     for s_idx, smp in enumerate(samples):
         if kind == "density_matrix":
@@ -929,6 +988,8 @@ def evolve_gate_local(
                     bound_total += rep.residual_bound
                     frozen_total += sum(v for v in rep.frozen_excitation.values() if math.isfinite(v))
                     xt_total += rep.dropped_crosstalk
+                    branch_total += rep.branch_error_bound
+                    tolerance_total += rep.tolerance_change
                     if rep.summary is not None:
                         summaries[rep.gate_id] = rep.summary
             if s_idx == 0:
@@ -956,6 +1017,8 @@ def evolve_gate_local(
         notes=tuple(notes),
         workers=workers_max,
         idle_cache_hits=idle_hits_total,
+        branch_error_total=branch_total,
+        tolerance_change_total=tolerance_total,
     )
     return out_states, report, models
 
