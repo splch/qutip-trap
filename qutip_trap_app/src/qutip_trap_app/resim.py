@@ -776,9 +776,10 @@ def process_matrix(
     *,
     progress: Callable[[str, float | None, str], None] | None = None,
 ) -> tuple[Record, ProcessMatrixRecord]:
-    """Process tomography of one step from its recorded initial motional state (Section 5.4 (a)): every product input of the
-    register propagated through the step's pulses by the engine, the Choi matrix by least squares, projected onto CP and TP,
-    summarized against the step's ideal unitary (Section 6.8)."""
+    """Process tomography of one step from its recorded initial motional state (Section 5.4 (a)): the step's channel on the
+    register's product inputs (from the propagated internal basis when the step is unitary, every input propagated and the Choi
+    matrix fit by least squares otherwise; ``TomographyRecord.route``), projected onto CP and TP, summarized against the step's
+    ideal unitary (Section 6.8)."""
     from qutip_trap_app.viewmodel.circuit import embed_operator
 
     key = process_matrix_key(step_index, sample_index, branch)

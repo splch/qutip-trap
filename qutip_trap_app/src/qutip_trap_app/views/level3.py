@@ -562,7 +562,7 @@ def Level3Page(
                 icon=ft.Icons.GRID_4X4,
                 on_click=lambda e: session.submit_tomography(key, step, sample, branch),
                 disabled=tomo_running,
-                tooltip="every product input of the register through this step from its recorded motional state (16 inputs for two qubits), least squares, the CP/TP projection; a background job (Section 5.4)",
+                tooltip="the channel of this step on the register's product inputs (16 for two qubits) from its recorded motional state, read off the propagated internal basis when the step is unitary, the CP/TP projection; a background job (Section 5.4)",
                 key="compute-process-matrix",
             )
         ]

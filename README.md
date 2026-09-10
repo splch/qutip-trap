@@ -656,8 +656,17 @@ algebra is memoized behind one shared `AtomicStructure` per (species, field) (`s
 the 6.6 s the intrinsic budget, the played chain and the scattering channels spent recomputing it per call in a two-ion Bell
 run; (4) the steady states and spectra of the Bloch layer bypass QuTiP's options context, whose entry and exit rebuild every
 dispatch table (5 s of a 19 s surrogate calibration), bitwise identical; (5) the photon-record sampler classifies its cells in one
-pass and draws their Poisson counts as one vector, bitwise identical over 6000 records. (6) the device digest and the derived Raman drives are memoized per device instance and the builder's `QobjEvo` skips QuTiP's merge pass, which a GATE_LOCAL tomography (tens of thousands of engine runs on one device) paid for on every run: the four-qubit GHZ run 1137 -> 856 s, its in-process part 304 -> 67 s. End to end on the two-ion example
-device: the surrogate table 19 -> 6 s, `run()` of the Bell circuit with 2000 shots 16 -> 3.5 s. Also fixed: `rhs_evaluations`
+pass and draws their Poisson counts as one vector, bitwise identical over 6000 records. (6) the device digest and the derived Raman drives are memoized per device instance and the builder's `QobjEvo` skips QuTiP's merge pass, which a GATE_LOCAL tomography (tens of thousands of engine runs on one device) paid for on every run: the four-qubit GHZ run 1137 -> 856 s, its in-process part 304 -> 67 s. (7) The GATE_LOCAL tomography of a unitary step
+propagates the prod_i d_i internal basis kets per motional branch and reads the channel off the Stinespring isometry they form
+(`dynamics.tomography.choi_from_isometry`; the route is named in `TomographyRecord.route`), and on an internal-state-only space takes
+the cached segment propagator itself as the branch's Kraus operator (`JointExactEngine.propagator`, no state propagated), so the
+four-qubit GHZ circuit's entangling steps cost 164 instead of 656 engine runs and its carrier steps 41 propagators instead of 656
+runs: 856 -> 205 s with the same register fidelity; the register update sum_a K_a rho K_a^dag is one superoperator product (19x at
+ten qubits), one engine serves the whole walk, and the one-ion idle channels are cached (60 of the GHZ circuit's 64 came from the
+cache). `SolverOptions(tomography_isometry=False)` is the sixteen-input reference, which the dissipative steps keep anyway (ledger
+`anchor.perf.tomography_isometry`, `validation/scripts/bench_tomography.py`). End to end on the two-ion example
+device: the surrogate table 19 -> 6 s, `run()` of the Bell circuit with 2000 shots 16 -> 3.5 s, the same circuit through
+`level="GATE_LOCAL"` 17 -> 5 s. Also fixed: `rhs_evaluations`
 on `mesolve` segments counted twice per evaluation (the Liouvillian's spre and spost elements), and the Section 5.3 step-density
 test now checks its band on the Schroedinger-picture integration it was measured in.
 

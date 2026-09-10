@@ -225,6 +225,6 @@ rec = eng2.tomography(
 solves = sum(r.propagator_solves for r in rec.reports)
 hits = sum(r.propagator_cache_hits for r in rec.reports)
 print(
-    f"  tomography of the carrier step: {rec.branches} frozen-mode branches x 16 inputs = {rec.engine_runs} engine runs, {solves} propagator integrations, {hits} cache hits; tp residual {rec.tp_residual:.1e}, cp residual {rec.cp_residual:.1e}"
+    f"  tomography of the carrier step: {rec.branches} frozen-mode branches, {len(rec.labels)} inputs, {rec.engine_runs} engine runs ({rec.route} route), {solves} propagator integrations, {hits} cache hits; tp residual {rec.tp_residual:.1e}, cp residual {rec.cp_residual:.1e}"
 )
 print("\ndone")

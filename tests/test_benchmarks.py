@@ -187,7 +187,8 @@ def test_two_qubit_rb_and_the_entangling_channel(two_ion) -> None:  # type: igno
     b = rb.budget
     assert b is not None and "ms[0,1]" in b.channels
     ms = b.channels["ms[0,1]"].steps[0]
-    assert ms.local_dimension > 100 and ms.ions == (0, 1) and ms.engine_runs >= 16
+    # the isometry route: four basis columns per motional branch (the sixteen inputs follow by linearity)
+    assert ms.local_dimension > 100 and ms.ions == (0, 1) and ms.engine_runs >= 4
     assert 1e-5 < ms.summary.average_gate_infidelity < 1e-3
     assert ms.summary.depolarizing_rate == pytest.approx(1.25 * ms.summary.average_gate_infidelity, rel=1e-6)
     assert 0.2 * b.predicted["r_channel"] < r < 5.0 * b.predicted["r_channel"] + 3.0 * sr, (r, b.predicted)

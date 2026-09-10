@@ -25,7 +25,13 @@ The approximation is what Section 5.4 states: spin-motion and mode-mode correlat
 carried to the next; every step reports the bound Section 9.8 compares against, sum_m |alpha_m|^2 (2 nbar_m + 1) over its
 resolved modes, and the comparison itself is the test suite's. Extractions are cached by (device, step fingerprint, local space,
 motional-model fingerprint, noise sample, solver options): the same gate on the same motional state under the same sample costs
-nothing twice, and the cost of a fresh one is the prod d_i^2 x branches x n_traj engine runs of Section 11.2.
+nothing twice. The cost of a fresh one (performance pass 2026-09-09; ``SolverOptions.tomography_isometry``) is prod_i d_i x
+branches engine runs when the step is unitary (the channel read off the propagated internal basis, ``TomographyRecord.route``),
+one propagator per branch on an internal-state-only space (every carrier step), and the prod_i d_i^2 x branches x n_traj runs of
+Section 11.2 only on a dissipative step. The one-ion idle channels are cached by (device, ion, duration, engine setup, sample,
+options) and, when the sample carries a fast trajectory, the absolute window: an idle has no pulse, so no Debye-Waller factor and no
+motional coupling enters its one-ion Hamiltonian, and the same dead time between two gates is the same channel wherever it sits. One
+JOINT_EXACT engine serves the whole walk, so its propagator cache outlives the step that filled it.
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ from qutip_trap.dynamics.engine import (
 )
 from qutip_trap.dynamics.tomography import (
     TomographyRecord,
+    TomographyRoute,
     apply_kraus_dm,
     apply_kraus_ket,
     fingerprint_model,
@@ -229,12 +236,18 @@ class Register:
         fac = [int(f) for f in factors]
         rest = [f for f in range(n) if f not in fac]
         d_loc = int(np.prod([self.dims[f] for f in fac]))
-        d_rest = int(np.prod(self.dims)) // d_loc
         if self.dm is not None:
+            # one einsum over the 2n-axis VIEW of the density matrix: a traced factor shares its row and column letter, a kept
+            # factor keeps both, so only the diagonal of the traced part is read (the transpose-then-reshape it replaces copied
+            # the whole register, 268 MB at twelve qubits, to trace 16 k of its elements; performance pass 2026-09-09)
+            letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            if 2 * n > len(letters):
+                raise ValueError(f"a register of {n} factors exceeds the einsum alphabet")
+            row = [letters[f] for f in range(n)]
+            col = [letters[f] if f in rest else letters[n + f] for f in range(n)]
+            kept = "".join(row[f] for f in fac) + "".join(col[f] for f in fac)
             arr = self.dm.reshape(list(self.dims) + list(self.dims))
-            perm = fac + rest + [n + f for f in fac] + [n + f for f in rest]
-            a = np.transpose(arr, perm).reshape(d_loc, d_rest, d_loc, d_rest)
-            return np.asarray(np.einsum("axbx->ab", a))
+            return np.asarray(np.einsum("".join(row) + "".join(col) + "->" + kept, arr).reshape(d_loc, d_loc))
         assert self.kets is not None
         out = np.zeros((d_loc, d_loc), dtype=complex)
         for k in self.kets:
@@ -465,6 +478,10 @@ class GateLocalStep:
     workers: int = 1
     """Processes this step's engine runs actually used (M9b audit B10): the tomography inputs spread over a parallel map, or
     the trajectories inside one engine run. 1 = in-process, which is every carrier step (no resolved mode in its space)."""
+    route: TomographyRoute = "states"
+    """How the step's channel was extracted (``TomographyRecord.route``; performance pass 2026-09-09): "propagator" on an
+    internal-state-only space, "isometry" on a unitary step with resolved modes, "states" on a dissipative step. An idle step
+    reports the route of its one-ion channels ("propagator" when they came from the idle cache too)."""
 
 
 @dataclass(frozen=True)
@@ -483,6 +500,7 @@ class GateLocalReport:
     engine_runs: int
     """Engine calls over every sample and step (cache misses only)."""
     cache_hits: int
+    """Gate steps whose extraction came from the cache."""
     summaries: dict[str, ChannelSummary]
     """Per gate step id (the first sample), the Section 6.8 channel summary."""
     motional_after: dict[str, dict[int, float]]
@@ -492,6 +510,8 @@ class GateLocalReport:
     """The largest number of processes any step of any sample actually used (M9b audit B10). The walk itself iterates its
     quasi-static samples serially (Section 11.3 item 9 asks for them to be spread too; that is unimplemented and this number
     says so), so a run whose every step is a carrier reports 1 however many workers were configured."""
+    idle_cache_hits: int = 0
+    """One-ion idle channels served from the cache over every sample and idle step (performance pass 2026-09-09)."""
 
     @property
     def discrepancy_bound(self) -> float:
@@ -582,6 +602,37 @@ def _cache_key(
     )
 
 
+def _idle_key(
+    device: Device,
+    ion: int,
+    ion_dim: int,
+    step: GateStep,
+    sample: NoiseSample,
+    seeds: SeedSpec,
+    options: SolverOptions,
+    setup: EngineSetup,
+) -> str:
+    """The cache key of one ion's idle channel. An idle schedule has no pulse, so nothing motional enters the one-ion
+    Hamiltonian (no Debye-Waller factor, no coupling) and the channel depends on the ion, the duration, the engine setup (its
+    qubit shifts and channels), the sample's offsets and the options alone; a sample with a fast trajectory (an OU grid indexed by
+    absolute time) makes the channel depend on WHERE the idle sits, so the absolute window joins the key exactly then. The
+    duration is rounded as the engine's propagator cache rounds its stored times (1e-15 s)."""
+    return canonical_digest(
+        (
+            "idle-channel",
+            device.hash(),
+            int(ion),
+            int(ion_dim),
+            round(float(step.duration_s), 15),
+            (step.t_start_s, step.t_end_s) if sample.ou_grids else None,
+            fingerprint_sample(sample),
+            fingerprint_options(options),
+            setup.fingerprint(),
+            seeds.root,
+        )
+    )
+
+
 def _purity_deficit(rho: np.ndarray) -> float:
     return float(max(1.0 - np.real(np.trace(rho @ rho)), 0.0))
 
@@ -599,30 +650,43 @@ def _idle_step(
     seeds: SeedSpec,
     options: SolverOptions,
     setup: EngineSetup,
+    engine: JointExactEngine,
     ion_dims: Sequence[int],
     heating_rates: Mapping[int, float],
     step_index: int,
-) -> tuple[MotionalModel, GateLocalStep, int]:
-    """Free evolution over an idle interval: per ion its exact one-qubit channel, per tracked mode its master equation, per
-    occupation-tracked mode nbar + ndot t (the heating that applies whether or not a mode is carried, Section 11.3 item 2)."""
+) -> tuple[MotionalModel, GateLocalStep, int, int]:
+    """Free evolution over an idle interval: per ion its exact one-qubit channel (from the idle cache when the same ion idled for
+    the same duration before, ``_idle_key``), per tracked mode its master equation, per occupation-tracked mode nbar + ndot t (the
+    heating that applies whether or not a mode is carried, Section 11.3 item 2). Returns (model, report, engine runs, cache hits)."""
     n_modes = len(device.crystal.modes)
     sched = Schedule((), ((step.t_start_s, step.t_end_s),), (), {}, t0_s=step.t_start_s)
     runs = 0
+    hits = 0
     workers = 1
     integrators: list[str] = []
     method = "sesolve"
+    route: TomographyRoute = "propagator"
     notes: list[str] = []
     for q, d in enumerate(ion_dims):
         space_q = HilbertSpace((int(d),), (), None, tuple(range(n_modes)), ions=(q,))
-        engine = setup.engine()
-        rec = engine.tomography(device, sched, space_q, model, sample, seeds, options)
-        runs += rec.engine_runs
-        workers = max(workers, rec.workers)
+        key = _idle_key(device, q, int(d), step, sample, seeds, options, setup)
+        rec = _TOMOGRAPHY_CACHE.get(key)
+        if rec is None:
+            rec = engine.tomography(device, sched, space_q, model, sample, seeds, options)
+            runs += rec.engine_runs
+            workers = max(workers, rec.workers)
+            if len(_TOMOGRAPHY_CACHE) >= _CACHE_MAX:
+                _TOMOGRAPHY_CACHE.clear()
+            _TOMOGRAPHY_CACHE[key] = rec
+        else:
+            hits += 1
         for i in rec.integrators:
             if i not in integrators:
                 integrators.append(i)
         if rec.method != "sesolve":
             method = rec.method
+        if rec.route != "propagator":
+            route = rec.route
         rngs = None
         if register.kind == "ensemble":
             rngs = [
@@ -648,7 +712,6 @@ def _idle_step(
             ions=(0,),
         )
         state = space_m.initial_state(qt.basis(int(ion_dims[0]), 0), states={m: rho_m}, thermal={})
-        engine = setup.engine()
         traces = engine.run_pulses(device, sched, state, space_m, sample, seeds, options)
         runs += 1
         rep = engine.last_report
@@ -680,7 +743,8 @@ def _idle_step(
         method=method,
         integrators=tuple(integrators),
         engine_runs=runs,
-        cache_hit=False,
+        # every one-ion channel came from the idle cache (the per-mode master-equation runs are never cached)
+        cache_hit=hits == len(ion_dims),
         cp_residual=0.0,
         tp_residual=0.0,
         summary=None,
@@ -694,8 +758,9 @@ def _idle_step(
         margin_reached={},
         notes=tuple(notes),
         workers=workers,
+        route=route,
     )
-    return new_model, report, runs
+    return new_model, report, runs, hits
 
 
 def _gate_step(
@@ -707,6 +772,7 @@ def _gate_step(
     seeds: SeedSpec,
     options: SolverOptions,
     setup: EngineSetup,
+    engine: JointExactEngine,
     ion_dims: Sequence[int],
     caps: Mapping[int, int] | None,
     step_index: int,
@@ -720,7 +786,6 @@ def _gate_step(
     rec = _TOMOGRAPHY_CACHE.get(key)
     hit = rec is not None
     if rec is None:
-        engine = setup.engine()
         rec = engine.tomography(device, tuple(step.pulses), space, model, sample, seeds, options)
         if len(_TOMOGRAPHY_CACHE) >= _CACHE_MAX:
             _TOMOGRAPHY_CACHE.clear()
@@ -789,6 +854,7 @@ def _gate_step(
         notes=tuple(dict.fromkeys(notes)),
         # a cache hit ran nothing, so it used no worker (M9b audit B10)
         workers=1 if hit else rec.workers,
+        route=rec.route,
     )
     return new_model, report, (0 if hit else rec.engine_runs), hit, rec.space
 
@@ -811,6 +877,8 @@ def evolve_gate_local(
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
     steps = gate_steps(sched)
+    # one engine for the whole walk: its propagator cache (Section 11.3 item 5) outlives the step that filled it
+    engine = setup.engine()
     heating = device.noise.heating_rates_quanta_per_s(device) if setup.device_channels else {}
     kind: RegisterKind = "density_matrix" if n_ions <= options.register_dm_max_qubits else "ensemble"
     populations = [np.real(np.diag(np.asarray(qt.ptrace(register0, [q]).full()))) for q in range(n_ions)]
@@ -821,6 +889,7 @@ def evolve_gate_local(
     motional_after: dict[str, dict[int, float]] = {}
     runs_total = 0
     hits_total = 0
+    idle_hits_total = 0
     workers_max = 1
     largest = 0
     bound_total = 0.0
@@ -842,14 +911,15 @@ def evolve_gate_local(
         )
         for k, step in enumerate(steps):
             if step.kind == "idle":
-                model, rep, runs = _idle_step(
-                    device, step, register, model, smp, seeds, options, setup, ion_dims, heating, k
+                model, rep, runs, idle_hits = _idle_step(
+                    device, step, register, model, smp, seeds, options, setup, engine, ion_dims, heating, k
                 )
                 runs_total += runs
+                idle_hits_total += idle_hits
                 workers_max = max(workers_max, rep.workers)
             else:
                 model, rep, runs, hit, space_used = _gate_step(
-                    device, step, register, model, smp, seeds, options, setup, ion_dims, caps, k
+                    device, step, register, model, smp, seeds, options, setup, engine, ion_dims, caps, k
                 )
                 runs_total += runs
                 hits_total += int(hit)
@@ -885,6 +955,7 @@ def evolve_gate_local(
         motional_after=motional_after,
         notes=tuple(notes),
         workers=workers_max,
+        idle_cache_hits=idle_hits_total,
     )
     return out_states, report, models
 

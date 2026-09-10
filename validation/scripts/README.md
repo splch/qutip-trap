@@ -239,3 +239,12 @@ Added on 2026-09-09 by the performance pass:
   dop853-vern9 figure), and the real two-ion 100 us single-loop pulse of `tests/m4_fixtures.py` through
   `JointExactEngine.run_pulses` with `SolverOptions.rotating_frame` off and on (5.12 against 1.00 s, populations equal to 3e-8,
   the <a_m> traces to 3.6e-10). `outputs/bench_rotating.out`; runs the package in about a minute; wall times are never compared.
+- `bench_tomography.py`: the three routes of the GATE_LOCAL tomography (`dynamics/tomography.py`, `TomographyRecord.route`)
+  side by side on the `tests/m4_fixtures.py` chain: a carrier pi/2 pulse on the internal-state-only space with three Fock
+  branches (the propagator route against the sixteen-input state route: 3 against 48 engine runs, Choi matrices equal to
+  3.4e-16), a 10 us single-loop entangling pulse with the x-COM resolved at d = 15 and the stretch mode a frozen coupled
+  branch (the isometry route against the state route: 12 against 48 runs, 0.52 against 1.95 s, Choi matrices to 3.2e-9, outputs
+  to 5.3e-9, reduced motional outputs to 8.7e-9, the raw Choi matrix completely positive to 7e-17 and trace preserving to
+  4.3e-8, Dykstra in 2 iterations instead of 12), and the ten-qubit register update as one superoperator product against the
+  per-operator einsum (0.010 against 0.148 s, difference 1.4e-18) with `Register.marginal` on the strided view (0.08 against
+  1.05 ms, identical). `outputs/bench_tomography.out`; runs the package in a few seconds; wall times are never compared.

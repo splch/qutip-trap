@@ -33,6 +33,7 @@ from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
+from qutip_trap.dynamics.tomography import cp_residual
 from qutip_trap.noise.sampling import quiet_sample
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
@@ -160,7 +161,8 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
 
 
 def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> None:  # type: ignore[no-untyped-def]
-    """The sixteen inputs of a two-ion step spread over the workers reproduce the in-process Choi matrix to 1e-10."""
+    """The four basis columns of a unitary two-ion step (the isometry route; the engine carries no channel here) spread over the
+    workers reproduce the in-process Choi matrix to 1e-10."""
     dev, _drives, sched, space, _table = heating_fixture
     model = MotionalModel(reduced={}, nbar={m: 0.0 for m in range(6)}, frozen=(0, 1, 4, 5))
     recs = {}
@@ -168,7 +170,11 @@ def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> 
         eng = JointExactEngine()
         opts = SolverOptions(map=mp, workers=min(N_WORKERS, 8))  # type: ignore[arg-type]
         recs[mp] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
-    assert recs["serial"].engine_runs == recs["parallel"].engine_runs == 16
+    assert recs["serial"].route == recs["parallel"].route == "isometry"
+    assert recs["serial"].engine_runs == recs["parallel"].engine_runs == 4
+    assert recs["serial"].workers == 1 and 1 <= recs["parallel"].workers <= 4, (
+        "four columns, at most four processes"
+    )
     assert np.max(np.abs(recs["serial"].choi - recs["parallel"].choi)) < 1e-10
     assert recs["serial"].tp_residual < 1e-10 and recs["parallel"].tp_residual < 1e-10
 
@@ -223,21 +229,65 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
 
 
 def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
-    """Sixteen inputs times the frozen modes' Fock branches: the engine integrates one propagator per branch (the Debye-Waller
-    factors differ between branches, so H differs) and serves the fifteen other inputs of each branch from the cache."""
+    """A carrier step on an internal-state-only space, times the frozen modes' Fock branches: the propagator route integrates one
+    propagator per branch (the Debye-Waller factors differ between branches, so H differs) and takes it AS the branch's Kraus
+    operator, no state propagated; the M9a reference (``tomography_isometry=False``) propagates the sixteen inputs through the
+    same cached propagators and reconstructs the same channel to round-off."""
     dev, sched, space = carrier_fixture
-    eng = JointExactEngine()
     model = MotionalModel(
         reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.05, 3: 0.05, 4: 0.0, 5: 0.0}, frozen=tuple(range(6))
     )
+    eng = JointExactEngine()
     rec = eng.tomography(
         dev, sched.pulses[0], space, model, quiet_sample(), SeedSpec(0), SolverOptions(branch_weight_min=0.02)
     )
-    assert rec.branches >= 2 and rec.engine_runs == 16 * rec.branches
-    solves = sum(r.propagator_solves for r in rec.reports)
-    hits = sum(r.propagator_cache_hits for r in rec.reports)
-    assert solves == rec.branches and hits == 16 * rec.branches - rec.branches
-    assert rec.tp_residual < 1e-10 and rec.cp_residual < 1e-10
+    assert rec.route == "propagator" and rec.branches >= 2 and rec.engine_runs == rec.branches
+    assert sum(r.propagator_solves for r in rec.reports) == rec.branches
+    assert sum(r.propagator_cache_hits for r in rec.reports) == 0
+    assert all(s.integrator.endswith("[propagator]") for r in rec.reports for s in r.segments if s.pulses)
+    assert rec.tp_residual < 1e-10 and rec.cp_residual < 1e-10 and cp_residual(rec.choi_raw) < 1e-13
+    assert rec.n_traj == 1 and rec.method == "sesolve" and rec.workers == 1 and rec.motional_out == {}
+    ref_engine = JointExactEngine()
+    ref = ref_engine.tomography(
+        dev,
+        sched.pulses[0],
+        space,
+        model,
+        quiet_sample(),
+        SeedSpec(0),
+        SolverOptions(branch_weight_min=0.02, tomography_isometry=False),
+    )
+    assert ref.route == "states" and ref.branches == rec.branches and ref.engine_runs == 16 * ref.branches
+    assert sum(r.propagator_solves for r in ref.reports) == ref.branches
+    assert sum(r.propagator_cache_hits for r in ref.reports) == 16 * ref.branches - ref.branches
+    assert np.max(np.abs(rec.choi - ref.choi)) < 1e-12
+    assert max(np.max(np.abs(a - b)) for a, b in zip(rec.outputs, ref.outputs)) < 1e-12
+    # the propagator itself: U applied to an input reproduces the engine's final ket from the same cached propagator
+    u, rep = eng.propagator(
+        dev, sched, space, quiet_sample(), SeedSpec(0), SolverOptions(), motional_model=model
+    )
+    assert u.shape == (4, 4) and np.max(np.abs(u.conj().T @ u - np.eye(4))) < 1e-9
+    assert rep.propagator_solves + rep.propagator_cache_hits == 1 and rep.method == "sesolve"
+    st = space.initial_state([1, 0])
+    tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions())
+    assert tr.final.joint is not None
+    assert (
+        np.max(
+            np.abs(
+                u @ np.asarray(st.joint.full()).reshape(-1) - np.asarray(tr.final.joint.full()).reshape(-1)
+            )
+        )
+        < 1e-12
+    )
+    with pytest.raises(ValueError):
+        eng.propagator(
+            dev,
+            sched,
+            HilbertSpace((2, 2), (ModeTruncation(2, 6, (0, 1), 0.1),), None, (0, 1, 3, 4, 5)),
+            quiet_sample(),
+            SeedSpec(0),
+            SolverOptions(),
+        )
 
 
 # ---- run() over workers ---------------------------------------------------------------------------------------------------------------

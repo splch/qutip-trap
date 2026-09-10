@@ -1,0 +1,12 @@
+== Part 1: carrier pi/2 pulse on the internal-state-only space [2, 2], frozen x modes at nbar = 0.05 (three branches)
+  carrier route=propagator branches=3 engine_runs=  3 propagator solves/hits=3/0 dims=[2, 2] wall=0.01 s tp(choi_raw)=5.86e-12 cp(choi_raw)=1.12e-16 dykstra=2
+  carrier route=states     branches=3 engine_runs= 48 propagator solves/hits=3/45 dims=[2, 2] wall=0.02 s tp(choi_raw)=5.86e-12 cp(choi_raw)=1.04e-15 dykstra=2
+  agreement: choi 3.44e-16, choi_raw 3.44e-16, outputs 7.85e-17
+== Part 2: 10 us single-loop entangling pulse, x-COM resolved at d = 15, stretch mode frozen and coupled (three branches)
+  entangling route=isometry   branches=3 engine_runs= 12 propagator solves/hits=0/0 dims=[2, 2, 15] wall=0.52 s tp(choi_raw)=4.31e-08 cp(choi_raw)=6.65e-17 dykstra=2
+  entangling route=states     branches=3 engine_runs= 48 propagator solves/hits=0/0 dims=[2, 2, 15] wall=1.95 s tp(choi_raw)=9.35e-08 cp(choi_raw)=1.73e-09 dykstra=12
+  agreement: choi 3.15e-09, choi_raw 3.66e-09, outputs 5.30e-09
+  mode 2: reduced motional outputs 8.67e-09, <a_m> 6.08e-09, nbar 5.30e-09, residual displacement 3.43e-17
+== Part 3: the register update at ten qubits (four Kraus operators on factors (0, 5))
+  apply_kraus_dm (superoperator product) 0.010 s, per-operator einsum 0.148 s, max |difference| 1.37e-18, trace 1.000000000000
+  Register.marginal on the strided view 0.08 ms, transpose-and-copy form 1.05 ms, max |difference| 0.00e+00

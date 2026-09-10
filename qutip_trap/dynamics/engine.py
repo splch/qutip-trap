@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -208,6 +208,14 @@ class SolverOptions:
     """Internal-state-only spaces (every mode frozen; Section 11.3 item 5, M9b): the segment propagator is integrated once as a
     D x D operator through the same ladder and applied to every initial state, cached per engine on the built Hamiltonian's
     fingerprint; False integrates every state through the ODE ladder (the reference)."""
+    tomography_isometry: bool = True
+    """GATE_LOCAL tomography (Section 5.4; performance pass 2026-09-09): when a step's evolution is unitary (no collapse operator
+    on any segment) the channel is read off the propagated INTERNAL BASIS, prod_i d_i kets per motional branch, as the Stinespring
+    isometry V_b whose slices by motional output index are the Kraus operators (``dynamics.tomography.choi_from_isometry``), and on an
+    internal-state-only space off the segment propagator itself (``JointExactEngine.propagator``: one engine call per branch, no state
+    propagated); the prod_i d_i^2 input states the map is stated on follow by linearity. False propagates every input state and fits the
+    Choi matrix by least squares (the M9a reference); the two agree to the solver tolerance (``tests/test_tomography.py``). A
+    dissipative step takes the reference route whatever this says, because a trajectory is not linear in its initial ket."""
     rotating_frame: bool = True
     """Integrate every ket segment (``sesolve`` and ``mcsolve``) in the exact rotating frame of its diagonal H_0 = H_mot + H_int
     (``dynamics.rotating``; Sections 5.2, 5.3): psi = e^{-i H_0 t} phi with the phases applied to the STATE and undone on the
@@ -486,13 +494,15 @@ class JointExactEngine:
     ) -> ChannelSummary:
         """State-based process tomography of one pulse, a gate's pulse group or a whole Schedule on ``space`` (Section 5.4; M9a).
 
-        Every one of the prod_i d_i^2 linearly independent pure internal inputs of ``dynamics.tomography.input_states`` is
-        propagated through ``run_pulses`` from the motional state of ``motional_model`` (the tracked reduced density matrices
-        of the resolved modes, their thermal states where none is tracked, the frozen modes' Fock populations as weighted
-        branches), the Choi matrix is reconstructed by least squares and projected onto CP and TP by Dykstra's alternating
-        projection, and the summary of Section 6.8 is computed against ``ideal`` (the gate's ideal unitary on the space's ions
-        in factor order; NaN infidelities without one). The full record, including the motional outputs the GATE_LOCAL model
-        tracks, is :meth:`tomography`.
+        The channel is extracted from the motional state of ``motional_model`` (the tracked reduced density matrices of the
+        resolved modes, their thermal states where none is tracked, the frozen modes' Fock populations as weighted branches):
+        when the evolution is unitary and ``SolverOptions.tomography_isometry`` holds, from the prod_i d_i internal basis kets
+        propagated through ``run_pulses`` per branch (the Stinespring isometry; off the segment propagator itself on an
+        internal-state-only space), otherwise from every one of the prod_i d_i^2 linearly independent pure inputs of
+        ``dynamics.tomography.input_states`` with the Choi matrix reconstructed by least squares. The Choi matrix is projected
+        onto CP and TP by Dykstra's alternating projection and the summary of Section 6.8 is computed against ``ideal`` (the
+        gate's ideal unitary on the space's ions in factor order; NaN infidelities without one). The full record, including the
+        motional outputs the GATE_LOCAL model tracks and the route taken, is :meth:`tomography`.
         """
         rec = self.tomography(device, pulse, space, motional_model, sample, seeds, options)
         return rec.summary(ideal)
@@ -654,32 +664,20 @@ class JointExactEngine:
             ops.extend(intensity_noise_channels(parts, dens))
         return ops
 
-    def _run(
+    def _played_schedule(
         self,
         device: Device,
         schedule: Schedule,
-        state: State,
-        space: HilbertSpace,
         sample: NoiseSample,
         seeds: SeedSpec,
         options: SolverOptions,
-        growth_retries: int,
-    ) -> Traces:
+        notes: list[str],
+    ) -> tuple[Schedule, tuple[str, ...]]:
+        """The schedule the ions see: the played chain of Section 7.3 (M8: requested -> physical through the device's derived
+        values, when a table is given) and then the hardware chain of Section 7.10 (M7). Returns (schedule, hardware notes); the
+        played chain's notes are appended to ``notes``."""
         from qutip_trap.control.hardware import apply_hardware_chain
-        from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, evolve
-        from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
-        from qutip_trap.hilbert.operators import thermal_populations
-        from qutip_trap.hilbert.truncation import boundary_populations
-        from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, key_frozen_n
 
-        bopts = self.builder_options if isinstance(self.builder_options, BuilderOptions) else BuilderOptions()
-        joint = state.joint
-        if joint is None:
-            raise ValueError("JOINT_EXACT needs a joint state; build one with HilbertSpace.initial_state")
-        if joint.shape[0] != space.dimension:
-            raise ValueError("the state does not live on the given space")
-        notes: list[str] = []
-        # the played chain of Section 7.3 (M8): requested -> physical through the device's derived values
         sched = schedule
         hw_notes: tuple[str, ...] = ()
         if self.table is not None:
@@ -687,22 +685,35 @@ class JointExactEngine:
 
             sched, played_notes = physical_schedule(device, sched, self.table)
             notes.extend(played_notes)
-        # the hardware chain of Section 7.10 (M7)
         if self.hardware_chain and options.hardware_chain:
             rng_jitter = np.random.default_rng(seeds.child(sample.sample_id, 0, 0, 0, "timing_jitter"))
             sched, hw_notes = apply_hardware_chain(sched, device.hardware, rng=rng_jitter)
-        # Frozen spectators: this evolution's Fock states (Section 5.2), from the sample where the caller put them there.
-        # Section 5.2's "samples n_m once per shot" is realized by run(), which enumerates the frozen modes' Fock states as
-        # weighted branches (an exact quadrature over the same thermal distribution, better than sampling) and passes each
-        # branch's tuple in sample.values. The draw below is the fallback for a direct run_pulses caller, which has no shot
-        # index at all - one call is one evolution - so it is keyed PER SAMPLE and reported as such (M9b audit B11).
+        return sched, hw_notes
+
+    @staticmethod
+    def _frozen_fock_states(
+        space: HilbertSpace,
+        sample: NoiseSample,
+        seeds: SeedSpec,
+        nbar: Mapping[int, float],
+        notes: list[str],
+    ) -> dict[int, int]:
+        """Frozen spectators: this evolution's Fock states (Section 5.2), from the sample where the caller put them there.
+
+        Section 5.2's "samples n_m once per shot" is realized by run(), which enumerates the frozen modes' Fock states as
+        weighted branches (an exact quadrature over the same thermal distribution, better than sampling) and passes each
+        branch's tuple in sample.values. The draw below is the fallback for a direct run_pulses caller, which has no shot
+        index at all - one call is one evolution - so it is keyed PER SAMPLE and reported as such (M9b audit B11)."""
+        from qutip_trap.hilbert.operators import thermal_populations
+        from qutip_trap.noise.sampling import key_frozen_n
+
         frozen_n: dict[int, int] = {}
         for m in space.frozen:
             key = key_frozen_n(m)
             if key in sample.values:
                 frozen_n[m] = int(round(sample.values[key]))
             else:
-                nbar_m = float(state.motional.nbar.get(m, 0.0))
+                nbar_m = float(nbar.get(m, 0.0))
                 if nbar_m <= 0.0:
                     frozen_n[m] = 0
                 else:
@@ -715,20 +726,199 @@ class JointExactEngine:
                         f"thermal distribution at nbar = {nbar_m:.4g}, keyed per SAMPLE (run() enumerates the branches "
                         "instead, which is the per-shot mechanism of Section 5.2)"
                     )
-        # the state-independent collapse operators
+        return frozen_n
+
+    def _collapse_setup(
+        self, device: Device, space: HilbertSpace, options: SolverOptions
+    ) -> tuple[list[CollapseOp], bool]:
+        """The state-independent collapse operators of a run on ``space`` (the explicit ``channels`` plus, under
+        ``device_channels``, the device's own) and whether a segment with active pulses CAN carry collapse operators built from
+        its pulses (scattering, intensity noise): decided before any build so that the drive operators are assembled exactly
+        where a Liouvillian is formed (Section 5.3) and held factorized everywhere else (Section 11.3 item 4; M9b)."""
         static_ops: list[CollapseOp] = list(self.channels)
         if self.device_channels:
             static_ops.extend(device.noise.channels(device, space))
-        # the Lindblad method the dissipative segments will take, and whether a segment CAN carry collapse operators built from
-        # its pulses: decided before the build so that the drive operators are assembled exactly where a Liouvillian is formed
-        # (Section 5.3) and held factorized everywhere else (Section 11.3 item 4; M9b)
-        lindblad_resolved: str = options.lindblad_method
-        if lindblad_resolved == "auto":
-            lindblad_resolved = "mesolve" if space.dimension <= options.mesolve_dimension_max else "mcsolve"
         pulse_channels_possible = bool(self.device_channels) and (
             bool(options.scattering_channels)
             or (bool(options.intensity_noise_channels) and device.noise.intensity_white_density() > 0.0)
         )
+        return static_ops, pulse_channels_possible
+
+    def is_unitary(self, device: Device, space: HilbertSpace, options: SolverOptions) -> bool:
+        """Whether every segment of a run on ``space`` evolves unitarily: no explicit channel, no device channel on the space and
+        no pulse-built channel possible, so the final state is LINEAR in the initial ket. This is the condition under which the
+        GATE_LOCAL tomography may propagate the internal basis alone (``SolverOptions.tomography_isometry``); a trajectory of
+        ``mcsolve`` is not linear in its initial ket and a ``mesolve`` segment evolves a density matrix."""
+        static_ops, pulse_channels_possible = self._collapse_setup(device, space, options)
+        return not static_ops and not pulse_channels_possible
+
+    @staticmethod
+    def _segment_edges(sched: Schedule) -> list[float]:
+        """Segments at every pulse boundary and idle boundary; the state is given at the schedule's declared start
+        (``Schedule.t0_s``, a GATE_LOCAL step's start) or at min(0, the first cut) as M2 to M8 did, and the last edge is
+        ``pulses_end_s`` (the measurement event that may follow is the readout stage's, not free evolution)."""
+        starts = [p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle]
+        t0 = float(sched.t0_s) if sched.t0_s is not None else min(starts + [0.0])
+        t_end = max(sched.pulses_end_s, t0)
+        cuts = {t0, t_end}
+        for p in sched.pulses:
+            cuts.update((p.t_start_s, p.t_end_s))
+        for a, b in sched.idle:
+            cuts.update((a, b))
+        return _merge_cuts(sorted(t for t in cuts if t0 <= t <= t_end))
+
+    def _segment_times(self, a: float, b: float) -> np.ndarray:
+        """The stored times of one segment: ``store_per_segment`` points from ``a`` to ``b`` plus the caller's ``store_times_s``
+        inside it (the same array on every path, so the propagator cache's key is shared between them)."""
+        n_store = max(int(self.store_per_segment), 2)
+        extra = [t for t in self.store_times_s if a < t < b]
+        return np.array(sorted(set(np.linspace(a, b, n_store).tolist()) | set(extra)))
+
+    def propagator(
+        self,
+        device: Device,
+        schedule: Schedule,
+        space: HilbertSpace,
+        sample: NoiseSample,
+        seeds: SeedSpec,
+        options: SolverOptions,
+        *,
+        motional_model: MotionalModel | None = None,
+    ) -> tuple[np.ndarray, EngineReport]:
+        """U(t_end, t_0) of ``schedule`` on the internal-state-only ``space`` (every mode frozen, no ENR group) as a D x D
+        matrix, with the report of a run (Section 11.3 item 5; performance pass 2026-09-09).
+
+        The product over the segments of the segment propagators: the exact closed form of a constant segment (the diagonal
+        phases of an idle, one eigendecomposition otherwise; ``closed_form_constant``) or the propagator the cache holds or
+        integrates once through the Section 5.3 ladder (``_segment_propagator``, the same key ``run_pulses`` uses). On such a
+        space the propagator IS the step's channel, so the GATE_LOCAL tomography reads the branch's Kraus operator off it
+        instead of propagating states (``dynamics.tomography``, ``SolverOptions.tomography_isometry``). ``motional_model``
+        supplies the occupations for the frozen modes whose Fock state the sample does not carry (``run_pulses`` reads them
+        from its state). Raises ``ValueError`` on a space with a resolved mode or an ENR group, and when a segment would carry
+        a collapse operator (a propagator of a dissipative segment is not a unitary: use ``run_pulses``).
+        """
+        from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
+
+        if space.resolved or space.enr_group is not None:
+            raise ValueError(
+                "propagator() takes an internal-state-only space (every mode frozen, no ENR group); a space with a resolved "
+                "mode is a joint space, whose propagator is never formed (Section 11.3 item 5)"
+            )
+        bopts = self.builder_options if isinstance(self.builder_options, BuilderOptions) else BuilderOptions()
+        notes: list[str] = []
+        sched, hw_notes = self._played_schedule(device, schedule, sample, seeds, options, notes)
+        nbar = motional_model.nbar if motional_model is not None else {}
+        frozen_n = self._frozen_fock_states(space, sample, seeds, nbar, notes)
+        static_ops, pulse_channels_possible = self._collapse_setup(device, space, options)
+        edges = self._segment_edges(sched)
+        u = np.eye(space.dimension, dtype=complex)
+        segments: list[SegmentReport] = []
+        records: list[object] = []
+        solves = 0
+        hits = 0
+        for a, b in zip(edges[:-1], edges[1:]):
+            if b <= a:
+                continue
+            active = [p for p in sched.pulses if p.t_start_s <= a + 1e-15 and p.t_end_s >= b - 1e-15]
+            if static_ops or (active and pulse_channels_possible):
+                raise ValueError(
+                    "the segment carries collapse operators, so its propagator is not a unitary: propagate states through "
+                    "run_pulses (is_unitary() says which)"
+                )
+            built = build_hamiltonian(
+                device,
+                active,
+                space,
+                sample=sample,
+                options=bopts,
+                qubit_shifts_hz=self.qubit_shifts_hz,
+                frozen_n=frozen_n,
+            )
+            records.extend(built.records)
+            times = self._segment_times(a, b)
+            u_seg: np.ndarray | None = None
+            integrator = "exact"
+            atol_used = options.atol
+            rhs_evals: int | None = None
+            retries_seg: tuple[str, ...] = ()
+            if self.closed_form_constant and built.H.isconstant:
+                u_seg = _constant_unitary(built.H(a), b - a)
+            if u_seg is None:
+                prop, hit = self._segment_propagator(built, times, options, 0)
+                hits += int(hit)
+                solves += int(not hit)
+                u_seg = prop.unitaries[-1]
+                integrator = "propagator[cached]" if hit else f"{prop.integrator}[propagator]"
+                atol_used = prop.atol
+                rhs_evals = None if hit else prop.rhs_evaluations
+                retries_seg = prop.retries
+            u = u_seg @ u
+            segments.append(
+                SegmentReport(
+                    a,
+                    b,
+                    tuple(p.gate_id for p in active),
+                    integrator,
+                    atol_used,
+                    rhs_evals,
+                    _steps_per_period(rhs_evals, built.omega_max_rad_s, b - a),
+                    built.approximations,
+                    {},
+                    retries_seg,
+                    method="sesolve",
+                    kernel=built.kernel,
+                )
+            )
+        report = EngineReport(
+            segments=tuple(segments),
+            frozen_n=frozen_n,
+            growth_retries=0,
+            space=space,
+            drive_records=tuple(records),
+            method="sesolve",
+            hardware_notes=hw_notes,
+            schedule_played=sched,
+            notes=tuple(notes),
+            kernel=_kernel_summary(segments),
+            propagator_solves=solves,
+            propagator_cache_hits=hits,
+        )
+        self.last_report = report
+        return u, report
+
+    def _run(
+        self,
+        device: Device,
+        schedule: Schedule,
+        state: State,
+        space: HilbertSpace,
+        sample: NoiseSample,
+        seeds: SeedSpec,
+        options: SolverOptions,
+        growth_retries: int,
+    ) -> Traces:
+        from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, evolve
+        from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
+        from qutip_trap.hilbert.truncation import boundary_populations
+        from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT
+
+        bopts = self.builder_options if isinstance(self.builder_options, BuilderOptions) else BuilderOptions()
+        joint = state.joint
+        if joint is None:
+            raise ValueError("JOINT_EXACT needs a joint state; build one with HilbertSpace.initial_state")
+        if joint.shape[0] != space.dimension:
+            raise ValueError("the state does not live on the given space")
+        notes: list[str] = []
+        # the played chain of Section 7.3 (M8) and the hardware chain of Section 7.10 (M7)
+        sched, hw_notes = self._played_schedule(device, schedule, sample, seeds, options, notes)
+        # the frozen spectators' Fock states for this evolution (Section 5.2; M9b audit B11)
+        frozen_n = self._frozen_fock_states(space, sample, seeds, state.motional.nbar, notes)
+        # the state-independent collapse operators and whether a pulse segment can carry pulse-built ones (Section 5.3)
+        static_ops, pulse_channels_possible = self._collapse_setup(device, space, options)
+        # the Lindblad method the dissipative segments will take
+        lindblad_resolved: str = options.lindblad_method
+        if lindblad_resolved == "auto":
+            lindblad_resolved = "mesolve" if space.dimension <= options.mesolve_dimension_max else "mcsolve"
         map_kind = options.map
         n_workers = worker_count(options)
         workers_used = 1
@@ -736,21 +926,8 @@ class JointExactEngine:
         propagator_hits = 0
         trajectory_finals: list[qt.Qobj] = []
         trajectory_seeds: list[tuple[int, ...]] = []
-        # segments at every pulse boundary and idle boundary; the state is given at the schedule's declared start
-        # (``Schedule.t0_s``, a GATE_LOCAL step's start) or at min(0, the first cut) as M2 to M8 did
-        starts = [p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle]
-        t0 = float(sched.t0_s) if sched.t0_s is not None else min(starts + [0.0])
-        t_end = (
-            sched.pulses_end_s
-        )  # the measurement event that may follow is the readout stage's, not free evolution
-        if t_end < t0:
-            t_end = t0
-        cuts = {t0, t_end}
-        for p in sched.pulses:
-            cuts.update((p.t_start_s, p.t_end_s))
-        for a, b in sched.idle:
-            cuts.update((a, b))
-        edges = _merge_cuts(sorted(t for t in cuts if t0 <= t <= t_end))
+        edges = self._segment_edges(sched)
+        t0 = edges[0]
         e_keys: list[str] = []
         e_list: list[qt.Qobj] = []
         for i in space.ion_labels:
@@ -790,7 +967,6 @@ class JointExactEngine:
                     f"{options.branch_weight_min:g} dropped, total weight {dropped:.3e} (renormalized)"
                 )
         method_used = "sesolve" if kets is not None else "mesolve"
-        n_store = max(int(self.store_per_segment), 2)
         first = True
         largest_mode = max([m.d for m in space.resolved], default=0)
         atol_mc = options.atol if largest_mode <= LARGE_MODE_DIMENSION else max(options.atol, 1e-8)
@@ -829,8 +1005,7 @@ class JointExactEngine:
             records.extend(built.records)
             seg_ops = self._segment_channels(device, active, space, built, static_ops, options, notes)
             c_ops = [c.op for c in seg_ops]
-            extra = [t for t in self.store_times_s if a < t < b]
-            times = np.array(sorted(set(np.linspace(a, b, n_store).tolist()) | set(extra)))
+            times = self._segment_times(a, b)
             sel = slice(1, None) if not first else slice(0, None)
             seg_method = "sesolve"
             integrator = options.integrators[0]
@@ -1211,11 +1386,7 @@ class JointExactEngine:
                 bpop = boundary_populations(rho, space)
             for m, v in bpop.items():
                 worst_boundary[m] = max(worst_boundary.get(m, 0.0), v)
-            steps_per_period = None
-            if rhs_evals and built.omega_max_rad_s > 0.0:
-                n_steps = rhs_evals / 12.0
-                periods = (b - a) * built.omega_max_rad_s / (2.0 * math.pi)
-                steps_per_period = float(n_steps / periods) if periods > 0 else None
+            steps_per_period = _steps_per_period(rhs_evals, built.omega_max_rad_s, b - a)
             kinds = tuple(dict.fromkeys(_channel_kind(c.channel) for c in seg_ops))
             segments.append(
                 SegmentReport(
@@ -1381,6 +1552,27 @@ class _Propagator:
     atol: float
     rhs_evaluations: int | None
     retries: tuple[str, ...]
+
+
+def _steps_per_period(rhs_evals: int | None, omega_max_rad_s: float, duration_s: float) -> float | None:
+    """Integrator steps per period of the fastest mode (Section 5.3's step-density band): rhs_evals / 12 dop853 stages over the
+    periods of ``omega_max_rad_s`` in ``duration_s``; None without a count or a frequency."""
+    if not rhs_evals or omega_max_rad_s <= 0.0:
+        return None
+    periods = duration_s * omega_max_rad_s / (2.0 * math.pi)
+    return float((rhs_evals / 12.0) / periods) if periods > 0 else None
+
+
+def _constant_unitary(h: qt.Qobj, tau: float) -> np.ndarray | None:
+    """e^{-i h tau} of a constant Hamiltonian: by its diagonal phases when ``h`` is diagonal in the joint basis, else by one
+    Hermitian eigendecomposition up to ``EIGH_DIMENSION_MAX`` (None above it: the caller integrates the propagator)."""
+    energies = _diagonal_energies(h)
+    if energies is not None:
+        return np.asarray(np.diag(np.exp(-1j * tau * energies)), dtype=complex)
+    if h.shape[0] > EIGH_DIMENSION_MAX:
+        return None
+    w, vecs = np.linalg.eigh(np.asarray(h.full()))
+    return np.asarray((vecs * np.exp(-1j * tau * w)) @ vecs.conj().T, dtype=complex)
 
 
 def _kernel_summary(segments: Sequence[SegmentReport]) -> str:

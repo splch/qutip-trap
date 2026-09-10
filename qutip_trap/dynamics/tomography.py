@@ -23,10 +23,22 @@ trace-preserving map, from the pulse's exact evolution on its own joint space (S
 - ``expansion_coefficients``: the register's local marginal expanded in the input basis, so that the motional outputs of the
   tomography runs (linear in the input) give the reduced motional state the register actually leaves (item (b)).
 
-M9b: the prod_i d_i^2 x branches engine runs of a step with resolved modes are independent and are spread over the workers of
-``SolverOptions.workers`` through QuTiP's map (Section 11.3 item 9), each worker running its own trajectories in-process; a step
-on an internal-state-only space runs in-process, where the engine's propagator cache serves every input from one integration of
-the segment propagator (Section 11.3 item 5).
+M9b: the engine runs of a step with resolved modes are independent and are spread over the workers of ``SolverOptions.workers``
+through QuTiP's map (Section 11.3 item 9), each worker running its own trajectories in-process; a step on an internal-state-only
+space runs in-process (Section 11.3 item 5).
+
+Performance pass 2026-09-09 (``SolverOptions.tomography_isometry``, the default): when the step's evolution is unitary (no
+collapse operator on any segment, ``JointExactEngine.is_unitary``) the final state is linear in the initial ket, so the channel is
+read off the propagated INTERNAL BASIS instead of the prod_i d_i^2 input states. Per motional branch b (weight w_b, motional ket
+|m_b>) the prod_i d_i basis kets |j> (x) |m_b> are propagated and their finals stacked into the Stinespring isometry V_b, whose
+slices by motional output index are the Kraus operators K_{b,a} = sqrt(w_b) (<a|_mot (x) 1) V_b (``choi_from_isometry``); the
+outputs, reduced motional states and residual displacements of the d_int^2 inputs the map is stated on follow by linearity
+(``_extract_from_columns``), so ``TomographyRecord`` keeps its meaning. On an internal-state-only space (a carrier step, an idle)
+the segment propagator IS the branch's Kraus operator and ``JointExactEngine.propagator`` returns it without propagating a state:
+one engine call per branch. The three routes are named in ``TomographyRecord.route`` ("states" is the M9a reference, which a
+dissipative step always takes) and agree to the solver tolerance (``tests/test_tomography.py``). The Choi matrix of the isometry
+routes is completely positive by construction; the CP/TP projection is still applied so that the register's normalization stays
+exact, and ``tp_residual(choi_raw)`` is the norm the propagated columns lost (the motional truncation's leakage, the solver's drift).
 """
 
 from __future__ import annotations
@@ -35,7 +47,7 @@ import itertools
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import qutip as qt
@@ -51,6 +63,7 @@ from qutip_trap.dynamics.engine import (
 )
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.hilbert.operators import thermal_populations
+from qutip_trap.hilbert.truncation import boundary_populations
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n
 from qutip_trap.noise.summary import (
     average_gate_infidelity,
@@ -68,6 +81,11 @@ if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace
 
 M9A = "milestone M9a (dynamics/tomography.py, PLAN.md Section 5.4)"
+
+TomographyRoute = Literal["states", "isometry", "propagator"]
+"""How a channel was extracted: every input state propagated ("states", the M9a reference and the dissipative route), the internal
+basis propagated per branch and the channel read off the Stinespring isometry ("isometry"), or the segment propagator of an
+internal-state-only space taken as the branch's Kraus operator ("propagator")."""
 
 
 # ---- input states ----------------------------------------------------------------------------------------------------------------
@@ -108,6 +126,14 @@ def input_states(ion_dims: Sequence[int]) -> list[tuple[str, np.ndarray]]:
     return out
 
 
+def internal_basis(ion_dims: Sequence[int]) -> list[np.ndarray]:
+    """The prod_i d_i computational-basis kets of the internal space (first ion the first tensor factor), in the order of
+    ``computational_labels``: the columns the isometry route propagates (``SolverOptions.tomography_isometry``)."""
+    d = int(np.prod([int(x) for x in ion_dims]))
+    eye = np.eye(d, dtype=complex)
+    return [eye[:, j].copy() for j in range(d)]
+
+
 def computational_labels(ion_dims: Sequence[int]) -> list[str]:
     """The labels of the computational-basis inputs among ``input_states`` (the spin eigenstates of Section 5.4's report)."""
     return [
@@ -132,6 +158,27 @@ def choi_least_squares(inputs: Sequence[np.ndarray], outputs: Sequence[np.ndarra
     c4 = m.reshape(d, d, d, d)  # (i, j, k, l)
     c = np.transpose(c4, (0, 2, 1, 3)).reshape(d * d, d * d) / d  # (i, k ; j, l)
     return np.asarray(0.5 * (c + c.conj().T))
+
+
+def choi_from_isometry(v: np.ndarray, d_int: int) -> np.ndarray:
+    """The trace-1 Choi matrix of rho -> Tr_mot[V rho V^dag] for the (d_int d_mot) x d_int isometry V (Stinespring).
+
+    The columns of V are the propagated internal basis kets U(T)(|j> (x) |m_b>) of one motional branch (the joint basis is
+    ordered ions first, so a column reshapes to (internal out, motional out)), the Kraus operators K_a = (<a|_mot (x) 1) V are
+    its slices by motional output index a, and C = (1/d_int) sum_a |phi_a><phi_a| with phi_a = sum_i |i> (x) K_a|i> is the
+    convention of ``noise.summary.choi_from_kraus``, formed as one product without materializing the d_mot Kraus operators.
+    Completely positive by construction; trace preserving up to the norm the columns lost (``tp_residual``)."""
+    arr = np.asarray(v, dtype=complex)
+    if arr.ndim != 2 or arr.shape[1] != d_int or arr.shape[0] % d_int != 0:
+        raise ValueError(
+            f"an isometry of shape {arr.shape} does not embed a {d_int}-dimensional internal space"
+        )
+    d_mot = arr.shape[0] // d_int
+    t = arr.reshape(
+        d_int, d_mot, d_int
+    )  # (internal out k, motional out a, internal in i): K_a[k, i] = t[k, a, i]
+    m = np.transpose(t, (1, 2, 0)).reshape(d_mot, d_int * d_int)  # row a is phi_a in the (i, k) order
+    return np.asarray(m.T @ m.conj() / d_int)
 
 
 def _trace_out(c: np.ndarray, d: int) -> np.ndarray:
@@ -206,11 +253,29 @@ def kraus_operators(choi: np.ndarray, *, tol: float = 1e-14) -> list[np.ndarray]
     return out
 
 
+def kraus_superoperator(kraus: Sequence[np.ndarray]) -> np.ndarray:
+    """S = sum_a K_a (x) conj(K_a): the d^2 x d^2 matrix of rho -> sum_a K_a rho K_a^dag on the row-major vectorization of rho,
+    vec(K rho K^dag) = (K (x) conj(K)) vec(rho)."""
+    if not kraus:
+        raise ValueError("a channel has at least one Kraus operator")
+    d = int(kraus[0].shape[0])
+    s = np.zeros((d * d, d * d), dtype=complex)
+    for k in kraus:
+        k_arr = np.asarray(k, dtype=complex)
+        if k_arr.shape != (d, d):
+            raise ValueError("every Kraus operator of a channel has the same square shape")
+        s += np.kron(k_arr, k_arr.conj())
+    return s
+
+
 def apply_kraus_dm(
     rho: np.ndarray, kraus: Sequence[np.ndarray], dims: Sequence[int], factors: Sequence[int]
 ) -> np.ndarray:
     """sum_a K_a rho K_a^dag with the Kraus operators acting on the tensor ``factors`` (in the Kraus operators' own order) of a
-    register density matrix over ``dims``."""
+    register density matrix over ``dims``: ONE product of the d_loc^2 x d_loc^2 superoperator (``kraus_superoperator``) with the
+    register reshaped to (local row, local column) x (rest row, rest column). The per-operator ``einsum`` this replaces
+    (performance pass 2026-09-09) looped over all six indices without a matrix product, 19 times slower at ten qubits and
+    the dominant cost of a twelve-qubit GATE_LOCAL walk; the two agree to round-off (``tests/test_tomography.py``)."""
     n = len(dims)
     total = int(np.prod(dims))
     fac = [int(f) for f in factors]
@@ -218,16 +283,13 @@ def apply_kraus_dm(
     d_loc = int(np.prod([dims[f] for f in fac]))
     d_rest = total // d_loc
     arr = np.asarray(rho, dtype=complex).reshape(list(dims) + list(dims))
-    perm = fac + rest + [n + f for f in fac] + [n + f for f in rest]
-    a = np.transpose(arr, perm).reshape(d_loc, d_rest, d_loc, d_rest)
-    out = np.zeros_like(a)
-    for k in kraus:
-        out += np.einsum("ab,bxcy,dc->axdy", k, a, k.conj())
-    inv = np.argsort(perm)
+    perm = fac + [n + f for f in fac] + rest + [n + f for f in rest]
+    a = np.transpose(arr, perm).reshape(d_loc * d_loc, d_rest * d_rest)
+    out = kraus_superoperator(kraus) @ a
     shaped = out.reshape(
-        [dims[f] for f in fac] + [dims[f] for f in rest] + [dims[f] for f in fac] + [dims[f] for f in rest]
+        [dims[f] for f in fac] + [dims[f] for f in fac] + [dims[f] for f in rest] + [dims[f] for f in rest]
     )
-    return np.asarray(np.transpose(shaped, inv).reshape(total, total))
+    return np.asarray(np.transpose(shaped, np.argsort(perm)).reshape(total, total))
 
 
 def apply_kraus_ket(
@@ -409,6 +471,8 @@ class TomographyRecord:
     branches: int
     dropped_branch_weight: float
     engine_runs: int
+    """Engine calls: d_int^2 x branches state propagations on the "states" route, d_int x branches on the "isometry" route, one
+    propagator per branch on the "propagator" route (``route``)."""
     notes: tuple[str, ...]
     approximations: tuple[str, ...]
     integrators: tuple[str, ...]
@@ -416,6 +480,11 @@ class TomographyRecord:
     workers: int = 1
     """Processes the runs actually used: the inputs spread over a parallel map, or the trajectories inside one engine run
     (M9b audit B10). 1 = everything in-process, which is every carrier step, whose local space has no resolved mode."""
+    route: TomographyRoute = "states"
+    """How the channel was extracted (performance pass 2026-09-09): "states" propagates every input (the M9a reference, and
+    every dissipative step), "isometry" the internal basis per branch (Stinespring), "propagator" reads the branch's Kraus
+    operator off the segment propagator of an internal-state-only space. ``choi_raw`` is the least-squares fit on the first
+    route and the isometries' Choi matrix, completely positive by construction, on the other two."""
 
     @property
     def dimension(self) -> int:
@@ -516,10 +585,20 @@ def coupled_frozen_modes(device: Device, space: HilbertSpace, pulses: Sequence[P
 @dataclass(frozen=True)
 class _TomographyTask:
     input_index: int
+    """The input state ("states" route) or the internal basis column ("isometry" route) this run propagates."""
     branch_index: int
     state: object
     """The initial ``State`` on the gate-local space."""
     sample: NoiseSample
+
+
+def _branch_sample(sample: NoiseSample, branch: MotionalBranch) -> NoiseSample:
+    """The sample of one motional branch: the frozen coupled modes' Fock states and the branch weight (which scales the boundary
+    threshold, Section 5.5) on top of the run's values."""
+    values = dict(sample.values)
+    values.update({key_frozen_n(m): float(n) for m, n in branch.frozen_n.items()})
+    values[KEY_BRANCH_WEIGHT] = float(branch.weight)
+    return NoiseSample(sample.sample_id, values, dict(sample.ou_grids), sample.t_s)
 
 
 def _engine_run(
@@ -564,6 +643,298 @@ def _run_tasks(
     return map_tasks(_engine_run, items, map_kind=opts.map, workers=workers), used
 
 
+def _grown_space(reports: Iterable[EngineReport], current: HilbertSpace) -> HilbertSpace | None:
+    """The largest space the truncation monitor grew any run to (None when every run kept ``current``)."""
+    grown: HilbertSpace | None = None
+    for rep in reports:
+        if rep.space != current and (grown is None or rep.space.dimension > grown.dimension):
+            grown = rep.space
+    return grown
+
+
+@dataclass(frozen=True)
+class _Extraction:
+    """What one route produced on one space, before the record is assembled."""
+
+    route: TomographyRoute
+    outputs: list[np.ndarray]
+    mot_out: dict[int, list[np.ndarray]]
+    alpha_out: dict[int, list[complex]]
+    nbar_out: dict[int, list[float]]
+    boundary: dict[int, float]
+    populated: dict[int, int]
+    margins: dict[int, int]
+    reports: list[EngineReport]
+    n_traj: int
+    method: str
+    runs: int
+    workers: int
+    choi_raw: np.ndarray | None
+    """The Choi matrix the route formed directly (the isometry routes); None when it is fit by least squares (the state route)."""
+    grown: HilbertSpace | None
+    """The space the truncation monitor grew a run to: the caller reruns everything on it."""
+    notes: tuple[str, ...] = ()
+
+
+def _extract_from_states(
+    engine: JointExactEngine,
+    device: Device,
+    sched: Schedule,
+    current: HilbertSpace,
+    branches: Sequence[MotionalBranch],
+    thermal_frozen: Mapping[int, float],
+    labels_kets: Sequence[tuple[str, np.ndarray]],
+    sample: NoiseSample,
+    seeds: SeedSpec,
+    opts: SolverOptions,
+) -> _Extraction:
+    """The "states" route (M9a): every input of ``labels_kets`` propagated for every branch, the outputs averaged with the branch
+    weights; the Choi matrix is left to the least-squares fit."""
+    d_int = int(np.prod(current.ion_dims))
+    dims_int = [list(current.ion_dims), [1] * len(current.ion_dims)]
+    outputs: list[np.ndarray] = []
+    mot_out: dict[int, list[np.ndarray]] = {tr.mode: [] for tr in current.resolved}
+    alpha_out: dict[int, list[complex]] = {tr.mode: [] for tr in current.resolved}
+    nbar_out: dict[int, list[float]] = {tr.mode: [] for tr in current.resolved}
+    boundary: dict[int, float] = {}
+    populated: dict[int, int] = {}
+    margins: dict[int, int] = {}
+    n_traj = 1
+    method = "sesolve"
+    # every (input, branch) run is independent: prepare them all, run them through the map, then accumulate in order
+    payloads: list[_TomographyTask] = []
+    for lab_idx, (_lab, ket) in enumerate(labels_kets):
+        internal = qt.Qobj(ket.reshape(-1, 1), dims=dims_int)
+        for br_idx, br in enumerate(branches):
+            state = current.initial_state(internal, states=br.kets, thermal=thermal_frozen)
+            payloads.append(_TomographyTask(lab_idx, br_idx, state, _branch_sample(sample, br)))
+    results, map_workers = _run_tasks(engine, device, sched, current, payloads, seeds, opts)
+    reports = [rep for _t, rep in results]
+    grown = _grown_space(reports, current)
+    if grown is not None:
+        return _Extraction(
+            "states",
+            [],
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            reports,
+            1,
+            "sesolve",
+            len(results),
+            map_workers,
+            None,
+            grown,
+        )
+    for lab_idx in range(len(labels_kets)):
+        rho_acc = np.zeros((d_int, d_int), dtype=complex)
+        mot_acc = {
+            m: np.zeros((current.truncation(m).d, current.truncation(m).d), dtype=complex) for m in mot_out
+        }
+        alpha_acc = {m: 0j for m in mot_out}
+        for task, (traces, rep) in zip(payloads, results):
+            if task.input_index != lab_idx:
+                continue
+            br = branches[task.branch_index]
+            rho_acc += br.weight * np.asarray(traces.final.internal.full())
+            for m in mot_out:
+                mot_acc[m] += br.weight * np.asarray(traces.final.motional.reduced[m].full())
+                alpha_acc[m] += br.weight * complex(traces.alpha_m[m][-1])
+            for m, v in traces.boundary_population.items():
+                boundary[m] = max(boundary.get(m, 0.0), float(v))
+            for m, v in rep.populated_n_max.items():
+                populated[m] = max(populated.get(m, 0), int(v))
+            for m, v in rep.margin_reached.items():
+                margins[m] = min(margins.get(m, int(v)), int(v))
+            n_traj = max(n_traj, rep.trajectories if rep.method == "mcsolve" else 1)
+            if rep.method != "sesolve":
+                method = rep.method
+        outputs.append(rho_acc)
+        for m in mot_out:
+            mot_out[m].append(mot_acc[m])
+            alpha_out[m].append(alpha_acc[m])
+            nbar_out[m].append(_nbar_of(mot_acc[m]))
+    return _Extraction(
+        "states",
+        outputs,
+        mot_out,
+        alpha_out,
+        nbar_out,
+        boundary,
+        populated,
+        margins,
+        reports,
+        n_traj,
+        method,
+        len(results),
+        map_workers,
+        None,
+        None,
+    )
+
+
+def _isometry_columns(
+    engine: JointExactEngine,
+    device: Device,
+    sched: Schedule,
+    current: HilbertSpace,
+    branches: Sequence[MotionalBranch],
+    thermal_frozen: Mapping[int, float],
+    sample: NoiseSample,
+    seeds: SeedSpec,
+    opts: SolverOptions,
+) -> tuple[list[np.ndarray], list[EngineReport], dict[int, float], int, HilbertSpace | None]:
+    """The "isometry" route's runs: the d_int internal basis kets of every branch through the engine (the same map as the state
+    route), their final joint kets stacked into one D x d_int isometry per branch. Returns (isometries, reports, the boundary
+    populations the engine's monitor saw on those kets, processes used, the grown space or None)."""
+    d_int = int(np.prod(current.ion_dims))
+    dims_int = [list(current.ion_dims), [1] * len(current.ion_dims)]
+    payloads: list[_TomographyTask] = []
+    for j, ket in enumerate(internal_basis(current.ion_dims)):
+        internal = qt.Qobj(ket.reshape(-1, 1), dims=dims_int)
+        for br_idx, br in enumerate(branches):
+            state = current.initial_state(internal, states=br.kets, thermal=thermal_frozen)
+            payloads.append(_TomographyTask(j, br_idx, state, _branch_sample(sample, br)))
+    results, map_workers = _run_tasks(engine, device, sched, current, payloads, seeds, opts)
+    reports = [rep for _t, rep in results]
+    grown = _grown_space(reports, current)
+    if grown is not None:
+        return [], reports, {}, map_workers, grown
+    columns = [np.zeros((current.dimension, d_int), dtype=complex) for _ in branches]
+    boundary: dict[int, float] = {}
+    for task, (traces, _rep) in zip(payloads, results):
+        final = traces.final.joint
+        if final is None or not final.isket:
+            raise RuntimeError(
+                "the isometry route needs the final joint ket of a unitary run; the engine returned "
+                f"{'no joint state' if final is None else 'a density matrix'} (is_unitary() gates this route)"
+            )
+        columns[task.branch_index][:, task.input_index] = np.asarray(final.full()).reshape(-1)
+        for m, v in traces.boundary_population.items():
+            boundary[m] = max(boundary.get(m, 0.0), float(v))
+    return columns, reports, boundary, map_workers, None
+
+
+def _propagator_columns(
+    engine: JointExactEngine,
+    device: Device,
+    sched: Schedule,
+    current: HilbertSpace,
+    branches: Sequence[MotionalBranch],
+    sample: NoiseSample,
+    seeds: SeedSpec,
+    opts: SolverOptions,
+    motional_model: MotionalModel,
+) -> tuple[list[np.ndarray], list[EngineReport]]:
+    """The "propagator" route: on an internal-state-only space the segment propagator of each branch IS its isometry (d_mot = 1),
+    read off ``JointExactEngine.propagator`` without propagating a state (one engine call per branch)."""
+    columns: list[np.ndarray] = []
+    reports: list[EngineReport] = []
+    for br in branches:
+        u, rep = engine.propagator(
+            device, sched, current, _branch_sample(sample, br), seeds, opts, motional_model=motional_model
+        )
+        columns.append(u)
+        reports.append(rep)
+    return columns, reports
+
+
+def _nbar_of(rho_m: np.ndarray) -> float:
+    return float(np.real(np.trace(np.diag(np.arange(rho_m.shape[0])) @ rho_m)))
+
+
+def _extract_from_columns(
+    current: HilbertSpace,
+    branches: Sequence[MotionalBranch],
+    columns: Sequence[np.ndarray],
+    reports: list[EngineReport],
+    labels_kets: Sequence[tuple[str, np.ndarray]],
+    boundary_seen: Mapping[int, float],
+    workers: int,
+    route: TomographyRoute,
+) -> _Extraction:
+    """The channel and the record's per-input quantities from one isometry V_b per branch, by linearity (Stinespring).
+
+    The Choi matrix is sum_b w_b C(V_b) (``choi_from_isometry``); for every input ket psi_k of ``labels_kets`` the output joint
+    ket of branch b is V_b psi_k, whose internal marginal, reduced motional states, <a_m> and boundary populations are the same
+    functions the engine evaluates on its final states, averaged with the branch weights, so ``outputs``, ``motional_out``,
+    ``alpha_out`` and ``nbar_out`` keep the meaning of the state route. ``boundary_seen`` is what the engine's monitor recorded on
+    the propagated basis kets at every segment end; the d_int^2 inputs' final-time values are folded in, and a superposition's
+    boundary population is bounded by d_int times the basis kets' maximum (Cauchy-Schwarz), which the record notes."""
+    d_int = int(np.prod(current.ion_dims))
+    dim = current.dimension
+    d_mot = dim // d_int
+    n_in = len(labels_kets)
+    psi = np.array([k for _l, k in labels_kets], dtype=complex).T  # (d_int, n_in)
+    out_acc = np.zeros((n_in, d_int, d_int), dtype=complex)
+    choi_raw = np.zeros((d_int * d_int, d_int * d_int), dtype=complex)
+    resolved = [tr.mode for tr in current.resolved]
+    mot_acc: dict[int, list[np.ndarray]] = {
+        m: [np.zeros((current.truncation(m).d, current.truncation(m).d), dtype=complex) for _ in range(n_in)]
+        for m in resolved
+    }
+    alpha_acc: dict[int, list[complex]] = {m: [0j] * n_in for m in resolved}
+    boundary = dict(boundary_seen)
+    dims_ket = [list(current.dims), [1] * len(current.dims)]
+    for br, v in zip(branches, columns):
+        w = br.weight
+        if v.shape != (dim, d_int):
+            raise ValueError(f"branch isometry of shape {v.shape}, expected {(dim, d_int)}")
+        choi_raw += w * choi_from_isometry(v, d_int)
+        phi = v @ psi  # (dim, n_in): the output joint ket of every input
+        phi3 = phi.reshape(d_int, d_mot, n_in)
+        out_acc += w * np.einsum("iak,jak->kij", phi3, phi3.conj())
+        if d_mot > 1:
+            for k in range(n_in):
+                ket = qt.Qobj(phi[:, k].reshape(-1, 1), dims=dims_ket)
+                for m in resolved:
+                    mot_acc[m][k] += w * np.asarray(current.mode_marginal(ket, m).full())
+                    alpha_acc[m][k] += w * complex(qt.expect(current.annihilation(m), ket))
+                for m, val in boundary_populations(ket, current).items():
+                    boundary[m] = max(boundary.get(m, 0.0), float(val))
+    populated: dict[int, int] = {}
+    margins: dict[int, int] = {}
+    for rep in reports:
+        for m, v_pop in rep.populated_n_max.items():
+            populated[m] = max(populated.get(m, 0), int(v_pop))
+        for m, v_mar in rep.margin_reached.items():
+            margins[m] = min(margins.get(m, int(v_mar)), int(v_mar))
+    mot_out = {m: list(mats) for m, mats in mot_acc.items()}
+    notes: tuple[str, ...]
+    if route == "propagator":
+        notes = (
+            f"channel read off the segment propagator of the internal-state-only space, one per motional branch "
+            f"({len(branches)}); no state propagated (Section 11.3 item 5)",
+        )
+    else:
+        notes = (
+            f"channel read off the propagated internal basis ({d_int} kets per motional branch, Stinespring isometry); the "
+            f"boundary monitor ran on those kets, so a superposition input's boundary population is at most {d_int} times "
+            "the maximum reported (Section 5.5)",
+        )
+    return _Extraction(
+        route,
+        [out_acc[k] for k in range(n_in)],
+        mot_out,
+        {m: list(vals) for m, vals in alpha_acc.items()},
+        {m: [_nbar_of(mat) for mat in mats] for m, mats in mot_out.items()},
+        boundary,
+        populated,
+        margins,
+        reports,
+        1,
+        "sesolve",
+        len(reports),
+        workers,
+        choi_raw,
+        None,
+        notes,
+    )
+
+
 def tomography(
     engine: JointExactEngine,
     device: Device,
@@ -576,11 +947,15 @@ def tomography(
 ) -> TomographyRecord:
     """State-based process tomography of ``pulse`` on ``space`` from the motional state of ``motional_model`` (Section 5.4).
 
-    Every input of ``input_states`` is propagated by ``engine.run_pulses`` for every motional branch of ``motional_branches``
-    (weights >= ``options.branch_weight_min``), the outputs are averaged with the branch weights, the Choi matrix is reconstructed
-    and projected, and the motional outputs and residual displacements per input are kept for the register-weighted update. When
-    the truncation monitor grows the space during a run, every input is rerun on the grown space so that all outputs share one
-    space. On the trajectory path the engine's trajectory count is raised to ceil(1/epsilon_map) (``options.map_accuracy``).
+    For every motional branch of ``motional_branches`` (weights >= ``options.branch_weight_min``) the channel is extracted by one
+    of three routes (``TomographyRecord.route``): when the evolution is unitary and ``options.tomography_isometry`` holds, the
+    internal basis is propagated and the channel read off the Stinespring isometry (or, on an internal-state-only space, off the
+    segment propagator itself, no state propagated); otherwise every input of ``input_states`` is propagated by
+    ``engine.run_pulses`` and the Choi matrix fit by least squares. The outputs are averaged with the branch weights, the Choi
+    matrix is projected onto CP and TP, and the motional outputs and residual displacements per input are kept for the
+    register-weighted update. When the truncation monitor grows the space during a run, every run is repeated on the grown
+    space so that all outputs share one space. On the trajectory path the engine's trajectory count is raised to
+    ceil(1/epsilon_map) (``options.map_accuracy``).
     """
     sched = _as_schedule(pulse)
     dissipative = bool(engine.channels) or bool(engine.device_channels)
@@ -593,7 +968,7 @@ def tomography(
         opts = replace(options, ntraj=int(math.ceil(1.0 / options.map_accuracy)))
     labels_kets = input_states(space.ion_dims)
     labels = tuple(lab for lab, _k in labels_kets)
-    dims_int = [list(space.ion_dims), [1] * len(space.ion_dims)]
+    inputs = tuple(np.outer(k, k.conj()) for _l, k in labels_kets)
     frozen_coupled = coupled_frozen_modes(device, space, sched.pulses)
     current = space
     for _attempt in range(engine.max_growth_retries + 2):
@@ -601,84 +976,43 @@ def tomography(
             current, motional_model, frozen_coupled, opts.branch_weight_min
         )
         thermal_frozen = {m: float(motional_model.nbar.get(m, 0.0)) for m in current.frozen}
-        d_int = int(np.prod(current.ion_dims))
-        outputs: list[np.ndarray] = []
-        mot_out: dict[int, list[np.ndarray]] = {tr.mode: [] for tr in current.resolved}
-        alpha_out: dict[int, list[complex]] = {tr.mode: [] for tr in current.resolved}
-        nbar_out: dict[int, list[float]] = {tr.mode: [] for tr in current.resolved}
-        boundary: dict[int, float] = {}
-        populated: dict[int, int] = {}
-        margins: dict[int, int] = {}
-        reports: list[EngineReport] = []
-        n_traj = 1
-        method = "sesolve"
-        grown: HilbertSpace | None = None
-        runs = 0
-        # every (input, branch) run is independent: prepare them all, run them through the map, then accumulate in order
-        payloads: list[_TomographyTask] = []
-        for lab_idx, (_lab, ket) in enumerate(labels_kets):
-            internal = qt.Qobj(ket.reshape(-1, 1), dims=dims_int)
-            for br_idx, br in enumerate(branches):
-                state = current.initial_state(internal, states=br.kets, thermal=thermal_frozen)
-                values = dict(sample.values)
-                values.update({key_frozen_n(m): float(n) for m, n in br.frozen_n.items()})
-                values[KEY_BRANCH_WEIGHT] = float(br.weight)
-                smp = NoiseSample(sample.sample_id, values, dict(sample.ou_grids), sample.t_s)
-                payloads.append(_TomographyTask(lab_idx, br_idx, state, smp))
-        results, map_workers = _run_tasks(engine, device, sched, current, payloads, seeds, opts)
-        runs = len(results)
-        for rep in (r for _t, r in results):
-            reports.append(rep)
-            if rep.space != current and (grown is None or rep.space.dimension > grown.dimension):
-                grown = rep.space
-        if grown is None:
-            for lab_idx in range(len(labels_kets)):
-                rho_acc = np.zeros((d_int, d_int), dtype=complex)
-                mot_acc = {
-                    m: np.zeros((current.truncation(m).d, current.truncation(m).d), dtype=complex)
-                    for m in mot_out
-                }
-                alpha_acc = {m: 0j for m in mot_out}
-                for task, (traces, rep) in zip(payloads, results):
-                    if task.input_index != lab_idx:
-                        continue
-                    br = branches[task.branch_index]
-                    rho_acc += br.weight * np.asarray(traces.final.internal.full())
-                    for m in mot_out:
-                        mot_acc[m] += br.weight * np.asarray(traces.final.motional.reduced[m].full())
-                        alpha_acc[m] += br.weight * complex(traces.alpha_m[m][-1])
-                    for m, v in traces.boundary_population.items():
-                        boundary[m] = max(boundary.get(m, 0.0), float(v))
-                    for m, v in rep.populated_n_max.items():
-                        populated[m] = max(populated.get(m, 0), int(v))
-                    for m, v in rep.margin_reached.items():
-                        margins[m] = min(margins.get(m, int(v)), int(v))
-                    n_traj = max(n_traj, rep.trajectories if rep.method == "mcsolve" else 1)
-                    if rep.method != "sesolve":
-                        method = rep.method
-                outputs.append(rho_acc)
-                for m in mot_out:
-                    mot_out[m].append(mot_acc[m])
-                    alpha_out[m].append(alpha_acc[m])
-                    nbar_out[m].append(
-                        float(np.real(np.trace(np.diag(np.arange(mot_acc[m].shape[0])) @ mot_acc[m])))
-                    )
-        if grown is not None:
-            current = grown
+        route: TomographyRoute = "states"
+        if opts.tomography_isometry and engine.is_unitary(device, current, opts):
+            route = "propagator" if (not current.resolved and current.enr_group is None) else "isometry"
+        if route == "states":
+            ext = _extract_from_states(
+                engine, device, sched, current, branches, thermal_frozen, labels_kets, sample, seeds, opts
+            )
+        elif route == "propagator":
+            columns, reports = _propagator_columns(
+                engine, device, sched, current, branches, sample, seeds, opts, motional_model
+            )
+            ext = _extract_from_columns(current, branches, columns, reports, labels_kets, {}, 1, route)
+        else:
+            columns, reports, seen, map_workers, grown = _isometry_columns(
+                engine, device, sched, current, branches, thermal_frozen, sample, seeds, opts
+            )
+            if grown is not None:
+                current = grown
+                continue
+            ext = _extract_from_columns(
+                current, branches, columns, reports, labels_kets, seen, map_workers, route
+            )
+        if ext.grown is not None:
+            current = ext.grown
             continue
-        inputs = tuple(np.outer(k, k.conj()) for _l, k in labels_kets)
-        choi_raw = choi_least_squares(inputs, outputs)
+        choi_raw = ext.choi_raw if ext.choi_raw is not None else choi_least_squares(inputs, ext.outputs)
         choi, cp_res, tp_res, its = project_cptp(choi_raw)
         approximations: list[str] = []
         integrators: list[str] = []
-        for rep in reports:
+        for rep in ext.reports:
             for a in rep.approximations:
                 if a not in approximations:
                     approximations.append(a)
             for seg in rep.segments:
                 if seg.integrator not in integrators:
                     integrators.append(seg.integrator)
-        notes = list(branch_notes)
+        notes = list(branch_notes) + list(ext.notes)
         if dropped > 0.0:
             notes.append(
                 f"motional branches below branch_weight_min = {opts.branch_weight_min:g} dropped: weight {dropped:.3e} (renormalized)"
@@ -691,28 +1025,29 @@ def tomography(
             space=current,
             labels=labels,
             inputs=inputs,
-            outputs=tuple(outputs),
+            outputs=tuple(ext.outputs),
             choi=choi,
             choi_raw=choi_raw,
             cp_residual=cp_res,
             tp_residual=tp_res,
             dykstra_iterations=its,
-            n_traj=n_traj,
-            method=method,
-            motional_out={m: tuple(v) for m, v in mot_out.items()},
-            alpha_out={m: tuple(v) for m, v in alpha_out.items()},
-            nbar_out={m: tuple(v) for m, v in nbar_out.items()},
-            boundary_population=boundary,
-            populated_n_max=populated,
-            margin_reached=margins,
+            n_traj=ext.n_traj,
+            method=ext.method,
+            motional_out={m: tuple(v) for m, v in ext.mot_out.items()},
+            alpha_out={m: tuple(v) for m, v in ext.alpha_out.items()},
+            nbar_out={m: tuple(v) for m, v in ext.nbar_out.items()},
+            boundary_population=ext.boundary,
+            populated_n_max=ext.populated,
+            margin_reached=ext.margins,
             branches=len(branches),
             dropped_branch_weight=dropped,
-            engine_runs=runs,
+            engine_runs=ext.runs,
             notes=tuple(notes),
             approximations=tuple(approximations),
             integrators=tuple(integrators),
-            reports=tuple(reports),
-            workers=max([map_workers] + [rep.workers for rep in reports]),
+            reports=tuple(ext.reports),
+            workers=max([ext.workers] + [rep.workers for rep in ext.reports]),
+            route=ext.route,
         )
     raise RuntimeError("the gate-local space kept growing beyond the engine's retry budget")
 
@@ -799,6 +1134,8 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "intensity_noise_channels": options.intensity_noise_channels,
         "hardware_chain": options.hardware_chain,
         "margin_check": options.margin_check,
+        # the routes agree to the solver tolerance, but a record extracted by one must not answer for the other's report
+        "tomography_isometry": options.tomography_isometry,
     }
 
 
@@ -806,8 +1143,10 @@ __all__ = [
     "M9A",
     "MotionalBranch",
     "TomographyRecord",
+    "TomographyRoute",
     "apply_kraus_dm",
     "apply_kraus_ket",
+    "choi_from_isometry",
     "choi_least_squares",
     "computational_labels",
     "coupled_frozen_modes",
@@ -819,7 +1158,9 @@ __all__ = [
     "fingerprint_sample",
     "ideal_unitary_on",
     "input_states",
+    "internal_basis",
     "kraus_operators",
+    "kraus_superoperator",
     "local_ideal",
     "motional_branches",
     "project_cptp",

@@ -202,7 +202,7 @@ for s in rep_gl.steps:
     summ = s.summary
     line = (
         f"  step {s.gate_id}: ions {s.ions}, dims {list(s.space_dims)}, resolved {s.resolved}, frozen coupled {s.frozen_coupled}, "
-        f"{s.n_inputs} inputs x {s.n_branches} branches ({s.engine_runs} engine runs, {s.method}), cp/tp residual {s.cp_residual:.1e}/{s.tp_residual:.1e}"
+        f"{s.n_inputs} inputs x {s.n_branches} branches ({s.engine_runs} engine runs, {s.route} route, {s.method}), cp/tp residual {s.cp_residual:.1e}/{s.tp_residual:.1e}"
     )
     if summ is not None:
         line += f", average gate infidelity {summ.average_gate_infidelity:.3e}, depolarizing rate {summ.depolarizing_rate:.3e}, twirl p_II {summ.pauli_twirled.get('II', float('nan')):.5f}"

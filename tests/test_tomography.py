@@ -1,6 +1,7 @@
 """State-based process tomography, the Choi reconstruction, the CP/TP projection and the Kraus application (PLAN.md Section 5.4
 item (a); Section 6.8; Section 9.17 row "GATE_LOCAL tomography"; M9a), on synthetic channels and against the ideal unitaries the
-scheduler records (``GateTarget``)."""
+scheduler records (``GateTarget``); the isometry routes of the performance pass 2026-09-09 (``SolverOptions.tomography_isometry``)
+against the state route they replace, on the real engine."""
 
 from __future__ import annotations
 
@@ -9,29 +10,46 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap.api import HilbertSpace, ModeTruncation, SeedSpec, SolverOptions
+from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control import native
 from qutip_trap.control.schedule import GateTarget
+from qutip_trap.control.table import Waveform
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
 from qutip_trap.dynamics.tomography import (
     apply_kraus_dm,
     apply_kraus_ket,
+    choi_from_isometry,
     choi_least_squares,
     computational_labels,
     cp_residual,
     expansion_coefficients,
     ideal_unitary_on,
     input_states,
+    internal_basis,
     kraus_operators,
+    kraus_superoperator,
     project_cptp,
     regrid_reduced,
     single_qudit_inputs,
     tp_residual,
 )
+from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.summary import (
     apply_choi,
+    choi_from_kraus,
     choi_from_unitary,
     depolarizing_choi,
     entanglement_infidelity,
     pauli_twirl,
+)
+from tests.m4_fixtures import (
+    X_COM_TWO_IONS,
+    chain_device,
+    derived_seeds,
+    raman_gate_drives,
+    table_with_waveform,
+    two_ion_modes,
 )
 
 
@@ -165,3 +183,189 @@ def test_gate_target_unitary_follows_the_virtual_z_rule() -> None:
     assert np.max(np.abs(ms.unitary() - expected)) < 1e-14
     zz = GateTarget("zz[3]/loop1", (0, 1), ("zz", (0.3,)), {}, ("c",), 0.0, 1e-4)
     assert np.max(np.abs(zz.unitary() - native.zz(0.3))) < 1e-14
+
+
+# ---- the isometry routes (performance pass 2026-09-09) ---------------------------------------------------------------------------
+
+
+def _random_isometry(rows: int, cols: int, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    q, _r = np.linalg.qr(rng.normal(size=(rows, cols)) + 1j * rng.normal(size=(rows, cols)))
+    return np.asarray(q[:, :cols])
+
+
+def _apply_kraus_reference(
+    rho: np.ndarray, kraus: list[np.ndarray], dims: tuple[int, ...], factors: tuple[int, ...]
+) -> np.ndarray:
+    """The M9a form: one three-operand einsum per Kraus operator on the (local, rest, local, rest) reshaped register."""
+    n = len(dims)
+    total = int(np.prod(dims))
+    fac = list(factors)
+    rest = [f for f in range(n) if f not in fac]
+    d_loc = int(np.prod([dims[f] for f in fac]))
+    arr = rho.reshape(list(dims) + list(dims))
+    perm = fac + rest + [n + f for f in fac] + [n + f for f in rest]
+    a = np.transpose(arr, perm).reshape(d_loc, total // d_loc, d_loc, total // d_loc)
+    out = np.zeros_like(a)
+    for k in kraus:
+        out += np.einsum("ab,bxcy,dc->axdy", k, a, k.conj())
+    shaped = out.reshape([dims[f % n] for f in perm])
+    return np.asarray(np.transpose(shaped, np.argsort(perm)).reshape(total, total))
+
+
+def test_choi_from_isometry_is_the_kraus_construction_and_trace_preserving() -> None:
+    """A (d_int d_mot) x d_int isometry sliced by motional output index gives d_mot Kraus operators; ``choi_from_isometry`` forms
+    their trace-1 Choi matrix in ``choi_from_kraus``'s convention without materializing them, and a full-rank isometry is exactly
+    trace preserving (Stinespring). The internal basis is the identity's columns in the computational order."""
+    d_int, d_mot = 4, 3
+    v = _random_isometry(d_int * d_mot, d_int, seed=3)
+    kraus = [v.reshape(d_int, d_mot, d_int)[:, a, :] for a in range(d_mot)]
+    assert np.max(np.abs(sum(k.conj().T @ k for k in kraus) - np.eye(d_int))) < 1e-13
+    c = choi_from_isometry(v, d_int)
+    assert np.max(np.abs(c - choi_from_kraus(kraus))) < 1e-14
+    assert abs(np.trace(c) - 1.0) < 1e-13 and tp_residual(c) < 1e-12 and cp_residual(c) < 1e-13
+    # d_mot = 1: a unitary's Choi state
+    u = native.ms(0.3, -0.7, math.pi / 2.0)
+    assert np.max(np.abs(choi_from_isometry(u, 4) - choi_from_unitary(u))) < 1e-14
+    basis = internal_basis((2, 3))
+    assert len(basis) == 6 and all(np.array_equal(b, np.eye(6)[:, j]) for j, b in enumerate(basis))
+    assert len(basis) == len(computational_labels((2, 3)))
+    with pytest.raises(ValueError):
+        choi_from_isometry(v, 3)
+
+
+def test_superoperator_kraus_application_matches_the_per_operator_sum_with_a_permuted_factor_order() -> None:
+    """``apply_kraus_dm`` as one superoperator product against the M9a per-operator einsum on a six-qubit register, the local
+    factors in a non-trivial order (4, 1), for a random CPTP set of four Kraus operators and for a unitary; ``kraus_superoperator``
+    of a unitary is U (x) conj(U) and its action on a vectorized state is the sandwich."""
+    rng = np.random.default_rng(5)
+    dims = (2,) * 6
+    total = 2**6
+    psi = rng.normal(size=total) + 1j * rng.normal(size=total)
+    psi /= np.linalg.norm(psi)
+    rho = np.outer(psi, psi.conj())
+    q = _random_isometry(16, 4, seed=7)
+    kraus = [q[4 * a : 4 * a + 4, :] for a in range(4)]
+    assert np.max(np.abs(sum(k.conj().T @ k for k in kraus) - np.eye(4))) < 1e-13
+    for factors in ((4, 1), (1, 4), (0, 5), (2, 3)):
+        out = apply_kraus_dm(rho, kraus, dims, factors)
+        ref = _apply_kraus_reference(rho, kraus, dims, factors)
+        assert np.max(np.abs(out - ref)) < 1e-14, factors
+        assert abs(np.trace(out) - 1.0) < 1e-12
+    u = native.ms(0.3, -0.7, math.pi / 2.0)
+    s = kraus_superoperator([u])
+    assert np.max(np.abs(s - np.kron(u, u.conj()))) < 1e-15
+    r = rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4))
+    assert np.max(np.abs((s @ r.reshape(-1)).reshape(4, 4) - u @ r @ u.conj().T)) < 1e-13
+    with pytest.raises(ValueError):
+        kraus_superoperator([])
+
+
+@pytest.fixture(scope="module")
+def one_mode_entangling():  # type: ignore[no-untyped-def]
+    """A 10 us single-loop entangling pulse on the two-ion chain with the x-COM resolved at d = 15 and the stretch mode frozen but
+    coupled, so the thermal input makes three motional branches at nbar = 0.05 (weight floor 0.02). The cap has headroom on
+    both routes: at d = 13 the sixteen-input route's superpositions trip the Section 5.5 margin check one level above the basis
+    kets (a superposition's Fock tail is up to d_int times a basis ket's), and the two routes would end on different spaces."""
+    dev = chain_device(2)
+    drives = raman_gate_drives(2)
+    rabi, stark = derived_seeds(dev, drives)
+    modes = two_ion_modes(dev)
+    wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=100e3, all_modes=True)
+    table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
+    sched = ms_schedule(wf, (0, 1), drives, table)
+    space = HilbertSpace((2, 2), (ModeTruncation(2, 15, (0, 3), 0.13),), None, (0, 1, 3, 4, 5))
+    model = MotionalModel(
+        reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.05, 3: 0.05, 4: 0.0, 5: 0.0}, frozen=(0, 1, 3, 4, 5)
+    )
+    return dev, sched, space, model
+
+
+def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_entangling) -> None:  # type: ignore[no-untyped-def]
+    """The channel read off the four propagated basis kets per branch (Stinespring) against the sixteen-input least-squares
+    reconstruction on the same space: the Choi matrices, the outputs, the reduced motional states and the residual displacements
+    agree to the solver tolerance with four times fewer engine runs; the isometry's raw Choi matrix is completely positive by
+    construction and trace preserving to the norm the columns lost, and the projection has almost nothing left to do."""
+    dev, sched, space, model = one_mode_entangling
+    recs = {}
+    for flag in (True, False):
+        eng = JointExactEngine()
+        opts = SolverOptions(branch_weight_min=0.02, map="serial", tomography_isometry=flag)
+        recs[flag] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
+    iso, ref = recs[True], recs[False]
+    assert iso.route == "isometry" and ref.route == "states"
+    assert iso.branches == ref.branches == 3
+    assert iso.engine_runs == 4 * iso.branches and ref.engine_runs == 16 * ref.branches
+    assert iso.space == ref.space == space, "the same space: no growth on either route"
+    assert iso.labels == ref.labels and len(iso.inputs) == len(ref.inputs) == 16
+    assert np.max(np.abs(iso.choi - ref.choi)) < 1e-7
+    assert np.max(np.abs(iso.choi_raw - ref.choi_raw)) < 1e-7
+    assert max(np.max(np.abs(a - b)) for a, b in zip(iso.outputs, ref.outputs)) < 1e-7
+    for m in (2,):
+        assert max(np.max(np.abs(a - b)) for a, b in zip(iso.motional_out[m], ref.motional_out[m])) < 1e-7
+        assert max(abs(a - b) for a, b in zip(iso.alpha_out[m], ref.alpha_out[m])) < 1e-7
+        assert max(abs(a - b) for a, b in zip(iso.nbar_out[m], ref.nbar_out[m])) < 1e-7
+    assert set(iso.motional_out) == set(ref.motional_out) == {2}
+    assert iso.residual_displacement().keys() == ref.residual_displacement().keys()
+    assert abs(iso.residual_displacement()[2] - ref.residual_displacement()[2]) < 1e-7
+    # CP by construction, TP to the columns' norm loss; the least-squares fit needs the projection for both
+    assert cp_residual(iso.choi_raw) < 1e-12 and tp_residual(iso.choi_raw) < 1e-6
+    assert iso.cp_residual < 1e-12 and iso.tp_residual < 1e-12 and iso.dykstra_iterations <= 5
+    assert ref.dykstra_iterations >= iso.dykstra_iterations
+    assert iso.n_traj == 1 and iso.method == "sesolve" and set(iso.boundary_population) == {2}
+    assert (
+        iso.populated_n_max.keys() == ref.populated_n_max.keys()
+        and iso.margin_reached.keys() == ref.margin_reached.keys()
+    )
+    assert any("Stinespring" in n for n in iso.notes) and not any("Stinespring" in n for n in ref.notes)
+    assert len(iso.reports) == iso.engine_runs and all(r.method == "sesolve" for r in iso.reports)
+    # the record's derived quantities keep working on the isometry route
+    ks = iso.kraus()
+    assert 1 <= len(ks) <= 16 and np.max(np.abs(sum(k.conj().T @ k for k in ks) - np.eye(4))) < 1e-9
+    rho_local = np.asarray(iso.inputs[5])
+    mot_iso, alpha_iso = iso.motional_for(rho_local)
+    mot_ref, alpha_ref = ref.motional_for(rho_local)
+    assert np.max(np.abs(mot_iso[2] - mot_ref[2])) < 1e-7 and abs(alpha_iso[2] - alpha_ref[2]) < 1e-7
+
+
+def test_a_dissipative_step_keeps_the_state_route_whatever_the_switch_says() -> None:
+    """A trajectory is not linear in its initial ket: with a dephasing collapse operator on the space ``is_unitary`` is False,
+    the tomography propagates every one of the sixteen inputs even though the switch is on, and ``propagator`` refuses the
+    segment. Heating acts on modes, so the device's channels leave an internal-state-only space unitary and a space with a
+    resolved mode not."""
+    import dataclasses
+
+    from qutip_trap.api import white_spectrum
+    from qutip_trap.control.schedule import Schedule, single_qubit_pulse
+    from qutip_trap.dynamics.channels import qubit_dephasing_channels
+
+    dev = chain_device(2)
+    drives = raman_gate_drives(2)
+    rabi, _stark = derived_seeds(dev, drives)
+    pulse = single_qubit_pulse(
+        0, math.pi / 2.0, 0.3, drives[0], rabi[(0, 0)], 0.0, gate_id="gpi2", programmed=False
+    )
+    sched = Schedule((pulse,), (), (), {0: 0.0, 1: 0.0})
+    space = HilbertSpace((2, 2), (), None, (0, 1, 2, 3, 4, 5))
+    model = MotionalModel(reduced={}, nbar={m: 0.0 for m in range(6)}, frozen=tuple(range(6)))
+    opts = SolverOptions(lindblad_method="mesolve")
+    assert JointExactEngine().is_unitary(dev, space, opts)
+    dephasing = JointExactEngine(channels=qubit_dephasing_channels(space, {0: 1.0e3}))
+    assert not dephasing.is_unitary(dev, space, opts)
+    with pytest.raises(ValueError, match="collapse operators"):
+        dephasing.propagator(dev, sched, space, quiet_sample(), SeedSpec(0), opts)
+    rec = dephasing.tomography(dev, pulse, space, model, quiet_sample(), SeedSpec(0), opts)
+    assert rec.route == "states" and rec.method == "mesolve" and rec.engine_runs == 16 * rec.branches == 16
+    assert rec.tp_residual < 1e-10 and len(rec.kraus()) > 1, "dephasing: more than one Kraus operator"
+    noisy = dataclasses.replace(
+        dev,
+        noise=dataclasses.replace(
+            dev.noise, S_E=white_spectrum(1e-9, "(V/m)^2/(rad/s)"), correlation_length_m=0.0
+        ),
+    )
+    heating = JointExactEngine(device_channels=True)
+    assert heating.is_unitary(noisy, space, opts), "heating acts on modes, and every mode is frozen here"
+    resolved = HilbertSpace((2, 2), (ModeTruncation(2, 6, (0, 1), 0.13),), None, (0, 1, 3, 4, 5))
+    assert not heating.is_unitary(noisy, resolved, opts)
+    with pytest.raises(ValueError, match="internal-state-only"):
+        heating.propagator(noisy, sched, resolved, quiet_sample(), SeedSpec(0), opts)

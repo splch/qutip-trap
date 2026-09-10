@@ -61,7 +61,14 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
   register; spin-motion and mode-mode correlations left after a step are traced out rather than carried to the next. The
   approximation is measured, not hidden: every step reports the residual displacement per spin eigenstate, its bound
   Σ|α_m|²(2n̄_m + 1), the purity deficit of the reduced motional state, the frozen excitation bound and the dropped
-  crosstalk, and Section 9.8 holds a JOINT_EXACT comparison to that bound (`Diagnostics.gate_local`).
+  crosstalk, and Section 9.8 holds a JOINT_EXACT comparison to that bound (`Diagnostics.gate_local`). How the channel is
+  extracted is not an approximation (performance pass 2026-09-09, `TomographyRecord.route`): a unitary step propagates the
+  Π d_i internal basis kets per motional branch and reads the channel off the Stinespring isometry they form (a carrier step
+  on an internal-state-only space takes the cached segment propagator itself, one engine call per branch); a dissipative step
+  propagates every one of the Π d_i² input states and fits the Choi matrix by least squares, the reference route that
+  `SolverOptions(tomography_isometry=False)` forces everywhere. The routes agree to the solver tolerance. One thing does
+  change: the truncation monitor of Section 5.5 runs on the propagated basis kets, so a superposition input's boundary
+  population is bounded by Π d_i times the maximum it reports (Cauchy-Schwarz), which the step's notes say.
 - **Scattering at d = 2.** A run on two-level register factors reports the photon-scattering probabilities of every pulse as
   estimates in the intrinsic budget (Raman, leakage, Rayleigh); `internal_levels > 2` and `SolverOptions.scattering_channels`
   simulate them as collapse operators with recoil and read the leaked levels out by their manifold's class.
@@ -135,7 +142,9 @@ and for the two-ion example device of `device/presets.py` (2026-09-09, after the
 calibration about 6 s (15 s before it), a Bell circuit with 2000 shots about 3.5 s (8 s before; five carrier pulses and one
 entangling gate on the 572-dimensional space [2, 2, 11, 13]), a 384-Clifford
 single-qubit RB sequence 2 s (the carrier pulses run on the internal space through the propagator cache), a two-qubit
-Clifford about 10 s (1.5 entangling gates on average), the GATE_LOCAL tomography of one entangling gate about 60 s, a
+Clifford about 10 s (1.5 entangling gates on average), the Bell circuit through `level="GATE_LOCAL"` about 5 s (its
+entangling step's channel from 40 propagated basis columns over 10 motional branches on the space [2, 2, 11, 13]; 17 s on the
+sixteen-input reference route `SolverOptions(tomography_isometry=False)`, 60 s before the performance pass), a
 two-qubit quantum-volume circuit (two SU(4) layers, six entangling gates) about one minute. Calibration by simulated
 experiments of the two-ion device takes about twelve minutes; the three-ion GHZ circuit at dimension 1152 several minutes
 per run. Randomized benchmarking to the 10⁻⁵ level therefore needs sequences of hundreds of single-qubit Cliffords and

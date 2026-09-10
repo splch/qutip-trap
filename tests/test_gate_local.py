@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 import pytest
+import qutip as qt
 
 from qutip_trap.api import (
     Circuit,
@@ -95,8 +96,9 @@ def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None
 
 def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> None:  # type: ignore[no-untyped-def]
     """A GPi2 on ion 0 with its addressing crosstalk onto ion 1: the gate-local space is the two ions with every mode frozen, the
-    sixteen-input tomography returns a CPTP map whose application reproduces the JOINT_EXACT register to the solver tolerance; the
-    channel summary sits at the crosstalk scale; a second run hits the cache."""
+    tomography (the propagator route: one segment propagator per Fock branch is the branch's Kraus operator, the sixteen inputs
+    follow by linearity) returns a CPTP map whose application reproduces the JOINT_EXACT register to the solver tolerance; the
+    channel summary sits at the crosstalk scale; a second run hits the cache, for the gate step and for the idle channels."""
     fx, sur, kw = two_ion
     clear_gate_local_cache()
     # the register of GATE_LOCAL is the pumped density matrix itself; JOINT_EXACT enumerates it into branches, so the comparison
@@ -118,7 +120,9 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
         and s.n_inputs == 16
         and s.n_branches >= 1
     )
-    assert s.method == "sesolve" and s.n_traj == 1 and not s.cache_hit and s.engine_runs == 16 * s.n_branches
+    assert s.method == "sesolve" and s.n_traj == 1 and not s.cache_hit and s.engine_runs == s.n_branches
+    assert s.route == "propagator" and all(st.route == "propagator" for st in gl.steps)
+    assert gl.idle_cache_hits == 0, "the first idle of a fresh cache computes both ions' channels"
     assert s.tp_residual < 1e-10 and s.cp_residual < 1e-10, "Section 9.17: both residuals reported and tiny"
     assert s.summary is not None
     eps = sur.table.crosstalk[(0, 1)].value
@@ -141,6 +145,8 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     )
     c = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)  # type: ignore[arg-type]
     assert c.diagnostics.gate_local is not None and c.diagnostics.gate_local.cache_hits >= 1
+    assert c.diagnostics.gate_local.idle_cache_hits == 2 and c.diagnostics.gate_local.engine_runs == 0
+    assert [st.cache_hit for st in c.diagnostics.gate_local.steps] == [True, True]
     assert np.array_equal(b.bitstrings, c.bitstrings)
     rec = last_record(b)
     assert rec.gate_local is gl and rec.traces == () and rec.register_state is not None
@@ -274,6 +280,7 @@ def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:
     rec = JointExactEngine().tomography(dev, sched, space, model, sample, SeedSpec(0), SolverOptions())
     ks = rec.kraus()
     assert len(ks) == 1 and rec.tp_residual < 1e-10
+    assert rec.route == "propagator" and rec.engine_runs == 1 and rec.integrators == ("exact",)
     theta = 2.0 * math.pi * 400.0 * tau
     ideal = np.diag(
         [np.exp(0.5j * theta), np.exp(-0.5j * theta)]
@@ -339,3 +346,103 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
             )
     assert b.probabilities.get("000", 0.0) + b.probabilities.get("111", 0.0) > 0.9
     assert register_fidelity(b) > 0.9 and abs(register_fidelity(a) - register_fidelity(b)) < bound
+
+
+# ---- the register bookkeeping and the idle cache (performance pass 2026-09-09) ----------------------------------------------------
+
+
+def test_register_marginal_is_the_partial_trace_in_the_requested_factor_order() -> None:
+    """``Register.marginal`` reads the strided view of the density matrix; against QuTiP's ``ptrace`` (which returns the kept
+    factors in ascending order) with the factors requested in a non-ascending order, and the ensemble path against the average."""
+    from qutip_trap.run.gate_local import Register
+
+    rng = np.random.default_rng(11)
+    dims = (2, 3, 2)
+    total = int(np.prod(dims))
+    kets = []
+    for _ in range(3):
+        v = rng.normal(size=total) + 1j * rng.normal(size=total)
+        kets.append(v / np.linalg.norm(v))
+    rho = sum(np.outer(k, k.conj()) for k in kets) / len(kets)
+    reg = Register.from_density_matrix(rho, dims)
+    ens = Register(dims, kets=list(kets))
+    swap = np.zeros((4, 4))
+    swap[0, 0] = swap[3, 3] = swap[1, 2] = swap[2, 1] = 1.0
+    full = qt.Qobj(rho, dims=[list(dims), list(dims)])
+    for factors in ((0,), (1,), (2, 0), (0, 2), (1, 2)):
+        m = reg.marginal(factors)
+        m_ens = ens.marginal(factors)
+        ref = np.asarray(full.ptrace(sorted(factors)).full())
+        if list(factors) != sorted(factors):
+            ref = swap @ ref @ swap.T
+        assert m.shape == ref.shape and np.max(np.abs(m - ref)) < 1e-14, factors
+        assert np.max(np.abs(m_ens - ref)) < 1e-14, factors
+        assert abs(np.trace(m) - 1.0) < 1e-13
+
+
+def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_the_walk(
+    two_ion, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Three carrier gates leave three dead-time idles of the same length: the six one-ion idle channels cost two extractions
+    and four cache hits, the walk builds ONE engine, and with the cache defeated (a unique key per call) the register is the same
+    to round-off and the run costs four more engine calls. The key is blind to the absolute window unless the sample carries a fast
+    trajectory (an OU grid indexed by absolute time), and it sees the duration, the ion and the options."""
+    import uuid
+
+    from qutip_trap.noise.sampling import NoiseSample, key_qubit_trajectory_hz
+    from qutip_trap.run import gate_local
+    from qutip_trap.run.gate_local import EngineSetup, GateStep, _idle_key
+
+    fx, sur, kw = two_ion
+    circ = Circuit(
+        2,
+        (Operation("gpi2", (0,), (0.0,)), Operation("gpi2", (1,), (0.5,)), Operation("gpi2", (0,), (1.0,))),
+        (0, 1),
+    )
+    built = 0
+    original = EngineSetup.engine
+
+    def counting(self):  # type: ignore[no-untyped-def]
+        nonlocal built
+        built += 1
+        return original(self)
+
+    monkeypatch.setattr(EngineSetup, "engine", counting)
+    clear_gate_local_cache()
+    a = run(circ, fx.device, 120, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    gl = a.diagnostics.gate_local
+    assert gl is not None and built == 1, "one JOINT_EXACT engine per walk"
+    idles = [s for s in gl.steps if s.kind == "idle"]
+    assert len(idles) == 3 and gl.idle_cache_hits == 4 and gl.cache_hits == 0
+    assert [s.cache_hit for s in idles] == [False, True, True]
+    assert all(s.route == "propagator" for s in gl.steps)
+    assert all(
+        abs((i.t_end_s - i.t_start_s) - (idles[0].t_end_s - idles[0].t_start_s)) < 1e-15 for i in idles
+    )
+    runs_cached = gl.engine_runs
+    monkeypatch.setattr(gate_local, "_idle_key", lambda *args, **kwargs: uuid.uuid4().hex)
+    clear_gate_local_cache()
+    b = run(circ, fx.device, 120, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    gl_b = b.diagnostics.gate_local
+    assert gl_b is not None and gl_b.idle_cache_hits == 0 and gl_b.engine_runs == runs_cached + 4
+    assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-14
+    assert np.array_equal(a.bitstrings, b.bitstrings)
+    monkeypatch.undo()
+    # the key itself
+    dev = fx.device
+    setup = EngineSetup(table=sur.table)
+    opts = SolverOptions()
+    quiet = quiet_sample()
+    step_a = GateStep("idle", 1.0e-6, 2.0e-6, (), (), (), ())
+    step_b = GateStep("idle", 7.3e-5, 7.4e-5, (), (), (), ())
+    step_c = GateStep("idle", 1.0e-6, 2.5e-6, (), (), (), ())
+    k = lambda step, smp, o=opts, q=0: _idle_key(dev, q, 2, step, smp, SeedSpec(0), o, setup)  # noqa: E731
+    assert k(step_a, quiet) == k(step_b, quiet), "the same dead time anywhere in the walk is the same channel"
+    assert k(step_a, quiet) != k(step_c, quiet) and k(step_a, quiet) != k(step_a, quiet, q=1)
+    assert k(step_a, quiet) != k(step_a, quiet, o=SolverOptions(atol=1e-9))
+    grid = np.array([np.linspace(0.0, 2e-4, 5), [10.0, -5.0, 3.0, 0.0, 1.0]])
+    noisy = NoiseSample(0, {}, {key_qubit_trajectory_hz(0): grid})
+    assert k(step_a, noisy) != k(step_b, noisy), (
+        "a fast trajectory makes the channel depend on where the idle sits"
+    )
+    assert k(step_a, noisy) != k(step_a, quiet)
