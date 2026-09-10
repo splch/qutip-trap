@@ -88,7 +88,7 @@ its non-numeric skeleton and compares the numbers to a relative tolerance of 1e-
 (numbers below 1e-6 in magnitude printed with at most three significant digits: leaked populations, norm losses,
 element differences at the round-off level), whose last digits depend on the machine's BLAS and integrator and
 which are therefore compared to a factor of 3, their order of magnitude (the first Linux CI run differed from the
-macOS oracle by 4.06e-10 against 4.08e-10 on exactly such a number); wall times are never
+macOS oracle by 4.06e-10 against 4.08e-10 on exactly such a number; a pair at or across zero, which has no order of magnitude, is compared to the 1e-6 bound instead); wall times are never
 compared; `bench_*.py` run only with `--bench` and are not compared). `--report` writes
 `validation/report/convergence_report.{json,md}` and the fresh outputs, which CI uploads as the
 `convergence-report` artifact; it is the first CI job (`.github/workflows/ci.yml`). The committed outputs of
@@ -247,4 +247,35 @@ Added on 2026-09-09 by the performance pass:
   to 5.3e-9, reduced motional outputs to 8.7e-9, the raw Choi matrix completely positive to 7e-17 and trace preserving to
   4.3e-8, Dykstra in 2 iterations instead of 12), and the ten-qubit register update as one superoperator product against the
   per-operator einsum (0.010 against 0.148 s, difference 1.4e-18) with `Register.marginal` on the strided view (0.08 against
-  1.05 ms, identical). `outputs/bench_tomography.out`; runs the package in a few seconds; wall times are never compared.
+  1.05 ms, identical), and (part 4) the three declared relaxations keyed to the map accuracy on the same entangling step with
+  warm modes: the branch tail rule (55 branches kept at a zero budget, 34 at 1e-4, 28 at 2.5e-4 with a dropped weight of
+  2.2e-4 and the reported bound 2w = 4.5e-4, 21 at 1e-3), the keyed tolerance (46862 against 88464 right-hand sides, the
+  ten-times-tighter change 8.9e-6 reported against a realized channel difference of 2.0e-5 in d times the trace norm, 1.6e-6 in
+  the outputs) and the derived cap margin (3 instead of the fixture's 6 at eta = 0.1 for top levels 2 and 5, 4 at level 10, 6
+  instead of 8 at eta = 0.3, each with its measured interior element error below 1e-8 and its leakage below 1e-7).
+  `outputs/bench_tomography.out`; runs the package in a few seconds; wall times are never compared.
+
+Added on 2026-09-10 by the CI repair (the first job had failed on every push since M5, the workflow file since M11.1):
+
+- `.github/workflows/ci.yml`: the `app` job's name held an unquoted `: `, which YAML reads as a second mapping key, so
+  GitHub rejected the file and no job ran from M11.1 (2026-09-09) on; quoted.
+- `run_checks.py`: a residual-class pair at or across zero (check_calibration's fitted residual beta, -8.62e-12 here
+  against +1.97e-12 on one Linux runner) is compared to the 1e-6 bound; the factor-of-3 rule needs a common sign and an
+  order of magnitude that a round-off difference does not have.
+- `check_readout.py`: the Burrell midpoint threshold `floor(0.5 * mean) + 0.5` sat on an integer boundary (bright means
+  of exactly 80, 400 and 1600 counts from a BLAS dot product); Accelerate landed just above 80 and OpenBLAS just below,
+  so Linux used n_c = 39.5 and printed eps_D 1.7122e-4 against the committed 1.6694e-4 on every run since M5. The
+  half-mean is rounded to 1e-9 counts before the floor; the committed output is unchanged.
+- `check_bloch.py`: the argmin of nbar_D at nu/Gamma = 0.002 sits in a flat minimum and moved by 2e-6 between platforms
+  (-0.501253 against -0.501255), as did its residual against the closed-form limit (-4.7e-6 against -7.0e-6); Delta is
+  printed at three decimals and the residual by its decade. Output regenerated.
+- `check_circuits.py`: the surrogate table's detection entries are fitted to 4000 sampled records, so eps_B and eps_D
+  carry shot noise (eps_D 4.18e-4 here against 3.90e-4 on Linux); the line is `MC:` now, with a compared line stating
+  the 1e-3 band both must stay inside. Output regenerated.
+- `check_benchmarks.py`: six compared lines carried numbers that run through the SPAM estimate or the measured decays
+  (F(0) from SPAM with the SPAM entries, the measured simultaneous-RB rates, the predicted GHZ bound, eps_readout and
+  the predicted heavy-output probability) or the exact fidelities of the compiled random quantum-volume circuits, which
+  moved across platforms for the same seed ([0.99017, 0.99614, 0.99504, 0.99111] here against [0.9923, 0.99629,
+  0.99921, 0.99428] on Linux) while the pinned worst-fidelity band held. Each moved to an `MC:` line; the deterministic
+  numbers (r_channel, r_intrinsic, F_gates, eps_gates, the ideal heavy-output mean, the intrinsic scales) stay compared
+  and the `pinned` bands remain the compared anchors. Output regenerated.

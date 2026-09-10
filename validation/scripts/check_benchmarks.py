@@ -177,7 +177,12 @@ for k, ch in sorted(b.channels.items()):
             f"    {k}: step ions {s.ions}, full-step average gate infidelity {s.summary.average_gate_infidelity:.3e}, depolarizing rate {s.summary.depolarizing_rate:.3e}, {s.engine_runs} engine runs on dimension {s.local_dimension}"
         )
 print(
-    f"  predicted r_channel {b.predicted['r_channel']:.3e} (first-order composition), r_intrinsic {b.predicted['r_intrinsic']:.3e} (Section 9.6 scales, summed over each kind's whole schedule entry and so over a larger error than r_channel), F(0) from SPAM {b.predicted['F0_spam']:.5f}; SPAM {dict((k, (round(v[0], 6), round(v[1], 6))) for k, v in b.spam.items())}"
+    f"  predicted r_channel {b.predicted['r_channel']:.3e} (first-order composition), r_intrinsic {b.predicted['r_intrinsic']:.3e} (Section 9.6 scales, summed over each kind's whole schedule entry and so over a larger error than r_channel)"
+)
+# the SPAM entries are the surrogate table's detection calibration, fitted to sampled records, so F(0) carries shot noise
+# (0.99965 here against 0.99955 on Linux in CI); the pinned line below compares the survival against it instead
+print(
+    f"MC: F(0) from SPAM {b.predicted['F0_spam']:.5f}; SPAM {dict((k, (round(v[0], 6), round(v[1], 6))) for k, v in b.spam.items())}"
 )
 r_alone = rb1.error_per_clifford[0]
 pinned("single-qubit RB r per Clifford", r_alone, 1.0e-5, 4.0e-5)
@@ -216,9 +221,13 @@ print(
     f"  simultaneous RB budget: channels on the pair {dict((k, f'{v:.3e}') for k, v in sorted(bs.channel_infidelity.items()))};"
     f" predicted per-qubit r_channel {dict((k.split('.')[1], f'{v:.3e}') for k, v in sorted(bs.predicted.items()) if k.startswith('r_channel.'))}"
     f" (each kind's channel reduced to that ONE qubit, so the neighbour's crosstalk rotation counts, Section 6.6), mean"
-    f" {bs.predicted['r_channel']:.3e} against the measured {rb_sim.error_per_clifford[0]:.3e}; r_channel_joint_layer"
-    f" {bs.predicted['r_channel_joint_layer']:.3e} against the measured joint {rb_sim.joint_error_per_layer[0]:.3e};"
+    f" {bs.predicted['r_channel']:.3e}; r_channel_joint_layer {bs.predicted['r_channel_joint_layer']:.3e};"
     f" single-ion RB above saw {b.predicted['r_channel']:.1e}"
+)
+print(
+    f"MC: simultaneous RB measured against that budget: r = {rb_sim.error_per_clifford[0]:.3e} against the mean r_channel"
+    f" {bs.predicted['r_channel']:.3e}; joint per layer {rb_sim.joint_error_per_layer[0]:.3e} against r_channel_joint_layer"
+    f" {bs.predicted['r_channel_joint_layer']:.3e}"
 )
 pinned("simultaneous RB marginal r_q", rb_sim.error_per_clifford[0], 1.5e-4, 6.0e-4)
 pinned(
@@ -276,9 +285,8 @@ ms_ch = b2.channels["ms[0,1]"].steps[0]
 print(
     f"  ms[0,1] step: dimension {ms_ch.local_dimension}, {ms_ch.engine_runs} engine runs, average gate infidelity {ms_ch.summary.average_gate_infidelity:.3e}, depolarizing rate {ms_ch.summary.depolarizing_rate:.3e}, twirl p_II {ms_ch.summary.pauli_twirled['II']:.5f}"
 )
-print(
-    f"  predicted r_channel {b2.predicted['r_channel']:.3e}, r_intrinsic {b2.predicted['r_intrinsic']:.3e}, F(0) from SPAM {b2.predicted['F0_spam']:.5f}"
-)
+print(f"  predicted r_channel {b2.predicted['r_channel']:.3e}, r_intrinsic {b2.predicted['r_intrinsic']:.3e}")
+print(f"MC: F(0) from SPAM {b2.predicted['F0_spam']:.5f}")
 pinned("two-qubit RB r per Clifford", rb2.error_per_clifford[0], 1.0e-3, 6.0e-3)
 pinned("two-qubit RB r/r_channel", rb2.error_per_clifford[0] / b2.predicted["r_channel"], 0.5, 2.5)
 pinned("two-qubit RB entangling gates per Clifford", rb2.entangling_per_clifford, 1.0, 2.0)
@@ -293,8 +301,11 @@ print(
 print(
     f"  exact fidelities: max_theta <GHZ_theta| rho |GHZ_theta> {g2.register_fidelity_max_phase:.5f} (what the bound"
     f" estimates) and the fixed-phase <GHZ| rho |GHZ> {g2.register_fidelity:.5f} (which the bound therefore exceeds);"
-    f" predicted from the channels: F_gates {g2.budget.predicted['F_gates']:.5f}, bound"
-    f" {g2.budget.predicted['fidelity_bound']:.5f}; intrinsic scales {g2.budget.predicted['intrinsic_total']:.2e}"
+    f" predicted from the channels: F_gates {g2.budget.predicted['F_gates']:.5f}; intrinsic scales"
+    f" {g2.budget.predicted['intrinsic_total']:.2e}"
+)  # type: ignore[union-attr]
+print(
+    f"MC: predicted bound (F_gates through the SPAM estimate) {g2.budget.predicted['fidelity_bound']:.5f}"
 )  # type: ignore[union-attr]
 print(
     f"MC: parity points (phase/pi, parity): {[(round(float(r[0]) / math.pi, 3), round(float(r[1]), 3)) for r in g2.parity]}"
@@ -359,9 +370,14 @@ print(
     f" smaller, never the criterion); protocol circuit count met {qv.protocol_circuit_count_met}, passed {qv.passed},"
     f" log2 quantum volume {qv.log2_quantum_volume}"
 )
-print(f"  exact register fidelities {[round(float(x), 5) for x in qv.register_fidelity]}")
+# exact, but of the compiled random circuits: for the same seed CI saw [0.99017, 0.99614, 0.99504, 0.99111] here against
+# [0.9923, 0.99629, 0.99921, 0.99428] on Linux while the pinned worst-fidelity band below held; recorded, not compared
+print(f"MC: exact register fidelities {[round(float(x), 5) for x in qv.register_fidelity]}")
 print(
-    f"  predicted: eps_gates {qv.budget.predicted['eps_gates']:.3e}, eps_readout {qv.budget.predicted['eps_readout']:.3e}, heavy-output probability {qv.budget.predicted['heavy_output_probability']:.4f} against the ideal mean {qv.budget.predicted['ideal_heavy_output_probability']:.4f}; intrinsic scales per circuit {qv.budget.predicted['intrinsic_total']:.2e}"
+    f"  predicted: eps_gates {qv.budget.predicted['eps_gates']:.3e}; ideal mean heavy-output probability {qv.budget.predicted['ideal_heavy_output_probability']:.4f}; intrinsic scales per circuit {qv.budget.predicted['intrinsic_total']:.2e}"
+)  # type: ignore[union-attr]
+print(
+    f"MC: predicted eps_readout {qv.budget.predicted['eps_readout']:.3e} (from the SPAM estimate) and heavy-output probability {qv.budget.predicted['heavy_output_probability']:.4f} against the ideal mean {qv.budget.predicted['ideal_heavy_output_probability']:.4f}"
 )  # type: ignore[union-attr]
 pinned("quantum-volume mean heavy-output probability", qv.mean, 0.62, 0.82)
 pinned("quantum-volume Eq. (32) sigma", qv.sigma, 0.18, 0.26)

@@ -85,7 +85,7 @@ jobs:
       - run: uv run flet doctor
 
   app:
-    name: the application package (Section 14 / M11): lint, types, provenance index, view-model tests
+    name: "the application package (Section 14 / M11): lint, types, provenance index, view-model tests"
     needs: validation-checks
     runs-on: ubuntu-latest
     steps:

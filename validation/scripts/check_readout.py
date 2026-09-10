@@ -254,7 +254,11 @@ for detected in (2e5, 1e6, 4e6):
     rm = RecordModel.from_rates(rates_from_detected(detected, 0.010, shelf_lifetime_s=1.168), det_cam)
     pd_ = rm.count_distribution("shelf", 400e-6)
     pb_ = rm.count_distribution("bright", 400e-6)
-    n_c = math.floor(0.5 * pb_.mean()) + 0.5
+    # the bright mean is an integer here (80, 400 and 1600 counts) and mean() is a BLAS dot product, so floor(0.5 * mean)
+    # sat on an integer boundary: Accelerate gives 80.0000000000005 (n_c = 40.5, eps_D 1.6694e-4), Linux OpenBLAS a hair
+    # below 80 (n_c = 39.5, eps_D 1.7122e-4, the first CI mismatch since M5); round to 1e-9 counts first, so the midpoint
+    # threshold is the mathematical one on every platform
+    n_c = math.floor(round(0.5 * pb_.mean(), 9)) + 0.5
     print(
         f"detected rate {detected:.0e} s^-1: eps_D at the midpoint threshold = {pd_.probability_above(n_c):.4e} vs t_exp/(2 tau) = {400e-6 / (2 * 1.168):.4e}"
     )

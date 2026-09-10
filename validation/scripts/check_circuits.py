@@ -133,8 +133,14 @@ print(
 print(
     f"  spot check: fidelity {chk.fidelity:.5f}, leakage {chk.leakage:.2e}, residual quanta {dict((m, f'{v:.1e}') for m, v in chk.residual_quanta.items())}, space {chk.report.space.dims}"
 )
+# the surrogate's detection entries are fitted to 4000 sampled records (calibration.readout), so eps_B and eps_D carry shot
+# noise (eps_D 4.18e-4 here against 3.90e-4 on Linux, a CI mismatch since M6): recorded on an MC line, with the compared
+# line stating only the band they must stay inside
 print(
-    f"  detection: threshold {t.detection['threshold'].value:.1f}, window {t.detection['window_s'].value * 1e6:.1f} us, eps_B {t.detection['eps_B'].value:.2e}, eps_D {t.detection['eps_D'].value:.2e}"
+    f"MC: detection: threshold {t.detection['threshold'].value:.1f}, window {t.detection['window_s'].value * 1e6:.1f} us, eps_B {t.detection['eps_B'].value:.2e}, eps_D {t.detection['eps_D'].value:.2e}"
+)
+print(
+    f"  detection: eps_B and eps_D both below 1e-3: {'yes' if max(t.detection['eps_B'].value, t.detection['eps_D'].value) < 1e-3 else 'NO'}"
 )
 res = run(
     bell,

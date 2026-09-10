@@ -237,9 +237,15 @@ for ratio in (0.05, 0.01, 0.002):
         method="bounded",
         options={"xatol": 1e-7},
     )
+    # the minimum is flat at small nu/Gamma, so round-off in the Liouvillian solve moves the argmin at the 1e-6 level
+    # whatever xatol says: -0.501253 here against -0.501255 on Linux at nu/Gamma = 0.002, the residual -4.7e-6 against
+    # -7.0e-6 (a CI mismatch since 6a93670); print Delta at three decimals and the residual by its decade, the digits
+    # that reproduce across platforms
+    residual = float(sol.x) - limit
+    decade = 10.0 ** math.ceil(math.log10(abs(residual))) if residual != 0.0 else 0.0
     print(
         f"  argmin over Delta of nbar_D at nu/Gamma = {ratio:.3f} (bounded, xatol 1e-7): "
-        f"Delta = {float(sol.x):.6f} Gamma (residual against the limit {float(sol.x) - limit:+.3e})"
+        f"Delta = {float(sol.x):.3f} Gamma (|residual against the limit| below {decade:.0e})"
     )
 
 head(

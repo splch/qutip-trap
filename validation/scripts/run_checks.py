@@ -12,7 +12,8 @@ prefixes with ``MC:`` (Monte Carlo results whose last digits depend on the platf
 committed output fails the run (a hole in the oracle set is not a pass), fresh numeric lines with no committed
 counterpart are counted and reported (a grown script means a stale oracle), and ``--update --only <stem>`` rewrites
 one oracle from a fresh run for a deliberate change. The residual class (numbers below 1e-6 printed with at most three
-significant digits, compared to a factor RESIDUAL_FACTOR) is recorded in the ledger as ``conv.check_script_residual_class``.
+significant digits, compared to a factor RESIDUAL_FACTOR, or to the 1e-6 bound when the pair sits at or across zero) is
+recorded in the ledger as ``conv.check_script_residual_class``.
 
     uv run python validation/scripts/run_checks.py --report
     uv run python validation/scripts/run_checks.py --only check_atomic check_ms_closure
@@ -74,7 +75,8 @@ RESIDUAL_FACTOR = 3.0
 def is_residual(token: str) -> bool:
     """A number printed with <= 3 significant digits and below 1e-6 in magnitude: an integrator or round-off residual
     (leaked population, norm loss, element difference) whose last digits depend on the BLAS and integrator of the machine.
-    Such numbers are compared to a factor of RESIDUAL_FACTOR (their order of magnitude), everything else to ``rtol``."""
+    Such numbers are compared to a factor of RESIDUAL_FACTOR (their order of magnitude), everything else to ``rtol``; a
+    residual at or across zero has no order of magnitude and is compared to the RESIDUAL_MAGNITUDE bound instead."""
     try:
         value = float(token)
     except ValueError:
@@ -86,9 +88,12 @@ def _close(a: float, e: float, rtol: float, atol: float, residual: bool = False)
     if abs(a - e) <= max(atol, rtol * abs(e)):
         return True
     if residual:
-        if e == 0.0 or a == 0.0:
+        if e == 0.0 or a == 0.0 or a * e < 0.0:
+            # a residual at or across zero (check_calibration's fitted residual beta: -8.62e-12 here, +1.97e-12 on one
+            # Linux runner while a second runner's run passed) has no order of magnitude to compare: the bound is the
+            # comparison
             return abs(a - e) <= RESIDUAL_MAGNITUDE
-        return a * e > 0.0 and 1.0 / RESIDUAL_FACTOR <= a / e <= RESIDUAL_FACTOR
+        return 1.0 / RESIDUAL_FACTOR <= a / e <= RESIDUAL_FACTOR
     return False
 
 

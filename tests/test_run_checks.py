@@ -67,3 +67,33 @@ def test_residual_class_numbers_compare_to_an_order_of_magnitude() -> None:
         exp, "Delta/2pi = 1.00 MHz: phase = +0.00410 rad, population leaked 4.06e-09\n", rtol=1e-9, atol=1e-12
     )
     assert not bad_residual.ok
+
+
+def test_residual_class_pair_at_or_across_zero_compares_to_the_bound() -> None:
+    """check_calibration's fitted residual beta printed -8.62e-12 on the macOS oracle machine and +1.97e-12 on one Linux
+    runner (a second runner's run of the same commit passed): a round-off difference has no order of magnitude, so a
+    pair at or across zero is compared to the 1e-6 bound, while a residual grown past the bound, or by more than a
+    factor 3 on the same side of zero, still fails."""
+    rc = _load_runner()
+    exp = "null -20.0000 +- 2.8 V/m against -20; residual beta -8.62e-12; beta before -0.0454\n"
+    flipped = rc.compare(
+        exp,
+        "null -20.0000 +- 2.8 V/m against -20; residual beta +1.97e-12; beta before -0.0454\n",
+        rtol=1e-9,
+        atol=1e-12,
+    )
+    assert flipped.ok and flipped.residual_numbers == 1
+    grown = rc.compare(
+        exp,
+        "null -20.0000 +- 2.8 V/m against -20; residual beta +1.97e-03; beta before -0.0454\n",
+        rtol=1e-9,
+        atol=1e-12,
+    )
+    assert not grown.ok
+    same_side = rc.compare(
+        exp,
+        "null -20.0000 +- 2.8 V/m against -20; residual beta -8.62e-11; beta before -0.0454\n",
+        rtol=1e-9,
+        atol=1e-12,
+    )
+    assert not same_side.ok
