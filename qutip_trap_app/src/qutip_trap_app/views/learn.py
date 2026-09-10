@@ -321,7 +321,7 @@ def FreeActivity(store: Store, session: Session) -> ft.Control:
         info="the free version of the exercise; the delayed, unaided task of DESIGN.md Section 1 is this, one review gap later, with the drawer closed",
         actions=[
             ft.FilledButton(
-                content=ft.Text("Open the editor"), icon=ft.Icons.EDIT, on_click=lambda e: page.navigate("/")
+                content=ft.Text("Open the builder"), icon=ft.Icons.EDIT, on_click=lambda e: page.navigate("/")
             )
         ],
         key="free",

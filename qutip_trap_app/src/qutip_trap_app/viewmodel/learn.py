@@ -1098,7 +1098,7 @@ GHZ_EXERCISE: tuple[TourStop, ...] = tuple(
 annotations (``look_for``) withheld by the view until the learner asks for them."""
 
 FREE_EXERCISE: tuple[str, ...] = (
-    "Build a circuit of your own on Level 0: edit the OpenQASM, or import IonQ JSON.",
+    "Build a circuit of your own on Level 0: place gates on the wires, or import OpenQASM 2 or IonQ JSON.",
     "Predict its histogram before you run it.",
     "Run it. Find the bar that sits farthest from its target, in error bars.",
     "Follow that bar down: the gate on Level 1, the pulse on Level 2, the loop on Level 3, the term of H on Level 4.",

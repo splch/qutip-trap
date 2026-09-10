@@ -25,6 +25,7 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import DeviceRef, JobSpec, Record, TableRecord, job_for_preset
 from qutip_trap_app.requests import GateRequest
 from qutip_trap_app.verify import VerifyReport
+from qutip_trap_app.viewmodel.builder import CircuitFormat, parse_circuit_text
 from qutip_trap_app.viewmodel.learn import (
     DEFAULT_RETENTION_DAYS,
     Attempt,
@@ -46,6 +47,9 @@ BELL_QASM = (
 
 FAST_OPTIONS = SolverOptions(branch_weight_min=1e-3)
 """The options every job the app submits uses by default (the Section 9.6 fixture rule's fast setting)."""
+
+UNDO_DEPTH = 30
+"""How many circuit edits the builder's Undo can take back."""
 
 LEARNER_KEY = "qutip_trap_app.learner.v1"
 """The SharedPreferences key under which the learner's settings and mastery log are kept on the device."""
@@ -165,7 +169,9 @@ class Store:
     learner_loaded: bool = False
     """True once the saved learner was read (or found absent), so the first-launch question is asked once per device."""
     circuit_text: str = BELL_QASM
-    circuit_format: Literal["openqasm2", "ionq_json"] = "openqasm2"
+    circuit_format: CircuitFormat = "openqasm2"
+    circuit_undo: tuple[tuple[str, CircuitFormat], ...] = ()
+    """The circuit texts (with their formats) before each edit made in the builder, oldest first (DESIGN.md R16)."""
     shots: int = 200
     engine: Engine = "replay"
     prediction: str | None = None
@@ -345,12 +351,34 @@ class Session:
     # -- submitting work --
 
     def parse_circuit(self) -> Circuit:
-        from qutip_trap_app.core import load_ionq_json, load_openqasm2
+        return parse_circuit_text(self.store.circuit_text, self.store.circuit_format)
 
-        text = self.store.circuit_text
-        if self.store.circuit_format == "ionq_json":
-            return load_ionq_json(json.loads(text))
-        return load_openqasm2(text)
+    # -- editing the circuit (the builder of DESIGN.md R16: every change to the text goes through here) --
+
+    def edit_circuit(self, text: str, fmt: CircuitFormat = "openqasm2") -> None:
+        """Replace the circuit text (the builder's serialisation, or an imported program), remembering the old one for
+        Undo. An edited circuit is nobody's preset, and the last error about the old text no longer applies."""
+        self._remember_circuit()
+        self.store.circuit_text = text
+        self.store.circuit_format = fmt
+        self.store.active_preset = None
+        self.store.error = ""
+
+    def undo_circuit(self) -> bool:
+        """The circuit before the last edit, back in the builder; False when there is nothing to take back."""
+        if not self.store.circuit_undo:
+            return False
+        *rest, (text, fmt) = self.store.circuit_undo
+        self.store.circuit_undo = tuple(rest)
+        self.store.circuit_text = text
+        self.store.circuit_format = fmt
+        self.store.active_preset = None
+        self.store.error = ""
+        return True
+
+    def _remember_circuit(self) -> None:
+        history = (*self.store.circuit_undo, (self.store.circuit_text, self.store.circuit_format))
+        self.store.circuit_undo = history[-UNDO_DEPTH:]
 
     def build_job(self, *, n_ions: int | None = None, seed: int = 0, label: str = "") -> JobSpec:
         """The job for the current circuit on the current device (the Level 4 overrides included). Nothing is built here:
@@ -397,6 +425,7 @@ class Session:
         spec = PRESETS[preset_id]
         if spec.kind != "circuit":
             raise ValueError(f"{preset_id} is an experiment preset; it runs from the Learn view")
+        self._remember_circuit()
         self.store.circuit_text = spec.circuit_text
         self.store.circuit_format = "openqasm2"
         self.store.shots = int(spec.shots)
@@ -407,7 +436,8 @@ class Session:
         return spec
 
     def load_bell_example(self) -> None:
-        """The worked example back in the editor, on the published preset (no preset arguments, no active circuit preset)."""
+        """The worked example back in the builder, on the published preset (no preset arguments, no active circuit preset)."""
+        self._remember_circuit()
         self.store.circuit_text = BELL_QASM
         self.store.circuit_format = "openqasm2"
         self.store.preset_kwargs = {}
@@ -712,6 +742,7 @@ __all__ = [
     "LEARNER_KEY",
     "PRESETS",
     "THEME_VALUES",
+    "UNDO_DEPTH",
     "Engine",
     "JobStatus",
     "Learner",

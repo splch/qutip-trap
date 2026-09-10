@@ -1,9 +1,10 @@
 """Level 0, the machine (PLAN.md Section 14.2 row 0; DESIGN.md Sections 5 and 10).
 
-Before a run the focal object is Run: the circuit editor, then the predict-then-reveal card where the histogram will appear.
+Before a run the focal object is Run: the circuit builder (``views/builder.py``), then the predict-then-reveal card where
+the histogram will appear.
 After a run the focal picture is the histogram with the target beside it, first on the screen, with three stat tiles under
-it and the shots, the table and the verify-deeper report behind disclosure; the editor follows. The device card is six stat
-tiles with every row behind Details.
+it and the shots, the table and the verify-deeper report behind disclosure; the builder follows. The device card is six
+stat tiles with every row behind Details.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from qutip_trap_app.viewmodel.learn import score_histogram_prediction
 from qutip_trap_app.viewmodel.machine import Histogram, device_card_view, histogram, shot
 from qutip_trap_app.viewmodel.presets import PRESETS, circuit_comparisons, circuit_presets
 from qutip_trap_app.views import theme
+from qutip_trap_app.views.builder import CircuitBuilder, builder_toolbar
 from qutip_trap_app.views.common import (
     HAIRLINE,
     MUTED,
@@ -44,9 +46,6 @@ SKETCHES: dict[str, str] = {
     "uniform": "every outcome equally likely",
     "zero": "everything stays in |0...0>",
 }
-
-CODE_FONT = "Menlo"
-CODE_FONT_FALLBACK = ["SF Mono", "Consolas", "DejaVu Sans Mono", "Courier New", "monospace"]
 
 REQUEST_LABELS = {
     "replay": "channel replay",
@@ -81,13 +80,6 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
     ft.use_state(store)
     running = bool(store.running())
 
-    def set_text(e: Any) -> None:
-        store.circuit_text = str(e.control.value)
-        store.active_preset = None
-
-    def set_format(e: Any) -> None:
-        store.circuit_format = str(e.control.value)  # type: ignore[assignment]
-
     def set_shots(e: Any) -> None:
         try:
             store.shots = max(1, int(str(e.control.value)))
@@ -104,32 +96,8 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
         else:
             session.load_circuit_preset(choice)
 
-    editor = ft.TextField(
-        value=store.circuit_text,
-        label="circuit (OpenQASM 2 or IonQ JSON)",
-        multiline=True,
-        min_lines=6,
-        max_lines=12,
-        on_change=set_text,
-        text_style=ft.TextStyle(
-            size=13, font_family=CODE_FONT, font_family_fallback=CODE_FONT_FALLBACK, height=1.5
-        ),
-        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
-        key="circuit-text",
-    )
     controls = ft.Row(
         [
-            ft.Dropdown(
-                label="format",
-                value=store.circuit_format,
-                options=[
-                    ft.DropdownOption(key="openqasm2", text="OpenQASM 2"),
-                    ft.DropdownOption(key="ionq_json", text="IonQ JSON"),
-                ],
-                on_select=set_format,
-                width=150,
-                **_field_style(),
-            ),
             ft.TextField(
                 label="shots", value=str(store.shots), width=96, on_change=set_shots, **_field_style()
             ),
@@ -172,7 +140,7 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
     if store.active_preset:
         spec = PRESETS[store.active_preset]
         actions.append(status_line(f"{spec.title}: {spec.duration}"))
-    body: list[ft.Control] = [editor, controls]
+    body: list[ft.Control] = [CircuitBuilder(store, session), controls]
     if store.error:
         body.append(
             ft.Row(
@@ -190,7 +158,12 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
         "Circuit",
         ft.Column(body, spacing=12),
         why=lambda e: session.select_concept(0, "shot"),
+        info=(
+            "tap a gate to add it to the selected wire, drag it to place it, or use the + at a wire's end; a placed gate "
+            "opens its qubits and angles beneath; the OpenQASM 2 text and an OpenQASM 2 or IonQ JSON import are under Code"
+        ),
         actions=actions,
+        trailing=builder_toolbar(store, session),
         key="circuit",
     )
 

@@ -963,6 +963,7 @@ __all__ = [
     "HAIRLINE",
     "LEVEL_CONCEPTS",
     "MUTED",
+    "TWO_COLUMN_MIN_WIDTH",
     "ExplainCardView",
     "ExplainDrawer",
     "SpecificationTile",

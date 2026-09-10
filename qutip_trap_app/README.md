@@ -48,7 +48,10 @@ request semantics, the explain drawer's specification text and the navigation te
   stat tiles, tables behind Details, a why button per card opening its concept in the explain drawer (one concept at a time,
   the Specification tile beneath), chips that are buttons, a badge-only numerics strip; the request controls on Levels 1
   and 2 with the actual-versus-requested tiles; Level 1's Bloch discs; the Learn ladder (tour, three ions, your own, drills,
-  review, published experiments, progress) as routes; control keys for the `flet test` flows.
+  review, published experiments, progress) as routes; control keys for the `flet test` flows. Level 0's circuit is built,
+  not typed (DESIGN.md R16): `views/builder.py` draws the qubits as wires and the gates as tiles over the pure
+  `viewmodel/builder.py` (the palette, the greedy layout, the edits, the OpenQASM 2 round trip), with the text and an
+  OpenQASM 2 or IonQ JSON import behind a Code disclosure.
 - `views/theme.py` - the visual system of DESIGN.md Section 11: the light and dark colour schemes (every text/background
   pair checked at or above 4.5:1, outlines at 3:1), the type scale, the 8 pt grid and shapes, the component themes, the
   status colours of the pills and the categorical chart palette (validated for colour-vision deficiency in both modes).

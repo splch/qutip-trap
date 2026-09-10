@@ -38,6 +38,10 @@ SIZE_SMALL = 12
 SIZE_CAPTION = 11
 SIZE_MICRO = 10
 
+CODE_FONT = "Menlo"
+CODE_FONT_FALLBACK = ["SF Mono", "Consolas", "DejaVu Sans Mono", "Courier New", "monospace"]
+"""The code face: the OpenQASM text under Code, the Hamiltonian formula, an import field."""
+
 
 @dataclass(frozen=True)
 class Tokens:
@@ -398,6 +402,8 @@ def build_theme(dark: bool) -> ft.Theme:
 
 __all__ = [
     "CARD_PADDING",
+    "CODE_FONT",
+    "CODE_FONT_FALLBACK",
     "CONTENT_MAX_WIDTH",
     "DARK",
     "DRAWER_WIDTH",

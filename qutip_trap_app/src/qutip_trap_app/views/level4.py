@@ -56,8 +56,9 @@ from qutip_trap_app.views.common import (
     status_line,
     value_cell,
 )
-from qutip_trap_app.views.level0 import CODE_FONT, CODE_FONT_FALLBACK, ProgressRows
+from qutip_trap_app.views.level0 import ProgressRows
 from qutip_trap_app.views.state import Session, Store
+from qutip_trap_app.views.theme import CODE_FONT, CODE_FONT_FALLBACK
 
 PAGE_TITLES: dict[str, tuple[str, str]] = {
     "species": ("The atom", "Which two levels are the qubit, and what else is there?"),
