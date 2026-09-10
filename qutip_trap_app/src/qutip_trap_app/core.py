@@ -141,7 +141,10 @@ CORE_GAPS: tuple[str, ...] = (
     "exposed, so the Level 3 Fock heatmap has values at pulse boundaries and re-simulated sub-steps only [core feature request: "
     "an optional per-time mode_marginal store in Traces]",
     "run() returns no wall time per pulse and no per-gate register state for GATE_LOCAL runs; the app measures the run's wall "
-    "time itself and marks the GATE_LOCAL per-gate register states unavailable until the channel replay of M11.2",
+    "time itself and derives the GATE_LOCAL register after each gate by composing the recorded step channels in time order "
+    "(viewmodel.circuit.gate_local_register_after); the idle intervals' one-qubit channels are not recorded, so they are "
+    "taken as the identity there [core feature request: the register after every step, or the idle channels, in the "
+    "GATE_LOCAL report]",
     "the Hamiltonian builder of Section 5.7 (build_hamiltonian, BuilderOptions, BuiltHamiltonian, DriveRecord) is not "
     "re-exported: the Level 4 Hamiltonian page imports it from qutip_trap.dynamics.hamiltonian to list the terms the engine "
     "integrates for a zoomed pulse [core feature request: a public per-segment builder entry point]",

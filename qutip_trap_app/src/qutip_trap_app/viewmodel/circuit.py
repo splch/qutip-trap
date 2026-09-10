@@ -19,8 +19,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from qutip_trap_app.core import kraus_operators
 from qutip_trap_app.record import ChannelSummaryRecord, Record, TargetRecord, TraceRecord
 from qutip_trap_app.viewmodel.catalogue import Shown
+
+
+class RegisterUnavailable(KeyError):
+    """The record holds nothing the register after a gate can be read from: no recorded trace, no replay register and no
+    GATE_LOCAL step channel. The message names the gap; Level 1 shows it in place of the register."""
+
 
 PAULI: dict[str, np.ndarray] = {
     "I": np.eye(2, dtype=complex),
@@ -255,7 +262,7 @@ def _weights(record: Record, sample_index: int | None, branch: int | None) -> li
         and (branch is None or tr.branch == branch)
     ]
     if not traces:
-        raise KeyError("no recorded traces match (a GATE_LOCAL run stores none: see core_gaps)")
+        raise RegisterUnavailable("no recorded traces match (a GATE_LOCAL run stores none: see core_gaps)")
     shots = record.diagnostics.shots_per_sample_realized or (1,) * record.n_samples
     weights = []
     for tr in traces:
@@ -282,12 +289,50 @@ def target_ket_after(record: Record, gate_index: int) -> np.ndarray:
     )
 
 
+GATE_LOCAL_REGISTER_NOTE = (
+    "derived: the recorded step channels of this GATE_LOCAL run composed in time order; the idle intervals' channels are "
+    "not recorded and are taken as the identity"
+)
+
+
+def gate_local_register_after(record: Record, gate_index: int) -> np.ndarray:
+    """The register after gate ``gate_index`` of a GATE_LOCAL record: |0...0> carried through the recorded step channels (each
+    gate step's Choi matrix on its local ions, Section 5.4, as Kraus operators) in time order up to the gate's own step.
+    The idle intervals' one-qubit channels are not recorded (``core_gaps``), so they are taken as the identity; on the
+    example device the final register fidelity this gives differs from the run's own by 7e-6 (``tests/test_gate_local_register.py``)."""
+    gl = record.gate_local
+    if gl is None:
+        raise RegisterUnavailable("this record stores no GATE_LOCAL step channels (see core_gaps)")
+    n = record.n_qubits
+    tg = _target_by_time(record)[gate_index]
+    last = record.step_of_gate(tg.gate_id).index
+    channels = {st.gate_id: st for st in gl.steps}
+    rho = np.zeros((2**n, 2**n), dtype=complex)
+    rho[0, 0] = 1.0
+    for step in record.schedule.steps[: last + 1]:
+        st = channels.get(step.gate_id)
+        if st is None or st.summary is None:
+            continue
+        ions = tuple(int(q) for q in st.ions)
+        if st.summary.choi.shape[0] != 4 ** len(ions):
+            raise RegisterUnavailable(
+                f"the channel of {st.gate_id} is not on two-level ions {ions} (Choi {st.summary.choi.shape})"
+            )
+        out = np.zeros_like(rho)
+        for kraus in kraus_operators(st.summary.choi):
+            k = embed_operator(kraus, ions, n)
+            out += k @ rho @ k.conj().T
+        rho = out
+    return rho
+
+
 def register_after(
     record: Record, gate_index: int, *, sample_index: int | None = None, branch: int | None = None
 ) -> RegisterView:
     """The register after gate ``gate_index``: from the recorded traces (the reduced state at the gate's end time, weighted
-    over the branches and samples unless one is selected), or from the channel replay's own register sequence for a
-    CHANNEL_REPLAY record (labelled derived). A GATE_LOCAL record stores neither (``core_gaps``)."""
+    over the branches and samples unless one is selected); else from the channel replay's own register sequence for a
+    CHANNEL_REPLAY record; else, for a GATE_LOCAL record, from its recorded step channels composed in time order (both
+    labelled derived in ``weights_note``). Raises :class:`RegisterUnavailable` when the record holds none of the three."""
     n = record.n_qubits
     tg = _target_by_time(record)[gate_index]
     t_end = tg.t_end_s
@@ -295,6 +340,10 @@ def register_after(
         rho = np.asarray(record.replay.register_after[gate_index], dtype=complex)
         return _register_view(
             record, gate_index, t_end, rho, "derived: the channel replay's register after this gate's channel"
+        )
+    if not record.traces and record.gate_local is not None:
+        return _register_view(
+            record, gate_index, t_end, gate_local_register_after(record, gate_index), GATE_LOCAL_REGISTER_NOTE
         )
     rho = np.zeros((2**n, 2**n), dtype=complex)
     for tr, w in _weights(record, sample_index, branch):
@@ -371,15 +420,18 @@ def infidelity_budget_check(record: Record) -> tuple[float | None, float, bool]:
 
 
 __all__ = [
+    "GATE_LOCAL_REGISTER_NOTE",
     "PAULI",
     "GateView",
     "PhaseRegister",
+    "RegisterUnavailable",
     "RegisterView",
     "bloch_vectors",
     "compile_report",
     "concurrence",
     "embed_operator",
     "fidelity_to_ket",
+    "gate_local_register_after",
     "infidelity_budget_check",
     "pauli_expectations",
     "phase_register",

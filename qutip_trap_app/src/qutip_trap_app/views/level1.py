@@ -19,6 +19,8 @@ from qutip_trap_app.requests import RequestError, request_angle, request_outcome
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
 from qutip_trap_app.viewmodel.circuit import (
     GateView,
+    RegisterUnavailable,
+    RegisterView,
     bloch_vectors,
     compile_report,
     phase_register,
@@ -34,6 +36,7 @@ from qutip_trap_app.views.common import (
     content_widths,
     data_table,
     details,
+    empty_state,
     hint,
     ions_text,
     kv_rows,
@@ -318,27 +321,18 @@ def RequestOutcomeView(
     return ft.Column(lines, spacing=6, key="request-outcome")
 
 
-@ft.component
-def Level1Page(
-    store: Store, session: Session, record: Record, gate_param: str, index: ProvenanceIndex
+def _register_card(
+    store: Store,
+    session: Session,
+    index: ProvenanceIndex,
+    selected: GateView,
+    reg: RegisterView,
+    n: int,
+    plain: bool,
+    why: Any,
 ) -> ft.Control:
-    ft.use_state(store)
-    gates = timeline(record)
-    if not gates:
-        return status_line("this circuit compiled to no gate pieces")
-    selected = next((g for g in gates if g.gate_id == gate_param), gates[0])
-    page = ft.context.page
-    key = record.key()
-    plain = store.learner.plan(1).plain_labels_first
-
-    def on_select(gid: str) -> None:
-        page.navigate(f"/job/{key}/circuit/{gid}")
-
-    reg = register_after(record, selected.index)
-    lanes_width, _strip = content_widths(store, page, 1)
-    frame = phase_register(record)
-    residuals = compile_report(record)
-    n = record.n_qubits
+    """The register after the selected gate: Bloch discs with the ideal arrow dashed, the populations, purity and fidelity
+    tiles, the Pauli expectations behind Details; how the register was obtained (recorded, or derived) on the info button."""
     ket = reg.target_ket
     target_bloch = bloch_vectors(np.outer(ket, ket.conj()), n) if ket is not None and ket.size == 2**n else {}
     discs = ft.Row(
@@ -350,7 +344,7 @@ def Level1Page(
         spacing=16,
         run_spacing=12,
     )
-    register_card = card(
+    return card(
         f"Register after {selected.gate_id}",
         ft.Column(
             [
@@ -383,11 +377,57 @@ def Level1Page(
             ],
             spacing=12,
         ),
-        why=lambda e: session.select_concept(
-            1, "entanglement_by_ms" if selected.name.value in ("ms", "zz") else "bloch_vector"
-        ),
+        why=why,
+        info=reg.weights_note,
         key="register",
     )
+
+
+@ft.component
+def Level1Page(
+    store: Store, session: Session, record: Record, gate_param: str, index: ProvenanceIndex
+) -> ft.Control:
+    ft.use_state(store)
+    gates = timeline(record)
+    if not gates:
+        return status_line("this circuit compiled to no gate pieces")
+    selected = next((g for g in gates if g.gate_id == gate_param), gates[0])
+    page = ft.context.page
+    key = record.key()
+    plain = store.learner.plan(1).plain_labels_first
+
+    def on_select(gid: str) -> None:
+        page.navigate(f"/job/{key}/circuit/{gid}")
+
+    reg: RegisterView | None
+    try:
+        reg = register_after(record, selected.index)
+    except (
+        RegisterUnavailable
+    ) as exc:  # a record with no trace, replay register or step channel: say so, keep the rest
+        reg = None
+        missing = str(exc)
+    lanes_width, _strip = content_widths(store, page, 1)
+    frame = phase_register(record)
+    residuals = compile_report(record)
+    n = record.n_qubits
+    why_register = lambda e: session.select_concept(  # noqa: E731
+        1, "entanglement_by_ms" if selected.name.value in ("ms", "zz") else "bloch_vector"
+    )
+    if reg is None:
+        register_card = card(
+            f"Register after {selected.gate_id}",
+            empty_state(
+                "Register not recorded",
+                f"{missing}; the timeline, the gate and the phase register are still here",
+                icon=ft.Icons.BLUR_CIRCULAR,
+                key="register-unavailable",
+            ),
+            why=why_register,
+            key="register",
+        )
+    else:
+        register_card = _register_card(store, session, index, selected, reg, n, plain, why_register)
     tiles: list[ft.Control] = [stat_tile(selected.duration, index, plain=plain)]
     for s in selected.calibrated:
         tiles.append(
