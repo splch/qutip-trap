@@ -8,6 +8,33 @@ of that table: the rows the implementation encodes, generated from the provenanc
 [`docs/provenance/ledger.yaml`](provenance/ledger.yaml) so that it cannot drift from what the tests assert (the table below is
 rewritten by `tools/docs_from_ledger.py`, and CI fails when it is stale).
 
+## Vocabulary
+
+Settled on 2026-09-11 for the API work of [`api_implementation_plan.md`](api_implementation_plan.md) (Phase 0, item 0.6). Every
+later phase uses these names; a name here changes only through a deprecation cycle.
+
+- **Machine.** The executor that 0.2.0 adds: a `Device`, the roles its beams play, the calibration table and the policy that
+  turns a circuit into a `Result`, with `run`, `compile`, `schedule` and `calibrated`. PLAN.md Section 14.2 already names
+  Level 0 "Machine" and the app's device card uses the word. Rejected: `Emulator` (Pulser, Quantinuum), because the object is
+  the machine as the physics describes it, not an imitation of one; `Backend` (Qiskit, pytket), because a backend is an
+  execution service, and this is a record with behaviour and no service behind it. `Device` stays the physical record, the
+  split pytket made between `BackendInfo` (data) and `Backend` (behaviour).
+- **`trap`.** The recommended import alias is `import qutip_trap as trap`; the documentation's examples use it from 0.2.0 on.
+  `qutip_trap.api` stays the spelled-out Appendix E import and is never aliased.
+- **Rungs.** The five levels of PLAN.md Section 14.2 are five modules: `qutip_trap` (rung 0, the machine), `qutip_trap.circuit`,
+  `qutip_trap.schedule`, `qutip_trap.dynamics` and `qutip_trap.physics`; `qutip_trap.interop` holds the adapters to other SDKs
+  (`qutip_trap.interop.qiskit` today) and `qutip_trap.experimental` the names outside the stability guarantee. The experiments,
+  calibration and benchmarks packages are "the laboratory". In API prose a step of the ladder is a **rung**, so that "level"
+  keeps its two other meanings; the app's "Level 0" to "Level 4" labels are the same five rungs.
+- **Fidelity levels.** `JOINT_EXACT` and `GATE_LOCAL` are the two levels a run can integrate at (Section 5.4), and `"auto"` the
+  policy that picks one against the Section 11.5 guards. The enum that replaces the strings in 0.2.0 is named `FidelityLevel`,
+  with members `AUTO = "auto"`, `JOINT_EXACT` and `GATE_LOCAL` equal to today's strings (so `Diagnostics.level == "GATE_LOCAL"`
+  stays true); it widens the `Literal` alias of that name in `run/levels.py`. The proposal's `Level` is rejected because the
+  word is taken twice: `qutip_trap.api.Level` is an atomic level (Appendix E, frozen), and "Level n" is a rung in the app.
+- **Error-model names** (`error_model()`, 0.3.0): `p_*` a probability per operation, `*_rate` per second, `*_ratio` a fraction
+  of another probability, `*_scale` a dimensionless multiplier. They join the unit suffixes every public float carries: `_hz`,
+  `_s`, `_m`, `_w`, `_gauss`, `_rad`, `_v`, `_pa`, `_cps`, and `_turns` only at the IonQ boundary.
+
 ## The rules that reach the public API
 
 - **Frequencies.** Every public number is an ordinary frequency in Hz (`qutip_trap.units.Hz`); every internal frequency is
@@ -24,9 +51,13 @@ rewritten by `tools/docs_from_ledger.py`, and CI fails when it is stale).
   θ) with θ = π/2 fully entangling and ZZ(θ) are the matrices of `control/native.py`; R(θ, φ) = exp[−iθ σ_φ/2] carries θ/2 in
   the exponent and XX(χ) = exp(−iχ σ_x σ_x) carries χ with no ½, maximally entangling at χ = π/4. A virtual RZ(θ) shifts
   every later pulse phase by φ → φ − θ, gates read in time order.
-- **Result bit order.** Qubit 0 is the least-significant bit of the histogram key: the string "101" on three qubits is
-  qubit 0 = 1, qubit 1 = 0, qubit 2 = 1 and the IonQ decimal key "5". `Result.final_state` is in QuTiP's tensor order (ion 0
-  the first factor); `run.job.to_register_order` converts.
+- **Result bit order.** In every bitstring key of a `Result`, qubit 0 is the least-significant bit, the rightmost character:
+  "101" on three qubits is qubit 0 = 1, qubit 1 = 0, qubit 2 = 1, and the IonQ v1 decimal key "5". This sentence is stated
+  once, here; `tests/test_docs.py` checks that no other page restates it and that no docstring contradicts it. IonQ's v2
+  result strings run the other way, `q[0]` first (`io/ionq.py` records the source). `Result.final_state` is in QuTiP's tensor
+  order (ion 0 the first factor); `run.job.to_register_order` converts.
+- **Tensor order of the native gate matrices.** Stated once, in the module docstring of `control/native.py`, with the check
+  that `ms` is the SWAP conjugate of qiskit-ionq's matrix (`tests/test_docs.py`, when qiskit-ionq is installed).
 - **Fidelity measures, three of them, kept apart.** The compiler and the benchmarks compare unitaries up to a global phase.
   (i) A channel's *average gate infidelity* is 1 − F_avg = d/(d + 1) (1 − F_e) with F_e the entanglement fidelity, and the
   *depolarizing rate* ε of Section 6.8 equals the entanglement infidelity in Chen et al. 2023's normalization

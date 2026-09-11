@@ -42,6 +42,10 @@ class PolarizationModulation:
 
 @dataclass(frozen=True)
 class Beam:
+    """One laser beam at the ions (Sections 3.3, 4.2.4): vacuum wavelength (m), unit propagation direction, laboratory-frame
+    Jones vector, 1/e^2 intensity waist (m), power (W) and a point on the axis (m); the per-ion intensity through the
+    Gaussian profile is where addressing crosstalk originates. Its polarization about B is derived by the atomic layer."""
+
     wavelength_m: float
     """VACUUM wavelength."""
     k_hat: tuple[float, float, float]

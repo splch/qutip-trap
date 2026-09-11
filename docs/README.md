@@ -30,5 +30,10 @@ Section 13 the conventions, Appendix E the public API). These pages are the rele
   compared digit for digit. Each headline Monte-Carlo number of `check_benchmarks.py` also gets a compared `pinned` line
   that states only the band the number must stay inside; the verdict word is part of that line, so a number leaving its
   band no longer matches the committed output and CI fails.
+- The public surface is enumerated by `tests/test_public_surface.py`: every name a rung module exports (today
+  `qutip_trap.api`) must resolve, carry a docstring of its own and appear in backticks on one of these pages; the names of
+  the 0.1.0 surface that still lack a line are listed in the test as a set that may only shrink. `tests/test_docs.py` also
+  checks that the bit-order sentence is stated exactly once (on the conventions page) and never contradicted by a
+  docstring, and that the tensor order of the native gate matrices is stated once, in `control/native.py`.
 - The README at the repository root carries the milestone-by-milestone account of what was built and what each milestone's
   tests established, including the plan inconsistencies each milestone surfaced.

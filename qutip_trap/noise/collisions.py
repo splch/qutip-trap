@@ -144,6 +144,10 @@ def sample_reorder(
 
 @dataclass(frozen=True)
 class CollisionEvent:
+    """One background-gas collision within a shot (Section 6.7): when it happened (seconds from the start of the preparation),
+    which ion it hit, and its outcome, ``heating_kick``, ``reorder``, ``loss`` or ``dark_ion``; the run turns it into a
+    herald, a discarded shot, a permuted ion order or a dark/lost flag that persists for every later shot."""
+
     time_s: float
     """Time within the shot (0 = the start of the preparation)."""
     ion: int

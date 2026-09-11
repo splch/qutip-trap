@@ -21,6 +21,10 @@ M12 = "milestone M12 (PLAN.md Section 4.6; not scheduled for the first release)"
 
 @dataclass(frozen=True)
 class FilterStage:
+    """One stage of the control-line filter chain a ``VoltageWaveform`` passes through (Section 4.6, M12): its kind (a
+    zero-order hold, an FIR, a Butterworth or a single pole), the order, the corner frequency (Hz) and the FIR taps,
+    whichever the kind needs."""
+
     kind: Literal["zoh", "fir", "butterworth", "single_pole"]
     order: int | None
     corner_hz: float | None
@@ -36,6 +40,12 @@ class FilterStage:
 
 @dataclass(frozen=True)
 class VoltageWaveform:
+    """The electrode-voltage record of one transport-family operation (Section 4.6, M12): the operation kind and profile
+    shape, the duration (s) and shape parameters, the DAC update period (s), the filter chain applied in order, and the
+    resulting voltages (V), well centre (m), axial frequency (Hz), inter-well distance (m) and quartic (V/m^4), quadratic
+    (V/m^2) and tilt (V/m) potential coefficients as functions of time. Not ``Waveform``, the calibrated entangling-pulse
+    record of ``control.table``."""
+
     kind: Literal["transport", "split", "merge", "swap", "junction_traverse"]
     shape: Literal["sine", "erf", "blackman", "bezier", "linear", "sin2_distance", "quintic_distance"]
     duration_s: float

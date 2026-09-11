@@ -125,6 +125,12 @@ class SeedSpec:
 
 @dataclass(frozen=True)
 class SolverOptions:
+    """The numerical policy of a run (Sections 5.3, 5.5, 11.5): the integrator tolerances and the escalation ladder, the guards
+    that route a run to GATE_LOCAL, the truncation caps and monitors, the trajectory method and count, the parallel map,
+    and the physics switches a run still reads from here (scattering channels, intensity-noise channels, the hardware
+    chain; docs/api_implementation_plan.md moves them to ``Physics`` in 0.3.0). Each field's docstring states its unit
+    and its rule."""
+
     atol: float = 1e-10
     rtol: float = 1e-8
     nsteps: int = 10**7

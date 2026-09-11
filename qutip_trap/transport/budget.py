@@ -65,6 +65,8 @@ def design_waveform(
     target_quanta: float = 1.0,
     shape: str = "erf",
 ) -> VoltageWaveform:
+    """Design the voltage waveform of a transport, split or merge between two zones that reaches ``target_quanta`` of
+    motional excitation within ``duration_s`` (Section 4.6). Owned by M12: raises ``NotImplementedError`` naming it."""
     raise NotImplementedError(f"design_waveform is {M12}")
 
 

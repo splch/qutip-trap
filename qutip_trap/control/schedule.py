@@ -143,6 +143,11 @@ class GateTarget:
 
 @dataclass(frozen=True)
 class Schedule:
+    """A circuit as pulses on the time axis (Sections 3.3, 7.1 to 7.3): the pulses, the idle intervals (s) during which heating
+    and dephasing act, the events (the terminal measurement), the per-qubit virtual-Z frame at the end (radians), the
+    transports of M12, the entangling gates as played and the ideal target of every played gate piece; ``t0_s`` is the
+    time the incoming state is given at."""
+
     pulses: tuple[Pulse, ...]
     idle: tuple[tuple[float, float], ...]
     """Idle intervals (start, end) during which heating and dephasing act (Section 3.4)."""

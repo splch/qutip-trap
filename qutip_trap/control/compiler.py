@@ -92,6 +92,10 @@ class CompileError(ValueError):
 
 @dataclass(frozen=True)
 class Operation:
+    """One operation of the IR (Section 3.3): a gate name of the native or the standard set (or ``measure``, ``reset``,
+    ``recool``), the qubits it acts on in the gate's own order (the first is the first tensor factor of its matrix) and
+    its parameters in radians; IonQ's turns are converted at the boundary."""
+
     name: str
     qubits: tuple[int, ...]
     params: tuple[float, ...]
@@ -132,6 +136,11 @@ class Operation:
 
 @dataclass(frozen=True)
 class Circuit:
+    """A circuit of the IR (Section 3.3): ``n_qubits`` qubit labels 0 to n - 1, the operations in time order (native, standard
+    and non-unitary names, parameters in radians) and the terminal measurement targets. The labels are the compiler's;
+    the run maps them onto ions, and the histogram keys of a ``Result`` put qubit 0 rightmost (Section 13, "Result bit
+    order")."""
+
     n_qubits: int
     ops: tuple[Operation, ...]
     measure: tuple[int, ...]

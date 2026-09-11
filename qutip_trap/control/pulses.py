@@ -64,6 +64,11 @@ class LightShiftCouplings:
 
 @dataclass(frozen=True)
 class Tone:
+    """One frequency component of a drive (Sections 4.3, 5.2): the detuning mu from the carrier (ordinary Hz), the phase phi in
+    the ion frame (radians) and the envelope Omega(t) as an ordinary frequency in the (hbar Omega/2) convention, each a
+    constant, an array sampled over the pulse or a callable of the time since the pulse start; ``theta_bessel_rad`` is the
+    kick backend's Bessel argument."""
+
     detuning_hz: Callable[[float], float] | float
     """mu(t) from the carrier (ordinary Hz in the public API); for a ``light_shift`` drive the BEAT NOTE itself, which sits
     near a mode frequency and not near the qubit frequency (Section 4.4.4)."""

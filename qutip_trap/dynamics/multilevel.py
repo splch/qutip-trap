@@ -101,6 +101,10 @@ class ModeSpec:
 
 @dataclass(frozen=True)
 class MultiLevelOptions:
+    """Options of the multi-level Hamiltonian builder (Sections 4.2.8, 8.1): the leakage policy, the recoil quadrature, the
+    frame-residual tolerance (rad/s), the addressing window (a fraction of the transition frequency), the optical phase of
+    each beam at the ion (radians) and each beam's linewidth (angular FWHM, rad/s) as a phase-diffusion collapse operator."""
+
     leak: LeakPolicy = "include"
     recoil: RecoilMode = "off"
     recoil_nodes: int = 16

@@ -42,6 +42,11 @@ CLASS_INDEX: dict[ReadoutClass, int] = {c: k for k, c in enumerate(CLASSES)}
 
 @dataclass(frozen=True)
 class Detector:
+    """The photon detector of the device (Sections 8.2, 8.5, 8.8): its kind, the total system detection efficiency, the
+    background rate (counts/s), the point-spread leakage onto neighbours by distance, the optional dead time (s) and
+    afterpulse probability, the detection window (s) and, for a camera, the numerical aperture, the object-plane pixel
+    pitch (m) and the read noise per pixel per readout (counts)."""
+
     kind: Literal["pmt", "camera", "snspd"]
     efficiency: float
     """Total system detection efficiency epsilon_sys (Section 8.2)."""

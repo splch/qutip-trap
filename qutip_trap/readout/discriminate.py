@@ -656,6 +656,11 @@ class RegisterConfusion:
 
 @dataclass(frozen=True)
 class POVM:
+    """The readout POVM of Section 5.7, the summary of the record and discriminator layers computed once per device: a per-ion
+    product form (exact only at zero readout crosstalk) or a register-wide confusion tensor (dense to N = 12, factored by
+    neighbour range beyond), the statistical uncertainty of its Monte-Carlo entries and the bright polarity per ion; the
+    fast readout path applies it to the projectively sampled internal levels in place of the record layer."""
+
     per_ion: tuple[np.ndarray, ...] | None
     """Product form, valid only at zero readout crosstalk: per ion an (n_levels, 2) matrix P(declared | internal LEVEL),
     rows the ion's levels (levels 0 and 1 the qubit, the rest leakage levels), columns (declared bright, declared dark).
@@ -1111,6 +1116,9 @@ def povm_confusion_over_levels(povm: POVM, schemes: Sequence[ReadoutScheme]) -> 
 
 @dataclass(frozen=True)
 class BudgetLine:
+    """One line of a :class:`ReadoutBudget` (Section 8.4): a named error mechanism's contribution to epsilon_B (a bright ion
+    read dark) and to epsilon_D (a dark ion read bright), both probabilities, with the source it was computed from."""
+
     name: str
     eps_B: float
     eps_D: float

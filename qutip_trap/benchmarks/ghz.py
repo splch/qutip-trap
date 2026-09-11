@@ -123,6 +123,11 @@ def fit_parity(
 
 @dataclass(frozen=True)
 class GHZResult:
+    """The GHZ-state benchmark of Section 7.9 on the simulated device: the populations P_0 and P_1, the parity fringe against
+    the analysis phase (radians) with its fit, the laboratory bound (P_0 + P_1 + C)/2 with its uncertainty, the two exact
+    register fidelities the simulator adds (module docstring: the bound equals the phase-optimised one and is an upper bound
+    on the fixed-phase one), the budget alongside and every ``Result`` behind the numbers."""
+
     qubits: tuple[int, ...]
     shots: int
     analysis_phases_rad: tuple[float, ...]

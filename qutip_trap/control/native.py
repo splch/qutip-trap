@@ -17,6 +17,13 @@ IonQ notation (verified against the vendor documentation, Section 7.6):
 
 Research notation: R_phi(theta) = exp[-i (theta/2)(cos phi sigma_x + sin phi sigma_y)], XX(chi) = exp(-i chi
 sigma_x (x) sigma_x) with chi = pi/4 maximally entangling; XX(chi) = MS(0, 0, 2 chi).
+
+Tensor order (the one statement of it; ``tests/test_docs.py`` checks that no docstring or page restates it): in every
+two-qubit matrix here the gate's first qubit is the left Kronecker factor, the most-significant index bit, so
+MS(phi0, phi1, theta) has GPi(phi0) on the left factor and the basis reads |q_first q_second>. Qiskit's little-endian
+convention puts a gate's first qubit on the RIGHT factor, so the matrix of ``qiskit_ionq.MSGate(phi0, phi1, theta)``
+(turns) is the SWAP conjugate of :func:`ms`, ms = SWAP @ M_qiskit @ SWAP (verified against qiskit-ionq 1.1.1 on
+2026-09-11; ``tests/test_docs.py`` repeats the check whenever qiskit-ionq is installed).
 """
 
 from __future__ import annotations

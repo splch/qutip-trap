@@ -65,6 +65,10 @@ def enr_dimension(n_modes: int, n_exc: int) -> int:
 
 @dataclass(frozen=True)
 class ModeTruncation:
+    """The truncation of one resolved mode (Section 5.1.1): the mode (a position in ``Crystal.modes``), its Fock dimension
+    d = n_max + 1, the populated range the cap was derived for, the largest Lamb-Dicke parameter the drives put on it and
+    the interior-element tolerance the cap was derived at (None for a fixture cap)."""
+
     mode: int
     d: int
     """d = n_max + 1 Fock levels."""
@@ -123,6 +127,12 @@ class CachedOperators:
 
 @dataclass(frozen=True)
 class HilbertSpace:
+    """The composite space of a run (Sections 5.1, 5.4): one qudit factor per ion (dimension 2, or 2 + leakage levels), one
+    truncated oscillator per resolved mode in the order of ``resolved``, an optional ENR group as one factor, and the
+    frozen spectators that contribute Debye-Waller factors analytically; ``ions`` names the device ion behind each ion
+    factor and ``dropped`` the frozen modes that are not modelled at all. Operators are built once per space and cached
+    (module docstring: the rules the construction obeys)."""
+
     ion_dims: tuple[int, ...]
     """2, or 2 + leakage levels, per ion."""
     resolved: tuple[ModeTruncation, ...]

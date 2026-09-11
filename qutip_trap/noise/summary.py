@@ -86,6 +86,8 @@ def entanglement_fidelity(choi: np.ndarray, choi_ideal: np.ndarray) -> float:
 
 
 def entanglement_infidelity(choi: np.ndarray, choi_ideal: np.ndarray) -> float:
+    """1 - F_e with F_e = Tr(C_ideal C) for the trace-1 Choi states of a channel and its unitary target (Section 6.8): the
+    depolarizing rate of Section 13 is this number, and the average gate infidelity is d/(d + 1) times it."""
     return 1.0 - entanglement_fidelity(choi, choi_ideal)
 
 

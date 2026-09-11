@@ -25,6 +25,11 @@ near-field magnetic-gradient drive, whose dressed sigma_z force carries J_2(4 Om
 
 @dataclass(frozen=True)
 class CalEntry:
+    """One calibrated number (Section 7.5): the value and its uncertainty in the units of the table field that holds it, the
+    status (``seed`` from the closed forms, ``calibrated`` by a simulated experiment, ``uncalibrated`` when a fit was
+    refused), the experiment and the provenance id behind it, the laboratory time of the fit (s) and the noise sample it
+    was fitted under."""
+
     value: float
     uncertainty: float
     status: Literal["seed", "calibrated", "uncalibrated"]
@@ -183,6 +188,12 @@ class Waveform:
 
 @dataclass(frozen=True)
 class CalibrationTable:
+    """What the scheduler believes about the device (Sections 3.2, 7.5): the per-ion, per-(ion, beam), per-pair and per-mode
+    entries, each a ``CalEntry`` with its status and provenance, the entangling ``Waveform`` per pair, all keyed to the
+    ``Device.hash()`` and the noise ``seed`` they were fitted under. Plain data: ``control.schedule`` reads it and never
+    writes it, ``calibration`` builds it; ``surrogate`` says whether it came from the closed forms with spot checks or
+    from full simulated experiments."""
+
     device_hash: str
     seed: int
     surrogate: bool

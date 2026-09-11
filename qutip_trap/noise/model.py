@@ -83,6 +83,12 @@ GAUSS_PER_TESLA = 1.0e4
 
 @dataclass(frozen=True)
 class NoiseModel:
+    """The noise of a device as spectra, drifts and event rates, never as phenomenological error rates (Sections 4.1.5, 6.1 to
+    6.7): the electric-field spectrum ``S_E`` with its correlation length, the optional magnetic, laser, rf and amplitude
+    spectra (two-sided in angular frequency; units in the module docstring), the quasi-static ``Drift`` records drawn once
+    per dynamical sample, the collision model and the grid oversampling of the sampled bands. Section 6.1 routes each by
+    its correlation time into a Lindblad operator, a per-sample parameter or a sampled time series."""
+
     S_E: NoiseSpectrum
     """Electric-field noise (heating, Section 6.2); stored two-sided like every NoiseSpectrum."""
     correlation_length_m: float | None

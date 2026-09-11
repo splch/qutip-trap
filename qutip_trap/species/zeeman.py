@@ -310,6 +310,10 @@ def transition_sensitivity(
 
 @dataclass(frozen=True)
 class ClockPoint:
+    """A field-insensitive point of a transition (Section 4.5.1): the field B0 (gauss) where d nu/dB = 0, the transition
+    frequency there (Hz) and the curvature d^2 nu/dB^2 (Hz/G^2), with ``taylor_c2_hz_per_g2`` = half of it as the second
+    Taylor coefficient (Section 13, "Curvature naming": both names, never one "curvature")."""
+
     B0_gauss: float
     frequency_hz: float
     d2nu_dB2_hz_per_g2: float

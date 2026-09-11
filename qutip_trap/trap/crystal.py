@@ -372,6 +372,10 @@ def is_collinear(positions_m: np.ndarray, *, rtol: float = 1e-9) -> bool:
 
 @dataclass(frozen=True)
 class Mode:
+    """One normal mode of the crystal (Section 4.1.3): its family and position within it (ascending frequency), its frequency
+    as an ordinary frequency (Hz), its unit axis, the unit-norm mass-weighted eigenvector c_{i,m} (last component positive)
+    and, for a non-collinear crystal, the (N, 3) displacement pattern the eigenvector is the projection of."""
+
     family: Family
     index: int
     """Position within the family, ascending frequency."""
@@ -432,6 +436,11 @@ class LambDicke:
 
 @dataclass(frozen=True)
 class Crystal:
+    """The ion crystal (Sections 4.1.2, 4.1.3, 4.1.7): the species of every ion, the equilibrium positions (m, laboratory
+    frame, z the trap axis), the 3N normal modes in the one canonical order every ``mode: int`` of the package refers to,
+    and the principal axes when they differ from the laboratory axes. Lamb-Dicke parameters are computed by this class
+    and nowhere else (``lamb_dicke``, with the micromotion factor C0 inside)."""
+
     species: tuple[Species, ...]
     """One entry per ion (mixed species allowed)."""
     positions_m: np.ndarray

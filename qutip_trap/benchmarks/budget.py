@@ -248,6 +248,9 @@ _CHANNEL_CACHE: dict[tuple[object, ...], GateChannel] = {}
 
 
 def clear_budget_cache() -> None:
+    """Empty the process-wide cache of :func:`gate_channel` results, keyed by the device hash, the gate kind, the table's
+    identity and the run settings that shape the channel; a script that changes physics behind an unchanged device hash
+    calls it so that the next benchmark budget is recomputed."""
     _CHANNEL_CACHE.clear()
 
 

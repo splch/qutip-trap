@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace
 
 FidelityLevel = Literal["JOINT_EXACT", "GATE_LOCAL"]
+"""The level a run integrates at (Section 5.4): ``JOINT_EXACT`` inside the Section 11.5 guards, ``GATE_LOCAL`` above them;
+``run(level="auto")`` chooses through :func:`resolve_level`. docs/conventions.md ("Vocabulary") settles this name for the
+enum of 0.2.0, whose members are these two strings and ``"auto"``."""
 M9A = "milestone M9a (GATE_LOCAL: state-based process tomography and the motional model, PLAN.md Section 5.4)"
 
 ESTIMATE_RESOLVED_MODES = 2

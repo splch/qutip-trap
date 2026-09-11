@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CollapseOp:
+    """One Lindblad collapse operator of a run (Sections 5.7, 6): the operator with its rate inside its root (a ``QobjEvo``
+    when the amplitude is time dependent), the rate it carries in s^-1 for reporting, the channel name, and the ion or
+    mode it acts on (None when neither applies)."""
+
     op: qt.Qobj | qt.QobjEvo
     """A constant operator, or a QobjEvo whose coefficient is the time-dependent amplitude (a shaped pulse's scattering,
     the white intensity-noise channel proportional to the drive term; M7)."""

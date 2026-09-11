@@ -159,6 +159,11 @@ def heavy_output_probability(result: Result, heavy: frozenset[str]) -> tuple[flo
 
 @dataclass(frozen=True)
 class QVResult:
+    """A quantum-volume run (Cross et al. 2019) on the simulated device: the heavy-output probability of every circuit with
+    its ideal value, the mean with the paper's Eq. (32) confidence ``sigma`` (the criterion) beside the standard error of
+    the mean (a diagnostic), the two halves of the pass (``threshold_cleared`` and the 100-circuit count), the exact
+    register fidelity per circuit, the circuits, their ``Result`` records and the budget alongside."""
+
     qubits: tuple[int, ...]
     depth: int
     n_circuits: int

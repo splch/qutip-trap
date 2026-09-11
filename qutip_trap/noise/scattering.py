@@ -68,6 +68,10 @@ RecoilOption = Literal["off", "minimal", "vector"]
 
 @dataclass(frozen=True)
 class ScatteringOptions:
+    """How the photon-scattering collapse operators of a pulse are built (Sections 4.5.5, 6.5): the recoil discretization
+    (``off``; ``minimal``, the six axis directions about B; ``vector``, the (n_theta, n_phi) product quadrature), whether
+    the crosstalk neighbours scatter the light they see, and whether the Rayleigh and the Raman operators are built."""
+
     recoil: RecoilOption = "minimal"
     n_theta: int = 3
     n_phi: int = 5

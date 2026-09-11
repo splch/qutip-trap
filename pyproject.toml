@@ -47,6 +47,8 @@ packages = ["qutip_trap"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# a deprecated path used inside the package, or a test that forgets pytest.warns, fails (docs/api_implementation_plan.md 0.1)
+filterwarnings = ["error::qutip_trap._compat.QutipTrapDeprecationWarning"]
 markers = [
     "convergence: tests whose pass/fail feeds the convergence-report artifact (Section 5.5)",
     "slow: level-C solves that take more than a few seconds (run in CI, deselect locally with -m 'not slow')",

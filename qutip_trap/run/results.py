@@ -1,9 +1,10 @@
 """Results, diagnostics and the persistent machine state (PLAN.md Sections 3.4, 6.7, 8.6; Appendix E).
 
-Bit order (Section 13, row "Result bit order"): qubit 0 is the LEAST-significant bit of the decimal histogram
-key; ``Result.bit_order`` says so explicitly and the exporter converts. A bitstring key such as "101" is read
-right to left, qubit 0 rightmost, so "101" on three qubits is qubit0 = 1, qubit1 = 0, qubit2 = 1 and the IonQ
-key "5". PennyLane reverses to big-endian on its side; Qiskit does not (Section 8.6).
+Bit order (Section 13, row "Result bit order"; the one sentence, stated in the same words on docs/conventions.md):
+in every bitstring key qubit 0 is the least-significant bit, the rightmost character, so "101" on three qubits is
+qubit0 = 1, qubit1 = 0, qubit2 = 1 and the IonQ v1 decimal key "5"; ``Result.bit_order`` says so explicitly and the
+exporters convert. IonQ's v2 result strings run the other way, q[0] first (``qutip_trap.io.ionq``); PennyLane
+reverses to big-endian on its side; Qiskit does not (Section 8.6).
 """
 
 from __future__ import annotations
@@ -86,6 +87,12 @@ class RunState:
 
 @dataclass(frozen=True)
 class Diagnostics:
+    """What a run did and what it approximated (Sections 3.4, 5.5, 8.6): the level that ran and the space it used, the class
+    of every mode, the truncation monitors, the integrator and its tolerances, the realized (samples, trajectories, shots
+    per sample) triple with the effective sample size, the root seed that reruns it, the calibration table it believed,
+    the approximations it made and the closed-form error budget reported beside the result; the GATE_LOCAL report when
+    that level ran."""
+
     level: Literal["JOINT_EXACT", "GATE_LOCAL"]
     """The level actually run."""
     space: HilbertSpace
@@ -160,6 +167,12 @@ def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dic
 
 @dataclass(frozen=True)
 class Result:
+    """The outcome of a run (Sections 3.4, 8.6): the per-shot bitstrings (column j = qubit j) and their aggregation into counts
+    and probabilities with binomial error bars from the effective sample size, the photon records and posteriors when the
+    record was read in full, the noise sample of every dynamical sample, the herald flags, the discarded shots, the
+    persistent machine state, the SPAM errors per qubit, the recombined register state when kept, and the
+    ``Diagnostics``. Histogram keys follow the Section 13 bit order (module docstring)."""
+
     bitstrings: np.ndarray
     """(shots, n_qubits) array of 0/1, column j = qubit j."""
     bit_order: Literal["qubit0_lsb"]

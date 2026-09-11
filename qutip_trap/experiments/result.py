@@ -9,6 +9,11 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ExperimentResult:
+    """What a simulated experiment returns (Sections 7.5, 7.9): the scan as measured (one row per point; the experiment
+    documents its columns and their units), the fitted parameters as (value, uncertainty) in the units the experiment
+    names, the fit model, the provenance id behind the fit, whether it converged (a failed or edge-of-scan fit leaves
+    its calibration entry ``uncalibrated``), notes, and the per-row statistical uncertainty when shots were drawn."""
+
     data: np.ndarray
     """The scan as measured: one row per point (columns documented per experiment)."""
     fitted: dict[str, tuple[float, float]]

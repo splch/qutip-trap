@@ -54,3 +54,35 @@ def test_branches_and_trajectories_are_separate_diagnostics() -> None:
     result = make_result(BITS)
     assert result.diagnostics.branches >= 1
     assert result.diagnostics.trajectories >= result.diagnostics.branches
+
+
+# ---- the IonQ character orders, pinned before the v2 exporter changes (docs/api_implementation_plan.md items 0.4 and 1.7) ---
+
+X_ON_QUBIT_ZERO = np.array([[1, 0, 0]] * 4, dtype=np.uint8)
+"""``x q[0]`` on three qubits, four shots: column j of ``Result.bitstrings`` is qubit j."""
+IONQ_V1_KEY = "1"
+"""The v1 decimal key of that shot: qubit 0 the least-significant bit."""
+IONQ_V2_KEY = "100"
+"""The v2 bitstring of that shot: wire order, ``q[0]`` the leftmost character (``qutip_trap.io.ionq`` records the source)."""
+
+
+def test_x_on_qubit_zero_reads_1_in_the_v1_formats_and_001_in_this_package() -> None:
+    """A Bell state cannot tell the two character orders apart; ``x q[0]`` can. The v1 exporters are correct today."""
+    result = make_result(X_ON_QUBIT_ZERO)
+    assert result.counts == {"001": 4}  # this package's key: qubit 0 rightmost
+    assert result.to_ionq_json() == {IONQ_V1_KEY: 1.0}
+    assert result.to_ionq_histogram() == {IONQ_V1_KEY: 4}
+    assert result.to_ionq_shots() == [IONQ_V1_KEY] * 4
+    assert IONQ_V2_KEY == "001"[::-1]  # the v2 string is this package's key reversed
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Phase 1.7 of docs/api_implementation_plan.md: Result.to_ionq_v2_probabilities() emits the v0.4 envelope with "
+    "output_all in wire order; today's to_ionq_v2 has neither the envelope nor that order (remove this marker there)",
+)
+def test_x_on_qubit_zero_reads_100_in_the_v2_envelope() -> None:
+    result = make_result(X_ON_QUBIT_ZERO)
+    assert result.to_ionq_v2_probabilities() == {
+        "probabilities": {"registers": {"output_all": {IONQ_V2_KEY: 1.0}}}
+    }

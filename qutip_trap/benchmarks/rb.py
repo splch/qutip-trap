@@ -266,6 +266,11 @@ def fit_decay(
 
 @dataclass(frozen=True)
 class RBResult:
+    """A randomized-benchmarking run on the simulated device: the joint survival per (length, sequence) with its shot-noise
+    error, the A p^m + B fit, the error per Clifford r = (1 - p)(2^n - 1)/2^n of Section 13 beside the depolarizing
+    entanglement infidelity (4^n - 1)(1 - p)/4^n kept under that name, the per-qubit marginals of simultaneous RB, the
+    sequences, every ``Result`` and the budget alongside; ``variant`` names the Clifford or the Knill-style protocol."""
+
     qubits: tuple[int, ...]
     lengths: tuple[int, ...]
     n_sequences: int

@@ -373,6 +373,10 @@ def _internal_projector(n_ions: int, a: int, sa: int, b: int, sb: int) -> qt.Qob
 
 @dataclass(frozen=True)
 class CalibrationRun:
+    """The record of an entangling-gate spot check (Sections 4.4.7, 7.5): the corrected ``Waveform``, the exact ``GateCheck``
+    of every iteration, the amplitude factors applied, whether the angle converged, the reference state the checks started
+    from (``n0`` or ``thermal``) and the closed-form angle the waveform came in with (radians)."""
+
     waveform: Waveform
     checks: tuple[GateCheck, ...]
     factors: tuple[float, ...]

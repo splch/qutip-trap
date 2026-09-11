@@ -44,6 +44,10 @@ jobs:
         run: uv run python tools/ledger_from_tables.py --check
       - name: documentation tables are current with the ledger (M10)
         run: uv run python tools/docs_from_ledger.py --check
+      - name: import time of the root and of the Appendix E surface (tests/test_import_time.py holds the root under 0.2 s)
+        run: |
+          uv run python -X importtime -c "import qutip_trap" 2>&1 | tail -1
+          uv run python -X importtime -c "import qutip_trap.api" 2>&1 | tail -1
       - name: pytest
         run: uv run pytest
       - name: convergence tests (Section 5.5 / 9.9) as a junit report for the convergence-report artifact
