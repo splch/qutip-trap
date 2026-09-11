@@ -1,0 +1,40 @@
+"""The Qiskit door (``qutip_trap.interop.qiskit``): transpiled Qiskit circuits run on the two-ion example device and come
+back as a Qiskit ``Result`` in Qiskit's bit order, with the qutip-trap ``Result`` behind each experiment."""
+
+from __future__ import annotations
+
+import pytest
+
+pytest.importorskip("qiskit")
+
+from qiskit import QuantumCircuit, transpile  # noqa: E402
+
+from qutip_trap.api import SolverOptions  # noqa: E402
+from qutip_trap.interop.qiskit import QutipTrapProvider  # noqa: E402
+
+
+def test_bell_and_x_on_qubit_zero_through_qiskit() -> None:
+    backend = QutipTrapProvider().get_backend("yb171_chain", n_ions=2)
+    bell = QuantumCircuit(2, name="bell")
+    bell.h(0)
+    bell.cx(0, 1)
+    bell.measure_all()
+    flip = QuantumCircuit(2, name="x0")  # asymmetric: it pins the bit order, which a Bell state cannot
+    flip.x(0)
+    flip.measure_all()
+    job = backend.run(
+        [transpile(c, backend) for c in (bell, flip)],
+        shots=400,
+        seed=3,
+        options=SolverOptions(branch_weight_min=1e-3),
+    )
+    result = job.result()
+    assert result.success and job.status().name == "DONE"
+    counts = result.get_counts("bell")
+    assert set(counts) <= {"00", "11", "01", "10"}
+    assert (counts.get("00", 0) + counts.get("11", 0)) / 400 > 0.95
+    x0 = result.get_counts("x0")
+    # qubit 0 set reads "01": Qiskit's rightmost bit and qutip-trap's are the same qubit
+    assert x0.get("01", 0) > 380, x0
+    assert job.results[0].diagnostics.level == "JOINT_EXACT"
+    assert job.results[1].probabilities["01"] == x0["01"] / 400

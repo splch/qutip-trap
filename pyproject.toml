@@ -17,6 +17,8 @@ dependencies = [
 # Flet 0.86 is the announced last line before 1.0; review the pin when 1.0 ships.
 gui = ["flet[all]>=0.86,<1.0", "flet-charts>=0.86,<1.0"]
 plot = ["matplotlib>=3.10"]
+# the Qiskit BackendV2 of qutip_trap/interop/qiskit.py (Qiskit 2.x; imported only by that module)
+qiskit = ["qiskit>=2.0,<3"]
 
 [dependency-groups]
 dev = [
@@ -28,6 +30,8 @@ dev = [
     # needed by the committed check scripts under validation/scripts/ (Appendix D)
     "sympy>=1.14",
     "mpmath>=1.3",
+    # the Qiskit door (qutip_trap/interop/qiskit.py) and tests/test_interop_qiskit.py run in CI
+    "qiskit>=2.0,<3",
 ]
 
 [tool.uv.workspace]
@@ -74,5 +78,10 @@ files = ["qutip_trap", "validation/scripts/run_checks.py", "tools"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["qutip", "qutip.*", "scipy", "scipy.*", "flet", "flet.*"]
+module = ["qutip", "qutip.*", "scipy", "scipy.*", "flet", "flet.*", "qiskit", "qiskit.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# qiskit ships no type information mypy can use here, so its base classes resolve to Any
+module = ["qutip_trap.interop.qiskit"]
+disallow_subclassing_any = false
