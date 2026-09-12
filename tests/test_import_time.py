@@ -7,6 +7,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
 BUDGET_S = 0.2
 """The plan's budget for ``import qutip_trap`` on the CI runner (0.0003 s on the reference machine at 7a26a27)."""
 
@@ -40,3 +42,16 @@ def test_the_appendix_e_surface_imports_and_reports_its_time() -> None:
     print(
         f"import qutip_trap.api: {seconds:.3f} s (qutip loaded: {qutip_loaded}, numpy loaded: {numpy_loaded})"
     )
+
+
+def test_the_root_names_are_the_lazy_table_and_resolve_after_import() -> None:
+    """``qutip_trap.__all__`` is written out (so that a linter sees the TYPE_CHECKING re-exports) and must equal the lazy
+    table plus the version; every name resolves through the module ``__getattr__`` and is then cached."""
+    import qutip_trap
+
+    assert set(qutip_trap.__all__) == {"__version__", *qutip_trap._RUNG_0}
+    assert qutip_trap.Machine is qutip_trap.machine.Machine and "Machine" in vars(qutip_trap)
+    assert qutip_trap.presets.yb171_chain.__module__ == "qutip_trap.presets"
+    assert "Machine" in dir(qutip_trap) and "importlib" not in dir(qutip_trap)
+    with pytest.raises(AttributeError, match="no attribute 'nothing'"):
+        qutip_trap.nothing  # noqa: B018

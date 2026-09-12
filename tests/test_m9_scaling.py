@@ -39,7 +39,7 @@ from qutip_trap.control.schedule import schedule as make_schedule
 from qutip_trap.dynamics.engine import JointExactEngine
 from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, evolve
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
-from qutip_trap.hilbert.truncation import convergence_report, grown_caps, regrid_state
+from qutip_trap.hilbert.truncation import TruncationWarning, convergence_report, grown_caps, regrid_state
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.run.job import RunError
@@ -251,8 +251,10 @@ def test_select_space_reads_mode_dimension_max_and_names_the_clamp() -> None:
         t0_s=0.0,
     )
     nbar = {m: 20.0 for m in range(len(fx.device.crystal.modes))}
-    tight = select_space(fx.device, sched, SolverOptions(mode_dimension_max=8), nbar=nbar)
+    with pytest.warns(TruncationWarning) as caught:  # 0.2.0: the clamp is also said out loud (api plan 1.9)
+        tight = select_space(fx.device, sched, SolverOptions(mode_dimension_max=8), nbar=nbar)
     assert tight.resolved_modes, "the fixture must resolve at least one mode for the clamp to bite"
+    assert len([w for w in caught if issubclass(w.category, TruncationWarning)]) == len(tight.resolved_modes)
     assert all(tight.space.truncation(m).d == 8 for m in tight.resolved_modes)
     clamp = [n for n in tight.notes if "mode_dimension_max = 8 clamps it" in n]
     assert len(clamp) == len(tight.resolved_modes), tight.notes

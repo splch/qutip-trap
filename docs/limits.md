@@ -48,6 +48,10 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
   tolerance, measured directly, and one displacement from the top populated level leaks less than a tenth of the boundary
   threshold past the cap, never more than the fixture. The engine's margin check reads the same rule, the oracle asserts the
   declared tolerance at construction, and the step reports the measured element error (`GateLocalStep.element_error`).
+  Two truncations a run cannot make exact are also said out loud (0.2.0): a cap the rule wanted larger than
+  `mode_dimension_max` allowed, and a boundary population left above `boundary_population_max` after the retries, each a
+  `TruncationWarning` (a `QutipTrapWarning`) naming the mode and both numbers, so that a silent run kept its caps;
+  `warnings.simplefilter("error", QutipTrapWarning)` turns that silence into a test.
 - **Mode classes.** A mode is *resolved* (in the joint space), *frozen* (removed from the space, entering through per-shot
   Debye-Waller factors, with its off-resonant excitation bound and its entangling-angle loss χ_m reported) or *dropped*
   (contribution below 10⁻⁶ in |α|²(2n̄ + 1) and 10⁻⁴ rad in |χ|, the summed dropped contribution reported), by the

@@ -56,6 +56,7 @@ NATIVE_GATES: Final[dict[str, tuple[int, int]]] = {
     "zz": (2, 1),
     "rz": (1, 1),  # virtual: no pulse, a frame update (Section 7.1)
 }
+"""The native set (Section 7.1): name -> (qubits, parameters in radians); ``rz`` is virtual, a frame update without a pulse."""
 STANDARD_GATES: Final[dict[str, tuple[int, int]]] = {
     "id": (1, 0),
     "x": (1, 0),
@@ -78,7 +79,9 @@ STANDARD_GATES: Final[dict[str, tuple[int, int]]] = {
     "rzz": (2, 1),
     "u3": (1, 3),
 }
+"""The standard set of Section 7.2 the compiler expands into native gates: name -> (qubits, parameters in radians)."""
 NON_UNITARY: Final[frozenset[str]] = frozenset({"measure", "reset", "recool"})
+"""The non-unitary operations of Section 7.2 item 4, schedulable at the end of a circuit; mid-circuit they are refused."""
 EXPORTED_NATIVE: Final[frozenset[str]] = frozenset({"gpi", "gpi2", "ms", "zz"})
 """The native gates the IonQ JSON exporter carries (Section 7.2 item 1); rz is absorbed by the compiler."""
 

@@ -5,6 +5,7 @@ the machine usable, a clamped cap and a boundary excess warn with the mode and b
 from __future__ import annotations
 
 import dataclasses
+import re
 import warnings
 
 import numpy as np
@@ -94,12 +95,17 @@ def test_a_raising_callback_aborts_the_run_and_leaves_the_machine_usable(machine
 def test_a_clamped_cap_warns_with_the_mode_and_both_numbers(machine: Machine) -> None:
     sched = machine.schedule(BELL)
     clamped = SolverOptions(mode_dimension_max=4, branch_weight_min=1e-3)
-    with pytest.warns(
-        TruncationWarning,
-        match=r"mode 2: the cap rule asks for d = \d+ .* mode_dimension_max = 4 clamps it to d = 4",
-    ):
+    with pytest.warns(TruncationWarning) as caught:
         selection = select_space(machine.device, sched, clamped, nbar={m: 0.01 for m in range(6)})
     assert all(t.d == 4 for t in selection.space.resolved)
+    messages = [str(w.message) for w in caught if issubclass(w.category, TruncationWarning)]
+    assert len(messages) == len(selection.resolved_modes), (
+        messages
+    )  # one warning per clamped mode, none twice
+    assert any(
+        re.search(r"mode 2: the cap rule asks for d = \d+ .* mode_dimension_max = 4 clamps it to d = 4", m)
+        for m in messages
+    ), messages
     with warnings.catch_warnings():
         warnings.simplefilter("error", QutipTrapWarning)
         select_space(

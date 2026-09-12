@@ -2,7 +2,89 @@
 
 Runnable, in order: every ```python block below builds on the ones before it, and `tests/test_docs.py` executes them in
 one namespace (about three minutes on the reference machine, an 18-core laptop with Apple Accelerate BLAS, whose wall times
-are the ones quoted). The public surface is `qutip_trap.api` (Appendix E of the plan); frequencies are in Hz there.
+are the ones quoted). Since 0.2.0 the front door is the `Machine` of the root namespace (`import qutip_trap as trap`); the
+frozen Appendix E surface stays `qutip_trap.api`, and everything below the first section is written on it. Frequencies are
+in Hz on both.
+
+## Two minutes to a histogram
+
+A `Machine` is a device with the roles its beams play (`BeamRoles`), the calibration it runs on and the policy that turns a
+circuit into a `Result`: `Physics` (which effects are simulated), `Numerics` (how the integration is done), `Readout` (how the
+record is read) and the `FidelityLevel`. The example machines come from `trap.presets`; a circuit is built with one method per
+gate.
+
+```python
+import dataclasses
+
+import qutip_trap as trap
+
+machine = trap.presets.yb171_chain(2)                # a Machine on the example two-ion 171Yb+ device
+bell = trap.Circuit(2).h(0).cnot(0, 1)               # every qubit is measured unless .measured(...) narrows it
+quick = dataclasses.replace(machine, numerics=trap.Numerics(truncation={"branch_weight_min": 1e-3}))
+result = quick.run(bell, shots=2000)                 # compile, calibrate (cached by device hash), schedule, prepare, evolve, read
+print("histogram:", {k: round(v, 4) for k, v in sorted(result.probabilities.items())})
+print("level:", result.diagnostics.level, "|", result.diagnostics.level_reason)
+print("machine:", result.machine_hash[:12], "| took", f"{result.duration_s:.1f} s")
+assert result.probabilities["00"] + result.probabilities["11"] > 0.98
+estimate = quick.estimate(bell)                      # the level, the space and a wall-time guess before anything is integrated
+assert estimate.level == result.diagnostics.level and estimate.space == result.diagnostics.space
+deeper = dataclasses.replace(quick, level=trap.FidelityLevel.GATE_LOCAL)   # the app's "verify deeper"
+quiet = dataclasses.replace(quick, physics=trap.Physics(noise=False))      # the nominal sample, no channels
+record = result.to_dict()                            # the versioned record of docs/schemas/result.schema.json
+assert trap.Result.from_dict(record).counts == result.counts
+```
+
+`quick.run(..., progress=print)` reports a `Progress` per pulse, branch, sample and readout. `result.to_ionq_v2_probabilities()`
+is IonQ's v0.4 envelope (bitstrings in wire order, q[0] first) and `result.to_ionq_v1_probabilities()` the v1 decimal keys;
+`result.reversed_bits()` reverses every key (its first character is then qubit 0's bit) for comparisons with Cirq, Braket
+and PennyLane, which report that way. `trap.__version__` is the release the record carries.
+
+## The ladder
+
+The five levels of PLAN.md Section 14.2 are five modules, each a rung of the same machine (docs/conventions.md, "Vocabulary").
+Every name below is importable from the rung named; the objects are the same ones `qutip_trap.api` exports.
+
+- **`qutip_trap`** (rung 0, the machine): `Machine` with `run`, `compile`, `schedule`, `calibrated` and `estimate` (an
+  `Estimate`), `Circuit` and `Operation`, `Result`, `Diagnostics` and `Progress`, `FidelityLevel` with `decide_level` (a
+  `LevelDecision`: the dimension and the non-zeros against the guards), the option objects `Physics`, `Numerics` and
+  `Readout`, `Device` with `BeamRoles`, the rung modules and `presets`.
+- **`qutip_trap.presets`**: `yb171_chain(n)` and `ca40_optical(n)` as machines; `DevicePreset.machine()` bridges a preset.
+- **`qutip_trap.circuit`** (rung 1): the IR (`Circuit`, `Operation`, the tables `NATIVE_GATES`, `STANDARD_GATES`,
+  `NON_UNITARY`, `EXPORTED_NATIVE` and the builder's `GATE_PARAMETERS`), the compiler (`compile_with_report`, `CompileReport`,
+  `compile_to_native`, `CompileError`), `ideal_probabilities`, `circuit_unitary`, `gate_matrix` and the native matrices of
+  `control/native.py` (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `r_phi`, `xx`, `equal_up_to_global_phase`, with `rad_from_turns` and
+  `turns_from_rad` at the IonQ boundary).
+- **`qutip_trap.schedule`** (rung 2): `Schedule`, `Pulse`, `Drive`, `Tone`, `ScheduledEvent`, `PlayedGate`, `GateTarget`, the
+  scheduler `schedule` and its `ScheduleError`, the prefix of `run` as `compile_calibrate_schedule` returning a `Prefix`, the
+  drive maps (`GateDrive`, `default_gate_drives`, `infer_gate_drives`, `resolve_drives`), the table (`CalibrationTable`,
+  `CalEntry`, `Waveform`, `Segment`), the electronics (`HardwareChain`, `apply_hardware_chain`, `physical_schedule`), the
+  composite pulses (`CompositePulse`, `composite_pulse`), the comb (`CombSpec`), the derived drives (`derive_raman_drive`,
+  `derive_light_shift_drive`, `LightShiftCouplings`) and the closure solvers (`GateModes`, `gate_modes`, `ShapedPulse`,
+  `solve_amplitude_modulation`, `solve_fourier_amplitude_modulation`, `solve_frequency_modulation`).
+- **`qutip_trap.dynamics`** (rung 3): `JointExactEngine` (its `EngineReport` and `SegmentReport`), `build_hamiltonian` with
+  `BuilderOptions`, `BuiltHamiltonian` and `DriveRecord`, `prepare`, `State`, `Traces`, `HilbertSpace`, `ModeTruncation`,
+  `CachedOperators`, `SolverOptions` and the `Numerics` groups (`Integration`, `Truncation`, `Trajectories`, `GateLocal`,
+  `Parallel`), `gate_channel` with `GateChannel`, `ChannelSummary`, the tomography (`TomographyRecord`, `choi_least_squares`,
+  `input_states`, `kraus_operators`, `project_cptp`), the convergence check (`ConvergenceReport`, `convergence_check`), the
+  kernel (`FactorizedOperator`, `apply_drive_kernel`, `factorized_qobj`, `is_factorized`) and the maps (`map_tasks`,
+  `worker_count`).
+- **`qutip_trap.physics`** (rung 4): the species (`Species`, `species`, `available`, `Level`, `Transition`, `AtomicStructure`,
+  `ZeemanSpectrum`, `ClockPoint`, `MetastableChannels`), the trap and crystal (`Trap`, `RfDrive`, `DcElectrodes`,
+  `Electrodes`, `MathieuParameters`, `MicromotionIndex`, `AnharmonicTerms`, `Crystal`, `Mode`, `solve_crystal`), the light
+  (`Beam`, `PolarizationModulation`, `PolGradientBeams`), the field (`Field`, `GradientField`), the noise (`NoiseModel`,
+  `NoiseSpectrum`, `Drift`, `Mains`, `Collisions`, `CollisionEvent`, `collision_rate_per_ion`, `white_spectrum`,
+  `ou_spectrum`, `gaussian_spectrum`, `power_law_spectrum`), the detector (`Detector`, `CameraGeometry`, `ApparatusPreset`),
+  the electronics (`HardwareChain`), the `Device` with `DerivedQuantities`, `BeamRoles` and `ResolvedRoles`, the preparation
+  (`PreparationRecipe`, `SidebandCoolingSpec`, `standard_recipe`), the example-device helpers (`secular_trap`,
+  `raman_pair_along_x`, `oblique_detection_beam`, `quiet_noise_model`, `ideal_hardware`, `crain_snspd_detector`,
+  `myerson_ca40_pmt_detector`) and the unit types (`Hz`, `RadPerS`, `Gauss`, `Tesla`, `rad_s_from_hz`, `hz_from_rad_s`).
+- **`qutip_trap.io`**: `qasm2` with `loads` and `dumps` (OpenQASM 2 both ways; the native gates declared as qelib1.inc
+  definitions, `NATIVE_DECLARATIONS`, or bare for the exact round trip; `QELIB_NAMES` maps `cnot` to `cx`), and `ionq` with
+  `loads`, `dumps`, `load_job` and `dump_job` (`IonQJob`, the v0.4 body of type `JOB_TYPE` with the keys `JOB_KEYS`,
+  `NOISE_KEYS` and `SETTINGS_KEYS` the spec allows), beside the 0.1.0 functions `load_openqasm2`, `load_ionq_json` and
+  `dump_ionq_json`.
+- **`qutip_trap.interop`**: the adapters to other SDKs, `qutip_trap.interop.qiskit` today (a Qiskit 2 `BackendV2` behind the
+  `qiskit` extra).
 
 ## A device
 

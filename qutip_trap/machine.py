@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.options import Numerics, Physics, Readout, to_run_kwargs
 from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level
+from qutip_trap.run.space import ModeClass3
 
 if TYPE_CHECKING:
     from qutip_trap.control.compiler import Circuit, CompileReport
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.engine import JointExactEngine
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.run.results import Progress, Result
-    from qutip_trap.run.space import ModeClass3
 
 CalibrationMethod = Literal["closed_form", "experiments"]
 

@@ -404,6 +404,12 @@ class SegmentReport:
 
 @dataclass(frozen=True)
 class EngineReport:
+    """What one ``run_pulses`` did (Section 5.5's report): per integrated segment a ``SegmentReport`` (integrator, tolerance,
+    right-hand-side evaluations, boundary populations, channels, kernel, frame), the space the run ended on after any cap
+    growth, the method (``sesolve``, ``mesolve``, ``mcsolve``), the trajectory count, the cap-raising retries, the margins
+    reached and the populated ranges per mode, the workers and propagator-cache hits, and the notes and approximations the
+    diagnostics of a ``Result`` gather."""
+
     segments: tuple[SegmentReport, ...]
     frozen_n: dict[int, int]
     growth_retries: int

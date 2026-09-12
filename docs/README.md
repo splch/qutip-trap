@@ -15,6 +15,11 @@ Section 13 the conventions, Appendix E the public API). These pages are the rele
 - [provenance/ledger.yaml](provenance/ledger.yaml): the provenance ledger of Section 14.5, one record per quantity, with the
   fields `id, symbol, tag, section, source, equation, corrected_form`; the species block is generated from the species
   tables by `tools/ledger_from_tables.py`.
+- [deprecations.md](deprecations.md): the deprecation policy and every entry, "deprecated in / removed in" (from 0.2.0).
+- [schemas/result.schema.json](schemas/result.schema.json): the JSON schema of `Result.to_dict()`, written by
+  `tools/schemas.py` and checked in CI.
+- [api_proposal.md](api_proposal.md) and [api_implementation_plan.md](api_implementation_plan.md): the survey of the field's
+  SDK shapes and the phased plan the 0.2.0 ladder (`Machine`, the rung modules, the option objects) follows.
 
 ## How the documentation is kept true
 

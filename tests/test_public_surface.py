@@ -41,12 +41,31 @@ from tests.fixtures import (
 ROOT = repository_root()
 DOCS = ROOT / "docs"
 
-RUNG_MODULES: tuple[str, ...] = ("qutip_trap.api",)
-"""The modules whose ``__all__`` is the public surface. 1.6 adds ``qutip_trap``, ``qutip_trap.circuit``, ``.schedule``,
-``.dynamics``, ``.physics``, ``.presets``, ``.io.qasm2`` and ``.io.ionq``; 3.3 adds ``qutip_trap.experimental``."""
+RUNG_MODULES: tuple[str, ...] = (
+    "qutip_trap.api",
+    "qutip_trap",
+    "qutip_trap.circuit",
+    "qutip_trap.schedule",
+    "qutip_trap.dynamics",
+    "qutip_trap.physics",
+    "qutip_trap.presets",
+    "qutip_trap.io",
+    "qutip_trap.io.qasm2",
+    "qutip_trap.io.ionq",
+)
+"""The modules whose ``__all__`` is the public surface: the Appendix E surface and the rung modules of 0.2.0
+(docs/api_implementation_plan.md 1.6); 3.3 adds ``qutip_trap.experimental``."""
 
 PAGES: tuple[Path, ...] = tuple(
-    DOCS / name for name in ("physics_notes.md", "conventions.md", "examples.md", "limits.md", "README.md")
+    DOCS / name
+    for name in (
+        "physics_notes.md",
+        "conventions.md",
+        "examples.md",
+        "limits.md",
+        "deprecations.md",
+        "README.md",
+    )
 )
 """The documentation pages a name must appear on (the two planning documents under docs/ are not pages)."""
 
@@ -54,83 +73,39 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
     "qutip_trap.api": frozenset(
         {
             "AdaptiveML",
-            "AnharmonicTerms",
-            "ApparatusPreset",
-            "AtomicStructure",
-            "Beam",
             "BenchmarkBudget",
             "BlochModel",
             "BudgetLine",
-            "CachedOperators",
-            "CalEntry",
             "CalibrationCache",
             "CalibrationError",
             "CalibrationReport",
             "CalibrationRun",
             "CalibrationScans",
-            "CalibrationTable",
-            "CameraGeometry",
-            "ChannelSummary",
-            "ClockPoint",
             "CollapseOp",
-            "CollisionEvent",
-            "Collisions",
-            "CombSpec",
-            "CompileReport",
-            "CompositePulse",
             "ControlSegment",
             "DarkStateReport",
-            "DcElectrodes",
             "DecouplingSequence",
-            "DerivedQuantities",
             "DetectionCalibration",
             "DetectionRates",
-            "Detector",
-            "DevicePreset",
-            "Drift",
-            "Drive",
-            "Electrodes",
             "ExperimentResult",
-            "Field",
             "FilterStage",
             "FirstPhoton",
             "FluorescenceRates",
             "GHZResult",
-            "GateChannel",
             "GateCheck",
-            "GateDrive",
             "GateLocalReport",
-            "GateModes",
             "GateStep",
-            "GateTarget",
-            "Gauss",
-            "HardwareChain",
-            "HilbertSpace",
             "IncompleteSpeciesTable",
             "InternalLevels",
             "KAK",
-            "LightShiftCouplings",
-            "Mains",
-            "MathieuParameters",
-            "MetastableChannels",
-            "MicromotionIndex",
-            "Mode",
             "ModeSpec",
-            "ModeTruncation",
             "MotionalModel",
             "MultiLevelOptions",
-            "NoiseModel",
             "NoiseSample",
-            "NoiseSpectrum",
             "Observation",
             "POVM",
             "PhotonRecord",
-            "PlayedGate",
-            "PolGradientBeams",
-            "PolarizationModulation",
-            "PreparationRecipe",
             "PreparationRun",
-            "Pulse",
             "PulseEngine",
             "QVCircuit",
             "RBResult",
@@ -140,45 +115,24 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "ReadoutOutcome",
             "ReadoutScheme",
             "RecordModel",
-            "RfDrive",
             "RunRecord",
             "RunState",
             "ScatteringOptions",
-            "ScheduledEvent",
             "SeedSpec",
-            "Segment",
-            "ShapedPulse",
-            "SidebandCoolingSpec",
             "SpaceSelection",
-            "Species",
-            "State",
             "SteadyStateReport",
             "StepChannel",
             "SurrogateReport",
-            "Tesla",
             "ThresholdDiscriminator",
             "TimeResolvedML",
-            "Tone",
-            "Traces",
             "Trajectory",
             "TransportBudget",
-            "Trap",
             "TwoQubitClifford",
-            "Waveform",
-            "ZeemanSpectrum",
             "ZigzagError",
-            "apply_hardware_chain",
-            "available",
-            "ca40_optical_recipe",
             "calibrate_detection",
             "calibrate_entangling_angle",
-            "calibrate_with_report",
             "choi_from_unitary",
-            "choi_least_squares",
-            "circuit_unitary",
             "clear_budget_cache",
-            "collision_rate_per_ion",
-            "composite_pulse",
             "crosstalk_scan",
             "crystal_image",
             "decompose_two_qubit_clifford",
@@ -186,8 +140,6 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "decoupling_sequence",
             "depolarizing_choi",
             "depolarizing_rate",
-            "derive_light_shift_drive",
-            "derive_raman_drive",
             "design_waveform",
             "detection_histogram",
             "detection_rates_for_ion",
@@ -198,30 +150,21 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "frame_rotated",
             "frozen_excitation_bounds",
             "full_calibration",
-            "gate_modes",
             "gate_space",
             "gate_steps",
-            "gaussian_spectrum",
             "ghz_circuit",
             "haar_random_unitary",
             "heating_rate",
-            "input_states",
-            "kraus_operators",
             "last_record",
             "micromotion_scan",
             "mode_spectroscopy",
             "ms_phase_scan",
             "ms_scan",
             "optimize_threshold",
-            "ou_spectrum",
             "parity_circuit",
             "parity_scan",
             "pauli_twirl",
-            "physical_schedule",
             "povm_for",
-            "power_law_spectrum",
-            "prepare",
-            "project_cptp",
             "ramsey",
             "ramsey_frequency",
             "random_square_circuit",
@@ -232,24 +175,18 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "scattering_rate",
             "select_space",
             "sideband_spectroscopy",
-            "solve_amplitude_modulation",
-            "solve_crystal",
-            "solve_fourier_amplitude_modulation",
-            "solve_frequency_modulation",
             "species_by_name",
             "split_feasible",
-            "standard_recipe",
             "stark_scan",
             "step_space",
             "surrogate_table",
             "thermal_robustness",
             "thermometry",
             "transport_budget",
-            "white_spectrum",
         }
     )
 }
-"""The names of the 0.1.0 surface with no backticked mention on a documentation page (2026-09-11: 193 of 237)."""
+"""The names of the 0.1.0 surface with no backticked mention on a documentation page (2026-09-11: 111 of 237)."""
 
 
 def _module(module_name: str) -> ModuleType:
@@ -311,7 +248,9 @@ def _attribute_docstring(module_name: str, name: str) -> str | None:
 
 def _own_docstring(module_name: str, name: str, obj: object) -> str | None:
     """The docstring ``name`` itself carries: a class's own (never an inherited one, never the signature a dataclass
-    generates), a function's, or the attribute docstring of a type alias or NewType in its defining module."""
+    generates), a function's, a module's, or the attribute docstring of a type alias or NewType in its defining module."""
+    if inspect.ismodule(obj):
+        return obj.__doc__
     if inspect.isclass(obj):
         doc = obj.__dict__.get("__doc__")
         if not isinstance(doc, str):
@@ -322,7 +261,10 @@ def _own_docstring(module_name: str, name: str, obj: object) -> str | None:
     if inspect.isroutine(obj):
         doc = getattr(obj, "__doc__", None)
         return doc if isinstance(doc, str) else None
-    return _attribute_docstring(_source_modules(module_name)[name], name)
+    source = _source_modules(module_name).get(name) or getattr(obj, "__module__", None)
+    if source is None:
+        return None
+    return _attribute_docstring(source, name)
 
 
 @cache
@@ -332,7 +274,8 @@ def _code_spans() -> tuple[str, ...]:
     for page in PAGES:
         text = page.read_text(encoding="utf-8")
         spans += re.findall(r"```[A-Za-z]*\n(.*?)```", text, flags=re.S)
-        spans += re.findall(r"`([^`\n]+)`", re.sub(r"```.*?```", "", text, flags=re.S))
+        # strip the fenced blocks (a fence opens with ``` and a newline; the prose "```python block" of examples.md is not one)
+        spans += re.findall(r"`([^`\n]+)`", re.sub(r"```[A-Za-z]*\n.*?```", "", text, flags=re.S))
     return tuple(spans)
 
 
@@ -364,14 +307,28 @@ def test_every_public_name_is_documented_or_listed_as_not_yet(module_name: str) 
     """A name is public when it is documented (Qiskit's rule): it appears in backticks, alone or inside a code span or a
     fenced block, on one of the documentation pages. The 0.1.0 names that still lack a line are listed above; this test
     fails both ways, on a name that lost its line and on a listed name that gained one (remove it from the list)."""
-    undocumented = {name for name in _module(module_name).__all__ if not _documented(name)}
+    module = _module(module_name)
+    undocumented = {name for name in module.__all__ if not _documented(name)}
     listed = NOT_YET_DOCUMENTED.get(module_name, frozenset())
-    new = sorted(undocumented - listed)
+    # a rung module re-exporting an Appendix E name inherits that name's entry in the api list (the same object)
+    inherited = {
+        name
+        for name in undocumented
+        if module_name != "qutip_trap.api"
+        and name in NOT_YET_DOCUMENTED["qutip_trap.api"]
+        and getattr(module, name) is getattr(api, name)
+    }
+    new = sorted(undocumented - listed - inherited)
     assert not new, f"public names of {module_name} with no line under docs/ (write the line): {new}"
     stale = sorted(listed - undocumented)
     assert not stale, (
         f"names now documented, or no longer public: remove them from NOT_YET_DOCUMENTED: {stale}"
     )
+
+
+MUTABLE_SERVICES: frozenset[str] = frozenset({"JointExactEngine"})
+"""Dataclasses of the surface that are service objects with state (a report, a cache, a progress hook), not records: the
+Appendix E immutability rule is for the data; these are excluded from the frozen check with this reason."""
 
 
 def _dataclasses_of(module_name: str) -> list[tuple[str, type]]:
@@ -388,6 +345,8 @@ def test_every_dataclass_is_frozen_and_rebuilt_from_its_own_fields(module_name: 
     reproduces ``obj`` when and only when the constructor takes exactly the fields (no ``init=False`` field, no ``InitVar``, no
     hand-written ``__init__``), which is what ``dataclasses.replace(machine, level=...)`` relies on from 0.2.0."""
     for name, cls in _dataclasses_of(module_name):
+        if name in MUTABLE_SERVICES:
+            continue
         assert cls.__dataclass_params__.frozen, f"{name} is not frozen"
         fields = dataclasses.fields(cls)
         assert all(f.init for f in fields), f"{name} has an init=False field"

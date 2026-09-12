@@ -107,6 +107,11 @@ class CurvatureSpec:
 
 @dataclass(frozen=True)
 class BuilderOptions:
+    """How the one Hamiltonian builder writes a segment (Sections 4.3.1, 5.2, 11.3): the frame, the Lamb-Dicke expansion order
+    (None = the exact displacement), the sideband rotating-wave approximation and its sideband cutoff, the micromotion and
+    phase modes, the Stark, anharmonic, crosstalk and Debye-Waller terms, the beam-curvature couplings, the gradient-drive
+    form and the kernel that holds the drive operators. Every field's docstring names the section its choice implements."""
+
     frame: Frame = "schrodinger"
     lamb_dicke_order: int | None = None
     """None = exact D(i eta); 0, 1, 2, ... = the Taylor expansion of every displacement to that order (an approximation)."""

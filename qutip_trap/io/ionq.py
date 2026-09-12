@@ -55,6 +55,7 @@ JOB_KEYS: Final[frozenset[str]] = frozenset(
 """The keys of the v0.4 ``CircuitJobCreationPayload`` (``additionalProperties: false``); ``target`` is the v0.3 spelling of
 ``backend``, accepted on input and never written."""
 NOISE_KEYS: Final[frozenset[str]] = frozenset({"model", "seed"})
+"""The keys of a job's ``noise`` object: the model name (``ideal``, ``aria-1``, ``forte-1``, ...) and an optional seed."""
 SETTINGS_KEYS: Final[dict[str, frozenset[str]]] = {
     "compilation": frozenset({"precision", "opt", "gate_basis", "service_version"}),
     "error_mitigation": frozenset({"debiasing", "symmetry_verification"}),

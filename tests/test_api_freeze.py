@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import importlib
 import inspect
 import re
 import sys
@@ -17,6 +18,30 @@ from qutip_trap import api
 from qutip_trap.provenance import repository_root
 
 PLAN = repository_root() / "PLAN.md"
+
+RUNG_MODULES = (
+    "qutip_trap.api",
+    "qutip_trap",
+    "qutip_trap.circuit",
+    "qutip_trap.schedule",
+    "qutip_trap.dynamics",
+    "qutip_trap.physics",
+    "qutip_trap.presets",
+    "qutip_trap.io.qasm2",
+    "qutip_trap.io.ionq",
+)
+"""Where a declared name is looked up: the Appendix E surface first, then the rung modules of the 2026-09 additions (which
+``qutip_trap.api`` does not export; docs/api_implementation_plan.md 1.10)."""
+
+
+def resolve(name: str) -> object:
+    """The implementation of an Appendix E name: in ``qutip_trap.api``, else in the first rung module that exports it."""
+    for module_name in RUNG_MODULES:
+        module = importlib.import_module(module_name)
+        if name in getattr(module, "__all__", ()):
+            return getattr(module, name)
+    raise AssertionError(f"Appendix E declares {name}, which no rung module exports")
+
 
 # fields the Appendix E prose adds to the code blocks (the "Run 5 additions" bullet list and the preamble)
 PROSE_AMENDMENTS: dict[str, set[str]] = {
@@ -31,6 +56,9 @@ PROSE_AMENDMENTS: dict[str, set[str]] = {
 
 # declared in Appendix E as a property; implemented as a method taking the device's beams (documented deviation)
 PROPERTY_AS_METHOD: dict[str, set[str]] = {"Drive": {"delta_k"}}
+# fields the Appendix E prose of the 2026-09 additions declares with a None default that reads as the declared type after
+# construction (Circuit.measure, Circuit.registers): the default is None in the declaration and in the implementation
+NONE_MEANS_DEFAULT: set[tuple[str, str]] = {("Circuit", "measure"), ("Circuit", "registers")}
 
 
 # Appendix E declares these Literal types inline; the implementation names them (a type alias resolves to the same
@@ -89,6 +117,8 @@ EXTRA_REQUIRED_PARAMETERS: dict[tuple[str, str], dict[str, str]] = {
 # Appendix E names owned by milestone M12 (transport), whose methods legitimately raise NotImplementedError
 M12_CLASSES = {"Zone", "VoltageWaveform", "FilterStage", "Transport"}
 M12_METHODS = {("Trap", "pseudopotential_v"), ("Trap", "split_coefficients")}
+# methods of the 2026-09 additions that name the later phase of docs/api_implementation_plan.md implementing them
+LATER_PHASE_METHODS = {("Machine", "error_model"), ("Machine", "specs"), ("Machine", "submit")}
 
 
 @dataclasses.dataclass
@@ -222,8 +252,8 @@ def test_appendix_e_was_found_and_parsed() -> None:
 @pytest.mark.parametrize("name", sorted(CLASSES))
 def test_declared_class_exists_with_its_fields_types_defaults_and_methods(name: str) -> None:
     decl = CLASSES[name]
-    assert hasattr(api, name), f"Appendix E class {name} is missing from qutip_trap.api"
-    cls = getattr(api, name)
+    cls = resolve(name)
+    assert inspect.isclass(cls), f"Appendix E declares the class {name}; the surface has {cls!r}"
     module = sys.modules[cls.__module__]
     if decl.frozen_dataclass:
         assert dataclasses.is_dataclass(cls), f"{name} must be a dataclass"
@@ -259,6 +289,9 @@ def test_declared_class_exists_with_its_fields_types_defaults_and_methods(name: 
                 assert impl.default == allowed_default, (
                     f"{name}.{fname}: implemented default {impl.default!r}, the recorded divergence is {allowed_default!r}"
                 )
+                continue
+            if (name, fname) in NONE_MEANS_DEFAULT:
+                assert impl.default is None, f"{name}.{fname}: the omitted argument arrives as None"
                 continue
             assert _default_matches(dfield.default, impl), (
                 f"{name}.{fname}: Appendix E default {dfield.default}, implemented default {impl.default!r}"
@@ -322,8 +355,10 @@ def test_no_appendix_e_method_outside_m12_is_a_stub() -> None:
     for name, decl in CLASSES.items():
         if name in M12_CLASSES or decl.protocol:
             continue
-        cls = getattr(api, name)
+        cls = resolve(name)
         for meth in decl.methods:
+            if (name, meth) in LATER_PHASE_METHODS:
+                continue
             if (name, meth) in M12_METHODS:
                 continue
             attr = inspect.getattr_static(cls, meth)
@@ -336,7 +371,7 @@ def test_no_appendix_e_method_outside_m12_is_a_stub() -> None:
 
 def test_property_declared_as_method_is_documented() -> None:
     for cls_name, names in PROPERTY_AS_METHOD.items():
-        cls = getattr(api, cls_name)
+        cls = resolve(cls_name)
         for n in names:
             assert callable(getattr(cls, n))
             assert "Appendix E declares this as a property" in (getattr(cls, n).__doc__ or "")
@@ -344,8 +379,7 @@ def test_property_declared_as_method_is_documented() -> None:
 
 @pytest.mark.parametrize("name", sorted(FUNCTIONS))
 def test_declared_function_exists_with_its_parameters_and_defaults(name: str) -> None:
-    assert hasattr(api, name), f"Appendix E function {name} is missing from qutip_trap.api"
-    fn = getattr(api, name)
+    fn = resolve(name)
     decl = FUNCTIONS[name]
     sig = inspect.signature(fn)
     have = sig.parameters

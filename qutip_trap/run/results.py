@@ -588,9 +588,10 @@ class Result:
         }
 
     def reversed_bits(self) -> Result:
-        """The same result with every bitstring key and every column of ``bitstrings`` reversed, so that qubit 0 is the
-        LEFTMOST character (``bit_order == "qubit0_msb"``): for comparisons with Cirq, Braket and PennyLane, which report
-        that way. ``qubits`` and ``registers`` keep naming the qubits; a second call restores the Section 13 order."""
+        """The same result with every bitstring key and every column of ``bitstrings`` reversed, so that the FIRST
+        character of a key is qubit 0's bit (``bit_order == "qubit0_msb"``): for comparisons with Cirq, Braket and
+        PennyLane, which report that way. ``qubits`` and ``registers`` keep naming the qubits; a second call restores the
+        Section 13 order."""
         from dataclasses import replace
 
         bits = np.asarray(self.bitstrings)[:, ::-1]

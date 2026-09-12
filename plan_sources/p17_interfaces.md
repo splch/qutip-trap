@@ -648,4 +648,166 @@ class Schedule:
 - `NoiseModel.channels` returns the Rayleigh operator as `0.5 * sqrt(Gamma_el) * sigma_z` with a docstring stating that the dissipator prefactor is Γ_el/4 while the observable coherence decays at Γ_el/2, and that both are correct; the recoil-resolved emission channels are returned as one operator per (decay channel, recoil class) pair, never summed.
 - The M12 voltage record is named `VoltageWaveform`; the calibrated entangling-pulse record of Sections 7 and 8 keeps the name `Waveform`, so the two never collide.
 
+**2026-09 additions (0.2.0; docs/api_proposal.md and docs/api_implementation_plan.md Phase 1).** The ladder: one executor, five rung modules, three option objects, the builder on `Circuit`, the versioned `Result` record and the IonQ exporters named by the convention they emit. The declarations live in the rung modules named in the comments rather than in `qutip_trap.api`, which is unchanged; `tests/test_api_freeze.py` resolves them there. The rules above hold (frozen records, Hz in the public API, provenance on every derived number), with one exception named below.
+
+```python
+# ---- qutip_trap.device.model (rung 4: qutip_trap.physics) ----
+@dataclass(frozen=True)
+class BeamRoles:                # which beams play which part; None = infer from the wavelengths and the beam count
+    gate: "Mapping[int, GateDrive] | None" = None          # per ion, the single-qubit gate drive
+    entangling: "Mapping[int, GateDrive] | None" = None    # per ion, the entangling drive; {} declares none
+    detection: int | None = None                           # the detection beam's index
+    def resolve(self, device: "Device") -> "ResolvedRoles": ...   # the one resolution rule: explicit keywords, then the roles, then the inference
+
+@dataclass(frozen=True)
+class ResolvedRoles:
+    gate: dict[int, GateDrive]; entangling: dict[int, GateDrive]; detection: int | None
+    inferred: tuple[str, ...] = ()                         # the fields the wavelength rules filled in
+
+@dataclass(frozen=True)
+class Device:
+    ...                                                    # unchanged fields
+    roles: BeamRoles = BeamRoles()                         # left out of hash(): the apparatus is the identity, Machine.hash() carries the roles
+
+# ---- qutip_trap.run.levels (rung 0; FidelityLevel, LevelDecision and decide_level are exported by qutip_trap) ----
+class FidelityLevel(StrEnum):   # the members equal the strings the code accepted before: "auto", "JOINT_EXACT", "GATE_LOCAL"
+    AUTO = "auto"; JOINT_EXACT = "JOINT_EXACT"; GATE_LOCAL = "GATE_LOCAL"
+
+@dataclass(frozen=True)
+class LevelDecision:            # why a run integrates at its level (Section 11.5)
+    level: FidelityLevel; dimension: int; nnz: int; joint_dimension_max: int; nnz_max: int; estimated: bool
+
+def decide_level(device: Device, circuit: Circuit, options: SolverOptions, *, space: HilbertSpace | None = None) -> LevelDecision: ...
+
+@dataclass(frozen=True)
+class Diagnostics:
+    ...                                                    # unchanged fields
+    level_reason: str = ""                                 # LevelDecision.reason, or the level the caller forced and what auto would choose
+
+# ---- qutip_trap.options (rung 0; the groups also from qutip_trap.dynamics) ----
+@dataclass(frozen=True)
+class Integration:
+    atol: float = 1e-10; rtol: float = 1e-8; nsteps: int = 10**7; integrators: tuple[str, ...] = ("dop853", "vern9")
+    rotating_frame: bool = True; propagator_cache: bool = True
+@dataclass(frozen=True)
+class Truncation:
+    joint_dimension_max: int = 4096; nnz_max: int = 2 * 10**7; mode_dimension_max: int = 64
+    boundary_population_max: float = 1e-6; freeze_chi_max_rad: float = 0.05; freeze_alpha_max: float = 1e-4
+    branch_weight_min: float = 1e-6; margin_check: bool = True; margin_element_tol: float | None = None
+    caps: "Mapping[int, int] | None" = None; enr_group: "tuple[Sequence[int], int] | None" = None; space: "HilbertSpace | None" = None
+@dataclass(frozen=True)
+class Trajectories:
+    lindblad_method: Literal["auto", "mesolve", "mcsolve"] = "auto"; mesolve_dimension_max: int = 128; ntraj: int = 64
+    improved_sampling: bool = True; trajectory_target_tol: float | None = None; e_ops_for_target_tol: bool = True
+@dataclass(frozen=True)
+class GateLocal:
+    map_accuracy: float = 1e-3; crosstalk_threshold: float = 1e-3; register_dm_max_qubits: int = 12; register_ensemble: int = 64
+    tomography_isometry: bool = True; tomography_dropped_weight_max: float | None = None; tomography_tolerance_keyed: bool = True
+@dataclass(frozen=True)
+class Parallel:
+    map: Literal["serial", "parallel", "loky"] = "parallel"; workers: int | None = None; samples: int | None = None
+    addressing: bool | None = None                         # single-qubit gates in parallel; None = the device's hardware says
+@dataclass(frozen=True)
+class Numerics:                 # how the integration is done, nested by concern; SolverOptions is what it builds internally
+    integration: Integration = Integration(); truncation: Truncation = Truncation(); trajectories: Trajectories = Trajectories()
+    gate_local: GateLocal = GateLocal(); parallel: Parallel = Parallel(); convergence_check: bool = False
+    def to_solver_options(self, physics: "Physics | None" = None) -> SolverOptions: ...
+@dataclass(frozen=True)
+class Physics:                  # which effects are simulated; every default is what run did in 0.1.0
+    noise: bool = True; internal_levels: int = 2; scattering: Literal["estimate", "channels"] = "estimate"
+    scattering_recoil: Literal["off", "minimal", "vector"] = "minimal"; intensity_noise_channels: bool = True; hardware_chain: bool = True
+    stark_compensation: bool = True; crosstalk_suppression: Literal["none", "neighbour", "local"] = "none"; entangler: Literal["ms", "zz"] = "ms"
+    extra_channels: tuple[CollapseOp, ...] = (); builder: "BuilderOptions | None" = None; t0_s: float = 0.0; shot_period_s: float | None = None
+@dataclass(frozen=True)
+class Readout:                  # how the photon record is read
+    mode: Literal["fast", "full"] = "fast"; discriminator: "Discriminator | None" = None; povm_samples: int = 20_000
+
+# ---- qutip_trap.machine (rung 0) ----
+@dataclass(frozen=True)
+class Machine:                  # the executor: device + roles + calibration + policy; variants by dataclasses.replace
+    device: Device; table: CalibrationTable | None = None
+    physics: Physics = Physics(); numerics: Numerics = Numerics(); readout: Readout = Readout()
+    level: FidelityLevel = FidelityLevel.AUTO; name: str = ""
+    def run(self, circuit: Circuit, shots: int, *, seed: int = 0, keep_final_state: bool = False, progress: "Callable | None" = None) -> Result: ...
+    def compile(self, circuit: Circuit) -> CompileReport: ...
+    def schedule(self, circuit: Circuit, *, seed: int = 0) -> Schedule: ...         # compile + calibrate + schedule, nothing integrated
+    def calibrated(self, method: Literal["closed_form", "experiments"] = "closed_form", *, seed: int = 0, **scans) -> "Machine": ...
+    def estimate(self, circuit: Circuit, *, seed: int = 0) -> "Estimate": ...       # the level, the space and a wall-time guess
+    def hash(self) -> str: ...                                                        # device hash + roles + table digest + policy
+    def error_model(self): ...                                                        # 0.3.0 (Phase 2.6)
+    def specs(self) -> str: ...                                                       # 0.3.0 (Phase 2.5)
+    def submit(self, circuit: Circuit, shots: int, *, seed: int = 0): ...             # 0.4.0 (Phase 3.1)
+
+@dataclass(frozen=True)
+class Estimate:
+    level: FidelityLevel; reason: str; space: HilbertSpace; mode_class: dict[int, Literal["resolved", "frozen", "dropped", "enr"]]
+    dimension: int; nnz: int
+    n_pulses: int; n_entangling: int; duration_s: float; wall_time_s: float; notes: tuple[str, ...] = ()
+
+# ---- qutip_trap.control.compiler (rung 1: qutip_trap.circuit) ----
+@dataclass(frozen=True)
+class Circuit:                  # a persistent builder: one method per name of NATIVE_GATES and STANDARD_GATES, each returning a new Circuit
+    n_qubits: int; ops: tuple[Operation, ...] = (); measure: tuple[int, ...] = None   # omitted = every qubit
+    registers: dict[str, tuple[int, ...]] = None                                     # omitted = {"c": measure}
+    def h(self, q: int) -> "Circuit": ...
+    def cnot(self, q0: int, q1: int) -> "Circuit": ...
+    def gpi2(self, q: int, phase: float) -> "Circuit": ...
+    def ms(self, q0: int, q1: int, phi0: float, phi1: float, theta: float) -> "Circuit": ...
+    def measured(self, *qubits: int, registers: "Mapping[str, Sequence[int]] | None" = None) -> "Circuit": ...
+    def to_openqasm(self, *, declare_native: bool = True) -> str: ...
+    def to_ionq(self) -> dict: ...
+
+# ---- qutip_trap.run.pipeline (rung 2: qutip_trap.schedule) ----
+@dataclass(frozen=True)
+class Prefix:                   # what the compile-calibrate-schedule prefix of run produced
+    report: CompileReport; compiled: Circuit; table: CalibrationTable; device: Device; schedule: Schedule
+    gate_drives: dict[int, GateDrive]; entangling_drives: dict[int, GateDrive]; options: SolverOptions; notes: tuple[str, ...]
+
+def compile_calibrate_schedule(circuit: Circuit, device: Device, *, table: CalibrationTable | None = None, seed: int = 0,
+                               t0_s: float = 0.0, options: SolverOptions | None = None) -> Prefix: ...
+
+# ---- qutip_trap.run.results (rung 0) ----
+@dataclass(frozen=True)
+class Progress:                 # one step of a run's progress, handed to the progress callback
+    stage: str; done: int; total: int; elapsed_s: float
+
+@dataclass(frozen=True)
+class Result:
+    ...                                                    # unchanged fields; bit_order gains "qubit0_msb" for reversed_bits()
+    qubits: tuple[int, ...] | None = None                  # the circuit qubit each column holds
+    registers: dict[str, tuple[int, ...]] | None = None    # the circuit's classical registers
+    machine_hash: str | None = None; created_at: str = ""; duration_s: float = 0.0
+    def to_dict(self, *, per_shot: bool = False) -> dict: ...      # docs/schemas/result.schema.json, schema version 1
+    def reversed_bits(self) -> "Result": ...                       # qubit 0 leftmost, for Cirq, Braket and PennyLane comparisons
+    def to_ionq_v1_probabilities(self) -> dict: ...                # decimal keys, qubit 0 the 2^0 bit (to_ionq_json is its deprecated alias)
+    def to_ionq_v1_histogram(self) -> dict: ...
+    def to_ionq_v1_shots(self) -> list: ...
+    def to_ionq_v2_probabilities(self) -> dict: ...                # {"probabilities": {"registers": {"output_all": ..., <register>: ...}}}, q[0] leftmost
+    def to_ionq_v2_histogram(self) -> dict: ...
+    def to_ionq_v2_shots(self) -> dict: ...
+
+# ---- qutip_trap.io.ionq ----
+@dataclass(frozen=True)
+class IonQJob:                  # a v0.3 or v0.4 job body read back
+    circuit: Circuit; backend: str | None = None; shots: int | None = None; name: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict); noise: dict[str, Any] | None = None; settings: dict[str, Any] | None = None
+    dry_run: bool | None = None; type: str = "ionq.circuit.v1"
+def load_job(obj) -> IonQJob: ...
+def dump_job(circuit: Circuit, *, backend: str, shots: int = 100, noise=None, settings=None, name=None, metadata=None, dry_run=None) -> dict: ...
+
+# ---- entry point amendments ----
+def run(circuit: Circuit, device: Device, shots: int, *, table: CalibrationTable | None = None, t0_s: float = 0.0,
+        shot_period_s: float | None = None, samples: int | None = None,
+        level: Literal["JOINT_EXACT", "GATE_LOCAL", "auto"] = "auto", seed: int = 0,
+        options: SolverOptions | None = None, progress=None) -> Result: ...
+        # progress: called with a Progress per pulse and per (sample, branch) run when they run in-process, per sample and per readout
+```
+
+- `qutip_trap.io.qasm2.loads(text)` and `dumps(circuit, *, declare_native=True)`, and `qutip_trap.io.ionq.loads(obj)` and `dumps(circuit)`, are the two wire formats in the shape of `json`; `Circuit.from_openqasm`, `from_ionq`, `to_openqasm` and `to_ionq` are the same four on the type.
+- `Circuit.measure` and `Circuit.registers` are the declared types once constructed; the omitted argument (None) is the default.
+- `Result.bit_order` is `Literal["qubit0_lsb", "qubit0_msb"]`: every run reports `qubit0_lsb`, and `reversed_bits()` is the only source of the other.
+- `JointExactEngine`, exported by `qutip_trap.dynamics` as the concrete engine, is the one dataclass of the surface that is not frozen: a service object with a report, a propagator cache and a progress hook, not a record.
+- The warnings are classes, not records: `qutip_trap._compat.QutipTrapWarning` is the package's base, `QutipTrapDeprecationWarning` (also a `DeprecationWarning`) marks a deprecated path, and `qutip_trap.hilbert.truncation.TruncationWarning` a cap clamped by `mode_dimension_max` or a boundary population left above `boundary_population_max` after the retries.
+- Deprecated in 0.2.0 (docs/deprecations.md): `DevicePreset.run_kwargs()` (returns `{}`), `Result.to_ionq_json`, `to_ionq_histogram`, `to_ionq_shots` (aliases of the v1 names) and `Result.to_ionq_v2` (unchanged behaviour, superseded by the v2 exporters).
+
 Three rules bind the surface. The application of Section 14 imports nothing outside this appendix. `control` never imports `calibration`, which sits above it and communicates through `CalibrationTable`. Every derived number reachable through `Device.derived()`, `Result.diagnostics` or an `ExperimentResult` carries a provenance id from the ledger of Section 14.5, so the Section 9.11 coverage test is a set difference.

@@ -15,12 +15,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
+from qutip_trap.control.schedule import CrosstalkSuppression
 from qutip_trap.dynamics.engine import LindbladMethod, RecoilOption, SolverOptions
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
-    from qutip_trap.control.schedule import CrosstalkSuppression
     from qutip_trap.dynamics.channels import CollapseOp
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.hilbert.space import HilbertSpace

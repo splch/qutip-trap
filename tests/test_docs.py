@@ -19,13 +19,21 @@ from tools.docs_from_ledger import TARGETS, anchors_block, conventions_block, re
 ROOT = repository_root()
 DOCS = ROOT / "docs"
 PAGES = tuple(
-    DOCS / name for name in ("physics_notes.md", "conventions.md", "examples.md", "limits.md", "README.md")
+    DOCS / name
+    for name in (
+        "physics_notes.md",
+        "conventions.md",
+        "examples.md",
+        "limits.md",
+        "deprecations.md",
+        "README.md",
+    )
 )
 """The documentation pages; the two planning documents under docs/ quote the conventions and are not pages."""
 
 
 @pytest.mark.parametrize(
-    "name", ["physics_notes.md", "conventions.md", "examples.md", "limits.md", "README.md"]
+    "name", ["physics_notes.md", "conventions.md", "examples.md", "limits.md", "deprecations.md", "README.md"]
 )
 def test_documentation_pages_exist_and_are_not_empty(name: str) -> None:
     path = DOCS / name
@@ -52,7 +60,14 @@ def test_every_ledger_id_cited_in_the_documentation_resolves() -> None:
     dangling: dict[str, list[str]] = {}
     pages = [
         DOCS / name
-        for name in ("physics_notes.md", "conventions.md", "examples.md", "limits.md", "README.md")
+        for name in (
+            "physics_notes.md",
+            "conventions.md",
+            "examples.md",
+            "limits.md",
+            "deprecations.md",
+            "README.md",
+        )
     ]
     for path in [*pages, ROOT / "README.md"]:
         cited = set(pattern.findall(path.read_text(encoding="utf-8")))
@@ -135,6 +150,7 @@ def test_the_bit_order_sentence_is_stated_once_and_never_contradicted() -> None:
         "conventions.md": 1,
         "examples.md": 0,
         "limits.md": 0,
+        "deprecations.md": 0,
         "README.md": 0,
     }, hits
     assert BIT_ORDER_SENTENCE in (results.__doc__ or ""), (
