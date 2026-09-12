@@ -256,3 +256,69 @@ def test_mid_circuit_operations_pass_through_and_skip_the_whole_circuit_check() 
     assert [op.name for op in rep.circuit.ops] == ["gpi2", "measure", "gpi"]
     with pytest.raises(ValueError, match="non-unitary"):
         circuit_unitary(circ)
+
+
+# ---- the Circuit builder and its defaults (docs/api_implementation_plan.md 1.5; 0.2.0) -----------------------------------------
+
+
+def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_default() -> None:
+    import inspect
+
+    from qutip_trap.control.compiler import GATE_PARAMETERS, NATIVE_GATES, STANDARD_GATES
+
+    built = Circuit(2).h(0).cnot(0, 1)
+    assert built == Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
+    assert built.measure == (0, 1) and built.registers == {"c": (0, 1)}
+    native = (
+        Circuit(2)
+        .gpi2(0, phase=0.0)
+        .ms(0, 1, phi0=0.0, phi1=0.0, theta=math.pi / 2)
+        .zz(1, 0, 0.3)
+        .rz(0, theta=0.1)
+    )
+    assert native.is_native and native.ops[1] == Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2))
+    assert native.ops[2] == Operation("zz", (1, 0), (0.3,)) and native.ops[3] == Operation("rz", (0,), (0.1,))
+    assert Circuit(2).u3(1, 0.1, 0.2, 0.3).ops[0].params == (0.1, 0.2, 0.3)
+    assert Circuit(1).rx(0, theta=0.5) == Circuit(1).rx(0, 0.5)
+    # a builder never mutates: the original stays what it was
+    base = Circuit(2)
+    assert base.h(0) != base and base.ops == () and base.measure == (0, 1)
+    # every gate of the two tables is a method whose signature is the table's arity plus its parameters, by name
+    for name, (arity, n_params) in {**NATIVE_GATES, **STANDARD_GATES}.items():
+        sig = inspect.signature(getattr(Circuit, name))
+        assert len(sig.parameters) == 1 + arity + n_params, name
+        assert tuple(sig.parameters)[1 + arity :] == GATE_PARAMETERS.get(name, ()), name
+        assert (getattr(Circuit, name).__doc__ or "").startswith(f"Append ``{name}``")
+    with pytest.raises(ValueError, match="outside range"):
+        Circuit(2).h(2)
+    with pytest.raises(TypeError):
+        Circuit(2).rx(0)  # type: ignore[call-arg]  (the parameter is required)
+
+
+def test_measured_registers_and_the_third_positional_argument() -> None:
+    narrowed = Circuit(3).x(0).measured(0, 1)
+    assert narrowed.measure == (0, 1) and narrowed.registers == {"c": (0, 1)}
+    split = Circuit(3).x(0).measured(2, 0, registers={"a": (2,), "b": (0,)})
+    assert split.measure == (2, 0) and split.registers == {"a": (2,), "b": (0,)}
+    # the 0.1.0 call form, unchanged: the third positional argument narrows the measurement
+    assert Circuit(2, (), (1,)).measure == (1,) and Circuit(2, (), (1,)).registers == {"c": (1,)}
+    assert Circuit(2, (), ()).measure == () and Circuit(2, (), ()).registers == {"c": ()}
+    with pytest.raises(ValueError, match="register 'r'"):
+        Circuit(2, registers={"r": (0, 5)})
+    with pytest.raises(ValueError, match="register 'r'"):
+        Circuit(2, registers={"r": (0, 0)})
+    # the compiler keeps the registers on the native circuit
+    c = Circuit(2, registers={"a": (0,), "b": (1,)}).h(0).cnot(0, 1)
+    assert compile_with_report(c).circuit.registers == {"a": (0,), "b": (1,)}
+    assert compile_to_native(c).measure == (0, 1)
+
+
+def test_from_and_to_ionq_on_the_builder() -> None:
+    turn = native.rad_from_turns
+    native_circuit = Circuit(2).gpi2(0, turn(0.75)).ms(0, 1, 0.0, turn(0.25), turn(0.25)).zz(0, 1, turn(0.1))
+    body = native_circuit.to_ionq()
+    assert body["gateset"] == "native" and body["circuit"][0] == {"gate": "gpi2", "target": 0, "phase": 0.75}
+    assert Circuit.from_ionq(body) == native_circuit  # exact: the turns above are exact binary fractions
+    assert Circuit.from_ionq({"input": body, "backend": "simulator"}) == native_circuit
+    with pytest.raises(ValueError, match="compile first"):
+        Circuit(2).h(0).to_ionq()

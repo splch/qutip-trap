@@ -34,10 +34,12 @@ residual per-qubit Z frame that the computational-basis measurement discards (``
 from __future__ import annotations
 
 import cmath
+import dataclasses
+import inspect
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 import numpy as np
 
@@ -137,25 +139,44 @@ class Operation:
 @dataclass(frozen=True)
 class Circuit:
     """A circuit of the IR (Section 3.3): ``n_qubits`` qubit labels 0 to n - 1, the operations in time order (native, standard
-    and non-unitary names, parameters in radians) and the terminal measurement targets. The labels are the compiler's;
-    the run maps them onto ions, and the histogram keys of a ``Result`` put qubit 0 rightmost (Section 13, "Result bit
-    order")."""
+    and non-unitary names, parameters in radians), the terminal measurement targets (every qubit unless narrowed) and the
+    classical registers a result is reported under. Also a persistent builder (0.2.0; docs/api_implementation_plan.md
+    1.5): one method per gate name of ``NATIVE_GATES`` and ``STANDARD_GATES`` (``Circuit(2).h(0).cnot(0, 1)``), each
+    returning a new circuit with the operation appended, ``measured`` for the terminal targets, and ``from_openqasm``,
+    ``from_ionq``, ``to_openqasm``, ``to_ionq`` for the two wire formats. The labels are the compiler's; the run maps them
+    onto ions, and the histogram keys of a ``Result`` put qubit 0 rightmost (Section 13, "Result bit order")."""
 
     n_qubits: int
-    ops: tuple[Operation, ...]
-    measure: tuple[int, ...]
-    """The terminal measurement targets; mid-circuit measure and reset live in ``ops``."""
+    ops: tuple[Operation, ...] = ()
+    measure: tuple[int, ...] = None  # type: ignore[assignment]  # omitted (None) means every qubit; a tuple after __post_init__
+    """The terminal measurement targets; omitted, every qubit. Always a tuple once constructed (the Appendix E type), so
+    omit the argument rather than passing None where a type checker watches. Mid-circuit measure and reset live in ``ops``."""
+    registers: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]  # omitted (None) means {"c": measure}
+    """Name -> the qubits of each classical register in bit order (the register's bit 0 first); omitted, one register ``"c"``
+    over ``measure``. The OpenQASM 2 importer fills it from the ``creg`` declarations, the exporter writes them back, and the
+    IonQ v2 result exporter reports ``output_all`` beside them."""
 
     def __post_init__(self) -> None:
         if self.n_qubits <= 0:
             raise ValueError("a circuit has at least one qubit")
+        object.__setattr__(self, "ops", tuple(self.ops))
         for op in self.ops:
             if any(q >= self.n_qubits for q in op.qubits):
                 raise ValueError(f"operation {op.name} addresses a qubit outside range({self.n_qubits})")
-        if len(set(self.measure)) != len(self.measure) or any(
-            q < 0 or q >= self.n_qubits for q in self.measure
-        ):
+        measure = tuple(range(self.n_qubits)) if self.measure is None else tuple(int(q) for q in self.measure)
+        if len(set(measure)) != len(measure) or any(q < 0 or q >= self.n_qubits for q in measure):
             raise ValueError("measure targets must be distinct qubits of the circuit")
+        object.__setattr__(self, "measure", measure)
+        if self.registers is None:
+            registers = {"c": measure}
+        else:
+            registers = {
+                str(name): tuple(int(q) for q in qubits) for name, qubits in dict(self.registers).items()
+            }
+        for name, qubits in registers.items():
+            if len(set(qubits)) != len(qubits) or any(q < 0 or q >= self.n_qubits for q in qubits):
+                raise ValueError(f"register {name!r} names a qubit outside the circuit, or one qubit twice")
+        object.__setattr__(self, "registers", registers)
 
     @property
     def is_native(self) -> bool:
@@ -179,6 +200,134 @@ class Circuit:
                 if pair not in seen and (pair[1], pair[0]) not in seen:
                     seen.append(pair)
         return tuple(seen)
+
+    # ---- the builder (0.2.0) -----------------------------------------------------------------------------------------
+
+    def _with(self, op: Operation) -> Circuit:
+        """This circuit with ``op`` appended (the builder's one mechanism; the gate methods below call it)."""
+        return dataclasses.replace(self, ops=self.ops + (op,))
+
+    def measured(self, *qubits: int, registers: Mapping[str, Sequence[int]] | None = None) -> Circuit:
+        """This circuit measuring exactly ``qubits`` at the end, reported under ``registers`` (default: one register ``"c"``
+        over them in the order given)."""
+        measure = tuple(int(q) for q in qubits)
+        regs = (
+            {"c": measure}
+            if registers is None
+            else {name: tuple(int(q) for q in qs) for name, qs in registers.items()}
+        )
+        return dataclasses.replace(self, measure=measure, registers=regs)
+
+    @classmethod
+    def from_openqasm(cls, text: str) -> Circuit:
+        """The OpenQASM 2 importer (``qutip_trap.io.qasm2.loads``): angles in radians, ``creg`` names into ``registers``."""
+        from qutip_trap.io.openqasm import load_openqasm2
+
+        return load_openqasm2(text)
+
+    @classmethod
+    def from_ionq(cls, obj: Mapping[str, Any]) -> Circuit:
+        """The IonQ circuit JSON importer (``qutip_trap.io.ionq.loads``): a job body with ``input`` or the ``input`` object,
+        native or qis gate set, turns converted to radians."""
+        from qutip_trap.io.ionq import load_ionq_json
+
+        return load_ionq_json(dict(obj))
+
+    def to_openqasm(self, *, declare_native: bool = True) -> str:
+        """OpenQASM 2 text (``qutip_trap.io.qasm2.dumps``), the native gates declared as qelib1.inc definitions unless told not to."""
+        from qutip_trap.io.qasm2 import dumps
+
+        return dumps(self, declare_native=declare_native)
+
+    def to_ionq(self) -> dict[str, Any]:
+        """The IonQ ``input`` object (``qutip_trap.io.ionq.dumps``); the circuit must be native (compile first)."""
+        from qutip_trap.io.ionq import dump_ionq_json
+
+        return dump_ionq_json(self)
+
+    if TYPE_CHECKING:
+        # the gate methods are attached below by ``_builder_method`` from the two gate tables (one mechanism); these
+        # declarations give type checkers their signatures, qubits first and the parameters (radians) after them
+        def gpi(self, q: int, phase: float) -> Circuit: ...
+        def gpi2(self, q: int, phase: float) -> Circuit: ...
+        def ms(self, q0: int, q1: int, phi0: float, phi1: float, theta: float) -> Circuit: ...
+        def zz(self, q0: int, q1: int, theta: float) -> Circuit: ...
+        def rz(self, q: int, theta: float) -> Circuit: ...
+        def id(self, q: int) -> Circuit: ...
+        def x(self, q: int) -> Circuit: ...
+        def y(self, q: int) -> Circuit: ...
+        def z(self, q: int) -> Circuit: ...
+        def h(self, q: int) -> Circuit: ...
+        def s(self, q: int) -> Circuit: ...
+        def sdg(self, q: int) -> Circuit: ...
+        def t(self, q: int) -> Circuit: ...
+        def tdg(self, q: int) -> Circuit: ...
+        def sx(self, q: int) -> Circuit: ...
+        def rx(self, q: int, theta: float) -> Circuit: ...
+        def ry(self, q: int, theta: float) -> Circuit: ...
+        def cnot(self, q0: int, q1: int) -> Circuit: ...
+        def cx(self, q0: int, q1: int) -> Circuit: ...
+        def cz(self, q0: int, q1: int) -> Circuit: ...
+        def swap(self, q0: int, q1: int) -> Circuit: ...
+        def cp(self, q0: int, q1: int, theta: float) -> Circuit: ...
+        def rxx(self, q0: int, q1: int, theta: float) -> Circuit: ...
+        def rzz(self, q0: int, q1: int, theta: float) -> Circuit: ...
+        def u3(self, q: int, theta: float, phi: float, lam: float) -> Circuit: ...
+
+
+GATE_PARAMETERS: Final[dict[str, tuple[str, ...]]] = {
+    "gpi": ("phase",),
+    "gpi2": ("phase",),
+    "ms": ("phi0", "phi1", "theta"),
+    "zz": ("theta",),
+    "rz": ("theta",),
+    "rx": ("theta",),
+    "ry": ("theta",),
+    "cp": ("theta",),
+    "rxx": ("theta",),
+    "rzz": ("theta",),
+    "u3": ("theta", "phi", "lam"),
+}
+"""The parameter names of the builder methods, in the order of ``Operation.params`` (radians), for every parametrized gate
+of the two tables; a gate absent here takes no parameter."""
+
+
+def _builder_method(name: str, arity: int, n_params: int) -> Callable[..., Circuit]:
+    """The builder method of one gate name: qubits first (``q``, or ``q0`` and ``q1`` in the gate's own order), then the
+    parameters of ``GATE_PARAMETERS`` in radians, positional or by name; returns a new ``Circuit``."""
+    qubit_names = ("q",) if arity == 1 else ("q0", "q1")
+    param_names = GATE_PARAMETERS.get(name, ())
+    if len(param_names) != n_params:
+        raise ValueError(
+            f"GATE_PARAMETERS names {len(param_names)} parameter(s) for {name!r}, the table {n_params}"
+        )
+    kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    signature = inspect.Signature(
+        [
+            inspect.Parameter("self", kind),
+            *(inspect.Parameter(q, kind, annotation=int) for q in qubit_names),
+            *(inspect.Parameter(p, kind, annotation=float) for p in param_names),
+        ],
+        return_annotation="Circuit",
+    )
+
+    def method(self: Circuit, *args: Any, **kwargs: Any) -> Circuit:
+        bound = signature.bind(self, *args, **kwargs)
+        qubits = tuple(int(bound.arguments[q]) for q in qubit_names)
+        params = tuple(float(bound.arguments[p]) for p in param_names)
+        return self._with(Operation(name, qubits, params))
+
+    method.__dict__["__signature__"] = signature
+    method.__name__ = name
+    method.__qualname__ = f"Circuit.{name}"
+    where = "qubit ``q``" if arity == 1 else "qubits ``(q0, q1)``, in the gate's own order"
+    with_params = f" with ``{'``, ``'.join(param_names)}`` in radians" if param_names else ""
+    method.__doc__ = f"Append ``{name}`` on {where}{with_params}; returns a new ``Circuit``."
+    return method
+
+
+for _gate, (_arity, _n_params) in {**NATIVE_GATES, **STANDARD_GATES}.items():
+    setattr(Circuit, _gate, _builder_method(_gate, _arity, _n_params))
 
 
 # ---- ideal matrices: the compiler's definition of what a gate is supposed to do (Section 3.1) ----------------------------
@@ -714,7 +863,7 @@ def compile_with_report(
         residuals.append(_verify_block(block, gate_matrix(op), op.qubits, op.name))
         native_ops.extend(block)
     propagated, frame = propagate_frames(native_ops, circuit.n_qubits)
-    compiled = Circuit(circuit.n_qubits, tuple(propagated), circuit.measure)
+    compiled = Circuit(circuit.n_qubits, tuple(propagated), circuit.measure, circuit.registers)
     circuit_residual: float | None = None
     has_mid = any(op.is_non_unitary for op in circuit.ops)
     if verify_circuit and not has_mid and circuit.n_qubits <= 10:
@@ -756,6 +905,7 @@ def compile_to_native(circuit: Circuit, device: Device | None = None, **kwargs: 
 __all__ = [
     "BLOCK_TOLERANCE",
     "CNOT_MATRIX",
+    "GATE_PARAMETERS",
     "PHYSICAL_RZ_AXIS_RAD",
     "EXPORTED_NATIVE",
     "NATIVE_AREAS_RAD",

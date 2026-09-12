@@ -1,7 +1,8 @@
 """OpenQASM 2 importer, a subset (PLAN.md Sections 1.4, 7.2, 7.6; milestone M6).
 
 Accepted: the ``OPENQASM 2.0;`` header, ``include`` statements (ignored: the qelib1.inc gates are built in), ``qreg`` and
-``creg`` declarations (several registers are flattened in declaration order), ``gate`` declarations with parameters (expanded
+``creg`` declarations (qubit registers are flattened in declaration order; the classical registers a terminal measurement
+writes into become ``Circuit.registers``, name -> the measured qubits in bit order, 0.2.0), ``gate`` declarations with parameters (expanded
 by inlining, so the client SDKs' OpenQASM 2 export, which declares gpi, gpi2, ms and zz as custom gates built from u, rz,
 rxx and rzz, imports through its own definitions, Section 7.6), gate applications with register broadcasting, ``barrier``
 (ignored), ``measure`` (a trailing measurement is the circuit's terminal ``measure``; one followed by a later gate on the
@@ -109,10 +110,10 @@ class _Parser:
         self.toks = tokenize(text)
         self.i = 0
         self.qregs: list[tuple[str, int, int]] = []  # name, size, offset
-        self.cregs: dict[str, int] = {}
+        self.cregs: dict[str, int] = {}  # declaration order
         self.gates: dict[str, GateDef] = {}
         self.ops: list[Operation] = []
-        self.measured: list[tuple[int, int]] = []  # (qubit, position in ops)
+        self.cbits: dict[int, tuple[str, int]] = {}  # position in ops of a measure -> (creg, bit) it writes
         self.n_qubits = 0
 
     # ---- token helpers
@@ -157,6 +158,9 @@ class _Parser:
             if op.name != "measure":
                 for q in op.qubits:
                     last_touch[q] = k
+        bits: dict[str, dict[int, int]] = {
+            name: {} for name in self.cregs
+        }  # creg -> bit -> the qubit that writes it
         for k, op in enumerate(ops):
             if op.name == "measure":
                 q = op.qubits[0]
@@ -164,9 +168,20 @@ class _Parser:
                     keep.append(op)  # a later gate acts on it: mid-circuit
                 elif q not in terminal:
                     terminal.append(q)
+                if k in self.cbits:
+                    name, bit = self.cbits[k]
+                    bits[name][bit] = q  # a bit written twice keeps its last writer
             else:
                 keep.append(op)
-        return Circuit(self.n_qubits, tuple(keep), tuple(sorted(terminal)))
+        measure = tuple(sorted(terminal))
+        # the registers: every creg a measurement writes into, in declaration order, its written bits in bit order (a
+        # declared bit nothing writes is left out; a creg nothing writes into is not a register of the circuit; with no
+        # creg written at all the circuit gets the default register over its terminal targets, which is empty when the
+        # program measures nothing: run() then measures every ion, the 0.1.0 rule)
+        registers = {
+            name: tuple(written[bit] for bit in sorted(written)) for name, written in bits.items() if written
+        }
+        return Circuit(self.n_qubits, tuple(keep), measure, registers if registers else {"c": measure})
 
     def statement(self) -> None:
         t = self.peek()
@@ -187,11 +202,12 @@ class _Parser:
             self.take()
             src = self.argument()
             self.expect("->")
-            dst = self.cargument()
+            cname, dst = self.cargument()
             self.expect(";")
             if len(src) not in (1, len(dst)) and len(dst) != 1:
                 raise OpenQASMError(f"measure register sizes disagree at offset {t.pos}")
-            for q in src:
+            for k, q in enumerate(src):
+                self.cbits[len(self.ops)] = (cname, dst[k] if len(dst) > 1 else dst[0])
                 self.ops.append(Operation("measure", (q,), ()))
         elif t.text == "reset":
             self.take()
@@ -307,7 +323,8 @@ class _Parser:
             return [offset + idx]
         return [offset + k for k in range(size)]
 
-    def cargument(self) -> list[int]:
+    def cargument(self) -> tuple[str, list[int]]:
+        """A classical argument: (creg name, the bit indices) for c[i] or a whole register."""
         name = self.expect_kind("id").text
         if name not in self.cregs:
             raise OpenQASMError(f"unknown creg {name!r}")
@@ -315,8 +332,10 @@ class _Parser:
             self.take()
             idx = int(self.expect_kind("real").text)
             self.expect("]")
-            return [idx]
-        return list(range(self.cregs[name]))
+            if idx < 0 or idx >= self.cregs[name]:
+                raise OpenQASMError(f"{name}[{idx}] out of range")
+            return name, [idx]
+        return name, list(range(self.cregs[name]))
 
     def application(self, env: dict[str, float], qmap: dict[str, int] | None) -> None:
         """A gate application at the top level (qmap None: register arguments) with broadcasting."""
@@ -473,7 +492,8 @@ def evaluate(tokens: Sequence[_Tok], env: dict[str, float]) -> float:
 
 
 def load_openqasm2(text: str) -> Circuit:
-    """Import OpenQASM 2 text (the subset in the module docstring) into the IR; angles in radians."""
+    """Import OpenQASM 2 text (the subset in the module docstring) into the IR: angles in radians, the terminal measurements
+    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers`` (0.2.0)."""
     return _Parser(text).program()
 
 
