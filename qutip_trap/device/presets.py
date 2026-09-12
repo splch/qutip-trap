@@ -2,7 +2,8 @@
 
 A preset is a complete ``Device`` plus the ``GateDrive`` maps the scheduler needs when a device carries several Raman pairs
 (Section 7.3), so that the documentation examples and the benchmarks of ``qutip_trap.benchmarks`` run on a device without
-importing the test tree. The numbers are ILLUSTRATIVE (a realizable laboratory configuration, not a published apparatus):
+importing the test tree; since 0.2.0 the device itself carries those maps as ``Device.roles`` (docs/api_implementation_plan.md
+1.1). The numbers are ILLUSTRATIVE (a realizable laboratory configuration, not a published apparatus):
 
 ``yb171_chain(n_ions)`` is the 171Yb+ chain the validation suite runs on since milestone M6 (``tests/m6_fixtures.py``; a test
 asserts the two build the same device, hash for hash): B = 5 G along x, secular frequencies (3.0, 2.9, 2.0) MHz, a GLOBAL
@@ -25,12 +26,14 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from qutip_trap._compat import deprecated
 from qutip_trap.control.hardware import HardwareChain
 from qutip_trap.control.schedule import GateDrive
-from qutip_trap.device.model import Device, Field
+from qutip_trap.device.model import BeamRoles, Device, Field
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import beam_for_transition
 from qutip_trap.noise.model import NoiseModel
@@ -42,6 +45,9 @@ from qutip_trap.species import species
 from qutip_trap.species.raman import structure_at
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.model import Trap
+
+if TYPE_CHECKING:
+    from qutip_trap.machine import Machine
 
 OBLIQUE = (1.0 / math.sqrt(3.0), 1.0 / math.sqrt(3.0), 1.0 / math.sqrt(3.0))
 DETECTION_WAIST_M = 30e-6
@@ -56,14 +62,16 @@ FIELD_GAUSS = 5.0
 
 @dataclasses.dataclass(frozen=True)
 class DevicePreset:
-    """A device with the drive maps its scheduler needs (Section 7.3) and the index of its detection beam."""
+    """An example device with the drive maps its scheduler needs (Section 7.3) and the index of its detection beam. Since
+    0.2.0 the ``device`` carries the same three maps as ``Device.roles`` (docs/api_implementation_plan.md 1.1), so ``run``,
+    ``calibrate`` and the benchmarks need no drive keyword; the fields here restate them for the record and the app."""
 
     name: str
     device: Device
     gate_drives: dict[int, GateDrive]
-    """Which beams play the single-qubit gates of each ion."""
+    """Which beams play the single-qubit gates of each ion (``device.roles.gate``)."""
     entangling_drives: dict[int, GateDrive]
-    """Which beams play the entangling gates (the global pair)."""
+    """Which beams play the entangling gates (the global pair; ``device.roles.entangling``)."""
     detection_beam: int
     notes: tuple[str, ...] = ()
 
@@ -71,9 +79,22 @@ class DevicePreset:
     def n_ions(self) -> int:
         return self.device.crystal.n_ions
 
+    def machine(self) -> Machine:
+        """The preset as the executor of 0.2.0: a ``Machine`` on its device (which carries the roles), the closed-form
+        calibration cached per device, the default option objects and the AUTO level (docs/api_implementation_plan.md 1.1)."""
+        from qutip_trap.machine import Machine
+
+        return Machine(self.device, name=self.name)
+
+    @deprecated(
+        deadline="v0.4",
+        fix="Pass nothing: the preset's device carries its drive maps as Device.roles, and DevicePreset.machine() gives "
+        "the Machine (0.2.0).",
+    )
     def run_kwargs(self) -> dict[str, object]:
-        """The keyword arguments ``run``, ``calibrate`` and the benchmarks take for this device's drive maps."""
-        return {"gate_drives": self.gate_drives, "entangling_drives": self.entangling_drives}
+        """Empty since 0.2.0: ``run``, ``calibrate`` and the benchmarks read the drive maps from ``Device.roles``, which the
+        preset's device carries. Kept for one release so that ``**preset.run_kwargs()`` still runs; it warns."""
+        return {}
 
 
 def quiet_noise_model() -> NoiseModel:
@@ -204,6 +225,7 @@ def yb171_chain(
         gate_drives[i] = GateDrive("raman", (k, k + 1))
     det_index = len(beams)
     beams.append(oblique_detection_beam(s_o, FIELD_GAUSS))
+    entangling = {i: GateDrive("raman", (0, 1)) for i in range(n_ions)}
     dev = Device(
         crystal=crystal,
         trap=trap,
@@ -212,11 +234,11 @@ def yb171_chain(
         noise=noise if noise is not None else quiet_noise_model(),
         detector=detector if detector is not None else crain_snspd_detector(),
         hardware=hardware if hardware is not None else ideal_hardware(phase_continuous=phase_continuous),
+        roles=BeamRoles(gate=gate_drives, entangling=entangling, detection=det_index),
     )
     dev = dataclasses.replace(
         dev, preparation=recipe if recipe is not None else standard_recipe(dev, raman_pair=(0, 1))
     )
-    entangling = {i: GateDrive("raman", (0, 1)) for i in range(n_ions)}
     return DevicePreset(
         name=f"171Yb+ chain of {n_ions} (example device, illustrative numbers)",
         device=dev,
@@ -510,6 +532,7 @@ def ca40_optical(
                 waist_m=CA40_854_WAIST_M,
             )
         )
+    gate = {i: GateDrive("optical_E2", (0,)) for i in range(n_ions)}
     dev = Device(
         crystal=crystal,
         trap=trap,
@@ -518,12 +541,13 @@ def ca40_optical(
         noise=noise if noise is not None else quiet_noise_model(),
         detector=detector if detector is not None else myerson_ca40_pmt_detector(),
         hardware=hardware if hardware is not None else ideal_hardware(phase_continuous=phase_continuous),
+        roles=BeamRoles(gate=gate, entangling={}, detection=1),
     )
     dev = dataclasses.replace(dev, preparation=recipe if recipe is not None else ca40_optical_recipe(dev))
     return DevicePreset(
         name=f"40Ca+ optical-qubit chain of {n_ions} (example device, illustrative numbers)",
         device=dev,
-        gate_drives={i: GateDrive("optical_E2", (0,)) for i in range(n_ions)},
+        gate_drives=gate,
         entangling_drives={},
         detection_beam=1,
         notes=(

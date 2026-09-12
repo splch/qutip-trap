@@ -27,9 +27,10 @@ print("carrier Rabi frequencies ion 0 sees (Hz):", {k: round(derived.values[k]) 
 assert all(derived.provenance[k] for k in derived.values)  # every derived number names its ledger record
 ```
 
-Every derived number carries the id of its provenance record in `docs/provenance/ledger.yaml`. The preset's `run_kwargs()`
-names which beams play which gates (the addressing pair of each ion, the global pair for the entangling gates); a device
-with one Raman pair needs none of that.
+Every derived number carries the id of its provenance record in `docs/provenance/ledger.yaml`. The device carries which
+beams play which gates as `Device.roles` (the addressing pair of each ion for the single-qubit gates, the global pair for
+the entangling gates, the detection beam), so `run`, `calibrate` and the benchmarks need no drive maps; a device with one
+Raman pair infers its roles from the wavelengths.
 
 ## Calibrate, run a circuit, read the result
 
@@ -44,10 +45,10 @@ import numpy as np
 from qutip_trap.api import Circuit, Operation, SolverOptions, calibrate, ideal_probabilities, register_fidelity, run
 
 windows = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
-table = calibrate(device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=windows, **preset.run_kwargs())
+table = calibrate(device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=windows)
 options = SolverOptions(branch_weight_min=1e-3)
 bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-result = run(bell, device, 2000, table=table, keep_final_state=True, options=options, **preset.run_kwargs())
+result = run(bell, device, 2000, table=table, keep_final_state=True, options=options)
 print("histogram:", {k: round(v, 4) for k, v in sorted(result.probabilities.items())}, "ideal:", ideal_probabilities(bell))
 print("register infidelity:", f"{1 - register_fidelity(result):.2e}",
       "inside the closed-form budget", f"{result.diagnostics.intrinsic_budget['total']:.1e}")
@@ -108,7 +109,7 @@ r = (1 − p)/2 the error per Clifford (Section 13 of the plan).
 from qutip_trap.api import randomized_benchmarking
 
 rb = randomized_benchmarking(device, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True,
-                             table=table, options=options, **preset.run_kwargs())
+                             table=table, options=options)
 print(rb.fidelity_form(), "| r per Clifford:", f"{rb.error_per_clifford[0]:.1e} +- {rb.error_per_clifford[1]:.1e}")
 budget = rb.budget
 print("channel infidelity per native kind (reduced to qubit 0):", {k: f"{v:.1e}" for k, v in budget.channel_infidelity.items()})
@@ -117,12 +118,12 @@ print("predicted r from the channels:", f"{budget.predicted['r_channel']:.1e}",
       "| F(0) from SPAM:", f"{budget.predicted['F0_spam']:.4f}")
 
 sim = randomized_benchmarking(device, (0, 1), (1, 64), n_sequences=1, shots=400, pair=False, fix_offset=True,
-                              budget=False, table=table, options=options, **preset.run_kwargs())
+                              budget=False, table=table, options=options)
 print("simultaneous RB, per-ion marginal r_q:", [f"{v:.1e}" for v, _ in sim.marginal_error_per_clifford],
       "| mean:", f"{sim.error_per_clifford[0]:.1e}",
       "| the joint decay per layer of two Cliffords:", f"{sim.joint_error_per_layer[0]:.1e}")
 knill = randomized_benchmarking(device, (0,), (1, 64), n_sequences=1, shots=400, variant="knill",
-                                budget=False, table=table, options=options, **preset.run_kwargs())
+                                budget=False, table=table, options=options)
 print("Knill-style RB (Section 7.9):", knill.fidelity_form(),
       "| r per computational gate:", f"{knill.error_per_clifford[0]:.1e}")
 ```
@@ -146,14 +147,14 @@ follow the same pattern:
 from qutip_trap.api import ghz_fidelity, quantum_volume
 
 ghz = ghz_fidelity(device, (0, 1), shots=400, analysis_phases_rad=np.linspace(0.0, np.pi, 4, endpoint=False),
-                   table=table, options=options, **preset.run_kwargs())
+                   table=table, options=options)
 print("P00, P11:", {k: round(v[0], 4) for k, v in ghz.populations.items()},
       "| parity contrast:", f"{ghz.fit['contrast'][0]:.4f}",
       "| bound (P0 + P1 + C)/2:", f"{ghz.fidelity_bound[0]:.4f} +- {ghz.fidelity_bound[1]:.4f}",
       "| exact max-phase (what the bound estimates):", f"{ghz.register_fidelity_max_phase:.5f}",
       "| exact fixed-phase (which it exceeds):", f"{ghz.register_fidelity:.5f}")
 assert ghz.register_fidelity_max_phase >= ghz.register_fidelity - 1e-12
-qv = quantum_volume(device, (0, 1), n_circuits=1, shots=200, table=table, options=options, **preset.run_kwargs())
+qv = quantum_volume(device, (0, 1), n_circuits=1, shots=200, table=table, options=options)
 print("heavy-output probability:", qv.heavy_output_probability.round(3), "ideal:", qv.ideal_heavy_probability.round(3),
       "| exact register fidelity:", qv.register_fidelity.round(4),
       "| Eq. (32) sigma:", f"{qv.sigma:.3f}", "| clears 2/3 by two sigma:", qv.threshold_cleared,
@@ -178,7 +179,7 @@ motional state on the exact gate-local space, its Choi matrix, average gate infi
 ```python
 from qutip_trap.api import gate_channel
 
-ch = gate_channel(device, "gpi2[0]", table=table, options=options, **preset.run_kwargs())
+ch = gate_channel(device, "gpi2[0]", table=table, options=options)
 step = ch.steps[0]
 print("step ions:", step.ions, "| full-step average infidelity:", f"{step.summary.average_gate_infidelity:.1e}",
       "| reduced to qubit 0:", f"{ch.infidelity_on((0,)):.1e}", "| twirl p_II:", f"{step.summary.pauli_twirled['II']:.5f}")
@@ -201,7 +202,7 @@ ca = ca40_optical(1)
 ca_derived = ca.device.derived()
 print("729 nm carrier Rabi frequency (Hz):",
       {k: round(ca_derived.values[k]) for k in sorted(ca_derived.values) if k.startswith("rabi_hz[")})
-ca_result = run(Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)), ca.device, 200, **ca.run_kwargs())
+ca_result = run(Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)), ca.device, 200)
 print("one GPi2 on the optical qubit:", {k: round(v, 3) for k, v in sorted(ca_result.probabilities.items())})
 ```
 

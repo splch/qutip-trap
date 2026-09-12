@@ -537,13 +537,11 @@ def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:
 
     preset = ca40_optical()
     assert preset.entangling_drives == {}, "the 40Ca+ optical preset carries no entangling pair"
-    sur = surrogate_table(
-        preset.device, detection_records=200, detection_windows_s=(20e-6,), **preset.run_kwargs()
-    )
+    sur = surrogate_table(preset.device, detection_records=200, detection_windows_s=(20e-6,))
     assert sur.table.ms == {}, "no entangling drive, no waveform"
     assert sur.table.rabi, "the single-qubit drives are still seeded"
     circuit = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
-    res = run(circuit, preset.device, 20, table=sur.table, **preset.run_kwargs())  # type: ignore[arg-type]
+    res = run(circuit, preset.device, 20, table=sur.table)
     assert res.shots == 20 and sum(res.probabilities.values()) == pytest.approx(1.0)
     # and a partially addressed chain seeds only the ions its entangling drive names
     fx, _sur2 = two_ion

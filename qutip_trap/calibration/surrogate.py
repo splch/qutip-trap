@@ -20,7 +20,7 @@ import numpy as np
 
 from qutip_trap.calibration.entangling import CalibrationRun, calibrate_entangling_angle
 from qutip_trap.calibration.readout import DetectionCalibration, calibrate_detection
-from qutip_trap.control.schedule import GateDrive, default_gate_drives
+from qutip_trap.control.schedule import GateDrive, resolve_drives
 from qutip_trap.control.shaping import (
     CHI_MAXIMAL_RAD,
     ClosureError,
@@ -183,8 +183,7 @@ def surrogate_table(
     from qutip_trap.dynamics.engine import SolverOptions
 
     opts = options or SolverOptions()
-    drives = dict(gate_drives) if gate_drives is not None else default_gate_drives(device)
-    ent = dict(entangling_drives) if entangling_drives is not None else drives
+    drives, ent = resolve_drives(device, gate_drives, entangling_drives)
     crystal = device.crystal
     n = crystal.n_ions
     notes: list[str] = []

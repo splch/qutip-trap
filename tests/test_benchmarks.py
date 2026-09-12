@@ -47,7 +47,7 @@ def two_ion():  # type: ignore[no-untyped-def]
         detection_records=1000,
         detection_windows_s=WINDOWS,
     )
-    return preset, dict(table=sur.table, options=FAST, **preset.run_kwargs())
+    return preset, dict(table=sur.table, options=FAST)
 
 
 # ---- algebra on synthetic inputs -------------------------------------------------------------------------------------------

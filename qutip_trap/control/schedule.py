@@ -61,7 +61,7 @@ from qutip_trap.transport.budget import Transport
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from qutip_trap.control.table import CalibrationTable, Segment
     from qutip_trap.device.model import Device
@@ -218,9 +218,10 @@ class GateDrive:
         return self.beams[0] if self.beams else MICROWAVE_BEAM_KEY
 
 
-def default_gate_drives(device: Device) -> dict[int, GateDrive]:
+def infer_gate_drives(device: Device) -> dict[int, GateDrive]:
     """Infer the single-qubit gate drive from the device's beams: none = microwave, one = optical, a pair of equal
-    wavelength = Raman; anything else is ambiguous and must be passed explicitly."""
+    wavelength = Raman; anything else is ambiguous and must be declared (``Device.roles``) or passed explicitly. The rule
+    ``BeamRoles.resolve`` applies when the roles leave the gate drives ``None``."""
     n = device.crystal.n_ions
     idx = gate_beams(
         device
@@ -240,9 +241,28 @@ def default_gate_drives(device: Device) -> dict[int, GateDrive]:
     else:
         raise ScheduleError(
             "the device's far-detuned beams do not identify a single-qubit gate drive (need none, one, or one Raman pair); "
-            "pass gate_drives"
+            "declare them in Device.roles (or pass gate_drives)"
         )
     return {i: spec for i in range(n)}
+
+
+def default_gate_drives(device: Device) -> dict[int, GateDrive]:
+    """The single-qubit gate drives of ``device``: its declared ``roles.gate``, else :func:`infer_gate_drives`. The one
+    function the scheduler, ``run``, the calibration, the experiments and ``Device.derived()`` read (through
+    ``BeamRoles.resolve``; docs/api_implementation_plan.md 1.1)."""
+    return device.roles.resolve(device).gate
+
+
+def resolve_drives(
+    device: Device,
+    gate_drives: Mapping[int, GateDrive] | None = None,
+    entangling_drives: Mapping[int, GateDrive] | None = None,
+) -> tuple[dict[int, GateDrive], dict[int, GateDrive]]:
+    """(single-qubit drives, entangling drives) for one call: ``BeamRoles.resolve`` with the call's explicit keyword
+    arguments taking precedence over the device's roles, and the roles over the inference (the keyword arguments are
+    deprecated in 0.3.0)."""
+    resolved = device.roles.resolve(device, gate_drives=gate_drives, entangling_drives=entangling_drives)
+    return resolved.gate, resolved.entangling
 
 
 def carrier_rabi_hz(table: CalibrationTable, ion: int, gate_drive: GateDrive) -> float:
@@ -625,8 +645,7 @@ def schedule(
         )
     if crosstalk_suppression != "none" and parallel:
         raise ScheduleError("crosstalk suppression is scheduled on the serial path (Section 6.6)")
-    drives = gate_drives or default_gate_drives(device)
-    ent_drives = entangling_drives or drives
+    drives, ent_drives = resolve_drives(device, gate_drives, entangling_drives)
     dead = float(device.hardware.dead_time_s)
     reset = not bool(device.hardware.phase_continuous)
     delay = float(device.hardware.aom_rise_s) if response_delay else 0.0
@@ -1114,7 +1133,9 @@ __all__ = [
     "default_gate_drives",
     "entangling_pulses",
     "frame_after",
+    "infer_gate_drives",
     "ms_spin_phases",
+    "resolve_drives",
     "response_phase_rad",
     "schedule",
     "single_qubit_pulse",

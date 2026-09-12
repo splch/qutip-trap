@@ -51,14 +51,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 import qutip as qt
 
-from qutip_trap.control.compiler import CompileReport, compile_with_report
-from qutip_trap.control.schedule import (
-    CrosstalkSuppression,
-    GateDrive,
-    Schedule,
-    default_gate_drives,
-    schedule,
-)
+from qutip_trap.control.compiler import CompileReport
+from qutip_trap.control.schedule import CrosstalkSuppression, GateDrive, Schedule
 from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, SolverOptions, State, Traces
 from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
@@ -87,7 +81,8 @@ from qutip_trap.readout.discriminate import (
 )
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, detection_rates_for_ion
 from qutip_trap.run.gate_local import EngineSetup, GateLocalReport, evolve_gate_local
-from qutip_trap.run.levels import FidelityLevel, resolve_level, within_budget
+from qutip_trap.run.levels import FidelityLevel, decide_level, within_budget
+from qutip_trap.run.pipeline import compile_calibrate_schedule
 from qutip_trap.run.results import Diagnostics, Result, RunState, aggregate, binomial_error_bars
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.units import TWO_PI
@@ -689,7 +684,7 @@ def run(
     t0_s: float = 0.0,
     shot_period_s: float | None = None,
     samples: int | None = None,
-    level: Literal["JOINT_EXACT", "GATE_LOCAL", "auto"] = "auto",
+    level: Literal["JOINT_EXACT", "GATE_LOCAL", "auto"] | FidelityLevel = "auto",
     seed: int = 0,
     options: SolverOptions | None = None,
     gate_drives: Mapping[int, GateDrive] | None = None,
@@ -739,104 +734,34 @@ def run(
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
-    opts = options or SolverOptions()
-    drives = dict(gate_drives) if gate_drives is not None else default_gate_drives(device)
-    ent_drives = dict(entangling_drives) if entangling_drives is not None else drives
-    notes: list[str] = []
-    # Section 4.5.5: "Leakage is therefore simulated, not estimated, whenever d > 2". A d > 2 register whose scattering
-    # channels are off carries leakage levels that nothing can populate and reports no estimate for them either, so the
-    # combination is refused rather than defaulted silently: the flag is turned on and the run says so. Keep
-    # internal_levels = 2 for the d = 2 per-pulse estimate path of Section 4.3.2.
-    if internal_levels > 2 and not opts.scattering_channels:
-        # Section 4.5.5 asks for the LEAKAGE channel (and with it the spin-flip and Rayleigh operators on the register);
-        # the recoil displacements D(i(eta_abs - eta_em)) of Section 4.5.5's photon-recoil term are a separate, expensive
-        # choice (one displacement-dressed operator per emission direction, per pulse, per branch: 30 to 50x the cost of
-        # the register-only operators on the two-ion fixture), so the automatic switch turns the channels on WITHOUT them
-        # unless the caller asked for the vector quadrature; scattering_channels=True with scattering_recoil="minimal" or
-        # "vector" is the explicit request for recoil (M7 fixer's E-10, consolidated 2026-09-08)
-        recoil = opts.scattering_recoil if opts.scattering_recoil == "vector" else "off"
-        opts = replace(opts, scattering_channels=True, scattering_recoil=recoil)
-        notes.append(
-            f"internal_levels = {internal_levels} > 2: scattering_channels turned ON with scattering_recoil={recoil!r} "
-            "(Section 4.5.5, 'leakage is simulated, not estimated, whenever d > 2'; the recoil displacements are an "
-            "explicit choice: pass scattering_channels=True with scattering_recoil='minimal' or 'vector'); pass "
-            "internal_levels=2 for the d = 2 estimate path instead"
-        )
-    # 1. compile
-    report = compile_with_report(circuit, device, entangler=entangler)
-    compiled = report.circuit
-    # 2. calibrate (surrogate, cached per device and seed, Section 7.5) when no table is given
-    if table is None:
-        from qutip_trap.calibration.cache import cached_surrogate
-
-        kw = dict(calibrate_kwargs or {})
-        kw.setdefault("pairs", compiled.entangling_pairs())
-        sur = cached_surrogate(
-            device,
-            seed=seed,
-            t0_s=t0_s,
-            gate_drives=drives,
-            entangling_drives=ent_drives,
-            options=opts,
-            builder_options=builder_options,
-            caps=caps,
-            **kw,
-        )
-        table = sur.table
-        notes.extend(sur.notes)
-    elif not table.is_current_for(device.hash()):
-        notes.append(
-            "calibration table fitted for another device configuration (hash mismatch): played as given, never regenerated "
-            "silently (Section 7.5)"
-        )
-    # 2b. the calibrated micromotion compensation: the shim settings the table carries are what the machine has PROGRAMMED,
-    # so the run evolves the compensated device and a stale calibration against a drifted stray field leaves the residual
-    # excess micromotion a laboratory would have (Section 7.5: "stores shims and beta in the table, so that compensation is
-    # calibrated, drifts with the stray field between calibrations and is re-nulled like a laboratory re-nulls it").
-    # ``device_with_compensation`` re-solves the crystal, so the ions' displacement, the beams' intensity at the ions and
-    # the Lamb-Dicke parameters move together. No device PARAMETER changed - only a programmed voltage - so the hash the
-    # table is compared against above stays the uncompensated device's.
-    shim_entries = {
-        name: entry
-        for name, entry in table.micromotion.items()
-        if name.startswith("shim[") and name.endswith("]")
-    }
-    # only what the compensation experiment MEASURED is programmed: a seed shim is the device's own setting (already in the
-    # device) and an uncalibrated one is a compensation the calibration could not establish, which leaves the device as it is
-    shims = {
-        name[len("shim[") : -1]: float(entry.value)
-        for name, entry in shim_entries.items()
-        if entry.status == "calibrated"
-    }
-    unresolved = sorted(name for name, entry in shim_entries.items() if entry.status == "uncalibrated")
-    if unresolved:
-        notes.append(
-            f"micromotion compensation uncalibrated for {unresolved}: the run keeps the device's own shim settings and "
-            "carries whatever excess micromotion they leave (Section 7.5)"
-        )
-    if shims:
-        from qutip_trap.experiments.micromotion import device_with_compensation
-
-        compensated = device_with_compensation(device, shims)
-        if compensated.trap != device.trap:
-            device = compensated
-            notes.append(
-                "calibrated micromotion compensation applied to the run: "
-                + ", ".join(f"{k} = {v:.6g}" for k, v in sorted(shims.items()))
-                + " (Section 7.5; the reported device hash is the uncompensated device's)"
-            )
-    # 3. schedule
-    sched = schedule(
-        compiled,
+    # 1 to 3: compile, calibrate (the cached surrogate when no table is given), program the calibrated shims and schedule,
+    # the prefix ``Machine.schedule`` shares (run/pipeline.py; docs/api_implementation_plan.md 1.3)
+    prefix = compile_calibrate_schedule(
+        circuit,
         device,
-        table,
-        gate_drives=drives,
-        entangling_drives=ent_drives,
-        t0_s=0.0,
+        table=table,
+        seed=seed,
+        t0_s=t0_s,
+        options=options,
+        gate_drives=gate_drives,
+        entangling_drives=entangling_drives,
+        builder_options=builder_options,
+        caps=caps,
+        calibrate_kwargs=calibrate_kwargs,
+        entangler=entangler,
         parallel=parallel,
         crosstalk_suppression=crosstalk_suppression,
         stark_compensation=stark_compensation,
+        internal_levels=internal_levels,
     )
+    opts = prefix.options
+    ent_drives = prefix.entangling_drives
+    notes: list[str] = list(prefix.notes)
+    report = prefix.report
+    compiled = prefix.compiled
+    table = prefix.table
+    device = prefix.device
+    sched = prefix.schedule
     # 4. preparation (the physics of the recipe) and the space
     cooling_pair = _raman_pair_hint(ent_drives)
     prep_run = run_preparation(device, recipe_of(device, raman_pair=cooling_pair))
@@ -880,10 +805,17 @@ def run(
     _ok, dim, nnz = selection.budget
     # PLAN.md Appendix E: level="auto" "resolves through resolve_level(device, circuit, options)". It used to be dead code
     # while run() inlined within_budget (M9a audit B6/E18); the run's actual space makes the guards exact instead of the
-    # estimate resolve_level falls back to without one
-    resolved_level: FidelityLevel = resolve_level(device, compiled, opts, space=joint_space)
-    ok = resolved_level == "JOINT_EXACT"
-    run_level: FidelityLevel = resolved_level if level == "auto" else level
+    # estimate resolve_level falls back to without one. The decision carries the numbers it compared, which the result
+    # reports as Diagnostics.level_reason (docs/api_implementation_plan.md 1.2).
+    decision = decide_level(device, compiled, opts, space=joint_space)
+    ok = decision.level is FidelityLevel.JOINT_EXACT
+    requested = FidelityLevel(level)
+    run_level: FidelityLevel = decision.level if requested is FidelityLevel.AUTO else requested
+    level_reason = (
+        decision.reason
+        if requested is FidelityLevel.AUTO
+        else f"{run_level.value} forced by the caller; level='auto' would choose {decision.reason}"
+    )
     if run_level == "JOINT_EXACT" and not ok:
         # Section 11.5: the monitor "refuses to build joint spaces above a configurable dimension"; the knobs ARE the
         # configuration, so an explicit JOINT_EXACT above them is refused rather than built. Before 2026-09-08 it went ahead
@@ -1496,7 +1428,7 @@ def run(
     if selection.guard_violations:
         notes.extend(v for v in selection.guard_violations if v not in notes)
     diagnostics = Diagnostics(
-        level=run_level,
+        level=_diagnostics_level(run_level),
         space=joint_space,
         mode_class=dict(selection.mode_class),
         run_state=run_state,
@@ -1528,6 +1460,7 @@ def run(
         workers=workers_used,
         propagator_cache_hits=propagator_hits,
         convergence=convergence,
+        level_reason=level_reason,
     )
     result = Result(
         bitstrings=bits,
@@ -1563,6 +1496,15 @@ def run(
         gate_local=gl_report,
     )
     return result
+
+
+def _diagnostics_level(level: FidelityLevel) -> Literal["JOINT_EXACT", "GATE_LOCAL"]:
+    """The level a run ran at, as the Appendix E literal ``Diagnostics.level`` carries (never the AUTO policy)."""
+    if level is FidelityLevel.JOINT_EXACT:
+        return "JOINT_EXACT"
+    if level is FidelityLevel.GATE_LOCAL:
+        return "GATE_LOCAL"
+    raise ValueError("a run reports the level it ran at, not the AUTO policy")
 
 
 def _kernel_kind(kinds: set[str]) -> str:

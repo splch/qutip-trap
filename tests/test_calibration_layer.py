@@ -317,8 +317,18 @@ def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -
     assert d.values["qubit_freq_hz[0]"] == pytest.approx(sur.table.qubit_freq[0].value)
     assert d.values["mode_hz[3]"] == pytest.approx(sur.table.modes[3].value)
     assert d.values["R_bright_per_s[0]"] > 1e6
-    # six far-detuned beams do not identify ONE single-qubit drive: the device says so instead of guessing (Section 7.3)
-    assert not any(k.startswith("rabi_hz") for k in d.values) and any("gate drives" in n for n in d.notes)
+    # the fixture declares which of its six far-detuned beams play which gates (Device.roles, 0.2.0), so the device derives
+    # the addressing pairs' Rabi frequencies: the same numbers the surrogate seeds its table with
+    assert d.values["rabi_hz[(0, 2)]"] == pytest.approx(sur.table.rabi[(0, 2)].value)
+    assert d.values["rabi_hz[(1, 4)]"] == pytest.approx(sur.table.rabi[(1, 4)].value)
+    # without the roles the same beams do not identify ONE single-qubit drive: the device says so instead of guessing
+    # (Section 7.3)
+    from qutip_trap.device.model import BeamRoles
+
+    bare = dataclasses.replace(fx.device, roles=BeamRoles()).derived()
+    assert not any(k.startswith("rabi_hz") for k in bare.values) and any(
+        "gate drives" in n for n in bare.notes
+    )
     # an unambiguous device derives its drive: the Rabi frequency, the light shift, the Lamb-Dicke parameters
     single = single_ion_raman_device()
     dd = derive_raman_drive(single, 0, (0, 1), scattering=False)

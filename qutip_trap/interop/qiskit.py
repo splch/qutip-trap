@@ -103,7 +103,8 @@ class QutipTrapJob(JobV1):
 
 class QutipTrapBackend(BackendV2):
     """One example device (a ``DevicePreset``) as a Qiskit backend. ``table`` pins a calibration (else the closed-form
-    surrogate, cached per device); ``run_kwargs`` are defaults for every ``run`` on top of the preset's drive maps."""
+    surrogate, cached per device); ``run_kwargs`` are defaults for every ``run``; the drive maps come from the device's
+    ``roles`` (0.2.0)."""
 
     def __init__(
         self, preset: DevicePreset, *, table: CalibrationTable | None = None, **run_kwargs: Any
@@ -111,7 +112,7 @@ class QutipTrapBackend(BackendV2):
         super().__init__(name=preset.name, description=preset.name, backend_version=__version__)
         self.preset = preset
         self.table = table
-        self.run_kwargs: dict[str, Any] = {**preset.run_kwargs(), **run_kwargs}
+        self.run_kwargs: dict[str, Any] = dict(run_kwargs)
         self._target = qutip_trap_target(preset.n_ions)
 
     @property

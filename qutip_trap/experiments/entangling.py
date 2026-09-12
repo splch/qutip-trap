@@ -39,7 +39,7 @@ def _entangling_setup(
 ) -> tuple[Any, dict[int, Any], dict[int, Any], Any, Any, Any]:
     """(waveform, entangling drives, single-qubit drives, table, modes, space) from the keyword arguments or the device's defaults."""
     from qutip_trap.calibration.entangling import gate_space
-    from qutip_trap.control.schedule import default_gate_drives
+    from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import gate_modes
 
     table = kw.get("table")
@@ -48,8 +48,9 @@ def _entangling_setup(
         raise ValueError(
             "ms_scan/parity_scan need the pair's waveform (kw waveform=, or a table with an ms entry)"
         )
-    sq: dict[int, Any] = kw.get("gate_drives") or default_gate_drives(device)
-    ent: dict[int, Any] = kw.get("entangling_drives") or sq
+    sq_resolved, ent_resolved = resolve_drives(device, kw.get("gate_drives"), kw.get("entangling_drives"))
+    sq: dict[int, Any] = dict(sq_resolved)
+    ent: dict[int, Any] = dict(ent_resolved)
     beams = ent[pair[0]].beams
     if len(beams) != 2:
         raise ValueError("the entangling experiments take a Raman (two-beam) entangling drive")

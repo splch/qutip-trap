@@ -284,7 +284,7 @@ def full_calibration(
     **surrogate_kwargs: Any,
 ) -> CalibrationReport:
     """Calibrate ``device`` by simulated experiments in the dependency order of Section 7.5 (module docstring)."""
-    from qutip_trap.control.schedule import default_gate_drives
+    from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
     from qutip_trap.experiments import (
         crosstalk_scan,
@@ -310,8 +310,7 @@ def full_calibration(
         raise ValueError(
             f"unknown calibration experiments {sorted(unknown)}; known: {ORDER} and the aliases {sorted(ALIASES)}"
         )
-    drives = dict(gate_drives) if gate_drives is not None else default_gate_drives(device)
-    ent = dict(entangling_drives) if entangling_drives is not None else drives
+    drives, ent = resolve_drives(device, gate_drives, entangling_drives)
     n = device.crystal.n_ions
     sur = surrogate or surrogate_table(
         device,

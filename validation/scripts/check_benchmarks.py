@@ -148,7 +148,7 @@ sur = surrogate_table(
     detection_windows_s=WINDOWS,
 )
 print(f"MC: surrogate table in {time.perf_counter() - t0:.1f} s")
-kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3), **preset.run_kwargs())
+kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3))
 t0 = time.perf_counter()
 rb1 = randomized_benchmarking(
     dev, (0,), (1, 128, 512, 2048), n_sequences=3, shots=4000, budget=True, fix_offset=True, **kw
@@ -321,7 +321,7 @@ sur3 = surrogate_table(
     detection_records=1500,
     detection_windows_s=WINDOWS,
 )
-kw3 = dict(table=sur3.table, options=SolverOptions(branch_weight_min=3e-3), **preset3.run_kwargs())
+kw3 = dict(table=sur3.table, options=SolverOptions(branch_weight_min=3e-3))
 g3 = ghz_fidelity(
     dev3,
     (0, 1, 2),

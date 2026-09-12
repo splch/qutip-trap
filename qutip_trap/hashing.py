@@ -9,7 +9,10 @@ fields these objects carry). The rules, verbatim from Appendix E:
 - ndarrays as dtype plus C-order bytes (the shape is included so that reshapes differ);
 - dicts by sorted key;
 - callables by qualified name plus a digest of their source;
-- Qobj fields excluded.
+- Qobj fields excluded;
+- fields declared with ``field(metadata={"hash": "exclude"})`` left out: ``Device.roles`` (0.2.0), the operator's
+  assignment of which beams play which part, which is not the apparatus the digest identifies, so every digest taken
+  before roles existed stays valid (``Machine.hash()`` carries the roles instead).
 
 A cross-process test asserts that the same device yields the same digest (tests/test_hashing.py).
 """
@@ -92,6 +95,8 @@ def _feed(h: Any, obj: object) -> None:
     elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         h.update(f"D{type(obj).__qualname__}(".encode())
         for f in dataclasses.fields(obj):
+            if f.metadata.get("hash") == "exclude":
+                continue
             h.update(f"{f.name}=".encode())
             _feed(h, getattr(obj, f.name))
         h.update(b");")

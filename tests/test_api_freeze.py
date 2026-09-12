@@ -24,7 +24,7 @@ PROSE_AMENDMENTS: dict[str, set[str]] = {
     "Transition": {"quadrupole_element_au", "quadrupole_convention"},
     "Beam": {"polarization_amplitudes", "modulation"},
     "Tone": {"theta_bessel_rad"},
-    "Device": {"zones"},
+    "Device": {"zones", "roles"},
     "Trap": {"dc_schedule", "basis_potentials"},
     "Schedule": {"transports"},
 }

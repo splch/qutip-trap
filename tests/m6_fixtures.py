@@ -19,6 +19,7 @@ import numpy as np
 
 from qutip_trap.api import Beam, Device
 from qutip_trap.control.schedule import GateDrive
+from qutip_trap.device.model import BeamRoles
 from qutip_trap.light.bloch import beam_for_transition
 from qutip_trap.prep.recipe import PreparationRecipe, magic_angle_polarization, standard_recipe
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD
@@ -108,6 +109,7 @@ def circuit_fixture(
     from qutip_trap.api import Field
     from tests.fixtures import make_hardware, make_noise
 
+    entangling = {i: GateDrive("raman", (0, 1)) for i in range(n_ions)}
     dev = Device(
         crystal=crystal,
         trap=trap,
@@ -116,12 +118,12 @@ def circuit_fixture(
         noise=make_noise(),
         detector=snspd_detector(leakage=leakage),
         hardware=dataclasses.replace(make_hardware(), phase_continuous=phase_continuous),
+        roles=BeamRoles(gate=gate_drives, entangling=entangling, detection=det_index),
     )
     if recipe is not None:
         dev = dataclasses.replace(dev, preparation=recipe)
     elif with_recipe:
         dev = dataclasses.replace(dev, preparation=standard_recipe(dev, raman_pair=(0, 1)))
-    entangling = {i: GateDrive("raman", (0, 1)) for i in range(n_ions)}
     return CircuitFixture(dev, gate_drives, entangling, det_index)
 
 

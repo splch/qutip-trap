@@ -60,4 +60,17 @@ def detection_beams(device: Device, ion: int, *, window: float = RESONANT_WINDOW
     return tuple(out)
 
 
-__all__ = ["RESONANT_WINDOW", "detection_beams", "gate_beams", "resonant_beams"]
+def infer_detection_beam(device: Device, *, window: float = RESONANT_WINDOW) -> int | None:
+    """The index of the beam nearest (in relative wavelength) to the first species' cycling line, within ``window``; None when
+    no beam is that close. The default of ``BeamRoles.detection``; the readout itself reads :func:`detection_beams`."""
+    species = device.crystal.species[0]
+    lam = species.transition(species.cycling).wavelength_vac_m
+    best: tuple[float, int] | None = None
+    for k, beam in enumerate(device.beams):
+        rel = abs(beam.wavelength_m - lam) / lam
+        if rel < window and (best is None or rel < best[0]):
+            best = (rel, k)
+    return None if best is None else best[1]
+
+
+__all__ = ["RESONANT_WINDOW", "detection_beams", "gate_beams", "infer_detection_beam", "resonant_beams"]

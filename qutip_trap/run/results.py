@@ -156,6 +156,10 @@ class Diagnostics:
     ``shots // samples``, so with shots = 2000 over 64 samples it reports 31 while 32 samples took 32 shots. This tuple is
     also the shot -> sample map Section 8.6 asks the result to make recoverable: sample k owns the contiguous shot block
     [sum_{j<k} M_j, sum_{j<=k} M_j) (see ``Result.sample_of_shot``)."""
+    level_reason: str = ""
+    """Why the run integrated at ``level`` (0.2.0; docs/api_implementation_plan.md 1.2): the joint dimension and the
+    drive-operator non-zero count of the declared space against ``SolverOptions.joint_dimension_max`` and ``nnz_max``
+    (``run.levels.LevelDecision.reason``), or the level the caller forced and what ``level="auto"`` would have chosen."""
 
 
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:

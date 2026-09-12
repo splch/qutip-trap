@@ -395,7 +395,7 @@ def two_ion():  # type: ignore[no-untyped-def]
         detection_records=800,
         detection_windows_s=windows,
     )
-    kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3), **preset.run_kwargs())
+    kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3))
     return preset, kw
 
 
@@ -457,7 +457,6 @@ def test_simultaneous_rb_runs_on_three_ions(two_ion) -> None:  # type: ignore[no
         budget=False,
         fix_offset=True,
         options=SolverOptions(branch_weight_min=3e-3),
-        **preset.run_kwargs(),
     )
     assert rb.n_qubits == 3 and rb.marginal_survival is not None
     assert rb.marginal_survival.shape == (3, 2, 1) and len(rb.marginal_error_per_clifford) == 3
