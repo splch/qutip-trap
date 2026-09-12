@@ -40,6 +40,7 @@ import numpy as np
 from qutip_trap.control.shaping import GateModes, excursion_by_mode, gate_modes, waveform_integrals
 from qutip_trap.hilbert.operators import populated_range, required_margin
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation, enr_dimension
+from qutip_trap.hilbert.truncation import warn_cap_clamped
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
@@ -455,6 +456,7 @@ def select_space(
         tr = cap_for(c.radius, nb[m], c.eta_max, d_min=d_min, d_max=d_ceiling, extra=extra_levels, tail=tail)
         d = int(caps[m]) if caps is not None and m in caps else tr.d
         if d_want > d and (caps is None or m not in caps):
+            warn_cap_clamped(m, d_want, n_hi_want, d, d_ceiling)
             notes.append(
                 f"mode {m}: the cap rule asks for d = {d_want} (expected occupation up to n = {n_hi_want}) but "
                 f"mode_dimension_max = {d_ceiling} clamps it to d = {d} (declared range up to n = {min(n_hi_want, d - 1)}); "

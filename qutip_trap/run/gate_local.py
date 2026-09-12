@@ -37,7 +37,7 @@ JOINT_EXACT engine serves the whole walk, so its propagator cache outlives the s
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
@@ -68,6 +68,7 @@ from qutip_trap.dynamics.tomography import (
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.hilbert.operators import displacement_leakage
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.hilbert.truncation import warn_cap_clamped
 from qutip_trap.run.space import (
     ModeClass3,
     ModeContribution,
@@ -416,6 +417,7 @@ def step_space(
         if caps is not None and m in caps:
             d = int(caps[m])
         elif d_want > d:
+            warn_cap_clamped(m, d_want, n_hi, d, d_ceiling)
             notes.append(
                 f"mode {m}: the cap rule asks for d = {d_want} (expected occupation up to n = {n_hi}) but "
                 f"mode_dimension_max = {d_ceiling} clamps it to d = {d} (declared range up to n = {min(n_hi, d - 1)}); the "
@@ -924,9 +926,11 @@ def evolve_gate_local(
     ion_dims: Sequence[int],
     setup: EngineSetup,
     caps: Mapping[int, int] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[list[tuple[float, qt.Qobj]]], GateLocalReport, list[MotionalModel]]:
     """The GATE_LOCAL walk of Section 5.4 over every dynamical sample: (per sample the weighted register states for the readout
-    stage, the report, per sample the final motional model)."""
+    stage, the report, per sample the final motional model). ``progress(done, total)`` is called after every sample's walk
+    (``run``'s ``progress`` of 0.2.0)."""
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
     steps = gate_steps(sched)
@@ -997,6 +1001,8 @@ def evolve_gate_local(
                 motional_after[rep.gate_id] = dict(rep.nbar_after)
         out_states.append(register.states())
         models.append(model)
+        if progress is not None:
+            progress(s_idx + 1, len(samples))
     if kind == "ensemble":
         notes.append(
             f"register carried as a pure-state ensemble of {options.register_ensemble} members ({n_ions} qubits above "

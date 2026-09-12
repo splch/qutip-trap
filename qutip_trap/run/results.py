@@ -343,6 +343,33 @@ class Diagnostics:
         )
 
 
+@dataclass(frozen=True)
+class Progress:
+    """One step of a run's progress (0.2.0; docs/api_implementation_plan.md 1.8), handed to the ``progress`` callback of
+    ``run`` and ``Machine.run``: the ``stage`` (``pulse``, one integrated pulse segment, counted across the in-process
+    (sample, branch) engine runs; ``branch``, one (sample, branch) engine run; ``sample``, one dynamical sample evolved;
+    ``readout``, one sample read out), how many of the stage's ``total`` steps are ``done``, and the seconds since the run
+    started. Within one run the counts of a stage are monotone and end at ``done == total``; a parallel map reports its
+    branches when the map returns and no pulses (the engines ran in workers), and a cap-raising retry or a convergence
+    check integrates again and repeats the pulse counts."""
+
+    stage: str
+    done: int
+    total: int
+    elapsed_s: float
+
+    def __post_init__(self) -> None:
+        if self.total < 0 or not 0 <= self.done <= self.total:
+            raise ValueError(
+                f"progress counts 0 <= done <= total, got done = {self.done}, total = {self.total}"
+            )
+
+    @property
+    def fraction(self) -> float:
+        """``done / total``, 1 when the stage has no steps."""
+        return self.done / self.total if self.total else 1.0
+
+
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:
     """sqrt(p (1 - p)/n_eff) per key: the histogram error bars from the effective sample size (Section 3.4)."""
     if n_eff <= 0.0:
@@ -742,6 +769,7 @@ class Result:
 
 __all__ = [
     "Diagnostics",
+    "Progress",
     "Result",
     "RunState",
     "aggregate",

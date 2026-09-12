@@ -45,7 +45,7 @@ from __future__ import annotations
 import itertools
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -60,6 +60,7 @@ from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.hilbert.truncation import warn_if_boundary_exceeds
 from qutip_trap.noise.collisions import (
     collision_rate_per_ion,
     sample_collisions,
@@ -85,7 +86,7 @@ from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, de
 from qutip_trap.run.gate_local import EngineSetup, GateLocalReport, evolve_gate_local
 from qutip_trap.run.levels import FidelityLevel, decide_level, within_budget
 from qutip_trap.run.pipeline import compile_calibrate_schedule
-from qutip_trap.run.results import Diagnostics, Result, RunState, aggregate, binomial_error_bars
+from qutip_trap.run.results import Diagnostics, Progress, Result, RunState, aggregate, binomial_error_bars
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.units import TWO_PI
 from qutip_trap.validation.two_qubit_closed_forms import ballance_thermal_error
@@ -717,6 +718,7 @@ def run(
     crosstalk_suppression: CrosstalkSuppression = "none",
     stark_compensation: bool = True,
     enr_group: tuple[Sequence[int], int] | None = None,
+    progress: Callable[[Progress], None] | None = None,
 ) -> Result:
     """Compile -> calibrate -> schedule -> prepare -> evolve -> readout -> Result (Section 3.4).
 
@@ -742,12 +744,15 @@ def run(
     ``Diagnostics.gate_local``); either level can be forced. ``enr_group`` = (modes, N_exc) carries a group of cold modes as
     one excitation-number-restricted factor (Section 11.3 item 1). ``parallel`` defaults to the device's
     ``HardwareChain.parallel_addressing`` (Section 7.3: single-qubit gates run in parallel only if the device model allows
-    parallel addressing); entangling gates stay serialized one at a time per crystal either way.
+    parallel addressing); entangling gates stay serialized one at a time per crystal either way. ``progress`` (0.2.0) is
+    called with a ``Progress`` per integrated pulse and per (sample, branch) engine run when those run in-process, per
+    dynamical sample evolved and per sample read out; an exception it raises aborts the run.
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
     started = time.perf_counter()
     created_at = datetime.now(UTC).isoformat(timespec="seconds")
+    notify = _Reporter(progress, started)
     # 1 to 3: compile, calibrate (the cached surrogate when no table is given), program the calibrated shims and schedule,
     # the prefix ``Machine.schedule`` shares (run/pipeline.py; docs/api_implementation_plan.md 1.3)
     prefix = compile_calibrate_schedule(
@@ -1019,7 +1024,9 @@ def run(
                     sample_id=smp.sample_id, values=values, ou_grids=dict(smp.ou_grids), t_s=smp.t_s
                 )
                 payloads.append((s_idx, k, st, sample_b))
-        results, workers_used = _run_engine_tasks(engine, device, sched, joint_space, payloads, seeds, opts)
+        results, workers_used = _run_engine_tasks(
+            engine, device, sched, joint_space, payloads, seeds, opts, report=notify
+        )
         if opts.convergence_check:
             # Section 5.5's second bullet: repeat the evolution with atol and rtol tightened by ten and report the change in
             # the FIRST sample's register populations, which are deterministic where the sampled histogram is not (M2's
@@ -1069,6 +1076,7 @@ def run(
                     # the truncation monitor grew the caps on this branch (Section 5.5): the diagnostics report the largest space
                     grown_space = rep.space
             register_states.append([(1.0, qt.Qobj(rho_int, dims=dims_int))])
+            notify("sample", s_idx + 1, len(samples_seq))
         joint_space = grown_space
         dims_int = [list(joint_space.ion_dims), list(joint_space.ion_dims)]
     else:
@@ -1083,6 +1091,7 @@ def run(
             ion_dims=joint_space.ion_dims,
             setup=setup,
             caps=caps,
+            progress=(lambda done, total: notify("sample", done, total)) if notify.active else None,
         )
         for step in gl_report.steps:
             for m, v in step.boundary_population.items():
@@ -1144,6 +1153,8 @@ def run(
             "the truncation monitor raised the caps (Section 5.5): "
             + ", ".join(f"mode {m} by {add} level(s)" for m, add in sorted(cap_growth.items()))
         )
+    # 1.9: a boundary population the retries left above the threshold is said out loud as well as reported
+    warn_if_boundary_exceeds(boundary, opts.boundary_population_max)
     dm_states = [[(w, st) for w, st in members if st.isoper] for members in register_states]
     rho_register: qt.Qobj | None = None
     if all(len(ms) == len(all_) for ms, all_ in zip(dm_states, register_states)):
@@ -1316,6 +1327,7 @@ def run(
             if sample_bits
             else np.zeros((0, len(measured)), dtype=np.uint8)
         )
+        notify("readout", s_idx + 1, len(samples_seq))
     assert outcome is not None
     bits = np.asarray(bits_kept, dtype=np.uint8).reshape(-1, len(measured))
     counts, probabilities = aggregate(bits)
@@ -1546,6 +1558,23 @@ def _engine_task(
     return traces, rep
 
 
+class _Reporter:
+    """The ``progress`` callback of one run (docs/api_implementation_plan.md 1.8) with the run's own clock: ``report(stage,
+    done, total)`` builds the ``Progress`` and hands it on; a callback of None makes every report a no-op."""
+
+    def __init__(self, callback: Callable[[Progress], None] | None, started: float) -> None:
+        self.callback = callback
+        self.started = started
+
+    @property
+    def active(self) -> bool:
+        return self.callback is not None
+
+    def __call__(self, stage: str, done: int, total: int) -> None:
+        if self.callback is not None:
+            self.callback(Progress(stage, int(done), int(total), time.perf_counter() - self.started))
+
+
 def _run_engine_tasks(
     engine: Any,
     device: Device,
@@ -1554,24 +1583,40 @@ def _run_engine_tasks(
     payloads: Sequence[tuple[int, int, State, NoiseSample]],
     seeds: SeedSpec,
     opts: SolverOptions,
+    report: _Reporter | None = None,
 ) -> tuple[list[tuple[Traces, EngineReport]], int]:
     """The JOINT_EXACT engine runs of ``run()``: in-process on one engine when the map is serial, one worker is available or
     there is a single run (the engine's trajectory map then takes the workers), else spread over the workers with the
     trajectories of every run in-process (Section 11.3 item 9; M9b). Returns the (traces, report) pairs in order and the
-    worker count the maps used."""
+    worker count the maps used. In-process runs report every pulse (counted across the runs) and every run to ``report``;
+    a parallel map reports its runs once, when it returns."""
     workers = worker_count(opts)
-    if opts.map == "serial" or workers <= 1 or len(payloads) < 2:
+    n_runs = len(payloads)
+    if opts.map == "serial" or workers <= 1 or n_runs < 2:
         out: list[tuple[Traces, EngineReport]] = []
-        for _s_idx, _k, st, smp in payloads:
+        for k, (_s_idx, _k, st, smp) in enumerate(payloads):
+            if report is not None and report.active:
+
+                def per_pulse(p: Progress, k: int = k) -> None:
+                    assert report is not None
+                    report("pulse", k * p.total + p.done, n_runs * p.total)
+
+                engine.progress = per_pulse
             traces = engine.run_pulses(device, sched, st, space, smp, seeds, opts)
             rep = engine.last_report
             assert rep is not None
             out.append((traces, rep))
+            if report is not None:
+                report("branch", k + 1, n_runs)
+        engine.progress = None
         used = max((r.workers for _t, r in out), default=1)
         return out, used
     inner = replace(opts, map="serial")
     items = [(engine, device, sched, st, space, smp, seeds, inner) for _s_idx, _k, st, smp in payloads]
-    return map_tasks(_engine_task, items, map_kind=opts.map, workers=workers), min(workers, len(payloads))
+    results = map_tasks(_engine_task, items, map_kind=opts.map, workers=workers)
+    if report is not None:
+        report("branch", n_runs, n_runs)
+    return results, min(workers, n_runs)
 
 
 def _supplied_class(space: HilbertSpace, mode: int) -> Literal["resolved", "frozen", "dropped", "enr"]:

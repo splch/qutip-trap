@@ -14,7 +14,7 @@ for later milestones. Variants are ``dataclasses.replace(machine, ...)``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.engine import JointExactEngine
     from qutip_trap.hilbert.space import HilbertSpace
-    from qutip_trap.run.results import Result
+    from qutip_trap.run.results import Progress, Result
     from qutip_trap.run.space import ModeClass3
 
 CalibrationMethod = Literal["closed_form", "experiments"]
@@ -124,9 +124,18 @@ class Machine:
 
     # ---- rung 0 -------------------------------------------------------------------------------------------------------
 
-    def run(self, circuit: Circuit, shots: int, *, seed: int = 0, keep_final_state: bool = False) -> Result:
+    def run(
+        self,
+        circuit: Circuit,
+        shots: int,
+        *,
+        seed: int = 0,
+        keep_final_state: bool = False,
+        progress: Callable[[Progress], None] | None = None,
+    ) -> Result:
         """Compile, calibrate, schedule, prepare, evolve and read out ``circuit`` for ``shots`` (Section 3.4): today's
-        ``run`` with this machine's table, level and option objects; ``seed`` is the root of every keyed stream."""
+        ``run`` with this machine's table, level and option objects; ``seed`` is the root of every keyed stream and
+        ``progress`` is called per pulse, per branch, per sample and per readout (``Progress``)."""
         from qutip_trap.run.job import run as run_job
         from qutip_trap.run.job import with_fields
 
@@ -138,6 +147,7 @@ class Machine:
             level=self.level,
             seed=seed,
             keep_final_state=keep_final_state,
+            progress=progress,
             **to_run_kwargs(self.physics, self.numerics, self.readout),
         )
         return with_fields(result, machine_hash=self.hash())

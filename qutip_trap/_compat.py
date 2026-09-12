@@ -28,7 +28,13 @@ from types import FrameType
 from typing import Any, Final, TypeVar, cast
 
 
-class QutipTrapDeprecationWarning(DeprecationWarning):
+class QutipTrapWarning(UserWarning):
+    """The base of every warning this package issues on its own behalf: a truncation the run could not make exact
+    (``hilbert.truncation.TruncationWarning``), a deprecated name (:class:`QutipTrapDeprecationWarning`). Filter on it to
+    hear or silence the package as a whole; ``warnings.simplefilter("error", QutipTrapWarning)`` makes silence a test."""
+
+
+class QutipTrapDeprecationWarning(QutipTrapWarning, DeprecationWarning):
     """A qutip-trap name or call form that will be removed; the message names the deadline and the fix."""
 
 
@@ -180,6 +186,7 @@ def deprecated_alias[**P, R](
 
 __all__ = [
     "QutipTrapDeprecationWarning",
+    "QutipTrapWarning",
     "deprecated",
     "deprecated_alias",
     "deprecated_parameter",

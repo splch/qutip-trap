@@ -10,12 +10,14 @@ probabilities; the test suite does this for every validation case (Section 5.5).
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
 import numpy as np
 import qutip as qt
 
+from qutip_trap._compat import QutipTrapWarning
 from qutip_trap.dynamics.engine import SolverOptions, State
 from qutip_trap.dynamics.evolve import ConvergenceReport
 from qutip_trap.hilbert.space import HilbertSpace
@@ -25,6 +27,42 @@ M2 = "milestone M2 (hilbert/truncation.py, PLAN.md Section 5.5)"
 
 class TruncationError(RuntimeError):
     """The boundary monitor tripped and the configured growth limit was reached (Section 5.5)."""
+
+
+class TruncationWarning(QutipTrapWarning):
+    """A truncation the run could not make exact and reports (Section 5.5; docs/api_implementation_plan.md 1.9): a cap the
+    rule wanted larger than ``SolverOptions.mode_dimension_max`` allowed, or a boundary population above
+    ``boundary_population_max`` after the cap-raising retries. The ``Diagnostics`` carry the numbers as before; the warning
+    names the mode and both numbers so that silence means the caps held."""
+
+
+def warn_cap_clamped(mode: int, d_wanted: int, n_hi_wanted: int, d: int, d_max: int) -> None:
+    """Issue the :class:`TruncationWarning` of a cap clamped by ``mode_dimension_max`` (``run.space.select_space`` and the
+    GATE_LOCAL step spaces), attributed to the caller of the selection."""
+    warnings.warn(
+        TruncationWarning(
+            f"mode {mode}: the cap rule asks for d = {d_wanted} (expected occupation up to n = {n_hi_wanted}) but "
+            f"mode_dimension_max = {d_max} clamps it to d = {d}; the boundary monitor grows the cap only up to the engine's "
+            "retry budget (Section 5.5), and the Diagnostics report the clamped range"
+        ),
+        stacklevel=3,
+    )
+
+
+def warn_if_boundary_exceeds(boundary: Mapping[int, float], threshold: float) -> None:
+    """Issue one :class:`TruncationWarning` per mode whose reported boundary population exceeds ``threshold``
+    (``SolverOptions.boundary_population_max``) after the run's cap-raising retries; nothing is issued when every mode is
+    below it, so a silent run kept its caps."""
+    for mode, value in sorted(boundary.items()):
+        if value > threshold:
+            warnings.warn(
+                TruncationWarning(
+                    f"mode {mode}: boundary population {value:.3e} exceeds boundary_population_max = {threshold:.1e} after "
+                    "the cap-raising retries (Section 5.5; a branch of weight w is allowed boundary_population_max / w, so a "
+                    "low-weight branch can report this legitimately); Diagnostics.boundary_population carries it"
+                ),
+                stacklevel=3,
+            )
 
 
 def boundary_population(state: State | qt.Qobj, space: HilbertSpace, mode: int, *, levels: int = 2) -> float:
@@ -269,6 +307,9 @@ def regrid_state(joint: qt.Qobj, old: HilbertSpace, new: HilbertSpace) -> qt.Qob
 
 
 __all__ = [
+    "TruncationWarning",
+    "warn_cap_clamped",
+    "warn_if_boundary_exceeds",
     "ConvergenceRegime",
     "MarginReport",
     "TruncationError",

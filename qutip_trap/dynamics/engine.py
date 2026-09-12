@@ -39,7 +39,8 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.levels import InternalLevels
     from qutip_trap.noise.sampling import NoiseSample
+    from qutip_trap.run.results import Progress
 
 # QuTiP multistep integrators, never used (Section 5.3: the escalation ladder is dop853 then vern9)
 MULTISTEP_INTEGRATORS: frozenset[str] = frozenset({"adams", "bdf", "lsoda", "vode", "zvode"})
@@ -506,6 +508,10 @@ class JointExactEngine:
     The result is the same state to the solver tolerance; the segment reports integrator ``exact``. False forces the ODE
     ladder on every segment (the Section 5.3 step-density measurements)."""
     last_report: EngineReport | None = None
+    progress: Callable[[Progress], None] | None = field(default=None, repr=False, compare=False)
+    """Called after every integrated pulse segment of ``run_pulses`` with ``Progress("pulse", done, total, elapsed_s)``
+    (0.2.0; docs/api_implementation_plan.md 1.8); ``run`` sets it and rebases the clock to the run's start. Dropped when the
+    engine is shipped to a worker, so a parallel map reports no pulses."""
     _propagators: dict[tuple[object, ...], _Propagator] = field(
         default_factory=dict, repr=False, compare=False
     )
@@ -516,6 +522,7 @@ class JointExactEngine:
         state = dict(self.__dict__)
         state["last_report"] = None
         state["_propagators"] = {}
+        state["progress"] = None
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
@@ -1025,6 +1032,14 @@ class JointExactEngine:
         if bool(options.improved_sampling) and n_mc_segments > 1:
             notes.append(IMPROVED_SAMPLING_MULTI_SEGMENT.format(n=n_mc_segments))
         target_tol_estimate: int | None = None
+        pulse_total = sum(
+            1
+            for a_e, b_e in zip(edges[:-1], edges[1:])
+            if b_e > a_e
+            and any(p.t_start_s <= a_e + 1e-15 and p.t_end_s >= b_e - 1e-15 for p in sched.pulses)
+        )
+        pulse_done = 0
+        progress_started = time.perf_counter()
         for seg_index, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
             if b <= a:
                 continue
@@ -1448,6 +1463,13 @@ class JointExactEngine:
                     frame="rotating" if rot is not None else "schrodinger",
                 )
             )
+            if active and self.progress is not None:
+                from qutip_trap.run.results import Progress
+
+                pulse_done += 1
+                self.progress(
+                    Progress("pulse", pulse_done, pulse_total, time.perf_counter() - progress_started)
+                )
             if active:
                 # Section 5.5's ONE threshold, "1e-6 of the population the pulse moves": a branch of weight w (run() and the
                 # tomography evolve the initial mixture's Fock branches one by one, each normalized) carries at most w of that
