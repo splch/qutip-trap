@@ -182,12 +182,12 @@ def test_result_bit_order_examples_of_section_9_13() -> None:
     # "5" and "7" on three qubits are 101 and 111 with qubit 0 least significant
     rows = np.array([[1, 0, 1], [1, 1, 1]] * 2, dtype=np.uint8)
     res = make_result(rows)
-    assert res.to_ionq_json() == {"5": 0.5, "7": 0.5}
-    assert res.to_ionq_histogram() == {"5": 2, "7": 2}
+    assert res.to_ionq_v1_probabilities() == {"5": 0.5, "7": 0.5}
+    assert res.to_ionq_v1_histogram() == {"5": 2, "7": 2}
     assert set(res.counts) == {"101", "111"}
     shots = np.array([bits_from_decimal(k, 3) for k in ("6", "1", "0", "7")])
     assert [bitstring_key(r) for r in shots] == ["110", "001", "000", "111"]
-    assert make_result(shots).to_ionq_shots() == ["6", "1", "0", "7"]
+    assert make_result(shots).to_ionq_v1_shots() == ["6", "1", "0", "7"]
 
 
 @given(

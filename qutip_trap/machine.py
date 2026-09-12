@@ -128,8 +128,9 @@ class Machine:
         """Compile, calibrate, schedule, prepare, evolve and read out ``circuit`` for ``shots`` (Section 3.4): today's
         ``run`` with this machine's table, level and option objects; ``seed`` is the root of every keyed stream."""
         from qutip_trap.run.job import run as run_job
+        from qutip_trap.run.job import with_fields
 
-        return run_job(
+        result = run_job(
             circuit,
             self.device,
             shots,
@@ -139,6 +140,7 @@ class Machine:
             keep_final_state=keep_final_state,
             **to_run_kwargs(self.physics, self.numerics, self.readout),
         )
+        return with_fields(result, machine_hash=self.hash())
 
     def submit(self, circuit: Circuit, shots: int, *, seed: int = 0) -> Any:
         """A ``Job`` handle running in a worker process."""

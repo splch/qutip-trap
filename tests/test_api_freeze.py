@@ -62,6 +62,11 @@ ALLOWED_TYPE_DIVERGENCES: dict[tuple[str, str], tuple[str, str]] = {
         "dict[str,Callable[...,float]]|None",
         "M0: the callable's signature is stated (a narrowing of the annotation, not of the value set)",
     ),
+    ("Result", "bit_order"): (
+        "Literal['qubit0_lsb','qubit0_msb']",
+        "0.2.0: Result.reversed_bits() returns the same shots with qubit 0 leftmost for the SDKs that report that way "
+        "(docs/api_implementation_plan.md 1.7); every run still reports qubit0_lsb",
+    ),
 }
 # fields whose Appendix E default is deliberately not the implemented one, with the reason (ledger conv.appendix_e_signatures)
 ALLOWED_DEFAULT_DIVERGENCES: dict[tuple[str, str], tuple[object, str]] = {

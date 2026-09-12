@@ -22,13 +22,23 @@ Sources: IonQ's documentation, the OpenQASM 3 page of the v0.4 API reference und
 circuit applying x q[0]; and measuring all three returns {"100": 1.0}"), and qiskit-ionq 1.1.1, whose
 ``_decode_distribution_artifact`` in ``ionq_job.py`` reverses every ``output_all`` key before converting it to the
 decimal form ("Result artifacts use wire-order bitstrings (qubit 0 first)"). The OpenAPI v0.4 document itself (spec
-dated 2026-09-10) does not state the order and its example is the symmetric Bell state. ``Result.to_ionq_v2`` today
-emits neither the envelope nor this order; the exporters that do are Phase 1.7 of the plan, and
-``tests/test_m6_results_export.py`` holds the fixture.
+dated 2026-09-10) does not state the order and its example is the symmetric Bell state. ``Result.to_ionq_v2_probabilities``,
+``to_ionq_v2_histogram`` and ``to_ionq_v2_shots`` emit the envelope in this order (0.2.0); the 0.1.0 ``Result.to_ionq_v2``
+kept this package's own order and is deprecated; ``tests/test_m6_results_export.py`` holds the fixture.
+
+Job bodies (the v0.4 ``CircuitJobCreationPayload``): ``dump_job`` writes ``{"type": "ionq.circuit.v1", "backend": ...,
+"shots": ..., "input": {...}}`` plus the optional ``name``, ``metadata``, ``noise`` (``{"model": ..., "seed": ...}``),
+``settings`` (``compilation``, ``error_mitigation``) and ``dry_run``; the spec sets ``additionalProperties: false`` on the
+body, the input and the settings, so every key is checked here and a v0.3 ``target`` is written as ``backend``.
+``load_job`` reads either (``target`` or ``backend``). ``loads`` and ``dumps`` are the circuit importer and exporter in the
+shape of ``json`` (a string in, a string out).
 """
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Final
 
 from qutip_trap.control.compiler import NATIVE_GATES, STANDARD_GATES, Circuit, Operation
@@ -36,6 +46,20 @@ from qutip_trap.control.native import rad_from_turns, turns_from_rad
 
 _TURN_GATES: Final[frozenset[str]] = frozenset({"gpi", "gpi2", "ms", "zz"})
 _QIS_ALIASES: Final[dict[str, str]] = {"cx": "cnot", "rz": "rz"}
+
+JOB_TYPE: Final[str] = "ionq.circuit.v1"
+"""The ``type`` of a JSON gate-list job (the other v0.4 type, ``ionq.qasm3.v1``, carries OpenQASM 3 text)."""
+JOB_KEYS: Final[frozenset[str]] = frozenset(
+    {"type", "backend", "input", "shots", "name", "metadata", "noise", "settings", "dry_run", "session_id"}
+)
+"""The keys of the v0.4 ``CircuitJobCreationPayload`` (``additionalProperties: false``); ``target`` is the v0.3 spelling of
+``backend``, accepted on input and never written."""
+NOISE_KEYS: Final[frozenset[str]] = frozenset({"model", "seed"})
+SETTINGS_KEYS: Final[dict[str, frozenset[str]]] = {
+    "compilation": frozenset({"precision", "opt", "gate_basis", "service_version"}),
+    "error_mitigation": frozenset({"debiasing", "symmetry_verification"}),
+}
+"""The two settings groups of the v0.4 spec and the keys each allows."""
 
 
 def _round12(x: float) -> float:
@@ -135,4 +159,125 @@ def dump_ionq_json(circuit: Circuit) -> dict[str, Any]:
     return {"gateset": "native", "qubits": circuit.n_qubits, "circuit": items}
 
 
-__all__ = ["dump_ionq_json", "load_ionq_json"]
+@dataclass(frozen=True)
+class IonQJob:
+    """A circuit job as IonQ's REST API takes it (v0.4 ``CircuitJobCreationPayload``; ``target`` of v0.3 read as
+    ``backend``): the circuit (radians; the wire carries turns), the backend name, the shots, the optional name, metadata
+    (string values), noise (``{"model": ..., "seed": ...}``), settings and dry-run flag."""
+
+    circuit: Circuit
+    backend: str | None = None
+    shots: int | None = None
+    name: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    noise: dict[str, Any] | None = None
+    settings: dict[str, Any] | None = None
+    dry_run: bool | None = None
+    type: str = JOB_TYPE
+
+
+def _check_keys(obj: Mapping[str, Any], allowed: frozenset[str], what: str) -> None:
+    unknown = sorted(set(obj) - allowed)
+    if unknown:
+        raise ValueError(
+            f"{what} has no key {unknown} (the v0.4 schema sets additionalProperties: false); allowed: {sorted(allowed)}"
+        )
+
+
+def loads(obj: str | Mapping[str, Any]) -> Circuit:
+    """IonQ circuit JSON (a job body or its ``input``), as text or as a mapping -> ``Circuit`` (``load_ionq_json``)."""
+    data = json.loads(obj) if isinstance(obj, str) else dict(obj)
+    return load_ionq_json(data)
+
+
+def dumps(circuit: Circuit, *, indent: int | None = None) -> str:
+    """``Circuit`` -> the IonQ ``input`` object as JSON text (``dump_ionq_json``)."""
+    return json.dumps(dump_ionq_json(circuit), indent=indent)
+
+
+def load_job(obj: str | Mapping[str, Any]) -> IonQJob:
+    """A v0.3 or v0.4 job body (text or mapping) -> :class:`IonQJob`: the circuit from ``input`` and the fields around it,
+    ``target`` (v0.3) or ``backend`` (v0.4) as the backend."""
+    body = json.loads(obj) if isinstance(obj, str) else dict(obj)
+    if "input" not in body:
+        raise ValueError("a job body carries its circuit under 'input'")
+    job_type = str(body.get("type", JOB_TYPE))
+    if job_type != JOB_TYPE:
+        raise ValueError(f"load_job reads {JOB_TYPE!r} jobs (a JSON gate list), got type {job_type!r}")
+    backend = body.get("backend", body.get("target"))
+    metadata = {str(k): str(v) for k, v in dict(body.get("metadata") or {}).items()}
+    return IonQJob(
+        circuit=load_ionq_json(body["input"]),
+        backend=None if backend is None else str(backend),
+        shots=None if body.get("shots") is None else int(body["shots"]),
+        name=None if body.get("name") is None else str(body["name"]),
+        metadata=metadata,
+        noise=None if body.get("noise") is None else dict(body["noise"]),
+        settings=None if body.get("settings") is None else dict(body["settings"]),
+        dry_run=None if body.get("dry_run") is None else bool(body["dry_run"]),
+        type=job_type,
+    )
+
+
+def dump_job(
+    circuit: Circuit,
+    *,
+    backend: str,
+    shots: int = 100,
+    noise: Mapping[str, Any] | None = None,
+    settings: Mapping[str, Any] | None = None,
+    name: str | None = None,
+    metadata: Mapping[str, str] | None = None,
+    dry_run: bool | None = None,
+) -> dict[str, Any]:
+    """The v0.4 job body for a native circuit: ``type``, ``backend`` (``simulator``, ``qpu.forte-1``, ...), ``shots`` and
+    ``input``, plus ``name``, ``metadata``, ``noise`` (``{"model": "aria-1", "seed": 7}``: the model is required when noise
+    is given), ``settings`` (``compilation`` and ``error_mitigation`` groups) and ``dry_run`` when given; every key is checked
+    against the spec, which rejects unknown ones."""
+    if shots < 1:
+        raise ValueError("shots is a positive count")
+    body: dict[str, Any] = {
+        "type": JOB_TYPE,
+        "backend": str(backend),
+        "shots": int(shots),
+        "input": dump_ionq_json(circuit),
+    }
+    if name is not None:
+        body["name"] = str(name)
+    if metadata is not None:
+        body["metadata"] = {str(k): str(v) for k, v in dict(metadata).items()}
+    if noise is not None:
+        noise_d = dict(noise)
+        _check_keys(noise_d, NOISE_KEYS, "noise")
+        if "model" not in noise_d:
+            raise ValueError("noise needs its 'model' ('ideal', 'aria-1', 'forte-1', ...)")
+        body["noise"] = {"model": str(noise_d["model"])}
+        if noise_d.get("seed") is not None:
+            body["noise"]["seed"] = int(noise_d["seed"])
+    if settings is not None:
+        settings_d = dict(settings)
+        _check_keys(settings_d, frozenset(SETTINGS_KEYS), "settings")
+        body["settings"] = {}
+        for group, value in settings_d.items():
+            group_d = dict(value)
+            _check_keys(group_d, SETTINGS_KEYS[group], f"settings.{group}")
+            body["settings"][group] = group_d
+    if dry_run is not None:
+        body["dry_run"] = bool(dry_run)
+    _check_keys(body, JOB_KEYS, "the job body")
+    return body
+
+
+__all__ = [
+    "JOB_KEYS",
+    "JOB_TYPE",
+    "NOISE_KEYS",
+    "SETTINGS_KEYS",
+    "IonQJob",
+    "dump_ionq_json",
+    "dump_job",
+    "dumps",
+    "load_ionq_json",
+    "load_job",
+    "loads",
+]

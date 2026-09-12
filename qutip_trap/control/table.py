@@ -8,10 +8,10 @@ provenance id, its age and the noise sample it was fitted under (Section 7.5).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dc_field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from qutip_trap.control.shaping import GateModes, Kernel
@@ -39,6 +39,30 @@ class CalEntry:
     """Calibration age: the laboratory time the fit was made at (Section 7.5)."""
     sample_id: int
     """The noise sample the entry was fitted under."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """The entry as plain JSON-able values (``Result.to_dict``, 0.2.0)."""
+        return {
+            "value": float(self.value),
+            "uncertainty": float(self.uncertainty),
+            "status": self.status,
+            "experiment": self.experiment,
+            "provenance_id": self.provenance_id,
+            "fitted_at_s": float(self.fitted_at_s),
+            "sample_id": int(self.sample_id),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> CalEntry:
+        return cls(
+            value=float(d["value"]),
+            uncertainty=float(d["uncertainty"]),
+            status=d["status"],
+            experiment=str(d["experiment"]),
+            provenance_id=str(d["provenance_id"]),
+            fitted_at_s=float(d["fitted_at_s"]),
+            sample_id=int(d["sample_id"]),
+        )
 
     def __post_init__(self) -> None:
         if self.uncertainty < 0.0:
@@ -259,6 +283,108 @@ class CalibrationTable:
     def uncalibrated(self) -> tuple[str, ...]:
         """The flat keys of every entry a fit could not establish (what the scheduler refuses to use)."""
         return tuple(k for k, e in self.entries().items() if e.status == "uncalibrated")
+
+    def to_dict(self) -> dict[str, Any]:
+        """The table as plain JSON-able values (``Result.to_dict``, 0.2.0): the identity fields, every ``CalEntry`` under its
+        flat key (``entries()``), and per entangling pair the scalar summary of its waveform (duration, kind, chi_m, alpha_m
+        and the two phase entries); the segments and Fourier coefficients, which may hold callables, are not carried, so a
+        table read back has ``ms == {}`` and schedules no entangling gate."""
+        waveforms: dict[str, Any] = {}
+        for pair, wf in self.ms.items():
+            waveforms[repr(pair)] = {
+                "duration_s": float(wf.duration_s),
+                "kind": wf.kind,
+                "chi_m": {str(m): float(x) for m, x in wf.chi_m.items()},
+                "alpha_m": {str(m): [float(a.real), float(a.imag)] for m, a in wf.alpha_m.items()},
+                "phi_s": wf.phi_s.to_dict(),
+                "phi_m": wf.phi_m.to_dict(),
+            }
+        return {
+            "device_hash": self.device_hash,
+            "seed": int(self.seed),
+            "surrogate": bool(self.surrogate),
+            "fitted_at_s": float(self.fitted_at_s),
+            "entries": {
+                key: entry.to_dict() for key, entry in self.entries().items() if not key.startswith("ms[")
+            },
+            "waveforms": waveforms,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> CalibrationTable:
+        """The inverse of :meth:`to_dict`: every scalar entry restored under its field and key, ``ms`` empty (module
+        docstring of the method)."""
+        import ast
+
+        fields: dict[str, dict[Any, CalEntry]] = {
+            name: {}
+            for name in (
+                "qubit_freq",
+                "rabi",
+                "stark",
+                "crosstalk",
+                "crosstalk_phase",
+                "modes",
+                "nbar",
+                "micromotion",
+                "detection",
+                "heating",
+                "lamb_dicke",
+            )
+        }
+        field_entry: CalEntry | None = None
+        for flat, value in dict(d["entries"]).items():
+            entry = CalEntry.from_dict(value)
+            if flat == "field":
+                field_entry = entry
+                continue
+            name, _, rest = flat.partition("[")
+            if name not in fields or not rest.endswith("]"):
+                raise ValueError(f"unknown calibration entry key {flat!r}")
+            fields[name][ast.literal_eval(rest[:-1])] = entry
+        if field_entry is None:
+            raise ValueError("a calibration table carries its field entry")
+        return cls(
+            device_hash=str(d["device_hash"]),
+            seed=int(d["seed"]),
+            surrogate=bool(d["surrogate"]),
+            qubit_freq=fields["qubit_freq"],
+            rabi=fields["rabi"],
+            stark=fields["stark"],
+            crosstalk=fields["crosstalk"],
+            modes=fields["modes"],
+            nbar=fields["nbar"],
+            ms={},
+            field=field_entry,
+            micromotion=fields["micromotion"],
+            detection=fields["detection"],
+            heating=fields["heating"],
+            crosstalk_phase=fields["crosstalk_phase"],
+            lamb_dicke=fields["lamb_dicke"],
+            fitted_at_s=float(d.get("fitted_at_s", 0.0)),
+        )
+
+    @classmethod
+    def empty(cls, device_hash: str = "") -> CalibrationTable:
+        """No calibration at all: every map empty and the field entry ``uncalibrated``, the table of a result that came from
+        outside the simulator (``Result.from_ionq_v1_shots``, ``Result.from_dict`` of a summary without one)."""
+        none = CalEntry(math.nan, math.nan, "uncalibrated", "none", "", 0.0, 0)
+        return cls(
+            device_hash=device_hash,
+            seed=0,
+            surrogate=False,
+            qubit_freq={},
+            rabi={},
+            stark={},
+            crosstalk={},
+            modes={},
+            nbar={},
+            ms={},
+            field=none,
+            micromotion={},
+            detection={},
+            heating={},
+        )
 
 
 __all__ = ["CalEntry", "CalibrationTable", "Leg", "Segment", "Waveform", "WaveformKind", "usable"]

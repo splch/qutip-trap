@@ -13,9 +13,11 @@ import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+
+from qutip_trap._compat import deprecated, deprecated_alias
 
 if TYPE_CHECKING:
     from qutip import Qobj
@@ -83,6 +85,24 @@ class RunState:
     @classmethod
     def nominal(cls, n_ions: int) -> RunState:
         return cls(tuple(range(n_ions)), frozenset(), frozenset(), ())
+
+    def to_dict(self) -> dict[str, Any]:
+        """Plain JSON-able values (``Result.to_dict``, 0.2.0)."""
+        return {
+            "order": [int(i) for i in self.order],
+            "dark": sorted(int(i) for i in self.dark),
+            "lost": sorted(int(i) for i in self.lost),
+            "events": [[int(shot), str(event)] for shot, event in self.events],
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> RunState:
+        return cls(
+            tuple(int(i) for i in d["order"]),
+            frozenset(int(i) for i in d["dark"]),
+            frozenset(int(i) for i in d["lost"]),
+            tuple((int(shot), str(event)) for shot, event in d["events"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -161,6 +181,167 @@ class Diagnostics:
     drive-operator non-zero count of the declared space against ``SolverOptions.joint_dimension_max`` and ``nnz_max``
     (``run.levels.LevelDecision.reason``), or the level the caller forced and what ``level="auto"`` would have chosen."""
 
+    def to_dict(self) -> dict[str, Any]:
+        """The summary of the run as plain JSON-able values (``Result.to_dict``, 0.2.0): every scalar and per-mode field, the
+        declared space, the calibration table's entries (``CalibrationTable.to_dict``), and for the two reports only whether
+        they exist; ``from_dict`` reads it back with those two as None."""
+
+        space: HilbertSpace = self.space
+        return {
+            "level": self.level,
+            "level_reason": self.level_reason,
+            "space": {
+                "ion_dims": [int(d) for d in space.ion_dims],
+                "resolved": [
+                    {
+                        "mode": int(t.mode),
+                        "d": int(t.d),
+                        "expected_n_range": [int(t.expected_n_range[0]), int(t.expected_n_range[1])],
+                        "eta_max": float(t.eta_max),
+                        "element_tol": None if t.element_tol is None else float(t.element_tol),
+                    }
+                    for t in space.resolved
+                ],
+                "enr_group": (
+                    None
+                    if space.enr_group is None
+                    else [[int(m) for m in space.enr_group[0]], int(space.enr_group[1])]
+                ),
+                "frozen": [int(m) for m in space.frozen],
+                "ions": [int(i) for i in space.ions],
+                "dropped": [int(m) for m in space.dropped],
+            },
+            "mode_class": {str(m): c for m, c in self.mode_class.items()},
+            "run_state": self.run_state.to_dict(),
+            "wall_clock_span_s": float(self.wall_clock_span_s),
+            "boundary_population": {str(m): float(v) for m, v in self.boundary_population.items()},
+            "margin_levels": {str(m): int(v) for m, v in self.margin_levels.items()},
+            "dropped_modes": [int(m) for m in self.dropped_modes],
+            "frozen_contribution": {
+                str(m): [float(a), float(b)] for m, (a, b) in self.frozen_contribution.items()
+            },
+            "integrator": self.integrator,
+            "tolerances": [float(self.tolerances[0]), float(self.tolerances[1])],
+            "samples": int(self.samples),
+            "trajectories": int(self.trajectories),
+            "shots_per_sample": int(self.shots_per_sample),
+            "effective_sample_size": float(self.effective_sample_size),
+            "root_seed": int(self.root_seed),
+            "calibration": self.calibration.to_dict(),
+            "approximations": [str(a) for a in self.approximations],
+            "intrinsic_budget": {str(k): float(v) for k, v in self.intrinsic_budget.items()},
+            "dropped_branch_weight": float(self.dropped_branch_weight),
+            "frozen_excitation_bound": {str(m): float(v) for m, v in self.frozen_excitation_bound.items()},
+            "dropped_contribution": [
+                float(self.dropped_contribution[0]),
+                float(self.dropped_contribution[1]),
+            ],
+            "margin_reached": {str(m): int(v) for m, v in self.margin_reached.items()},
+            "populated_n_max": {str(m): int(v) for m, v in self.populated_n_max.items()},
+            "cap_growth": {str(m): int(v) for m, v in self.cap_growth.items()},
+            "gate_local": self.gate_local is not None,
+            "kernel": self.kernel,
+            "workers": int(self.workers),
+            "propagator_cache_hits": int(self.propagator_cache_hits),
+            "branches": int(self.branches),
+            "convergence": None if self.convergence is None else self.convergence.summary(),
+            "shots_per_sample_realized": [int(m) for m in self.shots_per_sample_realized],
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Diagnostics:
+        """The inverse of :meth:`to_dict`: the GATE_LOCAL report and the convergence report come back as None (the summary
+        says only that they existed) and the calibration table without its waveforms."""
+        from qutip_trap.control.table import CalibrationTable
+        from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+
+        sp = d["space"]
+        space = HilbertSpace(
+            tuple(int(x) for x in sp["ion_dims"]),
+            tuple(
+                ModeTruncation(
+                    int(t["mode"]),
+                    int(t["d"]),
+                    (int(t["expected_n_range"][0]), int(t["expected_n_range"][1])),
+                    float(t["eta_max"]),
+                    None if t.get("element_tol") is None else float(t["element_tol"]),
+                )
+                for t in sp["resolved"]
+            ),
+            None
+            if sp.get("enr_group") is None
+            else (tuple(int(m) for m in sp["enr_group"][0]), int(sp["enr_group"][1])),
+            tuple(int(m) for m in sp["frozen"]),
+            tuple(int(i) for i in sp.get("ions", ())),
+            tuple(int(m) for m in sp.get("dropped", ())),
+        )
+        return cls(
+            level=d["level"],
+            space=space,
+            mode_class={int(m): c for m, c in dict(d["mode_class"]).items()},
+            run_state=RunState.from_dict(d["run_state"]),
+            wall_clock_span_s=float(d["wall_clock_span_s"]),
+            boundary_population={int(m): float(v) for m, v in dict(d["boundary_population"]).items()},
+            margin_levels={int(m): int(v) for m, v in dict(d["margin_levels"]).items()},
+            dropped_modes=tuple(int(m) for m in d["dropped_modes"]),
+            frozen_contribution={
+                int(m): (float(v[0]), float(v[1])) for m, v in dict(d["frozen_contribution"]).items()
+            },
+            integrator=str(d["integrator"]),
+            tolerances=(float(d["tolerances"][0]), float(d["tolerances"][1])),
+            samples=int(d["samples"]),
+            trajectories=int(d["trajectories"]),
+            shots_per_sample=int(d["shots_per_sample"]),
+            effective_sample_size=float(d["effective_sample_size"]),
+            root_seed=int(d["root_seed"]),
+            calibration=CalibrationTable.from_dict(d["calibration"]),
+            approximations=tuple(str(a) for a in d["approximations"]),
+            intrinsic_budget={str(k): float(v) for k, v in dict(d["intrinsic_budget"]).items()},
+            dropped_branch_weight=float(d["dropped_branch_weight"]),
+            frozen_excitation_bound={int(m): float(v) for m, v in dict(d["frozen_excitation_bound"]).items()},
+            dropped_contribution=(float(d["dropped_contribution"][0]), float(d["dropped_contribution"][1])),
+            margin_reached={int(m): int(v) for m, v in dict(d["margin_reached"]).items()},
+            populated_n_max={int(m): int(v) for m, v in dict(d["populated_n_max"]).items()},
+            cap_growth={int(m): int(v) for m, v in dict(d["cap_growth"]).items()},
+            gate_local=None,
+            kernel=str(d["kernel"]),
+            workers=int(d["workers"]),
+            propagator_cache_hits=int(d["propagator_cache_hits"]),
+            branches=int(d["branches"]),
+            convergence=None,
+            shots_per_sample_realized=tuple(int(m) for m in d["shots_per_sample_realized"]),
+            level_reason=str(d.get("level_reason", "")),
+        )
+
+    @classmethod
+    def external(cls, n_qubits: int, *, approximations: Sequence[str] = ()) -> Diagnostics:
+        """The diagnostics of a result that came from outside the simulator (``Result.from_ionq_v1_shots``): a register-only
+        space, no modes, no samples, an empty calibration table, and ``approximations`` saying where the shots came from."""
+        from qutip_trap.control.table import CalibrationTable
+        from qutip_trap.hilbert.space import HilbertSpace
+
+        return cls(
+            level="JOINT_EXACT",
+            space=HilbertSpace(tuple([2] * int(n_qubits)), (), None, ()),
+            mode_class={},
+            run_state=RunState.nominal(int(n_qubits)),
+            wall_clock_span_s=0.0,
+            boundary_population={},
+            margin_levels={},
+            dropped_modes=(),
+            frozen_contribution={},
+            integrator="none",
+            tolerances=(math.nan, math.nan),
+            samples=0,
+            trajectories=0,
+            shots_per_sample=0,
+            effective_sample_size=0.0,
+            root_seed=0,
+            calibration=CalibrationTable.empty(),
+            approximations=tuple(approximations),
+            level_reason="no simulation: the shots came from outside",
+        )
+
 
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:
     """sqrt(p (1 - p)/n_eff) per key: the histogram error bars from the effective sample size (Section 3.4)."""
@@ -171,16 +352,21 @@ def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dic
 
 @dataclass(frozen=True)
 class Result:
-    """The outcome of a run (Sections 3.4, 8.6): the per-shot bitstrings (column j = qubit j) and their aggregation into counts
-    and probabilities with binomial error bars from the effective sample size, the photon records and posteriors when the
-    record was read in full, the noise sample of every dynamical sample, the herald flags, the discarded shots, the
-    persistent machine state, the SPAM errors per qubit, the recombined register state when kept, and the
-    ``Diagnostics``. Histogram keys follow the Section 13 bit order (module docstring)."""
+    """The outcome of a run (Sections 3.4, 8.6): the per-shot bitstrings (column j the qubit ``qubits[j]``) and their
+    aggregation into counts and probabilities with binomial error bars from the effective sample size, the photon records
+    and posteriors when the record was read in full, the noise sample of every dynamical sample, the herald flags, the
+    discarded shots, the persistent machine state, the SPAM errors per qubit, the recombined register state when kept, and
+    the ``Diagnostics``. Histogram keys follow the Section 13 bit order (module docstring); ``to_dict`` is the versioned
+    record and the ``to_ionq_v1_*`` / ``to_ionq_v2_*`` methods the IonQ formats, each named by the convention it emits
+    (0.2.0; docs/api_implementation_plan.md 1.7)."""
 
     bitstrings: np.ndarray
-    """(shots, n_qubits) array of 0/1, column j = qubit j."""
-    bit_order: Literal["qubit0_lsb"]
+    """(shots, n_qubits) array of 0/1: row k is shot k, column j the qubit ``qubits[j]`` (qubit j when every qubit was
+    measured); in the keys of ``counts`` qubit 0 is the least-significant bit, the rightmost character."""
+    bit_order: Literal["qubit0_lsb", "qubit0_msb"]
+    """``qubit0_lsb`` (every run): the Section 13 order; ``qubit0_msb`` only on the result of ``reversed_bits()``."""
     counts: dict[str, int]
+    """Shots per bitstring key; qubit 0 is the least-significant bit, the rightmost character (Section 13)."""
     probabilities: dict[str, float]
     error_bars: dict[str, float]
     photon_records: np.ndarray | None
@@ -207,13 +393,25 @@ class Result:
     arrival_times_s: tuple[tuple[np.ndarray, ...], ...] | None = None
     """Per shot, per ion, the photon arrival times when the discriminator asked for them (Noek's first-photon protocol,
     Crain's stop-on-first-photon); None otherwise. Ragged, so a tuple of arrays rather than one array."""
+    qubits: tuple[int, ...] | None = None
+    """The circuit qubit each column of ``bitstrings`` holds (the measured qubits in ascending order); None means column
+    j is qubit j (0.2.0)."""
+    registers: dict[str, tuple[int, ...]] | None = None
+    """The circuit's classical registers, name -> qubits in bit order (``Circuit.registers``), which the IonQ v2 exporters
+    report beside ``output_all``; None means one register ``"c"`` over every measured qubit (0.2.0)."""
+    machine_hash: str | None = None
+    """``Machine.hash()`` of the machine that ran the circuit (0.2.0); None for a run through the ``run`` function."""
+    created_at: str = ""
+    """When the run started, ISO 8601 in UTC (0.2.0); empty when unknown."""
+    duration_s: float = 0.0
+    """Wall time of the run, seconds (0.2.0); 0 when unknown."""
 
     def __post_init__(self) -> None:
         arr = np.asarray(self.bitstrings)
         if arr.ndim != 2:
             raise ValueError("bitstrings must be a (shots, n_qubits) array")
-        if self.bit_order != "qubit0_lsb":
-            raise ValueError("the only supported bit order is qubit0_lsb (Section 13)")
+        if self.bit_order not in ("qubit0_lsb", "qubit0_msb"):
+            raise ValueError("the bit order is qubit0_lsb (Section 13) or qubit0_msb (reversed_bits only)")
         counts, probabilities = aggregate(arr)
         if counts != self.counts:
             raise ValueError("counts must aggregate the bitstrings with qubit 0 as the least-significant bit")
@@ -223,6 +421,15 @@ class Result:
             raise ValueError("probabilities must be counts / shots")
         if len(self.heralds) != arr.shape[0]:
             raise ValueError("one herald flag per shot")
+        if self.qubits is not None:
+            qubits = tuple(int(q) for q in self.qubits)
+            if len(qubits) != arr.shape[1] or len(set(qubits)) != len(qubits):
+                raise ValueError("qubits names each column of bitstrings once")
+            object.__setattr__(self, "qubits", qubits)
+        if self.registers is not None:
+            object.__setattr__(
+                self, "registers", {str(k): tuple(int(q) for q in v) for k, v in dict(self.registers).items()}
+            )
 
     @property
     def n_qubits(self) -> int:
@@ -232,17 +439,259 @@ class Result:
     def shots(self) -> int:
         return int(np.asarray(self.bitstrings).shape[0])
 
-    def to_ionq_json(self) -> dict[str, float]:
-        """The legacy IonQ probability result: decimal-integer keys, qubit 0 least significant (Section 8.6)."""
+    @property
+    def column_qubits(self) -> tuple[int, ...]:
+        """The circuit qubit of every column of ``bitstrings``: ``qubits`` when given, else 0, 1, ..., n - 1."""
+        return self.qubits if self.qubits is not None else tuple(range(self.n_qubits))
+
+    # ---- the IonQ v1 formats: decimal keys, qubit 0 the 2^0 bit (Section 8.6) ---------------------------------------------
+
+    def to_ionq_v1_probabilities(self) -> dict[str, float]:
+        """IonQ's v1 probability result (``ionq.result.probabilities.json.v1``): decimal-integer keys, qubit 0 the
+        least-significant bit; ``{"0": 0.5, "3": 0.5}`` for a two-qubit Bell state."""
         return {str(int(key, 2)): p for key, p in self.probabilities.items()}
 
-    def to_ionq_histogram(self) -> dict[str, int]:
-        """The histogram variant: shot counts with the same decimal keys."""
+    def to_ionq_v1_histogram(self) -> dict[str, int]:
+        """The v1 histogram: shot counts with the same decimal keys."""
         return {str(int(key, 2)): c for key, c in self.counts.items()}
 
-    def to_ionq_shots(self) -> list[str]:
-        """The per-shot format: an ordered list of decimal strings ("6", "1", "0", "7" is 110, 001, 000, 111 on three qubits)."""
+    def to_ionq_v1_shots(self) -> list[str]:
+        """The v1 per-shot format: an ordered list of decimal strings ("6", "1", "0", "7" is 110, 001, 000, 111 on three
+        qubits, qubit 0 the least-significant bit); ``from_ionq_v1_shots`` reads it back."""
         return [decimal_key(row) for row in np.asarray(self.bitstrings)]
+
+    to_ionq_json = deprecated_alias(
+        to_ionq_v1_probabilities, deadline="v0.4", fix="Call Result.to_ionq_v1_probabilities() instead."
+    )
+    to_ionq_histogram = deprecated_alias(
+        to_ionq_v1_histogram, deadline="v0.4", fix="Call Result.to_ionq_v1_histogram() instead."
+    )
+    to_ionq_shots = deprecated_alias(
+        to_ionq_v1_shots, deadline="v0.4", fix="Call Result.to_ionq_v1_shots() instead."
+    )
+
+    @classmethod
+    def from_ionq_v1_shots(
+        cls, shots: Sequence[str | int], n_qubits: int, *, source: str = "IonQ v1 shots"
+    ) -> Result:
+        """A ``Result`` from a v1 per-shot list (decimal strings or integers, qubit 0 the 2^0 bit): counts, probabilities
+        and binomial error bars for ``len(shots)`` independent shots, no SPAM, and ``Diagnostics.external`` saying that no
+        simulation stands behind it; ``to_ionq_v1_shots`` closes the round trip."""
+        rows = [bits_from_decimal(str(int(k)), int(n_qubits)) for k in shots]
+        bits = (
+            np.asarray(rows, dtype=np.uint8).reshape(-1, int(n_qubits))
+            if rows
+            else np.zeros((0, int(n_qubits)), dtype=np.uint8)
+        )
+        counts, probabilities = aggregate(bits)
+        return cls(
+            bitstrings=bits,
+            bit_order="qubit0_lsb",
+            counts=counts,
+            probabilities=probabilities,
+            error_bars=binomial_error_bars(probabilities, float(len(rows))),
+            photon_records=None,
+            posteriors=None,
+            noise_samples=(),
+            heralds=np.zeros(len(rows), dtype=np.uint8),
+            discarded_shots=0,
+            run_state=RunState.nominal(int(n_qubits)),
+            spam={},
+            final_state=None,
+            diagnostics=Diagnostics.external(
+                int(n_qubits),
+                approximations=(
+                    f"imported from {source}: no simulation behind these shots, no SPAM, no diagnostics",
+                ),
+            ),
+        )
+
+    # ---- the IonQ v2 formats: the v0.4 envelope, bitstrings in wire order (qutip_trap.io.ionq) ------------------------------
+
+    def _v2_registers(self) -> dict[str, list[int]]:
+        """Register name -> the columns of ``bitstrings`` in the register's bit order, ``output_all`` first (every measured
+        qubit, ascending), then the circuit's registers; a register naming an unmeasured qubit is refused."""
+        column_of = {q: j for j, q in enumerate(self.column_qubits)}
+        out: dict[str, list[int]] = {"output_all": [column_of[q] for q in sorted(column_of)]}
+        named = self.registers if self.registers is not None else {"c": tuple(sorted(column_of))}
+        for name, qubits in named.items():
+            missing = [q for q in qubits if q not in column_of]
+            if missing:
+                raise ValueError(f"register {name!r} names qubits {missing} that this result did not measure")
+            out[name] = [column_of[q] for q in qubits]
+        return out
+
+    def _v2_strings(self, columns: Sequence[int]) -> list[str]:
+        """One string per shot: the bit of the register's first qubit is the FIRST character (IonQ's wire order)."""
+        bits = (
+            np.asarray(self.bitstrings)[:, list(columns)]
+            if columns
+            else np.zeros((self.shots, 0), dtype=np.uint8)
+        )
+        return ["".join(str(int(b)) for b in row) for row in bits]
+
+    def to_ionq_v2_probabilities(self) -> dict[str, Any]:
+        """``ionq.result.probabilities.json.v2``: ``{"probabilities": {"registers": {"output_all": {bitstring: p}, ...}}}``
+        with the circuit's registers beside ``output_all``; the strings are in IonQ's wire order, q[0] the LEFTMOST
+        character (the reverse of ``counts``' keys; the source is recorded in ``qutip_trap.io.ionq``)."""
+        registers: dict[str, dict[str, float]] = {}
+        for name, columns in self._v2_registers().items():
+            tally = Counter(self._v2_strings(columns))
+            total = float(sum(tally.values())) or 1.0
+            registers[name] = {key: n / total for key, n in sorted(tally.items())}
+        return {"probabilities": {"registers": registers}}
+
+    def to_ionq_v2_histogram(self) -> dict[str, Any]:
+        """``ionq.result.histogram.json.v2``: the same envelope under ``"histogram"`` with shot counts."""
+        registers: dict[str, dict[str, int]] = {}
+        for name, columns in self._v2_registers().items():
+            registers[name] = dict(sorted(Counter(self._v2_strings(columns)).items()))
+        return {"histogram": {"registers": registers}}
+
+    def to_ionq_v2_shots(self) -> dict[str, Any]:
+        """``ionq.result.shots.json.v2``: ``{"shots": [{"registers": {name: [bits...]}}, ...]}``, one bit array per register
+        per shot in wire order (the register's first qubit first)."""
+        columns = self._v2_registers()
+        bits = np.asarray(self.bitstrings)
+        return {
+            "shots": [
+                {"registers": {name: [int(bits[k, j]) for j in cols] for name, cols in columns.items()}}
+                for k in range(bits.shape[0])
+            ]
+        }
+
+    def reversed_bits(self) -> Result:
+        """The same result with every bitstring key and every column of ``bitstrings`` reversed, so that qubit 0 is the
+        LEFTMOST character (``bit_order == "qubit0_msb"``): for comparisons with Cirq, Braket and PennyLane, which report
+        that way. ``qubits`` and ``registers`` keep naming the qubits; a second call restores the Section 13 order."""
+        from dataclasses import replace
+
+        bits = np.asarray(self.bitstrings)[:, ::-1]
+        counts, probabilities = aggregate(bits)
+        order: Literal["qubit0_lsb", "qubit0_msb"] = (
+            "qubit0_msb" if self.bit_order == "qubit0_lsb" else "qubit0_lsb"
+        )
+        return replace(
+            self,
+            bitstrings=np.ascontiguousarray(bits),
+            bit_order=order,
+            counts=counts,
+            probabilities=probabilities,
+            error_bars={key[::-1]: v for key, v in self.error_bars.items()},
+            photon_records=None
+            if self.photon_records is None
+            else np.ascontiguousarray(self.photon_records[:, ::-1]),
+            posteriors=None if self.posteriors is None else np.ascontiguousarray(self.posteriors[:, ::-1]),
+            sub_bin_records=None
+            if self.sub_bin_records is None
+            else np.ascontiguousarray(self.sub_bin_records[:, ::-1]),
+            arrival_times_s=None
+            if self.arrival_times_s is None
+            else tuple(tuple(reversed(shot)) for shot in self.arrival_times_s),
+            qubits=tuple(reversed(self.column_qubits)),
+        )
+
+    # ---- the versioned record ---------------------------------------------------------------------------------------------
+
+    def to_dict(self, *, per_shot: bool = False) -> dict[str, Any]:
+        """The result as plain JSON-able values under the envelope of ``docs/schemas/result.schema.json`` (schema version 1):
+        the identity (``schema_version``, ``qutip_trap_version``, ``device_hash``, ``machine_hash``, ``shots``, ``root_seed``,
+        ``created_at``, ``duration_s``), then counts, probabilities, error bars, SPAM, the herald tallies, the run state and
+        the diagnostics summary; ``per_shot=True`` adds the per-shot arrays (bitstrings, heralds, photon records, posteriors).
+        Not carried: the noise samples, the final state, the calibration waveforms, the GATE_LOCAL and convergence reports."""
+        from qutip_trap import __version__
+
+        heralds = np.asarray(self.heralds, dtype=int)
+        out: dict[str, Any] = {
+            "schema_version": 1,
+            "qutip_trap_version": __version__,
+            "device_hash": self.diagnostics.calibration.device_hash,
+            "machine_hash": self.machine_hash,
+            "created_at": self.created_at,
+            "duration_s": float(self.duration_s),
+            "shots": int(self.shots),
+            "n_qubits": int(self.n_qubits),
+            "qubits": [int(q) for q in self.column_qubits],
+            "bit_order": self.bit_order,
+            "root_seed": int(self.diagnostics.root_seed),
+            "counts": {k: int(v) for k, v in self.counts.items()},
+            "probabilities": {k: float(v) for k, v in self.probabilities.items()},
+            "error_bars": {k: float(v) for k, v in self.error_bars.items()},
+            "spam": {k: [float(a), float(b)] for k, (a, b) in self.spam.items()},
+            "discarded_shots": int(self.discarded_shots),
+            "registers": None
+            if self.registers is None
+            else {k: [int(q) for q in v] for k, v in self.registers.items()},
+            "heralds": {
+                "collision": int(np.count_nonzero(heralds & 1)),
+                "dark_or_lost": int(np.count_nonzero(heralds & 2)),
+                "count_anomaly": int(np.count_nonzero(heralds & 4)),
+            },
+            "run_state": self.run_state.to_dict(),
+            "diagnostics": self.diagnostics.to_dict(),
+        }
+        if per_shot:
+            out["per_shot"] = {
+                "bitstrings": np.asarray(self.bitstrings, dtype=int).tolist(),
+                "heralds": heralds.tolist(),
+                "photon_records": None
+                if self.photon_records is None
+                else np.asarray(self.photon_records).tolist(),
+                "posteriors": None
+                if self.posteriors is None
+                else np.asarray(self.posteriors, dtype=float).tolist(),
+            }
+        return out
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Result:
+        """The inverse of :meth:`to_dict` for schema version 1: the per-shot arrays when the record carries them, else
+        bitstrings rebuilt from the counts (one row per counted shot, in key order) with zero heralds; the diagnostics as
+        ``Diagnostics.from_dict`` reads the summary; no noise samples, no final state."""
+        if int(d.get("schema_version", -1)) != 1:
+            raise ValueError(f"Result.from_dict reads schema version 1, got {d.get('schema_version')!r}")
+        n = int(d["n_qubits"])
+        per_shot = d.get("per_shot")
+        if per_shot is not None:
+            bits = np.asarray(per_shot["bitstrings"], dtype=np.uint8).reshape(-1, n)
+            heralds = np.asarray(per_shot["heralds"], dtype=np.uint8)
+            records = per_shot.get("photon_records")
+            posteriors = per_shot.get("posteriors")
+        else:
+            rows = [
+                np.array([int(ch) for ch in key[::-1]], dtype=np.uint8)
+                for key, count in dict(d["counts"]).items()
+                for _ in range(int(count))
+            ]
+            bits = (
+                np.asarray(rows, dtype=np.uint8).reshape(-1, n) if rows else np.zeros((0, n), dtype=np.uint8)
+            )
+            heralds = np.zeros(bits.shape[0], dtype=np.uint8)
+            records = None
+            posteriors = None
+        return cls(
+            bitstrings=bits,
+            bit_order=d["bit_order"],
+            counts={k: int(v) for k, v in dict(d["counts"]).items()},
+            probabilities={k: float(v) for k, v in dict(d["probabilities"]).items()},
+            error_bars={k: float(v) for k, v in dict(d["error_bars"]).items()},
+            photon_records=None if records is None else np.asarray(records, dtype=int),
+            posteriors=None if posteriors is None else np.asarray(posteriors, dtype=float),
+            noise_samples=(),
+            heralds=heralds,
+            discarded_shots=int(d["discarded_shots"]),
+            run_state=RunState.from_dict(d["run_state"]),
+            spam={k: (float(v[0]), float(v[1])) for k, v in dict(d["spam"]).items()},
+            final_state=None,
+            diagnostics=Diagnostics.from_dict(d["diagnostics"]),
+            qubits=tuple(int(q) for q in d["qubits"]),
+            registers=None
+            if d.get("registers") is None
+            else {k: tuple(int(q) for q in v) for k, v in dict(d["registers"]).items()},
+            machine_hash=d.get("machine_hash"),
+            created_at=str(d.get("created_at", "")),
+            duration_s=float(d.get("duration_s", 0.0)),
+        )
 
     @property
     def sample_of_shot(self) -> np.ndarray:
@@ -260,8 +709,15 @@ class Result:
             out[:n] if out.shape[0] >= n else np.concatenate([out, np.full(n - out.shape[0], -1, np.int64)])
         )
 
+    @deprecated(
+        deadline="v0.4",
+        fix="Call Result.to_ionq_v2_probabilities(), which emits IonQ's v0.4 envelope with the strings in wire order (q[0] "
+        "the leftmost character); this method's strings put qubit 0 rightmost and it carries no envelope.",
+    )
     def to_ionq_v2(self, registers: Mapping[str, Sequence[int]] | None = None) -> dict[str, dict[str, float]]:
-        """Section 8.6's v2 register-nested result: ``{register name: {bitstring: probability}}``.
+        """The 0.1.0 register-nested export, ``{register name: {bitstring: probability}}`` with this package's own bit order
+        inside each register (qubit 0 of the register rightmost): kept unchanged for one release and deprecated, because
+        IonQ's v2 strings run the other way and sit inside an envelope (``to_ionq_v2_probabilities``).
 
         ``registers`` names the classical registers and the qubits each covers, in the register's own bit order (qubit 0 of
         the register least significant, the Section 13 convention). With no registers given the whole measured set is one

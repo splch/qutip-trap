@@ -44,6 +44,8 @@ jobs:
         run: uv run python tools/ledger_from_tables.py --check
       - name: documentation tables are current with the ledger (M10)
         run: uv run python tools/docs_from_ledger.py --check
+      - name: the Result schema is current with the envelope (docs/api_implementation_plan.md 1.7)
+        run: uv run python tools/schemas.py --check
       - name: import time of the root and of the Appendix E surface (tests/test_import_time.py holds the root under 0.2 s)
         run: |
           uv run python -X importtime -c "import qutip_trap" 2>&1 | tail -1

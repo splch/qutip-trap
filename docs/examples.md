@@ -63,8 +63,9 @@ Mølmer-Sørensen pulse on the 572-dimensional space [2, 2, 11, 13] (two ions, t
 levels, the other four modes dropped by the contribution criterion), giving a histogram within the readout errors of
 0.5/0.5 and a register infidelity of about 2 × 10⁻³ against the compiled circuit's state. `result.diagnostics` records the
 level that ran, the space, the mode classes, the boundary populations, the branch cutoff, the integrators, the seeds and
-every approximation made; `result.to_ionq_json()` gives the IonQ probability format (decimal keys, qubit 0 least
-significant).
+every approximation made; `result.to_ionq_v1_probabilities()` gives IonQ's v1 probability format (decimal keys, qubit 0
+the least-significant bit) and `result.to_ionq_v2_probabilities()` the v0.4 envelope (bitstrings in wire order, q[0] first);
+`result.to_dict()` is the versioned record of `docs/schemas/result.schema.json`.
 
 ## A circuit from OpenQASM 2 or IonQ JSON
 

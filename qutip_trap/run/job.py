@@ -44,8 +44,10 @@ from __future__ import annotations
 
 import itertools
 import math
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -675,6 +677,16 @@ def last_record(result: Result) -> RunRecord:
     return _LAST_RECORD[id(result)]
 
 
+def with_fields(result: Result, **changes: Any) -> Result:
+    """``dataclasses.replace`` on a Result that keeps its RunRecord reachable through ``last_record`` (the record is keyed
+    by the result's identity, so a plain replace would lose it); ``Machine.run`` stamps ``machine_hash`` with it."""
+    out = replace(result, **changes)
+    record = _LAST_RECORD.get(id(result))
+    if record is not None:
+        _LAST_RECORD[id(out)] = record
+    return out
+
+
 def run(
     circuit: Circuit,
     device: Device,
@@ -734,6 +746,8 @@ def run(
     """
     if shots <= 0:
         raise ValueError("shots must be positive")
+    started = time.perf_counter()
+    created_at = datetime.now(UTC).isoformat(timespec="seconds")
     # 1 to 3: compile, calibrate (the cached surrogate when no table is given), program the calibrated shims and schedule,
     # the prefix ``Machine.schedule`` shares (run/pipeline.py; docs/api_implementation_plan.md 1.3)
     prefix = compile_calibrate_schedule(
@@ -1479,6 +1493,10 @@ def run(
         diagnostics=diagnostics,
         sub_bin_records=sub_bin_records,
         arrival_times_s=arrival_times,
+        qubits=tuple(int(q) for q in measured),
+        registers=dict(compiled.registers),
+        created_at=created_at,
+        duration_s=float(time.perf_counter() - started),
     )
     _LAST_RECORD[id(result)] = RunRecord(
         compile=report,

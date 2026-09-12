@@ -109,7 +109,10 @@ def test_bell_state_probabilities_match_the_ideal_distribution_within_readout_an
     assert abs(p["00"] - p["11"]) < 5.0 * res.error_bars["00"]
     assert p.get("01", 0.0) + p.get("10", 0.0) < 0.01
     assert res.error_bars["00"] == pytest.approx(math.sqrt(p["00"] * (1.0 - p["00"]) / 2000.0))
-    assert set(res.to_ionq_json()) <= {"0", "1", "2", "3"} and res.to_ionq_json()["0"] == p["00"]
+    assert (
+        set(res.to_ionq_v1_probabilities()) <= {"0", "1", "2", "3"}
+        and res.to_ionq_v1_probabilities()["0"] == p["00"]
+    )
     assert res.heralds.shape == (2000,) and res.discarded_shots == 0 and res.photon_records is None
 
 

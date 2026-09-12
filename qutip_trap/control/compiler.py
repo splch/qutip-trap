@@ -163,11 +163,16 @@ class Circuit:
         for op in self.ops:
             if any(q >= self.n_qubits for q in op.qubits):
                 raise ValueError(f"operation {op.name} addresses a qubit outside range({self.n_qubits})")
-        measure = tuple(range(self.n_qubits)) if self.measure is None else tuple(int(q) for q in self.measure)
+        # the two defaults arrive as None (the omitted argument) and leave as the declared types
+        given_measure: object = self.measure
+        measure = (
+            tuple(range(self.n_qubits)) if given_measure is None else tuple(int(q) for q in self.measure)
+        )
         if len(set(measure)) != len(measure) or any(q < 0 or q >= self.n_qubits for q in measure):
             raise ValueError("measure targets must be distinct qubits of the circuit")
         object.__setattr__(self, "measure", measure)
-        if self.registers is None:
+        given_registers: object = self.registers
+        if given_registers is None:
             registers = {"c": measure}
         else:
             registers = {

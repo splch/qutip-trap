@@ -1,0 +1,739 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/splch/qutip-trap/blob/main/docs/schemas/result.schema.json",
+  "title": "qutip-trap Result",
+  "description": "The envelope Result.to_dict() writes and Result.from_dict() reads (schema version 1): the identity of the run, the histogram with its error bars, the SPAM errors, the herald tallies, the run state and the diagnostics summary; per_shot carries the arrays when asked for. Bitstring keys put qubit 0 rightmost (docs/conventions.md).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "qutip_trap_version",
+    "device_hash",
+    "machine_hash",
+    "created_at",
+    "duration_s",
+    "shots",
+    "n_qubits",
+    "qubits",
+    "bit_order",
+    "root_seed",
+    "counts",
+    "probabilities",
+    "error_bars",
+    "spam",
+    "discarded_shots",
+    "registers",
+    "heralds",
+    "run_state",
+    "diagnostics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "qutip_trap_version": {
+      "type": "string"
+    },
+    "device_hash": {
+      "type": "string"
+    },
+    "machine_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "duration_s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "shots": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "n_qubits": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "qubits": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "bit_order": {
+      "type": "string",
+      "enum": [
+        "qubit0_lsb",
+        "qubit0_msb"
+      ]
+    },
+    "root_seed": {
+      "type": "integer"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "probabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "error_bars": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "spam": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "discarded_shots": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "registers": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "heralds": {
+      "type": "object",
+      "required": [
+        "collision",
+        "dark_or_lost",
+        "count_anomaly"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "collision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dark_or_lost": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count_anomaly": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "run_state": {
+      "type": "object",
+      "required": [
+        "order",
+        "dark",
+        "lost",
+        "events"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "dark": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "lost": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": [
+        "level",
+        "level_reason",
+        "space",
+        "mode_class",
+        "run_state",
+        "wall_clock_span_s",
+        "boundary_population",
+        "margin_levels",
+        "dropped_modes",
+        "frozen_contribution",
+        "integrator",
+        "tolerances",
+        "samples",
+        "trajectories",
+        "shots_per_sample",
+        "effective_sample_size",
+        "root_seed",
+        "calibration",
+        "approximations",
+        "intrinsic_budget",
+        "dropped_branch_weight",
+        "frozen_excitation_bound",
+        "dropped_contribution",
+        "margin_reached",
+        "populated_n_max",
+        "cap_growth",
+        "gate_local",
+        "kernel",
+        "workers",
+        "propagator_cache_hits",
+        "branches",
+        "convergence",
+        "shots_per_sample_realized"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "JOINT_EXACT",
+            "GATE_LOCAL"
+          ]
+        },
+        "level_reason": {
+          "type": "string"
+        },
+        "space": {
+          "type": "object",
+          "required": [
+            "ion_dims",
+            "resolved",
+            "enr_group",
+            "frozen",
+            "ions",
+            "dropped"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ion_dims": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "resolved": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "d",
+                  "expected_n_range",
+                  "eta_max",
+                  "element_tol"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "type": "integer"
+                  },
+                  "d": {
+                    "type": "integer",
+                    "minimum": 2
+                  },
+                  "expected_n_range": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "eta_max": {
+                    "type": "number"
+                  },
+                  "element_tol": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "enr_group": {
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "frozen": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "ions": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "dropped": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "mode_class": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "resolved",
+              "frozen",
+              "dropped",
+              "enr"
+            ]
+          }
+        },
+        "run_state": {
+          "type": "object",
+          "required": [
+            "order",
+            "dark",
+            "lost",
+            "events"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "order": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "dark": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "lost": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "wall_clock_span_s": {
+          "type": "number"
+        },
+        "boundary_population": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "margin_levels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "dropped_modes": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "frozen_contribution": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "integrator": {
+          "type": "string"
+        },
+        "tolerances": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "trajectories": {
+          "type": "integer"
+        },
+        "shots_per_sample": {
+          "type": "integer"
+        },
+        "effective_sample_size": {
+          "type": "number"
+        },
+        "root_seed": {
+          "type": "integer"
+        },
+        "calibration": {
+          "type": "object",
+          "required": [
+            "device_hash",
+            "seed",
+            "surrogate",
+            "fitted_at_s",
+            "entries",
+            "waveforms"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "device_hash": {
+              "type": "string"
+            },
+            "seed": {
+              "type": "integer"
+            },
+            "surrogate": {
+              "type": "boolean"
+            },
+            "fitted_at_s": {
+              "type": "number"
+            },
+            "entries": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "value",
+                  "uncertainty",
+                  "status",
+                  "experiment",
+                  "provenance_id",
+                  "fitted_at_s",
+                  "sample_id"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": "number"
+                  },
+                  "uncertainty": {
+                    "type": "number"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "seed",
+                      "calibrated",
+                      "uncalibrated"
+                    ]
+                  },
+                  "experiment": {
+                    "type": "string"
+                  },
+                  "provenance_id": {
+                    "type": "string"
+                  },
+                  "fitted_at_s": {
+                    "type": "number"
+                  },
+                  "sample_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "waveforms": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "duration_s",
+                  "kind",
+                  "chi_m",
+                  "alpha_m",
+                  "phi_s",
+                  "phi_m"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "duration_s": {
+                    "type": "number"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "chi_m": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number"
+                    }
+                  },
+                  "alpha_m": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
+                  },
+                  "phi_s": {
+                    "type": "object",
+                    "required": [
+                      "value",
+                      "uncertainty",
+                      "status",
+                      "experiment",
+                      "provenance_id",
+                      "fitted_at_s",
+                      "sample_id"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "value": {
+                        "type": "number"
+                      },
+                      "uncertainty": {
+                        "type": "number"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "seed",
+                          "calibrated",
+                          "uncalibrated"
+                        ]
+                      },
+                      "experiment": {
+                        "type": "string"
+                      },
+                      "provenance_id": {
+                        "type": "string"
+                      },
+                      "fitted_at_s": {
+                        "type": "number"
+                      },
+                      "sample_id": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "phi_m": {
+                    "type": "object",
+                    "required": [
+                      "value",
+                      "uncertainty",
+                      "status",
+                      "experiment",
+                      "provenance_id",
+                      "fitted_at_s",
+                      "sample_id"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "value": {
+                        "type": "number"
+                      },
+                      "uncertainty": {
+                        "type": "number"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "seed",
+                          "calibrated",
+                          "uncalibrated"
+                        ]
+                      },
+                      "experiment": {
+                        "type": "string"
+                      },
+                      "provenance_id": {
+                        "type": "string"
+                      },
+                      "fitted_at_s": {
+                        "type": "number"
+                      },
+                      "sample_id": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "approximations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "intrinsic_budget": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "dropped_branch_weight": {
+          "type": "number"
+        },
+        "frozen_excitation_bound": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "dropped_contribution": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "margin_reached": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "populated_n_max": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "cap_growth": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "gate_local": {
+          "type": "boolean"
+        },
+        "kernel": {
+          "type": "string"
+        },
+        "workers": {
+          "type": "integer"
+        },
+        "propagator_cache_hits": {
+          "type": "integer"
+        },
+        "branches": {
+          "type": "integer"
+        },
+        "convergence": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shots_per_sample_realized": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "per_shot": {
+      "type": "object",
+      "required": [
+        "bitstrings",
+        "heralds",
+        "photon_records",
+        "posteriors"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bitstrings": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ]
+            }
+          }
+        },
+        "heralds": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "photon_records": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "posteriors": {
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
