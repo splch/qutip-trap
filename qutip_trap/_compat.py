@@ -64,8 +64,12 @@ def _qualified(obj: object) -> str:
     return f"{module}.{name}" if module else str(name)
 
 
-def _message(what: str, deadline: str, fix: str) -> str:
+def message(what: str, deadline: str, fix: str) -> str:
+    """The one sentence shape every deprecation warning of the package has: what, the deadline, the fix."""
     return f"{what} is deprecated and will be removed in qutip-trap {deadline} at the earliest. {fix}"
+
+
+_message = message
 
 
 def warn(message: str, *, stacklevel: int = 1) -> None:
@@ -190,6 +194,7 @@ __all__ = [
     "deprecated",
     "deprecated_alias",
     "deprecated_parameter",
+    "message",
     "validate",
     "warn",
 ]

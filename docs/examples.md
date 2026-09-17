@@ -47,7 +47,8 @@ Every name below is importable from the rung named; the objects are the same one
 - **`qutip_trap`** (rung 0, the machine): `Machine` with `run`, `compile`, `schedule`, `calibrated` and `estimate` (an
   `Estimate`), `Circuit` and `Operation`, `Result`, `Diagnostics` and `Progress`, `FidelityLevel` with `decide_level` (a
   `LevelDecision`: the dimension and the non-zeros against the guards), the option objects `Physics`, `Numerics` and
-  `Readout`, `Device` with `BeamRoles`, the rung modules and `presets`.
+  `Readout`, `Device` with `BeamRoles`, `as_machine` (a `Device` wrapped in a default machine, the laboratory's first
+  argument), the rung modules and `presets`.
 - **`qutip_trap.presets`**: `yb171_chain(n)` and `ca40_optical(n)` as machines; `DevicePreset.machine()` bridges a preset.
 - **`qutip_trap.circuit`** (rung 1): the IR (`Circuit`, `Operation`, the tables `NATIVE_GATES`, `STANDARD_GATES`,
   `NON_UNITARY`, `EXPORTED_NATIVE` and the builder's `GATE_PARAMETERS`), the compiler (`compile_with_report`, `CompileReport`,
@@ -58,7 +59,9 @@ Every name below is importable from the rung named; the objects are the same one
   scheduler `schedule` and its `ScheduleError`, the prefix of `run` as `compile_calibrate_schedule` returning a `Prefix`, the
   drive maps (`GateDrive`, `default_gate_drives`, `infer_gate_drives`, `resolve_drives`), the table (`CalibrationTable`,
   `CalEntry`, `Waveform`, `Segment`), the electronics (`HardwareChain`, `apply_hardware_chain`, `physical_schedule`), the
-  composite pulses (`CompositePulse`, `composite_pulse`), the comb (`CombSpec`), the derived drives (`derive_raman_drive`,
+  composite pulses (`CompositePulse`, `composite_pulse`), the comb (`CombSpec`), the table's edits as proposals
+  (`CalibrationTable.with_params`, `updated_with`, `kind_of`; `CalEntry.kind` with `EntryKind` and `ENTRY_KINDS`, setpoint
+  against characterisation), the derived drives (`derive_raman_drive`,
   `derive_light_shift_drive`, `LightShiftCouplings`) and the closure solvers (`GateModes`, `gate_modes`, `ShapedPulse`,
   `solve_amplitude_modulation`, `solve_fourier_amplitude_modulation`, `solve_frequency_modulation`).
 - **`qutip_trap.dynamics`** (rung 3): `JointExactEngine` (its `EngineReport` and `SegmentReport`), `build_hamiltonian` with
@@ -78,6 +81,16 @@ Every name below is importable from the rung named; the objects are the same one
   (`PreparationRecipe`, `SidebandCoolingSpec`, `standard_recipe`), the example-device helpers (`secular_trap`,
   `raman_pair_along_x`, `oblique_detection_beam`, `quiet_noise_model`, `ideal_hardware`, `crain_snspd_detector`,
   `myerson_ca40_pmt_detector`) and the unit types (`Hz`, `RadPerS`, `Gauss`, `Tesla`, `rad_s_from_hz`, `hz_from_rad_s`).
+- **`qutip_trap.experiments`, `qutip_trap.calibration`, `qutip_trap.benchmarks`** (the laboratory, 0.3.0): every
+  experiment, the calibration and the benchmarks take a `Machine` first (a `Device` is wrapped in a default machine) and read
+  its table and option objects; the drive keywords are deprecated in favour of `Device.roles`. Each experiment returns its
+  typed result (`RabiScan`, `RamseyFringe`, `SidebandSpectrum`, `ThermometryResult`, `HeatingRateFit`, `MSScan`, `ParityScan`,
+  `DetectionHistogram`, `StarkScan`, `CrosstalkScan`, `FieldScan`, `MicromotionScan`, `CrystalImage`; the table `RESULT_TYPES`),
+  an `ExperimentResult` with the fitted parameters as attributes, the scan as `requested` beside the scan as `realized`
+  (`ScanParameters`; `realized_drive` reads the tone words the hardware chain plays), the fit's `chi2` and a `quality`
+  verdict. `calibrate(machine, method="closed_form" | "experiments")` (`CalibrationMethod`) returns the `CalibrationReport`
+  whose `table` the scheduler reads; `Machine.calibrated` pins it. `randomized_benchmarking`, `ghz_fidelity`,
+  `quantum_volume` and `gate_channel` run on the machine.
 - **`qutip_trap.io`**: `qasm2` with `loads` and `dumps` (OpenQASM 2 both ways; the native gates declared as qelib1.inc
   definitions, `NATIVE_DECLARATIONS`, or bare for the exact round trip; `QELIB_NAMES` maps `cnot` to `cx`), and `ionq` with
   `loads`, `dumps`, `load_job` and `dump_job` (`IonQJob`, the v0.4 body of type `JOB_TYPE` with the keys `JOB_KEYS`,

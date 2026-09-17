@@ -7,7 +7,7 @@ and ``Readout`` (``qutip_trap.options``) and the level policy, in one frozen rec
 ``run`` (a ``Result``), ``compile`` (rung 1), ``schedule`` (rung 2: compile, calibrate and schedule without integrating,
 IonQ's dry run), ``engine`` (rung 3), ``calibrated`` (the same machine with its table pinned), ``estimate`` (the level, the
 space and a wall-time guess before anything is integrated) and ``hash`` (the identity a run record stores). ``run``
-delegates to ``qutip_trap.run.job.run`` through ``options.to_run_kwargs``, so nothing new enters the hot path; ``error_model``,
+is ``qutip_trap.run.pipeline.execute`` on the machine (the pipeline ``run`` delegates to since 0.3.0); ``error_model``,
 ``specs`` and ``submit`` raise ``NotImplementedError`` naming the phase that implements them, the repository's convention
 for later milestones. Variants are ``dataclasses.replace(machine, ...)``.
 """
@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.options import Numerics, Physics, Readout, to_run_kwargs
+from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level
 from qutip_trap.run.space import ModeClass3
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from qutip_trap.run.results import Progress, Result
 
 CalibrationMethod = Literal["closed_form", "experiments"]
+"""``Machine.calibrated`` and ``calibration.calibrate``: the closed-form surrogate or the simulated experiments."""
 
 COST_FIXED_S = 0.02
 """Section 11.2's fitted per-segment constant a of cost = a + b x elements x evaluations."""
@@ -133,24 +134,13 @@ class Machine:
         keep_final_state: bool = False,
         progress: Callable[[Progress], None] | None = None,
     ) -> Result:
-        """Compile, calibrate, schedule, prepare, evolve and read out ``circuit`` for ``shots`` (Section 3.4): today's
-        ``run`` with this machine's table, level and option objects; ``seed`` is the root of every keyed stream and
-        ``progress`` is called per pulse, per branch, per sample and per readout (``Progress``)."""
-        from qutip_trap.run.job import run as run_job
-        from qutip_trap.run.job import with_fields
+        """Compile, calibrate, schedule, prepare, evolve and read out ``circuit`` for ``shots`` (Section 3.4):
+        ``qutip_trap.run.pipeline.execute`` on this machine, with its table, level and option objects; ``seed`` is the root
+        of every keyed stream and ``progress`` is called per pulse, per branch, per sample and per readout (``Progress``).
+        The function ``qutip_trap.run.job.run`` is this method with the machine built from its keyword arguments."""
+        from qutip_trap.run.pipeline import execute
 
-        result = run_job(
-            circuit,
-            self.device,
-            shots,
-            table=self.table,
-            level=self.level,
-            seed=seed,
-            keep_final_state=keep_final_state,
-            progress=progress,
-            **to_run_kwargs(self.physics, self.numerics, self.readout),
-        )
-        return with_fields(result, machine_hash=self.hash())
+        return execute(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=progress)
 
     def submit(self, circuit: Circuit, shots: int, *, seed: int = 0) -> Any:
         """A ``Job`` handle running in a worker process."""
@@ -160,9 +150,9 @@ class Machine:
 
     def compile(self, circuit: Circuit) -> CompileReport:
         """Standard gates to native gates with phase tracking, every block and the whole circuit verified (Section 7.2)."""
-        from qutip_trap.control.compiler import compile_with_report
+        from qutip_trap.control.compiler import compile_report
 
-        return compile_with_report(circuit, self.device, entangler=self.physics.entangler)
+        return compile_report(circuit, self.device, entangler=self.physics.entangler)
 
     def schedule(self, circuit: Circuit, *, seed: int = 0) -> Schedule:
         """The compile-calibrate-schedule prefix of ``run`` (``run/pipeline.py``): the pulses with absolute times, the played
@@ -188,28 +178,14 @@ class Machine:
     def calibrated(
         self, method: CalibrationMethod = "closed_form", *, seed: int = 0, **scans: Any
     ) -> Machine:
-        """This machine with its table pinned: the closed-form surrogate with exact spot checks (``"closed_form"``, Section
-        7.5's default) or the simulated experiments (``"experiments"``, M8), through ``calibration.calibrate`` with the
-        device's roles and this machine's numerics; ``scans`` are that function's keyword arguments (``pairs``,
-        ``detection_records``, ``detection_windows_s``, ``experiments``, ...). The table travels with the record."""
+        """This machine with its table pinned: ``calibration.calibrate(self, method=method, seed=seed, **scans)`` (the
+        closed-form surrogate with exact spot checks, Section 7.5's default, or the simulated experiments, M8) and its
+        report's table on the record; ``scans`` are that function's scan settings (``pairs``, ``detection_records``,
+        ``detection_windows_s``, ``experiments``, ...). ``calibrate`` itself returns the whole ``CalibrationReport``."""
         from qutip_trap.calibration import calibrate
 
-        if method not in ("closed_form", "experiments"):
-            raise ValueError("method is 'closed_form' or 'experiments'")
-        roles = self.device.roles.resolve(self.device)
-        table = calibrate(
-            self.device,
-            seed=seed,
-            surrogate=(method == "closed_form"),
-            t0_s=self.physics.t0_s,
-            gate_drives=roles.gate,
-            entangling_drives=roles.entangling,
-            options=self.numerics.to_solver_options(self.physics),
-            builder_options=self.physics.builder,
-            caps=self.numerics.truncation.caps,
-            **scans,
-        )
-        return replace(self, table=table)
+        report = calibrate(self, method=method, seed=seed, **scans)
+        return replace(self, table=report.table)
 
     # ---- before running ------------------------------------------------------------------------------------------------
 
@@ -316,6 +292,49 @@ class Machine:
         raise NotImplementedError("Machine.specs is Phase 2.5 of docs/api_implementation_plan.md (0.3.0)")
 
 
+def as_machine(machine: Machine | Device) -> Machine:
+    """``machine`` itself, or a ``Device`` wrapped in a default ``Machine``: the first argument of every experiment,
+    calibration and benchmark since 0.3.0 (docs/api_implementation_plan.md 2.2; a bare Device warns from 0.4.0)."""
+    from qutip_trap.device.model import Device as _Device
+
+    return Machine(machine) if isinstance(machine, _Device) else machine
+
+
+DRIVE_KEYWORDS: dict[str, str] = {
+    "gate_drive": "Declare the drive on the device: dataclasses.replace(device, roles=BeamRoles(gate={ion: drive})).",
+    "gate_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(gate=...)).",
+    "entangling_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(entangling=...)).",
+}
+"""The drive keywords of the laboratory deprecated in 0.3.0 (``Device.roles`` names the drives), with their fix sentences."""
+
+
+def laboratory_kwargs(
+    machine: Machine | Device, kw: Mapping[str, Any], *, caller: object, stacklevel: int = 2
+) -> tuple[Device, dict[str, Any]]:
+    """The device and the keyword arguments an experiment reads for a call on ``machine`` (docs/api_implementation_plan.md
+    2.2). A ``Machine`` supplies the defaults of ``table`` (its pinned table), ``options``
+    (``numerics.to_solver_options(physics)``) and ``builder_options`` (``physics.builder``), each only where the call did
+    not pass the keyword; a ``Device`` supplies nothing, the 0.1.0 behaviour. The drive keywords of ``DRIVE_KEYWORDS`` are
+    deprecated (the device's roles name the drives): each warns, attributed ``stacklevel`` frames above ``caller``'s
+    frame, and is kept for the experiment to read."""
+    from qutip_trap._compat import message, warn
+    from qutip_trap.device.model import Device as _Device
+
+    out = dict(kw)
+    for key, fix in DRIVE_KEYWORDS.items():
+        if key in out:
+            what = getattr(caller, "__module__", "") + "." + getattr(caller, "__qualname__", str(caller))
+            warn(message(f"the {key!r} argument of {what}", "v0.5", fix), stacklevel=stacklevel + 1)
+    if isinstance(machine, _Device):
+        return machine, out
+    if machine.table is not None:
+        out.setdefault("table", machine.table)
+    out.setdefault("options", machine.numerics.to_solver_options(machine.physics))
+    if machine.physics.builder is not None:
+        out.setdefault("builder_options", machine.physics.builder)
+    return machine.device, out
+
+
 def _class_of(space: HilbertSpace, mode: int) -> ModeClass3:
     cls = space.mode_class(mode)
     if cls == "resolved":
@@ -328,9 +347,12 @@ def _class_of(space: HilbertSpace, mode: int) -> ModeClass3:
 __all__ = [
     "COST_FIXED_S",
     "COST_PER_NONZERO_S",
+    "DRIVE_KEYWORDS",
     "EVALUATIONS_PER_PULSE_SECOND",
     "TOMOGRAPHY_INPUTS_PER_STEP",
     "CalibrationMethod",
     "Estimate",
     "Machine",
+    "as_machine",
+    "laboratory_kwargs",
 ]

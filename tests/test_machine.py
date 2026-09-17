@@ -11,6 +11,7 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.api import (
     Circuit,
     FidelityLevel,
@@ -63,9 +64,16 @@ def test_calibrated_pins_a_table_for_the_device(machine) -> None:  # type: ignor
 
 def test_machine_run_equals_run_field_for_field(machine, bell) -> None:  # type: ignore[no-untyped-def]
     preset, m = machine
-    reference = run(
-        BELL, preset.device, 400, table=m.table, options=SolverOptions(branch_weight_min=1e-3), seed=0
-    )
+    reference = run(BELL, preset.device, 400, table=m.table, numerics=FAST, seed=0)
+    # the 0.1.0 call shape is rewritten onto the same machine, with the warning naming the keyword and its new home (2.1)
+    with pytest.warns(
+        QutipTrapDeprecationWarning, match=r"'options' argument of qutip_trap.run.job.run .* v0.5"
+    ):
+        legacy = run(
+            BELL, preset.device, 400, table=m.table, options=SolverOptions(branch_weight_min=1e-3), seed=0
+        )
+    assert np.array_equal(legacy.bitstrings, reference.bitstrings) and legacy.counts == reference.counts
+    assert legacy.machine_hash == reference.machine_hash == bell.machine_hash
     assert np.array_equal(bell.bitstrings, reference.bitstrings) and np.array_equal(
         bell.heralds, reference.heralds
     )
@@ -84,6 +92,7 @@ def test_machine_run_equals_run_field_for_field(machine, bell) -> None:  # type:
         if f.name == "wall_clock_span_s":
             continue
         assert getattr(bell.diagnostics, f.name) == getattr(reference.diagnostics, f.name), f.name
+        assert getattr(legacy.diagnostics, f.name) == getattr(reference.diagnostics, f.name), f.name
 
 
 def test_schedule_equals_the_scheduler_on_the_same_table(machine) -> None:  # type: ignore[no-untyped-def]

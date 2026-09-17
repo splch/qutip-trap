@@ -32,6 +32,7 @@ from qutip_trap.control.schedule import (
 from qutip_trap.device.model import BeamRoles, ResolvedRoles
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
+from qutip_trap.options import Numerics, Truncation
 from qutip_trap.run.levels import decide_level
 from tests.fixtures import make_device
 from tests.m6_fixtures import circuit_fixture
@@ -176,6 +177,9 @@ def test_the_level_decision_names_both_numbers_and_both_guards() -> None:
     assert resolve_level(dev, native, SolverOptions(joint_dimension_max=64)) is FidelityLevel.GATE_LOCAL
 
 
+FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
+
+
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     preset = yb171_chain(2)
@@ -186,18 +190,20 @@ def two_ion():  # type: ignore[no-untyped-def]
 def test_run_without_drive_keywords_reproduces_the_bell_histogram_bit_for_bit(two_ion) -> None:  # type: ignore[no-untyped-def]
     """docs/examples.md's run (roles from the device) against the 0.1.0 call form (the preset's maps as keyword arguments)."""
     preset, table = two_ion
-    options = SolverOptions(branch_weight_min=1e-3)
-    new = run(BELL, preset.device, 400, table=table, options=options, seed=3)
-    old = run(
-        BELL,
-        preset.device,
-        400,
-        table=table,
-        options=options,
-        seed=3,
-        gate_drives=preset.gate_drives,
-        entangling_drives=preset.entangling_drives,
-    )
+    new = run(BELL, preset.device, 400, table=table, numerics=FAST, seed=3)
+    with pytest.warns(
+        QutipTrapDeprecationWarning
+    ):  # options, gate_drives and entangling_drives: three rewrites (2.1)
+        old = run(
+            BELL,
+            preset.device,
+            400,
+            table=table,
+            options=SolverOptions(branch_weight_min=1e-3),
+            seed=3,
+            gate_drives=preset.gate_drives,
+            entangling_drives=preset.entangling_drives,
+        )
     assert np.array_equal(new.bitstrings, old.bitstrings) and new.counts == old.counts
     assert new.probabilities["00"] + new.probabilities["11"] > 0.98
     # 1.2: the diagnostics say which level ran and why, with the dimension and the non-zeros against the guards
@@ -215,7 +221,7 @@ def test_a_forced_level_reports_the_choice_auto_would_have_made(two_ion) -> None
         20,
         table=table,
         level=FidelityLevel.GATE_LOCAL,
-        options=SolverOptions(branch_weight_min=1e-3),
+        numerics=FAST,
     )
     assert forced.diagnostics.level == "GATE_LOCAL"
     assert forced.diagnostics.level_reason.startswith(

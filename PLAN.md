@@ -3184,4 +3184,84 @@ def run(circuit: Circuit, device: Device, shots: int, *, table: CalibrationTable
 - The warnings are classes, not records: `qutip_trap._compat.QutipTrapWarning` is the package's base, `QutipTrapDeprecationWarning` (also a `DeprecationWarning`) marks a deprecated path, and `qutip_trap.hilbert.truncation.TruncationWarning` a cap clamped by `mode_dimension_max` or a boundary population left above `boundary_population_max` after the retries.
 - Deprecated in 0.2.0 (docs/deprecations.md): `DevicePreset.run_kwargs()` (returns `{}`), `Result.to_ionq_json`, `to_ionq_histogram`, `to_ionq_shots` (aliases of the v1 names) and `Result.to_ionq_v2` (unchanged behaviour, superseded by the v2 exporters).
 
+**2026-09 additions (0.3.0; docs/api_implementation_plan.md Phase 2).** The option objects become the declared form of ``run``, the laboratory runs on machines, and the inverse direction (the phenomenological error model) is published. As for 0.2.0, the declarations live in the rung modules named in the comments and `tests/test_api_freeze.py` resolves them there; the keyword arguments of 0.1.0 stay accepted for two minor releases, rewritten with a `QutipTrapDeprecationWarning` naming their new home (docs/deprecations.md).
+
+```python
+# ---- entry point amendments (qutip_trap.run.job; rung 0) ----
+def run(circuit: Circuit, device: Device, shots: int, *, table: CalibrationTable | None = None,
+        level: Literal["JOINT_EXACT", "GATE_LOCAL", "auto"] = "auto", seed: int = 0, keep_final_state: bool = False,
+        progress=None, physics: "Physics | None" = None, numerics: "Numerics | None" = None,
+        readout: "Readout | None" = None, **deprecated) -> Result: ...
+        # Machine(device, table=table, physics=physics, numerics=numerics, readout=readout, level=level).run(circuit, shots, seed=seed, ...):
+        # the pipeline is run.pipeline.execute on the machine. ``deprecated`` accepts the 0.1.0 keywords (run.job.LEGACY_RUN_KEYWORDS:
+        # t0_s, shot_period_s, samples, options, gate_drives, entangling_drives, builder_options, readout as a string, discriminator,
+        # povm_samples, space, caps, channels, entangler, parallel, calibrate_kwargs, noise, internal_levels, crosstalk_suppression,
+        # stark_compensation, enr_group), each rewritten onto the machine with a warning; removable in v0.5 at the earliest.
+        # The pipeline itself is qutip_trap.run.pipeline.execute(machine, circuit, shots, *, seed, keep_final_state, progress),
+        # the implementation of Machine.run (not a public name: the method is the API)
+```
+
+```python
+# ---- the laboratory on machines (qutip_trap.experiments; docs/api_implementation_plan.md 2.2, 2.3) ----
+@dataclass(frozen=True)
+class ScanParameters:           # a scan's parameters by name, one tuple each; attribute access (scan.requested.durations_s)
+    values: "Mapping[str, Any]" = field(default_factory=dict)
+
+@dataclass(frozen=True)
+class ExperimentResult:
+    ...                                                    # unchanged fields
+    requested: "ScanParameters | None" = None              # the scan as asked for (the scanned axis and the settings held)
+    realized: "ScanParameters | None" = None               # the scan the hardware chain plays (realized_drive); None where no drive axis
+    chi2: float | None = None                              # the principal fit's reduced chi-square; None without a weighted fit
+    subject: dict[str, Any] = field(default_factory=dict)  # {"ion": 0, "beam": 2} | {"pair": (0, 1)} | {"mode": 3}, as the table keys it
+    created_at: str = field(default_factory=str)           # ISO 8601 UTC; not part of equality
+    def plot(self, ax=None): ...                           # needs the plot extra (matplotlib)
+
+class RabiScan(ExperimentResult): ...                      # f_rabi_hz, nbar, contrast, offset
+class RamseyFringe(ExperimentResult): ...                  # delta_hz, contrast, phi0_rad, offset; qubit_freq_hz, qubit_offset_hz (ramsey_frequency)
+class SidebandSpectrum(ExperimentResult): ...              # carrier_hz, blue_sideband_hz, red_sideband_hz, mode_hz, eta, nbar, omega_bsb_hz
+class ThermometryResult(ExperimentResult): ...             # nbar, ratio, duration_s
+class HeatingRateFit(ExperimentResult): ...                # ndot_per_s, nbar0
+class MSScan(ExperimentResult): ...                        # closure_offset_hz, closure_scale, chi_unit_rad, leakage_min; correction_rad(ion)
+class ParityScan(ExperimentResult): ...                    # contrast, phi0_rad, bell_fidelity_bound, P00, P11
+class DetectionHistogram(ExperimentResult): ...            # threshold, window_s, eps_B, eps_D, errors
+class StarkScan(ExperimentResult): ...                     # stark_shift_hz, coupling_shift_hz; shift_of_beam(beam)
+class CrosstalkScan(ExperimentResult): ...                 # rate_hz; eps(j), rate_of(j), phase_rad(j), neighbours
+class FieldScan(ExperimentResult): ...                     # B_gauss, qubit_freq_hz, qubit_offset_hz
+class MicromotionScan(ExperimentResult): ...               # shims_v, shim_v(name), beta_before
+class CrystalImage(ExperimentResult): ...                  # n_ions, n_bright, n_dark, n_lost
+        # every typed attribute equals value(key) where the fit produced the key and is None where it did not; quality is
+        # "good" | "poor" | "failed" | "exact" (the acceptance test before CalibrationTable.updated_with)
+
+def rabi_scan(machine, ion, durations_s, **kw) -> RabiScan: ...       # machine: Machine | Device (a Device is wrapped in a default Machine)
+def ramsey(machine, ion, delays_s, **kw) -> RamseyFringe: ...
+def ramsey_frequency(machine, ion, delays_s, **kw) -> RamseyFringe: ...
+def micromotion_scan(machine, ion, beam, shim_ranges_v, method="rf_photon_correlation", **kw) -> MicromotionScan: ...
+def sideband_spectroscopy(machine, ion, detunings_hz, **kw) -> SidebandSpectrum: ...
+def ms_scan(machine, pair, amplitudes, detunings_hz, **kw) -> MSScan: ...
+def parity_scan(machine, pair, analysis_phases_rad, **kw) -> ParityScan: ...
+def heating_rate(machine, mode, delays_s, **kw) -> HeatingRateFit: ...
+def detection_histogram(machine, ion, n_records, **kw) -> DetectionHistogram: ...
+        # the machine supplies table, options and builder_options as the defaults of kw (a Device supplies nothing, the 0.1.0
+        # behaviour); gate_drive=, gate_drives= and entangling_drives= in kw are deprecated: the device's roles name the drives (v0.5)
+def as_machine(machine) -> "Machine": ...                  # qutip_trap: a Device wrapped in a default Machine, else the machine itself
+
+# ---- qutip_trap.calibration ----
+def calibrate(machine, *, method: Literal["closed_form", "experiments"] = "closed_form", experiments: tuple[str, ...] = ("all",),
+              seed: int = 0, t0_s: float | None = None, surrogate: bool | None = None, **scans) -> "CalibrationReport": ...
+        # on a Machine: the CalibrationReport on every call (its .table is what the scheduler reads; t0_s defaults to the machine's
+        # Physics.t0_s); on a bare Device: the 0.1.0 result, the CalibrationTable, with surrogate=True/False deprecated in favour of
+        # method= (warns from 0.4.0). calibrate_with_report and compile_with_report are deprecated (Machine.compile returns the report).
+
+# ---- qutip_trap.benchmarks ----
+def randomized_benchmarking(machine, qubits, lengths, *, n_sequences: int = 4, shots: int = 200, seed: int = 0, budget: bool = True,
+                            fix_offset: bool | None = None, variant: str = "clifford", pair: bool | None = None) -> "RBResult": ...
+def ghz_fidelity(machine, qubits, *, shots: int = 400, analysis_phases_rad=None, seed: int = 0, budget: bool = True) -> "GHZResult": ...
+def quantum_volume(machine, qubits, *, n_circuits: int = 4, shots: int = 200, depth: int | None = None, seed: int = 0,
+                   budget: bool = True) -> "QVResult": ...
+def gate_channel(machine, kind: str) -> "GateChannel": ...  # cached per Machine.hash() and kind
+        # the 0.1.0 **run_kwargs of the benchmarks (table, options, level, noise, ...) are still accepted, each rewritten onto the
+        # machine with a warning (v0.5)
+```
+
 Three rules bind the surface. The application of Section 14 imports nothing outside this appendix. `control` never imports `calibration`, which sits above it and communicates through `CalibrationTable`. Every derived number reachable through `Device.derived()`, `Result.diagnostics` or an `ExperimentResult` carries a provenance id from the ledger of Section 14.5, so the Section 9.11 coverage test is a set difference.

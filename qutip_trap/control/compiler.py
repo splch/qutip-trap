@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 import numpy as np
 
+from qutip_trap._compat import deprecated
 from qutip_trap.control import native
 
 if TYPE_CHECKING:
@@ -841,7 +842,7 @@ class CompileReport:
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
-def compile_with_report(
+def compile_report(
     circuit: Circuit,
     device: Device | None = None,
     *,
@@ -849,7 +850,8 @@ def compile_with_report(
     cnot_signs: tuple[int, int] = (1, 1),
     verify_circuit: bool = True,
 ) -> CompileReport:
-    """Standard gates -> native gates with phase tracking, every block and the whole circuit verified (Section 7.2).
+    """Standard gates -> native gates with phase tracking, every block and the whole circuit verified (Section 7.2):
+    the compile step with its report, ``Machine.compile`` (docs/api_implementation_plan.md 2.2).
 
     ``device`` is accepted for the Appendix E signature (the template choice depends on the entangler, not on the device's
     hidden values); ``cnot_signs`` = (s, v) of Maslov's template. Native circuits pass through with their rz absorbed.
@@ -907,7 +909,25 @@ def compile_with_report(
 
 def compile_to_native(circuit: Circuit, device: Device | None = None, **kwargs: object) -> Circuit:
     """Standard gates -> native gates with phase tracking, verified against target unitaries (Section 7.2; Appendix E)."""
-    return compile_with_report(circuit, device, **kwargs).circuit  # type: ignore[arg-type]
+    return compile_report(circuit, device, **kwargs).circuit  # type: ignore[arg-type]
+
+
+@deprecated(
+    deadline="v0.5", fix="Call Machine(device).compile(circuit) instead; it returns the same CompileReport."
+)
+def compile_with_report(
+    circuit: Circuit,
+    device: Device | None = None,
+    *,
+    entangler: Entangler = "ms",
+    cnot_signs: tuple[int, int] = (1, 1),
+    verify_circuit: bool = True,
+) -> CompileReport:
+    """The 0.1.0 name of the compile step with its report; deprecated in 0.3.0 (docs/api_implementation_plan.md 2.2) in
+    favour of ``Machine.compile``, which returns the same ``CompileReport``."""
+    return compile_report(
+        circuit, device, entangler=entangler, cnot_signs=cnot_signs, verify_circuit=verify_circuit
+    )
 
 
 __all__ = [
@@ -930,6 +950,7 @@ __all__ = [
     "circuit_unitary",
     "cnot_global_phase",
     "cnot_template",
+    "compile_report",
     "compile_to_native",
     "compile_with_report",
     "cost_of",

@@ -51,12 +51,14 @@ from scipy.optimize import brentq
 from scipy.special import jv
 
 from qutip_trap.experiments.fitting import at_scan_edge, weighted_fit
-from qutip_trap.experiments.result import ExperimentResult
+from qutip_trap.experiments.result import ExperimentResult, MicromotionScan, ScanParameters
 from qutip_trap.experiments.single_ion import _observation
+from qutip_trap.machine import laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.light.bloch import BlochModel
+    from qutip_trap.machine import Machine
 
 METHODS = ("rf_photon_correlation", "doppler_nulling", "sideband_ratio")
 FIELD_SHIMS = ("Ex", "Ey", "Ez")
@@ -250,7 +252,7 @@ def _invert_j1_over_j0(ratio: float) -> float:
 
 
 def micromotion_scan(
-    device: Device,
+    machine: Machine | Device,
     ion: int,
     beam: int,
     shim_ranges_v: Mapping[str, tuple[float, float]],
@@ -267,6 +269,7 @@ def micromotion_scan(
     (pass, shim index, setting, signal, sigma). A trap without an rf record returns exact zeros with no scan behind them
     (the caller stores them as seeds, not as a measurement).
     """
+    device, kw = laboratory_kwargs(machine, kw, caller=micromotion_scan)
     if method not in METHODS:
         raise ValueError(f"method is one of {METHODS}")
     obs = _observation(device, kw)
@@ -278,12 +281,14 @@ def micromotion_scan(
         fitted = {f"shim[{name}]": (0.0, 0.0) for name in names}
         fitted[f"beta[{beam}]"] = (0.0, 0.0)
         fitted["beta_before"] = (0.0, 0.0)
-        return ExperimentResult(
+        return MicromotionScan(
             data=np.zeros((0, 5)),
             fitted=fitted,
             model=f"micromotion_{method}",
             provenance_id="anchor.trap.berkeland_excess_micromotion",
             notes=("no rf record on the trap: excess micromotion is not modelled (C0 = 1, beta = 0)",),
+            requested=ScanParameters({f"shim[{n}]_v": tuple(shim_ranges_v[n]) for n in names}),
+            subject={"ion": int(ion), "beam": int(beam)},
         )
     shims: dict[str, float] = {}
     if device.trap.path == "explicit":
@@ -372,13 +377,15 @@ def micromotion_scan(
         fitted = {f"shim[{n}]": null_fits[n] for n in names}
         fitted[f"beta[{beam}]"] = (beta_res, s_beta)
         fitted["beta_before"] = (beta0, 0.0)
-        return ExperimentResult(
+        return MicromotionScan(
             data=np.array(rows),
             fitted=fitted,
             model=f"micromotion_{method}",
             provenance_id="anchor.trap.berkeland_excess_micromotion",
             converged=converged,
             notes=tuple(notes),
+            requested=ScanParameters({f"shim[{n}]_v": tuple(shim_ranges_v[n]) for n in names}),
+            subject={"ion": int(ion), "beam": int(beam)},
         )
 
     # ---- the sideband-ratio method through the exact modulated builder --------------------------------------------------------
@@ -481,13 +488,15 @@ def micromotion_scan(
     fitted["beta_before"] = (abs(beta0), 0.0)
     fitted["carrier_hz"] = (f0, s_f0)
     fitted["sideband_excitation"] = (p_sb, s_p)
-    return ExperimentResult(
+    return MicromotionScan(
         data=np.array(rows),
         fitted=fitted,
         model="micromotion_sideband_ratio",
         provenance_id="anchor.trap.berkeland_excess_micromotion",
         converged=converged,
         notes=tuple(notes),
+        requested=ScanParameters({f"shim[{n}]_v": tuple(shim_ranges_v[n]) for n in names}),
+        subject={"ion": int(ion), "beam": int(beam)},
     )
 
 

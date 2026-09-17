@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from qutip_trap.experiments.result import ExperimentResult
+from qutip_trap.experiments.result import CrystalImage, ExperimentResult
 from qutip_trap.experiments.single_ion import _observation
+from qutip_trap.machine import laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
+    from qutip_trap.machine import Machine
 
 
 def _ion_rates(device: Device, ion: int) -> tuple[float, float] | None:
@@ -46,7 +48,7 @@ def _ion_rates(device: Device, ion: int) -> tuple[float, float] | None:
     return float(model.detected_bright_per_s), float(model.background_per_s)
 
 
-def crystal_image(device: Device, **kw: Any) -> ExperimentResult:
+def crystal_image(machine: Machine | Device, **kw: Any) -> ExperimentResult:
     """Image the chain and compare it with the nominal crystal (Section 6.7).
 
     ``run_state`` the persistent machine state to image (default nominal), ``exposure_s`` (default ten detection windows),
@@ -54,6 +56,7 @@ def crystal_image(device: Device, **kw: Any) -> ExperimentResult:
     (exact means otherwise), ``psf_sigma_m`` a Gaussian PSF for a camera without an NA. Fitted: n_ions, n_bright, n_dark, n_lost,
     bright[i] (1 or 0), counts[i], and position_m[i] (camera only); data: the image (camera) or the per-ion counts.
     """
+    device, kw = laboratory_kwargs(machine, kw, caller=crystal_image)
     from qutip_trap.run.results import RunState
 
     n = device.crystal.n_ions
@@ -173,7 +176,7 @@ def crystal_image(device: Device, **kw: Any) -> ExperimentResult:
         notes.append(
             "identical ions: a reorder is invisible to the image (the mode structure detects it, Section 6.7)"
         )
-    return ExperimentResult(
+    return CrystalImage(
         data=np.asarray(data),
         fitted=fitted,
         model="crystal_image",

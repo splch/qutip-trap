@@ -45,11 +45,12 @@ from qutip_trap.benchmarks.budget import (
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SeedSpec
 from qutip_trap.experiments.fitting import weighted_fit
-from qutip_trap.run.job import register_fidelity, run
+from qutip_trap.run.job import machine_with_run_kwargs, register_fidelity
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
+    from qutip_trap.machine import Machine
 
 
 def ghz_circuit(qubits: Sequence[int], n_qubits: int) -> Circuit:
@@ -159,7 +160,7 @@ class GHZResult:
 
 
 def ghz_fidelity(
-    device: Device,
+    machine: Machine | Device,
     qubits: Sequence[int],
     *,
     shots: int = 400,
@@ -168,10 +169,16 @@ def ghz_fidelity(
     budget: bool = True,
     **run_kwargs: Any,
 ) -> GHZResult:
-    """The GHZ benchmark of the module docstring on ``qubits`` (two or more), every point a ``run`` of ``shots``.
+    """The GHZ benchmark of the module docstring on ``qubits`` (two or more), every point a ``Machine.run`` of ``shots``.
 
-    ``analysis_phases_rad`` default to eight phases over one period 2 pi/N of the parity oscillation. ``run_kwargs`` go to
-    ``run``; ``keep_final_state`` is forced on for the populations run (the exact register fidelity)."""
+    ``analysis_phases_rad`` default to eight phases over one period 2 pi/N of the parity oscillation. ``machine`` carries the
+    table, the level and the option objects (a bare ``Device`` is wrapped in a default machine); the 0.1.0 ``run_kwargs``
+    are still accepted, each rewritten onto the machine with a deprecation warning; ``keep_final_state`` is forced on for
+    the populations run (the exact register fidelity)."""
+    m = machine_with_run_kwargs(
+        machine, run_kwargs, caller="qutip_trap.benchmarks.ghz.ghz_fidelity", stacklevel=2, call_keywords=True
+    )
+    device = m.device
     qs = tuple(int(q) for q in qubits)
     if len(qs) < 2 or len(set(qs)) != len(qs):
         raise ValueError("a GHZ state needs at least two distinct qubits")
@@ -189,9 +196,8 @@ def ghz_fidelity(
     if len(phases) < 4:
         raise ValueError("at least four analysis phases for the three-parameter parity fit")
     root = SeedSpec(int(seed))
-    kw = {k: v for k, v in run_kwargs.items() if k != "keep_final_state"}
     seed0 = int(root.child(0, 0, 0, 0, "ghz_runs").generate_state(1)[0])
-    res_pop = run(ghz_circuit(qs, n_ions), device, shots, seed=seed0, keep_final_state=True, **kw)
+    res_pop = m.run(ghz_circuit(qs, n_ions), shots, seed=seed0, keep_final_state=True)
     key0, key1 = "0" * n, "1" * n
     p0 = float(res_pop.probabilities.get(key0, 0.0))
     p1 = float(res_pop.probabilities.get(key1, 0.0))
@@ -201,7 +207,7 @@ def ghz_fidelity(
     rows: list[tuple[float, float, float]] = []
     for k, phi in enumerate(phases):
         seed_k = int(root.child(0, 0, k + 1, 0, "ghz_runs").generate_state(1)[0])
-        res = run(parity_circuit(qs, n_ions, phi), device, shots, seed=seed_k, **kw)
+        res = m.run(parity_circuit(qs, n_ions, phi), shots, seed=seed_k)
         par, sg = parity_of(res)
         rows.append((phi, par, sg))
         results.append(res)
@@ -223,7 +229,7 @@ def ghz_fidelity(
         counts, intrinsic = gather_counts_and_intrinsic([res_pop], [1])
         spam = spam_of(res_pop, qs)
         kinds = [name for name in counts if not name.startswith("total")]
-        channels, infid = channels_for(device, kinds, qs, **kw)
+        channels, infid = channels_for(m, kinds, qs)
         f_gates = 1.0
         for kind in kinds:
             f_gates *= (1.0 - infid[kind]) ** counts[kind]

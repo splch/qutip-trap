@@ -43,11 +43,12 @@ from qutip_trap.benchmarks.budget import (
 from qutip_trap.control.compiler import Circuit, Operation, decompose_single_qubit, ideal_probabilities
 from qutip_trap.control.two_qubit import canonical_operations, haar_random_unitary, kak_decomposition
 from qutip_trap.dynamics.engine import SeedSpec
-from qutip_trap.run.job import last_record, register_fidelity, run
+from qutip_trap.run.job import last_record, machine_with_run_kwargs, register_fidelity
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
+    from qutip_trap.machine import Machine
 
 HEAVY_OUTPUT_THRESHOLD = 2.0 / 3.0
 PROTOCOL_CIRCUITS = 100
@@ -205,7 +206,7 @@ class QVResult:
 
 
 def quantum_volume(
-    device: Device,
+    machine: Machine | Device,
     qubits: Sequence[int],
     *,
     n_circuits: int = 4,
@@ -215,7 +216,17 @@ def quantum_volume(
     budget: bool = True,
     **run_kwargs: Any,
 ) -> QVResult:
-    """The quantum-volume style run of the module docstring on ``qubits`` (two or more), depth = width by default."""
+    """The quantum-volume style run of the module docstring on ``qubits`` (two or more), depth = width by default, every
+    circuit a ``Machine.run``; ``machine`` carries the table, the level and the option objects (a bare ``Device`` is wrapped
+    in a default machine), and the 0.1.0 ``run_kwargs`` are still accepted with a deprecation warning each."""
+    m = machine_with_run_kwargs(
+        machine,
+        run_kwargs,
+        caller="qutip_trap.benchmarks.volume.quantum_volume",
+        stacklevel=2,
+        call_keywords=True,
+    )
+    device = m.device
     qs = tuple(int(q) for q in qubits)
     if len(qs) < 2 or len(set(qs)) != len(qs):
         raise ValueError("a quantum-volume circuit needs at least two distinct qubits")
@@ -229,7 +240,6 @@ def quantum_volume(
         raise ValueError("depth is positive")
     root = SeedSpec(int(seed))
     rng = np.random.default_rng(root.child(0, 0, 0, 0, "qv_circuits"))
-    kw = {k: v for k, v in run_kwargs.items() if k != "keep_final_state"}
     circuits: list[QVCircuit] = []
     results: list[Result] = []
     h = np.zeros(n_circuits)
@@ -240,7 +250,7 @@ def quantum_volume(
     for k in range(n_circuits):
         qc = random_square_circuit(rng, qs, d, n_ions)
         run_seed = int(root.child(0, 0, k, 0, "qv_runs").generate_state(1)[0])
-        res = run(qc.circuit, device, shots, seed=run_seed, keep_final_state=True, **kw)
+        res = m.run(qc.circuit, shots, seed=run_seed, keep_final_state=True)
         rec = last_record(res)
         n_pulses += rec.compile.n_pulses
         n_ent += rec.compile.n_entangling
@@ -265,7 +275,7 @@ def quantum_volume(
         counts, intrinsic = gather_counts_and_intrinsic(results, [1] * n_circuits)
         spam = spam_of(results[0], qs)
         kinds = [k for k in counts if not k.startswith("total")]
-        channels, infid = channels_for(device, kinds, qs, **kw)
+        channels, infid = channels_for(m, kinds, qs)
         eps_gates = 1.0 - float(np.prod([(1.0 - infid[k]) ** counts[k] for k in kinds])) if kinds else 0.0
         eps_ro = sum(0.5 * (spam.get(f"q{q}", (0.0, 0.0))[0] + spam.get(f"q{q}", (0.0, 0.0))[1]) for q in qs)
         eps = 1.0 - (1.0 - eps_gates) * (1.0 - eps_ro)

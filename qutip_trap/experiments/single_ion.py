@@ -42,7 +42,16 @@ from qutip_trap.experiments.fitting import (
     thermal_rabi_model,
     weighted_fit,
 )
-from qutip_trap.experiments.result import ExperimentResult
+from qutip_trap.experiments.result import (
+    ExperimentResult,
+    RabiScan,
+    RamseyFringe,
+    ScanParameters,
+    SidebandSpectrum,
+    realized_drive,
+    requested_drive,
+)
+from qutip_trap.machine import laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Drive
@@ -50,6 +59,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.machine import Machine
     from qutip_trap.noise.sampling import NoiseSample
 
 
@@ -67,6 +77,8 @@ class _Setup:
     nbar: dict[int, float]
     etas: dict[int, float]
     stark_shift_hz: float
+    gate_drive: GateDrive
+    """The single-qubit drive the experiment resolved (the table keys the Rabi entry by its first beam)."""
 
 
 def thermal_n_max(nbar: float, tail: float = 1e-7) -> int:
@@ -220,6 +232,7 @@ def _setup(device: Device, ion: int, kw: dict[str, Any]) -> _Setup:
         nbar=nbar,
         etas=etas,
         stark_shift_hz=stark,
+        gate_drive=gate_drive,
     )
 
 
@@ -348,7 +361,9 @@ def _run(
 # ---- the experiments -----------------------------------------------------------------------------------------------------------
 
 
-def rabi_scan(device: Device, ion: int, durations_s: Sequence[float], **kw: Any) -> ExperimentResult:
+def rabi_scan(
+    machine: Machine | Device, ion: int, durations_s: Sequence[float], **kw: Any
+) -> ExperimentResult:
     """Carrier (or sideband, with ``detuning_hz``) Rabi flopping of ``ion`` against pulse duration, fitted with the thermal
     Debye-Waller envelope (Section 4.2.7): fitted f_rabi_hz, nbar and contrast; data columns (t, P1).
 
@@ -356,6 +371,7 @@ def rabi_scan(device: Device, ion: int, durations_s: Sequence[float], **kw: Any)
     (f_rabi, contrast, offset) only, since the Debye-Waller decay over about 1/(eta^2 nbar) Rabi periods makes a three-parameter
     fit to less than one period degenerate; the scan should span at least ten pi times.
     """
+    device, kw = laboratory_kwargs(machine, kw, caller=rabi_scan)
     from qutip_trap.control.pulses import Pulse
 
     setup = _setup(device, ion, kw)
@@ -431,7 +447,7 @@ def rabi_scan(device: Device, ion: int, durations_s: Sequence[float], **kw: Any)
         converged = fit.converged and fitted["f_rabi_hz"][0] > 0.0
         if not fit.converged:
             notes.append(f"Rabi fit did not converge: {fit.message}")
-    return ExperimentResult(
+    return RabiScan(
         data=data,
         fitted=fitted,
         model="thermal_debye_waller_rabi",
@@ -439,15 +455,20 @@ def rabi_scan(device: Device, ion: int, durations_s: Sequence[float], **kw: Any)
         converged=converged,
         notes=tuple(notes),
         sigma=sigma,
+        requested=ScanParameters({"durations_s": ts, **requested_drive(setup.drive, t_max)}),
+        realized=ScanParameters({"durations_s": ts, **realized_drive(device, setup.drive, t_max)}),
+        chi2=fitted["chi2_per_dof"][0] if "chi2_per_dof" in fitted else None,
+        subject={"ion": int(ion), "beam": setup.gate_drive.table_key_beam},
     )
 
 
-def ramsey(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
+def ramsey(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """pi/2 - delay - pi/2(phase ``analysis_phase_rad``) on ``ion`` at drive detuning ``detuning_hz``; data columns (delay, P1);
     fitted fringe P = A cos(2 pi delta t + phi_0) + B: delta_hz, contrast (Section 7.5, the Ramsey-frequency experiment's core).
 
     ``pi_half_s`` overrides the pi/2 duration (default 1/(4 f) at the physical Rabi frequency; a laboratory uses its table's,
     ``rabi_hz_belief``); ``delay_pulses`` is a callable (start, end) -> list of pulses filling the delay (the Stark scan)."""
+    device, kw = laboratory_kwargs(machine, kw, caller=ramsey)
     from qutip_trap.control.pulses import Pulse
 
     setup = _setup(device, ion, kw)
@@ -495,19 +516,30 @@ def ramsey(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -> Ex
             "chi2_per_dof": (fit.chi2_per_dof, 0.0),
         }
         converged = fit.converged
-    return ExperimentResult(
+    return RamseyFringe(
         data=data,
         fitted=fitted,
         model="ramsey_fringe",
         provenance_id="conv.detuning_symbols",
         converged=converged,
         sigma=sigma,
+        requested=ScanParameters(
+            {"delays_s": data[:, 0], "pi_half_s": (t_half,), **requested_drive(setup.drive, t_half)}
+        ),
+        realized=ScanParameters(
+            {"delays_s": data[:, 0], "pi_half_s": (t_half,), **realized_drive(device, setup.drive, t_half)}
+        ),
+        chi2=fitted["chi2_per_dof"][0] if "chi2_per_dof" in fitted else None,
+        subject={"ion": int(ion), "beam": setup.gate_drive.table_key_beam},
     )
 
 
-def ramsey_frequency(device: Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
+def ramsey_frequency(
+    machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any
+) -> ExperimentResult:
     """Qubit frequency for the table: the frame (drive reference) frequency plus the fitted Ramsey fringe frequency, with the
     sign resolved by two scans at drive detunings +-``probe_hz`` (default 1 kHz); the scheduler never reads the true value."""
+    device, kw = laboratory_kwargs(machine, kw, caller=ramsey_frequency)
     probe = abs(float(kw.get("probe_hz", 1e3)))
     frame_hz = float(kw.get("frame_hz", 0.0))
     plus = ramsey(device, ion, delays_s, **{**kw, "detuning_hz": +probe})
@@ -532,7 +564,7 @@ def ramsey_frequency(device: Device, ion: int, delays_s: Sequence[float], **kw: 
         notes.append(
             f"the offset {x:.3g} Hz exceeds the probe {probe:.3g} Hz: the sign resolution is ambiguous; raise probe_hz"
         )
-    return ExperimentResult(
+    return RamseyFringe(
         data=data,
         fitted={
             "qubit_offset_hz": (x, unc),
@@ -544,16 +576,21 @@ def ramsey_frequency(device: Device, ion: int, delays_s: Sequence[float], **kw: 
         provenance_id="conv.detuning_symbols",
         converged=converged,
         notes=tuple(notes),
+        requested=plus.requested,
+        realized=plus.realized,
+        chi2=max(c for c in (plus.chi2, minus.chi2) if c is not None) if (plus.chi2 or minus.chi2) else None,
+        subject=dict(plus.subject),
     )
 
 
 def sideband_spectroscopy(
-    device: Device, ion: int, detunings_hz: Sequence[float], **kw: Any
+    machine: Machine | Device, ion: int, detunings_hz: Sequence[float], **kw: Any
 ) -> ExperimentResult:
     """P1 after a pulse of ``duration_s`` (default the carrier pi time) against the drive detuning; the fitted entries are the
     detunings of the local maxima nearest the carrier and the driven mode's first sidebands (Section 7.9); with ``fit=True``
     the blue sideband and the carrier are fitted with the plan's lineshape (``fit_lineshape``) where the scan has at least five
     points within a quarter of the mode frequency of them: blue_sideband_fit_hz, omega_bsb_hz, carrier_fit_hz."""
+    device, kw = laboratory_kwargs(machine, kw, caller=sideband_spectroscopy)
     from qutip_trap.control.pulses import Pulse
 
     base = _setup(device, ion, {**kw, "detuning_hz": 0.0})
@@ -561,9 +598,11 @@ def sideband_spectroscopy(
     duration = float(kw.get("duration_s", 0.5 / base.rabi_hz))
     rows: list[tuple[float, float]] = []
     sig: list[float | None] = []
+    realized_mus: list[float] = []
     for k, mu in enumerate(sorted(float(x) for x in detunings_hz)):
         setup = _setup(device, ion, {**kw, "detuning_hz": mu, "space": base.space})
         pulse = Pulse(setup.drive, 0.0, duration, "sideband_spectroscopy", ())
+        realized_mus.append(realized_drive(device, setup.drive, duration)["detuning_hz"])
         avg = _run(device, ion, [pulse], setup, kw)
         p, s = obs.p1(avg.final_p1(ion), ion, "sideband_spectroscopy", k)
         rows.append((mu, p))
@@ -597,12 +636,16 @@ def sideband_spectroscopy(
     else:
         idx = int(np.argmax(p1))
         fitted["carrier_hz"] = (float(mus[idx]), step)
-    return ExperimentResult(
+    return SidebandSpectrum(
         data=data,
         fitted=fitted,
         model="sideband_spectrum_peaks",
         provenance_id="conv.detuning_symbols",
         sigma=sigma,
+        requested=ScanParameters({"detunings_hz": mus, "duration_s": (duration,)}),
+        realized=ScanParameters({"detunings_hz": realized_mus, "duration_s": (duration,)}),
+        subject={"ion": int(ion), "beam": base.gate_drive.table_key_beam}
+        | ({"mode": int(base.driven_mode)} if base.driven_mode is not None else {}),
     )
 
 

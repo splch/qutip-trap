@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
+from qutip_trap._compat import deprecated
 from qutip_trap.control.schedule import CrosstalkSuppression
 from qutip_trap.dynamics.engine import LindbladMethod, RecoilOption, SolverOptions
 
@@ -336,9 +337,14 @@ class Readout(_FromMapping):
         return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
 
+@deprecated(
+    deadline="v0.5",
+    fix="Pass physics=, numerics= and readout= to run, or build a Machine with them and call Machine.run.",
+)
 def to_run_kwargs(physics: Physics, numerics: Numerics, readout: Readout) -> dict[str, Any]:
-    """The keyword arguments of ``qutip_trap.run.job.run`` for these option objects: the one place that knows today's
-    names (0.3.0 inverts the direction and rewrites the old keywords into the objects)."""
+    """The 0.1.0 keyword arguments of ``qutip_trap.run.job.run`` for these option objects. Deprecated in 0.3.0: ``run`` now
+    takes the objects themselves and rewrites these keywords with a warning (``run.job.LEGACY_RUN_KEYWORDS``), so the
+    dictionary this returns is one that warns when splatted into ``run``."""
     tr = numerics.truncation
     return {
         "options": numerics.to_solver_options(physics),

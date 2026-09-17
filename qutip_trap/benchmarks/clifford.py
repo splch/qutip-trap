@@ -60,8 +60,11 @@ CORES: Final[dict[CoreName, np.ndarray]] = {
     "swap": SWAP_MATRIX,
 }
 CLASS_SIZES: Final[dict[CoreName, int]] = {"identity": 576, "cnot": 5184, "iswap": 5184, "swap": 576}
+"""The size of each class of the two-qubit Clifford group by its KAK core (identity, cnot, iswap, swap: 576 + 5184 + 5184 + 576
+= 11520); the double-coset sampler weights the cores by them."""
 ENTANGLING_COUNT: Final[dict[CoreName, int]] = {"identity": 0, "cnot": 1, "iswap": 2, "swap": 3}
 TWO_QUBIT_GROUP_ORDER: Final[int] = 11520
+"""The order of the two-qubit Clifford group modulo phases, 11520 (Section 7.9)."""
 SINGLE_QUBIT_GROUP_ORDER: Final[int] = 24
 
 

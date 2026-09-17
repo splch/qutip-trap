@@ -95,10 +95,16 @@ def _feed(h: Any, obj: object) -> None:
     elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         h.update(f"D{type(obj).__qualname__}(".encode())
         for f in dataclasses.fields(obj):
-            if f.metadata.get("hash") == "exclude":
+            rule = f.metadata.get("hash")
+            if rule == "exclude":
+                continue
+            value = getattr(obj, f.name)
+            if rule == "skip_default" and f.default is not dataclasses.MISSING and value == f.default:
+                # a field added after the record's digests were captured enters the canonical form only when it is set
+                # (docs/api_implementation_plan.md Section 1, "hash stability")
                 continue
             h.update(f"{f.name}=".encode())
-            _feed(h, getattr(obj, f.name))
+            _feed(h, value)
         h.update(b");")
     elif isinstance(obj, Mapping):
         h.update(f"m{len(obj)}(".encode())

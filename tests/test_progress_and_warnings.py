@@ -71,7 +71,7 @@ def test_the_callback_sequence_is_monotone_per_stage_and_complete(machine: Machi
         machine.device,
         200,
         table=machine.table,
-        options=SolverOptions(branch_weight_min=1e-3, map="serial"),
+        numerics=Numerics(truncation=Truncation(branch_weight_min=1e-3), parallel=Parallel(map="serial")),
         seed=1,
         progress=seen_fn.append,
     )

@@ -59,11 +59,12 @@ from qutip_trap.control.compiler import Circuit, Operation, decompose_single_qub
 from qutip_trap.dynamics.engine import SeedSpec
 from qutip_trap.experiments.fitting import weighted_fit
 from qutip_trap.noise.summary import depolarizing_entanglement_infidelity, rb_error_per_clifford
-from qutip_trap.run.job import last_record, run
+from qutip_trap.run.job import last_record, machine_with_run_kwargs
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
+    from qutip_trap.machine import Machine
 
 
 @dataclass(frozen=True)
@@ -362,7 +363,7 @@ def mean_survival_sigma(values: np.ndarray, sigma: np.ndarray, n_sequences: int,
 
 
 def randomized_benchmarking(
-    device: Device,
+    machine: Machine | Device,
     qubits: Sequence[int],
     lengths: Sequence[int],
     *,
@@ -372,19 +373,30 @@ def randomized_benchmarking(
     budget: bool = True,
     fix_offset: bool | None = None,
     variant: str = "clifford",
+    pair: bool | None = None,
     **run_kwargs: Any,
 ) -> RBResult:
-    """Randomized benchmarking of one qubit (or several at once, simultaneous RB) or of a pair, through ``run``.
+    """Randomized benchmarking of one qubit (or several at once, simultaneous RB) or of a pair, through ``Machine.run``.
 
     ``lengths`` are the Clifford counts m (the closing inverse not counted), or for ``variant="knill"`` the computational-gate
     counts L (the closing pi/2 not counted); every (length, sequence) is one ``run`` of ``shots`` with its own keyed seed.
     ``pair`` selects the protocol on exactly two qubits: ``pair=True`` (the default there) the 11520-element two-qubit
     Clifford group, ``pair=False`` simultaneous single-qubit RB; ``pair=True`` on any other qubit count is an error.
-    ``run_kwargs`` go to ``run`` (``table``, ``gate_drives``, ``entangling_drives``, ``options``, ``level``, ``noise``, ...).
+    ``machine`` carries the table, the level and the option objects (a bare ``Device`` is wrapped in a default machine;
+    docs/api_implementation_plan.md 2.2); the 0.1.0 ``run_kwargs`` (``table``, ``options``, ``level``, ``noise``, ...) are
+    still accepted, each rewritten onto the machine with a deprecation warning.
     ``budget=True`` adds the Section 6.8 channels of the native gate kinds used (one GATE_LOCAL tomography per kind, cached
     per device) and the predictions composed from them. ``fix_offset`` pins the fit's B at 1/2^n (always pinned for the
     Knill-style variant, whose published form is B p^L + 1/2).
     """
+    mach = machine_with_run_kwargs(
+        machine,
+        run_kwargs,
+        caller="qutip_trap.benchmarks.rb.randomized_benchmarking",
+        stacklevel=2,
+        call_keywords=True,
+    )
+    device = mach.device
     qs = tuple(int(q) for q in qubits)
     if not qs or len(set(qs)) != len(qs):
         raise ValueError(
@@ -402,9 +414,7 @@ def randomized_benchmarking(
     n_ions = device.crystal.n_ions
     if any(q < 0 or q >= n_ions for q in qs):
         raise ValueError("qubits index the device's ions")
-    # pop unconditionally: `and` would short-circuit past the pop on any qubit count but two and leave `pair` in the
-    # kwargs splatted into run(), which has no such parameter
-    pair_requested = run_kwargs.pop("pair", None)
+    pair_requested = pair
     if pair_requested is not None and bool(pair_requested) and (len(qs) != 2 or variant != "clifford"):
         raise ValueError(
             "pair=True runs the 11520-element two-qubit Clifford group and needs exactly two qubits and "
@@ -444,7 +454,7 @@ def randomized_benchmarking(
                 seq = single_qubit_sequences(rng, qs, m, n_ions)
             run_seed = int(root.child(0, 0, k_run, 0, "rb_runs").generate_state(1)[0])
             k_run += 1
-            res = run(seq.circuit, device, shots, seed=run_seed, **run_kwargs)
+            res = mach.run(seq.circuit, shots, seed=run_seed)
             rec = last_record(res)
             n_pulses += rec.compile.n_pulses
             n_ent += rec.compile.n_entangling
@@ -507,7 +517,7 @@ def randomized_benchmarking(
         counts, intrinsic = gather_counts_and_intrinsic(results, units)
         spam = spam_of(results[0], qs)
         kinds = [k for k in counts if not k.startswith("total")]
-        channels, infid = channels_for(device, kinds, qs, **run_kwargs)
+        channels, infid = channels_for(mach, kinds, qs)
         r_channel_joint = float(sum(counts[k] * infid[k] for k in kinds))
         per_qubit = (
             {q: float(n_q * sum(counts[k] * channels[k].infidelity_on((q,)) for k in kinds)) for q in qs}

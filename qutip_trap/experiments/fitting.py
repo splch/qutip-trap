@@ -147,6 +147,9 @@ def parity_model(p: np.ndarray, phi: np.ndarray) -> np.ndarray:
 
 @dataclass(frozen=True)
 class FitResult:
+    """A weighted least-squares fit (``weighted_fit``): the parameters and their one-sigma errors, the reduced chi-square, whether
+    the optimiser converged, its message and the number of points fitted."""
+
     params: np.ndarray
     errors: np.ndarray
     """One-sigma uncertainties from the covariance (scaled by max(1, chi^2/dof) when sigmas are given)."""

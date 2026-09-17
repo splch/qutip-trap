@@ -6,13 +6,15 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from qutip_trap.experiments.result import ExperimentResult
+from qutip_trap.experiments.result import DetectionHistogram, ExperimentResult, ScanParameters
+from qutip_trap.machine import laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
+    from qutip_trap.machine import Machine
 
 
-def detection_histogram(device: Device, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
+def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
     """Section 7.5 item 5 (M5): histogram bright and dark photon counts on the simulated readout model of ion ``ion`` and
     choose the threshold and window minimizing the average error.
 
@@ -23,6 +25,7 @@ def detection_histogram(device: Device, ion: int, n_records: int, **kw: Any) -> 
     readout stage of ``run`` applies it. ``data`` holds the bright and dark histograms at the chosen window
     (rows) and ``fitted`` the threshold, window, eps_B, eps_D and the fitted rates with their uncertainties.
     """
+    device, kw = laboratory_kwargs(machine, kw, caller=detection_histogram)
     from qutip_trap.calibration.readout import calibrate_detection
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel
@@ -66,8 +69,13 @@ def detection_histogram(device: Device, ion: int, n_records: int, **kw: Any) -> 
     data[1, : cal.dark_histogram.size] = cal.dark_histogram
     fitted = {name: (e.value, e.uncertainty) for name, e in cal.entries.items()}
     fitted["R_bright_scattered_per_s"] = (rates.R_bright_per_s, 0.0)
-    return ExperimentResult(
-        data=data, fitted=fitted, model="detection_histogram", provenance_id="conv.readout_figure_of_merit"
+    return DetectionHistogram(
+        data=data,
+        fitted=fitted,
+        model="detection_histogram",
+        provenance_id="conv.readout_figure_of_merit",
+        requested=ScanParameters({"windows_s": [float(w) for w in windows], "n_records": (n_records,)}),
+        subject={"ion": int(ion)},
     )
 
 

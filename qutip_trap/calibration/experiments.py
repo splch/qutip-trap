@@ -311,6 +311,9 @@ def full_calibration(
             f"unknown calibration experiments {sorted(unknown)}; known: {ORDER} and the aliases {sorted(ALIASES)}"
         )
     drives, ent = resolve_drives(device, gate_drives, entangling_drives)
+    # the experiments read the drives from the device's roles (0.3.0): the resolved maps become the roles of the device
+    # this calibration runs on; the roles are not part of the device digest, so the table's device_hash is unchanged
+    device = replace(device, roles=replace(device.roles, gate=drives, entangling=ent))
     n = device.crystal.n_ions
     sur = surrogate or surrogate_table(
         device,
@@ -391,7 +394,6 @@ def full_calibration(
             device,
             0,
             sc.ramsey_delays_s,
-            gate_drive=drives[0],
             b_seed_gauss=float(table.field.value),
             probe_hz=sc.field_probe_hz,
             table=table,
@@ -461,7 +463,6 @@ def full_calibration(
                 ranges,
                 method=sc.micromotion_method,
                 points=sc.micromotion_points,
-                gate_drive=drives[0],
                 **{**common, "stream": "micromotion_scan[0]"},
             )
             results["micromotion_scan[0]"] = res
@@ -488,7 +489,6 @@ def full_calibration(
                 device,
                 ion,
                 m,
-                gate_drive=drives[ion],
                 seed_hz=float(table.modes[m].value),
                 span=sc.mode_span,
                 coarse_points=sc.mode_coarse_points,
@@ -529,7 +529,6 @@ def full_calibration(
                 device,
                 i,
                 ts,
-                gate_drive=spec,
                 nbar_fixed=nbar_belief.get(driven, 0.0) if driven is not None else 0.0,
                 table=table,
                 qubit_shifts_hz=frame_shifts(device, table),
@@ -550,7 +549,6 @@ def full_calibration(
                 device,
                 i,
                 sc.stark_delays_s,
-                gate_drive=spec,
                 probe_hz=sc.stark_probe_hz,
                 rabi_hz_belief=_belief(table, i, spec),
                 table=table,
@@ -571,7 +569,6 @@ def full_calibration(
                 device,
                 i,
                 sc.ramsey_delays_s,
-                gate_drive=spec,
                 probe_hz=sc.field_probe_hz,
                 frame_hz=frame_hz,
                 rabi_hz_belief=_belief(table, i, spec),
@@ -601,7 +598,6 @@ def full_calibration(
                 device,
                 i,
                 ts,
-                gate_drive=spec,
                 rabi_hz_belief=f_i,
                 analysis_phases_rad=np.linspace(
                     0.0, 2.0 * math.pi, sc.crosstalk_phase_points, endpoint=False
@@ -649,8 +645,6 @@ def full_calibration(
                 table = replace(table, ms=ms_entries)
             gate_kw = {
                 "table": table,
-                "gate_drives": drives,
-                "entangling_drives": ent,
                 "qubit_shifts_hz": frame_shifts(device, table),
                 "mode_frequencies_hz": modes_hz,
                 **{k: v for k, v in common.items() if k != "nbar"},
@@ -802,7 +796,6 @@ def full_calibration(
                 m,
                 delays,
                 ion=ion,
-                gate_drive=drives[ion],
                 nbar0=nbar_belief.get(m, 0.0),
                 ndot_seed=ndot_seed,
                 mode_hz=float(table.modes[m].value),

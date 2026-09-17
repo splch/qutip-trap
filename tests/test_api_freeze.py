@@ -29,6 +29,9 @@ RUNG_MODULES = (
     "qutip_trap.presets",
     "qutip_trap.io.qasm2",
     "qutip_trap.io.ionq",
+    "qutip_trap.experiments",
+    "qutip_trap.calibration",
+    "qutip_trap.benchmarks",
 )
 """Where a declared name is looked up: the Appendix E surface first, then the rung modules of the 2026-09 additions (which
 ``qutip_trap.api`` does not export; docs/api_implementation_plan.md 1.10)."""
@@ -428,7 +431,7 @@ def test_unimplemented_entry_points_name_their_milestone() -> None:
     # M6: the surrogate calibration, the compiler and the OpenQASM 2 importer are implemented; M8 the full simulated-experiment
     # calibration and Device.derived(); M9a the GATE_LOCAL tomography; M9b the matrix-free kernel
     with pytest.raises(ValueError, match=r"unknown calibration experiments"):
-        api.calibrate(dev, surrogate=False, experiments=("not_an_experiment",))  # type: ignore[arg-type]
+        api.calibrate(dev, method="experiments", experiments=("not_an_experiment",))  # type: ignore[arg-type]
     assert api.load_openqasm2("OPENQASM 2.0; qreg q[1]; x q[0];").ops[0].name == "x"
     assert (
         api.compile_to_native(api.Circuit(1, (api.Operation("x", (0,), ()),), (0,)), dev).ops[0].name == "gpi"

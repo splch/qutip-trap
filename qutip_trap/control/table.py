@@ -17,6 +17,28 @@ if TYPE_CHECKING:
     from qutip_trap.control.shaping import GateModes, Kernel
 
 Leg = Literal["red", "blue"]
+EntryKind = Literal["setpoint", "characterisation"]
+"""Qibolab's partition of a calibration (docs/api_proposal.md Section 4.8): a ``setpoint`` is what the scheduler programs
+(the frame frequency, the Rabi rate the amplitude word is derived from, the light shift it compensates, the mode frequencies
+its sidebands sit at, the entangling waveforms, the micromotion shims, the detection threshold and window); a
+``characterisation`` is what was measured about the device and programmed nowhere (the field, the occupations, the heating
+rates, the crosstalk ratios and phases, the Lamb-Dicke parameters)."""
+ENTRY_KINDS: dict[str, EntryKind] = {
+    "qubit_freq": "setpoint",
+    "rabi": "setpoint",
+    "stark": "setpoint",
+    "modes": "setpoint",
+    "ms": "setpoint",
+    "micromotion": "setpoint",
+    "detection": "setpoint",
+    "field": "characterisation",
+    "nbar": "characterisation",
+    "heating": "characterisation",
+    "crosstalk": "characterisation",
+    "crosstalk_phase": "characterisation",
+    "lamb_dicke": "characterisation",
+}
+"""The kind of every table field (``CalibrationTable.kind_of`` reads an entry's own ``kind`` first)."""
 WaveformKind = Literal["ms", "light_shift", "gradient"]
 """``ms``: bichromatic red/blue legs on the spin flip (Section 4.4.1); ``light_shift``: one beat note ("blue") on the
 state-dependent light shift, sigma_z sigma_z (Section 4.4.4); ``gradient``: the two microwave tones at -/+ delta of a
@@ -39,10 +61,14 @@ class CalEntry:
     """Calibration age: the laboratory time the fit was made at (Section 7.5)."""
     sample_id: int
     """The noise sample the entry was fitted under."""
+    kind: EntryKind | None = dc_field(default=None, metadata={"hash": "skip_default"})
+    """``setpoint`` (what the scheduler programs) or ``characterisation`` (what was measured about the device); None derives
+    it from the table field that holds the entry (``ENTRY_KINDS``, ``CalibrationTable.kind_of``; 0.3.0). Left out of the
+    digest while unset, so every 0.2.0 table digest survives."""
 
     def to_dict(self) -> dict[str, Any]:
-        """The entry as plain JSON-able values (``Result.to_dict``, 0.2.0)."""
-        return {
+        """The entry as plain JSON-able values (``Result.to_dict``, 0.2.0); ``kind`` only when set."""
+        out: dict[str, Any] = {
             "value": float(self.value),
             "uncertainty": float(self.uncertainty),
             "status": self.status,
@@ -51,6 +77,9 @@ class CalEntry:
             "fitted_at_s": float(self.fitted_at_s),
             "sample_id": int(self.sample_id),
         }
+        if self.kind is not None:
+            out["kind"] = self.kind
+        return out
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> CalEntry:
@@ -62,6 +91,7 @@ class CalEntry:
             provenance_id=str(d["provenance_id"]),
             fitted_at_s=float(d["fitted_at_s"]),
             sample_id=int(d["sample_id"]),
+            kind=d.get("kind"),
         )
 
     def __post_init__(self) -> None:
@@ -216,7 +246,15 @@ class CalibrationTable:
     entries, each a ``CalEntry`` with its status and provenance, the entangling ``Waveform`` per pair, all keyed to the
     ``Device.hash()`` and the noise ``seed`` they were fitted under. Plain data: ``control.schedule`` reads it and never
     writes it, ``calibration`` builds it; ``surrogate`` says whether it came from the closed forms with spot checks or
-    from full simulated experiments."""
+    from full simulated experiments.
+
+    Lookup precedence (0.3.0; the way OpenQASM 3 states ``defcal`` resolution, most specific first): an entangling
+    ``Waveform`` is looked up per PAIR, under either key order (``waveform_for``); a Rabi, Stark or crosstalk entry per
+    (ion, beam) or (ion, neighbour), with the beam the drive's first beam (``GateDrive.table_key_beam``; -1 for a microwave
+    drive); a qubit frequency, mode frequency, occupation or heating rate per ion or per mode; the field and the detection
+    entries once for the device. A more specific entry never falls back to a less specific one: an absent or
+    ``uncalibrated`` entry refuses to schedule (Section 7.3). Edits are proposals: ``with_params`` sets entries by field,
+    ``updated_with`` maps a typed ``ExperimentResult`` onto the entries it fitted, both returning a new table."""
 
     device_hash: str
     seed: int
@@ -257,8 +295,69 @@ class CalibrationTable:
         silently regenerated, when a device parameter changes)."""
         return self.device_hash == device_hash
 
-    def entries(self) -> dict[str, CalEntry]:
-        """Every CalEntry of the table under a flat key (``rabi[(0, 2)]``, ``modes[3]``, ``field``, ...), waveform phases included."""
+    def kind_of(self, key: str) -> EntryKind:
+        """The kind of the entry under the flat ``key`` of ``entries()``: its own ``kind`` when set, else the kind of the table
+        field that holds it (``ENTRY_KINDS``; the waveform phases are setpoints)."""
+        entry = self.entries()[key]
+        if entry.kind is not None:
+            return entry.kind
+        name = key.split("[", 1)[0].split(".", 1)[0]
+        return ENTRY_KINDS[name]
+
+    def with_params(self, **overrides: Any) -> CalibrationTable:
+        """This table with the given fields set (docs/api_implementation_plan.md 2.4; Cirq's ``NoiseProperties.with_params``):
+        a mapping field (``rabi``, ``modes``, ``ms``, ...) takes the given entries MERGED over the existing ones (an ``ms``
+        pair under either key order replaces the stored pair), a scalar field (``field``, ``fitted_at_s``, ``seed``,
+        ``surrogate``) is replaced; the device hash is the device's and cannot be set; an unknown name is refused. The
+        scheduler plays the result as written (a miscalibration set by hand, the app's Level 2 request), so the caller
+        owns the physics of the edit."""
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(self)}
+        unknown = sorted(k for k in overrides if k not in names or k == "device_hash")
+        if unknown:
+            raise TypeError(
+                f"CalibrationTable.with_params: unknown or unsettable field(s) {unknown}; the fields are "
+                f"{sorted(names - {'device_hash'})}"
+            )
+        changes: dict[str, Any] = {}
+        for name, value in overrides.items():
+            current = getattr(self, name)
+            if isinstance(current, dict):
+                if not isinstance(value, Mapping):
+                    raise TypeError(
+                        f"CalibrationTable.with_params: {name} takes a mapping of entries, got {type(value).__name__}"
+                    )
+                merged = dict(current)
+                for key, entry in value.items():
+                    stored = key
+                    if name == "ms" and isinstance(key, tuple) and len(key) == 2:
+                        a, b = int(key[0]), int(key[1])
+                        stored = (a, b) if (a, b) in merged or (b, a) not in merged else (b, a)
+                    merged[stored] = entry
+                changes[name] = merged
+            else:
+                changes[name] = value
+        return dataclasses.replace(self, **changes)
+
+    def updated_with(
+        self, result: Any, *, fitted_at_s: float | None = None, sample_id: int = 0
+    ) -> CalibrationTable:
+        """The proposal a typed ``ExperimentResult`` makes for this table (docs/api_implementation_plan.md 2.4; Qibocal's
+        rule: an update is a proposal a caller gates on ``result.quality`` before adopting): the entries the result fitted,
+        each a ``CalEntry`` stamped with the value and uncertainty, ``calibrated`` (or ``uncalibrated`` when the fit did not
+        converge), the experiment's name, its provenance id, ``fitted_at_s`` (default: this table's) and ``sample_id``, set
+        through ``with_params``; the table's own ``fitted_at_s`` moves to the youngest entry. The result names the fields
+        it sets (``ExperimentResult.table_updates``); a result that sets none (a parity scan, an image) is refused."""
+        at = float(self.fitted_at_s if fitted_at_s is None else fitted_at_s)
+        updates = result.table_updates(fitted_at_s=at, sample_id=int(sample_id))
+        return self.with_params(**updates, fitted_at_s=max(float(self.fitted_at_s), at))
+
+    def entries(self, kind: EntryKind | None = None) -> dict[str, CalEntry]:
+        """Every CalEntry of the table under a flat key (``rabi[(0, 2)]``, ``modes[3]``, ``field``, ...), waveform phases included;
+        ``kind`` keeps the setpoints or the characterisation only (``kind_of``)."""
+        if kind is not None:
+            return {k: e for k, e in self.entries().items() if self.kind_of(k) == kind}
         out: dict[str, CalEntry] = {"field": self.field}
         for name in (
             "qubit_freq",
@@ -387,4 +486,14 @@ class CalibrationTable:
         )
 
 
-__all__ = ["CalEntry", "CalibrationTable", "Leg", "Segment", "Waveform", "WaveformKind", "usable"]
+__all__ = [
+    "ENTRY_KINDS",
+    "EntryKind",
+    "CalEntry",
+    "CalibrationTable",
+    "Leg",
+    "Segment",
+    "Waveform",
+    "WaveformKind",
+    "usable",
+]

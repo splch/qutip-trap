@@ -37,12 +37,45 @@ from qutip_trap.experiments.micromotion import (
 )
 from qutip_trap.experiments.motion import heating_rate, mode_spectroscopy, thermometry
 from qutip_trap.experiments.readout import detection_histogram
-from qutip_trap.experiments.result import ExperimentResult
+from qutip_trap.experiments.result import (
+    RESULT_TYPES,
+    CrosstalkScan,
+    CrystalImage,
+    DetectionHistogram,
+    ExperimentResult,
+    FieldScan,
+    HeatingRateFit,
+    MicromotionScan,
+    MSScan,
+    ParityScan,
+    RabiScan,
+    RamseyFringe,
+    ScanParameters,
+    SidebandSpectrum,
+    StarkScan,
+    ThermometryResult,
+    realized_drive,
+)
 from qutip_trap.experiments.single_ion import rabi_scan, ramsey, ramsey_frequency, sideband_spectroscopy
 
 __all__ = [
+    "RESULT_TYPES",
+    "CrosstalkScan",
+    "CrystalImage",
+    "DetectionHistogram",
     "ExperimentResult",
+    "FieldScan",
     "FitResult",
+    "HeatingRateFit",
+    "MSScan",
+    "MicromotionScan",
+    "ParityScan",
+    "RabiScan",
+    "RamseyFringe",
+    "ScanParameters",
+    "SidebandSpectrum",
+    "StarkScan",
+    "ThermometryResult",
     "Observation",
     "ReadoutErrors",
     "correlation_signal",
@@ -62,6 +95,7 @@ __all__ = [
     "parity_scan",
     "periodic_scattering",
     "rabi_scan",
+    "realized_drive",
     "ramsey",
     "ramsey_frequency",
     "readout_errors_for",

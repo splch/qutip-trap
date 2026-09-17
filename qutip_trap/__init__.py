@@ -28,6 +28,7 @@ __version__ = "0.2.0"
 _RUNG_0: dict[str, tuple[str, str | None]] = {
     "Machine": ("qutip_trap.machine", "Machine"),
     "Estimate": ("qutip_trap.machine", "Estimate"),
+    "as_machine": ("qutip_trap.machine", "as_machine"),
     "Circuit": ("qutip_trap.control.compiler", "Circuit"),
     "Operation": ("qutip_trap.control.compiler", "Operation"),
     "Result": ("qutip_trap.run.results", "Result"),
@@ -60,6 +61,7 @@ __all__ = [
     "FidelityLevel",
     "LevelDecision",
     "Machine",
+    "as_machine",
     "Numerics",
     "Operation",
     "Physics",
@@ -99,7 +101,7 @@ if TYPE_CHECKING:
     from qutip_trap import circuit, dynamics, interop, io, physics, presets, schedule
     from qutip_trap.control.compiler import Circuit, Operation
     from qutip_trap.device.model import BeamRoles, Device
-    from qutip_trap.machine import Estimate, Machine
+    from qutip_trap.machine import Estimate, Machine, as_machine
     from qutip_trap.options import Numerics, Physics, Readout
     from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level
     from qutip_trap.run.results import Diagnostics, Progress, Result

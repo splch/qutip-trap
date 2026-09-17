@@ -52,6 +52,9 @@ RUNG_MODULES: tuple[str, ...] = (
     "qutip_trap.io",
     "qutip_trap.io.qasm2",
     "qutip_trap.io.ionq",
+    "qutip_trap.experiments",
+    "qutip_trap.calibration",
+    "qutip_trap.benchmarks",
 )
 """The modules whose ``__all__`` is the public surface: the Appendix E surface and the rung modules of 0.2.0
 (docs/api_implementation_plan.md 1.6); 3.3 adds ``qutip_trap.experimental``."""
@@ -78,7 +81,6 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "BudgetLine",
             "CalibrationCache",
             "CalibrationError",
-            "CalibrationReport",
             "CalibrationRun",
             "CalibrationScans",
             "CollapseOp",
@@ -87,7 +89,6 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "DecouplingSequence",
             "DetectionCalibration",
             "DetectionRates",
-            "ExperimentResult",
             "FilterStage",
             "FirstPhoton",
             "FluorescenceRates",
@@ -184,9 +185,77 @@ NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
             "thermometry",
             "transport_budget",
         }
-    )
+    ),
+    "qutip_trap.experiments": frozenset(
+        {
+            "FitResult",
+            "Observation",
+            "ReadoutErrors",
+            "correlation_signal",
+            "crosstalk_scan",
+            "crystal_image",
+            "detection_histogram",
+            "device_with_compensation",
+            "field_scan",
+            "fit_lineshape",
+            "half_rabi_lineshape",
+            "heating_rate",
+            "lineshape_model",
+            "micromotion_scan",
+            "mode_spectroscopy",
+            "ms_phase_scan",
+            "ms_scan",
+            "parity_scan",
+            "periodic_scattering",
+            "ramsey",
+            "ramsey_frequency",
+            "readout_errors_for",
+            "sideband_spectroscopy",
+            "signed_beta",
+            "stark_scan",
+            "thermal_rabi_model",
+            "thermal_rabi_model_fixed_nbar",
+            "thermometry",
+            "weighted_fit",
+        }
+    ),
+    "qutip_trap.calibration": frozenset(
+        {
+            "ALIASES",
+            "CalibrationCache",
+            "CalibrationError",
+            "CalibrationScans",
+            "DEFAULT_CACHE",
+            "EXPERIMENTS",
+            "ORDER",
+            "UPSTREAM",
+            "full_calibration",
+            "upstream_status",
+        }
+    ),
+    "qutip_trap.benchmarks": frozenset(
+        {
+            "BenchmarkBudget",
+            "CLASS_SIZES",
+            "GHZResult",
+            "QVCircuit",
+            "RBResult",
+            "RBSequence",
+            "SINGLE_QUBIT_CLIFFORDS",
+            "StepChannel",
+            "TWO_QUBIT_GROUP_ORDER",
+            "TwoQubitClifford",
+            "clear_budget_cache",
+            "decompose_two_qubit_clifford",
+            "ghz_circuit",
+            "parity_circuit",
+            "random_square_circuit",
+            "random_two_qubit_clifford",
+            "two_qubit_clifford_group",
+        }
+    ),
 }
-"""The names of the 0.1.0 surface with no backticked mention on a documentation page (2026-09-11: 111 of 237)."""
+"""The names of the 0.1.0 surface with no backticked mention on a documentation page (2026-09-11: 109 of 237)."""
 
 
 def _module(module_name: str) -> ModuleType:
