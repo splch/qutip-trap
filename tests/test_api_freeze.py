@@ -121,7 +121,7 @@ EXTRA_REQUIRED_PARAMETERS: dict[tuple[str, str], dict[str, str]] = {
 M12_CLASSES = {"Zone", "VoltageWaveform", "FilterStage", "Transport"}
 M12_METHODS = {("Trap", "pseudopotential_v"), ("Trap", "split_coefficients")}
 # methods of the 2026-09 additions that name the later phase of docs/api_implementation_plan.md implementing them
-LATER_PHASE_METHODS = {("Machine", "error_model"), ("Machine", "specs"), ("Machine", "submit")}
+LATER_PHASE_METHODS = {("Machine", "error_model"), ("Machine", "submit")}
 
 
 @dataclasses.dataclass

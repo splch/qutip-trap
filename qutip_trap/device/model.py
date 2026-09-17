@@ -12,7 +12,7 @@ import dataclasses
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from qutip_trap.hashing import canonical_digest
 
@@ -221,6 +221,32 @@ class Device:
         from qutip_trap.device.derived import derived_quantities
 
         return derived_quantities(self)
+
+    def specs(self) -> str:
+        """The derived quantities as a readable report with their provenance ids (docs/api_implementation_plan.md 2.5,
+        after Pulser's ``Device.specs``): the crystal, beams, detector and electronics in one line each, then every entry of
+        ``derived()`` grouped by family (the qubit transitions, the trap, the modes, the drives, the detection, the heating),
+        ``key = value  [ledger id]``, the units in the keys (``_hz``, ``_gauss``, ``_per_s``, ``_m``, ``_ev``), and the noise
+        channels ``NoiseModel.summary`` lists; the notes of ``derived()`` close the report."""
+        from qutip_trap.device.specs import render_specs
+
+        return render_specs(self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The device as plain JSON-able values (``qutip_trap.device.serial``; schema version 1 in
+        ``docs/schemas/device.schema.json``): ``{"schema_version", "qutip_trap_version", "device_hash", "device"}``, the
+        record walked by its field annotations (tuples as lists, dict keys as strings, non-finite floats as strings, arrays
+        as dtype, shape and data). ``from_dict`` reads it back exactly: the read device has the hash written."""
+        from qutip_trap.device.serial import device_to_dict
+
+        return device_to_dict(self)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Device:
+        """The device of a ``to_dict`` record (schema version 1); an unknown field or version is refused."""
+        from qutip_trap.device.serial import device_from_dict
+
+        return device_from_dict(data)
 
     def hash(self) -> str:
         """The canonical digest of Appendix E: declaration-order fields, 12-digit floats, sorted dicts, Qobj excluded.

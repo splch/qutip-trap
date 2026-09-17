@@ -37,7 +37,6 @@ from qutip_trap.device.model import BeamRoles, Device, Field
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import beam_for_transition
 from qutip_trap.noise.model import NoiseModel
-from qutip_trap.noise.spectra import Drift, NoiseSpectrum
 from qutip_trap.prep.recipe import PreparationRecipe, magic_angle_polarization, standard_recipe
 from qutip_trap.readout.detection import Detector
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
@@ -97,30 +96,11 @@ class DevicePreset:
         return {}
 
 
+@deprecated(deadline="v0.5", fix="Call NoiseModel() instead; every default of the model means off.")
 def quiet_noise_model() -> NoiseModel:
-    """A noise model with no heating, no field or drift content and no collisions (every Drift of zero rms)."""
-    omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
-    flat = NoiseSpectrum(omega_rad_s=omega, S=np.zeros(5), unit="(V/m)^2/(rad/s)")
-    quiet = Drift(rms=0.0, tau_s=1.0, servo_bandwidth_hz=None)
-    return NoiseModel(
-        S_E=flat,
-        correlation_length_m=0.0,
-        S_B=None,
-        mains=None,
-        laser_phase=None,
-        laser_intensity=None,
-        rf_amplitude_noise=None,
-        rf_phase_noise=None,
-        rf_amplitude_drift=quiet,
-        mode_drift_differential=quiet,
-        rabi_drift=quiet,
-        beam_phase_drift=quiet,
-        field_drift=quiet,
-        stray_field_drift=quiet,
-        pointing_drift=quiet,
-        rabi_amplitude=None,
-        collisions=None,
-    )
+    """A noise model with no heating, no field or drift content and no collisions (every Drift of zero rms): since 0.3.0
+    this is ``NoiseModel()`` itself (docs/api_implementation_plan.md 2.5), field for field and digest for digest."""
+    return NoiseModel()
 
 
 def ideal_hardware(*, phase_continuous: bool = False, dead_time_s: float = 1e-6) -> HardwareChain:
@@ -231,7 +211,7 @@ def yb171_chain(
         trap=trap,
         field=Field(FIELD_GAUSS, (1.0, 0.0, 0.0), None),
         beams=tuple(beams),
-        noise=noise if noise is not None else quiet_noise_model(),
+        noise=noise if noise is not None else NoiseModel(),
         detector=detector if detector is not None else crain_snspd_detector(),
         hardware=hardware if hardware is not None else ideal_hardware(phase_continuous=phase_continuous),
         roles=BeamRoles(gate=gate_drives, entangling=entangling, detection=det_index),
@@ -538,7 +518,7 @@ def ca40_optical(
         trap=trap,
         field=Field(FIELD_GAUSS, (1.0, 0.0, 0.0), None),
         beams=tuple(beams),
-        noise=noise if noise is not None else quiet_noise_model(),
+        noise=noise if noise is not None else NoiseModel(),
         detector=detector if detector is not None else myerson_ca40_pmt_detector(),
         hardware=hardware if hardware is not None else ideal_hardware(phase_continuous=phase_continuous),
         roles=BeamRoles(gate=gate, entangling={}, detection=1),

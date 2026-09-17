@@ -3264,4 +3264,31 @@ def gate_channel(machine, kind: str) -> "GateChannel": ...  # cached per Machine
         # machine with a warning (v0.5)
 ```
 
+```python
+# ---- qutip_trap.noise.model and qutip_trap.device.model (rung 4: qutip_trap.physics; docs/api_implementation_plan.md 2.5) ----
+@dataclass(frozen=True)
+class NoiseModel:
+    ...                                                    # unchanged fields; every default now means off (NoiseModel() is the quiet model,
+                                                           #   digest for digest the quiet_noise_model() of the presets, which is deprecated)
+    S_E: "NoiseSpectrum" = field(default_factory=quiet_field_spectrum)   # the zero spectrum
+    correlation_length_m: float | None = 0.0
+    S_B: "NoiseSpectrum | None" = None; mains: "Mains | None" = None; laser_phase: "NoiseSpectrum | None" = None
+    laser_intensity: "NoiseSpectrum | None" = None; rf_amplitude_noise: "NoiseSpectrum | None" = None
+    rf_phase_noise: "NoiseSpectrum | None" = None; rabi_amplitude: "NoiseSpectrum | None" = None; collisions: "Collisions | None" = None
+    rf_amplitude_drift: Drift = field(default_factory=quiet_drift); mode_drift_differential: Drift = field(default_factory=quiet_drift)
+    rabi_drift: Drift = field(default_factory=quiet_drift); beam_phase_drift: Drift = field(default_factory=quiet_drift)
+    field_drift: Drift = field(default_factory=quiet_drift); stray_field_drift: Drift = field(default_factory=quiet_drift)
+    pointing_drift: Drift = field(default_factory=quiet_drift)
+    def summary(self, device: "Device | None" = None) -> dict[str, tuple[float, str]]: ...   # the channels that follow from what was set, with units
+    def from_experiments(self, results, *, device: "Device") -> "NoiseModel": ...            # a HeatingRateFit -> the S_E level it implies
+
+@dataclass(frozen=True)
+class Device:
+    ...                                                    # unchanged fields
+    def specs(self) -> str: ...                            # the derived quantities as a report with their provenance ids (Machine.specs adds the roles)
+    def to_dict(self) -> dict: ...                         # docs/schemas/device.schema.json, schema version 1: tuples as lists, dict keys as strings,
+                                                           #   non-finite floats as "inf" | "-inf" | "nan", arrays as {dtype, shape, data}
+    def from_dict(data) -> "Device": ...                   # a classmethod; exact: the device read has the hash written
+```
+
 Three rules bind the surface. The application of Section 14 imports nothing outside this appendix. `control` never imports `calibration`, which sits above it and communicates through `CalibrationTable`. Every derived number reachable through `Device.derived()`, `Result.diagnostics` or an `ExperimentResult` carries a provenance id from the ledger of Section 14.5, so the Section 9.11 coverage test is a set difference.

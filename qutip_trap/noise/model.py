@@ -35,9 +35,10 @@ functions of ``noise/decoupling.py`` only.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -81,37 +82,77 @@ RF_DERIVED_FAMILIES = ("transverse_1", "transverse_2")
 GAUSS_PER_TESLA = 1.0e4
 
 
+DRIFT_UNITS: dict[str, str] = {
+    "rf_amplitude_drift": "1",
+    "mode_drift_differential": "Hz",
+    "rabi_drift": "1",
+    "beam_phase_drift": "rad",
+    "field_drift": "T",
+    "stray_field_drift": "V/m",
+    "pointing_drift": "m",
+    "laser_frequency_drift": "Hz",
+}
+"""The unit of each ``Drift`` field's rms (the module docstring), as ``summary`` reports it."""
+
+
+def _rms_unit(density_unit: str) -> str:
+    """The unit of an rms from a two-sided density's unit: ``X^2/(rad/s)`` -> ``X``, else the density unit with a note."""
+    m = re.fullmatch(r"\((.*)\)\^2/\(rad/s\)|(.*)\^2/\(rad/s\)", density_unit.strip())
+    if m:
+        return m.group(1) or m.group(2)
+    return f"sqrt({density_unit} x rad/s)"
+
+
+def quiet_field_spectrum() -> NoiseSpectrum:
+    """The zero electric-field spectrum ``NoiseModel()`` carries: a five-point zero band over +-2 pi x 10^7 rad/s in
+    (V/m)^2/(rad/s), the record ``quiet_noise_model()`` built since 0.1.0 (the same arrays, so the digests agree)."""
+    omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
+    return NoiseSpectrum(omega_rad_s=omega, S=np.zeros(5), unit="(V/m)^2/(rad/s)")
+
+
+def quiet_drift() -> Drift:
+    """A drift of zero rms (tau_s = 1 s, no servo): the default of every ``Drift`` field of ``NoiseModel``."""
+    return Drift(rms=0.0, tau_s=1.0, servo_bandwidth_hz=None)
+
+
 @dataclass(frozen=True)
 class NoiseModel:
     """The noise of a device as spectra, drifts and event rates, never as phenomenological error rates (Sections 4.1.5, 6.1 to
     6.7): the electric-field spectrum ``S_E`` with its correlation length, the optional magnetic, laser, rf and amplitude
     spectra (two-sided in angular frequency; units in the module docstring), the quasi-static ``Drift`` records drawn once
     per dynamical sample, the collision model and the grid oversampling of the sampled bands. Section 6.1 routes each by
-    its correlation time into a Lindblad operator, a per-sample parameter or a sampled time series."""
+    its correlation time into a Lindblad operator, a per-sample parameter or a sampled time series.
 
-    S_E: NoiseSpectrum
-    """Electric-field noise (heating, Section 6.2); stored two-sided like every NoiseSpectrum."""
-    correlation_length_m: float | None
-    """Spatial correlation length of the field noise (0 uncorrelated, inf uniform); REQUIRED once S_E is non-zero (Section 4.1.5)."""
-    S_B: NoiseSpectrum | None
-    mains: Mains | None
-    laser_phase: NoiseSpectrum | None
-    laser_intensity: NoiseSpectrum | None
-    rf_amplitude_noise: NoiseSpectrum | None
-    rf_phase_noise: NoiseSpectrum | None
-    rf_amplitude_drift: Drift
-    """Common-mode fractional drift of every rf-derived mode of a family."""
-    mode_drift_differential: Drift
-    rabi_drift: Drift
-    beam_phase_drift: Drift
-    field_drift: Drift
-    stray_field_drift: Drift
-    pointing_drift: Drift
-    """Beam pointing, which moves crosstalk and Rabi rate together (Section 6.6)."""
-    rabi_amplitude: NoiseSpectrum | None
+    Every default means "off" (0.3.0; docs/api_proposal.md Section 4.6, after Perceval's ``NoiseModel()``): ``NoiseModel()``
+    is the quiet model, field for field the ``quiet_noise_model()`` of the presets, so a channel is on exactly when its
+    input was set; ``summary()`` lists the channels that follow from what was set, with units, and ``from_experiments``
+    turns a measured heating rate into the field spectrum it implies."""
+
+    S_E: NoiseSpectrum = field(default_factory=lambda: quiet_field_spectrum())
+    """Electric-field noise (heating, Section 6.2); stored two-sided like every NoiseSpectrum. Default: the zero spectrum
+    (no heating), so that ``NoiseModel()`` is the quiet model (0.3.0; docs/api_implementation_plan.md 2.5)."""
+    correlation_length_m: float | None = 0.0
+    """Spatial correlation length of the field noise (0 uncorrelated, inf uniform); REQUIRED once S_E is non-zero (Section 4.1.5).
+    Default 0.0 beside the zero spectrum."""
+    S_B: NoiseSpectrum | None = None
+    mains: Mains | None = None
+    laser_phase: NoiseSpectrum | None = None
+    laser_intensity: NoiseSpectrum | None = None
+    rf_amplitude_noise: NoiseSpectrum | None = None
+    rf_phase_noise: NoiseSpectrum | None = None
+    rf_amplitude_drift: Drift = field(default_factory=lambda: quiet_drift())
+    """Common-mode fractional drift of every rf-derived mode of a family; default: no drift."""
+    mode_drift_differential: Drift = field(default_factory=lambda: quiet_drift())
+    rabi_drift: Drift = field(default_factory=lambda: quiet_drift())
+    beam_phase_drift: Drift = field(default_factory=lambda: quiet_drift())
+    field_drift: Drift = field(default_factory=lambda: quiet_drift())
+    stray_field_drift: Drift = field(default_factory=lambda: quiet_drift())
+    pointing_drift: Drift = field(default_factory=lambda: quiet_drift())
+    """Beam pointing, which moves crosstalk and Rabi rate together (Section 6.6); default: no drift."""
+    rabi_amplitude: NoiseSpectrum | None = None
     """Two-sided S_a(omega) of the ADDITIVE amplitude noise in rad/s (Section 6.9); Omega is taken from the pulse
     at use and never folded as Omega^2 into a device PSD."""
-    collisions: Collisions | None
+    collisions: Collisions | None = None
     laser_frequency_drift: Drift | None = None
     """Hz: the gate laser's frequency against the transition (optical qubits); None = none (M7 extension, defaulted)."""
     beam_phase_noise: NoiseSpectrum | None = None
@@ -293,6 +334,91 @@ class NoiseModel:
                 f"{undeclared} non-zero rate(s) carry no apparatus tag (NoiseSpectrum/Drift.provenance)"
             )
         return "; ".join(parts)
+
+    def summary(self, device: Device | None = None) -> dict[str, tuple[float, str]]:
+        """The channels that follow from what was set, name -> (value, unit) (docs/api_implementation_plan.md 2.5, after
+        Pulser's noise table): per mode the heating rate (quanta/s) and the motional dephasing time (s), per ion the white
+        qubit dephasing rate (1/s) and the collision rate (1/s), each when ``device`` is given and the input is set; the
+        white intensity-noise density (1/(rad/s)); the rms of every sampled band (its own unit) and of every non-quiet
+        drift (the field's unit); the mains amplitude per harmonic (T). Empty for the quiet model."""
+        out: dict[str, tuple[float, str]] = {}
+        if device is not None:
+            for m, rate in self.heating_rates_quanta_per_s(device).items():
+                out[f"heating_rate_per_s[{m}]"] = (float(rate), "quanta/s")
+            for m, tau in self.motional_dephasing_tau_s(device).items():
+                out[f"motional_dephasing_tau_s[{m}]"] = (float(tau), "s")
+            for i, gamma in self.qubit_white_dephasing_per_s(device).items():
+                out[f"qubit_dephasing_per_s[{i}]"] = (float(gamma), "1/s")
+            if self.collisions is not None and self.collisions.pressure_pa > 0.0:
+                from qutip_trap.noise.collisions import collision_rate_per_ion
+
+                for i in range(device.crystal.n_ions):
+                    rate = collision_rate_per_ion(self.collisions, float(device.crystal.masses_kg[i]))
+                    out[f"collision_rate_per_ion[{i}]"] = (float(rate), "1/s")
+        elif not self.S_E.is_zero():
+            out["S_E_white_level"] = (float(self.S_E.white_level), self.S_E.unit)
+        density = self.intensity_white_density()
+        if density > 0.0:
+            out["intensity_noise_density"] = (density, "1/(rad/s)")
+        for name, spec in self.sampled_spectra(device).items():
+            out[f"{name}_rms"] = (float(math.sqrt(max(spec.variance(), 0.0))), _rms_unit(spec.unit))
+        for name, drift in self.drifts.items():
+            if not drift.quiet:
+                out[f"{name}_rms"] = (float(drift.rms), DRIFT_UNITS[name])
+        if self.mains is not None:
+            for k, amp in sorted(self.mains.amplitudes_t.items()):
+                if amp != 0.0:
+                    out[f"mains_amplitude_t[{k}]"] = (float(amp), "T")
+        return out
+
+    def from_experiments(self, results: Sequence[Any], *, device: Device) -> NoiseModel:
+        """This model with the inputs a set of experiment results imply (docs/api_implementation_plan.md 2.5, True-Q's
+        loop closed): the heating-rate case first. Every ``HeatingRateFit`` (mode ``m``, ``ndot_per_s``) implies the
+        single-sided field spectral density S_E(omega_m) = 4 m hbar omega_m n_dot/e^2 at that mode's frequency
+        (``trap.heating.s_e_from_heating_rate``, Brownnutt; the mass is the crystal's first ion's, so a mixed-species
+        crystal is refused); with one mode the model takes a white two-sided ``S_E`` at S_E/2, with several the mean of
+        their levels and the spread in ``extra["S_E_from_experiments_spread"]``; ``correlation_length_m`` stays as set (0.0
+        by default: uncorrelated). Any other result type is refused: nothing else is inverted yet."""
+        from qutip_trap.trap.heating import s_e_from_heating_rate
+
+        masses = {float(m) for m in device.crystal.masses_kg}
+        if len(masses) != 1:
+            raise ValueError(
+                "NoiseModel.from_experiments: the heating inversion takes one ion mass; the crystal mixes species"
+            )
+        mass = masses.pop()
+        levels: list[float] = []
+        for res in results:
+            if type(res).__name__ != "HeatingRateFit":
+                raise ValueError(
+                    f"NoiseModel.from_experiments inverts heating-rate fits only, not {type(res).__name__}"
+                )
+            mode = int(res.subject["mode"])
+            ndot = float(res.value("ndot_per_s"))
+            omega = float(device.crystal.modes[mode].omega_rad_s)
+            levels.append(
+                0.5 * s_e_from_heating_rate(ndot, mass, omega)
+            )  # two-sided, the NoiseSpectrum convention
+        if not levels:
+            raise ValueError("NoiseModel.from_experiments: no result given")
+        level = float(np.mean(levels))
+        spectrum = NoiseSpectrum(
+            np.array([0.0, 1.0]),
+            np.zeros(2),
+            "(V/m)^2/(rad/s)",
+            white_level=level,
+            provenance=("heating_rate experiment (NoiseModel.from_experiments)",),
+        )
+        extra = dict(self.extra)
+        extra["S_E_from_experiments_modes"] = float(len(levels))
+        if len(levels) > 1:
+            extra["S_E_from_experiments_spread"] = float(np.max(levels) - np.min(levels))
+        return replace(
+            self,
+            S_E=spectrum,
+            correlation_length_m=0.0 if self.correlation_length_m is None else self.correlation_length_m,
+            extra=extra,
+        )
 
     def grid_omega_max_rad_s(self, device: Device | None) -> float:
         w = 0.0
@@ -518,4 +644,12 @@ def servo_residual(values: np.ndarray, times_s: np.ndarray, bandwidth_hz: float)
     return out
 
 
-__all__ = ["GAUSS_PER_TESLA", "RF_DERIVED_FAMILIES", "NoiseModel", "servo_residual"]
+__all__ = [
+    "DRIFT_UNITS",
+    "quiet_drift",
+    "quiet_field_spectrum",
+    "GAUSS_PER_TESLA",
+    "RF_DERIVED_FAMILIES",
+    "NoiseModel",
+    "servo_residual",
+]

@@ -1,5 +1,7 @@
-"""The JSON schema of the ``Result`` envelope (docs/api_implementation_plan.md 1.7; 0.2.0): ``docs/schemas/result.schema.json``
-is written from ``RESULT_SCHEMA`` below, which mirrors ``Result.to_dict``; ``--check`` exits 1 when the committed file is
+"""The JSON schemas of the ``Result`` envelope (docs/api_implementation_plan.md 1.7; 0.2.0) and of the ``Device`` record (2.5;
+0.3.0): ``docs/schemas/result.schema.json`` is written from ``RESULT_SCHEMA`` below, which mirrors ``Result.to_dict``, and
+``docs/schemas/device.schema.json`` from ``qutip_trap.device.serial.device_schema``, generated from the device tree's field
+annotations; ``--check`` exits 1 when the committed file is
 stale (CI, like the ledger tables), and ``validate`` checks an instance against the subset of JSON Schema the file uses
 (``type``, ``properties``, ``required``, ``additionalProperties``, ``items``, ``enum``, ``minimum``, ``const``), so a test
 can validate a real result without a validator dependency. ``tests/test_m6_results_export.py`` asserts that the schema's
@@ -22,6 +24,7 @@ from typing import Any
 from qutip_trap.provenance import repository_root
 
 SCHEMA_PATH = Path("docs") / "schemas" / "result.schema.json"
+DEVICE_SCHEMA_PATH = Path("docs") / "schemas" / "device.schema.json"
 
 
 def _numbers(keys: str = "string") -> dict[str, Any]:
@@ -300,8 +303,22 @@ def _type_ok(value: object, kind: str) -> bool:
     raise ValueError(f"unknown JSON Schema type {kind!r}")
 
 
-def validate(instance: object, schema: Mapping[str, Any], path: str = "$") -> list[str]:
-    """The violations of ``instance`` against ``schema`` (the subset in the module docstring), empty when it validates."""
+def validate(
+    instance: object, schema: Mapping[str, Any], path: str = "$", root: Mapping[str, Any] | None = None
+) -> list[str]:
+    """The violations of ``instance`` against ``schema`` (the subset in the module docstring, plus ``anyOf`` and the local
+    ``$ref`` into ``$defs`` the device schema uses), empty when it validates."""
+    root = schema if root is None else root
+    if "$ref" in schema:
+        ref = str(schema["$ref"])
+        if not ref.startswith("#/$defs/"):
+            raise ValueError(f"only local $defs references are supported, got {ref!r}")
+        return validate(instance, root["$defs"][ref[len("#/$defs/") :]], path, root)
+    if "anyOf" in schema:
+        attempts = [validate(instance, alt, path, root) for alt in schema["anyOf"]]
+        if any(not a for a in attempts):
+            return []
+        return [f"{path}: no alternative of anyOf fits ({'; '.join(e for a in attempts for e in a[:1])})"]
     errors: list[str] = []
     if "const" in schema and instance != schema["const"]:
         errors.append(f"{path}: expected the constant {schema['const']!r}, got {instance!r}")
@@ -325,11 +342,11 @@ def validate(instance: object, schema: Mapping[str, Any], path: str = "$") -> li
         extra = schema.get("additionalProperties", True)
         for key, value in instance.items():
             if key in properties:
-                errors.extend(validate(value, properties[key], f"{path}.{key}"))
+                errors.extend(validate(value, properties[key], f"{path}.{key}", root))
             elif extra is False:
                 errors.append(f"{path}: the key {key!r} is not allowed")
             elif isinstance(extra, Mapping):
-                errors.extend(validate(value, extra, f"{path}.{key}"))
+                errors.extend(validate(value, extra, f"{path}.{key}", root))
     elif isinstance(instance, Sequence) and not isinstance(instance, str | bytes):
         if "minItems" in schema and len(instance) < schema["minItems"]:
             errors.append(f"{path}: fewer than {schema['minItems']} items")
@@ -338,30 +355,39 @@ def validate(instance: object, schema: Mapping[str, Any], path: str = "$") -> li
         items = schema.get("items")
         if items is not None:
             for k, value in enumerate(instance):
-                errors.extend(validate(value, items, f"{path}[{k}]"))
+                errors.extend(validate(value, items, f"{path}[{k}]", root))
     return errors
 
 
 def render() -> str:
-    return json.dumps(RESULT_SCHEMA, indent=2) + "\n"
+    return json.dumps(RESULT_SCHEMA, indent=2, ensure_ascii=False) + "\n"
+
+
+def render_device() -> str:
+    """The device schema, generated from the field annotations of the device tree (``qutip_trap.device.serial``)."""
+    from qutip_trap.device.serial import device_schema
+
+    return json.dumps(device_schema(), indent=2, ensure_ascii=False) + "\n"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--check", action="store_true", help="exit 1 when the committed schema is stale")
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--check", action="store_true", help="exit 1 when a committed schema is stale")
     args = parser.parse_args(argv)
-    path = repository_root() / SCHEMA_PATH
-    text = render()
-    if args.check:
-        if not path.exists() or path.read_text(encoding="utf-8") != text:
-            print(f"{path} is stale: run tools/schemas.py", file=sys.stderr)
-            return 1
-        print(f"{path} is current")
-        return 0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    print(f"wrote {path}")
-    return 0
+    root = repository_root()
+    stale = 0
+    for path, text in ((root / SCHEMA_PATH, render()), (root / DEVICE_SCHEMA_PATH, render_device())):
+        if args.check:
+            if not path.exists() or path.read_text(encoding="utf-8") != text:
+                print(f"{path} is stale: run `uv run python tools/schemas.py`")
+                stale = 1
+            else:
+                print(f"{path} is current")
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            print(f"wrote {path}")
+    return stale
 
 
 if __name__ == "__main__":

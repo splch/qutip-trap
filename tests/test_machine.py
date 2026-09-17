@@ -171,7 +171,9 @@ def test_the_later_phases_name_themselves(machine) -> None:  # type: ignore[no-u
     _preset, m = machine
     with pytest.raises(NotImplementedError, match=r"Phase 2\.6"):
         m.error_model()
-    with pytest.raises(NotImplementedError, match=r"Phase 2\.5"):
-        m.specs()
     with pytest.raises(NotImplementedError, match=r"Phase 3\.1"):
         m.submit(BELL, 10)
+    # 2.5: specs is implemented, on the device's derived quantities plus the machine's roles, table and level
+    text = m.specs()
+    assert text.startswith(f"device {m.device.hash()[:12]}") and "rabi_hz[(0, 2)] =" in text
+    assert "gate drives = {0: GateDrive(" in text and "table = pinned (" in text and "level = auto" in text

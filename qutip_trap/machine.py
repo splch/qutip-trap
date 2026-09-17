@@ -288,8 +288,21 @@ class Machine:
         )
 
     def specs(self) -> str:
-        """The derived quantities of the device as a readable report with their provenance ids."""
-        raise NotImplementedError("Machine.specs is Phase 2.5 of docs/api_implementation_plan.md (0.3.0)")
+        """The derived quantities of the device as a readable report with their provenance ids (``Device.specs``), then
+        the roles the machine resolved (which beams play the gates), whether a table is pinned and the level policy."""
+        roles = self.device.roles.resolve(self.device)
+        lines = [self.device.specs(), "", "machine"]
+        lines.append(f"  gate drives = {dict(sorted(roles.gate.items()))}")
+        lines.append(f"  entangling drives = {dict(sorted(roles.entangling.items()))}")
+        lines.append(
+            f"  detection beam = {roles.detection}"
+            + (f"  (inferred: {', '.join(roles.inferred)})" if roles.inferred else "")
+        )
+        lines.append(
+            f"  table = {'pinned (' + self.table.device_hash[:12] + ', seed ' + str(self.table.seed) + ')' if self.table is not None else 'the cached closed-form surrogate'}"
+        )
+        lines.append(f"  level = {self.level.value}")
+        return "\n".join(lines)
 
 
 def as_machine(machine: Machine | Device) -> Machine:
