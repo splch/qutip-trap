@@ -39,6 +39,7 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.schedule import ScheduleError
 from qutip_trap.experiments.light import stark_scan
 from qutip_trap.experiments.result import ExperimentResult
+from qutip_trap.options import Numerics
 from qutip_trap.run.job import RunError, last_record
 from qutip_trap.units import TWO_PI
 from tests.m6_fixtures import circuit_fixture
@@ -51,14 +52,7 @@ WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1000,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
     return fx, sur
 
 
@@ -104,14 +98,7 @@ def test_stark_scan_resolves_the_fringe_branch_with_two_probe_signs(
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(shift_hz))
     probe = 1e3
-    res = stark_scan(
-        fx.device,
-        0,
-        np.linspace(0.0, 2e-3, 9),
-        gate_drive=fx.gate_drives[0],
-        probe_hz=probe,
-        shots=None,
-    )
+    res = stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), probe_hz=probe, shots=None)
     beams = fx.gate_drives[0].beams
     assert res.converged is ok, res.notes
     if ok:
@@ -133,7 +120,7 @@ def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two
     non-zero shift is refused, and nine delays over the same span accept it."""
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
-    kw = dict(gate_drive=fx.gate_drives[0], probe_hz=1e3, shots=None)
+    kw = dict(probe_hz=1e3, shots=None)
     coarse = stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 5), **kw)  # type: ignore[arg-type]
     fine = stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), **kw)  # type: ignore[arg-type]
     assert not coarse.converged and any("Nyquist" in n for n in coarse.notes), coarse.notes
@@ -148,18 +135,10 @@ def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion,
     same keyword dictionary and forwarded it: ``mode='beat_note'`` raised int('beat_note') before the switch was stripped."""
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
-    res = stark_scan(
-        fx.device,
-        0,
-        np.linspace(0.0, 2e-3, 9),
-        gate_drive=fx.gate_drives[0],
-        probe_hz=1e3,
-        shots=None,
-        mode="beat_note",
-    )
+    res = stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), probe_hz=1e3, shots=None, mode="beat_note")
     assert "stark_shift_hz" in res.fitted and "coupling_shift_hz" in res.fitted
     with pytest.raises(ValueError, match="per_beam"):
-        stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), gate_drive=fx.gate_drives[0], mode="nonsense")
+        stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), mode="nonsense")
 
 
 # ---- B2: a refused experiment's own entries ----------------------------------------------------------------------------------
@@ -187,8 +166,6 @@ def test_a_refused_experiment_marks_its_own_entries_uncalibrated_and_the_schedul
             "stark_scan",
             "ramsey_frequency",
         ),
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         surrogate=dataclasses.replace(sur, table=bad_field),
     )
     t = report.table
@@ -204,13 +181,7 @@ def test_a_refused_experiment_marks_its_own_entries_uncalibrated_and_the_schedul
     assert t.micromotion == {}
     assert all("field" in reason for reason in report.refused.values()), report.refused
     with pytest.raises(ScheduleError):
-        schedule(
-            BELL,
-            fx.device,
-            t,
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
-        )
+        schedule(BELL, fx.device, t)
 
 
 def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -218,12 +189,7 @@ def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated
     a seed (the Section 7.5 bootstrap and ``calibrate(experiments=...)``), only the refusal path marks."""
     fx, sur = two_ion
     report = full_calibration(
-        fx.device,
-        experiments=("field_scan",),
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        surrogate=sur,
-        scans=CalibrationScans(shots=None),
+        fx.device, experiments=("field_scan",), surrogate=sur, scans=CalibrationScans(shots=None)
     )
     assert not report.refused, report.refused
     assert report.table.field.status == "calibrated"
@@ -266,14 +232,7 @@ def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:  # type: 
         },
     )
     with pytest.raises(RunError, match="7.3"):
-        run(
-            GPI,
-            fx.device,
-            10,
-            table=bad,
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
-        )
+        run(GPI, fx.device, 10, table=bad)
 
 
 # ---- B4: the micromotion loop -----------------------------------------------------------------------------------------------
@@ -314,13 +273,7 @@ def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two
 
     def table_with(status: str, value: float):  # type: ignore[no-untyped-def]
         sur = surrogate_table(
-            dev,
-            pairs=[(0, 1)],
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
-            detection_records=200,
-            detection_windows_s=(20e-6,),
-            spot_check=False,
+            dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
         )
         return dataclasses.replace(
             sur.table,
@@ -332,9 +285,7 @@ def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two
         )
 
     kw = dict(
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        options=SolverOptions(branch_weight_min=1e-2),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     good = run(GPI, dev, 5, table=table_with("calibrated", -20.0), **kw)  # type: ignore[arg-type]
     assert any("micromotion compensation applied" in n for n in last_record(good).notes)
@@ -364,15 +315,7 @@ def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_
     beam = 0
     from qutip_trap.experiments import micromotion_scan
 
-    scan = micromotion_scan(
-        at_t0,
-        0,
-        beam,
-        {"Ex": (-40.0, 0.0)},
-        method="sideband_ratio",
-        points=5,
-        gate_drive=fx.gate_drives[0],
-    )
+    scan = micromotion_scan(at_t0, 0, beam, {"Ex": (-40.0, 0.0)}, method="sideband_ratio", points=5)
     assert scan.converged, scan.notes
     shim = float(scan.fitted["shim[Ex]"][0])
     assert shim == pytest.approx(-20.0, abs=1.0), "the scan nulls the field it was calibrated against"
@@ -406,24 +349,12 @@ def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_d
     beams = fx.entangling_drives[0].beams
     modes = gate_modes(fx.device, (0, 1), (beams[0], beams[1]), nbar={})
     with pytest.raises(ValueError, match="mode_frequencies_hz"):
-        ms_scan(
-            fx.device,
-            (0, 1),
-            [1.0],
-            [0.0],
-            table=sur.table,
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
-            modes=modes,
-            mode_frequencies_hz={2: 2.8e6},
-        )
+        ms_scan(fx.device, (0, 1), [1.0], [0.0], table=sur.table, modes=modes, mode_frequencies_hz={2: 2.8e6})
     # and the frequencies the table believes reach the GateModes the scans build
     from qutip_trap.experiments.entangling import _entangling_setup
 
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         mode_frequencies_hz={m: e.value + 1234.0 for m, e in sur.table.modes.items()},
     )
     _wf, _ent, _sq, _t, built, _space = _entangling_setup(fx.device, (0, 1), dict(kw))
@@ -452,12 +383,10 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
     phases = [float(x) for x in np.linspace(0.0, math.pi, 4, endpoint=False)]
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         nbar={m: e.value for m, e in sur.table.nbar.items()},
         inputs=("00", "01"),
         shots=None,
-        options=SolverOptions(branch_weight_min=1e-2),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     df = 1e3
     ref = ms_phase_scan(fx.device, (0, 1), phases, **kw)  # type: ignore[arg-type]
@@ -480,7 +409,7 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
 
 def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reason(two_ion) -> None:  # type: ignore[no-untyped-def]
     """``calibrate`` advertised ``thermometry``, ``mode_spectroscopy``, ``crosstalk_phase`` and ``ms_phase_scan``;
-    ``full_calibration`` honoured none of them as a standalone name, so ``calibrate(surrogate=False,
+    ``full_calibration`` honoured none of them as a standalone name, so ``calibrate(method="experiments",
     experiments=('mode_spectroscopy',))`` returned a pure surrogate table with no error and NO NOTE. Each is now an alias
     of the experiment that runs it, and every accepted name leaves one of three honest traces: a result, a refusal with its
     upstream reason, or a note saying why the scan does not exist on this device (``heating_rate`` on the quiet fixture,
@@ -510,12 +439,7 @@ def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reaso
     for name in EXPERIMENTS:
         resolved = ALIASES.get(name, name)
         report = full_calibration(
-            fx.device,
-            experiments=(name,),
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
-            surrogate=dataclasses.replace(sur, table=blocked),
-            scans=scans,
+            fx.device, experiments=(name,), surrogate=dataclasses.replace(sur, table=blocked), scans=scans
         )
         assert report.experiments == (resolved,), (name, report.experiments)
         ran = any(k == resolved or k.startswith(f"{resolved}[") for k in report.results)
@@ -546,10 +470,10 @@ def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:
     # and a partially addressed chain seeds only the ions its entangling drive names
     fx, _sur2 = two_ion
     partial = surrogate_table(
-        fx.device,
+        dataclasses.replace(
+            fx.device, roles=dataclasses.replace(fx.device.roles, entangling={0: fx.entangling_drives[0]})
+        ),
         pairs=[],
-        gate_drives=fx.gate_drives,
-        entangling_drives={0: fx.entangling_drives[0]},
         detection_records=200,
         detection_windows_s=(20e-6,),
     )
@@ -586,8 +510,6 @@ def test_the_heating_experiment_runs_end_to_end_on_a_device_with_electric_field_
         noisy,
         seed=11,
         experiments=("heating_rate",),
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         pairs=[(0, 1)],
         scans=CalibrationScans(
             shots=None, heating_delays=4, heating_span_over_ndot=1.0, micromotion_ranges={}
@@ -623,10 +545,9 @@ def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) ->
             key: dataclasses.replace(sur.table.rabi[key], value=1.05 * sur.table.rabi[key].value),
         },
     )
-    drives = dict(gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives)
     # the schedule: the pi time shortens by exactly 1/1.05
-    ref_sched = schedule(GPI, fx.device, sur.table, **drives)  # type: ignore[arg-type]
-    high_sched = schedule(GPI, fx.device, high, **drives)  # type: ignore[arg-type]
+    ref_sched = schedule(GPI, fx.device, sur.table)
+    high_sched = schedule(GPI, fx.device, high)
     assert high_sched.pulses[0].duration_s / ref_sched.pulses[0].duration_s == pytest.approx(
         1.0 / 1.05, rel=1e-12
     )
@@ -641,8 +562,7 @@ def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) ->
             5,
             table=table,
             keep_final_state=True,
-            options=SolverOptions(branch_weight_min=1e-3),
-            **drives,  # type: ignore[arg-type]
+            numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
         )
         rho = last_record(res).register_state
         assert rho is not None

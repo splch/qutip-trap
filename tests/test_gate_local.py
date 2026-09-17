@@ -28,6 +28,7 @@ from qutip_trap.control.schedule import Schedule
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.run.gate_local import clear_gate_local_cache
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
@@ -41,20 +42,11 @@ FAST = SolverOptions(branch_weight_min=1e-3)
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1000,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=FAST,
+        numerics=Numerics.from_solver_options(FAST),
     )
     return fx, sur, kw
 
@@ -70,13 +62,7 @@ def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None
     fx, sur, _kw = two_ion
     from qutip_trap.control.compiler import compile_to_native
 
-    sched = schedule(
-        compile_to_native(BELL, fx.device),
-        fx.device,
-        sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-    )
+    sched = schedule(compile_to_native(BELL, fx.device), fx.device, sur.table)
     steps = gate_steps(sched)
     gates = [s for s in steps if s.kind == "gate"]
     idles = [s for s in steps if s.kind == "idle"]
@@ -105,7 +91,12 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     # keeps every branch (the preparation error is 2.5e-6, below the default cutoff) on this cheap all-frozen space, and the
     # tomography's tail rule is switched off for the same reason (the keyed tolerance and the derived margin never touch a
     # carrier step: no resolved mode)
-    exact = {**kw, "options": SolverOptions(branch_weight_min=1e-9, tomography_dropped_weight_max=0.0)}
+    exact = {
+        **kw,
+        "numerics": Numerics.from_solver_options(
+            SolverOptions(branch_weight_min=1e-9, tomography_dropped_weight_max=0.0)
+        ),
+    }
     a = run(GPI2, fx.device, 100, level="JOINT_EXACT", **exact)  # type: ignore[arg-type]
     b = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)  # type: ignore[arg-type]
     assert a.diagnostics.level == "JOINT_EXACT" and b.diagnostics.level == "GATE_LOCAL"
@@ -232,7 +223,9 @@ def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_
     (Section 5.4); forced on the two-ion GPi2 circuit it reproduces the density-matrix histogram within statistics."""
     fx, sur, kw = two_ion
     opts = SolverOptions(branch_weight_min=1e-3, register_dm_max_qubits=1, register_ensemble=24)
-    b = run(GPI2, fx.device, 240, level="GATE_LOCAL", **{**kw, "options": opts})  # type: ignore[arg-type]
+    b = run(
+        GPI2, fx.device, 240, level="GATE_LOCAL", **{**kw, "numerics": Numerics.from_solver_options(opts)}
+    )  # type: ignore[arg-type]
     a = run(GPI2, fx.device, 240, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
     gl = b.diagnostics.gate_local
     assert gl is not None and gl.register == "ensemble" and gl.ensemble_size == 24
@@ -320,22 +313,15 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     after every gate, the crosstalk neighbours inside the gate-local spaces."""
     fx = circuit_fixture(3, address_waist_m=2.0e-6)
     sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1), (1, 2)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1000,
-        detection_windows_s=WINDOWS,
+        fx.device, pairs=[(0, 1), (1, 2)], detection_records=1000, detection_windows_s=WINDOWS
     )
     ghz = Circuit(
         3, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()), Operation("cnot", (1, 2), ())), (0, 1, 2)
     )
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=1e-2),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     a = run(ghz, fx.device, 500, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
     b = run(ghz, fx.device, 500, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]

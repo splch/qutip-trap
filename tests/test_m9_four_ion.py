@@ -47,6 +47,7 @@ from qutip_trap.api import (
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import compile_to_native
 from qutip_trap.control.schedule import schedule as make_schedule
+from qutip_trap.options import Numerics
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import best_contributions, select_space
 from tests.m6_fixtures import circuit_fixture
@@ -72,22 +73,10 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     tracked occupation after each gate matches the joint run's reduced motional state to 5 %."""
     fx = circuit_fixture(4)
     sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1), (1, 2), (2, 3)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=WINDOWS,
+        fx.device, pairs=[(0, 1), (1, 2), (2, 3)], detection_records=200, detection_windows_s=WINDOWS
     )
     native = compile_to_native(GHZ4, fx.device)
-    sched = make_schedule(
-        native,
-        fx.device,
-        sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        t0_s=0.0,
-    )
+    sched = make_schedule(native, fx.device, sur.table, t0_s=0.0)
     n_modes = len(fx.device.crystal.modes)
     nbar0 = {m: 0.0 for m in range(n_modes)}
     best = best_contributions(fx.device, sched.gates, nbar0)
@@ -103,11 +92,8 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     assert [selection.mode_class[m] for m in (4, 5, 6)] == ["frozen"] * 3, selection.mode_class
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=opts,
-        caps={7: 12},
+        numerics=Numerics.from_solver_options(opts, caps={7: 12}),
         seed=3,
     )
     a = run(GHZ4, fx.device, 200, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]

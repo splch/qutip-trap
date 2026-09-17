@@ -14,7 +14,7 @@ from qutip_trap.control.compiler import (
     SWAP_MATRIX,
     Circuit,
     CompileError,
-    compile_with_report,
+    compile_report,
     cp_matrix,
 )
 from qutip_trap.control.two_qubit import (
@@ -52,7 +52,7 @@ def test_named_gates_land_in_their_canonical_class(
     assert k.entangling_count == count
     assert np.max(np.abs(k.matrix() - u)) < 1e-9
     ops = decompose_two_qubit_unitary(u, (0, 1))
-    rep = compile_with_report(Circuit(2, tuple(ops), (0, 1)))
+    rep = compile_report(Circuit(2, tuple(ops), (0, 1)))
     assert rep.n_entangling == count and rep.circuit_residual is not None and rep.circuit_residual < 1e-8
 
 
@@ -69,7 +69,7 @@ def test_haar_random_su4_costs_three_entangling_gates_in_the_weyl_chamber() -> N
         for m in k.left + k.right:
             assert np.max(np.abs(m.conj().T @ m - np.eye(2))) < 1e-9
         ops = decompose_two_qubit_unitary(u, (1, 0))
-        rep = compile_with_report(Circuit(2, tuple(ops), (0, 1)))
+        rep = compile_report(Circuit(2, tuple(ops), (0, 1)))
         assert rep.n_entangling == 3 and rep.circuit_residual is not None and rep.circuit_residual < 1e-8
         assert all(op.name in ("gpi", "gpi2", "ms", "zz") for op in rep.circuit.ops)
         # every Moelmer-Soerensen gate is played at an angle in [0, pi/2] (Section 7.1)

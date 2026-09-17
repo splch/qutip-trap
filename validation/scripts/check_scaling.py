@@ -54,6 +54,7 @@ from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.summary import apply_choi, choi_from_unitary, depolarizing_choi, entanglement_infidelity, pauli_twirl
 from qutip_trap.run.space import classify, frozen_excitation_bounds, waveform_contributions
 from qutip_trap.units import TWO_PI
+from qutip_trap.options import Numerics
 from tests.m4_fixtures import chain_device, derived_seeds, raman_gate_drives
 from tests.m6_fixtures import circuit_fixture
 
@@ -180,9 +181,9 @@ print(f"  margin_check=False keeps dims {eng_off.last_report.space.dims}: P1 = {
 section("6. GATE_LOCAL against JOINT_EXACT on the two-ion Bell circuit (Sections 5.4, 9.8)")
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 fx = circuit_fixture(2)
-sur = surrogate_table(fx.device, pairs=[(0, 1)], gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives, detection_records=2000, detection_windows_s=WINDOWS)
+sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-kw = dict(table=sur.table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives, keep_final_state=True, options=SolverOptions(branch_weight_min=1e-3))
+kw = dict(table=sur.table, keep_final_state=True, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)))
 je = run(BELL, fx.device, 2000, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
 gl = run(BELL, fx.device, 2000, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
 assert je.final_state is not None and gl.final_state is not None and gl.diagnostics.gate_local is not None

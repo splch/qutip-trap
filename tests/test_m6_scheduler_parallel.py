@@ -57,7 +57,7 @@ def test_two_ms_gates_on_disjoint_pairs_never_overlap(four_ion, parallel_address
         (Operation("ms", (0, 1), (0.0, 0.0, MS)), Operation("ms", (2, 3), (0.0, 0.0, MS))),
         (0, 1, 2, 3),
     )
-    sch = schedule(circ, dev, table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives)
+    sch = schedule(circ, dev, table)
     first, second = _span(sch, "ms[0]"), _span(sch, "ms[1]")
     assert first[1] <= second[0] + 1e-15, (
         f"parallel_addressing={parallel_addressing}: ms[0] {first} overlaps ms[1] {second}"
@@ -74,13 +74,13 @@ def test_parallel_addressing_overlaps_single_qubit_gates_but_the_serial_default_
     """The other half of Section 7.3: with the device model allowing it, carrier pulses on distinct ions do run together."""
     fx, table = four_ion
     circ = Circuit(4, (Operation("gpi2", (0,), (0.0,)), Operation("gpi2", (2,), (0.0,))), (0, 1, 2, 3))
-    serial = schedule(circ, fx.device, table, gate_drives=fx.gate_drives)
+    serial = schedule(circ, fx.device, table)
     a, b = _span(serial, "gpi2[0]"), _span(serial, "gpi2[1]")
     assert a[1] <= b[0], "the serial default sequences single-qubit gates"
     dev_par = dataclasses.replace(
         fx.device, hardware=dataclasses.replace(fx.device.hardware, parallel_addressing=True)
     )
-    par = schedule(circ, dev_par, table, gate_drives=fx.gate_drives)
+    par = schedule(circ, dev_par, table)
     a2, b2 = _span(par, "gpi2[0]"), _span(par, "gpi2[1]")
     assert a2 == b2, "distinct addressing beams play the two carrier pulses in the same window"
 
@@ -100,7 +100,7 @@ def test_a_single_qubit_gate_after_an_ms_still_waits_for_it_under_parallel_addre
         ),
         (0, 1, 2, 3),
     )
-    sch = schedule(circ, dev, table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives)
+    sch = schedule(circ, dev, table)
     ms_span = _span(sch, "ms[0]")
     on_gate_ion = _span(sch, "gpi2[1]")
     spectator = _span(sch, "gpi2[2]")
@@ -115,9 +115,9 @@ def test_parallel_true_is_refused_when_the_device_model_does_not_allow_it(four_i
     circ = Circuit(4, (Operation("gpi2", (0,), (0.0,)),), (0, 1, 2, 3))
     assert fx.device.hardware.parallel_addressing is False
     with pytest.raises(ScheduleError, match="parallel_addressing"):
-        schedule(circ, fx.device, table, gate_drives=fx.gate_drives, parallel=True)
+        schedule(circ, fx.device, table, parallel=True)
     # explicitly serial on a parallel chain is allowed (the caller may want the serial path, e.g. crosstalk echoes)
     dev = dataclasses.replace(
         fx.device, hardware=dataclasses.replace(fx.device.hardware, parallel_addressing=True)
     )
-    assert schedule(circ, dev, table, gate_drives=fx.gate_drives, parallel=False).pulses
+    assert schedule(circ, dev, table, parallel=False).pulses

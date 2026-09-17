@@ -217,11 +217,40 @@ class JobSpec:
         # the mapping was produced by dataclasses.asdict on a SolverOptions and carries exactly its fields
         return core.SolverOptions(**cast(dict[str, Any], self.options))
 
-    def run_kwargs(self) -> dict[str, Any]:
-        return {
-            "gate_drives": {i: d.to_core() for i, d in self.gate_drives.items()},
-            "entangling_drives": {i: d.to_core() for i, d in self.entangling_drives.items()},
-        }
+    def physics(self) -> core.Physics:
+        """The ``Physics`` of the job: the solver options' switches plus the job's own physics fields (0.3.0)."""
+        return core.Physics.from_solver_options(
+            self.solver_options(),
+            noise=self.noise,
+            internal_levels=self.internal_levels,
+            stark_compensation=self.stark_compensation,
+            entangler=self.entangler,
+            t0_s=self.t0_s,
+        )
+
+    def numerics(self) -> core.Numerics:
+        """The ``Numerics`` of the job: the solver options plus the explicit caps and the sample count (0.3.0)."""
+        return core.Numerics.from_solver_options(self.solver_options(), caps=self.caps, samples=self.samples)
+
+    def machine(self, device: core.Device, table: core.CalibrationTable | None = None) -> core.Machine:
+        """The ``Machine`` this job runs on: ``device`` with the job's drive maps as its roles (the record's maps are
+        what the run used; the device's own roles otherwise), the table, and the job's physics, numerics, readout and
+        level (0.3.0: the app runs through the machine and forwards no run keyword)."""
+        roles = device.roles
+        if self.gate_drives or self.entangling_drives:
+            roles = dataclasses.replace(
+                roles,
+                gate={i: d.to_core() for i, d in self.gate_drives.items()} or roles.gate,
+                entangling={i: d.to_core() for i, d in self.entangling_drives.items()} or roles.entangling,
+            )
+        return core.Machine(
+            dataclasses.replace(device, roles=roles),
+            table=table,
+            physics=self.physics(),
+            numerics=self.numerics(),
+            readout=core.Readout(mode=self.readout),
+            level=core.FidelityLevel(self.level),
+        )
 
 
 def options_record(options: core.SolverOptions) -> dict[str, OptionValue]:
@@ -1893,7 +1922,8 @@ class LiveRun:
     result: core.Result
     core_record: core.RunRecord
     options: core.SolverOptions
-    run_kwargs: dict[str, Any]
+    machine: core.Machine
+    """The machine the run went through (0.3.0): its device carries the roles, its option objects the policy."""
 
     @property
     def space(self) -> core.HilbertSpace:
@@ -1916,15 +1946,14 @@ def calibrate_for(job: JobSpec, preset: core.DevicePreset) -> core.CalibrationTa
         raise RecordError(
             "M11.1 records rebuild surrogate tables only; the simulated-experiment path is M11.3's stale-badge job"
         )
-    table = core.calibrate(
-        preset.device,
+    report = core.calibrate(
+        job.machine(preset.device),
         seed=cal.seed,
         pairs=[tuple(p) for p in cal.pairs],
         detection_records=cal.detection_records,
         detection_windows_s=cal.detection_windows_s,
-        **job.run_kwargs(),
     )
-    return table_with_overrides(table, job.waveform_overrides)
+    return table_with_overrides(report.table, job.waveform_overrides)
 
 
 @dataclass(frozen=True)
@@ -1971,14 +2000,16 @@ def table_with_overrides(
     an error, never a silent no-op."""
     if not overrides:
         return table
-    ms = dict(table.ms)
+    shifted: dict[tuple[int, int], core.Waveform] = {}
     for key, offset in overrides.items():
         a, b = (int(x) for x in key.split(","))
-        pair = (a, b) if (a, b) in ms else (b, a)
-        if pair not in ms:
+        wf = table.waveform_for((a, b))
+        if wf is None:
             raise RecordError(f"no entangling waveform for pair {key} in the calibration table to shift")
-        ms[pair] = shift_detuning(ms[pair], float(offset))
-    return dataclasses.replace(table, ms=ms)
+        shifted[(a, b)] = shift_detuning(wf, float(offset))
+    return table.with_params(
+        ms=shifted
+    )  # the table's own proposal operation (0.3.0); the pair order is canonicalised there
 
 
 def execute(
@@ -1991,27 +2022,9 @@ def execute(
     table = calibrate_for(job, pre)
     circuit = job.circuit.to_core()
     opts = job.solver_options()
-    kwargs = job.run_kwargs()
+    machine = job.machine(pre.device, table)
     t0 = time.perf_counter()
-    result = core.run(
-        circuit,
-        pre.device,
-        job.shots,
-        table=table,
-        t0_s=job.t0_s,
-        samples=job.samples,
-        level=job.level,
-        seed=job.seed,
-        options=opts,
-        readout=job.readout,
-        entangler=job.entangler,
-        keep_final_state=job.keep_final_state,
-        noise=job.noise,
-        internal_levels=job.internal_levels,
-        stark_compensation=job.stark_compensation,
-        caps=job.caps,
-        **kwargs,
-    )
+    result = machine.run(circuit, job.shots, seed=job.seed, keep_final_state=job.keep_final_state)
     wall = time.perf_counter() - t0
     record = build_record(
         job, pre.device, table, result, wall_time_s=wall, joint_store_dimension_max=joint_store_dimension_max
@@ -2022,7 +2035,7 @@ def execute(
         result=result,
         core_record=core.last_record(result),
         options=opts,
-        run_kwargs=kwargs,
+        machine=machine,
     )
     return record, live
 

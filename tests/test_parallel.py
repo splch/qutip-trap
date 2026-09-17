@@ -35,6 +35,7 @@ from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.dynamics.tomography import cp_residual
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics, Physics
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -303,14 +304,7 @@ WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1000,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
     return fx, sur
 
 
@@ -323,11 +317,10 @@ def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
             fx.device,
             shots,
             table=sur.table,
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
             keep_final_state=True,
             level="JOINT_EXACT",
-            options=opts,
+            physics=Physics.from_solver_options(opts),
+            numerics=Numerics.from_solver_options(opts),
         )
     return out["serial"], out["parallel"]
 

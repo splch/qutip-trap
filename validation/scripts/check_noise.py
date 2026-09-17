@@ -267,7 +267,7 @@ fx0 = circuit_fixture(2)
 from tests.fixtures import make_hardware
 
 fx = dataclasses.replace(fx0, device=dataclasses.replace(fx0.device, hardware=dataclasses.replace(make_hardware(realistic=True), phase_continuous=False)))
-sur = surrogate_table(fx.device, pairs=[(0, 1)], gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives, detection_records=200, detection_windows_s=(20e-6,))
+sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,))
 wf2 = sur.table.waveform_for((0, 1))
 assert wf2 is not None
 nb = {m: e.value for m, e in sur.table.nbar.items()}

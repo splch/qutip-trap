@@ -22,8 +22,9 @@ from qutip_trap.benchmarks.rb import fit_decay, rb_model
 from qutip_trap.benchmarks.volume import random_square_circuit
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control import native
-from qutip_trap.control.compiler import compile_with_report, ideal_probabilities
+from qutip_trap.control.compiler import compile_report, ideal_probabilities
 from qutip_trap.control.two_qubit import haar_random_unitary
+from qutip_trap.machine import Machine
 from qutip_trap.noise.summary import (
     apply_choi,
     average_gate_infidelity,
@@ -31,6 +32,7 @@ from qutip_trap.noise.summary import (
     depolarizing_choi,
     entanglement_infidelity,
 )
+from qutip_trap.options import Numerics
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 FAST = SolverOptions(branch_weight_min=1e-3)
@@ -39,15 +41,8 @@ FAST = SolverOptions(branch_weight_min=1e-3)
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     preset = yb171_chain(2)
-    sur = surrogate_table(
-        preset.device,
-        pairs=[(0, 1)],
-        gate_drives=preset.gate_drives,
-        entangling_drives=preset.entangling_drives,
-        detection_records=1000,
-        detection_windows_s=WINDOWS,
-    )
-    return preset, dict(table=sur.table, options=FAST)
+    sur = surrogate_table(preset.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
+    return preset, Machine(preset.device, table=sur.table, numerics=Numerics.from_solver_options(FAST))
 
 
 # ---- algebra on synthetic inputs -------------------------------------------------------------------------------------------
@@ -115,7 +110,7 @@ def test_parity_fit_and_ghz_circuits() -> None:
     fit_ideal, ok_ideal = fit_parity(phases, np.array(ideal_parity), np.full(8, 1e-6), n)
     assert ok_ideal and fit_ideal["contrast"][0] == pytest.approx(1.0, abs=1e-6)
     assert fit_ideal["offset"][0] == pytest.approx(0.0, abs=1e-6)
-    rep = compile_with_report(parity_circuit((0, 1), 2, 0.7))
+    rep = compile_report(parity_circuit((0, 1), 2, 0.7))
     assert rep.n_entangling == 1 and rep.circuit_residual is not None and rep.circuit_residual < 1e-8
 
 
@@ -125,7 +120,7 @@ def test_random_square_circuits_have_heavy_sets_of_half_the_strings_and_three_ga
         qc = random_square_circuit(rng, tuple(range(n)), n, n)
         assert len(qc.heavy) == 2 ** (n - 1) and 0.5 < qc.heavy_ideal_probability <= 1.0
         assert abs(sum(qc.ideal.values()) - 1.0) < 1e-9 and qc.entangling_count == 3 * n * (n // 2)
-        rep = compile_with_report(qc.circuit)
+        rep = compile_report(qc.circuit)
         assert rep.n_entangling == qc.entangling_count and rep.circuit_residual is not None
         assert rep.circuit_residual < 1e-7
     assert one_gate_circuit("ms[0,1]", 2).ops[0].params == (0.0, 0.0, math.pi / 2)
@@ -141,10 +136,8 @@ def test_single_qubit_rb_decays_at_the_channel_scale_with_the_budget_alongside(t
     """Section 13 'RB error rate': r = (1 - p)/2 from the fit; the survival decays over hundreds of Cliffords at the 1e-5 level
     the Section 6.8 channel of the carrier pulses predicts (the first-order composition is an estimate, coherent errors of one
     Clifford's pulses partly cancel); the SPAM offset F(0) matches the readout and preparation errors."""
-    preset, kw = two_ion
-    rb = randomized_benchmarking(
-        preset.device, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True, **kw
-    )
+    _preset, mach = two_ion
+    rb = randomized_benchmarking(mach, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True)
     assert rb.n_qubits == 1 and rb.survival.shape == (3, 1) and rb.converged
     assert rb.mean_survival[0] > 0.998 and rb.mean_survival[-1] < rb.mean_survival[0]
     r, sr = rb.error_per_clifford
@@ -175,10 +168,8 @@ def test_single_qubit_rb_decays_at_the_channel_scale_with_the_budget_alongside(t
 def test_two_qubit_rb_and_the_entangling_channel(two_ion) -> None:  # type: ignore[no-untyped-def]
     """Two-qubit Clifford RB on the pair: 1.5 entangling gates per Clifford on average, r = (3/4)(1 - p) at the 1e-3 level of
     the composed channels (five pulses per Clifford at 2.6e-4 each on the pair dominate the 1.1e-4 entangling gate)."""
-    preset, kw = two_ion
-    rb = randomized_benchmarking(
-        preset.device, (0, 1), (1, 6, 16), n_sequences=1, shots=400, fix_offset=True, **kw
-    )
+    _preset, mach = two_ion
+    rb = randomized_benchmarking(mach, (0, 1), (1, 6, 16), n_sequences=1, shots=400, fix_offset=True)
     assert rb.n_qubits == 2 and rb.fit["B"] == (0.25, 0.0)
     assert rb.mean_survival[0] > 0.97 and rb.mean_survival[-1] < rb.mean_survival[0]
     assert 0.5 <= rb.entangling_per_clifford <= 3.0 and rb.pulses_per_clifford > rb.entangling_per_clifford
@@ -199,8 +190,8 @@ def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion) -> None:  # typ
     """Section 7.9: the Bell/GHZ bound (P_00 + P_11 + C)/2 from populations and a parity scan through run(), and the two
     exact fidelities it sits between -- it estimates max_theta <GHZ_theta| rho |GHZ_theta> (an identity, conv.ghz_parity_bound)
     and is therefore an UPPER bound on the fixed-phase <GHZ| rho |GHZ> -- plus the predicted floor from the channels."""
-    preset, kw = two_ion
-    g = ghz_fidelity(preset.device, (0, 1), shots=500, **kw)
+    _preset, mach = two_ion
+    g = ghz_fidelity(mach, (0, 1), shots=500)
     assert g.n_qubits == 2 and len(g.results) == 9 and g.converged
     p0, p1 = g.populations["P0"][0], g.populations["P1"][0]
     assert p0 + p1 > 0.98 and abs(p0 - p1) < 0.1
@@ -230,8 +221,8 @@ def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion) -> None:  # typ
 def test_quantum_volume_style_run_at_width_two(two_ion) -> None:  # type: ignore[no-untyped-def]
     """Cross et al. 2019 at width two: heavy outputs from the ideal distribution, the measured heavy-output probability near the
     ideal one on this device, three entangling gates per SU(4), the depolarizing prediction from the channels."""
-    preset, kw = two_ion
-    qv = quantum_volume(preset.device, (0, 1), n_circuits=2, shots=300, **kw)
+    _preset, mach = two_ion
+    qv = quantum_volume(mach, (0, 1), n_circuits=2, shots=300)
     assert qv.depth == 2 and qv.n_circuits == 2 and qv.entangling_per_circuit == 6.0
     assert np.all(qv.ideal_heavy_probability > 0.5) and np.all(qv.register_fidelity > 0.95)
     assert np.all(

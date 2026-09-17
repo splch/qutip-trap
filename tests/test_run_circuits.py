@@ -21,6 +21,7 @@ from qutip_trap.api import (
 )
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.schedule import ScheduleError
+from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.run.job import enumerate_branches
 from tests.m6_fixtures import circuit_fixture
 
@@ -32,14 +33,7 @@ FAST = SolverOptions(branch_weight_min=1e-4)
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=2000,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
     return fx, sur
 
 
@@ -51,10 +45,9 @@ def bell(two_ion):  # type: ignore[no-untyped-def]
         fx.device,
         2000,
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=FAST,
+        physics=Physics.from_solver_options(FAST),
+        numerics=Numerics.from_solver_options(FAST),
     )
     return fx, sur, res
 
@@ -185,9 +178,7 @@ def test_seeds_reproduce_shot_by_shot_and_readout_full_path_generates_records(tw
     fx, sur = two_ion
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        options=SolverOptions(branch_weight_min=1e-2),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     a = run(BELL, fx.device, 300, **kw)  # type: ignore[arg-type]
     b = run(BELL, fx.device, 300, **kw)  # type: ignore[arg-type]
@@ -195,7 +186,7 @@ def test_seeds_reproduce_shot_by_shot_and_readout_full_path_generates_records(tw
     assert np.array_equal(a.bitstrings, b.bitstrings)
     assert not np.array_equal(a.bitstrings, c.bitstrings)
     assert a.diagnostics.dropped_branch_weight > 1e-3, "the coarse branch cutoff drops and reports weight"
-    full = run(BELL, fx.device, 300, readout="full", **kw)  # type: ignore[arg-type]
+    full = run(BELL, fx.device, 300, **kw, readout=Readout(mode="full"))  # type: ignore[arg-type]
     assert full.photon_records is not None and full.photon_records.shape == (300, 2)
     assert full.photon_records.max() > 3, "bright ions scatter tens of photons in the window"
     assert abs(full.probabilities.get("00", 0.0) - a.probabilities.get("00", 0.0)) < 0.1
@@ -216,10 +207,8 @@ def test_single_qubit_gate_identity_on_the_pipeline(two_ion) -> None:  # type: i
         fx.device,
         100,
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=1e-3),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
     )
     fid = register_fidelity(res)
     eps = sur.table.crosstalk[(0, 1)].value
@@ -235,14 +224,20 @@ def test_single_qubit_gate_identity_on_the_pipeline(two_ion) -> None:  # type: i
 
 def test_refusals_and_the_level_guard(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    kw = dict(table=sur.table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives)
+    kw = dict(table=sur.table)
     with pytest.raises(ValueError, match="shots"):
         run(BELL, fx.device, 0, **kw)  # type: ignore[arg-type]
     mid = Circuit(2, (Operation("measure", (0,), ()), Operation("x", (0,), ())), (0, 1))
     with pytest.raises(ScheduleError, match="mid-circuit"):
         run(mid, fx.device, 10, **kw)  # type: ignore[arg-type]
     # a joint dimension above the guard routes to GATE_LOCAL (Section 11.5; M9a): the run proceeds and says so
-    small_guard = run(BELL, fx.device, 10, options=SolverOptions(joint_dimension_max=64), **kw)  # type: ignore[arg-type]
+    small_guard = run(
+        BELL,
+        fx.device,
+        10,
+        **kw,
+        numerics=Numerics.from_solver_options(SolverOptions(joint_dimension_max=64)),
+    )  # type: ignore[arg-type]
     assert small_guard.diagnostics.level == "GATE_LOCAL" and small_guard.diagnostics.gate_local is not None
     assert any("GATE_LOCAL" in a for a in small_guard.diagnostics.approximations)
 
@@ -262,23 +257,11 @@ def test_branch_enumeration_weights_and_cutoff() -> None:
 def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_pairs() -> None:
     """Appendix E: run(table=None) calibrates the surrogate at t0 for the pairs the circuit uses; calibrate() is the same table."""
     fx = circuit_fixture(2)
-    table = calibrate(
-        fx.device,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        pairs=[(0, 1)],
-        detection_records=1500,
-        detection_windows_s=WINDOWS,
-    )
+    table = calibrate(fx.device, pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS)
     assert table.waveform_for((0, 1)) is not None and table.detection["threshold"].status == "calibrated"
+    # no table: run builds the closed-form surrogate for the circuit's pairs (the default scan settings)
     res = run(
-        BELL,
-        fx.device,
-        200,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        options=SolverOptions(branch_weight_min=1e-2),
-        calibrate_kwargs={"detection_records": 1500, "detection_windows_s": WINDOWS},
+        BELL, fx.device, 200, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
     )
     assert res.diagnostics.calibration.surrogate and res.probabilities.get("00", 0.0) > 0.3
     assert any("surrogate" in a or "waveform" in a for a in res.diagnostics.approximations)
@@ -312,7 +295,7 @@ def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase()
         dev = dataclasses.replace(
             fx.device, hardware=dataclasses.replace(fx.device.hardware, phase_continuous=continuous)
         )
-        sch = schedule(circ, dev, table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives)
+        sch = schedule(circ, dev, table)
         ms_pulses = [p for p in sch.pulses if (p.gate_id or "").startswith("ms")]
         t_g = ms_pulses[0].t_start_s
         assert t_g > 0.0
@@ -372,12 +355,7 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
     boundary populations stay below the threshold and the histogram is the GHZ one within the readout and the crosstalk."""
     fx = circuit_fixture(3, address_waist_m=2.0e-6)
     sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1), (1, 2)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1500,
-        detection_windows_s=WINDOWS,
+        fx.device, pairs=[(0, 1), (1, 2)], detection_records=1500, detection_windows_s=WINDOWS
     )
     assert 0.01 < sur.table.crosstalk[(1, 0)].value < 0.04
     for pair in ((0, 1), (1, 2)):
@@ -406,10 +384,8 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         fx.device,
         1000,
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=3e-3),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
     )
     d = res.diagnostics
     # two resolved modes: the cap rule of Section 5.5 at the 1e-6 tail (M9a) gives 11 levels on the COM (populated to n = 2) and
@@ -450,14 +426,7 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
     and the bright-state readout error exceeding the dark one adds to it (check_circuits.py 4 prints the coherent-only
     matrix model beside the exact register populations)."""
     fx = circuit_fixture(3, address_waist_m=2.0e-6)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1500,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS)
     ops = (
         Operation("x", (1,), ()),
         Operation("h", (0,), ()),
@@ -476,10 +445,8 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
         fx.device,
         1000,
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=3e-3),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
     )
     declared = _declared_probabilities(res, (0, 2))
     assert declared["01"] > 0.99

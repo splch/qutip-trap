@@ -139,14 +139,7 @@ preset = yb171_chain(2)
 dev = preset.device
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 t0 = time.perf_counter()
-sur = surrogate_table(
-    dev,
-    pairs=[(0, 1)],
-    gate_drives=preset.gate_drives,
-    entangling_drives=preset.entangling_drives,
-    detection_records=2000,
-    detection_windows_s=WINDOWS,
-)
+sur = surrogate_table(dev, pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
 print(f"MC: surrogate table in {time.perf_counter() - t0:.1f} s")
 kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3))
 t0 = time.perf_counter()
@@ -313,14 +306,7 @@ print(
 preset3 = yb171_chain(3, address_waist_m=2.0e-6)
 dev3 = preset3.device
 t0 = time.perf_counter()
-sur3 = surrogate_table(
-    dev3,
-    pairs=[(0, 1), (1, 2)],
-    gate_drives=preset3.gate_drives,
-    entangling_drives=preset3.entangling_drives,
-    detection_records=1500,
-    detection_windows_s=WINDOWS,
-)
+sur3 = surrogate_table(dev3, pairs=[(0, 1), (1, 2)], detection_records=1500, detection_windows_s=WINDOWS)
 kw3 = dict(table=sur3.table, options=SolverOptions(branch_weight_min=3e-3))
 g3 = ghz_fidelity(
     dev3,

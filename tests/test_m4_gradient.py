@@ -30,7 +30,7 @@ from scipy.special import jv
 from qutip_trap.api import Device, Field, Trap
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.table import CalEntry, Segment, Waveform
-from qutip_trap.device.model import GradientField
+from qutip_trap.device.model import BeamRoles, GradientField
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import (
@@ -350,8 +350,9 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
     )
     micro = {i: GateDrive("microwave", ()) for i in (0, 1)}
     ent = {i: GateDrive("gradient", ()) for i in (0, 1)}
+    dev = dc.replace(dev, roles=BeamRoles(gate=micro, entangling=ent))  # the scheduler reads the roles
     circuit = Circuit(2, (Operation("zz", (0, 1), (math.pi / 2,)),), (0, 1))
-    sched = schedule(circuit, dev, table, gate_drives=micro, entangling_drives=ent)
+    sched = schedule(circuit, dev, table)
     kinds = [p.drive.kind for p in sched.pulses]
     assert kinds.count("gradient") == 4, "two ions x two half-angle loops"
     assert kinds.count("microwave") == 4, "the echo and un-echo pi pulses on both ions"
@@ -364,20 +365,14 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
     assert [g.kind for g in sched.gates] == ["zz", "zz"]
     # a gradient waveform on a light-shift drive is refused, and so is MS(...) on a gradient waveform
     with pytest.raises(ScheduleError, match="gradient gate drive"):
-        schedule(circuit, dev, table, gate_drives=micro, entangling_drives=micro)
+        schedule(circuit, dc.replace(dev, roles=BeamRoles(gate=micro, entangling=micro)), table)
     ms_circuit = Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1))
     with pytest.raises(ScheduleError, match="microwave-gradient one"):
-        schedule(ms_circuit, dev, table, gate_drives=micro, entangling_drives=ent)
+        schedule(ms_circuit, dev, table)
     # the sign guard of the sigma_z path
     wrong = gradient_waveform(dev, chi_rad=+math.pi / 8.0)
     with pytest.raises(ScheduleError, match="opposite sign"):
-        schedule(
-            circuit,
-            dev,
-            dc.replace(table, ms={(0, 1): wrong}),
-            gate_drives=micro,
-            entangling_drives=ent,
-        )
+        schedule(circuit, dev, dc.replace(table, ms={(0, 1): wrong}))
 
 
 def test_srinivas_own_parameters() -> None:

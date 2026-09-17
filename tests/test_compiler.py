@@ -14,7 +14,6 @@ from qutip_trap.api import (
     Operation,
     circuit_unitary,
     compile_to_native,
-    compile_with_report,
     dump_ionq_json,
     ideal_probabilities,
     load_ionq_json,
@@ -25,6 +24,7 @@ from qutip_trap.control.compiler import (
     CompileError,
     cnot_global_phase,
     cnot_template,
+    compile_report,
     cp_matrix,
     cp_template,
     cp_template_local_defect_rad,
@@ -164,14 +164,14 @@ def test_standard_two_qubit_gates_and_u3_compile_and_verify() -> None:
     ):
         circ = Circuit(2, (op,), (0, 1))
         for ent in ("ms", "zz"):
-            rep = compile_with_report(circ, entangler=ent)  # type: ignore[arg-type]
+            rep = compile_report(circ, entangler=ent)  # type: ignore[arg-type]
             assert rep.circuit.is_exported_native
             assert rep.circuit_residual is not None and rep.circuit_residual < 1e-9
             assert all(r < 1e-9 for r in rep.block_residuals)
-    rep = compile_with_report(Circuit(1, (Operation("u3", (0,), (0.3, 1.1, -2.0)),), (0,)))
+    rep = compile_report(Circuit(1, (Operation("u3", (0,), (0.3, 1.1, -2.0)),), (0,)))
     assert rep.circuit_residual is not None and rep.circuit_residual < 1e-12 and rep.n_pulses == 2
     with pytest.raises(CompileError):
-        compile_with_report(Circuit(1, (Operation("rx", (0,), (float("nan"),)),), (0,)))
+        compile_report(Circuit(1, (Operation("rx", (0,), (float("nan"),)),), (0,)))
 
 
 def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_frame() -> None:
@@ -214,14 +214,14 @@ def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_fra
 
 def test_bell_and_ghz_compile_to_the_expected_pulse_counts_and_distributions() -> None:
     bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-    rep = compile_with_report(bell)
+    rep = compile_report(bell)
     assert rep.n_entangling == 1 and rep.n_pulses == 6 and rep.circuit.is_exported_native
     assert ideal_probabilities(bell) == pytest.approx({"00": 0.5, "11": 0.5})
     ghz = Circuit(
         3, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()), Operation("cnot", (1, 2), ())), (0, 1, 2)
     )
     assert ideal_probabilities(ghz) == pytest.approx({"000": 0.5, "111": 0.5})
-    assert compile_with_report(ghz).n_entangling == 2
+    assert compile_report(ghz).n_entangling == 2
     # bit order: X on qubit 0 alone reads "01" (qubit 0 rightmost), and a measured subset drops the other qubits
     x0 = Circuit(2, (Operation("x", (0,), ()),), (0, 1))
     assert ideal_probabilities(x0) == pytest.approx({"01": 1.0})
@@ -242,7 +242,7 @@ def test_ionq_json_round_trip_of_a_compiled_circuit_and_native_passthrough() -> 
     nat = Circuit(
         2, (Operation("rz", (1,), (0.4,)), Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2.0))), (0, 1)
     )
-    rep = compile_with_report(nat)
+    rep = compile_report(nat)
     assert rep.circuit.ops == (Operation("ms", (0, 1), (0.0, pytest.approx(-0.4), math.pi / 2.0)),)  # type: ignore[arg-type]
     assert rep.final_frame_rad == {0: 0.0, 1: pytest.approx(0.4)}
 
@@ -251,7 +251,7 @@ def test_mid_circuit_operations_pass_through_and_skip_the_whole_circuit_check() 
     circ = Circuit(
         2, (Operation("h", (0,), ()), Operation("measure", (0,), ()), Operation("x", (1,), ())), (0, 1)
     )
-    rep = compile_with_report(circ)
+    rep = compile_report(circ)
     assert rep.circuit_residual is None and any("mid-circuit" in n for n in rep.notes)
     assert [op.name for op in rep.circuit.ops] == ["gpi2", "measure", "gpi"]
     with pytest.raises(ValueError, match="non-unitary"):
@@ -309,7 +309,7 @@ def test_measured_registers_and_the_third_positional_argument() -> None:
         Circuit(2, registers={"r": (0, 0)})
     # the compiler keeps the registers on the native circuit
     c = Circuit(2, registers={"a": (0,), "b": (1,)}).h(0).cnot(0, 1)
-    assert compile_with_report(c).circuit.registers == {"a": (0,), "b": (1,)}
+    assert compile_report(c).circuit.registers == {"a": (0,), "b": (1,)}
     assert compile_to_native(c).measure == (0, 1)
 
 

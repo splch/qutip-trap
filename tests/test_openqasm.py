@@ -11,10 +11,10 @@ from qutip_trap.api import (
     Circuit,
     Operation,
     circuit_unitary,
-    compile_with_report,
     ideal_probabilities,
     load_openqasm2,
 )
+from qutip_trap.control.compiler import compile_report
 from qutip_trap.io.openqasm import OpenQASMError, evaluate, tokenize
 
 BELL = """
@@ -64,7 +64,7 @@ def test_expressions_registers_and_broadcasting() -> None:
     assert circ.ops[5] == Operation("rz", (1,), (pytest.approx(0.25),))  # type: ignore[arg-type]
     assert circ.ops[7] == Operation("cp", (1, 0), (0.5,))
     assert circ.ops[8].name == "swap" and circ.ops[9].name == "rxx" and circ.ops[10].name == "rzz"
-    rep = compile_with_report(circ)
+    rep = compile_report(circ)
     assert rep.circuit_residual is not None and rep.circuit_residual < 1e-9
 
 

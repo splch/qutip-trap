@@ -11,10 +11,12 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import CalEntry, Circuit, Drift, Operation, calibrate, compile_with_report, schedule
+from qutip_trap._compat import QutipTrapDeprecationWarning
+from qutip_trap.api import CalEntry, Circuit, Drift, Operation, calibrate, schedule
 from qutip_trap.calibration import DEFAULT_CACHE, CalibrationCache, calibrate_with_report
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.compiler import compile_report
 from qutip_trap.control.played import physical_schedule
 from qutip_trap.control.schedule import crosstalk_beliefs
 from qutip_trap.experiments import crystal_image
@@ -37,14 +39,7 @@ BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0,
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=1000,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
     return fx, sur
 
 
@@ -86,10 +81,8 @@ def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalib
     two_ion,
 ) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    rep = compile_with_report(BELL, fx.device)
-    sched = schedule(
-        rep.circuit, fx.device, sur.table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives
-    )
+    rep = compile_report(BELL, fx.device)
+    sched = schedule(rep.circuit, fx.device, sur.table)
     played, notes = physical_schedule(fx.device, sched, sur.table)
     assert all(p.drive.programmed for p in sched.pulses) and not any(
         p.drive.programmed for p in played.pulses
@@ -110,9 +103,7 @@ def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalib
             key: dataclasses.replace(sur.table.rabi[key], value=0.99 * sur.table.rabi[key].value),
         },
     )
-    sched_low = schedule(
-        rep.circuit, fx.device, low, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives
-    )
+    sched_low = schedule(rep.circuit, fx.device, low)
     played_low, _ = physical_schedule(fx.device, sched_low, low)
     single = [
         (a, b)
@@ -137,8 +128,8 @@ def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -
     """Section 7.5 item 7: every tone is detuned by the shift the table predicts for the played amplitude; both legs of an MS
     segment move together (the spin and motion phases are untouched); the flag switches it off."""
     fx, sur = two_ion
-    rep = compile_with_report(BELL, fx.device)
-    kw = dict(gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives)
+    rep = compile_report(BELL, fx.device)
+    kw: dict[str, object] = {}
     on = schedule(rep.circuit, fx.device, sur.table, **kw)  # type: ignore[arg-type]
     off = schedule(rep.circuit, fx.device, sur.table, stark_compensation=False, **kw)  # type: ignore[arg-type]
     for p_on, p_off in zip(on.pulses, off.pulses):
@@ -212,8 +203,6 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
     cache = CalibrationCache()
     kw = dict(
         pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         detection_records=200,
         detection_windows_s=(20e-6,),
         spot_check=False,
@@ -230,7 +219,8 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
     t3 = calibrate(changed, cache=cache, **kw)  # type: ignore[arg-type]
     assert t3 is not t1 and not t1.is_current_for(changed.hash()) and t3.is_current_for(changed.hash())
     assert cache.invalidate(fx.device) == 1 and cache.tables_for(fx.device) == ()
-    report = calibrate_with_report(changed, cache=cache, **kw)  # type: ignore[arg-type]
+    with pytest.warns(QutipTrapDeprecationWarning, match="calibrate_with_report is deprecated"):
+        report = calibrate_with_report(changed, cache=cache, **kw)  # type: ignore[arg-type]
     assert report.table is t3, "the report is cached beside its table"
     assert isinstance(DEFAULT_CACHE, CalibrationCache)
 
@@ -257,11 +247,7 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
     assert upstream_status(bad, UPSTREAM["sideband_spectroscopy"]) == "micromotion"
     assert upstream_status(sur.table, UPSTREAM["sideband_spectroscopy"]) is None
     report = full_calibration(
-        fx.device,
-        experiments=("sideband_spectroscopy",),
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        surrogate=dataclasses.replace(sur, table=bad),
+        fx.device, experiments=("sideband_spectroscopy",), surrogate=dataclasses.replace(sur, table=bad)
     )
     assert (
         "sideband_spectroscopy" in report.refused and "micromotion" in report.refused["sideband_spectroscopy"]

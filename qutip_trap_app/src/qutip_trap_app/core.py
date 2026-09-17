@@ -14,6 +14,7 @@ record carries that list, so a reader of an exported record knows which core fac
 from __future__ import annotations
 
 # ---- the public surface (Appendix E) -------------------------------------------------------------------------------------------
+from qutip_trap import FidelityLevel, Machine, Numerics, Physics, Readout, as_machine
 from qutip_trap import __version__ as core_version
 from qutip_trap.api import (
     Beam,
@@ -174,6 +175,12 @@ CORE_GAPS: tuple[str, ...] = (
 """What the core does not expose (or does not re-export) that the application needs; Section 14.6's record of the gaps."""
 
 __all__ = [
+    "FidelityLevel",
+    "Machine",
+    "Numerics",
+    "Physics",
+    "Readout",
+    "as_machine",
     "Beam",
     "BuilderOptions",
     "BuiltHamiltonian",

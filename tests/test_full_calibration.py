@@ -1,4 +1,4 @@
-"""The full calibration by simulated experiments end to end (PLAN.md Section 7.5; milestone M8): ``calibrate(surrogate=False)`` on
+"""The full calibration by simulated experiments end to end (PLAN.md Section 7.5; milestone M8): ``calibrate(method="experiments")`` on
 the two-ion 171Yb+ fixture with reduced scans follows the dependency graph, replaces every seed by a calibrated entry whose value
 agrees with the device's true derived value within the uncertainty the fit reports, stores the entangling waveform at its closure
 amplitude with aligned phases, and a Bell circuit run from that table (the scheduler reading only the table, the ions seeing the
@@ -13,10 +13,12 @@ import numpy as np
 import pytest
 
 from qutip_trap.api import Circuit, Operation, SolverOptions, calibrate, register_fidelity, run
-from qutip_trap.calibration import CalibrationScans, calibrate_with_report
+from qutip_trap.calibration import CalibrationScans
 from qutip_trap.calibration.experiments import CalibrationReport
 from qutip_trap.control.table import usable
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
+from qutip_trap.machine import Machine
+from qutip_trap.options import Numerics, Physics
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
@@ -45,12 +47,10 @@ SCANS = CalibrationScans(
 @pytest.fixture(scope="module")
 def calibrated():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
-    report = calibrate_with_report(
-        fx.device,
-        surrogate=False,
+    report = calibrate(
+        Machine(fx.device),
+        method="experiments",
         seed=11,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         pairs=[(0, 1)],
         scans=SCANS,
         detection_records=1500,
@@ -174,10 +174,8 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
     histogram agrees with the surrogate-table run within statistics."""
     fx, report = calibrated
     kw = dict(
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=1e-3),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
     )
     res = run(BELL, fx.device, 1000, table=report.table, **kw)  # type: ignore[arg-type]
     ref = run(BELL, fx.device, 1000, table=report.surrogate.table, **kw)  # type: ignore[arg-type]
@@ -212,10 +210,8 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
 
     cache = CalibrationCache()
     kw = dict(
-        surrogate=False,
+        method="experiments",
         seed=11,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         pairs=[(0, 1)],
         scans=CalibrationScans(
             shots=None, detection_records=300, detection_windows_s=(20e-6,), micromotion_ranges={}
@@ -239,9 +235,7 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
         fx.device,
         50,
         table=report.table,
-        t0_s=3600.0,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        options=SolverOptions(branch_weight_min=1e-2),
+        physics=Physics.from_solver_options(SolverOptions(branch_weight_min=1e-2), t0_s=3600.0),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     assert res.diagnostics.calibration.fitted_at_s == 0.0 and res.shots == 50

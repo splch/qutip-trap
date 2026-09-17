@@ -3,6 +3,7 @@ conventions, the ZZ wrapper construction, virtual-Z frames, partial angles, refu
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -195,7 +196,6 @@ def test_virtual_z_frame_carries_through_ms(calibrated) -> None:  # type: ignore
 def test_scheduler_refusals_and_table_lookup(calibrated) -> None:  # type: ignore[no-untyped-def]
     dev, modes, drives, _space, table, _run = calibrated
     empty = table_with_waveform((0, 1), Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=20e3))
-    import dataclasses
 
     none = dataclasses.replace(empty, ms={})
     with pytest.raises(ScheduleError, match="no entangling waveform"):
@@ -214,16 +214,12 @@ def test_scheduler_refusals_and_table_lookup(calibrated) -> None:  # type: ignor
 
     couplings = LightShiftCouplings((-2.0, 0.0), 0.0, 1e9)
     ent = {i: GateDrive("light_shift", (0, 1), light_shift=couplings) for i in (0, 1)}
+    dev_ls = dataclasses.replace(
+        dev, roles=dataclasses.replace(dev.roles, entangling=ent)
+    )  # the scheduler reads the roles
     with pytest.raises(ScheduleError, match="opposite sign"):
-        schedule(
-            Circuit(2, (Operation("zz", (0, 1), (math.pi / 2,)),), (0, 1)),
-            dev,
-            ls_table,
-            entangling_drives=ent,
-        )
-    sch = schedule(
-        Circuit(2, (Operation("zz", (0, 1), (-math.pi / 2,)),), (0, 1)), dev, ls_table, entangling_drives=ent
-    )
+        schedule(Circuit(2, (Operation("zz", (0, 1), (math.pi / 2,)),), (0, 1)), dev_ls, ls_table)
+    sch = schedule(Circuit(2, (Operation("zz", (0, 1), (-math.pi / 2,)),), (0, 1)), dev_ls, ls_table)
     ids = [p.gate_id or "" for p in sch.pulses]
     assert (
         sum("loop1" in i for i in ids) == 2

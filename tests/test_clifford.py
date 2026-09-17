@@ -29,7 +29,7 @@ from qutip_trap.benchmarks.clifford import (
     two_qubit_clifford_group,
 )
 from qutip_trap.benchmarks.rb import single_qubit_sequences, two_qubit_sequence
-from qutip_trap.control.compiler import compile_with_report, decompose_single_qubit
+from qutip_trap.control.compiler import compile_report, decompose_single_qubit
 from qutip_trap.control.two_qubit import global_phase
 
 
@@ -84,7 +84,7 @@ def test_core_templates_reproduce_their_matrices() -> None:
     for name, mat in CORES.items():
         got = operations_unitary(core_operations(name, (0, 1)), (0, 1))
         assert global_phase(got, mat, atol=1e-9) is not None, name
-        rep = compile_with_report(
+        rep = compile_report(
             __import__("qutip_trap.control.compiler", fromlist=["Circuit"]).Circuit(
                 2, tuple(core_operations(name, (0, 1))), (0, 1)
             )
@@ -140,7 +140,7 @@ def test_random_sequences_close_to_the_identity_and_measure_their_qubits() -> No
         assert two.circuit.measure == (0, 1)
         got2 = operations_unitary(list(two.circuit.ops), (0, 1))
         assert global_phase(got2, np.eye(4), atol=1e-8) is not None
-        rep = compile_with_report(two.circuit)
+        rep = compile_report(two.circuit)
         assert (
             rep.n_entangling
             == sum(c.entangling_count for c in two.cliffords[0]) + two.inverse.entangling_count

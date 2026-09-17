@@ -51,7 +51,8 @@ Every name below is importable from the rung named; the objects are the same one
   argument), the rung modules and `presets`.
 - **`qutip_trap.presets`**: `yb171_chain(n)` and `ca40_optical(n)` as machines; `DevicePreset.machine()` bridges a preset.
 - **`qutip_trap.circuit`** (rung 1): the IR (`Circuit`, `Operation`, the tables `NATIVE_GATES`, `STANDARD_GATES`,
-  `NON_UNITARY`, `EXPORTED_NATIVE` and the builder's `GATE_PARAMETERS`), the compiler (`compile_with_report`, `CompileReport`,
+  `NON_UNITARY`, `EXPORTED_NATIVE` and the builder's `GATE_PARAMETERS`), the compiler (`Machine.compile` returning the
+  `CompileReport`; `compile_with_report` is its deprecated function form,
   `compile_to_native`, `CompileError`), `ideal_probabilities`, `circuit_unitary`, `gate_matrix` and the native matrices of
   `control/native.py` (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `r_phi`, `xx`, `equal_up_to_global_phase`, with `rad_from_turns` and
   `turns_from_rad` at the IonQ boundary).
@@ -79,7 +80,8 @@ Every name below is importable from the rung named; the objects are the same one
   `ou_spectrum`, `gaussian_spectrum`, `power_law_spectrum`), the detector (`Detector`, `CameraGeometry`, `ApparatusPreset`),
   the electronics (`HardwareChain`), the `Device` with `DerivedQuantities`, `BeamRoles` and `ResolvedRoles`, the preparation
   (`PreparationRecipe`, `SidebandCoolingSpec`, `standard_recipe`), the example-device helpers (`secular_trap`,
-  `raman_pair_along_x`, `oblique_detection_beam`, `quiet_noise_model`, `ideal_hardware`, `crain_snspd_detector`,
+  `raman_pair_along_x`, `oblique_detection_beam`, `quiet_noise_model` (deprecated: `NoiseModel()` is quiet), `ideal_hardware`,
+  `crain_snspd_detector`,
   `myerson_ca40_pmt_detector`) and the unit types (`Hz`, `RadPerS`, `Gauss`, `Tesla`, `rad_s_from_hz`, `hz_from_rad_s`).
 - **`qutip_trap.experiments`, `qutip_trap.calibration`, `qutip_trap.benchmarks`** (the laboratory, 0.3.0): every
   experiment, the calibration and the benchmarks take a `Machine` first (a `Device` is wrapped in a default machine) and read
@@ -90,7 +92,10 @@ Every name below is importable from the rung named; the objects are the same one
   (`ScanParameters`; `realized_drive` reads the tone words the hardware chain plays), the fit's `chi2` and a `quality`
   verdict. `calibrate(machine, method="closed_form" | "experiments")` (`CalibrationMethod`) returns the `CalibrationReport`
   whose `table` the scheduler reads; `Machine.calibrated` pins it. `randomized_benchmarking`, `ghz_fidelity`,
-  `quantum_volume` and `gate_channel` run on the machine.
+  `quantum_volume` and `gate_channel` run on the machine. The inverse direction is `Machine.error_model()` (the module
+  function `error_model`): an `ErrorModel` with the average gate infidelity and duration per native gate kind, the
+  depolarizing weights `p_1q` and `p_2q`, `p_meas` and `p_init`, and the exporters `to_ionq_noise` (`r_1q`, `r_2q`),
+  `to_quantinuum_error_params` and `to_qdk_qubit_params`, each stating its conversion.
 - **`qutip_trap.io`**: `qasm2` with `loads` and `dumps` (OpenQASM 2 both ways; the native gates declared as qelib1.inc
   definitions, `NATIVE_DECLARATIONS`, or bare for the exact round trip; `QELIB_NAMES` maps `cnot` to `cx`), and `ionq` with
   `loads`, `dumps`, `load_job` and `dump_job` (`IonQJob`, the v0.4 body of type `JOB_TYPE` with the keys `JOB_KEYS`,
@@ -111,7 +116,7 @@ detection light, Crain's SNSPD detector, a quiet noise model and near-ideal elec
 ```python
 from qutip_trap.api import yb171_chain
 
-preset = yb171_chain(2)
+preset = yb171_chain(2)                 # the DevicePreset of the 0.1.0 surface; preset.machine() is the Machine above
 device = preset.device
 derived = device.derived()
 modes_mhz = [round(m.omega_hz / 1e6, 4) for m in device.crystal.modes]
@@ -122,28 +127,31 @@ print("carrier Rabi frequencies ion 0 sees (Hz):", {k: round(derived.values[k]) 
 assert all(derived.provenance[k] for k in derived.values)  # every derived number names its ledger record
 ```
 
-Every derived number carries the id of its provenance record in `docs/provenance/ledger.yaml`. The device carries which
+Every derived number carries the id of its provenance record in `docs/provenance/ledger.yaml`; `device.specs()` renders
+them as a report and `device.to_dict()` is the JSON record of `docs/schemas/device.schema.json`. The device carries which
 beams play which gates as `Device.roles` (the addressing pair of each ion for the single-qubit gates, the global pair for
-the entangling gates, the detection beam), so `run`, `calibrate` and the benchmarks need no drive maps; a device with one
-Raman pair infers its roles from the wavelengths.
+the entangling gates, the detection beam), so the machine, the calibration and the benchmarks need no drive maps; a device
+with one Raman pair infers its roles from the wavelengths.
 
 ## Calibrate, run a circuit, read the result
 
-`run` compiles the circuit to native gates (verified against the target unitary), calibrates the device (the closed-form
-surrogate with exact spot checks, cached per device), schedules pulses from the calibration table, prepares the ions
-(Doppler cooling, pulsed sideband cooling, optical pumping), integrates every pulse on the joint space of the ions and the
-resolved motional modes, and reads out through the fluorescence model.
+`Machine.run` compiles the circuit to native gates (verified against the target unitary), calibrates the device (the
+closed-form surrogate with exact spot checks, cached per device), schedules pulses from the calibration table, prepares the
+ions (Doppler cooling, pulsed sideband cooling, optical pumping), integrates every pulse on the joint space of the ions and
+the resolved motional modes, and reads out through the fluorescence model. `Machine.calibrated` pins the table on the
+machine so that every later call reads the same one; `calibrate(machine)` returns the whole `CalibrationReport`.
 
 ```python
 import numpy as np
 
-from qutip_trap.api import Circuit, Operation, SolverOptions, calibrate, ideal_probabilities, register_fidelity, run
+from qutip_trap.api import Circuit, Operation, ideal_probabilities, register_fidelity
 
 windows = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
-table = calibrate(device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=windows)
-options = SolverOptions(branch_weight_min=1e-3)
+pinned = machine.calibrated(pairs=[(0, 1)], detection_records=2000, detection_windows_s=windows)
+table = pinned.table
+fast = dataclasses.replace(pinned, numerics=trap.Numerics(truncation={"branch_weight_min": 1e-3}))
 bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-result = run(bell, device, 2000, table=table, keep_final_state=True, options=options)
+result = fast.run(bell, 2000, keep_final_state=True)
 print("histogram:", {k: round(v, 4) for k, v in sorted(result.probabilities.items())}, "ideal:", ideal_probabilities(bell))
 print("register infidelity:", f"{1 - register_fidelity(result):.2e}",
       "inside the closed-form budget", f"{result.diagnostics.intrinsic_budget['total']:.1e}")
@@ -165,7 +173,7 @@ the least-significant bit) and `result.to_ionq_v2_probabilities()` the v0.4 enve
 ## A circuit from OpenQASM 2 or IonQ JSON
 
 ```python
-from qutip_trap.api import compile_to_native, compile_with_report, dump_ionq_json, load_ionq_json, load_openqasm2
+from qutip_trap.api import compile_to_native, dump_ionq_json, load_ionq_json, load_openqasm2
 
 qasm = 'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; h q[0]; cx q[0],q[1]; measure q -> c;'
 circuit = load_openqasm2(qasm)
@@ -173,29 +181,33 @@ native = compile_to_native(circuit)
 print("native gates:", [op.name for op in native.ops])
 as_json = dump_ionq_json(native)
 assert load_ionq_json(as_json).ops == native.ops, "the IonQ JSON round trip is exact"
-report = compile_with_report(circuit)
+report = machine.compile(circuit)
 print("pulses:", report.n_pulses, "| entangling:", report.n_entangling,
       "| whole-circuit residual:", f"{report.circuit_residual:.1e}")
 ```
 
 ## An experiment the calibration runs
 
-The experiment API runs the laboratory's scans on the simulated device through the same engine and fits them the way the
-laboratory does, with shot noise and readout errors declared:
+The experiment API runs the laboratory's scans on the machine through the same engine and fits them the way the
+laboratory does, with shot noise and readout errors declared; the machine supplies its table and options, the device's
+roles the drive, and the result is typed (`RabiScan`) with the scan as requested beside the scan the electronics played:
 
 ```python
 from qutip_trap.api import rabi_scan
 
 durations = tuple(float(t) for t in np.linspace(0.0, 30e-6, 13))
-scan = rabi_scan(device, 0, durations, gate_drive=preset.gate_drives[0], shots=200, table=table)
+scan = rabi_scan(pinned, 0, durations, shots=200)
 print("fitted carrier Rabi frequency (Hz):", round(scan.value("f_rabi_hz")), "+-", round(scan.uncertainty("f_rabi_hz")),
-      "| converged:", scan.converged)
+      "| converged:", scan.converged, "| quality:", scan.quality)
+assert scan.f_rabi_hz == scan.value("f_rabi_hz") and scan.requested.durations_s == scan.realized.durations_s
+proposal = table.updated_with(scan)              # an update is a proposal: adopt it only past the quality test
+assert proposal.rabi[(0, 2)].experiment == "rabi_scan" and proposal.kind_of("rabi[(0, 2)]") == "setpoint"
 ```
 
 ## Benchmarks with the simulator's own budget
 
-The benchmarks run the standard protocols on the device through `run` and report, beside the measured number, what the
-simulator's own physics accounts for: the closed-form error scales of every pulse, the channel of every native gate kind by
+The benchmarks run the standard protocols on the machine through `Machine.run` and report, beside the measured number, what
+the simulator's own physics accounts for: the closed-form error scales of every pulse, the channel of every native gate kind by
 process tomography, and the SPAM errors.
 
 Single-qubit randomized benchmarking: random Cliffords and the inverse of their product, the survival fitted to A p^m + B,
@@ -204,8 +216,7 @@ r = (1 − p)/2 the error per Clifford (Section 13 of the plan).
 ```python
 from qutip_trap.api import randomized_benchmarking
 
-rb = randomized_benchmarking(device, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True,
-                             table=table, options=options)
+rb = randomized_benchmarking(fast, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True)
 print(rb.fidelity_form(), "| r per Clifford:", f"{rb.error_per_clifford[0]:.1e} +- {rb.error_per_clifford[1]:.1e}")
 budget = rb.budget
 print("channel infidelity per native kind (reduced to qubit 0):", {k: f"{v:.1e}" for k, v in budget.channel_infidelity.items()})
@@ -213,13 +224,11 @@ print("predicted r from the channels:", f"{budget.predicted['r_channel']:.1e}",
       "| Section 9.6 scales per Clifford (a bound over a wider scope):", f"{budget.predicted['r_intrinsic']:.1e}",
       "| F(0) from SPAM:", f"{budget.predicted['F0_spam']:.4f}")
 
-sim = randomized_benchmarking(device, (0, 1), (1, 64), n_sequences=1, shots=400, pair=False, fix_offset=True,
-                              budget=False, table=table, options=options)
+sim = randomized_benchmarking(fast, (0, 1), (1, 64), n_sequences=1, shots=400, pair=False, fix_offset=True, budget=False)
 print("simultaneous RB, per-ion marginal r_q:", [f"{v:.1e}" for v, _ in sim.marginal_error_per_clifford],
       "| mean:", f"{sim.error_per_clifford[0]:.1e}",
       "| the joint decay per layer of two Cliffords:", f"{sim.joint_error_per_layer[0]:.1e}")
-knill = randomized_benchmarking(device, (0,), (1, 64), n_sequences=1, shots=400, variant="knill",
-                                budget=False, table=table, options=options)
+knill = randomized_benchmarking(fast, (0,), (1, 64), n_sequences=1, shots=400, variant="knill", budget=False)
 print("Knill-style RB (Section 7.9):", knill.fidelity_form(),
       "| r per computational gate:", f"{knill.error_per_clifford[0]:.1e}")
 ```
@@ -242,15 +251,14 @@ follow the same pattern:
 ```python
 from qutip_trap.api import ghz_fidelity, quantum_volume
 
-ghz = ghz_fidelity(device, (0, 1), shots=400, analysis_phases_rad=np.linspace(0.0, np.pi, 4, endpoint=False),
-                   table=table, options=options)
+ghz = ghz_fidelity(fast, (0, 1), shots=400, analysis_phases_rad=np.linspace(0.0, np.pi, 4, endpoint=False))
 print("P00, P11:", {k: round(v[0], 4) for k, v in ghz.populations.items()},
       "| parity contrast:", f"{ghz.fit['contrast'][0]:.4f}",
       "| bound (P0 + P1 + C)/2:", f"{ghz.fidelity_bound[0]:.4f} +- {ghz.fidelity_bound[1]:.4f}",
       "| exact max-phase (what the bound estimates):", f"{ghz.register_fidelity_max_phase:.5f}",
       "| exact fixed-phase (which it exceeds):", f"{ghz.register_fidelity:.5f}")
 assert ghz.register_fidelity_max_phase >= ghz.register_fidelity - 1e-12
-qv = quantum_volume(device, (0, 1), n_circuits=1, shots=200, table=table, options=options)
+qv = quantum_volume(fast, (0, 1), n_circuits=1, shots=200)
 print("heavy-output probability:", qv.heavy_output_probability.round(3), "ideal:", qv.ideal_heavy_probability.round(3),
       "| exact register fidelity:", qv.register_fidelity.round(4),
       "| Eq. (32) sigma:", f"{qv.sigma:.3f}", "| clears 2/3 by two sigma:", qv.threshold_cleared,
@@ -275,7 +283,7 @@ motional state on the exact gate-local space, its Choi matrix, average gate infi
 ```python
 from qutip_trap.api import gate_channel
 
-ch = gate_channel(device, "gpi2[0]", table=table, options=options)
+ch = gate_channel(fast, "gpi2[0]")
 step = ch.steps[0]
 print("step ions:", step.ions, "| full-step average infidelity:", f"{step.summary.average_gate_infidelity:.1e}",
       "| reduced to qubit 0:", f"{ch.infidelity_on((0,)):.1e}", "| twirl p_II:", f"{step.summary.pauli_twirled['II']:.5f}")
@@ -283,6 +291,22 @@ print("step ions:", step.ions, "| full-step average infidelity:", f"{step.summar
 
 The full step's infidelity counts the crosstalk rotation of the neighbour (about 3 × 10⁻⁴ from a 2.2 % Rabi ratio on a
 π/2 pulse); reduced to the addressed ion it drops to the off-resonant sideband scale of a few 10⁻⁵.
+
+## The inverse direction: the error model
+
+Every vendor emulator takes phenomenological numbers and none derives them. `Machine.error_model()` emits them from the
+simulated device: one GATE_LOCAL tomography per native gate kind and qubit (cached with the channels above), the SPAM from
+the detection calibration and the preparation recipe, the durations from the schedule, with exporters to IonQ's, Quantinuum's
+and the QDK estimator's vocabularies and the conversion stated on each (IonQ's `r` is the maximally-mixed weight,
+`F_avg = 1 - r/2` on one qubit and `1 - 3r/4` on two, so `r_1q = 2 r` for the average gate infidelity `r`).
+
+```python
+em = fast.error_model()
+print("average gate infidelity per kind:", {k: f"{v:.1e}" for k, v in em.infidelity.items()})
+print("IonQ:", {k: f"{v:.2e}" for k, v in em.to_ionq_noise().items()},
+      "| QDK:", em.to_qdk_qubit_params()["oneQubitGateTime"], em.to_qdk_qubit_params()["twoQubitGateTime"])
+assert em.to_ionq_noise()["r_1q"] == 2.0 * sum(em.infidelity[k] for k in em.single_qubit_kinds) / len(em.single_qubit_kinds)
+```
 
 ## A second species: the 40Ca+ optical qubit
 
@@ -298,7 +322,7 @@ ca = ca40_optical(1)
 ca_derived = ca.device.derived()
 print("729 nm carrier Rabi frequency (Hz):",
       {k: round(ca_derived.values[k]) for k in sorted(ca_derived.values) if k.startswith("rabi_hz[")})
-ca_result = run(Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)), ca.device, 200)
+ca_result = ca.machine().run(Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)), 200)
 print("one GPi2 on the optical qubit:", {k: round(v, 3) for k, v in sorted(ca_result.probabilities.items())})
 ```
 

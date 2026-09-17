@@ -14,7 +14,7 @@ for later milestones. Variants are ``dataclasses.replace(machine, ...)``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -24,6 +24,7 @@ from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level
 from qutip_trap.run.space import ModeClass3
 
 if TYPE_CHECKING:
+    from qutip_trap.benchmarks.error_model import ErrorModel
     from qutip_trap.control.compiler import Circuit, CompileReport
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.control.table import CalibrationTable
@@ -281,11 +282,14 @@ class Machine:
             )
         )
 
-    def error_model(self) -> Any:
-        """The phenomenological summary of the simulated device (``ErrorModel``) with the vendors' exporters."""
-        raise NotImplementedError(
-            "Machine.error_model is Phase 2.6 of docs/api_implementation_plan.md (0.3.0)"
-        )
+    def error_model(self, *, qubits: Sequence[int] | None = None) -> ErrorModel:
+        """The phenomenological summary of this machine (``benchmarks.error_model``; docs/api_implementation_plan.md 2.6):
+        per native gate kind the average gate infidelity of its GATE_LOCAL channel and its duration, the depolarizing
+        weights, the SPAM errors and the noise rates, with the exporters to IonQ's, Quantinuum's and the QDK estimator's
+        vocabularies; ``qubits`` restricts the characterised ions."""
+        from qutip_trap.benchmarks.error_model import error_model
+
+        return error_model(self, qubits=qubits)
 
     def specs(self) -> str:
         """The derived quantities of the device as a readable report with their provenance ids (``Device.specs``), then

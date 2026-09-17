@@ -83,7 +83,6 @@ def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_u
         fx.device,
         0,
         3,
-        gate_drive=fx.gate_drives[0],
         nbar=nbar,
         shots=400,
         readout=True,
@@ -186,14 +185,7 @@ def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> No
     drive's shift is the sum, equal to the derived one within the fit uncertainty."""
     fx, dd = two_ion
     res = stark_scan(
-        fx.device,
-        0,
-        np.linspace(0.0, 2e-3, 9),
-        gate_drive=fx.gate_drives[0],
-        nbar={2: 0.0185, 3: 0.0154},
-        shots=1000,
-        readout=True,
-        seed=6,
+        fx.device, 0, np.linspace(0.0, 2e-3, 9), nbar={2: 0.0185, 3: 0.0154}, shots=1000, readout=True, seed=6
     )
     assert res.converged, res.notes
     total, s_total = res.fitted["stark_shift_hz"]
@@ -218,7 +210,6 @@ def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> 
         fx.device,
         0,
         ts,
-        gate_drive=fx.gate_drives[0],
         nbar={2: 0.0185, 3: 0.0154},
         shots=600,
         readout=True,
@@ -244,7 +235,6 @@ def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_ev
         fx.device,
         0,
         np.linspace(0.0, 10.0 * 0.5 / f, 41),
-        gate_drive=fx.gate_drives[0],
         nbar={2: 0.0185, 3: 0.0154},
         nbar_fixed=0.0185,
         shots=500,

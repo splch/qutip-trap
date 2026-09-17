@@ -25,6 +25,7 @@ from qutip_trap.benchmarks.clifford import (
     random_two_qubit_clifford,
     two_qubit_clifford_group,
 )
+from qutip_trap.benchmarks.error_model import ErrorModel, error_model
 from qutip_trap.benchmarks.ghz import GHZResult, ghz_circuit, ghz_fidelity, parity_circuit
 from qutip_trap.benchmarks.rb import RBResult, RBSequence, randomized_benchmarking
 from qutip_trap.benchmarks.volume import QVCircuit, QVResult, quantum_volume, random_square_circuit
@@ -34,6 +35,7 @@ __all__ = [
     "SINGLE_QUBIT_CLIFFORDS",
     "TWO_QUBIT_GROUP_ORDER",
     "BenchmarkBudget",
+    "ErrorModel",
     "GHZResult",
     "GateChannel",
     "QVCircuit",
@@ -44,6 +46,7 @@ __all__ = [
     "TwoQubitClifford",
     "clear_budget_cache",
     "decompose_two_qubit_clifford",
+    "error_model",
     "gate_channel",
     "ghz_circuit",
     "ghz_fidelity",

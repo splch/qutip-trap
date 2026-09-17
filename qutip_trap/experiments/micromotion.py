@@ -418,9 +418,17 @@ def micromotion_scan(
     beta0 = signed_beta(device, ion, k_vec)
     t_sb = float(kw.get("sideband_duration_s") or 1.0 / (4.0 * float(jv(1, 0.2)) * omega))
 
+    scan_kw = {
+        k: v for k, v in base_kw.items() if k != "gate_drive"
+    }  # rabi_scan reads the drive from the roles (0.3.0)
+
+    def with_role(trial: Device) -> Device:
+        gate = dict(trial.roles.gate) if trial.roles.gate is not None else default_gate_drives(trial)
+        return replace(trial, roles=replace(trial.roles, gate={**gate, ion: gate_drive}))
+
     def carrier_rate(trial: Device) -> tuple[float, float]:
         ts = [float(x) for x in np.linspace(0.0, 2.0 / omega, 9)]
-        res = rabi_scan(trial, ion, ts, **{**base_kw, "detuning_hz": 0.0})
+        res = rabi_scan(with_role(trial), ion, ts, **{**scan_kw, "detuning_hz": 0.0})
         return res.fitted["f_rabi_hz"]
 
     def sideband_excitation(trial: Device, index: int) -> tuple[float, float | None]:

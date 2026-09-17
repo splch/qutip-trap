@@ -25,6 +25,7 @@ runs the same job at the next engine and compares.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -181,21 +182,8 @@ def extract_pieces(
 ) -> tuple[tuple[ChannelPiece, ...], tuple[str, ...]]:
     """One gate played once at GATE_LOCAL from the prepared motional state: the Section 6.8 summaries of its pieces."""
     circuit = one_gate_circuit(kind, ions, angle, device.crystal.n_ions, phase_rad)
-    res = core.run(
-        circuit,
-        device,
-        1,
-        table=table,
-        level="GATE_LOCAL",
-        seed=job.seed,
-        options=job.solver_options(),
-        noise=job.noise,
-        entangler=job.entangler,
-        stark_compensation=job.stark_compensation,
-        internal_levels=job.internal_levels,
-        caps=job.caps,
-        **job.run_kwargs(),
-    )
+    machine = dataclasses.replace(job.machine(device, table), level=core.FidelityLevel.GATE_LOCAL)
+    res = machine.run(circuit, 1, seed=job.seed)
     gl = res.diagnostics.gate_local
     if gl is None:
         raise RecordError("the one-gate GATE_LOCAL run returned no gate-local report")
@@ -429,16 +417,14 @@ def replay(
     opts = job.solver_options()
     if progress:
         progress("compiling", 0.0, "compiling to native gates")
-    report = core.compile_with_report(circuit, device, entangler=job.entangler)
+    machine = job.machine(device, table)
+    report = machine.compile(circuit)
     if progress:
         progress("scheduling", 0.05, "scheduling pulses from the calibration table")
-    kwargs = job.run_kwargs()
     sched = core.schedule(
         report.circuit,
-        device,
+        machine.device,
         table,
-        gate_drives=kwargs["gate_drives"],
-        entangling_drives=kwargs["entangling_drives"],
         t0_s=0.0,
         parallel=None,
         crosstalk_suppression="none",

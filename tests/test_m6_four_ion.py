@@ -18,6 +18,7 @@ import pytest
 from qutip_trap.api import Circuit, Operation, SolverOptions, register_fidelity, run
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.options import Numerics
 from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
@@ -33,12 +34,7 @@ D_M = 12
 def four_ion():  # type: ignore[no-untyped-def]
     fixture = circuit_fixture(4, address_waist_m=2.0e-6)
     table = surrogate_table(
-        fixture.device,
-        pairs=[(0, 1)],
-        gate_drives=fixture.gate_drives,
-        entangling_drives=fixture.entangling_drives,
-        detection_records=800,
-        detection_windows_s=WINDOWS,
+        fixture.device, pairs=[(0, 1)], detection_records=800, detection_windows_s=WINDOWS
     )
     return fixture, table
 
@@ -80,11 +76,8 @@ def test_a_four_ion_circuit_runs_through_the_pipeline_at_the_row_2b_dimension(fo
         fixture.device,
         200,
         table=surrogate.table,
-        gate_drives=fixture.gate_drives,
-        entangling_drives=fixture.entangling_drives,
-        space=space,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=3e-3),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3), space=space),
     )
     diagnostics = result.diagnostics
     assert diagnostics.level == "JOINT_EXACT"
@@ -112,9 +105,7 @@ def test_the_pipeline_s_own_four_ion_space_exceeds_the_guard_and_routes_to_gate_
         fixture.device,
         50,
         table=surrogate.table,
-        gate_drives=fixture.gate_drives,
-        entangling_drives=fixture.entangling_drives,
-        options=SolverOptions(branch_weight_min=1e-2),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     diagnostics = result.diagnostics
     assert diagnostics.level == "GATE_LOCAL" and diagnostics.gate_local is not None

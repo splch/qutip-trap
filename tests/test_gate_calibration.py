@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -254,6 +255,9 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     dev = two_ion_device()
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
+    dev = dataclasses.replace(
+        dev, roles=dataclasses.replace(dev.roles, gate=drives)
+    )  # the experiments read the roles
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
     space = gate_space(modes, 2, waveform=am.waveform)
     table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
@@ -261,9 +265,7 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
         dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4
     )
     table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI, stark_hz=STARK)
-    scan = ms_scan(
-        dev, (0, 1), (0.9, 0.97, 1.03, 1.1), (0.0,), table=table, gate_drives=drives, space=space, modes=modes
-    )
+    scan = ms_scan(dev, (0, 1), (0.9, 0.97, 1.03, 1.1), (0.0,), table=table, space=space, modes=modes)
     assert scan.data.shape == (4, 5) and scan.model == "ms_population_scan"
     assert scan.fitted["closure_scale"][0] == pytest.approx(1.0, abs=0.01)
     p11 = scan.data[:, 4]
@@ -273,7 +275,6 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
         (0, 1),
         np.linspace(0.0, math.pi, 6, endpoint=False),
         table=table,
-        gate_drives=drives,
         space=space,
         modes=modes,
     )
@@ -281,7 +282,5 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     assert par.fitted["contrast"][0] > 0.99
     assert par.fitted["bell_fidelity_bound"][0] > 0.99
     assert par.fitted["phi0_rad"][1] < 0.05
-    import dataclasses
-
     with pytest.raises(ValueError, match="waveform"):
-        ms_scan(dev, (0, 1), (1.0,), (0.0,), table=dataclasses.replace(table, ms={}), gate_drives=drives)
+        ms_scan(dev, (0, 1), (1.0,), (0.0,), table=dataclasses.replace(table, ms={}))

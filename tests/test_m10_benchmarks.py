@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -46,6 +47,7 @@ from qutip_trap.benchmarks.volume import (
 )
 from qutip_trap.control import native
 from qutip_trap.control.compiler import CNOT_MATRIX, Circuit, Operation, ideal_probabilities
+from qutip_trap.machine import Machine
 from qutip_trap.noise.summary import (
     average_gate_infidelity,
     choi_from_unitary,
@@ -55,6 +57,7 @@ from qutip_trap.noise.summary import (
     qiskit_depolarizing_lambda,
     rb_error_per_clifford,
 )
+from qutip_trap.options import Numerics
 
 # the committed check_benchmarks.out numbers these tests hold the code to
 COMMITTED_SIMULTANEOUS_JOINT_P = 0.999080
@@ -387,16 +390,13 @@ def two_ion():  # type: ignore[no-untyped-def]
 
     preset = yb171_chain(2)
     windows = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
-    sur = surrogate_table(
+    sur = surrogate_table(preset.device, pairs=[(0, 1)], detection_records=800, detection_windows_s=windows)
+    mach = Machine(
         preset.device,
-        pairs=[(0, 1)],
-        gate_drives=preset.gate_drives,
-        entangling_drives=preset.entangling_drives,
-        detection_records=800,
-        detection_windows_s=windows,
+        table=sur.table,
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
     )
-    kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3))
-    return preset, kw
+    return preset, mach
 
 
 @pytest.mark.slow
@@ -404,9 +404,9 @@ def test_simultaneous_rb_reports_marginals_in_the_budget_s_own_unit(two_ion) -> 
     """Gambetta et al. 2012 on the two-ion example device: the per-qubit marginal r_q, the per-qubit composition
     r_channel.q{i} (each kind's channel reduced to THAT ONE qubit) in the same unit, and the joint decay beside them as
     the correlation diagnostic, in the unit of r_channel_joint_layer."""
-    preset, kw = two_ion
+    _preset, mach = two_ion
     rb = randomized_benchmarking(
-        preset.device, (0, 1), (1, 32, 128), n_sequences=1, shots=600, pair=False, fix_offset=True, **kw
+        mach, (0, 1), (1, 32, 128), n_sequences=1, shots=600, pair=False, fix_offset=True
     )
     assert rb.n_qubits == 2 and rb.variant == "clifford"
     assert rb.marginal_survival is not None and rb.marginal_survival.shape == (2, 3, 1)
@@ -448,7 +448,10 @@ def test_simultaneous_rb_runs_on_three_ions(two_ion) -> None:  # type: ignore[no
     del two_ion
     preset = yb171_chain(3, address_waist_m=2.0e-6)
     rb = randomized_benchmarking(
-        preset.device,
+        Machine(
+            preset.device,
+            numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
+        ),
         (0, 1, 2),
         (1, 8),
         n_sequences=1,
@@ -456,7 +459,6 @@ def test_simultaneous_rb_runs_on_three_ions(two_ion) -> None:  # type: ignore[no
         pair=False,
         budget=False,
         fix_offset=True,
-        options=SolverOptions(branch_weight_min=3e-3),
     )
     assert rb.n_qubits == 3 and rb.marginal_survival is not None
     assert rb.marginal_survival.shape == (3, 2, 1) and len(rb.marginal_error_per_clifford) == 3
@@ -474,11 +476,12 @@ def test_the_intrinsic_budget_keeps_the_zz_wrapper_s_section_9_6_scales(two_ion)
     """With ``entangler="zz"`` the CNOT template's pieces carry gate ids containing a slash (``zz[0]/ms``,
     ``zz[0]/loop1``, ``zz[0]/loop2``), whose scales the old ``key.split("/")[0]`` lookup dropped from every per-kind
     budget."""
-    from qutip_trap.run.job import last_record, run
+    from qutip_trap.run.job import last_record
 
-    preset, kw = two_ion
+    _preset, mach = two_ion
     circuit = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-    res = run(circuit, preset.device, 1, entangler="zz", **kw)
+    zz = dataclasses.replace(mach, physics=dataclasses.replace(mach.physics, entangler="zz"))
+    res = zz.run(circuit, 1)
     schedule = last_record(res).schedule
     kinds = kinds_of_schedule(schedule)
     assert any("/" in gid for gid in kinds), kinds

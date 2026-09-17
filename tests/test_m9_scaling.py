@@ -42,6 +42,7 @@ from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.hilbert.truncation import TruncationWarning, convergence_report, grown_caps, regrid_state
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.run.job import RunError
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import cap_for, cap_requirement, select_space
@@ -153,22 +154,8 @@ def test_the_selection_reports_the_guard_verdict_of_its_declaration() -> None:
     """``select_space`` evaluates the Section 11.5 guards on the declaration and reports them, so ``run()`` reads one verdict
     instead of recomputing it after the space is in hand (audit B2)."""
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=WINDOWS,
-    )
-    sched = make_schedule(
-        compile_to_native(BELL, fx.device),
-        fx.device,
-        sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        t0_s=0.0,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
+    sched = make_schedule(compile_to_native(BELL, fx.device), fx.device, sur.table, t0_s=0.0)
     inside = select_space(fx.device, sched, SolverOptions(), nbar={})
     assert inside.budget == within_budget(inside.space, SolverOptions())
     assert inside.budget[0] and not any("outside the Section 11.5 guards" in n for n in inside.notes)
@@ -184,18 +171,9 @@ def test_the_non_zero_guard_routes_a_run_to_gate_local() -> None:
     drove a run through it (only ``joint_dimension_max``). ``nnz_max`` below the estimate reroutes to GATE_LOCAL and the run
     says so (audit E2)."""
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
     )
     joint = run(BELL, fx.device, 20, level="auto", **kw)  # type: ignore[arg-type]
     assert joint.diagnostics.level == "JOINT_EXACT"
@@ -206,8 +184,8 @@ def test_the_non_zero_guard_routes_a_run_to_gate_local() -> None:
         fx.device,
         20,
         level="auto",
-        options=SolverOptions(nnz_max=nnz // 2, joint_dimension_max=10**9),
-        **kw,  # type: ignore[arg-type]
+        **kw,
+        numerics=Numerics.from_solver_options(SolverOptions(nnz_max=nnz // 2, joint_dimension_max=10**9)),
     )
     assert guarded.diagnostics.level == "GATE_LOCAL" and guarded.diagnostics.gate_local is not None
     assert any(f"{nnz} drive non-zeros" in a for a in guarded.diagnostics.approximations)
@@ -234,22 +212,8 @@ def test_select_space_reads_mode_dimension_max_and_names_the_clamp() -> None:
     """The ceiling reaches the selection from ``SolverOptions`` and a clamp is a note that names the mode, the range the rule
     asked for and the range that survives (audit E9: it was silent)."""
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=WINDOWS,
-    )
-    sched = make_schedule(
-        compile_to_native(BELL, fx.device),
-        fx.device,
-        sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        t0_s=0.0,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
+    sched = make_schedule(compile_to_native(BELL, fx.device), fx.device, sur.table, t0_s=0.0)
     nbar = {m: 20.0 for m in range(len(fx.device.crystal.modes))}
     with pytest.warns(TruncationWarning) as caught:  # 0.2.0: the clamp is also said out loud (api plan 1.9)
         tight = select_space(fx.device, sched, SolverOptions(mode_dimension_max=8), nbar=nbar)
@@ -419,22 +383,8 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
     from qutip_trap.dynamics.engine import TruncationLimit
 
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=WINDOWS,
-    )
-    sched = make_schedule(
-        compile_to_native(BELL, fx.device),
-        fx.device,
-        sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        t0_s=0.0,
-    )
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
+    sched = make_schedule(compile_to_native(BELL, fx.device), fx.device, sur.table, t0_s=0.0)
     y_rock, y_com = Y_MODES_TWO_IONS
     x_caps = (ModeTruncation(2, 10, (0, 3), 0.13), ModeTruncation(3, 11, (0, 4), 0.13))
     product = HilbertSpace(
@@ -474,15 +424,27 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
 
     kw = dict(
         table=sur.table,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
         seed=7,
     )
     with pytest.raises(RunError, match="37752"):
-        run(BELL, fx.device, 200, level="JOINT_EXACT", enr_group=((y_rock, y_com), 10), **kw)  # type: ignore[arg-type]
+        run(
+            BELL,
+            fx.device,
+            200,
+            level="JOINT_EXACT",
+            **kw,
+            numerics=Numerics.from_solver_options(enr_group=((y_rock, y_com), 10)),
+        )  # type: ignore[arg-type]
     with pytest.raises((TruncationLimit, RunError), match="16016"):
-        run(BELL, fx.device, 200, level="JOINT_EXACT", enr_group=((y_rock, y_com), 2), **kw)  # type: ignore[arg-type]
+        run(
+            BELL,
+            fx.device,
+            200,
+            level="JOINT_EXACT",
+            **kw,
+            numerics=Numerics.from_solver_options(enr_group=((y_rock, y_com), 2)),
+        )  # type: ignore[arg-type]
 
 
 def test_every_joint_operator_and_state_of_an_enr_space_carries_the_spaces_dims() -> None:
@@ -656,15 +618,8 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked() -> None:
     rtol tightened by ten and puts the change in the register populations on ``Diagnostics.convergence`` (M2's
     ``ConvergenceReport``, the run-path plumbing M9's). Off by default, and ``None`` then means "not asked for"."""
     fx = circuit_fixture(2)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[(0, 1)],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=200,
-        detection_windows_s=WINDOWS,
-    )
-    kw = dict(table=sur.table, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives, seed=5)
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
+    kw = dict(table=sur.table, seed=5)
     plain = run(BELL, fx.device, 20, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
     assert plain.diagnostics.convergence is None
     checked = run(
@@ -672,8 +627,8 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked() -> None:
         fx.device,
         20,
         level="JOINT_EXACT",
-        options=SolverOptions(convergence_check=True),
-        **kw,  # type: ignore[arg-type]
+        **kw,
+        numerics=Numerics.from_solver_options(SolverOptions(convergence_check=True)),
     )
     rep = checked.diagnostics.convergence
     assert rep is not None

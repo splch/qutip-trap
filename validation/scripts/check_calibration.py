@@ -28,7 +28,7 @@ import time
 import numpy as np
 
 from qutip_trap.api import Circuit, Operation, RfDrive, SolverOptions, register_fidelity, run, white_spectrum
-from qutip_trap.calibration import CalibrationScans, calibrate_with_report
+from qutip_trap.calibration import CalibrationScans, calibrate
 from qutip_trap.experiments import (
     crosstalk_scan,
     field_scan,
@@ -152,32 +152,13 @@ print(
 )
 fx = circuit_fixture(2)
 dd = derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False)
-st = stark_scan(
-    fx.device,
-    0,
-    np.linspace(0.0, 2e-3, 9),
-    gate_drive=fx.gate_drives[0],
-    nbar={2: 0.0185, 3: 0.0154},
-    shots=1000,
-    readout=True,
-    seed=6,
-)
+st = stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), nbar={2: 0.0185, 3: 0.0154}, shots=1000, readout=True, seed=6)
 print(
     f"MC: Stark scan per beam on the two-ion fixture: {sigmas(st.fitted['stark_shift_hz'][0], dd.stark_shift_hz, st.fitted['stark_shift_hz'][1])} Hz; per beam "
     + ", ".join(f"{st.fitted[f'stark_shift_hz[{b}]'][0]:.2f}" for b in fx.gate_drives[0].beams)
 )
 eps_true = abs(crosstalk_ratios(fx.device, 0, fx.gate_drives[0].beams)[1])
-xt = crosstalk_scan(
-    fx.device,
-    0,
-    np.linspace(0.0, 0.5 / (eps_true * dd.carrier_rabi_hz), 16),
-    gate_drive=fx.gate_drives[0],
-    nbar={2: 0.0185, 3: 0.0154},
-    shots=600,
-    readout=True,
-    analysis_phases_rad=np.linspace(0.0, 2.0 * math.pi, 6, endpoint=False),
-    seed=7,
-)
+xt = crosstalk_scan(fx.device, 0, np.linspace(0.0, 0.5 / (eps_true * dd.carrier_rabi_hz), 16), nbar={2: 0.0185, 3: 0.0154}, shots=600, readout=True, analysis_phases_rad=np.linspace(0.0, 2.0 * math.pi, 6, endpoint=False), seed=7)
 print(
     f"MC: crosstalk scan: eps_01 {sigmas(xt.fitted['eps[1]'][0], eps_true, xt.fitted['eps[1]'][1])}; axis phase {xt.fitted['phase_rad[1]'][0]:+.4f} +- {xt.fitted['phase_rad[1]'][1]:.4f} rad against 0"
 )
@@ -193,6 +174,8 @@ print(
 )
 from qutip_trap.light.roles import detection_beams  # noqa: E402
 from qutip_trap.trap.crystal import solve_crystal  # noqa: E402
+from qutip_trap.options import Numerics
+from qutip_trap.machine import Machine
 
 fx_rf = circuit_fixture(2, with_recipe=False)
 dev_c = dataclasses.replace(
@@ -247,12 +230,10 @@ scans = CalibrationScans(
     detection_windows_s=WINDOWS,
     micromotion_ranges={},
 )
-report = calibrate_with_report(
-    fx.device,
-    surrogate=False,
+report = calibrate(
+    Machine(fx.device),
+    method="experiments",
     seed=11,
-    gate_drives=fx.gate_drives,
-    entangling_drives=fx.entangling_drives,
     pairs=[(0, 1)],
     scans=scans,
     detection_records=1500,
@@ -300,10 +281,8 @@ print(
 )
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 kw = dict(
-    gate_drives=fx.gate_drives,
-    entangling_drives=fx.entangling_drives,
     keep_final_state=True,
-    options=SolverOptions(branch_weight_min=1e-3),
+    numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
 )
 res_full = run(BELL, fx.device, 1000, table=t, **kw)  # type: ignore[arg-type]
 res_sur = run(BELL, fx.device, 1000, table=report.surrogate.table, **kw)  # type: ignore[arg-type]

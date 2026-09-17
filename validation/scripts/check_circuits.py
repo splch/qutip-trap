@@ -28,19 +28,18 @@ from qutip_trap.api import (
     SeedSpec,
     SolverOptions,
     circuit_unitary,
-    compile_with_report,
     ideal_probabilities,
     last_record,
     register_fidelity,
     run,
 )
-from qutip_trap.control.schedule import Schedule, entangling_pulses
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control import native
 from qutip_trap.control.compiler import (
     CNOT_MATRIX,
     cnot_global_phase,
     cnot_template,
+    compile_report,
     compile_to_native,
     cp_matrix,
     cp_template,
@@ -50,11 +49,13 @@ from qutip_trap.control.compiler import (
     embed,
     gate_matrix,
 )
+from qutip_trap.control.schedule import Schedule, entangling_pulses
 from qutip_trap.control.shaping import gate_modes, symmetric_pulse, waveform_integrals
 from qutip_trap.dynamics.engine import JointExactEngine
 from qutip_trap.hilbert.operators import displacement_operator
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.run.space import waveform_contributions
 from qutip_trap.units import TWO_PI
 from tests.m4_fixtures import table_with_waveform
@@ -104,7 +105,7 @@ for theta in (math.pi / 2.0, math.pi / 4.0, math.pi):
         f"  CP({theta / math.pi:.2f} pi): compiler template exact up to a global phase: {ok}; Debnath's as drawn |Tr|/4 = {overlap:.4f} (cos^2((pi - theta)/4) = {cp_template_overlap(theta):.4f})"
     )
 bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-rep = compile_with_report(bell)
+rep = compile_report(bell)
 print(
     f"  Bell circuit: {rep.n_pulses} pulses ({rep.n_entangling} entangling), residual frame {dict((k, round(v / math.pi, 3)) for k, v in rep.final_frame_rad.items())} pi, whole-circuit residual {rep.circuit_residual:.1e}"
 )
@@ -112,14 +113,7 @@ print(
 section("2. two-ion 171Yb+ Bell state with all physics on (Section 9.6 row 1)")
 fx = circuit_fixture(2)
 dev = fx.device
-sur = surrogate_table(
-    dev,
-    pairs=[(0, 1)],
-    gate_drives=fx.gate_drives,
-    entangling_drives=fx.entangling_drives,
-    detection_records=4000,
-    detection_windows_s=WINDOWS,
-)
+sur = surrogate_table(dev, pairs=[(0, 1)], detection_records=4000, detection_windows_s=WINDOWS)
 t = sur.table
 wf = t.waveform_for((0, 1))
 assert wf is not None and wf.segments is not None
@@ -147,10 +141,8 @@ res = run(
     dev,
     4000,
     table=t,
-    gate_drives=fx.gate_drives,
-    entangling_drives=fx.entangling_drives,
     keep_final_state=True,
-    options=SolverOptions(branch_weight_min=1e-5),
+    numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-5)),
 )
 d = res.diagnostics
 print(
@@ -182,10 +174,8 @@ for phi in phis:
         dev,
         1,
         table=t,
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
         keep_final_state=True,
-        options=SolverOptions(branch_weight_min=1e-3),
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
     )
     assert r.final_state is not None
     pops = np.real(np.diag(np.asarray(r.final_state.full())))
@@ -199,12 +189,20 @@ print(
 section("2b. the beat-note phase at the gate start (Section 7.10; Roos 2008)")
 import dataclasses
 
-from qutip_trap.control.schedule import schedule as _schedule
 from qutip_trap.control.compiler import embed as _embed
+from qutip_trap.control.schedule import (
+    schedule as _schedule,
+)
+from qutip_trap.dynamics.engine import (
+    SeedSpec as _SeedSpec,
+)
+from qutip_trap.noise.sampling import (
+    quiet_sample as _quiet,
+)
 from qutip_trap.run.job import to_register_order
-from qutip_trap.run.space import select_space as _select_space
-from qutip_trap.dynamics.engine import SeedSpec as _SeedSpec
-from qutip_trap.noise.sampling import quiet_sample as _quiet
+from qutip_trap.run.space import (
+    select_space as _select_space,
+)
 
 ms_only = Circuit(2, (Operation("ms", (0, 1), (math.pi, 0.0, math.pi / 2.0)),), (0, 1))
 mu_wf = float(wf.segments[0].detuning_hz["blue"])
@@ -218,9 +216,7 @@ for continuous in (False, True):
     dev_pc = dataclasses.replace(dev, hardware=dataclasses.replace(dev.hardware, phase_continuous=continuous))
     for cycles in (0.0, 21.25, 21.5):
         t_g = cycles / mu_wf
-        sch = _schedule(
-            ms_only, dev_pc, t, gate_drives=fx.gate_drives, entangling_drives=fx.entangling_drives, t0_s=t_g
-        )
+        sch = _schedule(ms_only, dev_pc, t, t0_s=t_g)
         sp2 = _select_space(dev_pc, sch, SolverOptions(), nbar={2: 0.0, 3: 0.0}).space
         tr = JointExactEngine().run_pulses(
             dev_pc, sch, sp2.initial_state([1, 0]), sp2, _quiet(), _SeedSpec(0), SolverOptions()
@@ -314,14 +310,7 @@ print(
 ghz = Circuit(
     3, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()), Operation("cnot", (1, 2), ())), (0, 1, 2)
 )
-sur3 = surrogate_table(
-    dev3,
-    pairs=[(0, 1), (1, 2)],
-    gate_drives=fx3.gate_drives,
-    entangling_drives=fx3.entangling_drives,
-    detection_records=2000,
-    detection_windows_s=WINDOWS,
-)
+sur3 = surrogate_table(dev3, pairs=[(0, 1), (1, 2)], detection_records=2000, detection_windows_s=WINDOWS)
 for pair in ((0, 1), (1, 2)):
     r3 = sur3.entangling[pair]
     print(
@@ -332,10 +321,8 @@ res3 = run(
     dev3,
     2000,
     table=sur3.table,
-    gate_drives=fx3.gate_drives,
-    entangling_drives=fx3.entangling_drives,
     keep_final_state=True,
-    options=SolverOptions(branch_weight_min=3e-3),
+    numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
 )
 d3 = res3.diagnostics
 print(
@@ -424,10 +411,8 @@ rb = run(
     dev3,
     4000,
     table=sur3.table,
-    gate_drives=fx3.gate_drives,
-    entangling_drives=fx3.entangling_drives,
     keep_final_state=True,
-    options=SolverOptions(branch_weight_min=3e-3),
+    numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
 )
 assert rb.final_state is not None
 rec_b = last_record(rb)

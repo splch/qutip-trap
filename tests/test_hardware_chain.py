@@ -196,14 +196,7 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
 
     def check(hardware, chain: bool):  # type: ignore[no-untyped-def]
         dev = dataclasses.replace(fx.device, hardware=hardware)
-        sur = surrogate_table(
-            dev,
-            pairs=[(0, 1)],
-            gate_drives=fx.gate_drives,
-            entangling_drives=fx.entangling_drives,
-            detection_records=200,
-            detection_windows_s=(20e-6,),
-        )
+        sur = surrogate_table(dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,))
         wf = sur.table.waveform_for((0, 1))
         assert wf is not None
         nb = {m: e.value for m, e in sur.table.nbar.items()}

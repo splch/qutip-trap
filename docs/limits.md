@@ -95,7 +95,7 @@ as user inputs (Section 12), and the compute cost that bounds what exact simulat
   J₀(β) carrier factor of excess micromotion; explicit rf (Floquet) dynamics is a validation option because it multiplies
   the step budget by Ω_rf/ω_m.
 - **Calibration.** The default table is the closed-form surrogate with exact spot checks (Section 7.5); the full calibration by
-  simulated experiments (`calibrate(surrogate=False)`) is an opt-in audit that fits the compute budget up to two ions. Drift
+  simulated experiments (`calibrate(machine, method="experiments")`) is an opt-in audit that fits the compute budget up to two ions. Drift
   enters through the dynamical samples at the shot clock and an optional servo; recalibration in the loop is not modelled.
 - **The fast readout path.** The product POVM is exact at zero readout crosstalk; with camera or neighbour crosstalk the
   fast path carries the register-wide confusion tensor (dense to twelve ions) and the full photon-record path is the

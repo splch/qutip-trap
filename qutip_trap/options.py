@@ -234,20 +234,33 @@ class Numerics(_FromMapping):
         )
 
     @classmethod
-    def from_solver_options(cls, options: SolverOptions) -> Numerics:
-        """The numerics a ``SolverOptions`` carries (its four physics switches go to ``Physics.from_solver_options``)."""
-        d = dataclasses.asdict(options)
+    def from_solver_options(
+        cls,
+        options: SolverOptions | None = None,
+        *,
+        caps: Mapping[int, int] | None = None,
+        space: HilbertSpace | None = None,
+        enr_group: tuple[Sequence[int], int] | None = None,
+        samples: int | None = None,
+        addressing: bool | None = None,
+    ) -> Numerics:
+        """The numerics a ``SolverOptions`` carries (its four physics switches go to ``Physics.from_solver_options``; None is
+        the default options), plus the five numerics that never lived on ``SolverOptions``: the explicit caps, a declared
+        space and an ENR group (``Truncation``), the sample count and the parallel-addressing switch (``Parallel``), the
+        homes of ``run``'s 0.1.0 keywords ``caps``, ``space``, ``enr_group``, ``samples`` and ``parallel``."""
+        opts = options if options is not None else SolverOptions()
+        d = dataclasses.asdict(opts)
 
         def pick(group: type[DataclassInstance]) -> dict[str, Any]:
             return {f.name: d[f.name] for f in dataclasses.fields(group) if f.name in d}
 
         return cls(
             integration=Integration(**pick(Integration)),
-            truncation=Truncation(**pick(Truncation)),
+            truncation=Truncation(**pick(Truncation), caps=caps, space=space, enr_group=enr_group),
             trajectories=Trajectories(**pick(Trajectories)),
             gate_local=GateLocal(**pick(GateLocal)),
-            parallel=Parallel(map=options.map, workers=options.workers),
-            convergence_check=options.convergence_check,
+            parallel=Parallel(map=opts.map, workers=opts.workers, samples=samples, addressing=addressing),
+            convergence_check=opts.convergence_check,
         )
 
 
@@ -305,13 +318,15 @@ class Physics(_FromMapping):
         return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
     @classmethod
-    def from_solver_options(cls, options: SolverOptions, **fields: Any) -> Physics:
-        """The physics switches a ``SolverOptions`` carries, plus any other ``Physics`` field as a keyword."""
+    def from_solver_options(cls, options: SolverOptions | None = None, **fields: Any) -> Physics:
+        """The physics switches a ``SolverOptions`` carries (None: the defaults), plus any other ``Physics`` field as a
+        keyword (``noise=False``, ``entangler="zz"``, ...)."""
+        opts = options if options is not None else SolverOptions()
         return cls(
-            scattering="channels" if options.scattering_channels else "estimate",
-            scattering_recoil=options.scattering_recoil,
-            intensity_noise_channels=options.intensity_noise_channels,
-            hardware_chain=options.hardware_chain,
+            scattering="channels" if opts.scattering_channels else "estimate",
+            scattering_recoil=opts.scattering_recoil,
+            intensity_noise_channels=opts.intensity_noise_channels,
+            hardware_chain=opts.hardware_chain,
             **fields,
         )
 

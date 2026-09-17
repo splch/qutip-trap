@@ -16,6 +16,7 @@ import pytest
 
 from qutip_trap.api import Circuit, Operation, SolverOptions, last_record, run
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import AdaptiveML, FirstPhoton, ThresholdDiscriminator, TimeResolvedML
 from tests.m6_fixtures import circuit_fixture
 
@@ -27,24 +28,15 @@ FAST = SolverOptions(branch_weight_min=1e-2)
 @pytest.fixture(scope="module")
 def one_ion():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(1)
-    sur = surrogate_table(
-        fx.device,
-        pairs=[],
-        gate_drives=fx.gate_drives,
-        entangling_drives=fx.entangling_drives,
-        detection_records=400,
-        detection_windows_s=WINDOWS,
-    )
+    sur = surrogate_table(fx.device, pairs=[], detection_records=400, detection_windows_s=WINDOWS)
     return fx, sur
 
 
 def _kw(fx, sur):  # type: ignore[no-untyped-def]
     return {
         "table": sur.table,
-        "gate_drives": fx.gate_drives,
-        "entangling_drives": fx.entangling_drives,
-        "options": FAST,
-        "noise": False,
+        "numerics": Numerics.from_solver_options(FAST),
+        "physics": Physics(noise=False),
     }
 
 
@@ -53,7 +45,7 @@ def test_time_resolved_ml_runs_end_to_end_on_the_full_record_path(one_ion) -> No
     the posterior confidence of Section 8.6 reach ``Result``."""
     fx, sur = one_ion
     disc = TimeResolvedML(5e-6, 20e-6)
-    res = run(ONE, fx.device, 40, readout="full", discriminator=disc, **_kw(fx, sur))
+    res = run(ONE, fx.device, 40, **_kw(fx, sur), readout=Readout(mode="full", discriminator=disc))
     rec = last_record(res)
     assert rec.readout.povm is None and rec.readout.product is None
     # the scheme states the dark class: 171Yb+ direct fluorescence, so "dark" and Myerson's 1/tau is R_b
@@ -76,7 +68,7 @@ def test_a_monte_carlo_povm_runs_the_fast_path_and_declares_its_error_bar(one_io
     the statistical uncertainty it earned (``POVM.uncertainty``)."""
     fx, sur = one_ion
     disc = TimeResolvedML(5e-6, 20e-6)
-    res = run(ONE, fx.device, 40, discriminator=disc, povm_samples=400, **_kw(fx, sur))
+    res = run(ONE, fx.device, 40, **_kw(fx, sur), readout=Readout(discriminator=disc, povm_samples=400))
     rec = last_record(res)
     assert rec.readout.povm is not None and rec.readout.povm.per_ion is not None
     unc = rec.readout.povm.uncertainty
@@ -86,7 +78,9 @@ def test_a_monte_carlo_povm_runs_the_fast_path_and_declares_its_error_bar(one_io
     eps_b, eps_d = res.spam["q0"]
     assert 0.0 <= eps_b <= 0.1 and 0.0 <= eps_d <= 0.1
     # the threshold discriminator's POVM stays exact and reports no uncertainty
-    thr = run(ONE, fx.device, 40, discriminator=ThresholdDiscriminator(0.5, 20e-6), **_kw(fx, sur))
+    thr = run(
+        ONE, fx.device, 40, **_kw(fx, sur), readout=Readout(discriminator=ThresholdDiscriminator(0.5, 20e-6))
+    )
     assert last_record(thr).readout.povm.uncertainty == 0.0  # type: ignore[union-attr]
     assert not any("sampled records per level" in s for s in thr.diagnostics.approximations)
 
@@ -99,7 +93,7 @@ def test_the_adaptive_and_first_photon_protocols_also_run(one_ion) -> None:  # t
         AdaptiveML(5e-6, 40e-6, 1e-3),
         FirstPhoton(40e-6, cutoff_s=10e-6),
     ):
-        res = run(ONE, fx.device, 30, readout="full", discriminator=disc, **_kw(fx, sur))
+        res = run(ONE, fx.device, 30, **_kw(fx, sur), readout=Readout(mode="full", discriminator=disc))
         assert res.shots == 30 and res.photon_records is not None
         assert any("readout full path" in s for s in res.diagnostics.approximations)
         if disc.needs_arrivals:

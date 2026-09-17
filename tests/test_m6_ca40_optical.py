@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from qutip_trap.api import Circuit, Operation, SolverOptions, register_fidelity, run
+from qutip_trap.api import Circuit, Operation, SolverOptions, register_fidelity
 from qutip_trap.device.presets import (
     CA40_DETECTION_WINDOW_S,
     CA40_TRAP_HZ,
@@ -19,6 +19,8 @@ from qutip_trap.device.presets import (
     ca40_optical_recipe,
 )
 from qutip_trap.light.roles import gate_beams
+from qutip_trap.machine import Machine
+from qutip_trap.options import Numerics
 from qutip_trap.prep.recipe import recipe_of, run_preparation, standard_recipe
 from qutip_trap.species import species
 
@@ -96,15 +98,12 @@ def test_run_completes_one_gpi2_on_the_optical_qubit() -> None:
     conv.ca40_linewidth_reading, anchor.ca40.gamma_dependent_repins). The loss is not exactly linear in (2 nbar + 1), which
     would predict -8 %."""
     preset = ca40_optical(1)
-    result = run(
-        GPI2,
-        preset.device,
-        200,
-        gate_drives=preset.gate_drives,
-        entangling_drives=preset.entangling_drives,
-        keep_final_state=True,
-        options=SolverOptions(branch_weight_min=1e-4),
-        calibrate_kwargs={"detection_records": 600, "detection_windows_s": WINDOWS},
+    result = (
+        Machine(preset.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-4)))
+        .calibrated(
+            pairs=list(GPI2.entangling_pairs()), **{"detection_records": 600, "detection_windows_s": WINDOWS}
+        )
+        .run(GPI2, 200, keep_final_state=True)
     )
     diagnostics = result.diagnostics
     assert diagnostics.level == "JOINT_EXACT"
@@ -127,13 +126,14 @@ def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() 
     preset = ca40_optical(2)
     bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
     with pytest.raises(Exception) as excinfo:
-        run(
-            bell,
-            preset.device,
-            10,
-            gate_drives=preset.gate_drives,
-            entangling_drives=preset.entangling_drives,
-            options=SolverOptions(branch_weight_min=1e-2),
-            calibrate_kwargs={"detection_records": 200, "detection_windows_s": WINDOWS},
+        (
+            Machine(
+                preset.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
+            )
+            .calibrated(
+                pairs=list(bell.entangling_pairs()),
+                **{"detection_records": 200, "detection_windows_s": WINDOWS},
+            )
+            .run(bell, 10)
         )
     assert excinfo.type is not AssertionError

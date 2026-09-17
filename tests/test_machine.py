@@ -169,8 +169,6 @@ def test_mappings_are_accepted_and_the_engine_is_configured_from_the_machine(mac
 
 def test_the_later_phases_name_themselves(machine) -> None:  # type: ignore[no-untyped-def]
     _preset, m = machine
-    with pytest.raises(NotImplementedError, match=r"Phase 2\.6"):
-        m.error_model()
     with pytest.raises(NotImplementedError, match=r"Phase 3\.1"):
         m.submit(BELL, 10)
     # 2.5: specs is implemented, on the device's derived quantities plus the machine's roles, table and level

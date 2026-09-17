@@ -917,4 +917,29 @@ class Device:
     def from_dict(data) -> "Device": ...                   # a classmethod; exact: the device read has the hash written
 ```
 
+```python
+# ---- qutip_trap.benchmarks.error_model (the inverse direction; docs/api_implementation_plan.md 2.6) ----
+@dataclass(frozen=True)
+class ErrorModel:               # the phenomenological summary of one machine: physics in, vendors' numbers out
+    infidelity: dict[str, float]                           # per native gate kind (gpi[i], gpi2[i], ms[i,j]), the average gate infidelity r of
+                                                           #   its GATE_LOCAL channel reduced to the gate's qubits
+    durations_s: dict[str, float]                          # per kind from the schedule; "measure" is the detection window
+    p_1q: float; p_2q: float | None                        # the depolarizing weights: mean of 2 r over the single-qubit kinds, 4 r/3 over the pairs
+    p_meas: dict[int, tuple[float, float]]                 # per qubit (P(read 1 | 0 prepared), P(read 0 | 1 prepared)) = (eps_D, eps_B)
+    p_init: dict[int, float]                               # per qubit, the preparation error
+    dephasing_rate_per_s: dict[int, float]; heating_rate_per_s: dict[int, float]   # from the noise model (1/s, quanta/s)
+    machine_hash: str; qubits: tuple[int, ...]; entangler: str
+    provenance: dict[str, str] = field(default_factory=dict); notes: tuple[str, ...] = ()
+    def to_ionq_noise(self) -> dict: ...                   # {"r_1q", "r_2q"}: F_avg = 1 - r_1q/2 and 1 - 3 r_2q/4 (lambda = eps 4^n/(4^n - 1))
+    def to_quantinuum_error_params(self) -> dict: ...      # p1, p2 (the same weights), p_meas, p_init, linear_dephasing_rate (1/s), quadratic 0.0
+    def to_qdk_qubit_params(self) -> dict: ...             # the estimator's gate-based qubitParams: times as "5 µs" strings, error rates as the weights
+def error_model(machine, *, qubits=None) -> ErrorModel: ...   # Machine.error_model(qubits=) is this function
+
+@dataclass(frozen=True)
+class Machine:
+    ...                                                    # unchanged
+    def error_model(self, *, qubits=None) -> ErrorModel: ...
+    def specs(self) -> str: ...                            # Device.specs plus the roles, the table and the level
+```
+
 Three rules bind the surface. The application of Section 14 imports nothing outside this appendix. `control` never imports `calibration`, which sits above it and communicates through `CalibrationTable`. Every derived number reachable through `Device.derived()`, `Result.diagnostics` or an `ExperimentResult` carries a provenance id from the ledger of Section 14.5, so the Section 9.11 coverage test is a set difference.
