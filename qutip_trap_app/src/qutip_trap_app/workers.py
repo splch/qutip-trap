@@ -102,6 +102,16 @@ def complete_job(job: JobSpec, preset: Any) -> JobSpec:
     return out
 
 
+def _core_progress(progress: Any) -> Any:
+    """The core's ``progress`` callback as worker events (0.4.0): each ``Progress`` of ``Machine.run`` (per pulse, branch,
+    sample and readout) becomes a progress event whose stage is the core's and whose fraction is ``done / total``."""
+
+    def forward(p: Any) -> None:
+        progress(f"running: {p.stage}", p.fraction, f"{p.stage} {p.done} of {p.total}")
+
+    return forward
+
+
 def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: Any) -> Any:
     from qutip_trap_app import device_layer as layer_mod
     from qutip_trap_app import record as rec_mod
@@ -120,7 +130,7 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
         progress(
             "running", None, f"{job.level} run of {job.shots} shots on {preset.device.crystal.n_ions} ions"
         )
-        record, live = rec_mod.execute(job, preset)
+        record, live = rec_mod.execute(job, preset, progress=_core_progress(progress))
         key = record.key()
         state.records[key] = record
         state.lives[key] = live
@@ -284,7 +294,7 @@ def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: 
         table = rec_mod.calibrate_for(job, preset)
         state.tables[preset.device.hash()] = table
         progress("running", None, f"{job.level} run of {job.shots} shots: {job.label or 'the requested job'}")
-        record, live = rec_mod.execute(job, preset)
+        record, live = rec_mod.execute(job, preset, progress=_core_progress(progress))
         key = record.key()
         state.lives[key] = live
         step_i = int(payload.get("step", -1))

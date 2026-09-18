@@ -74,6 +74,8 @@ class Integration(_FromMapping):
     """Integrate ket segments in the exact rotating frame of the diagonal H_0 (Section 5.2)."""
     propagator_cache: bool = True
     """Cache the propagator of internal-state-only segments (Section 11.3 item 5)."""
+    store_marginals: bool = False
+    """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal`` (0.4.0)."""
 
     def __post_init__(self) -> None:
         SolverOptions(**self.asdict())  # the same rules and messages as SolverOptions

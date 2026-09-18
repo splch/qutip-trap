@@ -163,6 +163,46 @@ def test_core_is_imported_in_one_module_only() -> None:
     assert not offenders, f"qutip_trap imported outside core.py: {offenders}"
 
 
+DOCUMENTED_MODULES = frozenset(
+    {
+        "qutip_trap",
+        "qutip_trap.api",
+        "qutip_trap.circuit",
+        "qutip_trap.schedule",
+        "qutip_trap.dynamics",
+        "qutip_trap.physics",
+        "qutip_trap.presets",
+        "qutip_trap.io",
+        "qutip_trap.io.qasm2",
+        "qutip_trap.io.ionq",
+        "qutip_trap.experiments",
+        "qutip_trap.calibration",
+        "qutip_trap.benchmarks",
+        "qutip_trap.interop",
+        "qutip_trap.experimental",
+    }
+)
+"""The rung modules the core documents (its ``tests/test_public_surface.py``): the only import locations the app may use."""
+
+
+def test_core_is_imported_from_documented_modules_only_and_every_gap_is_closed() -> None:
+    """docs/api_implementation_plan.md 3.3 (0.4.0): ``core.py`` imports only from the documented rung modules and
+    ``CORE_GAPS`` is empty, so the Section 14.6 contract holds without a single private import."""
+    from qutip_trap_app import core
+
+    tree = ast.parse((SRC / "core.py").read_text(encoding="utf-8"))
+    imported = sorted(
+        {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("qutip_trap")
+        }
+    )
+    private = [m for m in imported if m not in DOCUMENTED_MODULES]
+    assert not private, f"core.py imports undocumented core modules: {private}"
+    assert core.CORE_GAPS == ()
+
+
 def test_viewmodels_do_not_import_flet() -> None:
     for path in (SRC / "viewmodel").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))

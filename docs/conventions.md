@@ -8,34 +8,9 @@ of that table: the rows the implementation encodes, generated from the provenanc
 [`docs/provenance/ledger.yaml`](provenance/ledger.yaml) so that it cannot drift from what the tests assert (the table below is
 rewritten by `tools/docs_from_ledger.py`, and CI fails when it is stale).
 
-## Vocabulary
-
-Settled on 2026-09-11 for the API work of [`api_implementation_plan.md`](api_implementation_plan.md) (Phase 0, item 0.6). Every
-later phase uses these names; a name here changes only through a deprecation cycle.
-
-- **Machine.** The executor that 0.2.0 adds: a `Device`, the roles its beams play, the calibration table and the policy that
-  turns a circuit into a `Result`, with `run`, `compile`, `schedule` and `calibrated`. PLAN.md Section 14.2 already names
-  Level 0 "Machine" and the app's device card uses the word. Rejected: `Emulator` (Pulser, Quantinuum), because the object is
-  the machine as the physics describes it, not an imitation of one; `Backend` (Qiskit, pytket), because a backend is an
-  execution service, and this is a record with behaviour and no service behind it. `Device` stays the physical record, the
-  split pytket made between `BackendInfo` (data) and `Backend` (behaviour).
-- **`trap`.** The recommended import alias is `import qutip_trap as trap`; the documentation's examples use it from 0.2.0 on.
-  `qutip_trap.api` stays the spelled-out Appendix E import and is never aliased.
-- **Rungs.** The five levels of PLAN.md Section 14.2 are five modules: `qutip_trap` (rung 0, the machine), `qutip_trap.circuit`,
-  `qutip_trap.schedule`, `qutip_trap.dynamics` and `qutip_trap.physics`; `qutip_trap.interop` holds the adapters to other SDKs
-  (`qutip_trap.interop.qiskit` today) and `qutip_trap.experimental` the names outside the stability guarantee. The experiments,
-  calibration and benchmarks packages are "the laboratory". In API prose a step of the ladder is a **rung**, so that "level"
-  keeps its two other meanings; the app's "Level 0" to "Level 4" labels are the same five rungs.
-- **Fidelity levels.** `JOINT_EXACT` and `GATE_LOCAL` are the two levels a run can integrate at (Section 5.4), and `"auto"` the
-  policy that picks one against the Section 11.5 guards. The enum that replaces the strings in 0.2.0 is named `FidelityLevel`,
-  with members `AUTO = "auto"`, `JOINT_EXACT` and `GATE_LOCAL` equal to today's strings (so `Diagnostics.level == "GATE_LOCAL"`
-  stays true); it widens the `Literal` alias of that name in `run/levels.py`. The proposal's `Level` is rejected because the
-  word is taken twice: `qutip_trap.api.Level` is an atomic level (Appendix E, frozen), and "Level n" is a rung in the app.
-- **Error-model names** (`error_model()`, 0.3.0): `p_*` a probability per operation, `*_rate` per second, `*_ratio` a fraction
-  of another probability, `*_scale` a dimensionless multiplier. They join the unit suffixes every public float carries: `_hz`,
-  `_s`, `_m`, `_w`, `_gauss`, `_rad`, `_v`, `_pa`, `_cps`, and `_turns` only at the IonQ boundary.
-
 ## The rules that reach the public API
+
+The units, the bit order, the tensor order and the seed invariants come first because every other page assumes them.
 
 - **Frequencies.** Every public number is an ordinary frequency in Hz (`qutip_trap.units.Hz`); every internal frequency is
   angular in rad/s (`RadPerS`); the conversion is one explicit 2π at the boundary (`rad_s_from_hz`, `hz_from_rad_s`). A
@@ -77,9 +52,46 @@ later phase uses these names; a name here changes only through a deprecation cyc
   L = √(γ_φ/2) σ_z, under which the coherence decays at γ_φ, so γ_φ = 1/T₂ for the white component.
 - **Seeds.** One root `SeedSequence` per run, spawned by (sample, trajectory, shot, ion, channel), so every random variate is
   independent of execution order, of the worker count and of truncation retries; the 1-versus-18-worker agreement is a
-  tolerance test at 10⁻¹² (Section 3.4).
+  tolerance test at 10⁻¹² (Section 3.4). The contract, exactly as `run/pipeline.py` has it: the same
+  (`shots`, `samples`, `seed`, machine hash) reproduces every shot bit for bit, whether the run went through `Machine.run`,
+  `run` or a `Job` in a worker process, because the root seed and the machine fix every keyed stream and the shots are dealt
+  to the dynamical samples in contiguous blocks (`conv.shot_blocks_per_sample`: sample k owns the shots from Σ_{j<k} M_j to
+  Σ_{j≤k} M_j, with M_j = shots // n_samples plus one for the first shots mod n_samples samples; `Result.sample_of_shot`
+  reads the blocks back). A different `shots` does NOT reproduce the shots the two runs share: with `samples=None` the
+  sample count is min(shots, 64) and the block sizes move with it, so a shot lands in a different sample with different
+  quasi-static values, and the per-shot draws (the photon records, the collisions) are keyed by the sample id and the shot
+  index inside its block. Integrator and cap-rule changes may move sampled outcomes between minor releases, because the
+  trajectory and readout draws follow the state they are drawn from; a record is therefore compared across releases by its
+  histogram within its error bars and by its diagnostics, never shot list against shot list.
 - **Identity.** `Device.hash()` is a canonical serialization (declaration-order fields, floats rounded to 12 significant
   digits, dicts by sorted key, `Qobj` fields excluded), the key of the calibration cache and of every cached tomography.
+
+## Vocabulary
+
+Settled on 2026-09-11 for the API work of [`api_implementation_plan.md`](api_implementation_plan.md) (Phase 0, item 0.6). Every
+later phase uses these names; a name here changes only through a deprecation cycle.
+
+- **Machine.** The executor that 0.2.0 adds: a `Device`, the roles its beams play, the calibration table and the policy that
+  turns a circuit into a `Result`, with `run`, `compile`, `schedule` and `calibrated`. PLAN.md Section 14.2 already names
+  Level 0 "Machine" and the app's device card uses the word. Rejected: `Emulator` (Pulser, Quantinuum), because the object is
+  the machine as the physics describes it, not an imitation of one; `Backend` (Qiskit, pytket), because a backend is an
+  execution service, and this is a record with behaviour and no service behind it. `Device` stays the physical record, the
+  split pytket made between `BackendInfo` (data) and `Backend` (behaviour).
+- **`trap`.** The recommended import alias is `import qutip_trap as trap`; the documentation's examples use it from 0.2.0 on.
+  `qutip_trap.api` stays the spelled-out Appendix E import and is never aliased.
+- **Rungs.** The five levels of PLAN.md Section 14.2 are five modules: `qutip_trap` (rung 0, the machine), `qutip_trap.circuit`,
+  `qutip_trap.schedule`, `qutip_trap.dynamics` and `qutip_trap.physics`; `qutip_trap.interop` holds the adapters to other SDKs
+  (`qutip_trap.interop.qiskit` today) and `qutip_trap.experimental` the names outside the stability guarantee. The experiments,
+  calibration and benchmarks packages are "the laboratory". In API prose a step of the ladder is a **rung**, so that "level"
+  keeps its two other meanings; the app's "Level 0" to "Level 4" labels are the same five rungs.
+- **Fidelity levels.** `JOINT_EXACT` and `GATE_LOCAL` are the two levels a run can integrate at (Section 5.4), and `"auto"` the
+  policy that picks one against the Section 11.5 guards. The enum that replaces the strings in 0.2.0 is named `FidelityLevel`,
+  with members `AUTO = "auto"`, `JOINT_EXACT` and `GATE_LOCAL` equal to today's strings (so `Diagnostics.level == "GATE_LOCAL"`
+  stays true); it widens the `Literal` alias of that name in `run/levels.py`. The proposal's `Level` is rejected because the
+  word is taken twice: `qutip_trap.api.Level` is an atomic level (Appendix E, frozen), and "Level n" is a rung in the app.
+- **Error-model names** (`error_model()`, 0.3.0): `p_*` a probability per operation, `*_rate` per second, `*_ratio` a fraction
+  of another probability, `*_scale` a dimensionless multiplier. They join the unit suffixes every public float carries: `_hz`,
+  `_s`, `_m`, `_w`, `_gauss`, `_rad`, `_v`, `_pa`, `_cps`, and `_turns` only at the IonQ boundary.
 
 ## The full convention table
 

@@ -18,23 +18,27 @@ from tools.docs_from_ledger import TARGETS, anchors_block, conventions_block, re
 
 ROOT = repository_root()
 DOCS = ROOT / "docs"
-PAGES = tuple(
-    DOCS / name
-    for name in (
-        "physics_notes.md",
-        "conventions.md",
-        "examples.md",
-        "limits.md",
-        "deprecations.md",
-        "README.md",
-    )
+PAGE_NAMES = (
+    "machine.md",
+    "circuit.md",
+    "schedule.md",
+    "dynamics.md",
+    "physics.md",
+    "laboratory.md",
+    "experimental.md",
+    "physics_notes.md",
+    "conventions.md",
+    "examples.md",
+    "limits.md",
+    "deprecations.md",
+    "README.md",
 )
-"""The documentation pages; the two planning documents under docs/ quote the conventions and are not pages."""
+"""The documentation pages: the ladder (0.4.0; one page per rung, the laboratory, the experimental namespace) and the pages
+every release had; the two planning documents under docs/ quote the conventions and are not pages."""
+PAGES = tuple(DOCS / name for name in PAGE_NAMES)
 
 
-@pytest.mark.parametrize(
-    "name", ["physics_notes.md", "conventions.md", "examples.md", "limits.md", "deprecations.md", "README.md"]
-)
+@pytest.mark.parametrize("name", PAGE_NAMES)
 def test_documentation_pages_exist_and_are_not_empty(name: str) -> None:
     path = DOCS / name
     assert path.exists(), name
@@ -58,18 +62,7 @@ def test_every_ledger_id_cited_in_the_documentation_resolves() -> None:
     records = load_ledger()
     pattern = re.compile(r"`((?:conv|anchor)\.[A-Za-z0-9_.]*[A-Za-z0-9_])`")
     dangling: dict[str, list[str]] = {}
-    pages = [
-        DOCS / name
-        for name in (
-            "physics_notes.md",
-            "conventions.md",
-            "examples.md",
-            "limits.md",
-            "deprecations.md",
-            "README.md",
-        )
-    ]
-    for path in [*pages, ROOT / "README.md"]:
+    for path in [*PAGES, ROOT / "README.md"]:
         cited = set(pattern.findall(path.read_text(encoding="utf-8")))
         missing = sorted(c for c in cited if c not in records)
         if missing:
@@ -145,14 +138,7 @@ def test_the_bit_order_sentence_is_stated_once_and_never_contradicted() -> None:
     no docstring or page puts qubit 0 at the other end. The register density matrix's order is a statement about ions and
     tensor factors ("ion 0 the first factor, the most-significant index bit") and is worded so."""
     hits = {page.name: page.read_text(encoding="utf-8").count(BIT_ORDER_SENTENCE) for page in PAGES}
-    assert hits == {
-        "physics_notes.md": 0,
-        "conventions.md": 1,
-        "examples.md": 0,
-        "limits.md": 0,
-        "deprecations.md": 0,
-        "README.md": 0,
-    }, hits
+    assert hits == {name: (1 if name == "conventions.md" else 0) for name in PAGE_NAMES}, hits
     assert BIT_ORDER_SENTENCE in (results.__doc__ or ""), (
         "run/results.py must state the bit order in the same words"
     )

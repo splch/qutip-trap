@@ -221,8 +221,8 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
         detection_windows_s=(20e-6,),
         cache=cache,
     )
-    t1 = calibrate(fx.device, **kw)  # type: ignore[arg-type]
-    t2 = calibrate(fx.device, **kw)  # type: ignore[arg-type]
+    t1 = calibrate(Machine(fx.device), **kw).table  # type: ignore[arg-type]
+    t2 = calibrate(Machine(fx.device), **kw).table  # type: ignore[arg-type]
     assert t1 is t2 and cache.hits == 1
     assert t1.field.experiment == "field_scan" and t1.field.status == "calibrated"
     assert all(e.status == "seed" for e in t1.rabi.values()), (

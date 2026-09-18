@@ -1,21 +1,38 @@
 """The core contract: every import of ``qutip_trap`` the application makes, in one module (PLAN.md Section 14.6).
 
 Section 14.6: "The app calls only public core API that exists for the core's own reasons ... If a zoom view needs data the
-core does not expose, the app records the gap and shows the view as unavailable rather than patching the core." The public
-surface is ``qutip_trap.api`` (Appendix E). Everything the application uses from the core is re-exported from here, so
-that a reader can audit the contract in one place and ``tests/test_provenance_coverage.py`` can assert that no other
-module of the application imports ``qutip_trap`` directly.
+core does not expose, the app records the gap and shows the view as unavailable rather than patching the core." Everything
+the application uses from the core is re-exported from here, so that a reader can audit the contract in one place and
+``tests/test_provenance_coverage.py`` can assert that no other module of the application imports ``qutip_trap`` directly,
+and that this one imports only the documented rung modules of the ladder (docs/api_implementation_plan.md 3.3; 0.4.0):
+the root ``qutip_trap`` (rung 0, the machine), ``qutip_trap.schedule`` (rung 2), ``qutip_trap.dynamics`` (rung 3),
+``qutip_trap.physics`` (rung 4) and the Appendix E compatibility surface ``qutip_trap.api``.
 
-Two names below come from outside ``qutip_trap.api``. Each is a core feature request (a re-export, nothing more) that the
-application works around on its own side, exactly as Section 14.1 asks; they are listed in :data:`CORE_GAPS` and the run
-record carries that list, so a reader of an exported record knows which core facilities the app leaned on.
+Until 0.3.0 twelve names came from private modules, each a core feature request the application worked around on its own
+side and listed in :data:`CORE_GAPS`, which the run record carries. Phase 3 of the plan closed every one of them: the
+concrete engine and the Hamiltonian builder are on the dynamics rung, the noise-sample keys beside them, the closed forms
+and published models on the physics rung, the closed-form waveform trajectory on the schedule rung, the traces carry the
+per-time Fock marginals (``Traces.mode_marginal``) and the GATE_LOCAL report the register after every step
+(``GateLocalStep.register_after``). ``CORE_GAPS`` is therefore empty and stays as the record's field.
 """
 
 from __future__ import annotations
 
-# ---- the public surface (Appendix E) -------------------------------------------------------------------------------------------
-from qutip_trap import FidelityLevel, Machine, Numerics, Physics, Readout, as_machine
+# ---- rung 0: the machine, the jobs and the option objects ------------------------------------------------------------------
+from qutip_trap import (
+    FidelityLevel,
+    Job,
+    JobCancelled,
+    Machine,
+    Numerics,
+    Physics,
+    Readout,
+    RunSpec,
+    as_machine,
+)
 from qutip_trap import __version__ as core_version
+
+# ---- the Appendix E compatibility surface ------------------------------------------------------------------------------------
 from qutip_trap.api import (
     Beam,
     CalEntry,
@@ -97,8 +114,49 @@ from qutip_trap.api import (
     yb171_chain,
 )
 
-# ---- names the core does not re-export through qutip_trap.api (each a filed core feature request, Section 14.1) -----------
-from qutip_trap.control.shaping import (
+# ---- rung 3: the dynamics ------------------------------------------------------------------------------------------------------
+from qutip_trap.dynamics import (
+    KEY_BRANCH_WEIGHT,
+    BuilderOptions,
+    BuiltHamiltonian,
+    DriveRecord,
+    JointExactEngine,
+    build_hamiltonian,
+    key_frozen_n,
+    key_mode_offset_hz,
+    key_qubit_offset_hz,
+)
+
+# ---- rung 4: the physics, its closed forms and the published models ----------------------------------------------------------
+from qutip_trap.physics import (
+    ATOMIC_MASS_KG,
+    CRAIN_YB171_SNSPD,
+    MYERSON_CA40_PMT,
+    HartyParameters,
+    apply_pulses,
+    axial_modes_dimensionless,
+    ballance_thermal_error,
+    debye_waller_factor,
+    doppler_force_nbar,
+    equilibrium_dimensionless,
+    is_stable,
+    kirchmair_populations,
+    lamb_dicke_parameter,
+    mean_occupation,
+    monodromy,
+    ms_alpha,
+    ms_gamma,
+    rabi_matrix_element,
+    rabi_table,
+    simulate_epg_sets,
+    stenholm_coefficients,
+    thermal_debye_waller_infidelity,
+    thermal_distribution,
+    x0_m,
+)
+
+# ---- rung 2: the schedule and the closed-form trajectory behind a played waveform -----------------------------------------------
+from qutip_trap.schedule import (
     CHI_MAXIMAL_RAD,
     SampledEnvelope,
     SegmentedEnvelope,
@@ -108,78 +166,22 @@ from qutip_trap.control.shaping import (
     integrals_segmented,
     trajectory_sampled,
 )
-from qutip_trap.dynamics.engine import JointExactEngine
-from qutip_trap.dynamics.hamiltonian import BuilderOptions, BuiltHamiltonian, DriveRecord, build_hamiltonian
-from qutip_trap.hilbert.operators import debye_waller_factor, rabi_matrix_element, rabi_table
-from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, key_frozen_n, key_mode_offset_hz, key_qubit_offset_hz
-from qutip_trap.prep.closed_forms import (
-    doppler_force_nbar,
-    lamb_dicke_parameter,
-    stenholm_coefficients,
-    x0_m,
-)
-from qutip_trap.prep.sideband import apply_pulses, mean_occupation, thermal_distribution
-from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
-from qutip_trap.trap.crystal import axial_modes_dimensionless, equilibrium_dimensionless
-from qutip_trap.trap.mathieu import is_stable, monodromy
-from qutip_trap.units import ATOMIC_MASS_KG
-from qutip_trap.validation.harty_rb import HartyParameters, simulate_epg_sets
-from qutip_trap.validation.two_qubit_closed_forms import (
-    ballance_thermal_error,
-    kirchmair_populations,
-    ms_alpha,
-    ms_gamma,
-    thermal_debye_waller_infidelity,
-)
 
-CORE_GAPS: tuple[str, ...] = (
-    "qutip_trap.api exports the PulseEngine protocol but no concrete engine; the per-pulse evolution entry point Section 14.6 "
-    "names (JointExactEngine.run_pulses) is imported from qutip_trap.dynamics.engine [core feature request: re-export "
-    "JointExactEngine in qutip_trap.api]",
-    "the noise-sample keys run() stamps on every branch (branch_weight, frozen_n[m]) are imported from qutip_trap.noise.sampling "
-    "so that a re-simulation rebuilds the same NoiseSample [core feature request: re-export KEY_BRANCH_WEIGHT and key_frozen_n]",
-    "Traces carries <n_m>(t) and the final reduced motional states only: a per-time Fock distribution inside a pulse is not "
-    "exposed, so the Level 3 Fock heatmap has values at pulse boundaries and re-simulated sub-steps only [core feature request: "
-    "an optional per-time mode_marginal store in Traces]",
-    "run() returns no wall time per pulse and no per-gate register state for GATE_LOCAL runs; the app measures the run's wall "
-    "time itself and derives the GATE_LOCAL register after each gate by composing the recorded step channels in time order "
-    "(viewmodel.circuit.gate_local_register_after); the idle intervals' one-qubit channels are not recorded, so they are "
-    "taken as the identity there [core feature request: the register after every step, or the idle channels, in the "
-    "GATE_LOCAL report]",
-    "the Hamiltonian builder of Section 5.7 (build_hamiltonian, BuilderOptions, BuiltHamiltonian, DriveRecord) is not "
-    "re-exported: the Level 4 Hamiltonian page imports it from qutip_trap.dynamics.hamiltonian to list the terms the engine "
-    "integrates for a zoomed pulse [core feature request: a public per-segment builder entry point]",
-    "the analytic matrix elements of Section 4.3.1 (rabi_table, rabi_matrix_element, debye_waller_factor) are not re-exported: "
-    "the Omega_{n',n} table of the Hamiltonian page imports them from qutip_trap.hilbert.operators [core feature request]",
-    "the Mathieu stability functions of Section 4.1.1 (monodromy, is_stable) are not re-exported: the trap page's stability "
-    "diagram imports them from qutip_trap.trap.mathieu [core feature request]",
-    "the pulsed sideband-cooling transfer (apply_pulses, mean_occupation, thermal_distribution) is not re-exported: the cooling "
-    "page's nbar-after-each-pulse staircase imports it from qutip_trap.prep.sideband; the repump recoil kernel the recipe "
-    "applies between pulses is not reachable at all, so the staircase is drawn without it and says so [core feature request]",
-    "the quasi-static noise-sample keys (qubit_offset_hz[i], mode_offset_hz[m]) are imported from qutip_trap.noise.sampling so "
-    "that the Hamiltonian page can name what a sample's values shift [core feature request: re-export the key builders]",
-    "Traces carries no per-time Fock distribution inside a pulse: the Level 3 heatmap re-simulates truncated copies of the pulse "
-    "(causality makes the truncated pulse's final state the full pulse's state at that time) as a background job [core "
-    "feature request: an optional per-time mode_marginal store in Traces would make it free]",
-    "the closed-form gate integrals of Section 4.4.3 behind a played waveform (envelope_of, integrals_segmented, "
-    "trajectory_sampled and the two envelope types) are not re-exported: the Level 3 spin-branch loops alpha_im(t) and the "
-    "gate page's closed-form angle at the played amplitude import them from qutip_trap.control.shaping [core feature "
-    "request: a public trajectory entry point on Waveform]",
-    "the validation-suite closed forms the published-experiment presets of Section 14.5 run (Harty's randomized-benchmarking "
-    "model of Section 9.2, Kirchmair's thermal populations of Section 9.4, the Doppler force and rate coefficients of "
-    "Section 9.3, James's dimensionless equilibrium and axial modes of Section 9.1, the zero-point length and Lamb-Dicke "
-    "closed form, the closure algebra constants) and the published readout apparatus presets of Section 8.4 (Myerson, "
-    "Crain) and the CODATA atomic mass unit are not re-exported by qutip_trap.api: the app imports them from qutip_trap.validation, "
-    "qutip_trap.prep, qutip_trap.trap, qutip_trap.readout and qutip_trap.units [core feature request: a public validation namespace]",
-)
-"""What the core does not expose (or does not re-export) that the application needs; Section 14.6's record of the gaps."""
+CORE_GAPS: tuple[str, ...] = ()
+"""What the core does not expose (or does not re-export) that the application needs: Section 14.6's record of the gaps.
+Empty since 0.4.0 (docs/api_implementation_plan.md 3.3): every gap of 0.1.0 to 0.3.0 is closed by a documented rung
+module; the field stays on the run record so that an exported record still says which core facilities the app leaned
+on (none)."""
 
 __all__ = [
     "FidelityLevel",
+    "Job",
+    "JobCancelled",
     "Machine",
     "Numerics",
     "Physics",
     "Readout",
+    "RunSpec",
     "as_machine",
     "Beam",
     "BuilderOptions",

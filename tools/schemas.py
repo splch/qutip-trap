@@ -1,14 +1,15 @@
-"""The JSON schemas of the ``Result`` envelope (docs/api_implementation_plan.md 1.7; 0.2.0) and of the ``Device`` record (2.5;
-0.3.0): ``docs/schemas/result.schema.json`` is written from ``RESULT_SCHEMA`` below, which mirrors ``Result.to_dict``, and
-``docs/schemas/device.schema.json`` from ``qutip_trap.device.serial.device_schema``, generated from the device tree's field
-annotations; ``--check`` exits 1 when the committed file is
+"""The JSON schemas of the ``Result`` envelope (docs/api_implementation_plan.md 1.7; 0.2.0), of the ``Device`` record (2.5;
+0.3.0) and of the ``RunSpec`` (3.1; 0.4.0): ``docs/schemas/result.schema.json`` is written from ``RESULT_SCHEMA`` below,
+which mirrors ``Result.to_dict``, ``docs/schemas/device.schema.json`` from ``qutip_trap.device.serial.device_schema``,
+generated from the device tree's field annotations, and ``docs/schemas/runspec.schema.json`` from ``runspec_schema``,
+generated from the option objects' fields; ``--check`` exits 1 when a committed file is
 stale (CI, like the ledger tables), and ``validate`` checks an instance against the subset of JSON Schema the file uses
 (``type``, ``properties``, ``required``, ``additionalProperties``, ``items``, ``enum``, ``minimum``, ``const``), so a test
 can validate a real result without a validator dependency. ``tests/test_m6_results_export.py`` asserts that the schema's
 properties are exactly the keys a result writes.
 
-    uv run python tools/schemas.py            # rewrite docs/schemas/result.schema.json
-    uv run python tools/schemas.py --check    # exit 1 if the file is stale
+    uv run python tools/schemas.py            # rewrite the three schemas under docs/schemas/
+    uv run python tools/schemas.py --check    # exit 1 if a file is stale
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from qutip_trap.provenance import repository_root
 
 SCHEMA_PATH = Path("docs") / "schemas" / "result.schema.json"
 DEVICE_SCHEMA_PATH = Path("docs") / "schemas" / "device.schema.json"
+RUNSPEC_SCHEMA_PATH = Path("docs") / "schemas" / "runspec.schema.json"
 
 
 def _numbers(keys: str = "string") -> dict[str, Any]:
@@ -363,6 +365,160 @@ def render() -> str:
     return json.dumps(RESULT_SCHEMA, indent=2, ensure_ascii=False) + "\n"
 
 
+_SCALAR_SCHEMA: dict[type, dict[str, Any]] = {
+    bool: {"type": "boolean"},
+    int: {"type": "integer"},
+    float: {"type": "number"},
+    str: {"type": "string"},
+}
+
+RUNSPEC_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
+    "physics": {
+        "extra_channels": {"type": "array", "maxItems": 0},
+        "builder": {"type": ["object", "null"]},
+        "shot_period_s": {"type": ["number", "null"]},
+    },
+    "integration": {"integrators": {"type": "array", "items": {"type": "string"}, "minItems": 1}},
+    "truncation": {
+        "margin_element_tol": {"type": ["number", "null"]},
+        "caps": {"type": ["object", "null"], "additionalProperties": {"type": "integer", "minimum": 2}},
+        "enr_group": {"type": ["array", "null"], "minItems": 2, "maxItems": 2},
+        "space": {"type": "null"},
+    },
+    "trajectories": {"trajectory_target_tol": {"type": ["number", "null"]}},
+    "gate_local": {"tomography_dropped_weight_max": {"type": ["number", "null"]}},
+    "parallel": {
+        "workers": {"type": ["integer", "null"], "minimum": 1},
+        "samples": {"type": ["integer", "null"], "minimum": 1},
+        "addressing": {"type": ["boolean", "null"]},
+    },
+    "readout": {"discriminator": {"type": "null"}},
+}
+"""The ``RunSpec`` fields whose JSON form is not the scalar their default has: the nullable ones, the arrays and the values
+a record cannot carry (``RunSpec.to_dict`` refuses them, so the schema states the empty or null form)."""
+
+
+def _option_schema(group: str, types: Mapping[str, type]) -> dict[str, Any]:
+    """One option object as a JSON Schema object: every field required, its type from its default's type unless
+    ``RUNSPEC_OVERRIDES`` says otherwise, no other keys."""
+    overrides = RUNSPEC_OVERRIDES.get(group, {})
+    properties: dict[str, Any] = {}
+    for name, kind in types.items():
+        if name in overrides:
+            properties[name] = overrides[name]
+        elif kind in _SCALAR_SCHEMA:
+            properties[name] = _SCALAR_SCHEMA[kind]
+        else:
+            raise TypeError(
+                f"{group}.{name}: no JSON Schema for a default of type {kind.__name__}; add an override"
+            )
+    return {
+        "type": "object",
+        "required": list(types),
+        "additionalProperties": False,
+        "properties": properties,
+    }
+
+
+def runspec_schema() -> dict[str, Any]:
+    """The schema of ``RunSpec.to_dict`` (schema version 1), the option objects' parts generated from their fields
+    (``qutip_trap.run.spec.spec_field_types``) so that a field added to one without a row here fails ``--check``."""
+    from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, spec_field_types
+
+    types = spec_field_types()
+    numerics = {
+        "type": "object",
+        "required": [
+            "integration",
+            "truncation",
+            "trajectories",
+            "gate_local",
+            "parallel",
+            "convergence_check",
+        ],
+        "additionalProperties": False,
+        "properties": {
+            "integration": _option_schema("integration", types["integration"]),
+            "truncation": _option_schema("truncation", types["truncation"]),
+            "trajectories": _option_schema("trajectories", types["trajectories"]),
+            "gate_local": _option_schema("gate_local", types["gate_local"]),
+            "parallel": _option_schema("parallel", types["parallel"]),
+            "convergence_check": {"type": "boolean"},
+        },
+    }
+    circuit = {
+        "type": "object",
+        "required": ["n_qubits", "ops", "measure", "registers"],
+        "additionalProperties": False,
+        "properties": {
+            "n_qubits": {"type": "integer", "minimum": 1},
+            "ops": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "qubits", "params"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "name": {"type": "string"},
+                        "qubits": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                        "params": {"type": "array", "items": {"type": "number"}},
+                    },
+                },
+            },
+            "measure": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "registers": {
+                "type": "object",
+                "additionalProperties": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            },
+        },
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://github.com/splch/qutip-trap/blob/main/docs/schemas/runspec.schema.json",
+        "title": "qutip-trap RunSpec",
+        "description": (
+            "The record RunSpec.to_dict() writes and RunSpec.from_dict() reads (schema version 1): the unit of submission of "
+            "Machine.submit, with the circuit (parameters in radians), the shots and the seed, the hash of the machine it was "
+            "made for, and the policy spelled out as the three option objects and the level (docs/api_implementation_plan.md "
+            "3.1). Tuples are lists and integer keys strings."
+        ),
+        "type": "object",
+        "required": [
+            "schema_version",
+            "qutip_trap_version",
+            "machine_hash",
+            "label",
+            "circuit",
+            "shots",
+            "seed",
+            "keep_final_state",
+            "level",
+            "physics",
+            "numerics",
+            "readout",
+        ],
+        "additionalProperties": False,
+        "properties": {
+            "schema_version": {"const": SPEC_SCHEMA_VERSION},
+            "qutip_trap_version": {"type": "string"},
+            "machine_hash": {"type": "string"},
+            "label": {"type": "string"},
+            "circuit": circuit,
+            "shots": {"type": "integer", "minimum": 1},
+            "seed": {"type": "integer"},
+            "keep_final_state": {"type": "boolean"},
+            "level": {"type": "string", "enum": ["auto", "JOINT_EXACT", "GATE_LOCAL"]},
+            "physics": _option_schema("physics", types["physics"]),
+            "numerics": numerics,
+            "readout": _option_schema("readout", types["readout"]),
+        },
+    }
+
+
+def render_runspec() -> str:
+    return json.dumps(runspec_schema(), indent=2, ensure_ascii=False) + "\n"
+
+
 def render_device() -> str:
     """The device schema, generated from the field annotations of the device tree (``qutip_trap.device.serial``)."""
     from qutip_trap.device.serial import device_schema
@@ -376,7 +532,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = repository_root()
     stale = 0
-    for path, text in ((root / SCHEMA_PATH, render()), (root / DEVICE_SCHEMA_PATH, render_device())):
+    for path, text in (
+        (root / SCHEMA_PATH, render()),
+        (root / DEVICE_SCHEMA_PATH, render_device()),
+        (root / RUNSPEC_SCHEMA_PATH, render_runspec()),
+    ):
         if args.check:
             if not path.exists() or path.read_text(encoding="utf-8") != text:
                 print(f"{path} is stale: run `uv run python tools/schemas.py`")

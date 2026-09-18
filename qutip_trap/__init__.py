@@ -4,9 +4,10 @@ The specification is ``PLAN.md`` at the repository root; the frozen Appendix E s
 0.1.0 completed milestones M0 to M10 of PLAN.md Section 10 (the atomic layer, the trap and crystal, the one Hamiltonian
 builder, cooling and preparation, entangling gates, readout, end-to-end circuits, noise channels, calibration emulation,
 the two scaling milestones and the benchmark emulation); 0.2.0 adds the ladder of ``docs/api_proposal.md``. This module is
-rung 0, the machine: ``Machine``, ``Circuit``, ``Result`` and the option objects, with ``presets`` for the example machines.
-``qutip_trap.circuit``, ``qutip_trap.schedule``, ``qutip_trap.dynamics`` and ``qutip_trap.physics`` are the rungs below,
-``qutip_trap.io`` the wire formats and ``qutip_trap.interop`` the adapters to other SDKs. Every name here is imported on
+rung 0, the machine: ``Machine``, ``Circuit``, ``Result``, the option objects and, since 0.4.0, ``RunSpec`` and ``Job``
+(``Machine.submit``), with ``presets`` for the example machines. ``qutip_trap.circuit``, ``qutip_trap.schedule``,
+``qutip_trap.dynamics`` and ``qutip_trap.physics`` are the rungs below, ``qutip_trap.io`` the wire formats,
+``qutip_trap.interop`` the adapters to other SDKs and ``qutip_trap.experimental`` the names outside the stability guarantee. Every name here is imported on
 first use through a module ``__getattr__``, so ``import qutip_trap`` stays free of numpy and qutip
 (``tests/test_import_time.py``). The recommended alias is ``import qutip_trap as trap`` (docs/conventions.md, "Vocabulary").
 
@@ -22,7 +23,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 """The release, recorded by ``Result.to_dict()`` as ``qutip_trap_version``."""
 
 _RUNG_0: dict[str, tuple[str, str | None]] = {
@@ -34,6 +35,11 @@ _RUNG_0: dict[str, tuple[str, str | None]] = {
     "Result": ("qutip_trap.run.results", "Result"),
     "Diagnostics": ("qutip_trap.run.results", "Diagnostics"),
     "Progress": ("qutip_trap.run.results", "Progress"),
+    "RunSpec": ("qutip_trap.run.spec", "RunSpec"),
+    "Job": ("qutip_trap.run.spec", "Job"),
+    "JobStatus": ("qutip_trap.run.spec", "JobStatus"),
+    "JobCancelled": ("qutip_trap.run.spec", "JobCancelled"),
+    "JobError": ("qutip_trap.run.spec", "JobError"),
     "FidelityLevel": ("qutip_trap.run.levels", "FidelityLevel"),
     "LevelDecision": ("qutip_trap.run.levels", "LevelDecision"),
     "decide_level": ("qutip_trap.run.levels", "decide_level"),
@@ -49,6 +55,7 @@ _RUNG_0: dict[str, tuple[str, str | None]] = {
     "physics": ("qutip_trap.physics", None),
     "io": ("qutip_trap.io", None),
     "interop": ("qutip_trap.interop", None),
+    "experimental": ("qutip_trap.experimental", None),
 }
 """The rung-0 names: each -> (the module that defines it, its attribute there; None for the module itself)."""
 
@@ -59,6 +66,10 @@ __all__ = [
     "Diagnostics",
     "Estimate",
     "FidelityLevel",
+    "Job",
+    "JobCancelled",
+    "JobError",
+    "JobStatus",
     "LevelDecision",
     "Machine",
     "as_machine",
@@ -68,10 +79,12 @@ __all__ = [
     "Progress",
     "Readout",
     "Result",
+    "RunSpec",
     "__version__",
     "circuit",
     "decide_level",
     "dynamics",
+    "experimental",
     "interop",
     "io",
     "physics",
@@ -98,10 +111,11 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     # the lazy names, spelled out for type checkers and editors
-    from qutip_trap import circuit, dynamics, interop, io, physics, presets, schedule
+    from qutip_trap import circuit, dynamics, experimental, interop, io, physics, presets, schedule
     from qutip_trap.control.compiler import Circuit, Operation
     from qutip_trap.device.model import BeamRoles, Device
     from qutip_trap.machine import Estimate, Machine, as_machine
     from qutip_trap.options import Numerics, Physics, Readout
     from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level
     from qutip_trap.run.results import Diagnostics, Progress, Result
+    from qutip_trap.run.spec import Job, JobCancelled, JobError, JobStatus, RunSpec

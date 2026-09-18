@@ -5,8 +5,11 @@ rung 2: ``JointExactEngine.run_pulses`` returns ``Traces`` without any readout, 
 integrates (``BuiltHamiltonian`` with one ``DriveRecord`` per pulse and ion), ``prepare`` the initial ``State`` on a
 ``HilbertSpace``, ``gate_channel`` the Section 6.8 summary of one native gate kind, and the tomography records the GATE_LOCAL
 walk extracts; the ``Numerics`` groups (``Integration``, ``Truncation``, ``Trajectories``, ``GateLocal``, ``Parallel``) are the
-knobs. The names that sit above this package in the layering (``prepare``, ``gate_channel``, the option groups) are
-imported on first use."""
+knobs; ``NoiseSample`` with the key builders (``KEY_BRANCH_WEIGHT``, ``key_frozen_n``, ``key_qubit_offset_hz``,
+``key_mode_offset_hz``) names what a run stamps on every branch and sample (0.4.0). The names that sit above this package
+in the layering (``prepare``, ``gate_channel``, the option groups) are imported on first use. The tomography internals
+``choi_least_squares`` and ``project_cptp`` moved to ``qutip_trap.experimental`` in 0.4.0; importing them from here warns
+(docs/deprecations.md)."""
 
 from __future__ import annotations
 
@@ -38,10 +41,13 @@ _LAZY: dict[str, tuple[str, str]] = {
     "build_hamiltonian": ("qutip_trap.dynamics.hamiltonian", "build_hamiltonian"),
     "prepare": ("qutip_trap.run.job", "prepare"),
     "TomographyRecord": ("qutip_trap.dynamics.tomography", "TomographyRecord"),
-    "choi_least_squares": ("qutip_trap.dynamics.tomography", "choi_least_squares"),
     "input_states": ("qutip_trap.dynamics.tomography", "input_states"),
     "kraus_operators": ("qutip_trap.dynamics.tomography", "kraus_operators"),
-    "project_cptp": ("qutip_trap.dynamics.tomography", "project_cptp"),
+    "NoiseSample": ("qutip_trap.noise.sampling", "NoiseSample"),
+    "KEY_BRANCH_WEIGHT": ("qutip_trap.noise.sampling", "KEY_BRANCH_WEIGHT"),
+    "key_frozen_n": ("qutip_trap.noise.sampling", "key_frozen_n"),
+    "key_mode_offset_hz": ("qutip_trap.noise.sampling", "key_mode_offset_hz"),
+    "key_qubit_offset_hz": ("qutip_trap.noise.sampling", "key_qubit_offset_hz"),
     "gate_channel": ("qutip_trap.benchmarks.budget", "gate_channel"),
     "GateChannel": ("qutip_trap.benchmarks.budget", "GateChannel"),
     "Numerics": ("qutip_trap.options", "Numerics"),
@@ -52,11 +58,25 @@ _LAZY: dict[str, tuple[str, str]] = {
     "Parallel": ("qutip_trap.options", "Parallel"),
 }
 """Names imported on first use to keep the import graph acyclic: the modules above this package in the layering, and the
-tomography module, which reaches the noise package (``control.schedule`` imports ``dynamics.frames`` while it is itself
-being imported, so this package's own initialization must not need ``control.schedule``)."""
+tomography and noise-sampling modules, which reach the noise package (``control.schedule`` imports ``dynamics.frames``
+while it is itself being imported, and ``noise.scattering`` imports ``control.schedule``, so this package's own
+initialization must need neither)."""
+
+
+_MOVED_TO_EXPERIMENTAL: dict[str, str] = {
+    "choi_least_squares": "Import choi_least_squares from qutip_trap.experimental.",
+    "project_cptp": "Import project_cptp from qutip_trap.experimental.",
+}
+"""The tomography internals this rung exported in 0.2.0 and 0.3.0: deprecated here since 0.4.0, the names live in
+``qutip_trap.experimental`` (docs/api_implementation_plan.md 3.3), where the stability guarantee does not reach."""
 
 
 def __getattr__(name: str) -> Any:
+    if name in _MOVED_TO_EXPERIMENTAL:
+        from qutip_trap._compat import message, warn
+
+        warn(message(f"qutip_trap.dynamics.{name}", "v0.6", _MOVED_TO_EXPERIMENTAL[name]), stacklevel=2)
+        return getattr(importlib.import_module("qutip_trap.dynamics.tomography"), name)
     try:
         module_name, attribute = _LAZY[name]
     except KeyError:
@@ -67,7 +87,7 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    return sorted({*globals(), *_LAZY})
+    return sorted({*globals(), *_LAZY, *_MOVED_TO_EXPERIMENTAL})
 
 
 if TYPE_CHECKING:
@@ -78,17 +98,19 @@ if TYPE_CHECKING:
         DriveRecord,
         build_hamiltonian,
     )
-    from qutip_trap.dynamics.tomography import (
-        TomographyRecord,
-        choi_least_squares,
-        input_states,
-        kraus_operators,
-        project_cptp,
+    from qutip_trap.dynamics.tomography import TomographyRecord, input_states, kraus_operators
+    from qutip_trap.noise.sampling import (
+        KEY_BRANCH_WEIGHT,
+        NoiseSample,
+        key_frozen_n,
+        key_mode_offset_hz,
+        key_qubit_offset_hz,
     )
     from qutip_trap.options import GateLocal, Integration, Numerics, Parallel, Trajectories, Truncation
     from qutip_trap.run.job import prepare
 
 __all__ = [
+    "KEY_BRANCH_WEIGHT",
     "BuilderOptions",
     "BuiltHamiltonian",
     "CachedOperators",
@@ -105,6 +127,7 @@ __all__ = [
     "JointExactEngine",
     "ModeTruncation",
     "MotionalModel",
+    "NoiseSample",
     "Numerics",
     "Parallel",
     "PulseEngine",
@@ -118,15 +141,16 @@ __all__ = [
     "Truncation",
     "apply_drive_kernel",
     "build_hamiltonian",
-    "choi_least_squares",
     "convergence_check",
     "factorized_qobj",
     "gate_channel",
     "input_states",
     "is_factorized",
+    "key_frozen_n",
+    "key_mode_offset_hz",
+    "key_qubit_offset_hz",
     "kraus_operators",
     "map_tasks",
     "prepare",
-    "project_cptp",
     "worker_count",
 ]

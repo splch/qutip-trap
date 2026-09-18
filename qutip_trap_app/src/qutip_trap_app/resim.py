@@ -298,8 +298,11 @@ def zoom(
     options: core.SolverOptions | None = None,
     force: bool = False,
 ) -> tuple[Record, ZoomTrace, ZoomStats]:
-    """Re-simulate one gate step at fine resolution from its recorded initial state; cached in the record by key."""
+    """Re-simulate one gate step at fine resolution from its recorded initial state; cached in the record by key. The zoom
+    stores the per-time Fock populations of every resolved mode (``core.Traces.mode_marginal``; 0.4.0), so the Fock movie
+    of the step is read off it rather than re-simulated."""
     opts = options if options is not None else live.options
+    opts = dataclasses.replace(opts, store_marginals=True)
     key = zoom_key(step_index, sample_index, branch, n_store, opts)
     cached = record.zoom(key)
     if cached is not None and not force:
@@ -454,17 +457,6 @@ DEFAULT_FOCK_FRAMES = 8
 TWO_PI = 2.0 * math.pi
 
 
-def _truncated_schedule(live: LiveRun, step: core.GateStep, t_k: float) -> core.Schedule:
-    """The step's schedule cut at ``t_k``: every pulse that started before ``t_k`` ends there (causality makes the truncated
-    pulse's final state the full pulse's state at ``t_k``; no tone is changed before that time), idle intervals likewise."""
-    sched = sub_schedule(live, step)
-    pulses = tuple(
-        dataclasses.replace(p, t_end_s=min(p.t_end_s, t_k)) for p in sched.pulses if p.t_start_s < t_k - 1e-15
-    )
-    idle = tuple((a, min(b, t_k)) for a, b in sched.idle if a < t_k - 1e-15)
-    return dataclasses.replace(sched, pulses=pulses, idle=idle, events=())
-
-
 def fock_movie_key(
     step_index: int, sample_index: int, branch: int, n_frames: int, options: core.SolverOptions
 ) -> str:
@@ -482,11 +474,12 @@ def fock_movie(
     options: core.SolverOptions | None = None,
     progress: Callable[[str, float | None, str], None] | None = None,
 ) -> tuple[Record, FockMovie]:
-    """Per-time Fock distributions of every resolved mode inside one step by truncated re-simulation, cached by key.
+    """Per-time Fock distributions of every resolved mode inside one step, read off the step's zoom (0.4.0), cached by key.
 
-    The core's traces carry <n_m>(t) only (``core.CORE_GAPS``); the state at an interior time t_k is the final state of the
-    same pulses cut at t_k, so K truncated runs from the recorded boundary state give P(n_m, t_k) exactly, at about K/2 times
-    the cost of one full zoom. Frame 0 is the recorded boundary state; frame K ends at the step's end.
+    The zoom's fine trace stores the Fock populations at every one of its points (``core.Traces.mode_marginal``, which the
+    core added in 0.4.0 for exactly this view), so the movie is K + 1 of those rows at the frame times: frame 0 the step's
+    start, frame K its end. Until 0.4.0 the core's traces carried <n_m>(t) only and the movie re-simulated K truncated
+    copies of the pulse (``core.CORE_GAPS`` recorded the gap); the zoom is computed once when it is not cached yet.
     """
     if n_frames < 1:
         raise ValueError("a Fock movie has at least one frame after the start")
@@ -496,57 +489,28 @@ def fock_movie(
     if cached is not None:
         return record, cached
     t0 = time.perf_counter()
-    rec = boundary_states(record, live, sample_index, branch, up_to=step_index)
-    start = rec.boundary(step_index, sample_index, branch)
-    assert start is not None
-    space = live.space
-    state = _state_from_boundary(start, space)
-    _st, sample = initial_state(rec, live, sample_index, branch)
-    step = live.steps[step_index]
-    engine = engine_for(rec, live, store_per_segment=2)
-    resolved = [m.mode for m in space.resolved]
-    times = [float(step.t_start_s)]
-    dists: dict[int, list[np.ndarray]] = {
-        m: [np.real(np.diag(start.mode_reduced[m])).astype(float)]
-        for m in resolved
-        if m in start.mode_reduced
-    }
-    nbars: dict[int, list[float]] = {m: [float(start.nbar.get(m, 0.0))] for m in dists}
-    calls = 0
-    for k in range(1, n_frames + 1):
-        t_k = step.t_start_s + (step.t_end_s - step.t_start_s) * k / n_frames
-        if progress is not None:
-            progress(
-                "fock movie",
-                (k - 1) / n_frames,
-                f"frame {k} of {n_frames}: the pulse cut at {t_k * 1e6:.2f} us",
-            )
-        tr = engine.run_pulses(
-            live.device,
-            _truncated_schedule(live, step, t_k),
-            state,
-            space,
-            sample,
-            core.SeedSpec(rec.job.seed),
-            opts,
+    if progress is not None:
+        progress("fock movie", 0.0, "the step's zoom, whose stored Fock populations are the frames")
+    rec, z, stats = zoom(record, live, step_index, sample_index, branch, options=opts)
+    tr = z.trace
+    if tr.mode_marginal is None:
+        raise RecordError(
+            "the zoom carries no Fock populations: re-run the zoom (its options store them since 0.4.0)"
         )
-        calls += 1
-        times.append(float(t_k))
-        for m in dists:
-            dists[m].append(np.asarray(space.fock_populations(tr.final, m), dtype=float))
-            nbars[m].append(float(tr.final.motional.nbar.get(m, 0.0)))
+    n_points = int(tr.times_s.size)
+    frames = [round(k * (n_points - 1) / n_frames) for k in range(n_frames + 1)]
     movie = FockMovie(
         key=key,
         step_index=step_index,
         sample_index=sample_index,
         branch=branch,
         options_digest=options_digest(opts),
-        times_s=np.asarray(times, dtype=float),
-        distributions={m: np.vstack(v) for m, v in dists.items()},
-        nbar={m: np.asarray(v, dtype=float) for m, v in nbars.items()},
-        engine_calls=calls,
+        times_s=np.asarray([float(tr.times_s[i]) for i in frames], dtype=float),
+        distributions={int(m): np.asarray(dist[frames], dtype=float) for m, dist in tr.mode_marginal.items()},
+        nbar={int(m): np.asarray(tr.mode_nbar[m][frames], dtype=float) for m in tr.mode_marginal},
+        engine_calls=stats.engine_calls,
         wall_time_s=time.perf_counter() - t0,
-        method="truncated re-simulation of the recorded pulses from the recorded boundary state (causality)",
+        method="read off the step's zoom: the engine stored the Fock populations at every point (Traces.mode_marginal, 0.4.0)",
     )
     return rec.with_fock_movie(movie), movie
 

@@ -93,6 +93,7 @@ def test_record_holds_the_ladder(bell: tuple[Record, LiveRun]) -> None:
     assert set(record.results.target_probabilities) == {"00", "11"}
     assert record.results.probabilities["00"] + record.results.probabilities["11"] > 0.98
     assert record.results.register_fidelity is not None and record.results.register_fidelity > 0.99
-    assert record.core_gaps and record.device_card.n_ions == 2
+    assert record.core_gaps == () and record.device_card.n_ions == 2, "every core gap closed in 0.4.0"
+    assert record.run_spec and json.loads(record.run_spec)["shots"] == record.job.shots
     assert record.table.entries and not record.table.uncalibrated
     assert record.preparation.nbar and all(v >= 0.0 for v in record.preparation.nbar.values())

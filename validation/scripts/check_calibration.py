@@ -41,8 +41,10 @@ from qutip_trap.experiments import (
 )
 from qutip_trap.experiments.fitting import fit_lineshape, lineshape_model, sideband_lineshape
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
+from qutip_trap.machine import Machine
 from qutip_trap.noise.model import servo_residual
 from qutip_trap.noise.processes import correlated_normals
+from qutip_trap.options import Numerics
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
 from qutip_trap.units import TWO_PI
 from tests.m2_fixtures import single_ion_raman_device
@@ -152,13 +154,13 @@ print(
 )
 fx = circuit_fixture(2)
 dd = derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False)
-st = stark_scan(fx.device, 0, np.linspace(0.0, 2e-3, 9), nbar={2: 0.0185, 3: 0.0154}, shots=1000, readout=True, seed=6)
+st = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), nbar={2: 0.0185, 3: 0.0154}, shots=1000, readout=True, seed=6)
 print(
     f"MC: Stark scan per beam on the two-ion fixture: {sigmas(st.fitted['stark_shift_hz'][0], dd.stark_shift_hz, st.fitted['stark_shift_hz'][1])} Hz; per beam "
     + ", ".join(f"{st.fitted[f'stark_shift_hz[{b}]'][0]:.2f}" for b in fx.gate_drives[0].beams)
 )
 eps_true = abs(crosstalk_ratios(fx.device, 0, fx.gate_drives[0].beams)[1])
-xt = crosstalk_scan(fx.device, 0, np.linspace(0.0, 0.5 / (eps_true * dd.carrier_rabi_hz), 16), nbar={2: 0.0185, 3: 0.0154}, shots=600, readout=True, analysis_phases_rad=np.linspace(0.0, 2.0 * math.pi, 6, endpoint=False), seed=7)
+xt = crosstalk_scan(Machine(fx.device), 0, np.linspace(0.0, 0.5 / (eps_true * dd.carrier_rabi_hz), 16), nbar={2: 0.0185, 3: 0.0154}, shots=600, readout=True, analysis_phases_rad=np.linspace(0.0, 2.0 * math.pi, 6, endpoint=False), seed=7)
 print(
     f"MC: crosstalk scan: eps_01 {sigmas(xt.fitted['eps[1]'][0], eps_true, xt.fitted['eps[1]'][1])}; axis phase {xt.fitted['phase_rad[1]'][0]:+.4f} +- {xt.fitted['phase_rad[1]'][1]:.4f} rad against 0"
 )
@@ -174,8 +176,6 @@ print(
 )
 from qutip_trap.light.roles import detection_beams  # noqa: E402
 from qutip_trap.trap.crystal import solve_crystal  # noqa: E402
-from qutip_trap.options import Numerics
-from qutip_trap.machine import Machine
 
 fx_rf = circuit_fixture(2, with_recipe=False)
 dev_c = dataclasses.replace(

@@ -455,6 +455,21 @@ def step_space(
 # ---- the report -----------------------------------------------------------------------------------------------------------------
 
 
+REGISTER_STORE_DIM_MAX = 256
+"""``GateLocalStep.register_after`` is stored up to this register dimension (eight qubits, one megabyte per step); above it,
+and for a pure-state ensemble, the field is None and the step's channels are the way to the register (0.4.0)."""
+
+
+@dataclass(frozen=True)
+class AppliedChannel:
+    """One channel the GATE_LOCAL walk applied to the register (0.4.0; docs/api_implementation_plan.md 3.2): the projected
+    Choi matrix (trace 1, ``dynamics.tomography.kraus_operators`` gives the Kraus form the walk applied) and the register
+    factors it acts on, in the Choi matrix's own factor order (a gate step's local ions; one ion of an idle step)."""
+
+    ions: tuple[int, ...]
+    choi: np.ndarray
+
+
 @dataclass(frozen=True)
 class GateLocalStep:
     """What one step of the GATE_LOCAL walk did (the first dynamical sample's walk is reported step by step)."""
@@ -512,6 +527,14 @@ class GateLocalStep:
     """Per resolved mode, the measured maximum difference between the exponential's interior elements and the analytic ones over
     the declared range (the Section 5.1.1 oracle), at the eta the cap was derived for; the number ``SolverOptions.margin_element_tol``
     bounds when the margin is derived."""
+    register_after: np.ndarray | None = None
+    """The register density matrix after this step (the first sample; 0.4.0; docs/api_implementation_plan.md 3.2), over the
+    ion dimensions in ion order (ion 0 the first factor, as ``Result.final_state``); None when the register is a pure-state
+    ensemble or its dimension exceeds ``REGISTER_STORE_DIM_MAX``. The last step's equals ``RunRecord.register_state``."""
+    channels: tuple[AppliedChannel, ...] = ()
+    """The channels this step applied to the register, in order (0.4.0): a gate step's one map on its local ions, an idle
+    step's one-qubit channel per ion. Composing them from the run's initial register reproduces ``register_after`` step by
+    step (``tests/test_gate_local.py``)."""
 
 
 @dataclass(frozen=True)
@@ -684,6 +707,13 @@ def _nbar(rho: np.ndarray) -> float:
     return float(np.real(np.sum(np.arange(rho.shape[0]) * np.real(np.diag(rho)))))
 
 
+def _register_snapshot(register: Register) -> np.ndarray | None:
+    """``GateLocalStep.register_after``: a copy of the register density matrix when it is one and small enough to keep."""
+    if register.dm is None or int(np.prod(register.dims)) > REGISTER_STORE_DIM_MAX:
+        return None
+    return np.array(register.dm, dtype=complex, copy=True)
+
+
 def _idle_step(
     device: Device,
     step: GateStep,
@@ -697,6 +727,7 @@ def _idle_step(
     ion_dims: Sequence[int],
     heating_rates: Mapping[int, float],
     step_index: int,
+    snapshot: bool = True,
 ) -> tuple[MotionalModel, GateLocalStep, int, int]:
     """Free evolution over an idle interval: per ion its exact one-qubit channel (from the idle cache when the same ion idled for
     the same duration before, ``_idle_key``), per tracked mode its master equation, per occupation-tracked mode nbar + ndot t (the
@@ -710,6 +741,7 @@ def _idle_step(
     method = "sesolve"
     route: TomographyRoute = "propagator"
     notes: list[str] = []
+    applied: list[AppliedChannel] = []
     for q, d in enumerate(ion_dims):
         space_q = HilbertSpace((int(d),), (), None, tuple(range(n_modes)), ions=(q,))
         key = _idle_key(device, q, int(d), step, sample, seeds, options, setup)
@@ -737,6 +769,7 @@ def _idle_step(
                 for k in range(register.size)
             ]
         register.apply(rec.kraus(), (q,), rngs)
+        applied.append(AppliedChannel((q,), np.asarray(rec.choi, dtype=complex)))
     reduced: dict[int, qt.Qobj] = {}
     nbar: dict[int, float] = dict(model.nbar)
     dt = step.duration_s
@@ -802,6 +835,8 @@ def _idle_step(
         notes=tuple(notes),
         workers=workers,
         route=route,
+        register_after=_register_snapshot(register) if snapshot else None,
+        channels=tuple(applied),
     )
     return new_model, report, runs, hits
 
@@ -819,6 +854,7 @@ def _gate_step(
     ion_dims: Sequence[int],
     caps: Mapping[int, int] | None,
     step_index: int,
+    snapshot: bool = True,
 ) -> tuple[MotionalModel, GateLocalStep, int, bool, HilbertSpace]:
     """One gate step: the local space, the (cached) tomography, the map on the register and the motional update."""
     n_modes = len(device.crystal.modes)
@@ -910,6 +946,8 @@ def _gate_step(
         tolerance_change=float(rec.tolerance_change or 0.0),
         tolerances=rec.tolerances,
         element_error=element_error,
+        register_after=_register_snapshot(register) if snapshot else None,
+        channels=(AppliedChannel(factors, np.asarray(rec.choi, dtype=complex)),),
     )
     return new_model, report, (0 if hit else rec.engine_runs), hit, rec.space
 
@@ -975,14 +1013,38 @@ def evolve_gate_local(
         for k, step in enumerate(steps):
             if step.kind == "idle":
                 model, rep, runs, idle_hits = _idle_step(
-                    device, step, register, model, smp, seeds, options, setup, engine, ion_dims, heating, k
+                    device,
+                    step,
+                    register,
+                    model,
+                    smp,
+                    seeds,
+                    options,
+                    setup,
+                    engine,
+                    ion_dims,
+                    heating,
+                    k,
+                    snapshot=s_idx == 0,
                 )
                 runs_total += runs
                 idle_hits_total += idle_hits
                 workers_max = max(workers_max, rep.workers)
             else:
                 model, rep, runs, hit, space_used = _gate_step(
-                    device, step, register, model, smp, seeds, options, setup, engine, ion_dims, caps, k
+                    device,
+                    step,
+                    register,
+                    model,
+                    smp,
+                    seeds,
+                    options,
+                    setup,
+                    engine,
+                    ion_dims,
+                    caps,
+                    k,
+                    snapshot=s_idx == 0,
                 )
                 runs_total += runs
                 hits_total += int(hit)
@@ -1031,6 +1093,8 @@ def evolve_gate_local(
 
 __all__ = [
     "M9A",
+    "REGISTER_STORE_DIM_MAX",
+    "AppliedChannel",
     "EngineSetup",
     "GateLocalReport",
     "GateLocalStep",

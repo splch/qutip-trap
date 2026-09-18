@@ -335,7 +335,8 @@ class Result:
                                                     #   shot until a recrystallize/reload event, never an i.i.d. per-shot herald
     spam: dict[str, tuple[float, float]]           # per qubit (eps_B, eps_D) with the definition used
     final_state: Qobj | None; diagnostics: Diagnostics
-    def to_ionq_json(self) -> dict: ...            # decimal-integer keys, qubit 0 least significant
+                                                    # to_ionq_json (decimal-integer keys, qubit 0 least significant) was declared here until 0.4.0
+                                                    #   removed it: to_ionq_v1_probabilities is the same export (0.2.0 additions below)
 
 # ---- entry points -------------------------------------------------------------------------
 def run(circuit: Circuit, device: Device, shots: int, *, table: CalibrationTable | None = None, t0_s: float = 0.0,
@@ -779,7 +780,7 @@ class Result:
     machine_hash: str | None = None; created_at: str = ""; duration_s: float = 0.0
     def to_dict(self, *, per_shot: bool = False) -> dict: ...      # docs/schemas/result.schema.json, schema version 1
     def reversed_bits(self) -> "Result": ...                       # qubit 0 leftmost, for Cirq, Braket and PennyLane comparisons
-    def to_ionq_v1_probabilities(self) -> dict: ...                # decimal keys, qubit 0 the 2^0 bit (to_ionq_json is its deprecated alias)
+    def to_ionq_v1_probabilities(self) -> dict: ...                # decimal keys, qubit 0 the 2^0 bit (to_ionq_json, its 0.1.0 name, was removed in 0.4.0)
     def to_ionq_v1_histogram(self) -> dict: ...
     def to_ionq_v1_shots(self) -> list: ...
     def to_ionq_v2_probabilities(self) -> dict: ...                # {"probabilities": {"registers": {"output_all": ..., <register>: ...}}}, q[0] leftmost
@@ -941,5 +942,55 @@ class Machine:
     def error_model(self, *, qubits=None) -> ErrorModel: ...
     def specs(self) -> str: ...                            # Device.specs plus the roles, the table and the level
 ```
+
+**2026-09 additions (0.4.0; docs/api_implementation_plan.md Phase 3).** Jobs and their record, the traces' Fock marginals and the per-step register of the GATE_LOCAL walk, the closed forms and published models on the physics rung, the `experimental` namespace, and the first removals. As before, the declarations live in the rung modules named in the comments and `tests/test_api_freeze.py` resolves them there.
+
+```python
+# ---- qutip_trap.run.spec (rung 0: RunSpec, Job, JobStatus, JobCancelled and JobError are exported by qutip_trap) ----
+@dataclass(frozen=True)
+class RunSpec:                  # the unit of submission: frozen, JSON-serialisable (docs/schemas/runspec.schema.json, schema version 1)
+    circuit: Circuit; shots: int; seed: int = 0; machine_hash: str = ""
+    physics: Physics = Physics(); numerics: Numerics = Numerics(); readout: Readout = Readout()
+    level: FidelityLevel = FidelityLevel.AUTO; keep_final_state: bool = False; label: str = ""
+    def of(machine, circuit: Circuit, shots: int, *, seed: int = 0, keep_final_state: bool = False, label: str = "") -> "RunSpec": ...
+                                                       # a classmethod: the machine's hash, option objects and level on the record (Machine.spec)
+    def to_dict(self) -> dict: ...                     # refuses by name the values a record cannot carry: explicit collapse operators, a
+                                                       #   declared HilbertSpace, a discriminator object
+    def from_dict(d) -> "RunSpec": ...                 # a classmethod; exact
+
+class Job:                      # a service object with state, not a frozen record: the handle Machine.submit returns; the run itself
+                                #   is Machine.run in a spawned worker process, its Progress streamed back (job.progress, a property)
+    def status(self) -> Literal["queued", "running", "done", "failed", "cancelled"]: ...
+    def result(self, timeout_s: float | None = None) -> Result: ...   # blocks; JobCancelled | JobError (the worker's traceback) | TimeoutError
+    def record(self): ...                              # the RunRecord behind the result; last_record(job.result()) finds the same one
+    def cancel(self, *, terminate_after_s: float | None = None) -> None: ...   # cooperative: within one pulse when the engines run
+                                                       #   in-process, after the current parallel map otherwise; the hard stop by time
+
+@dataclass(frozen=True)
+class Machine:
+    ...                                                    # unchanged
+    def submit(self, circuit: Circuit, shots: int, *, seed: int = 0, keep_final_state: bool = False, label: str = "") -> Job: ...
+    def spec(self, circuit: Circuit, shots: int, *, seed: int = 0, keep_final_state: bool = False, label: str = "") -> RunSpec: ...
+
+# ---- qutip_trap.dynamics.engine and qutip_trap.options (rung 3) ----
+@dataclass(frozen=True)
+class SolverOptions:
+    ...                                                    # unchanged
+    store_marginals: bool = False                          # Numerics.integration.store_marginals: the per-time Fock populations below
+
+@dataclass(frozen=True)
+class Traces:
+    ...                                                    # unchanged fields
+    mode_marginal: dict[int, np.ndarray] | None = None     # per carried mode the (T, d_m) Fock populations P(n, t), None unless stored;
+                                                           #   its mean is mode_occupations
+    wall_time_s: dict[str, float] = field(default_factory=dict)   # integration wall seconds per pulse (by gate id; "idle"), summing to the run's
+```
+
+- `SegmentReport.wall_time_s` (rung 3) is the exact per-segment number the pulse split above is made from.
+- The GATE_LOCAL per-step register (rung 0, `qutip_trap.run.gate_local`): `GateLocalStep.register_after`, the register density matrix after the step for the first sample (ion 0 the first factor, as `Result.final_state`; None for a pure-state ensemble or above `REGISTER_STORE_DIM_MAX = 256`), and `GateLocalStep.channels`, the `AppliedChannel(ions, choi)` maps the step applied in order (a gate step's one map, an idle step's one-qubit channel per ion), whose composition from the initial register reproduces `register_after` step by step.
+- Rung 4 (`qutip_trap.physics`) exports the closed forms and published models the derived numbers are checked against: `monodromy`, `is_stable`, `Monodromy`; `equilibrium_dimensionless`, `axial_modes_dimensionless`; `x0_m`, `lamb_dicke_parameter`; `rabi_matrix_element`, `rabi_table`, `debye_waller_factor`; `doppler_force_nbar`, `stenholm_coefficients`; `apply_pulses`, `mean_occupation`, `thermal_distribution`; `HartyParameters`, `simulate_epg_sets`; `ms_alpha`, `ms_gamma`, `kirchmair_populations`, `thermal_debye_waller_infidelity`, `ballance_thermal_error`, `ThermalReference`; `MYERSON_CA40_PMT`, `CRAIN_YB171_SNSPD`; `ATOMIC_MASS_KG`. Rung 2 (`qutip_trap.schedule`) exports the closed-form trajectory behind a played waveform: `envelope_of`, `Envelope`, `SegmentedEnvelope`, `SampledEnvelope`, `integrals_segmented`, `GateIntegrals`, `trajectory_sampled`, `closure_rabi_rad_s`, `closure_duration_s`, `CHI_MAXIMAL_RAD`. Rung 3 (`qutip_trap.dynamics`) exports `NoiseSample` with `KEY_BRANCH_WEIGHT`, `key_frozen_n`, `key_qubit_offset_hz` and `key_mode_offset_hz`, the keys a run stamps on every branch and sample.
+- `qutip_trap.experimental` gathers the names outside the stability guarantee (Mitiq's rule, gated by the import path): the M12 transport records and functions (`Zone`, `VoltageWaveform`, `FilterStage`, `Transport`, `TransportBudget`, `design_waveform`, `split_feasible`, `transport_budget`), the tomography internals `choi_least_squares` and `project_cptp`, and the two oracles `filter_function` and `frozen_excitation_bounds`. `qutip_trap.api` keeps exporting every one of them unchanged.
+- Deprecated in 0.4.0 (docs/deprecations.md): a bare `Device` as the first argument of an experiment, of `calibrate` or of a benchmark (wrap it, `Machine(device)` or `as_machine(device)`; removable in v0.6), and the `qutip_trap.dynamics` export of `choi_least_squares` and `project_cptp` (import them from `qutip_trap.experimental`; v0.6).
+- Removed in 0.4.0, two minor releases after their 0.2.0 warning: `DevicePreset.run_kwargs()`, `Result.to_ionq_json`, `to_ionq_histogram`, `to_ionq_shots` and `Result.to_ionq_v2`; the `Result` declaration above lost its `to_ionq_json` line accordingly. The names deprecated in 0.3.0 stay until 0.5.0.
 
 Three rules bind the surface. The application of Section 14 imports nothing outside this appendix. `control` never imports `calibration`, which sits above it and communicates through `CalibrationTable`. Every derived number reachable through `Device.derived()`, `Result.diagnostics` or an `ExperimentResult` carries a provenance id from the ledger of Section 14.5, so the Section 9.11 coverage test is a set difference.

@@ -120,8 +120,9 @@ EXTRA_REQUIRED_PARAMETERS: dict[tuple[str, str], dict[str, str]] = {
 # Appendix E names owned by milestone M12 (transport), whose methods legitimately raise NotImplementedError
 M12_CLASSES = {"Zone", "VoltageWaveform", "FilterStage", "Transport"}
 M12_METHODS = {("Trap", "pseudopotential_v"), ("Trap", "split_coefficients")}
-# methods of the 2026-09 additions that name the later phase of docs/api_implementation_plan.md implementing them
-LATER_PHASE_METHODS = {("Machine", "submit")}
+# methods of the 2026-09 additions that name the later phase of docs/api_implementation_plan.md implementing them (none
+# since 0.4.0 implemented Machine.submit; the set stays for the next planned addition)
+LATER_PHASE_METHODS: set[tuple[str, str]] = set()
 
 
 @dataclasses.dataclass

@@ -41,68 +41,14 @@ and PennyLane, which report that way. `trap.__version__` is the release the reco
 
 ## The ladder
 
-The five levels of PLAN.md Section 14.2 are five modules, each a rung of the same machine (docs/conventions.md, "Vocabulary").
-Every name below is importable from the rung named; the objects are the same ones `qutip_trap.api` exports.
-
-- **`qutip_trap`** (rung 0, the machine): `Machine` with `run`, `compile`, `schedule`, `calibrated` and `estimate` (an
-  `Estimate`), `Circuit` and `Operation`, `Result`, `Diagnostics` and `Progress`, `FidelityLevel` with `decide_level` (a
-  `LevelDecision`: the dimension and the non-zeros against the guards), the option objects `Physics`, `Numerics` and
-  `Readout`, `Device` with `BeamRoles`, `as_machine` (a `Device` wrapped in a default machine, the laboratory's first
-  argument), the rung modules and `presets`.
-- **`qutip_trap.presets`**: `yb171_chain(n)` and `ca40_optical(n)` as machines; `DevicePreset.machine()` bridges a preset.
-- **`qutip_trap.circuit`** (rung 1): the IR (`Circuit`, `Operation`, the tables `NATIVE_GATES`, `STANDARD_GATES`,
-  `NON_UNITARY`, `EXPORTED_NATIVE` and the builder's `GATE_PARAMETERS`), the compiler (`Machine.compile` returning the
-  `CompileReport`; `compile_with_report` is its deprecated function form,
-  `compile_to_native`, `CompileError`), `ideal_probabilities`, `circuit_unitary`, `gate_matrix` and the native matrices of
-  `control/native.py` (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `r_phi`, `xx`, `equal_up_to_global_phase`, with `rad_from_turns` and
-  `turns_from_rad` at the IonQ boundary).
-- **`qutip_trap.schedule`** (rung 2): `Schedule`, `Pulse`, `Drive`, `Tone`, `ScheduledEvent`, `PlayedGate`, `GateTarget`, the
-  scheduler `schedule` and its `ScheduleError`, the prefix of `run` as `compile_calibrate_schedule` returning a `Prefix`, the
-  drive maps (`GateDrive`, `default_gate_drives`, `infer_gate_drives`, `resolve_drives`), the table (`CalibrationTable`,
-  `CalEntry`, `Waveform`, `Segment`), the electronics (`HardwareChain`, `apply_hardware_chain`, `physical_schedule`), the
-  composite pulses (`CompositePulse`, `composite_pulse`), the comb (`CombSpec`), the table's edits as proposals
-  (`CalibrationTable.with_params`, `updated_with`, `kind_of`; `CalEntry.kind` with `EntryKind` and `ENTRY_KINDS`, setpoint
-  against characterisation), the derived drives (`derive_raman_drive`,
-  `derive_light_shift_drive`, `LightShiftCouplings`) and the closure solvers (`GateModes`, `gate_modes`, `ShapedPulse`,
-  `solve_amplitude_modulation`, `solve_fourier_amplitude_modulation`, `solve_frequency_modulation`).
-- **`qutip_trap.dynamics`** (rung 3): `JointExactEngine` (its `EngineReport` and `SegmentReport`), `build_hamiltonian` with
-  `BuilderOptions`, `BuiltHamiltonian` and `DriveRecord`, `prepare`, `State`, `Traces`, `HilbertSpace`, `ModeTruncation`,
-  `CachedOperators`, `SolverOptions` and the `Numerics` groups (`Integration`, `Truncation`, `Trajectories`, `GateLocal`,
-  `Parallel`), `gate_channel` with `GateChannel`, `ChannelSummary`, the tomography (`TomographyRecord`, `choi_least_squares`,
-  `input_states`, `kraus_operators`, `project_cptp`), the convergence check (`ConvergenceReport`, `convergence_check`), the
-  kernel (`FactorizedOperator`, `apply_drive_kernel`, `factorized_qobj`, `is_factorized`) and the maps (`map_tasks`,
-  `worker_count`).
-- **`qutip_trap.physics`** (rung 4): the species (`Species`, `species`, `available`, `Level`, `Transition`, `AtomicStructure`,
-  `ZeemanSpectrum`, `ClockPoint`, `MetastableChannels`), the trap and crystal (`Trap`, `RfDrive`, `DcElectrodes`,
-  `Electrodes`, `MathieuParameters`, `MicromotionIndex`, `AnharmonicTerms`, `Crystal`, `Mode`, `solve_crystal`), the light
-  (`Beam`, `PolarizationModulation`, `PolGradientBeams`), the field (`Field`, `GradientField`), the noise (`NoiseModel`,
-  `NoiseSpectrum`, `Drift`, `Mains`, `Collisions`, `CollisionEvent`, `collision_rate_per_ion`, `white_spectrum`,
-  `ou_spectrum`, `gaussian_spectrum`, `power_law_spectrum`), the detector (`Detector`, `CameraGeometry`, `ApparatusPreset`),
-  the electronics (`HardwareChain`), the `Device` with `DerivedQuantities`, `BeamRoles` and `ResolvedRoles`, the preparation
-  (`PreparationRecipe`, `SidebandCoolingSpec`, `standard_recipe`), the example-device helpers (`secular_trap`,
-  `raman_pair_along_x`, `oblique_detection_beam`, `quiet_noise_model` (deprecated: `NoiseModel()` is quiet), `ideal_hardware`,
-  `crain_snspd_detector`,
-  `myerson_ca40_pmt_detector`) and the unit types (`Hz`, `RadPerS`, `Gauss`, `Tesla`, `rad_s_from_hz`, `hz_from_rad_s`).
-- **`qutip_trap.experiments`, `qutip_trap.calibration`, `qutip_trap.benchmarks`** (the laboratory, 0.3.0): every
-  experiment, the calibration and the benchmarks take a `Machine` first (a `Device` is wrapped in a default machine) and read
-  its table and option objects; the drive keywords are deprecated in favour of `Device.roles`. Each experiment returns its
-  typed result (`RabiScan`, `RamseyFringe`, `SidebandSpectrum`, `ThermometryResult`, `HeatingRateFit`, `MSScan`, `ParityScan`,
-  `DetectionHistogram`, `StarkScan`, `CrosstalkScan`, `FieldScan`, `MicromotionScan`, `CrystalImage`; the table `RESULT_TYPES`),
-  an `ExperimentResult` with the fitted parameters as attributes, the scan as `requested` beside the scan as `realized`
-  (`ScanParameters`; `realized_drive` reads the tone words the hardware chain plays), the fit's `chi2` and a `quality`
-  verdict. `calibrate(machine, method="closed_form" | "experiments")` (`CalibrationMethod`) returns the `CalibrationReport`
-  whose `table` the scheduler reads; `Machine.calibrated` pins it. `randomized_benchmarking`, `ghz_fidelity`,
-  `quantum_volume` and `gate_channel` run on the machine. The inverse direction is `Machine.error_model()` (the module
-  function `error_model`): an `ErrorModel` with the average gate infidelity and duration per native gate kind, the
-  depolarizing weights `p_1q` and `p_2q`, `p_meas` and `p_init`, and the exporters `to_ionq_noise` (`r_1q`, `r_2q`),
-  `to_quantinuum_error_params` and `to_qdk_qubit_params`, each stating its conversion.
-- **`qutip_trap.io`**: `qasm2` with `loads` and `dumps` (OpenQASM 2 both ways; the native gates declared as qelib1.inc
-  definitions, `NATIVE_DECLARATIONS`, or bare for the exact round trip; `QELIB_NAMES` maps `cnot` to `cx`), and `ionq` with
-  `loads`, `dumps`, `load_job` and `dump_job` (`IonQJob`, the v0.4 body of type `JOB_TYPE` with the keys `JOB_KEYS`,
-  `NOISE_KEYS` and `SETTINGS_KEYS` the spec allows), beside the 0.1.0 functions `load_openqasm2`, `load_ionq_json` and
-  `dump_ionq_json`.
-- **`qutip_trap.interop`**: the adapters to other SDKs, `qutip_trap.interop.qiskit` today (a Qiskit 2 `BackendV2` behind the
-  `qiskit` extra).
+The five levels of PLAN.md Section 14.2 are five modules, each a rung of the same machine (docs/conventions.md, "Vocabulary"),
+and since 0.4.0 each has its own page listing every public name: [machine.md](machine.md) for `qutip_trap` (rung 0: the
+`Machine`, the option objects, `Circuit`, `Result`, the jobs and the presets), [circuit.md](circuit.md) for `qutip_trap.circuit`
+and the wire formats of `qutip_trap.io`, [schedule.md](schedule.md) for `qutip_trap.schedule`, [dynamics.md](dynamics.md) for
+`qutip_trap.dynamics`, [physics.md](physics.md) for `qutip_trap.physics`, [laboratory.md](laboratory.md) for the experiments,
+the calibration and the benchmarks, and [experimental.md](experimental.md) for `qutip_trap.experimental`. The examples below
+walk the rungs in that order on the example device; every name they use is on those pages, and the same objects are what
+`qutip_trap.api` exports under the Appendix E names.
 
 ## A device
 
@@ -159,6 +105,19 @@ print("level:", result.diagnostics.level, "| space dims:", result.diagnostics.sp
       "| mode classes:", result.diagnostics.mode_class)
 print("SPAM per qubit (eps_B, eps_D):", {k: tuple(round(x, 5) for x in v) for k, v in result.spam.items() if "." not in k})
 assert result.probabilities["00"] + result.probabilities["11"] > 0.98
+```
+
+The same run submitted to a worker process is a `Job` (0.4.0): `status()`, the latest `Progress` as `progress`,
+`result()` blocking for the same `Result` shot for shot, `record()` for the `RunRecord` behind it, and `cancel()`; its
+`spec` is the `RunSpec` a JSON document can carry.
+
+```python
+job = fast.submit(bell, 200, seed=7, label="bell in the background")
+print("submitted:", job.status(), "|", job.spec.to_dict()["shots"], "shots, machine", job.spec.machine_hash[:12])
+background = job.result(timeout_s=600.0)
+assert job.status() == "done" and background.counts == fast.run(bell, 200, seed=7).counts
+assert job.record().schedule.pulses, "the RunRecord travelled back with the result"
+print("the job's histogram:", {k: round(v, 3) for k, v in sorted(background.probabilities.items())})
 ```
 
 On the reference machine the surrogate takes about 15 s and the Bell run about 8 s: five carrier pulses and one 100 µs

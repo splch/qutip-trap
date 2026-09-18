@@ -161,6 +161,8 @@ def beta_exact(a: float, q: float) -> float:
 
 
 def is_stable(a: float, q: float) -> bool:
+    """Whether the Mathieu equation x'' + (a - 2q cos 2xi) x = 0 is stable at (a, q): |Tr M| < 2 for the monodromy matrix
+    over one period (Section 4.1.1; the stability diagram of the trap page)."""
     return monodromy(a, q).stable
 
 

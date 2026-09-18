@@ -15,7 +15,6 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.api import Circuit, Result
 from tests.fixtures import make_result
 
@@ -36,24 +35,6 @@ def test_sample_of_shot_is_the_contiguous_block_map() -> None:
     # the floored shots_per_sample cannot express this: 5 shots over 3 samples floors to 1
     assert uneven.diagnostics.shots_per_sample != 2
     assert sum(uneven.diagnostics.shots_per_sample_realized) == uneven.shots
-
-
-def test_the_0_1_0_v2_export_is_kept_and_deprecated() -> None:
-    """{register name: {bitstring: probability}} with this package's bit order inside each register (its qubit 0 rightmost):
-    unchanged for one release, warning that IonQ's v2 strings run the other way (``to_ionq_v2_probabilities``)."""
-    result = make_result(BITS)
-    with pytest.warns(
-        QutipTrapDeprecationWarning, match=r"to_ionq_v2 is deprecated .*to_ionq_v2_probabilities"
-    ):
-        default = result.to_ionq_v2()
-    assert default == {"c": {"00": 0.4, "10": 0.2, "11": 0.4}}
-    assert default["c"] == pytest.approx(result.probabilities)
-    with pytest.warns(QutipTrapDeprecationWarning):
-        split = result.to_ionq_v2({"a": (0,), "b": (1,)})
-    assert split == {"a": {"0": 0.6, "1": 0.4}, "b": {"0": 0.4, "1": 0.6}}
-    assert sum(split["a"].values()) == pytest.approx(1.0)
-    with pytest.warns(QutipTrapDeprecationWarning), pytest.raises(ValueError, match="outside the result"):
-        result.to_ionq_v2({"bad": (99,)})
 
 
 def test_branches_and_trajectories_are_separate_diagnostics() -> None:
@@ -82,11 +63,10 @@ def test_x_on_qubit_zero_reads_1_in_the_v1_formats_and_001_in_this_package() -> 
     assert result.to_ionq_v1_histogram() == {IONQ_V1_KEY: 4}
     assert result.to_ionq_v1_shots() == [IONQ_V1_KEY] * 4
     assert IONQ_V2_KEY == "001"[::-1]  # the v2 string is this package's key reversed
-    # the 0.1.0 names are aliases that warn
-    with pytest.warns(QutipTrapDeprecationWarning, match=r"Result\.to_ionq_json is deprecated"):
-        assert result.to_ionq_json() == {IONQ_V1_KEY: 1.0}
-    with pytest.warns(QutipTrapDeprecationWarning):
-        assert result.to_ionq_histogram() == {IONQ_V1_KEY: 4} and result.to_ionq_shots() == [IONQ_V1_KEY] * 4
+    # the 0.1.0 names (to_ionq_json, to_ionq_histogram, to_ionq_shots, to_ionq_v2) were deprecated in 0.2.0 and removed in
+    # 0.4.0 (docs/deprecations.md, "Removed"); a caller of one gets the plain AttributeError, not a silent alias
+    for gone in ("to_ionq_json", "to_ionq_histogram", "to_ionq_shots", "to_ionq_v2"):
+        assert not hasattr(result, gone), gone
 
 
 def test_x_on_qubit_zero_reads_100_in_the_v2_envelope() -> None:

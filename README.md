@@ -1,5 +1,7 @@
 # qutip-trap
 
+![qutip-trap](docs/qutip-trap-logo-light.svg)
+
 A first-principles trapped-ion quantum computer simulator built on [QuTiP](https://qutip.org). It takes a circuit and returns counts the way a trapped-ion QPU does: not by multiplying gate matrices and bolting on an error model, but by simulating the physics that produces them.
 
 A run holds the ions in a trap and solves for their crystal and motional modes, cools and optically pumps them, compiles the circuit to the native gates (GPi, GPi2, Mølmer-Sørensen, ZZ, virtual RZ), schedules laser pulses from a calibration performed on the simulated device, integrates every pulse on the joint qubit-plus-motion state under the spin-motion Hamiltonian with noise channels whose rates follow from the device parameters, and reads the ions out by state-dependent fluorescence. Every `Result` states which fidelity level ran, which Hilbert space was integrated and every approximation that was made.
@@ -55,6 +57,7 @@ Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a 
 
 - [PLAN.md](PLAN.md) is the specification: the physics (Part II), the numerics, noise, control and readout (Part III), the validation suite (Section 9) and the public API (Appendix E).
 - [docs/examples.md](docs/examples.md): runnable examples from a device to the benchmarks, executed by the test suite.
+- [docs/machine.md](docs/machine.md), [docs/circuit.md](docs/circuit.md), [docs/schedule.md](docs/schedule.md), [docs/dynamics.md](docs/dynamics.md), [docs/physics.md](docs/physics.md), [docs/laboratory.md](docs/laboratory.md), [docs/experimental.md](docs/experimental.md): the ladder, one page per rung with every public name on it, the laboratory and the experimental namespace (0.4.0).
 - [docs/physics_notes.md](docs/physics_notes.md), [docs/conventions.md](docs/conventions.md), [docs/limits.md](docs/limits.md), [docs/deprecations.md](docs/deprecations.md): the equations, the one convention per quantity, what the simulator does not do, and the deprecation ledger.
 
 ## Development

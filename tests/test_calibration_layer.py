@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.api import CalEntry, Circuit, Drift, Operation, calibrate, schedule
 from qutip_trap.calibration import DEFAULT_CACHE, CalibrationCache, calibrate_with_report
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
@@ -27,6 +27,7 @@ from qutip_trap.experiments.fitting import (
     sideband_lineshape,
 )
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
+from qutip_trap.machine import Machine, as_machine
 from qutip_trap.noise.model import servo_residual
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
@@ -207,8 +208,8 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
         detection_windows_s=(20e-6,),
         spot_check=False,
     )
-    t1 = calibrate(fx.device, cache=cache, **kw)  # type: ignore[arg-type]
-    t2 = calibrate(fx.device, cache=cache, **kw)  # type: ignore[arg-type]
+    t1 = calibrate(Machine(fx.device), cache=cache, **kw).table  # type: ignore[arg-type]
+    t2 = calibrate(Machine(fx.device), cache=cache, **kw).table  # type: ignore[arg-type]
     assert t1 is t2 and cache.hits == 1 and cache.misses == 1
     assert t1.is_current_for(fx.device.hash())
     changed = dataclasses.replace(
@@ -216,12 +217,18 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
         beams=fx.device.beams[:-1]
         + (dataclasses.replace(fx.device.beams[-1], power_w=fx.device.beams[-1].power_w * 1.1),),
     )
-    t3 = calibrate(changed, cache=cache, **kw)  # type: ignore[arg-type]
+    t3 = calibrate(Machine(changed), cache=cache, **kw).table  # type: ignore[arg-type]
     assert t3 is not t1 and not t1.is_current_for(changed.hash()) and t3.is_current_for(changed.hash())
     assert cache.invalidate(fx.device) == 1 and cache.tables_for(fx.device) == ()
-    with pytest.warns(QutipTrapDeprecationWarning, match="calibrate_with_report is deprecated"):
-        report = calibrate_with_report(changed, cache=cache, **kw)  # type: ignore[arg-type]
+    report = calibrate(Machine(changed), cache=cache, **kw)  # type: ignore[arg-type]
     assert report.table is t3, "the report is cached beside its table"
+    # the 0.1.0 name warns twice since 0.4.0 (the deprecated name, the bare device) and computes the same table under
+    # its own cache key (the bare-device arguments)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        legacy = calibrate_with_report(changed, cache=cache, **kw)  # type: ignore[arg-type]
+    assert any("calibrate_with_report is deprecated" in str(w.message) for w in caught)
+    assert legacy.table == t3
     assert isinstance(DEFAULT_CACHE, CalibrationCache)
 
 
@@ -276,13 +283,15 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
 
 def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, _sur = two_ion
-    img = crystal_image(fx.device, shots=1)
+    img = crystal_image(as_machine(fx.device), shots=1)
     assert img.converged and img.fitted["n_bright"][0] == 2.0 and img.fitted["n_dark"][0] == 0.0
     assert img.fitted["counts[0]"][0] > 50.0
-    dark = crystal_image(fx.device, run_state=RunState((0, 1), frozenset({1}), frozenset(), ()), shots=1)
+    dark = crystal_image(
+        as_machine(fx.device), run_state=RunState((0, 1), frozenset({1}), frozenset(), ()), shots=1
+    )
     assert not dark.converged and dark.fitted["n_dark"][0] == 1.0 and dark.fitted["bright[1]"][0] == 0.0
     assert any("read dark" in n for n in dark.notes)
-    lost = crystal_image(fx.device, run_state=RunState((0, 1), frozenset(), frozenset({0}), ()))
+    lost = crystal_image(as_machine(fx.device), run_state=RunState((0, 1), frozenset(), frozenset({0}), ()))
     assert lost.fitted["n_lost"][0] == 1.0 and lost.fitted["bright[0]"][0] == 0.0
 
 

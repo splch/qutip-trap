@@ -2,9 +2,8 @@
 forces a decision per name): every ``__all__`` name of every rung module resolves, carries a docstring of its own and appears in
 backticks on a documentation page, and every frozen dataclass among them round-trips through ``dataclasses.replace``.
 
-Phase 1 adds the rung modules to ``RUNG_MODULES`` as it creates them. A name of the 0.1.0 surface that has no line under
-``docs/`` yet is listed in ``NOT_YET_DOCUMENTED``; the list may only shrink (a name leaves it when its line is written, and a
-new public name is never added to it), and Phase 3.4 empties it when every rung name gets its page."""
+Phase 1 added the rung modules to ``RUNG_MODULES`` as it created them; Phase 3.4 (0.4.0) gave every rung its page
+(``PAGE_OF``), so every name must appear on its own rung's page and the list of not-yet-documented 0.1.0 names is gone."""
 
 from __future__ import annotations
 
@@ -55,13 +54,21 @@ RUNG_MODULES: tuple[str, ...] = (
     "qutip_trap.experiments",
     "qutip_trap.calibration",
     "qutip_trap.benchmarks",
+    "qutip_trap.experimental",
 )
-"""The modules whose ``__all__`` is the public surface: the Appendix E surface and the rung modules of 0.2.0
-(docs/api_implementation_plan.md 1.6); 3.3 adds ``qutip_trap.experimental``."""
+"""The modules whose ``__all__`` is the public surface: the Appendix E surface, the rung modules of 0.2.0
+(docs/api_implementation_plan.md 1.6), the laboratory (0.3.0) and ``qutip_trap.experimental`` (3.3; 0.4.0)."""
 
 PAGES: tuple[Path, ...] = tuple(
     DOCS / name
     for name in (
+        "machine.md",
+        "circuit.md",
+        "schedule.md",
+        "dynamics.md",
+        "physics.md",
+        "laboratory.md",
+        "experimental.md",
         "physics_notes.md",
         "conventions.md",
         "examples.md",
@@ -70,192 +77,26 @@ PAGES: tuple[Path, ...] = tuple(
         "README.md",
     )
 )
-"""The documentation pages a name must appear on (the two planning documents under docs/ are not pages)."""
+"""The documentation pages: since 0.4.0 the ladder (one page per rung, one for the laboratory, one for the experimental
+namespace), then the pages every release had (the two planning documents under docs/ are not pages)."""
 
-NOT_YET_DOCUMENTED: dict[str, frozenset[str]] = {
-    "qutip_trap.api": frozenset(
-        {
-            "AdaptiveML",
-            "BenchmarkBudget",
-            "BlochModel",
-            "BudgetLine",
-            "CalibrationCache",
-            "CalibrationError",
-            "CalibrationRun",
-            "CalibrationScans",
-            "CollapseOp",
-            "ControlSegment",
-            "DarkStateReport",
-            "DecouplingSequence",
-            "DetectionCalibration",
-            "DetectionRates",
-            "FilterStage",
-            "FirstPhoton",
-            "FluorescenceRates",
-            "GHZResult",
-            "GateCheck",
-            "GateLocalReport",
-            "GateStep",
-            "IncompleteSpeciesTable",
-            "InternalLevels",
-            "KAK",
-            "ModeSpec",
-            "MotionalModel",
-            "MultiLevelOptions",
-            "NoiseSample",
-            "Observation",
-            "POVM",
-            "PhotonRecord",
-            "PreparationRun",
-            "PulseEngine",
-            "QVCircuit",
-            "RBResult",
-            "RBSequence",
-            "ReadoutBudget",
-            "ReadoutErrors",
-            "ReadoutOutcome",
-            "ReadoutScheme",
-            "RecordModel",
-            "RunRecord",
-            "RunState",
-            "ScatteringOptions",
-            "SeedSpec",
-            "SpaceSelection",
-            "SteadyStateReport",
-            "StepChannel",
-            "SurrogateReport",
-            "ThresholdDiscriminator",
-            "TimeResolvedML",
-            "Trajectory",
-            "TransportBudget",
-            "TwoQubitClifford",
-            "ZigzagError",
-            "calibrate_detection",
-            "calibrate_entangling_angle",
-            "choi_from_unitary",
-            "clear_budget_cache",
-            "crosstalk_scan",
-            "crystal_image",
-            "decompose_two_qubit_clifford",
-            "decompose_two_qubit_unitary",
-            "decoupling_sequence",
-            "depolarizing_choi",
-            "depolarizing_rate",
-            "design_waveform",
-            "detection_histogram",
-            "detection_rates_for_ion",
-            "entanglement_infidelity",
-            "exact_gate_check",
-            "field_scan",
-            "filter_function",
-            "frame_rotated",
-            "frozen_excitation_bounds",
-            "full_calibration",
-            "gate_space",
-            "gate_steps",
-            "ghz_circuit",
-            "haar_random_unitary",
-            "heating_rate",
-            "last_record",
-            "micromotion_scan",
-            "mode_spectroscopy",
-            "ms_phase_scan",
-            "ms_scan",
-            "optimize_threshold",
-            "parity_circuit",
-            "parity_scan",
-            "pauli_twirl",
-            "povm_for",
-            "ramsey",
-            "ramsey_frequency",
-            "random_square_circuit",
-            "random_two_qubit_clifford",
-            "resolve_level",
-            "run_preparation",
-            "scattering_estimates",
-            "scattering_rate",
-            "select_space",
-            "sideband_spectroscopy",
-            "species_by_name",
-            "split_feasible",
-            "stark_scan",
-            "step_space",
-            "surrogate_table",
-            "thermal_robustness",
-            "thermometry",
-            "transport_budget",
-        }
-    ),
-    "qutip_trap.experiments": frozenset(
-        {
-            "FitResult",
-            "Observation",
-            "ReadoutErrors",
-            "correlation_signal",
-            "crosstalk_scan",
-            "crystal_image",
-            "detection_histogram",
-            "device_with_compensation",
-            "field_scan",
-            "fit_lineshape",
-            "half_rabi_lineshape",
-            "heating_rate",
-            "lineshape_model",
-            "micromotion_scan",
-            "mode_spectroscopy",
-            "ms_phase_scan",
-            "ms_scan",
-            "parity_scan",
-            "periodic_scattering",
-            "ramsey",
-            "ramsey_frequency",
-            "readout_errors_for",
-            "sideband_spectroscopy",
-            "signed_beta",
-            "stark_scan",
-            "thermal_rabi_model",
-            "thermal_rabi_model_fixed_nbar",
-            "thermometry",
-            "weighted_fit",
-        }
-    ),
-    "qutip_trap.calibration": frozenset(
-        {
-            "ALIASES",
-            "CalibrationCache",
-            "CalibrationError",
-            "CalibrationScans",
-            "DEFAULT_CACHE",
-            "EXPERIMENTS",
-            "ORDER",
-            "UPSTREAM",
-            "full_calibration",
-            "upstream_status",
-        }
-    ),
-    "qutip_trap.benchmarks": frozenset(
-        {
-            "BenchmarkBudget",
-            "CLASS_SIZES",
-            "GHZResult",
-            "QVCircuit",
-            "RBResult",
-            "RBSequence",
-            "SINGLE_QUBIT_CLIFFORDS",
-            "StepChannel",
-            "TWO_QUBIT_GROUP_ORDER",
-            "TwoQubitClifford",
-            "clear_budget_cache",
-            "decompose_two_qubit_clifford",
-            "ghz_circuit",
-            "parity_circuit",
-            "random_square_circuit",
-            "random_two_qubit_clifford",
-            "two_qubit_clifford_group",
-        }
-    ),
+PAGE_OF: dict[str, str] = {
+    "qutip_trap": "machine.md",
+    "qutip_trap.presets": "machine.md",
+    "qutip_trap.circuit": "circuit.md",
+    "qutip_trap.io": "circuit.md",
+    "qutip_trap.io.qasm2": "circuit.md",
+    "qutip_trap.io.ionq": "circuit.md",
+    "qutip_trap.schedule": "schedule.md",
+    "qutip_trap.dynamics": "dynamics.md",
+    "qutip_trap.physics": "physics.md",
+    "qutip_trap.experiments": "laboratory.md",
+    "qutip_trap.calibration": "laboratory.md",
+    "qutip_trap.benchmarks": "laboratory.md",
+    "qutip_trap.experimental": "experimental.md",
 }
-"""The names of the 0.1.0 surface with no backticked mention on a documentation page (2026-09-11: 109 of 237)."""
+"""Each rung module's own page (docs/api_implementation_plan.md 3.4: "the public-surface test requires every rung name on its
+page"); ``qutip_trap.api``, the compatibility surface, may document a name on any page."""
 
 
 def _module(module_name: str) -> ModuleType:
@@ -330,27 +171,40 @@ def _own_docstring(module_name: str, name: str, obj: object) -> str | None:
     if inspect.isroutine(obj):
         doc = getattr(obj, "__doc__", None)
         return doc if isinstance(doc, str) else None
-    source = _source_modules(module_name).get(name) or getattr(obj, "__module__", None)
+    source = (
+        _source_modules(module_name).get(name)
+        or _lazy_source(module_name, name)
+        or getattr(obj, "__module__", None)
+    )
     if source is None:
         return None
     return _attribute_docstring(source, name)
 
 
+def _lazy_source(module_name: str, name: str) -> str | None:
+    """The defining module of a name a rung module imports on first use (the root's ``_RUNG_0`` table, the dynamics rung's
+    ``_LAZY`` table: name -> (module, attribute))."""
+    module = _module(module_name)
+    for table_name in ("_RUNG_0", "_LAZY"):
+        table = getattr(module, table_name, None)
+        if isinstance(table, dict) and name in table:
+            return str(table[name][0])
+    return None
+
+
 @cache
-def _code_spans() -> tuple[str, ...]:
-    """Every backticked span of the documentation pages: fenced blocks and inline code."""
-    spans: list[str] = []
-    for page in PAGES:
-        text = page.read_text(encoding="utf-8")
-        spans += re.findall(r"```[A-Za-z]*\n(.*?)```", text, flags=re.S)
-        # strip the fenced blocks (a fence opens with ``` and a newline; the prose "```python block" of examples.md is not one)
-        spans += re.findall(r"`([^`\n]+)`", re.sub(r"```[A-Za-z]*\n.*?```", "", text, flags=re.S))
+def _code_spans(page: Path) -> tuple[str, ...]:
+    """Every backticked span of one documentation page: fenced blocks and inline code."""
+    text = page.read_text(encoding="utf-8")
+    spans: list[str] = re.findall(r"```[A-Za-z]*\n(.*?)```", text, flags=re.S)
+    # strip the fenced blocks (a fence opens with ``` and a newline; the prose "```python block" of examples.md is not one)
+    spans += re.findall(r"`([^`\n]+)`", re.sub(r"```[A-Za-z]*\n.*?```", "", text, flags=re.S))
     return tuple(spans)
 
 
-def _documented(name: str) -> bool:
+def _documented(name: str, pages: tuple[Path, ...] = PAGES) -> bool:
     pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
-    return any(pattern.search(span) for span in _code_spans())
+    return any(pattern.search(span) for page in pages for span in _code_spans(page))
 
 
 @pytest.mark.parametrize("module_name", RUNG_MODULES)
@@ -372,27 +226,24 @@ def test_every_public_name_carries_a_docstring_of_its_own(module_name: str) -> N
 
 
 @pytest.mark.parametrize("module_name", RUNG_MODULES)
-def test_every_public_name_is_documented_or_listed_as_not_yet(module_name: str) -> None:
+def test_every_public_name_is_documented_on_its_page(module_name: str) -> None:
     """A name is public when it is documented (Qiskit's rule): it appears in backticks, alone or inside a code span or a
-    fenced block, on one of the documentation pages. The 0.1.0 names that still lack a line are listed above; this test
-    fails both ways, on a name that lost its line and on a listed name that gained one (remove it from the list)."""
+    fenced block, on its rung's page (``PAGE_OF``; any page for the Appendix E surface). The 0.1.0 names that lacked a line
+    were listed in this test until 0.4.0 gave every rung its page (docs/api_implementation_plan.md 3.4); the list is gone
+    and a new public name fails here until its line is written."""
     module = _module(module_name)
-    undocumented = {name for name in module.__all__ if not _documented(name)}
-    listed = NOT_YET_DOCUMENTED.get(module_name, frozenset())
-    # a rung module re-exporting an Appendix E name inherits that name's entry in the api list (the same object)
-    inherited = {
-        name
-        for name in undocumented
-        if module_name != "qutip_trap.api"
-        and name in NOT_YET_DOCUMENTED["qutip_trap.api"]
-        and getattr(module, name) is getattr(api, name)
-    }
-    new = sorted(undocumented - listed - inherited)
-    assert not new, f"public names of {module_name} with no line under docs/ (write the line): {new}"
-    stale = sorted(listed - undocumented)
-    assert not stale, (
-        f"names now documented, or no longer public: remove them from NOT_YET_DOCUMENTED: {stale}"
+    pages = PAGES if module_name == "qutip_trap.api" else (DOCS / PAGE_OF[module_name],)
+    undocumented = sorted(name for name in module.__all__ if not _documented(name, pages))
+    where = "a documentation page" if module_name == "qutip_trap.api" else PAGE_OF[module_name]
+    assert not undocumented, (
+        f"public names of {module_name} with no line on {where} (write the line): {undocumented}"
     )
+
+
+def test_every_page_of_the_ladder_exists() -> None:
+    for page in PAGES:
+        assert page.exists(), page.name
+    assert set(PAGE_OF.values()) <= {p.name for p in PAGES}
 
 
 MUTABLE_SERVICES: frozenset[str] = frozenset({"JointExactEngine"})

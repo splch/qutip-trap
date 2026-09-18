@@ -149,9 +149,12 @@ def pulse_dynamics(record: Record, z: ZoomTrace) -> PulseDynamics:
         Shown("debye_waller", c[0], f"frozen mode {m}: |alpha|^2 (2 nbar + 1); chi loss {c[1]:.3g} rad")
         for m, c in sorted(record.diagnostics.frozen_contribution.items())
     )
-    unavailable = [
-        "per-time Fock distributions inside the pulse (core gap: Traces carries <n_m>(t) only; start and end shown)",
-    ]
+    unavailable: list[str] = []
+    if tr.mode_marginal is None:
+        unavailable.append(
+            "per-time Fock distributions inside the pulse: this trace stored none (the zoom stores them since 0.4.0; "
+            "start and end shown)"
+        )
     if n != 2:
         unavailable.append("concurrence and Pauli correlators are computed for two-qubit registers")
     return PulseDynamics(

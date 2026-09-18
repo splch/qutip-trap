@@ -31,6 +31,7 @@ HOMES: dict[str, tuple[type, str]] = {
     "integrators": (Integration, "integrators"),
     "rotating_frame": (Integration, "rotating_frame"),
     "propagator_cache": (Integration, "propagator_cache"),
+    "store_marginals": (Integration, "store_marginals"),
     "joint_dimension_max": (Truncation, "joint_dimension_max"),
     "nnz_max": (Truncation, "nnz_max"),
     "mode_dimension_max": (Truncation, "mode_dimension_max"),

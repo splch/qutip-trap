@@ -118,8 +118,7 @@ def test_each_preset_carries_its_old_drive_maps_as_roles(build) -> None:  # type
     # the declared detection beam is the one the wavelengths pick, and the readout's set contains it
     assert infer_detection_beam(dev) == preset.detection_beam
     assert preset.detection_beam in detection_beams(dev, 0)
-    with pytest.warns(QutipTrapDeprecationWarning, match=r"DevicePreset\.run_kwargs is deprecated"):
-        assert preset.run_kwargs() == {}
+    assert not hasattr(preset, "run_kwargs"), "deprecated in 0.2.0, removed in 0.4.0 (docs/deprecations.md)"
 
 
 def test_preset_device_digests_are_unchanged_from_7a26a27() -> None:

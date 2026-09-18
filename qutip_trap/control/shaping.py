@@ -259,6 +259,8 @@ class SampledEnvelope:
 
 
 Envelope = SegmentedEnvelope | SampledEnvelope
+"""A played waveform's envelope as the closed forms read it: piecewise constant (``SegmentedEnvelope``) or sampled by the
+hardware chain (``SampledEnvelope``); ``envelope_of`` builds one from a ``Waveform``."""
 
 
 # ---- the kernels -----------------------------------------------------------------------------------------------------------------

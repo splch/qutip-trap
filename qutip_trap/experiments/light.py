@@ -43,7 +43,7 @@ from qutip_trap.experiments.result import (
     requested_drive,
 )
 from qutip_trap.experiments.single_ion import _observation, _run, _setup, ramsey, ramsey_frequency, sub_stream
-from qutip_trap.machine import laboratory_kwargs
+from qutip_trap.machine import as_machine, laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
@@ -115,7 +115,7 @@ def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
     def run_with(label: float, delay_pulses: Any, tag: str, detuning_hz: float) -> tuple[float, float, bool]:
         # every sub-run draws its own shot noise (the two beams' Ramseys are separate experiments)
         res = ramsey(
-            device,
+            as_machine(device),
             ion,
             delays_s,
             **{
@@ -409,7 +409,9 @@ def field_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
     f_true, _d1t, _d2t = sp.transition_frequency_hz(lower, upper, device.field.B_gauss)
     shifts = {int(k): float(v) for k, v in dict(kw.get("qubit_shifts_hz", {})).items()}
     shifts[ion] = shifts.get(ion, 0.0) + (f_true - f_seed)
-    res = ramsey_frequency(device, ion, delays_s, **{**kw, "qubit_shifts_hz": shifts, "frame_hz": f_seed})
+    res = ramsey_frequency(
+        as_machine(device), ion, delays_s, **{**kw, "qubit_shifts_hz": shifts, "frame_hz": f_seed}
+    )
     x, s_x = res.fitted["qubit_offset_hz"]
     f_meas = f_seed + x
     notes = list(res.notes)

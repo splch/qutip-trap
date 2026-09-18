@@ -21,6 +21,7 @@ from qutip_trap.api import (
 )
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.schedule import ScheduleError
+from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.run.job import enumerate_branches
 from tests.m6_fixtures import circuit_fixture
@@ -257,7 +258,9 @@ def test_branch_enumeration_weights_and_cutoff() -> None:
 def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_pairs() -> None:
     """Appendix E: run(table=None) calibrates the surrogate at t0 for the pairs the circuit uses; calibrate() is the same table."""
     fx = circuit_fixture(2)
-    table = calibrate(fx.device, pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS)
+    table = calibrate(
+        Machine(fx.device), pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS
+    ).table
     assert table.waveform_for((0, 1)) is not None and table.detection["threshold"].status == "calibrated"
     # no table: run builds the closed-form surrogate for the circuit's pairs (the default scan settings)
     res = run(

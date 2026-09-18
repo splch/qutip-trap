@@ -30,6 +30,9 @@ TWO_PI = 2.0 * math.pi
 
 @dataclass(frozen=True)
 class HartyParameters:
+    """The operating point of Harty et al. 2014's single-qubit randomized benchmarking (PLAN.md Section 9.2): the pi/2
+    time, the dead time between pulses, the identity delay, and the noise levels the error-per-gate sets are simulated at."""
+
     t_pi2_s: float = 12.1e-6
     dead_time_s: float = 14e-6
     identity_delay_s: float = 12.1e-6

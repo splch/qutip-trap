@@ -19,7 +19,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from qutip_trap_app.core import kraus_operators
 from qutip_trap_app.record import ChannelSummaryRecord, Record, TargetRecord, TraceRecord
 from qutip_trap_app.viewmodel.catalogue import Shown
 
@@ -290,40 +289,28 @@ def target_ket_after(record: Record, gate_index: int) -> np.ndarray:
 
 
 GATE_LOCAL_REGISTER_NOTE = (
-    "derived: the recorded step channels of this GATE_LOCAL run composed in time order; the idle intervals' channels are "
-    "not recorded and are taken as the identity"
+    "recorded: the GATE_LOCAL walk's register after this step (the first dynamical sample)"
 )
 
 
 def gate_local_register_after(record: Record, gate_index: int) -> np.ndarray:
-    """The register after gate ``gate_index`` of a GATE_LOCAL record: |0...0> carried through the recorded step channels (each
-    gate step's Choi matrix on its local ions, Section 5.4, as Kraus operators) in time order up to the gate's own step.
-    The idle intervals' one-qubit channels are not recorded (``core_gaps``), so they are taken as the identity; on the
-    example device the final register fidelity this gives differs from the run's own by 7e-6 (``tests/test_gate_local_register.py``)."""
+    """The register after gate ``gate_index`` of a GATE_LOCAL record: the walk's own register after the gate's step, which the
+    core reports since 0.4.0 (``GateLocalStep.register_after``, the idle intervals' one-qubit channels included); until then
+    the app composed the recorded gate channels itself with the idle channels taken as the identity."""
     gl = record.gate_local
     if gl is None:
-        raise RegisterUnavailable("this record stores no GATE_LOCAL step channels (see core_gaps)")
-    n = record.n_qubits
+        raise RegisterUnavailable("this record stores no GATE_LOCAL steps (see core_gaps)")
     tg = _target_by_time(record)[gate_index]
-    last = record.step_of_gate(tg.gate_id).index
-    channels = {st.gate_id: st for st in gl.steps}
-    rho = np.zeros((2**n, 2**n), dtype=complex)
-    rho[0, 0] = 1.0
-    for step in record.schedule.steps[: last + 1]:
-        st = channels.get(step.gate_id)
-        if st is None or st.summary is None:
-            continue
-        ions = tuple(int(q) for q in st.ions)
-        if st.summary.choi.shape[0] != 4 ** len(ions):
-            raise RegisterUnavailable(
-                f"the channel of {st.gate_id} is not on two-level ions {ions} (Choi {st.summary.choi.shape})"
-            )
-        out = np.zeros_like(rho)
-        for kraus in kraus_operators(st.summary.choi):
-            k = embed_operator(kraus, ions, n)
-            out += k @ rho @ k.conj().T
-        rho = out
-    return rho
+    step = record.step_of_gate(tg.gate_id)
+    for st in gl.steps:
+        if st.gate_id == step.gate_id:
+            if st.register_after is None:
+                raise RegisterUnavailable(
+                    f"the record carries no register after {st.gate_id}: written before 0.4.0, or a register the core does "
+                    "not store (a pure-state ensemble, or above its store cap)"
+                )
+            return np.asarray(st.register_after, dtype=complex)
+    raise RegisterUnavailable(f"no GATE_LOCAL step carries gate {tg.gate_id!r}")
 
 
 def register_after(

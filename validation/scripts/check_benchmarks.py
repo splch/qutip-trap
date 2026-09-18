@@ -54,6 +54,8 @@ from qutip_trap.benchmarks.rb import two_qubit_sequence
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import CNOT_MATRIX, SWAP_MATRIX, cp_matrix
 from qutip_trap.control.two_qubit import global_phase
+from qutip_trap.machine import Machine
+from qutip_trap.options import Numerics
 
 
 def section(title: str) -> None:
@@ -141,10 +143,11 @@ WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 t0 = time.perf_counter()
 sur = surrogate_table(dev, pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
 print(f"MC: surrogate table in {time.perf_counter() - t0:.1f} s")
-kw = dict(table=sur.table, options=SolverOptions(branch_weight_min=1e-3))
+# the benchmarks run on a Machine since 0.3.0 (a bare device with run keywords warns; 0.4.0): the same table and options
+mach = Machine(dev, table=sur.table, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)))
 t0 = time.perf_counter()
 rb1 = randomized_benchmarking(
-    dev, (0,), (1, 128, 512, 2048), n_sequences=3, shots=4000, budget=True, fix_offset=True, **kw
+    mach, (0,), (1, 128, 512, 2048), n_sequences=3, shots=4000, budget=True, fix_offset=True
 )
 print(f"MC: wall {time.perf_counter() - t0:.1f} s for {len(rb1.results)} runs of 4000 shots")
 print(
@@ -192,7 +195,7 @@ pinned(
 )
 t0 = time.perf_counter()
 rb_sim = randomized_benchmarking(
-    dev, (0, 1), (1, 128, 512), n_sequences=2, shots=2000, budget=True, pair=False, fix_offset=True, **kw
+    mach, (0, 1), (1, 128, 512), n_sequences=2, shots=2000, budget=True, pair=False, fix_offset=True
 )
 
 print(
@@ -239,7 +242,7 @@ pinned(
 pinned("simultaneous RB marginal r_q / the isolated r", rb_sim.error_per_clifford[0] / r_alone, 5.0, 40.0)
 t0 = time.perf_counter()
 rb_knill = randomized_benchmarking(
-    dev, (0,), (1, 128, 512), n_sequences=2, shots=2000, budget=False, variant="knill", **kw
+    mach, (0,), (1, 128, 512), n_sequences=2, shots=2000, budget=False, variant="knill"
 )
 print(
     f"MC: Knill-style RB on ion 0 (Section 7.9; a random Pauli then a random Clifford per computational gate, one final"
@@ -259,7 +262,7 @@ pinned("Knill-style RB pulses per computational gate", rb_knill.pulses_per_cliff
 section("4. two-qubit randomized benchmarking on the pair (Section 7.9; Section 13)")
 t0 = time.perf_counter()
 rb2 = randomized_benchmarking(
-    dev, (0, 1), (1, 6, 16), n_sequences=2, shots=400, budget=True, fix_offset=True, **kw
+    mach, (0, 1), (1, 6, 16), n_sequences=2, shots=400, budget=True, fix_offset=True
 )
 print(f"MC: wall {time.perf_counter() - t0:.1f} s for {len(rb2.results)} runs")
 print(
@@ -287,7 +290,7 @@ pinned("ms[0,1] average gate infidelity", ms_ch.summary.average_gate_infidelity,
 
 section("5. GHZ fidelity (Section 7.9 'Entangling gate'; Section 9.6 rows 1 and 2)")
 t0 = time.perf_counter()
-g2 = ghz_fidelity(dev, (0, 1), shots=1000, budget=True, **kw)
+g2 = ghz_fidelity(mach, (0, 1), shots=1000, budget=True)
 print(
     f"MC: two ions, wall {time.perf_counter() - t0:.1f} s: P00 {fmt(g2.populations['P0'])}, P11 {fmt(g2.populations['P1'])}, parity contrast {fmt(g2.fit['contrast'])} (chi2/dof {g2.fit['chi2_per_dof'][0]:.2f}), fidelity bound (P0 + P1 + C)/2 = {fmt(g2.fidelity_bound)}"
 )
@@ -307,14 +310,13 @@ preset3 = yb171_chain(3, address_waist_m=2.0e-6)
 dev3 = preset3.device
 t0 = time.perf_counter()
 sur3 = surrogate_table(dev3, pairs=[(0, 1), (1, 2)], detection_records=1500, detection_windows_s=WINDOWS)
-kw3 = dict(table=sur3.table, options=SolverOptions(branch_weight_min=3e-3))
+mach3 = Machine(dev3, table=sur3.table, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)))
 g3 = ghz_fidelity(
-    dev3,
+    mach3,
     (0, 1, 2),
     shots=400,
     analysis_phases_rad=np.linspace(0.0, 2.0 * math.pi / 3.0, 5, endpoint=False),
     budget=False,
-    **kw3,
 )
 print(
     f"MC: three ions (dimension {int(np.prod(g3.results[0].diagnostics.space.dims))}), wall {time.perf_counter() - t0:.1f} s with the surrogate: P000 {fmt(g3.populations['P0'])}, P111 {fmt(g3.populations['P1'])}, contrast {fmt(g3.fit['contrast'])}, bound {fmt(g3.fidelity_bound)}"
@@ -342,7 +344,7 @@ for tag, g in (("two-ion", g2), ("three-ion", g3)):
 
 section("6. quantum-volume style run at width two (Cross et al. 2019)")
 t0 = time.perf_counter()
-qv = quantum_volume(dev, (0, 1), n_circuits=4, shots=400, budget=True, **kw)
+qv = quantum_volume(mach, (0, 1), n_circuits=4, shots=400, budget=True)
 print(
     f"MC: wall {time.perf_counter() - t0:.1f} s for {qv.n_circuits} circuits of depth {qv.depth} ({qv.entangling_per_circuit:.1f} entangling gates and {qv.pulses_per_circuit:.1f} pulses per circuit)"
 )

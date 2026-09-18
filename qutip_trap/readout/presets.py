@@ -78,6 +78,8 @@ MYERSON_CA40_PMT = ApparatusPreset(
         "sub-bins t_s = 10 us; bright -> dark transfer < 1e-3 s^-1"
     ),
 )
+"""Myerson et al. 2008's 40Ca+ shelving detection through a PMT (Section 8.4): the collection and quantum efficiencies, the
+dark counts and the detection window of the published apparatus, as an ``ApparatusPreset``."""
 
 HARTY_CA43 = ApparatusPreset(
     name="Harty 2014, 43Ca+ hyperfine qubit shelved to D5/2, PMT",
@@ -131,6 +133,8 @@ CRAIN_YB171_SNSPD = ApparatusPreset(
         "94(5) ms at 200 um, 814(77) ms at 370 um (Gaussian fringe decay exp(-tau^2/alpha^2))"
     ),
 )
+"""Crain et al. 2019's 171Yb+ state detection with a superconducting nanowire detector (Section 8.4): the published
+apparatus as an ``ApparatusPreset``, the detector the example 171Yb+ machine carries."""
 
 CHRISTENSEN_BA133 = ApparatusPreset(
     name="Christensen 2020, 133Ba+ hyperfine qubit shelved through P3/2",

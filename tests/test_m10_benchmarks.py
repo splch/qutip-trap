@@ -373,14 +373,14 @@ def test_pair_true_is_refused_on_any_qubit_count_but_two() -> None:
     ``pair=True`` on the wrong qubit count is refused up front."""
     from qutip_trap.api import yb171_chain
 
-    device = yb171_chain(2).device
+    machine = yb171_chain(2).machine()
     for qubits in ((0,), (0, 1)):
         with pytest.raises(ValueError, match="two qubits"):
-            randomized_benchmarking(device, qubits, (1,), pair=True, variant="knill")
+            randomized_benchmarking(machine, qubits, (1,), pair=True, variant="knill")
     with pytest.raises(ValueError, match="two qubits"):
-        randomized_benchmarking(device, (0,), (1,), pair=True)
+        randomized_benchmarking(machine, (0,), (1,), pair=True)
     with pytest.raises(ValueError, match="variant"):
-        randomized_benchmarking(device, (0,), (1,), variant="direct")
+        randomized_benchmarking(machine, (0,), (1,), variant="direct")
 
 
 @pytest.fixture(scope="module")

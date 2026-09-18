@@ -23,8 +23,9 @@ Storage policy (Section 14.3, "stored" against "recomputed on demand"):
   pulse (``resim.zoom``), and the convergence re-checks of a zoomed pulse (``resim.tolerance_recheck``,
   ``resim.truncation_recheck``). A cached zoom is keyed by (step, sample, branch, stored points, options digest), so
   zooming twice recomputes once (Section 9.11).
-- **Not available from the core** (Section 14.6: recorded as a gap, shown as unavailable): per-time Fock distributions
-  inside a pulse and the per-gate register states of a GATE_LOCAL run; see ``core.CORE_GAPS``.
+- **From the core since 0.4.0** (Section 14.6: the gaps the app recorded until 0.3.0 are closed): the per-time Fock
+  distributions inside a pulse (``TraceRecord.mode_marginal``, stored by the Level 3 zoom) and the register after every
+  step of a GATE_LOCAL run (``GateLocalStepRecord.register_after``); ``core.CORE_GAPS`` is empty and stays on the record.
 
 Conventions carried verbatim from the core: bitstring keys read qubit 0 rightmost (``conv.result_bit_order``); reduced
 internal states are in the register order (ion 0 the first tensor factor); every mode index is a position in
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import json
 import math
 import platform
 import time
@@ -250,6 +252,17 @@ class JobSpec:
             numerics=self.numerics(),
             readout=core.Readout(mode=self.readout),
             level=core.FidelityLevel(self.level),
+        )
+
+    def run_spec(self, device: core.Device, table: core.CalibrationTable | None = None) -> core.RunSpec:
+        """The core's ``RunSpec`` of this job on ``device`` (0.4.0): what ``Machine.submit`` would run, with the machine's
+        hash, the option objects and the level this record spells out in its own fields."""
+        return self.machine(device, table).spec(
+            self.circuit.to_core(),
+            self.shots,
+            seed=self.seed,
+            keep_final_state=self.keep_final_state,
+            label=self.label,
         )
 
 
@@ -700,6 +713,9 @@ class TraceRecord:
     final_joint: np.ndarray | None
     """The joint ket (D,) or density matrix (D, D) when D <= the store cap; None otherwise."""
     joint_dims: tuple[int, ...]
+    mode_marginal: dict[int, np.ndarray] | None = None
+    """Per resolved mode the (T, d) Fock populations at the stored times (``core.Traces.mode_marginal``; 0.4.0), when the
+    run stored them (``Numerics.integration.store_marginals``, which the Level 3 zoom turns on); None otherwise."""
 
     def index_at(self, t_s: float, tolerance_s: float = 1e-12) -> int:
         """The LAST stored index at time ``t_s`` (a segment end)."""
@@ -736,6 +752,10 @@ class GateLocalStepRecord:
     nbar_after: dict[int, float]
     boundary_population: dict[int, float]
     summary: ChannelSummaryRecord | None
+    register_after: np.ndarray | None = None
+    """The register density matrix after this step for the first sample (``core.GateLocalStep.register_after``; 0.4.0),
+    ion 0 the first factor; None for a record written before 0.4.0, a pure-state ensemble or a register above the core's
+    store cap."""
 
 
 @dataclass(frozen=True)
@@ -953,8 +973,9 @@ class ZoomTrace:
 
 @dataclass(frozen=True)
 class FockMovie:
-    """Per-time Fock distributions inside one gate step for one (sample, branch), from truncated re-simulations (Section 14.2
-    row 3 "Fock distributions per mode as heatmaps"; ``core.CORE_GAPS``: the core stores none, causality supplies them)."""
+    """Per-time Fock distributions inside one gate step for one (sample, branch) (Section 14.2 row 3 "Fock distributions per
+    mode as heatmaps"): since 0.4.0 rows of the step's zoom, whose trace stores the Fock populations at every point
+    (``core.Traces.mode_marginal``); until then K truncated re-simulations supplied them by causality."""
 
     key: str
     step_index: int
@@ -1122,6 +1143,10 @@ class Record:
     process_matrices: tuple[ProcessMatrixRecord, ...] = ()
     branch_loops: tuple[BranchLoopRecord, ...] = ()
     """The spin-branch loops of every played entangling waveform (Level 3's phase-space drawing; part of the run, not a cache)."""
+    run_spec: str = ""
+    """The core's own record of the request, ``RunSpec.to_dict()`` as JSON text (docs/schemas/runspec.schema.json; 0.4.0):
+    the circuit, shots, seed, the machine's hash and the policy spelled out, so a reader of an exported record has the
+    request in the core's vocabulary beside the app's ``JobSpec``; empty for a record written before 0.4.0."""
 
     # -- identity --
 
@@ -1622,6 +1647,9 @@ def trace_record(
         final_nbar={int(m): float(v) for m, v in tr.final.motional.nbar.items()},
         final_joint=joint,
         joint_dims=tuple(int(d) for d in joint_dims),
+        mode_marginal=None
+        if tr.mode_marginal is None
+        else {int(m): np.asarray(v, dtype=float) for m, v in tr.mode_marginal.items()},
     )
 
 
@@ -1654,6 +1682,9 @@ def gate_local_record(report: Any) -> GateLocalRecord:
             nbar_after={int(m): float(v) for m, v in s.nbar_after.items()},
             boundary_population={int(m): float(v) for m, v in s.boundary_population.items()},
             summary=None if s.summary is None else channel_summary_record(s.summary),
+            register_after=None
+            if getattr(s, "register_after", None) is None
+            else np.asarray(s.register_after, dtype=complex),
         )
         for s in report.steps
     )
@@ -1907,6 +1938,7 @@ def build_record(
             rec.schedule, device, {int(m): float(v) for m, v in rec.preparation.nbar.items()}
         ),
         joint_store_dimension_max=int(joint_store_dimension_max),
+        run_spec=json.dumps(job.run_spec(device, table).to_dict(), sort_keys=True),
     )
 
 
@@ -2013,9 +2045,15 @@ def table_with_overrides(
 
 
 def execute(
-    job: JobSpec, preset: core.DevicePreset | None = None, *, joint_store_dimension_max: int = 4096
+    job: JobSpec,
+    preset: core.DevicePreset | None = None,
+    *,
+    joint_store_dimension_max: int = 4096,
+    progress: Callable[[Any], None] | None = None,
 ) -> tuple[Record, LiveRun]:
-    """Calibrate, run and record one job; returns the record and the live handle re-simulation uses."""
+    """Calibrate, run and record one job; returns the record and the live handle re-simulation uses. ``progress`` is the
+    core's per-pulse, per-branch, per-sample and per-readout callback (a ``Progress`` each; 0.4.0), which the worker
+    streams to the UI."""
     pre = preset if preset is not None else job.device.build()
     if pre.device.hash() != job.device.hash:
         raise RecordError("the preset given does not match the job's device hash")
@@ -2024,7 +2062,9 @@ def execute(
     opts = job.solver_options()
     machine = job.machine(pre.device, table)
     t0 = time.perf_counter()
-    result = machine.run(circuit, job.shots, seed=job.seed, keep_final_state=job.keep_final_state)
+    result = machine.run(
+        circuit, job.shots, seed=job.seed, keep_final_state=job.keep_final_state, progress=progress
+    )
     wall = time.perf_counter() - t0
     record = build_record(
         job, pre.device, table, result, wall_time_s=wall, joint_store_dimension_max=joint_store_dimension_max

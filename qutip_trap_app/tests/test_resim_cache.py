@@ -61,7 +61,10 @@ def test_zoom_budget_and_dynamics_view(bell: tuple[Record, LiveRun]) -> None:
     deficit = float(dyn.norm_deficit.value)  # type: ignore[arg-type]
     assert 0.0 <= abs(deficit) < 1e-7
     assert all(abs(v.sum() - (1.0 - deficit)) < 1e-12 for v in dyn.fock_end.values())
-    assert dyn.unavailable, "the core gap on per-time Fock distributions is stated, not hidden"
+    assert z.trace.mode_marginal is not None, "the zoom stores the per-time Fock populations (0.4.0)"
+    assert not any("Fock" in u for u in dyn.unavailable), (
+        "the core gap on per-time Fock distributions is closed"
+    )
     panel = numerics_panel(record, zoom=z)
     assert panel.badge.status in ("pass", "not checked")
     assert all(float(b.value) < 1e-6 for b in panel.boundary)  # type: ignore[arg-type]

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.api import DevicePreset, yb171_chain
 from qutip_trap.control.schedule import default_gate_drives
 from qutip_trap.device.model import BeamRoles
@@ -30,8 +29,7 @@ def test_yb171_chain_is_the_m6_fixture_device() -> None:
             gate=preset.gate_drives, entangling=preset.entangling_drives, detection=preset.detection_beam
         )
         assert default_gate_drives(preset.device) == preset.gate_drives
-        with pytest.warns(QutipTrapDeprecationWarning, match=r"run_kwargs is deprecated .* Device\.roles"):
-            assert preset.run_kwargs() == {}
+        assert not hasattr(preset, "run_kwargs"), "deprecated in 0.2.0, removed in 0.4.0"
         assert preset.device.preparation is not None and preset.device.noise.is_quiet(preset.device)
 
 

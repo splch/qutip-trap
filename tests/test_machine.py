@@ -169,8 +169,14 @@ def test_mappings_are_accepted_and_the_engine_is_configured_from_the_machine(mac
 
 def test_the_later_phases_name_themselves(machine) -> None:  # type: ignore[no-untyped-def]
     _preset, m = machine
-    with pytest.raises(NotImplementedError, match=r"Phase 3\.1"):
-        m.submit(BELL, 10)
+    # 3.1 (0.4.0): submit is implemented, a Job in a worker process whose spec records the call (tests/test_job.py runs it)
+    job = m.submit(BELL, 10)
+    try:
+        assert job.status() in ("running", "done") and job.spec.shots == 10
+        assert job.spec.machine_hash == m.hash() and m.spec(BELL, 10) == job.spec
+    finally:
+        job.cancel(terminate_after_s=0.0)
+    assert job.status() == "cancelled"
     # 2.5: specs is implemented, on the device's derived quantities plus the machine's roles, table and level
     text = m.specs()
     assert text.startswith(f"device {m.device.hash()[:12]}") and "rabi_hz[(0, 2)] =" in text

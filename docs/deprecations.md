@@ -31,14 +31,30 @@ the version is 0.x the minor number counts the releases: deprecated in 0.2.0 mea
 | `quiet_noise_model()` | `NoiseModel()`, whose every default means off | the quiet model is the default model |
 
 The scheduler's own `schedule(circuit, device, table, gate_drives=, entangling_drives=)` keeps its explicit drive maps: they are
-rung 2's plumbing (the `Prefix` of Appendix E carries the resolved maps), and the roles are their default.
+rung 2's plumbing (the `Prefix` of Appendix E carries the resolved maps), and the roles are their default. `run(circuit, device, shots)` keeps taking a device: it is the 0.1.0 entry point and builds the machine itself.
 
-## Coming in 0.4.0
+## Deprecated in 0.4.0, removed in 0.6.0 at the earliest
 
-A bare `Device` as the first argument of an experiment, of `calibrate` or of a benchmark warns (wrap it: `Machine(device)` or
-`as_machine(device)`); `RunSpec` and `Job` arrive with `Machine.submit`; the first removals are the names deprecated in
-0.2.0 (`DevicePreset.run_kwargs`, the `to_ionq_*` aliases, `Result.to_ionq_v2`).
+| Name | Replacement | Why |
+|---|---|---|
+| a bare `Device` as the first argument of an experiment, of `calibrate` or of a benchmark (`machine.warn_bare_device`; `calibrate(device)` still returns the table) | `Machine(device)` or `as_machine(device)`, and `.table` on the report `calibrate` returns for a machine | the machine supplies the table and the option objects; two argument types with two return types was the 0.3.0 bridge, not the destination |
+| `qutip_trap.dynamics.choi_least_squares`, `qutip_trap.dynamics.project_cptp` (the rung's export; `qutip_trap.api` keeps them) | `qutip_trap.experimental` | the tomography internals are outside the stability guarantee until they have a second consumer (docs/api_implementation_plan.md 3.3) |
+
+## Coming in 0.5.0
+
+The names deprecated in 0.3.0 become removable: the 0.1.0 keyword arguments of `run` and of the benchmarks,
+`options.to_run_kwargs`, the drive keywords of the laboratory, `calibrate(surrogate=)`, `calibrate_with_report`,
+`compile_with_report` and `quiet_noise_model`. Each removal will move its row into the table below.
 
 ## Removed
 
-Nothing yet.
+| Name | Removed in | Deprecated in | Use instead |
+|---|---|---|---|
+| `DevicePreset.run_kwargs()` | 0.4.0 | 0.2.0 | nothing: `Device.roles` carries the drive maps, `DevicePreset.machine()` gives the `Machine` |
+| `Result.to_ionq_json()` | 0.4.0 | 0.2.0 | `Result.to_ionq_v1_probabilities()` |
+| `Result.to_ionq_histogram()` | 0.4.0 | 0.2.0 | `Result.to_ionq_v1_histogram()` |
+| `Result.to_ionq_shots()` | 0.4.0 | 0.2.0 | `Result.to_ionq_v1_shots()` |
+| `Result.to_ionq_v2(registers)` | 0.4.0 | 0.2.0 | `Result.to_ionq_v2_probabilities()`, `to_ionq_v2_histogram()`, `to_ionq_v2_shots()` (IonQ's v0.4 envelope, q[0] leftmost) |
+
+A removed name raises the plain `AttributeError`; its replacement has been in place since the release named in the third
+column.

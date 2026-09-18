@@ -7,9 +7,9 @@ and ``Readout`` (``qutip_trap.options``) and the level policy, in one frozen rec
 ``run`` (a ``Result``), ``compile`` (rung 1), ``schedule`` (rung 2: compile, calibrate and schedule without integrating,
 IonQ's dry run), ``engine`` (rung 3), ``calibrated`` (the same machine with its table pinned), ``estimate`` (the level, the
 space and a wall-time guess before anything is integrated) and ``hash`` (the identity a run record stores). ``run``
-is ``qutip_trap.run.pipeline.execute`` on the machine (the pipeline ``run`` delegates to since 0.3.0); ``error_model``,
-``specs`` and ``submit`` raise ``NotImplementedError`` naming the phase that implements them, the repository's convention
-for later milestones. Variants are ``dataclasses.replace(machine, ...)``.
+is ``qutip_trap.run.pipeline.execute`` on the machine (the pipeline ``run`` delegates to since 0.3.0); ``submit`` (0.4.0)
+is the same run in a worker process behind a ``Job``, with ``spec`` the ``RunSpec`` it records; ``error_model`` (0.3.0)
+the inverse direction. Variants are ``dataclasses.replace(machine, ...)``.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.engine import JointExactEngine
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.run.results import Progress, Result
+    from qutip_trap.run.spec import Job, RunSpec
 
 CalibrationMethod = Literal["closed_form", "experiments"]
 """``Machine.calibrated`` and ``calibration.calibrate``: the closed-form surrogate or the simulated experiments."""
@@ -143,9 +144,37 @@ class Machine:
 
         return execute(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=progress)
 
-    def submit(self, circuit: Circuit, shots: int, *, seed: int = 0) -> Any:
-        """A ``Job`` handle running in a worker process."""
-        raise NotImplementedError("Machine.submit is Phase 3.1 of docs/api_implementation_plan.md (0.4.0)")
+    def submit(
+        self,
+        circuit: Circuit,
+        shots: int,
+        *,
+        seed: int = 0,
+        keep_final_state: bool = False,
+        label: str = "",
+    ) -> Job:
+        """``run`` in a worker process behind a ``Job`` (docs/api_implementation_plan.md 3.1; 0.4.0): ``job.status()``,
+        ``job.progress`` (the latest ``Progress``), ``job.result()`` (the same ``Result`` ``run`` returns at this seed),
+        ``job.record()`` (the ``RunRecord`` behind it) and ``job.cancel()`` (stops within one pulse when the engines run
+        in-process); ``job.spec`` is the ``RunSpec`` of the call, with ``label`` the caller's name for it."""
+        from qutip_trap.run.spec import submit
+
+        return submit(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, label=label)
+
+    def spec(
+        self,
+        circuit: Circuit,
+        shots: int,
+        *,
+        seed: int = 0,
+        keep_final_state: bool = False,
+        label: str = "",
+    ) -> RunSpec:
+        """The ``RunSpec`` of ``run(circuit, shots, seed=seed, keep_final_state=keep_final_state)`` on this machine (0.4.0):
+        the frozen, JSON-serialisable record of the request and the policy, with this machine's hash."""
+        from qutip_trap.run.spec import RunSpec
+
+        return RunSpec.of(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, label=label)
 
     # ---- rung 1 and 2 -------------------------------------------------------------------------------------------------
 
@@ -311,10 +340,30 @@ class Machine:
 
 def as_machine(machine: Machine | Device) -> Machine:
     """``machine`` itself, or a ``Device`` wrapped in a default ``Machine``: the first argument of every experiment,
-    calibration and benchmark since 0.3.0 (docs/api_implementation_plan.md 2.2; a bare Device warns from 0.4.0)."""
+    calibration and benchmark since 0.3.0 (docs/api_implementation_plan.md 2.2). The laboratory's entry points warn on a
+    bare Device since 0.4.0 (``warn_bare_device``); this function is the fix they name and never warns itself."""
     from qutip_trap.device.model import Device as _Device
 
     return Machine(machine) if isinstance(machine, _Device) else machine
+
+
+BARE_DEVICE_DEADLINE = "v0.6"
+"""The first release that may refuse a bare ``Device`` where the laboratory takes a machine (deprecated in 0.4.0)."""
+
+
+def warn_bare_device(what: str, *, stacklevel: int = 2) -> None:
+    """The 0.4.0 deprecation of a bare ``Device`` as the first argument of an experiment, of ``calibrate`` or of a benchmark
+    (docs/deprecations.md): one warning attributed ``stacklevel`` frames above this function's caller, naming the fix."""
+    from qutip_trap._compat import message, warn
+
+    warn(
+        message(
+            f"a bare Device as the first argument of {what}",
+            BARE_DEVICE_DEADLINE,
+            "Wrap it: Machine(device) or as_machine(device); the machine supplies the table and the option objects.",
+        ),
+        stacklevel=stacklevel + 1,
+    )
 
 
 DRIVE_KEYWORDS: dict[str, str] = {
@@ -333,16 +382,18 @@ def laboratory_kwargs(
     (``numerics.to_solver_options(physics)``) and ``builder_options`` (``physics.builder``), each only where the call did
     not pass the keyword; a ``Device`` supplies nothing, the 0.1.0 behaviour. The drive keywords of ``DRIVE_KEYWORDS`` are
     deprecated (the device's roles name the drives): each warns, attributed ``stacklevel`` frames above ``caller``'s
-    frame, and is kept for the experiment to read."""
+    frame, and is kept for the experiment to read. A bare ``Device`` warns (0.4.0; ``warn_bare_device``) and supplies
+    nothing, the 0.1.0 behaviour."""
     from qutip_trap._compat import message, warn
     from qutip_trap.device.model import Device as _Device
 
     out = dict(kw)
+    what = getattr(caller, "__module__", "") + "." + getattr(caller, "__qualname__", str(caller))
     for key, fix in DRIVE_KEYWORDS.items():
         if key in out:
-            what = getattr(caller, "__module__", "") + "." + getattr(caller, "__qualname__", str(caller))
             warn(message(f"the {key!r} argument of {what}", "v0.5", fix), stacklevel=stacklevel + 1)
     if isinstance(machine, _Device):
+        warn_bare_device(what, stacklevel=stacklevel + 1)
         return machine, out
     if machine.table is not None:
         out.setdefault("table", machine.table)
@@ -362,6 +413,7 @@ def _class_of(space: HilbertSpace, mode: int) -> ModeClass3:
 
 
 __all__ = [
+    "BARE_DEVICE_DEADLINE",
     "COST_FIXED_S",
     "COST_PER_NONZERO_S",
     "DRIVE_KEYWORDS",
@@ -372,4 +424,5 @@ __all__ = [
     "Machine",
     "as_machine",
     "laboratory_kwargs",
+    "warn_bare_device",
 ]

@@ -53,7 +53,7 @@ from scipy.special import jv
 from qutip_trap.experiments.fitting import at_scan_edge, weighted_fit
 from qutip_trap.experiments.result import ExperimentResult, MicromotionScan, ScanParameters
 from qutip_trap.experiments.single_ion import _observation
-from qutip_trap.machine import laboratory_kwargs
+from qutip_trap.machine import as_machine, laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
@@ -428,7 +428,7 @@ def micromotion_scan(
 
     def carrier_rate(trial: Device) -> tuple[float, float]:
         ts = [float(x) for x in np.linspace(0.0, 2.0 / omega, 9)]
-        res = rabi_scan(with_role(trial), ion, ts, **{**scan_kw, "detuning_hz": 0.0})
+        res = rabi_scan(as_machine(with_role(trial)), ion, ts, **{**scan_kw, "detuning_hz": 0.0})
         return res.fitted["f_rabi_hz"]
 
     def sideband_excitation(trial: Device, index: int) -> tuple[float, float | None]:

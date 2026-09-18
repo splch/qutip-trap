@@ -762,13 +762,17 @@ def machine_with_run_kwargs(
     are attributed ``stacklevel`` frames above this function's caller: 1 names the caller's line, 2 (what ``run`` passes) the
     line that called the caller. With ``call_keywords`` (the benchmarks) ``table``, ``level`` and ``keep_final_state``
     are accepted in ``kwargs`` as well (``LEGACY_CALL_KEYWORDS``): the first two move onto the machine, the third is
-    dropped, each with its warning."""
+    dropped, each with its warning; a bare ``Device`` base warns there too (the laboratory's 0.4.0 rule,
+    ``machine.warn_bare_device``), while ``run`` itself takes a device by design and never warns for it."""
     from qutip_trap._compat import message, warn
     from qutip_trap.device.model import Device as _Device
     from qutip_trap.machine import Machine as _Machine
+    from qutip_trap.machine import warn_bare_device
 
     kwargs = dict(kwargs)
     machine = _Machine(base) if isinstance(base, _Device) else base
+    if call_keywords and isinstance(base, _Device):
+        warn_bare_device(caller, stacklevel=stacklevel + 1)
     if call_keywords:
         for key, fix in LEGACY_CALL_KEYWORDS.items():
             if key in kwargs:

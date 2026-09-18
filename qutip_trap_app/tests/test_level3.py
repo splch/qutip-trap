@@ -105,23 +105,29 @@ def test_hamiltonian_record_lists_what_the_engine_integrates(bell: tuple[Record,
     assert back.digest() == record.digest(), "the record round-trips with the Hamiltonian record inside"
 
 
-def test_fock_movie_frames_are_the_pulse_states_by_causality(bell: tuple[Record, LiveRun]) -> None:
+def test_fock_movie_frames_are_read_off_the_zooms_stored_marginals(bell: tuple[Record, LiveRun]) -> None:
+    """Since 0.4.0 the zoom's fine trace stores the Fock populations at every point (``Traces.mode_marginal``), so the movie
+    is rows of it: one engine call for the zoom when it is not cached yet, none after, and no truncated re-simulation."""
     record, live = bell
     step = _ms_step(record)
     record, movie = resim.fock_movie(record, live, step, n_frames=2)
-    assert movie.times_s.size == 3 and movie.engine_calls == 2
-    record, z, _stats = resim.zoom(record, live, step)
+    assert movie.times_s.size == 3 and movie.engine_calls <= 1 and "mode_marginal" in movie.method
+    record, z, stats = resim.zoom(record, live, step)
+    assert stats.cached, "the movie computed the zoom"
+    assert z.trace.mode_marginal is not None and set(z.trace.mode_marginal) == set(movie.distributions)
     resolved = [t.mode for t in record.space.resolved]
     for m, dist in movie.distributions.items():
         assert dist.shape == (3, record.space.dims[2 + resolved.index(m)])
         assert np.allclose(dist.sum(axis=1), 1.0, atol=1e-6)
         assert np.max(np.abs(dist[0] - z.fock_start[m])) < 1e-12, "frame 0 is the recorded boundary state"
-        assert np.max(np.abs(dist[-1] - z.fock_end[m])) < 1e-7, (
-            "the last frame is the full pulse's end (causality)"
-        )
+        assert np.max(np.abs(dist[-1] - z.fock_end[m])) < 1e-9, "the last frame is the pulse's end"
         k = int(np.argmin(np.abs(z.trace.times_s - movie.times_s[1])))
-        assert abs(movie.nbar[m][1] - z.trace.mode_nbar[m][k]) < 1e-3, (
-            "the mid frame's <n> sits on the fine trace"
+        assert abs(movie.nbar[m][1] - z.trace.mode_nbar[m][k]) < 1e-12, (
+            "the mid frame's <n> IS the fine trace's"
+        )
+        assert np.max(np.abs(dist[1] - z.trace.mode_marginal[m][k])) < 1e-15
+        assert abs(float(dist[1] @ np.arange(dist.shape[1])) - movie.nbar[m][1]) < 1e-8, (
+            "the marginal's mean is <n>"
         )
     heat = fock_heatmaps(movie)
     assert len(heat) == 2 and all(h.values.shape[0] == 3 for h in heat)

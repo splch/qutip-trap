@@ -210,7 +210,7 @@ class ExperimentResult:
         """The measured column against the scanned column with its error bars, on ``ax`` (a new figure when None); needs
         matplotlib (``uv sync --extra plot``). Returns the axes."""
         try:
-            import matplotlib.pyplot as plt  # type: ignore[import-not-found]  # the optional 'plot' extra
+            import matplotlib.pyplot as plt  # the optional 'plot' extra
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise ImportError("ExperimentResult.plot needs matplotlib: install the 'plot' extra") from exc
         if ax is None:

@@ -165,11 +165,12 @@ def calibrate(
 
     A bare ``Device`` is the 0.1.0 shape and keeps its 0.1.0 result, the ``CalibrationTable`` (its ``surrogate=True/False``
     keyword is deprecated in favour of ``method``; the drive keywords in ``scans`` are deprecated in favour of the device's
-    roles); it warns from 0.4.0. ``calibrate_with_report`` is the deprecated name of the report on a device.
+    roles); it warns since 0.4.0 (``machine.warn_bare_device``: wrap it, ``Machine(device)``, and read ``.table`` off the
+    report). ``calibrate_with_report`` is the deprecated name of the report on a device.
     """
     from qutip_trap._compat import message, warn
     from qutip_trap.device.model import Device as _Device
-    from qutip_trap.machine import DRIVE_KEYWORDS
+    from qutip_trap.machine import DRIVE_KEYWORDS, warn_bare_device
 
     unknown = [e for e in experiments if e != "all" and e not in EXPERIMENTS]
     if unknown:
@@ -194,6 +195,7 @@ def calibrate(
             )
     closed_form = method == "closed_form"
     if isinstance(machine, _Device):
+        warn_bare_device("qutip_trap.calibration.calibrate", stacklevel=2)
         report = _report(
             machine,
             seed=seed,

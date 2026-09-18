@@ -7,6 +7,7 @@ and ``calibrate(device)`` the table; ``calibrate_with_report`` and ``compile_wit
 from __future__ import annotations
 
 import dataclasses
+import re
 import warnings
 from typing import Any
 
@@ -101,10 +102,15 @@ def test_an_experiment_on_the_machine_equals_the_device_with_the_drive_keyword(
     name: str, fx: CircuitFixture
 ) -> None:
     on_machine = EXPERIMENTS[name](Machine(fx.device))
-    with pytest.warns(
-        QutipTrapDeprecationWarning, match=f"'gate_drive' argument of qutip_trap.experiments.*{name}"
-    ):
+    # the 0.1.0 shape warns twice since 0.4.0: for the drive keyword (0.3.0) and for the bare Device (0.4.0)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         on_device = EXPERIMENTS[name](fx.device, gate_drive=fx.gate_drives[0])
+    messages = [str(w.message) for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)]
+    assert any(re.search(f"'gate_drive' argument of qutip_trap.experiments.*{name}", m) for m in messages), (
+        messages
+    )
+    assert any("bare Device" in m for m in messages), messages
     same_result(on_machine, on_device)
     assert isinstance(on_machine, KINDS[name]) and RESULT_TYPES[name] is KINDS[name]
     # every typed attribute equals value(key) where the fit produced the key
@@ -135,7 +141,8 @@ def test_the_machine_supplies_table_options_and_builder_as_defaults(machine: Mac
         machine, {"table": None, "options": SolverOptions(atol=1e-12)}, caller=rabi_scan
     )
     assert given["table"] is None and given["options"].atol == 1e-12  # the call's own keywords win
-    bare, kw2 = laboratory_kwargs(machine.device, {}, caller=rabi_scan)
+    with pytest.warns(QutipTrapDeprecationWarning, match="bare Device as the first argument"):
+        bare, kw2 = laboratory_kwargs(machine.device, {}, caller=rabi_scan)
     assert bare is machine.device and kw2 == {}
     assert as_machine(machine) is machine and as_machine(machine.device) == Machine(machine.device)
     with pytest.warns(QutipTrapDeprecationWarning, match="'gate_drives' argument"):
@@ -216,14 +223,24 @@ def test_calibrate_returns_the_report_on_a_machine_and_the_table_on_a_device(
     assert report.results == {} and report.refused == {} and report.surrogate.table == report.table
     assert report.sample.sample_id == 0
     assert all(v == 0.0 for v in report.surrogate_error().values())  # the surrogate against itself
-    table = calibrate(fx.device, **scans)
-    assert isinstance(table, CalibrationTable) and table == machine.table
+    # a bare Device keeps its 0.1.0 result, the table, and warns since 0.4.0 (docs/deprecations.md)
     with pytest.warns(
-        QutipTrapDeprecationWarning, match="'surrogate' argument of qutip_trap.calibration.calibrate"
+        QutipTrapDeprecationWarning, match="bare Device as the first argument of qutip_trap.calibration"
     ):
+        table = calibrate(fx.device, **scans)
+    assert isinstance(table, CalibrationTable) and table == machine.table
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         assert calibrate(fx.device, surrogate=True, **scans) == table
-    with pytest.warns(QutipTrapDeprecationWarning, match="calibrate_with_report is deprecated"):
+    messages = [str(w.message) for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)]
+    assert any("'surrogate' argument of qutip_trap.calibration.calibrate" in m for m in messages), messages
+    assert any("bare Device" in m for m in messages), messages
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         legacy = calibrate_with_report(fx.device, **scans)
+    assert any("calibrate_with_report is deprecated" in str(w.message) for w in caught), [
+        str(w.message) for w in caught
+    ]
     assert legacy.table == table
     with pytest.raises(ValueError, match="closed_form"):
         calibrate(machine, method="guess")  # type: ignore[arg-type]
@@ -250,7 +267,7 @@ def test_benchmarks_take_a_machine_and_rewrite_the_run_kwargs(fx: CircuitFixture
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         legacy = gate_channel(
-            fx.device, kind, table=machine.table, options=SolverOptions(branch_weight_min=1e-3)
+            as_machine(fx.device), kind, table=machine.table, options=SolverOptions(branch_weight_min=1e-3)
         )
     texts = [str(w.message) for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)]
     assert len(texts) == 2 and all("qutip_trap.benchmarks.budget.gate_channel" in t for t in texts)
@@ -259,7 +276,7 @@ def test_benchmarks_take_a_machine_and_rewrite_the_run_kwargs(fx: CircuitFixture
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         old = randomized_benchmarking(
-            fx.device,
+            as_machine(fx.device),
             (0,),
             (1, 2),
             n_sequences=1,

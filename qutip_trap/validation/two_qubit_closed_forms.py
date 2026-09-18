@@ -186,6 +186,8 @@ def sideband_coupling_squared_difference(eta: float, n: int) -> float:
 
 
 ThermalReference = Literal["mean", "n0", "minus_half"]
+"""Which occupation the thermal Debye-Waller infidelity is referred to: the mean nbar, the ground state, or nbar - 1/2
+(the three conventions of the two-qubit gate literature, Section 9.4)."""
 
 
 def thermal_debye_waller_infidelity(eta: float, nbar: float, reference: ThermalReference) -> float:

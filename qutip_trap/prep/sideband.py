@@ -140,6 +140,7 @@ def apply_pulses(
 
 
 def mean_occupation(p: np.ndarray) -> float:
+    """sum_n n p_n of a Fock distribution ``p`` (the nbar after a pulsed sideband-cooling schedule, Section 4.2.2)."""
     return float(np.dot(np.arange(p.size), p))
 
 

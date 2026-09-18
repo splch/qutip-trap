@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from qutip_trap._compat import deprecated, deprecated_alias
-
 if TYPE_CHECKING:
     from qutip import Qobj
 
@@ -487,16 +485,6 @@ class Result:
         qubits, qubit 0 the least-significant bit); ``from_ionq_v1_shots`` reads it back."""
         return [decimal_key(row) for row in np.asarray(self.bitstrings)]
 
-    to_ionq_json = deprecated_alias(
-        to_ionq_v1_probabilities, deadline="v0.4", fix="Call Result.to_ionq_v1_probabilities() instead."
-    )
-    to_ionq_histogram = deprecated_alias(
-        to_ionq_v1_histogram, deadline="v0.4", fix="Call Result.to_ionq_v1_histogram() instead."
-    )
-    to_ionq_shots = deprecated_alias(
-        to_ionq_v1_shots, deadline="v0.4", fix="Call Result.to_ionq_v1_shots() instead."
-    )
-
     @classmethod
     def from_ionq_v1_shots(
         cls, shots: Sequence[str | int], n_qubits: int, *, source: str = "IonQ v1 shots"
@@ -736,36 +724,6 @@ class Result:
         return (
             out[:n] if out.shape[0] >= n else np.concatenate([out, np.full(n - out.shape[0], -1, np.int64)])
         )
-
-    @deprecated(
-        deadline="v0.4",
-        fix="Call Result.to_ionq_v2_probabilities(), which emits IonQ's v0.4 envelope with the strings in wire order (q[0] "
-        "the leftmost character); this method's strings put qubit 0 rightmost and it carries no envelope.",
-    )
-    def to_ionq_v2(self, registers: Mapping[str, Sequence[int]] | None = None) -> dict[str, dict[str, float]]:
-        """The 0.1.0 register-nested export, ``{register name: {bitstring: probability}}`` with this package's own bit order
-        inside each register (qubit 0 of the register rightmost): kept unchanged for one release and deprecated, because
-        IonQ's v2 strings run the other way and sit inside an envelope (``to_ionq_v2_probabilities``).
-
-        ``registers`` names the classical registers and the qubits each covers, in the register's own bit order (qubit 0 of
-        the register least significant, the Section 13 convention). With no registers given the whole measured set is one
-        register named ``"c"``, the default name qelib1.inc-style exports use, so the format is always available. The
-        OpenQASM 2 importer does not yet carry its ``creg`` names into the ``Circuit`` (it flattens them in declaration
-        order), so a caller who imported a multi-register program supplies the map itself."""
-        bits = np.asarray(self.bitstrings)
-        regs = dict(registers) if registers else {"c": tuple(range(self.n_qubits))}
-        out: dict[str, dict[str, float]] = {}
-        for name, qubits in regs.items():
-            idx = [int(q) for q in qubits]
-            if any(q < 0 or q >= self.n_qubits for q in idx):
-                raise ValueError(f"register {name!r} names qubits outside the result's {self.n_qubits}")
-            counts: dict[str, int] = {}
-            for row in bits[:, idx] if idx else np.zeros((bits.shape[0], 0), dtype=bits.dtype):
-                key = bitstring_key(row)
-                counts[key] = counts.get(key, 0) + 1
-            total = float(sum(counts.values())) or 1.0
-            out[name] = {k: c / total for k, c in sorted(counts.items())}
-        return out
 
 
 __all__ = [

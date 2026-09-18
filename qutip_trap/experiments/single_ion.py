@@ -51,7 +51,7 @@ from qutip_trap.experiments.result import (
     realized_drive,
     requested_drive,
 )
-from qutip_trap.machine import laboratory_kwargs
+from qutip_trap.machine import as_machine, laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Drive
@@ -542,8 +542,8 @@ def ramsey_frequency(
     device, kw = laboratory_kwargs(machine, kw, caller=ramsey_frequency)
     probe = abs(float(kw.get("probe_hz", 1e3)))
     frame_hz = float(kw.get("frame_hz", 0.0))
-    plus = ramsey(device, ion, delays_s, **{**kw, "detuning_hz": +probe})
-    minus = ramsey(device, ion, delays_s, **{**kw, "detuning_hz": -probe})
+    plus = ramsey(as_machine(device), ion, delays_s, **{**kw, "detuning_hz": +probe})
+    minus = ramsey(as_machine(device), ion, delays_s, **{**kw, "detuning_hz": -probe})
     fp = abs(plus.fitted["delta_hz"][0]) if plus.fitted else math.nan
     fm = abs(minus.fitted["delta_hz"][0]) if minus.fitted else math.nan
     # a fringe at |probe - x| for the + scan and |probe + x| for the - scan pins the true offset x of the transition from the frame

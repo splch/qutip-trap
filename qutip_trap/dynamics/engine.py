@@ -263,6 +263,12 @@ class SolverOptions:
     period of the highest mode) was measured in. A segment the frame does not cover (a non-diagonal static part such as an
     anharmonic term, a function-element term, a collapse operator that is not an eigenoperator of H_0 such as a recoil kick or
     the intensity-noise channel) integrates in the Schroedinger picture and says so in ``SegmentReport.frame``."""
+    store_marginals: bool = False
+    """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal`` (0.4.0;
+    docs/api_implementation_plan.md 3.2; ``Numerics.integration.store_marginals``). Off by default: a (T, d_m) array per
+    mode is extra work and memory on the hot path, and ``Traces.mode_occupations`` (its mean) is what a run reads. The
+    populations are taken from the same stored states as ``reduced_internal``, weighted over the branches or trajectories
+    exactly as the expectation values are, so ``sum_n n P(n, t) == mode_occupations[m][t]`` to the solver tolerance."""
 
     def __post_init__(self) -> None:
         if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
@@ -315,6 +321,15 @@ class Traces:
     """(time, "traj{k}:{channel}") of every quantum jump of the trajectory path (M7); empty on the density-matrix paths."""
     final: State
     boundary_population: dict[int, float]
+    mode_marginal: dict[int, np.ndarray] | None = None
+    """Per carried mode, the (T, d_m) Fock populations P(n, t) at every stored time (row t aligns with ``times_s``), the
+    same branch and trajectory weighting as ``expectations``; None unless ``SolverOptions.store_marginals`` (0.4.0;
+    docs/api_implementation_plan.md 3.2). Its mean ``sum_n n P(n, t)`` equals ``mode_occupations[m]`` to the solver
+    tolerance (``tests/test_traces_marginals.py``)."""
+    wall_time_s: dict[str, float] = field(default_factory=dict)
+    """Wall seconds spent integrating, per pulse by its gate id (0.4.0): a segment's time is split equally among the pulses
+    active in it, an idle segment's goes under ``"idle"``, so the values sum to the run's integration time (the exact
+    per-segment numbers are ``SegmentReport.wall_time_s`` on the engine's ``last_report``)."""
 
 
 @dataclass(frozen=True)
@@ -400,6 +415,8 @@ class SegmentReport:
     ``SolverOptions.rotating_frame``) or ``schrodinger`` (the closed forms, the propagator path, every ``mesolve`` segment, and
     the ket segments the frame does not cover). ``rhs_evaluations`` and ``steps_per_period`` count the evaluations of the picture
     named here, so the Section 5.3 band applies to ``schrodinger`` rows only."""
+    wall_time_s: float = 0.0
+    """Wall seconds the segment took to build and integrate (0.4.0; docs/api_implementation_plan.md 3.2)."""
 
 
 @dataclass(frozen=True)
@@ -996,6 +1013,11 @@ class JointExactEngine:
         times_all: list[np.ndarray] = []
         expect_all: dict[str, list[np.ndarray]] = {k: [] for k in e_keys}
         reduced: list[qt.Qobj] = []
+        # the per-time Fock populations of every carried mode (Traces.mode_marginal; 0.4.0) and the wall time per pulse
+        marginals: dict[int, list[np.ndarray]] | None = (
+            {m: [] for m in carried} if options.store_marginals else None
+        )
+        wall_by_pulse: dict[str, float] = {}
         segments: list[SegmentReport] = []
         records: list[object] = []
         jumps: list[tuple[float, str]] = []
@@ -1049,6 +1071,8 @@ class JointExactEngine:
         for seg_index, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
             if b <= a:
                 continue
+            seg_started = time.perf_counter()
+            seg_marg: dict[int, np.ndarray] | None = None
             active = [p for p in sched.pulses if p.t_start_s <= a + 1e-15 and p.t_end_s >= b - 1e-15]
             dissipative_seg = bool(static_ops) or (bool(active) and pulse_channels_possible)
             mesolve_seg = kets is None or (dissipative_seg and lindblad_resolved == "mesolve")
@@ -1127,6 +1151,9 @@ class JointExactEngine:
                 for k in e_keys:
                     expect_all[k].append(closed.expect[k][sel])
                 reduced.extend(closed.reduced[sel])
+                if marginals is not None:
+                    assert closed.marginals is not None
+                    seg_marg = {m: closed.marginals[m][sel] for m in carried}
                 seg_method = closed.method
                 integrator = closed.integrator
                 atol_used = closed.atol
@@ -1155,6 +1182,10 @@ class JointExactEngine:
                         red_p.append(
                             w_k * np.array([space.internal_marginal(st).full() for st in states_k[sel]])
                         )
+                        if marginals is not None:
+                            seg_marg = _weighted_marginals(
+                                seg_marg, w_k, _marginals_of(space, states_k[sel], carried)
+                            )
                     kets = kets_p
                     for k in e_keys:
                         expect_all[k].append(exp_p[k][sel])
@@ -1200,6 +1231,10 @@ class JointExactEngine:
                         red_acc.append(
                             w_k * np.array([space.internal_marginal(st).full() for st in states_back[sel]])
                         )
+                        if marginals is not None:
+                            seg_marg = _weighted_marginals(
+                                seg_marg, w_k, _marginals_of(space, states_back[sel], carried)
+                            )
                         integrator, atol_used, rhs_evals, retries_seg = (
                             ev.integrator,
                             ev.atol,
@@ -1233,6 +1268,8 @@ class JointExactEngine:
                     assert ev.states is not None
                     for st in ev.states[sel]:
                         reduced.append(space.internal_marginal(st))
+                    if marginals is not None:
+                        seg_marg = _marginals_of(space, list(ev.states[sel]), carried)
                     integrator, atol_used, rhs_evals, retries_seg = (
                         ev.integrator,
                         ev.atol,
@@ -1268,6 +1305,8 @@ class JointExactEngine:
                     assert ev.states is not None
                     for st in ev.states[sel]:
                         reduced.append(space.internal_marginal(st))
+                    if marginals is not None:
+                        seg_marg = _marginals_of(space, list(ev.states[sel]), carried)
                     integrator, atol_used, rhs_evals, retries_seg = (
                         ev.integrator,
                         ev.atol,
@@ -1418,6 +1457,10 @@ class JointExactEngine:
                         red_acc.append(
                             w_m * np.array([space.internal_marginal(st).full() for st in states_m[sel]])
                         )
+                        if marginals is not None:
+                            seg_marg = _weighted_marginals(
+                                seg_marg, w_m, _marginals_of(space, states_m[sel], carried)
+                            )
                         if j_m is not None:
                             for t_c, which in zip(res.col_times[j_m], res.col_which[j_m]):
                                 jumps.append((float(t_c), f"traj{k_traj}:{seg_ops[int(which)].channel}"))
@@ -1436,7 +1479,15 @@ class JointExactEngine:
             if seg_method == "mesolve":
                 method_used = "mesolve" if method_used != "mcsolve" else method_used
             times_all.append(times[sel])
+            if marginals is not None:
+                assert seg_marg is not None or not carried
+                for m in carried:
+                    assert seg_marg is not None
+                    marginals[m].append(seg_marg[m])
             first = False
+            seg_wall = time.perf_counter() - seg_started
+            for key_w in [p.gate_id or "pulse" for p in active] or ["idle"]:
+                wall_by_pulse[key_w] = wall_by_pulse.get(key_w, 0.0) + seg_wall / max(1, len(active))
             # ---- boundary populations and the report ---------------------------------------------------------
             if kets is not None:
                 bpop: dict[int, float] = {}
@@ -1467,6 +1518,7 @@ class JointExactEngine:
                     channels=kinds,
                     kernel=built.kernel,
                     frame="rotating" if rot is not None else "schrodinger",
+                    wall_time_s=seg_wall,
                 )
             )
             if active and self.progress is not None:
@@ -1591,6 +1643,13 @@ class JointExactEngine:
             jumps=tuple(sorted(jumps)),
             final=final,
             boundary_population=worst_boundary,
+            mode_marginal=None
+            if marginals is None
+            else {
+                m: np.concatenate(v) if v else np.zeros((times_arr.size, 0), dtype=float)
+                for m, v in marginals.items()
+            },
+            wall_time_s=wall_by_pulse,
         )
 
 
@@ -1687,6 +1746,8 @@ class _ClosedForm:
     integrator: str
     atol: float
     retries: tuple[str, ...]
+    marginals: dict[int, np.ndarray] | None = None
+    """Per carried mode the (T, d_m) Fock populations over the segment's stored times, when the options ask for them."""
 
 
 def _expectation_back(
@@ -1752,6 +1813,27 @@ def _eigen_frequency(op: qt.Qobj, energies: np.ndarray) -> float | None:
     return float(lam[0])
 
 
+def _carried_modes(space: HilbertSpace) -> list[int]:
+    """The modes a run carries as tensor factors: the resolved ones and the ENR group's members (``Traces.mode_occupations``)."""
+    return [m.mode for m in space.resolved] + (list(space.enr_group[0]) if space.enr_group else [])
+
+
+def _marginals_of(
+    space: HilbertSpace, states: Sequence[qt.Qobj], modes: Sequence[int]
+) -> dict[int, np.ndarray]:
+    """Per mode the (T, d_m) Fock populations of the stored ``states`` (``Traces.mode_marginal``; 0.4.0)."""
+    return {m: np.array([space.fock_populations(st, m) for st in states], dtype=float) for m in modes}
+
+
+def _weighted_marginals(
+    acc: dict[int, np.ndarray] | None, weight: float, part: dict[int, np.ndarray]
+) -> dict[int, np.ndarray]:
+    """``acc + weight * part`` per mode (``acc`` None starts the sum): the branch and trajectory weighting of the traces."""
+    if acc is None:
+        return {m: weight * v for m, v in part.items()}
+    return {m: acc[m] + weight * v for m, v in part.items()}
+
+
 def _closed_form_segment(
     h: qt.Qobj,
     c_ops: list[qt.Qobj],
@@ -1780,6 +1862,7 @@ def _closed_form_segment(
     energies = _diagonal_energies(h)
     taus = np.asarray(times, dtype=float) - float(times[0])
     dims_int = [list(space.ion_dims), list(space.ion_dims)]
+    carried = _carried_modes(space) if options.store_marginals else None
     if not c_ops:
         if energies is not None:
             phases = np.exp(-1j * np.outer(taus, energies))
@@ -1819,6 +1902,7 @@ def _closed_form_segment(
             expect = {k: np.zeros(times.size, dtype=complex) for k in e_keys}
             red_acc: np.ndarray | None = None
             new_kets: list[qt.Qobj] = []
+            fock_acc: dict[int, np.ndarray] | None = None
             for psi, w_k in zip(kets, weights):
                 states = propagate_ket(psi)
                 new_kets.append(states[-1])
@@ -1826,9 +1910,13 @@ def _closed_form_segment(
                     expect[k] += w_k * np.array([qt.expect(op, s) for s in states], dtype=complex)
                 marg = w_k * np.array([space.internal_marginal(s).full() for s in states])
                 red_acc = marg if red_acc is None else red_acc + marg
+                if carried is not None:
+                    fock_acc = _weighted_marginals(fock_acc, w_k, _marginals_of(space, states, carried))
             assert red_acc is not None
             reduced = [qt.Qobj(arr, dims=dims_int) for arr in red_acc]
-            return _ClosedForm(new_kets, None, expect, reduced, "sesolve", "exact", options.atol, ())
+            return _ClosedForm(
+                new_kets, None, expect, reduced, "sesolve", "exact", options.atol, (), marginals=fock_acc
+            )
         assert rho is not None
         states = propagate_dm(rho)
         expect = {
@@ -1843,6 +1931,7 @@ def _closed_form_segment(
             "exact",
             options.atol,
             (),
+            marginals=None if carried is None else _marginals_of(space, states, carried),
         )
     # dissipative segment: the master equation in the frame rotating with the diagonal H (mesolve path only)
     if energies is None or lindblad != "mesolve":
@@ -1884,6 +1973,7 @@ def _closed_form_segment(
         f"{ev.integrator}[rotating frame]",
         ev.atol,
         ev.retries,
+        marginals=None if carried is None else _marginals_of(space, states, carried),
     )
 
 

@@ -63,7 +63,8 @@ FIELD_GAUSS = 5.0
 class DevicePreset:
     """An example device with the drive maps its scheduler needs (Section 7.3) and the index of its detection beam. Since
     0.2.0 the ``device`` carries the same three maps as ``Device.roles`` (docs/api_implementation_plan.md 1.1), so ``run``,
-    ``calibrate`` and the benchmarks need no drive keyword; the fields here restate them for the record and the app."""
+    ``calibrate`` and the benchmarks need no drive keyword; the fields here restate them for the record and the app.
+    ``run_kwargs()``, deprecated in 0.2.0, was removed in 0.4.0 (docs/deprecations.md)."""
 
     name: str
     device: Device
@@ -84,16 +85,6 @@ class DevicePreset:
         from qutip_trap.machine import Machine
 
         return Machine(self.device, name=self.name)
-
-    @deprecated(
-        deadline="v0.4",
-        fix="Pass nothing: the preset's device carries its drive maps as Device.roles, and DevicePreset.machine() gives "
-        "the Machine (0.2.0).",
-    )
-    def run_kwargs(self) -> dict[str, object]:
-        """Empty since 0.2.0: ``run``, ``calibrate`` and the benchmarks read the drive maps from ``Device.roles``, which the
-        preset's device carries. Kept for one release so that ``**preset.run_kwargs()`` still runs; it warns."""
-        return {}
 
 
 @deprecated(deadline="v0.5", fix="Call NoiseModel() instead; every default of the model means off.")
