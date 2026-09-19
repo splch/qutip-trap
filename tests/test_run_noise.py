@@ -130,7 +130,9 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
     assert all(t.final.joint is not None for t in rec.traces)
 
 
+# eight serial trajectories at dimension 1287: four minutes here, past thirty on the loaded 4-vCPU runner, so an hour of its own
 @pytest.mark.slow
+@pytest.mark.timeout(3600)
 def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
     # internal_levels = 3 turns the scattering channels on automatically (Section 4.5.5; conv.scattering_channels_at_d_gt_2):

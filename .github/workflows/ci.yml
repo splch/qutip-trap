@@ -42,7 +42,7 @@ jobs:
   core:
     name: lint, type-check, tests
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       # one BLAS thread per process: pytest-xdist already runs a process per CPU, and threaded BLAS on the suite's small dense
       # matrices oversubscribes the runner (the dense-linear-algebra tests ran 8x slower under contention)
@@ -80,8 +80,37 @@ jobs:
       # sat 95 minutes on its last 29 tests with the 30-minute signal timeout never firing. xdist reports the ended worker's
       # test as a crash and starts a replacement. tests/conftest.py caps the engine's default worker count at one under
       # xdist, so no test forks a pool inside a worker.
+      # a test that outlives both in-process watchdogs (the run of c69e010: the second full-calibration test, five seconds
+      # here, ran past 35 minutes on the runner with neither the thread timeout nor the C-level watchdog ending its worker,
+      # which only a process that is not being scheduled can do) is dumped from OUTSIDE at the 90-minute mark: py-spy reads
+      # every test process's Python and native stacks through ptrace, whatever state the process is in
       - name: pytest (everything but the convergence and heavy tests, which the next two steps run)
-        run: uv run pytest -m "not convergence and not heavy" -n 4 --dist loadscope --timeout 1800 --timeout-method thread --max-worker-restart 8 -vv -rfEs --durations=30
+        run: |
+          uv run pytest -m "not convergence and not heavy" -n 4 --dist loadscope --timeout 1800 --timeout-method thread --max-worker-restart 8 -vv -rfEs --durations=30 &
+          PYTEST_PID=$!
+          (
+            # memory telemetry every ten minutes: a worker that neither in-process watchdog could end (the run of c69e010) is
+            # a process that is not being scheduled, and on a 16 GB runner four multi-gigabyte workers in swap would do that
+            for m in 10 20 30 40 50 60 70 80; do
+              sleep 600
+              echo "== ${m} min: $(free -m | awk '/Mem:/ {printf "mem used %s MB, available %s MB", $3, $7} /Swap:/ {printf ", swap used %s MB", $3}')"
+              ps -eo pid,rss,etimes,args --sort=-rss | head -7 | cut -c1-150
+            done
+          ) &
+          MEM_PID=$!
+          (
+            sleep 5400
+            echo "== 90 minutes: py-spy dump of every test process (python processes of this job)"
+            for pid in $(pgrep -f 'python' | grep -v "^$$\$"); do
+              echo "---- pid $pid: $(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null | cut -c1-160)"
+              sudo -n uvx py-spy dump --native --pid "$pid" 2>&1 | head -80 || true
+            done
+          ) &
+          SPY_PID=$!
+          wait $PYTEST_PID
+          STATUS=$?
+          kill $SPY_PID $MEM_PID 2>/dev/null || true
+          exit $STATUS
       # the memory-heavy tests alone: the direct factorization of test_level_c's d = 70 Liouvillian peaks at 7 GB, which beside
       # three other workers exhausts the 16 GB runner and stalls the run in swap (the runs of 1371cf0 and 75e835d)
       - name: pytest (the heavy tests, one at a time)

@@ -55,7 +55,7 @@ filterwarnings = ["error::qutip_trap._compat.QutipTrapDeprecationWarning"]
 markers = [
     "convergence: tests whose pass/fail feeds the convergence-report artifact (Section 5.5)",
     "slow: level-C solves that take more than a few seconds (run in CI, deselect locally with -m 'not slow')",
-    "heavy: peak resident memory of several gigabytes (the direct sparse factorization of a large Liouvillian); CI runs these alone after the parallel pass, because four xdist workers plus one such test exhaust a 16 GB runner and the run stalls in swap",
+    "heavy: must run alone in CI, after the parallel pass: peak resident memory of several gigabytes (the direct sparse factorization of a large Liouvillian, which beside three other workers exhausts a 16 GB runner and stalls the run in swap), or a wall-time measurement that four competing workers would falsify",
 ]
 
 [tool.ruff]

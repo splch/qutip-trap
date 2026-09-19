@@ -457,6 +457,7 @@ def _bench_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
 
 
 @pytest.mark.slow
+@pytest.mark.heavy  # wall times within a factor of four of the reference machine: measured alone, never beside three other workers
 def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_time() -> None:
     """The acceptance test of Section 11.3 item 4, against the table's own numbers (M9b audit E10).
 
