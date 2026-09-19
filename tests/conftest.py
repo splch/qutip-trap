@@ -17,11 +17,8 @@ replacement worker, and the dump names the line the test was on. xdist does not 
 
 from __future__ import annotations
 
-import ctypes
 import faulthandler
-import gc
 import os
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -31,21 +28,6 @@ if "PYTEST_XDIST_WORKER" in os.environ:
     os.environ.setdefault("QUTIP_TRAP_MAX_WORKERS", "1")
 
 _WATCHDOG_ENV = "QUTIP_TRAP_TEST_WATCHDOG_S"
-
-
-@pytest.fixture(autouse=True, scope="module")
-def _return_freed_memory_after_each_module() -> Iterator[None]:
-    """A worker's resident size grows by about a gigabyte every ten minutes on the Linux runner (measured on the run of c89fb4e:
-    2.3 GB per worker at thirty minutes, 7.6 of 16 GB used) although each module's fixtures are released at its end, because
-    glibc keeps the freed arenas. Collecting and asking glibc to return them (``malloc_trim``) after every module keeps four
-    workers inside the runner's memory; macOS has no malloc_trim and needs none of this."""
-    yield
-    gc.collect()
-    if sys.platform.startswith("linux"):
-        try:
-            ctypes.CDLL("libc.so.6").malloc_trim(0)
-        except (OSError, AttributeError):
-            pass
 
 
 @pytest.fixture(autouse=True)

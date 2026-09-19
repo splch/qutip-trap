@@ -52,9 +52,6 @@ jobs:
       # tests/conftest.py: a C-level per-test watchdog that ends a worker stuck inside one long C call, which neither
       # pytest-timeout method can interrupt (the runs of 1371cf0 and 80b89ed sat for hours on such tests), with a stack dump
       QUTIP_TRAP_TEST_WATCHDOG_S: "1800"
-      # glibc: two malloc arenas per process instead of eight per core; a worker's resident size grew a gigabyte every ten
-      # minutes on the run of c89fb4e (tests/conftest.py also trims after every module)
-      MALLOC_ARENA_MAX: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
