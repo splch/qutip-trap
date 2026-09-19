@@ -77,6 +77,7 @@ blanket 4 sigma."""
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(3600)
 def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncertainty(calibrated) -> None:  # type: ignore[no-untyped-def]
     """Section 7.5: 'calibrated parameters agree with the device's true derived parameters within the uncertainty the fits report'."""
     fx, report = calibrated

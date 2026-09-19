@@ -139,7 +139,10 @@ def test_sideband_calibrated_eta_carries_c0_and_a_carrier_derived_one_does_not()
     )
 
 
+# twelve long density-matrix integrations twice over (the exact scan and its Monte Carlo twin): past the suite's 30-minute
+# per-test timeout on the 4-vCPU runner beside three other workers (the run of 80b89ed ended its worker there), so an hour
 @pytest.mark.slow
+@pytest.mark.timeout(3600)
 def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # type: ignore[no-untyped-def]
     """Section 4.1.5's procedure through the engine's own heating channels: nbar against the delay is linear at Gamma_h and the fit
     recovers the rate and the prepared occupation within their uncertainties (Section 9.1, 'Heating dynamics'). Marked slow: the

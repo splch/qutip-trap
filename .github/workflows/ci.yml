@@ -49,6 +49,9 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
+      # tests/conftest.py: a C-level per-test watchdog that ends a worker stuck inside one long C call, which neither
+      # pytest-timeout method can interrupt (the runs of 1371cf0 and 80b89ed sat for hours on such tests), with a stack dump
+      QUTIP_TRAP_TEST_WATCHDOG_S: "1800"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -84,6 +87,14 @@ jobs:
       - name: pytest (the heavy tests, one at a time)
         if: always()
         run: uv run pytest -m heavy --timeout 1800 --timeout-method thread -vv -rfEs --durations=10
+      - name: watchdog stack dumps of any test the C-level watchdog ended (tests/conftest.py)
+        if: always()
+        run: |
+          found=0
+          for f in .pytest_watchdog/*.txt; do
+            if [ -f "$f" ] && grep -q 'Thread 0x' "$f"; then found=1; echo "== $f"; cat "$f"; fi
+          done
+          [ "$found" = 1 ] || echo "no test was ended by the watchdog"
       - name: convergence tests (Section 5.5 / 9.9) as a junit report for the convergence-report artifact
         if: always()
         run: |
