@@ -71,11 +71,14 @@ jobs:
         run: |
           uv run python -X importtime -c "import qutip_trap" 2>&1 | tail -1
           uv run python -X importtime -c "import qutip_trap.api" 2>&1 | tail -1
-      # four workers on the 4-vCPU runner, whole modules per worker (module fixtures are built once), thirty minutes per test:
-      # a test that hangs fails with a traceback instead of running the job into the six-hour limit as three runs did.
-      # tests/conftest.py caps the engine's default worker count at one under xdist, so no test forks a pool inside a worker.
+      # four workers on the 4-vCPU runner, whole modules per worker (module fixtures are built once), thirty minutes per test.
+      # -v names every test as it finishes (the dots of the cancelled runs could not say which test was stuck), and the
+      # thread timeout method ends a worker stuck inside C code, which the signal method cannot interrupt: a run of 1371cf0
+      # sat 95 minutes on its last 29 tests with the 30-minute signal timeout never firing. xdist reports the ended worker's
+      # test as a crash and starts a replacement. tests/conftest.py caps the engine's default worker count at one under
+      # xdist, so no test forks a pool inside a worker.
       - name: pytest (everything but the convergence tests, which the next step runs once for the artifact)
-        run: uv run pytest -m "not convergence" -n 4 --dist loadscope --timeout 1800 -rfEs --durations=30
+        run: uv run pytest -m "not convergence" -n 4 --dist loadscope --timeout 1800 --timeout-method thread --max-worker-restart 8 -v -rfEs --durations=30
       - name: convergence tests (Section 5.5 / 9.9) as a junit report for the convergence-report artifact
         if: always()
         run: |
