@@ -69,4 +69,6 @@ uv run pytest -n 4 --dist loadscope -m "not slow"
 uv run ruff check . && uv run mypy
 ```
 
+CI runs the fast tier (`-m "not slow"`) on every push and pull request, and the whole suite, slow tests included, on a nightly schedule and on manual dispatch (the Actions tab, "Run workflow"). The check scripts run on every push.
+
 CI also re-runs the check scripts under `validation/scripts/` and compares their outputs with the committed ones, so every number quoted in the documentation is recomputed on every push.

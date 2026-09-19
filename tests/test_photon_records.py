@@ -99,8 +99,9 @@ def test_acton_distributions_normalize_and_match_the_single_jump_quadrature() ->
     t = 1.0  # the mixtures depend only on lambda_0 and alpha/eta: choose unit window, detected rate lambda_0
     quad_dark = single_jump_count_distribution(200, t, 0.0, lambda0, a1 * lambda0, nodes=64)
     quad_bright = single_jump_count_distribution(200, t, lambda0, 0.0, a2 * lambda0, nodes=64)
-    assert np.max(np.abs(dark - quad_dark)) < 2e-16
-    assert np.max(np.abs(bright - quad_bright)) < 2e-16
+    # two machine epsilons: the Linux runner's libm lands exactly one epsilon (2.22e-16) away from the quadrature
+    assert np.max(np.abs(dark - quad_dark)) < 5e-16
+    assert np.max(np.abs(bright - quad_bright)) < 5e-16
     # at the default node count the same identity holds within a few ulp
     assert np.max(np.abs(dark - single_jump_count_distribution(200, t, 0.0, lambda0, a1 * lambda0))) < 1e-15
     assert np.max(np.abs(bright - single_jump_count_distribution(200, t, lambda0, 0.0, a2 * lambda0))) < 1e-15
