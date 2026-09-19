@@ -126,7 +126,8 @@ jobs:
         if: always()
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then SEL="heavy"; else SEL="heavy and not slow"; fi
-          uv run pytest -m "$SEL" --timeout 1800 --timeout-method thread -vv -rfEs --durations=10
+          # exit status 5 is pytest's "no tests collected": on a push every heavy test is also slow, so nothing is selected
+          uv run pytest -m "$SEL" --timeout 1800 --timeout-method thread -vv -rfEs --durations=10 || { rc=$?; [ "$rc" -eq 5 ] && echo "no heavy test in this tier" || exit "$rc"; }
       - name: watchdog stack dumps of any test the C-level watchdog ended (tests/conftest.py)
         if: always()
         run: |
