@@ -277,7 +277,10 @@ def test_doppler_limit_with_recoil_at_the_minimum_detuning() -> None:
 
 
 @pytest.mark.slow
+@pytest.mark.heavy
 def test_doppler_limit_level_c_matches_level_a() -> None:
+    """The d = 70 four-level model's Liouvillian is 78400-square with 8 million non-zeros; its direct factorization peaks at
+    7 GB of resident memory (measured 2026-09-19), so the test carries the ``heavy`` marker and CI runs it alone."""
     nu_d = 0.05 * G
     beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, -0.5 * G)
     cw = carrier_weight(0.4, beam.k_rad_per_m, beam.k_rad_per_m)
