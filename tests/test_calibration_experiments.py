@@ -62,6 +62,7 @@ def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequenc
     assert math.pi / (2.0 * math.pi * omega_fit) == pytest.approx(t_pi / math.exp(-0.5 * eta**2), rel=2e-3)
 
 
+@pytest.mark.slow
 def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(single) -> None:  # type: ignore[no-untyped-def]
     """Section 4.2.7 (i): P_rsb/P_bsb = nbar/(nbar + 1) for every pulse duration on a thermal state (Turchette); the shot-noise
     uncertainty covers the truth; a Fock state gives a duration-dependent ratio and is flagged."""
@@ -76,6 +77,7 @@ def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(si
     assert 0.005 < noisy.fitted["nbar"][1] < 0.05
 
 
+@pytest.mark.slow
 def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_uncertainty(two_ion) -> None:  # type: ignore[no-untyped-def]
     """Section 7.5 item 2 on the two-ion fixture's COM mode: the two-stage scan fitted with the plan's lineshape gives the mode
     frequency to well below a kilohertz (the FM solvers' need), |eta| from the sideband Rabi frequency (C0 = 1 without an rf
@@ -108,6 +110,7 @@ def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_u
     assert res.fitted["chi2_per_dof_blue"][0] < 3.0
 
 
+@pytest.mark.slow
 def test_sideband_calibrated_eta_carries_c0_and_a_carrier_derived_one_does_not() -> None:
     """Section 9.17, "C0 applied once": with an rf record at q = 0.3 the sideband Rabi frequency gives eta C0 (C0 = 1 + 3q^2/16 + O(q^4)
     = 1.018), the bare Delta k x0 c does not, and the two-body phase of a gate built from the two differs by 2(C0 - 1)."""
@@ -152,13 +155,13 @@ def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # ty
     assert truth > 20.0
     # nbar grows by three quanta (the plan's 10/ndot heats to ten and needs d = 170)
     delays = np.linspace(0.0, 3.0 / truth, 6)
-    exact = heating_rate(noisy, 1, delays, nbar0=0.1, include_stark=False)
+    exact = heating_rate(as_machine(noisy), 1, delays, nbar0=0.1, include_stark=False)
     assert exact.converged and exact.fitted["ndot_per_s"][0] == pytest.approx(truth, rel=0.03)
     assert exact.fitted["nbar0"][0] == pytest.approx(0.1, abs=0.01)
     nb = exact.data[:, 1]
     assert np.all(np.diff(nb) > 0.0), "nbar grows monotonically at the heating rate"
     noisy_res = heating_rate(
-        noisy, 1, delays, nbar0=0.1, include_stark=False, shots=1500, readout=False, seed=3
+        as_machine(noisy), 1, delays, nbar0=0.1, include_stark=False, shots=1500, readout=False, seed=3
     )
     ndot, s = noisy_res.fitted["ndot_per_s"]
     assert abs(ndot - truth) < 4.0 * s and 0.0 < s < 0.3 * truth
@@ -266,6 +269,7 @@ def _rf_device(stray_x_v_per_m: float):  # type: ignore[no-untyped-def]
     )
 
 
+@pytest.mark.slow
 def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_the_exact_modulated_builder() -> (
     None
 ):
@@ -289,6 +293,7 @@ def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_th
     )
 
 
+@pytest.mark.slow
 def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field() -> None:
     """Berkeland's rf-photon correlation from the periodic steady state of the detection beam's Bloch model: the complex first
     harmonic of the photon rate at the rf frequency is odd in the signed modulation index and linear near the null; projected on

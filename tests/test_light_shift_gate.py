@@ -173,6 +173,7 @@ def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> 
     assert not any("spin flip" in a and "keeps" in a for a in built.approximations)
 
 
+@pytest.mark.slow
 def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignore[no-untyped-def]
     """Section 4.4.4: two light-shift pulses of two-body angle pi/8 around a pi pulse on both ions give ZZ(pi/2) = exp(-i (pi/4) Z Z) on
     the optical qubit; the sign follows the detuning side; the exact spot check calibrates the pulse angle; the AM solver closes the

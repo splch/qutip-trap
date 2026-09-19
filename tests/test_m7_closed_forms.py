@@ -166,6 +166,7 @@ def test_hughes_first_term_is_the_only_temperature_dependent_one() -> None:
 # ---- E-9: the per-beam phase spectrum and Baldwin's filter form -------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_beam_phase_noise_synthesizes_an_independent_trajectory_per_beam() -> None:
     """Section 7.10: "the optical path difference between two Raman beams sets the beat-note phase, and its mechanical
     drift is the spin-phase noise that Chen et al. invoke, entered as a user-supplied phase spectrum". Each beam gets its

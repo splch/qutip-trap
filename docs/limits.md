@@ -157,6 +157,15 @@ gets 8 workers, a fresh process every CPU), an explicit request is capped the sa
 count actually used (ledger `conv.worker_memory_cap`). A long session that has built many Hamiltonians is the case this
 guards; two kernel watchdog panics on 2026-09-08 came from 18 workers forked out of multi-gigabyte pytest processes.
 
+Two more rules keep the pools out of places they do not belong. A count of one runs in-process: the trajectory segments take the
+serial map instead of a one-process pool, which would still fork a copy of the calling process per segment, and
+`Diagnostics.map` then reports `serial` for what actually ran. And the environment variable `QUTIP_TRAP_MAX_WORKERS` caps the
+DEFAULT count (`workers = None`) without touching an explicit `workers=` request, for a process that already runs beside others:
+`tests/conftest.py` sets it to 1 under pytest-xdist, so no test forks a pool inside a test worker, and CI sets it the same way.
+The report of a run also names every cap-raising retry of the truncation monitor (Section 5.5) in `notes`, with the trip, the
+growth and the joint dimension the run was integrated on again: a run declared on a small space and silently integrated on a
+larger one used to show only in `growth_retries` and the final space.
+
 and for the two-ion example device of `device/presets.py` (2026-09-09, after the performance pass): the surrogate
 calibration about 6 s (15 s before it), a Bell circuit with 2000 shots about 3.5 s (8 s before; five carrier pulses and one
 entangling gate on the 572-dimensional space [2, 2, 11, 13]), a 384-Clifford

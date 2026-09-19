@@ -291,7 +291,12 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
     """With heating channels present the builder is told the segment's method: a ``mesolve`` segment assembles even when
     factorization is forced (the Liouvillian is formed from the matrix, Section 5.3), an ``mcsolve`` segment keeps the factorized
     kernel; the trajectory results with the kernel forced each way agree per trajectory under the same seeds. A small space
-    (dimension 64) keeps the density-matrix reference affordable (Section 5.3: mesolve below about 100)."""
+    (dimension 64) keeps the density-matrix reference affordable (Section 5.3: mesolve below about 100).
+
+    The boundary monitor is told to accept that space: at d = 4 the pulse leaves 3.0e-3 of population on the top two Fock levels
+    of mode 2 (measured on both paths), and under the default 1e-6 the engine grew the caps to d = 8 twice over and integrated
+    the density matrix on dimension 256, which took 380 s where the declared space takes 4 s. This test compares two kernels
+    on the same space, not the physics of the truncation, so the loose threshold is the right one here."""
     dev, _drives, sched, _space, _table = ms_fixture
     noisy = dataclasses.replace(
         dev,
@@ -311,9 +316,10 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(lindblad_method="mesolve", margin_check=False),
+        SolverOptions(lindblad_method="mesolve", margin_check=False, boundary_population_max=1e-2),
     )
     rep_me = eng_me.last_report
+    assert rep_me is not None and rep_me.growth_retries == 0, rep_me.notes
     assert rep_me is not None and rep_me.method == "mesolve" and rep_me.kernel == "assembled"
     finals = {}
     for kernel in ("assembled", "factorized"):
@@ -333,10 +339,12 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
                 map="serial",
                 margin_check=False,
                 improved_sampling=False,
+                boundary_population_max=1e-2,
             ),
         )
         rep = eng.last_report
         assert rep is not None and rep.method == "mcsolve" and rep.kernel == kernel and rep.trajectories == 3
+        assert rep.growth_retries == 0, rep.notes
         assert len(rep.trajectory_finals) == 3 and len(rep.trajectory_seeds) == 3
         finals[kernel] = (rep.trajectory_finals, tr.jumps, tr.final.internal)
     for a, b in zip(finals["assembled"][0], finals["factorized"][0]):

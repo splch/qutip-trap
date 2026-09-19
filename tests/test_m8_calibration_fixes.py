@@ -318,7 +318,9 @@ def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_
     beam = 0
     from qutip_trap.experiments import micromotion_scan
 
-    scan = micromotion_scan(at_t0, 0, beam, {"Ex": (-40.0, 0.0)}, method="sideband_ratio", points=5)
+    scan = micromotion_scan(
+        as_machine(at_t0), 0, beam, {"Ex": (-40.0, 0.0)}, method="sideband_ratio", points=5
+    )
     assert scan.converged, scan.notes
     shim = float(scan.fitted["shim[Ex]"][0])
     assert shim == pytest.approx(-20.0, abs=1.0), "the scan nulls the field it was calibrated against"

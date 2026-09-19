@@ -62,12 +62,25 @@ def memory_worker_cap() -> int:
     return max(1, int(MEMORY_FRACTION_FOR_WORKERS * physical_memory_bytes() // parent))
 
 
+WORKERS_ENV = "QUTIP_TRAP_MAX_WORKERS"
+"""Environment cap on the DEFAULT worker count (``SolverOptions.workers = None``). A process that already runs beside others
+(a pytest-xdist worker, one job of several on a CI runner) sets it to 1 so that no run forks a pool of its own; an explicit
+``workers=`` request is not touched, so the parallel-map tests still exercise the pools."""
+
+
 def worker_count(options: SolverOptions) -> int:
-    """The processes the maps may use: ``SolverOptions.workers``, else every CPU QuTiP sees (``available_cpu_count``); 1 under
-    ``map="serial"``; never more than ``memory_worker_cap()`` allows (ledger ``conv.worker_memory_cap``)."""
+    """The processes the maps may use: ``SolverOptions.workers``, else every CPU QuTiP sees (``available_cpu_count``) capped by
+    ``WORKERS_ENV`` when it is set; 1 under ``map="serial"``; never more than ``memory_worker_cap()`` allows (ledger
+    ``conv.worker_memory_cap``)."""
     if options.map == "serial":
         return 1
-    wanted = int(options.workers) if options.workers is not None else int(available_cpu_count())
+    if options.workers is not None:
+        wanted = int(options.workers)
+    else:
+        wanted = int(available_cpu_count())
+        env = os.environ.get(WORKERS_ENV, "").strip()
+        if env:
+            wanted = min(wanted, max(1, int(env)))
     return max(1, min(wanted, memory_worker_cap()))
 
 

@@ -610,10 +610,19 @@ class JointExactEngine:
         current_space = space
         current_state = state
         retries = 0
+        growth_notes: list[str] = []
         while True:
             try:
                 return self._run(
-                    device, schedule, current_state, current_space, sample, seeds, options, retries
+                    device,
+                    schedule,
+                    current_state,
+                    current_space,
+                    sample,
+                    seeds,
+                    options,
+                    retries,
+                    tuple(growth_notes),
                 )
             except _BoundaryTrip as trip:
                 if retries >= self.max_growth_retries:
@@ -628,8 +637,14 @@ class JointExactEngine:
                     ) from trip
                 retries += 1
                 # a margin trip knows its deficit exactly and grows by it; a boundary trip grows by the configured step
-                new_space = current_space.grown(
-                    trip.mode, trip.add if trip.reason == "margin" and trip.add > 0 else self.growth_levels
+                grow = trip.add if trip.reason == "margin" and trip.add > 0 else self.growth_levels
+                new_space = current_space.grown(trip.mode, grow)
+                # the report names every retry (Section 5.5): a run declared on a small space and silently integrated on a
+                # larger one after a trip used to be visible only as growth_retries and the final space
+                growth_notes.append(
+                    f"cap-raising retry {retries} of {self.max_growth_retries}: {trip.reason} trip on mode {trip.mode} "
+                    f"(population {trip.worst:.3e}) grows its cap by {grow} level(s); the run is integrated again on joint "
+                    f"dimension {new_space.dimension} (was {current_space.dimension})"
                 )
                 if new_space.dimension > options.joint_dimension_max:
                     # Section 11.5's ceiling holds for a GROWN space too: a cap that keeps growing (a hot mode, or an ENR
@@ -967,6 +982,7 @@ class JointExactEngine:
         seeds: SeedSpec,
         options: SolverOptions,
         growth_retries: int,
+        growth_notes: tuple[str, ...] = (),
     ) -> Traces:
         from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, evolve
         from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
@@ -979,7 +995,7 @@ class JointExactEngine:
             raise ValueError("JOINT_EXACT needs a joint state; build one with HilbertSpace.initial_state")
         if joint.shape[0] != space.dimension:
             raise ValueError("the state does not live on the given space")
-        notes: list[str] = []
+        notes: list[str] = list(growth_notes)
         # the played chain of Section 7.3 (M8) and the hardware chain of Section 7.10 (M7)
         sched, hw_notes = self._played_schedule(device, schedule, sample, seeds, options, notes)
         # the frozen spectators' Fock states for this evolution (Section 5.2; M9b audit B11)
@@ -993,6 +1009,7 @@ class JointExactEngine:
         map_kind = options.map
         n_workers = worker_count(options)
         workers_used = 1
+        map_used = "serial"
         propagator_solves = 0
         propagator_hits = 0
         trajectory_finals: list[qt.Qobj] = []
@@ -1382,10 +1399,13 @@ class JointExactEngine:
                         kets = [kets[0]] * n_traj_seg
                         weights = [1.0 / n_traj_seg] * n_traj_seg
                     n_stoch = n_traj_seg if improved_seg else len(kets)
-                    seg_map = map_kind if n_stoch > 1 else "serial"
+                    # one worker runs in-process: a one-process pool would still fork a copy of this process per segment
+                    seg_map = map_kind if (n_stoch > 1 and n_workers > 1) else "serial"
                     seg_workers = min(n_workers, n_stoch) if seg_map != "serial" else 1
                     mc_opts["map"], mc_opts["num_cpus"] = seg_map, seg_workers
                     workers_used = max(workers_used, seg_workers)
+                    if seg_map != "serial":
+                        map_used = seg_map
                     solver = qt.MCSolver(
                         built.H if rot is None else rot.H,
                         c_ops if rot is None else list(rot.c_ops),
@@ -1623,7 +1643,7 @@ class JointExactEngine:
             populated_n_max=populated_max,
             margin_reached=margin_reached,
             kernel=_kernel_summary(segments),
-            map=map_kind if method_used == "mcsolve" else "serial",
+            map=map_used if method_used == "mcsolve" else "serial",
             workers=workers_used,
             propagator_solves=propagator_solves,
             propagator_cache_hits=propagator_hits,

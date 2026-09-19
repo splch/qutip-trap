@@ -355,6 +355,7 @@ def test_morigi_2000_fig_3_ground_state_occupation() -> None:
     assert lc.boundary_population < 1e-8
 
 
+@pytest.mark.slow
 def test_eit_closed_form_is_the_weak_probe_limit_of_level_c() -> None:
     """At the delta = nu tuning Omega_r^2 = 4 nu (nu + Delta) the closed form gives (gamma/4 Delta)^2 exactly and level C
     approaches it as the probe weakens, the residual being the O(nu/Delta) the closed form drops (Section 4.2.3)."""

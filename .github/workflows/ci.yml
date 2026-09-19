@@ -4,10 +4,25 @@ on:
   push:
   pull_request:
 
+# a push that supersedes an in-flight run cancels it: two 0.3.0-era runs of superseded commits each ran to the six-hour job limit
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validation-checks:
-    name: Appendix D check scripts on the pinned toolchain (first job, PLAN.md M0)
+    name: "Appendix D check scripts, ${{ matrix.group.name }} (PLAN.md M0)"
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          # run sequentially the 26 scripts took 81 minutes, 48 of them check_calibration (now sections in parallel processes),
+          # 13 check_benchmarks and 9 check_bloch; the other 23 total under 4 minutes
+          - { name: calibration, args: "--only check_calibration" }
+          - { name: benchmarks-and-bloch, args: "--only check_benchmarks check_bloch" }
+          - { name: the-rest, args: "--skip check_calibration check_benchmarks check_bloch" }
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -16,18 +31,24 @@ jobs:
       - name: Sync the pinned environment (Python from .python-version, versions from uv.lock)
         run: uv sync --group dev
       - name: Re-run the check scripts and compare with the committed outputs
-        run: uv run python validation/scripts/run_checks.py --report
+        run: uv run python validation/scripts/run_checks.py --report ${{ matrix.group.args }}
       - name: Upload the convergence report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: convergence-report
+          name: convergence-report-${{ matrix.group.name }}
           path: validation/report/
 
   core:
     name: lint, type-check, tests
-    needs: validation-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # one BLAS thread per process: pytest-xdist already runs a process per CPU, and threaded BLAS on the suite's small dense
+      # matrices oversubscribes the runner (the dense-linear-algebra tests ran 8x slower under contention)
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -50,13 +71,16 @@ jobs:
         run: |
           uv run python -X importtime -c "import qutip_trap" 2>&1 | tail -1
           uv run python -X importtime -c "import qutip_trap.api" 2>&1 | tail -1
-      - name: pytest
-        run: uv run pytest
+      # four workers on the 4-vCPU runner, whole modules per worker (module fixtures are built once), thirty minutes per test:
+      # a test that hangs fails with a traceback instead of running the job into the six-hour limit as three runs did.
+      # tests/conftest.py caps the engine's default worker count at one under xdist, so no test forks a pool inside a worker.
+      - name: pytest (everything but the convergence tests, which the next step runs once for the artifact)
+        run: uv run pytest -m "not convergence" -n 4 --dist loadscope --timeout 1800 -rfEs --durations=30
       - name: convergence tests (Section 5.5 / 9.9) as a junit report for the convergence-report artifact
         if: always()
         run: |
           mkdir -p validation/report
-          uv run pytest -m convergence --junitxml=validation/report/convergence_tests.xml -q
+          uv run pytest -m convergence -n 4 --dist loadscope --timeout 1800 --junitxml=validation/report/convergence_tests.xml -q
       - name: Upload the convergence-test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -66,8 +90,8 @@ jobs:
 
   release:
     name: the 0.1.0 release checks - `uv build` and the import without the dev group (M10)
-    needs: validation-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -80,8 +104,8 @@ jobs:
 
   gui:
     name: Flet extra installs and `flet doctor` passes (M0)
-    needs: validation-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -92,8 +116,12 @@ jobs:
 
   app:
     name: "the application package (Section 14 / M11): lint, types, provenance index, view-model tests"
-    needs: validation-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -110,4 +138,4 @@ jobs:
       - name: the provenance index asset is current with the ledger and PLAN.md
         run: uv run python -m qutip_trap_app.provenance --check
       - name: view-model tests (Section 9.11 rows of M11.1; the Flet UI tests are skipped without the Flutter client)
-        run: uv run --package qutip-trap-app pytest qutip_trap_app/tests -q
+        run: uv run --package qutip-trap-app pytest qutip_trap_app/tests -q --timeout 1800 --durations=10

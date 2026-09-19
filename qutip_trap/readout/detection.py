@@ -31,6 +31,8 @@ from typing import Literal
 import numpy as np
 import qutip as qt
 from scipy.linalg import expm
+from scipy.sparse import block_diag, csr_matrix, diags, identity, kron
+from scipy.sparse.linalg import expm_multiply
 from scipy.special import gammainc, gammaln, j1
 
 from qutip_trap.readout.fluorescence import CLASSES, FluorescenceRates, ReadoutClass
@@ -419,6 +421,18 @@ class RecordModel:
         mu = (self.detected_bright_per_s + self.background_per_s) * window_s
         return int(math.ceil(mu + sigmas * math.sqrt(mu + 1.0))) + 5
 
+    def _augmented_generator(self, n_max: int, lam: np.ndarray) -> csr_matrix:
+        """The generator of the Markov-modulated Poisson process on (count n, class), sparse: blocks Q - diag(lambda) on the
+        diagonal, diag(lambda) one block up (a count increments n), and the bare Q on the last block, which absorbs n > n_max
+        without counting further (its mass is the overflow). Block-bidiagonal, so its exponential is applied to a vector with
+        ``expm_multiply`` rather than formed: the dense ``expm`` of the 3 (n_max + 2)-square matrix cost 30 s at n_max ~ 2000
+        for the same numbers to one part in 1e14."""
+        q = np.asarray(self.generator(), dtype=float)
+        counting = csr_matrix(q - np.diag(lam))
+        diagonal = block_diag([kron(identity(n_max + 1, format="csr"), counting), csr_matrix(q)])
+        shift = diags([np.ones(n_max + 1)], [1], shape=(n_max + 2, n_max + 2))
+        return csr_matrix(diagonal + kron(shift, csr_matrix(np.diag(lam))))
+
     def count_distribution(
         self,
         start: ReadoutClass | Sequence[float],
@@ -438,22 +452,14 @@ class RecordModel:
         nmax = self.suggested_n_max(window_s) if n_max is None else int(n_max)
         if nmax < 0:
             raise ValueError("n_max is non-negative")
-        q = self.generator()
         lam = self.class_count_rates(background=background)
         d = 3
         size = d * (nmax + 2)
-        a = np.zeros((size, size))
-        for n in range(nmax + 2):
-            blk = slice(n * d, (n + 1) * d)
-            if n <= nmax:
-                a[blk, blk] = q - np.diag(lam)
-                nxt = slice((n + 1) * d, (n + 2) * d)
-                a[blk, nxt] += np.diag(lam)
-            else:
-                a[blk, blk] = q
+        a = self._augmented_generator(nmax, lam)
         p0 = np.zeros(size)
         p0[:d] = self._start_vector(start)
-        p = np.asarray(p0 @ expm(a * window_s)).reshape(nmax + 2, d)
+        # p0 @ expm(A w) = expm(A^T w) @ p0: the exponential's action on one vector, never the dense exponential
+        p = np.asarray(expm_multiply((a.T * window_s).tocsc(), p0)).reshape(nmax + 2, d)
         pmf = p[: nmax + 1].sum(axis=1)
         overflow = float(p[nmax + 1].sum())
         end_class = p.sum(axis=0)
@@ -464,22 +470,17 @@ class RecordModel:
     def sub_bin_matrices(self, sub_bin_s: float, n_max: int) -> np.ndarray:
         """M[n, i, j] = P(n counts in a sub-bin and class j at its end | class i at its start): the exact HMM emission and
         transition kernel of the time-resolved record (the continuous-time likelihood no source gives, Section 8.7)."""
-        q = self.generator()
         lam = self.class_count_rates()
         d = 3
         size = d * (n_max + 2)
-        a = np.zeros((size, size))
-        for n in range(n_max + 2):
-            blk = slice(n * d, (n + 1) * d)
-            if n <= n_max:
-                a[blk, blk] = q - np.diag(lam)
-                a[blk, slice((n + 1) * d, (n + 2) * d)] += np.diag(lam)
-            else:
-                a[blk, blk] = q
-        e = np.asarray(expm(a * sub_bin_s))
+        a = self._augmented_generator(n_max, lam)
+        # the first d rows of expm(A tau) are the columns of expm(A^T tau) applied to the unit vectors of the count-0 block
+        starts = np.zeros((size, d))
+        starts[:d, :d] = np.eye(d)
+        rows = np.asarray(expm_multiply((a.T * sub_bin_s).tocsc(), starts)).T
         out = np.zeros((n_max + 2, d, d))
         for n in range(n_max + 2):
-            out[n] = e[:d, n * d : (n + 1) * d]
+            out[n] = rows[:, n * d : (n + 1) * d]
         return out
 
     # ---- sampling ---------------------------------------------------------------------------------------------------

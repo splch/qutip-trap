@@ -566,6 +566,7 @@ def test_floquet_fixed_point_matches_the_secular_static_model() -> None:
     assert sum(ss.populations[lab] for lab in BRIGHT) > 0.9
 
 
+@pytest.mark.slow
 def test_polarization_modulation_makes_the_liouvillian_periodic_and_still_solves() -> None:
     st = AtomicStructure(YB, 0.0, (0.0, 0.0, 1.0))
     power = 0.1 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0

@@ -125,6 +125,35 @@ def _check_resolves(times_s: np.ndarray, omega_max_rad_s: float) -> None:
         )
 
 
+_SYNTH_BLOCK_ELEMENTS = 1 << 20
+"""Complex elements per block of the synthesis: the (times x bins) phase table is evaluated block by block instead of as one
+N_t x N_bins matrix (240k x 512 for a 20 s grid resolving omega_max = 1200 rad/s: two 1 GB temporaries per realization)."""
+
+
+def _phased_sum(tau: np.ndarray, omega: np.ndarray, coef: np.ndarray) -> np.ndarray:
+    """Re sum_k coef_k exp(i omega_k tau_j) on the grid ``tau``, block by block. On a uniform grid the block's phase table
+    exp(i omega_k j delta) is computed once and rotated by exp(i omega_k tau_start) per block, so no transcendental is evaluated
+    per element; the products differ from a direct evaluation by round-off only. A non-uniform grid evaluates each block directly."""
+    n_t = int(tau.size)
+    n_w = int(omega.size)
+    out = np.empty(n_t)
+    if n_t == 0 or n_w == 0:
+        out[:] = 0.0
+        return out
+    block = max(1, min(n_t, _SYNTH_BLOCK_ELEMENTS // n_w))
+    steps = np.diff(tau)
+    uniform = n_t > 2 and bool(np.all(np.abs(steps - steps[0]) <= 1e-9 * abs(steps[0])))
+    table = np.exp(1j * np.outer(np.arange(block) * steps[0], omega)) if uniform else None
+    for start in range(0, n_t, block):
+        stop = min(start + block, n_t)
+        if table is not None:
+            phase = table[: stop - start] * np.exp(1j * tau[start] * omega)
+        else:
+            phase = np.exp(1j * np.outer(tau[start:stop], omega))
+        out[start:stop] = (phase @ coef).real
+    return out
+
+
 def synthesize(
     spectrum: NoiseSpectrum,
     times_s: np.ndarray,
@@ -165,9 +194,9 @@ def synthesize(
     amp = np.sqrt(np.maximum(s_c * widths / math.pi, 0.0))
     a = rng.standard_normal(centres.size)
     b = rng.standard_normal(centres.size)
-    phase = np.outer(t - t[0], centres)  # the process is stationary: the origin is the grid start
-    x = (np.cos(phase) * (amp * a)).sum(axis=1) + (np.sin(phase) * (amp * b)).sum(axis=1)
-    return Trajectory(t, np.asarray(x, dtype=float))
+    # the process is stationary: the origin is the grid start; Re(coef e^{i w tau}) = amp (a cos w tau + b sin w tau)
+    coef = amp * (a - 1j * b)
+    return Trajectory(t, _phased_sum(t - t[0], centres, coef))
 
 
 def ou_process(

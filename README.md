@@ -65,7 +65,7 @@ Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a 
 ```sh
 git clone https://github.com/splch/qutip-trap && cd qutip-trap
 uv sync --group dev
-uv run pytest -m "not slow"
+uv run pytest -n 4 --dist loadscope -m "not slow"
 uv run ruff check . && uv run mypy
 ```
 

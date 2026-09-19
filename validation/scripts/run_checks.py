@@ -17,6 +17,11 @@ recorded in the ledger as ``conv.check_script_residual_class``.
 
     uv run python validation/scripts/run_checks.py --report
     uv run python validation/scripts/run_checks.py --only check_atomic check_ms_closure
+    uv run python validation/scripts/run_checks.py --report --skip check_calibration check_benchmarks check_bloch
+
+CI runs the scripts as a matrix of three jobs (``check_calibration`` alone, ``check_benchmarks`` with ``check_bloch``, and the
+rest through ``--skip``), each with its own report artifact: sequentially the 26 scripts took 81 minutes on the runner, 48 of
+them ``check_calibration``, and every other job waited on them.
 """
 
 from __future__ import annotations
@@ -235,6 +240,12 @@ def main(argv: list[str] | None = None) -> int:
         "--bench", action="store_true", help="also run the bench_*.py timing scripts (minutes)"
     )
     parser.add_argument("--only", nargs="*", default=None, help="script stems to run")
+    parser.add_argument(
+        "--skip",
+        nargs="*",
+        default=None,
+        help="script stems to leave out (the CI matrix runs the heavy scripts in jobs of their own and the rest here)",
+    )
     parser.add_argument("--rtol", type=float, default=RTOL_DEFAULT)
     parser.add_argument("--atol", type=float, default=1e-12)
     parser.add_argument(
@@ -259,6 +270,12 @@ def main(argv: list[str] | None = None) -> int:
         if missing:
             print(f"unknown scripts: {sorted(missing)}", file=sys.stderr)
             return 2
+    if args.skip:
+        unknown = set(args.skip) - {p.stem for p in scripts}
+        if unknown:
+            print(f"unknown scripts: {sorted(unknown)}", file=sys.stderr)
+            return 2
+        scripts = [p for p in scripts if p.stem not in set(args.skip)]
 
     reports: list[ScriptReport] = []
     fresh_dir = REPORT_DIR / "outputs"

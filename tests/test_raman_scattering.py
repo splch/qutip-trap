@@ -407,6 +407,7 @@ def test_scattering_rates_against_mesolve_with_unequal_fine_structure_rates() ->
         assert not math.isclose(outside * gamma_shared, predicted[up.full_label], rel_tol=0.3)
 
 
+@pytest.mark.slow
 def test_rayleigh_dephasing_against_mesolve() -> None:
     """The qubit coherence decays at (Gamma_Ram + Gamma_el)/2 with Gamma_el = sum_q' |r_u - r_d|^2 (Uys Eqs. 6-8)."""
     sp = toy_spin_zero(gamma_p12_s=1.0e5, gamma_p32_s=1.0e5)

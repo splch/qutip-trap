@@ -54,7 +54,13 @@ def _square(x: int) -> int:
     return x * x
 
 
-def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_threshold() -> None:
+def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import qutip_trap.dynamics.parallel as par
+
+    # the default-count formula without the environment cap tests/conftest.py sets under xdist
+    monkeypatch.delenv(par.WORKERS_ENV, raising=False)
     items = list(range(7))
     assert map_tasks(_square, items, map_kind="parallel", workers=4) == [x * x for x in items]
     assert map_tasks(_square, items, map_kind="serial", workers=4) == [x * x for x in items]
@@ -87,6 +93,27 @@ def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch:
     assert par.memory_worker_cap() == 48
     monkeypatch.setattr(par, "peak_rss_bytes", lambda: 40 * 1024**3)
     assert par.memory_worker_cap() == 1 and worker_count(SolverOptions(map="parallel")) == 1
+
+
+def test_the_environment_caps_the_default_worker_count_but_not_an_explicit_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``QUTIP_TRAP_MAX_WORKERS`` (``dynamics/parallel.WORKERS_ENV``): a process that already runs beside others, such as a
+    pytest-xdist worker (``tests/conftest.py``), caps the DEFAULT count so that no run forks a pool of its own; a test that asks
+    for ``workers=`` explicitly is not touched, and a serial map stays at one."""
+    import qutip_trap.dynamics.parallel as par
+
+    monkeypatch.setattr(par, "memory_worker_cap", lambda: 64)
+    monkeypatch.delenv(par.WORKERS_ENV, raising=False)
+    assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
+    monkeypatch.setenv(par.WORKERS_ENV, "1")
+    assert worker_count(SolverOptions(map="parallel")) == 1
+    assert worker_count(SolverOptions(map="parallel", workers=5)) == 5
+    assert worker_count(SolverOptions(map="serial", workers=5)) == 1
+    monkeypatch.setenv(par.WORKERS_ENV, "3")
+    assert worker_count(SolverOptions(map="parallel")) == min(3, int(available_cpu_count()))
+    monkeypatch.setenv(par.WORKERS_ENV, " ")
+    assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
 
 
 @pytest.fixture(scope="module")
@@ -140,9 +167,10 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
             and rep.kernel == "factorized"
         )
         expected = 1 if mp == "serial" else min(worker_count(opts), 6)
-        assert expected >= 2 or mp == "serial", (
-            "the memory cap left no room for a parallel run on this machine"
-        )
+        if expected < 2 and mp != "serial":
+            pytest.skip(
+                "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
+            )
         assert rep.map == mp and rep.workers == expected
         out[mp] = (tr, rep)
     tr_s, rep_s = out["serial"]
@@ -334,7 +362,10 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
     assert a.final_state is not None and b.final_state is not None
     assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-12
     expected = min(worker_count(SolverOptions(map="parallel", workers=N_WORKERS)), 6)
-    assert expected >= 2, "the memory cap left no room for a parallel run on this machine"
+    if expected < 2:
+        pytest.skip(
+            "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
+        )
     assert a.diagnostics.workers == 1 and b.diagnostics.workers == expected
     assert a.diagnostics.trajectories == b.diagnostics.trajectories >= 2
     # one propagator per distinct Fock tuple of the coupled frozen modes (their Debye-Waller factors change H); every internal
@@ -350,6 +381,10 @@ def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_
     """Section 9.9 on the two-ion Bell circuit (twelve branches on the 572-dimensional joint space, the factorized kernel): the
     serial and the parallel run agree to 1e-12 in the register state and shot by shot."""
     fx, sur = two_ion
+    if worker_count(SolverOptions(map="parallel", workers=min(N_WORKERS, 6))) < 2:
+        pytest.skip(
+            "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
+        )
     a, b = _run_both(BELL, fx, sur, 300, branch_weight_min=1e-3)
     assert np.array_equal(a.bitstrings, b.bitstrings)
     assert a.final_state is not None and b.final_state is not None
@@ -381,6 +416,10 @@ def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heati
     others = tuple(m for m in range(len(dev.crystal.modes)) if m != x_mode)
     space = HilbertSpace((2,), (ModeTruncation(x_mode, 14, (0, 6), 0.12),), None, others)
     state = space.initial_state([0])
+    if worker_count(SolverOptions(map="parallel", workers=N_WORKERS)) < 2:
+        pytest.skip(
+            "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
+        )
     out = {}
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)

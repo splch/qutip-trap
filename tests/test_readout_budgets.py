@@ -202,7 +202,7 @@ def test_detection_histogram_experiment_runs_the_bloch_model_of_the_device_beams
     )
     assert fitted["threshold"][0] >= 0.5 and 10e-6 <= fitted["window_s"][0] <= 60e-6
     with pytest.raises(ValueError):
-        detection_histogram(_no_detection_device(), 0, 500)
+        detection_histogram(as_machine(_no_detection_device()), 0, 500)
 
 
 def _no_detection_device():  # type: ignore[no-untyped-def]

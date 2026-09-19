@@ -398,6 +398,10 @@ def test_boundary_monitor_grows_the_cap(raman) -> None:  # type: ignore[no-untyp
     rep = eng.last_report
     assert rep is not None and rep.growth_retries >= 1 and rep.space.truncation(KX).d > 4
     assert max(tr.boundary_population.values()) <= SolverOptions().boundary_population_max
+    # every retry is named in the report: the trip, the growth and the dimension the run was integrated on again
+    growth = [n for n in rep.notes if n.startswith("cap-raising retry")]
+    assert len(growth) == rep.growth_retries and f"mode {KX}" in growth[0] and "boundary trip" in growth[0]
+    assert f"joint dimension {rep.space.dimension}" in growth[-1]
 
 
 def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:

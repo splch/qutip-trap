@@ -359,6 +359,19 @@ def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any)
     )
 
 
+def _density_matrix_options(options: Any) -> Any:
+    """``options`` (or the defaults) with the Lindblad method pinned to ``mesolve`` and a dimension cap that never routes the
+    thermal probe to trajectories."""
+    from dataclasses import replace
+
+    from qutip_trap.dynamics.engine import SolverOptions
+
+    base = options if options is not None else SolverOptions()
+    return replace(
+        base, lindblad_method="mesolve", mesolve_dimension_max=max(int(base.mesolve_dimension_max), 1_000_000)
+    )
+
+
 def heating_rate(
     machine: Machine | Device, mode: int, delays_s: Sequence[float], **kw: Any
 ) -> ExperimentResult:
@@ -370,7 +383,6 @@ def heating_rate(
     """
     device, kw = laboratory_kwargs(machine, kw, caller=heating_rate)
     from qutip_trap.control.pulses import Pulse
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.hilbert.operators import required_margin
     from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 
@@ -396,8 +408,10 @@ def heating_rate(
         "frame": kw.get("frame", "interaction"),
         "device_channels": True,
         "fock_branches": False,
-        "options": kw.get("options")
-        or SolverOptions(lindblad_method="mesolve", mesolve_dimension_max=1_000_000),
+        # the thermal probe is a density matrix, so the scan integrates it as one (Section 5.3) whatever options it was handed:
+        # a machine's defaults (laboratory_kwargs) would route a state above mesolve_dimension_max to the trajectory path,
+        # which cannot start from a mixture; the caller's tolerances and every other choice are kept
+        "options": _density_matrix_options(kw.get("options")),
     }
     base = _setup(device, ion, probe_kw)
     eta = base.eta_driven
