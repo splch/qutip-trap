@@ -130,8 +130,11 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
     assert all(t.final.joint is not None for t in rec.traces)
 
 
-# eight serial trajectories at dimension 1287: four minutes here, past thirty on the loaded 4-vCPU runner, so an hour of its own
+# eight trajectories at dimension 1287: under the xdist worker cap they run one after another and took over an hour on the
+# runner (py-spy on the run of 83920a0 found the last worker alone in this mcsolve loop while three sat idle); the heavy step
+# runs the test by itself, where the engine's trajectory pool spreads them over the runner's cores
 @pytest.mark.slow
+@pytest.mark.heavy
 @pytest.mark.timeout(3600)
 def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
