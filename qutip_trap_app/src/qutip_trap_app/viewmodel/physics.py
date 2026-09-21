@@ -1205,10 +1205,11 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
         for i, v in sorted(ham.stark_shifts_hz.items())
     )
     terms: list[TermView] = []
+    resolved = [m for m, c in ham.mode_classes.items() if c == "resolved"]
     for k, d in enumerate(ham.drives):
-        resolved = [m for m, c in ham.mode_classes.items() if c == "resolved"]
-        op_text = f"sigma_+^({d.ion}) (x) " + " (x) ".join(
-            f"D_{m}(i eta = i {d.etas.get(m, 0.0):+.4f})" for m in resolved
+        # no resolved mode (every mode frozen or dropped): the term is the bare spin operator, with no dangling product
+        op_text = " (x) ".join(
+            [f"sigma_+^({d.ion})"] + [f"D_{m}(i eta = i {d.etas.get(m, 0.0):+.4f})" for m in resolved]
         )
         terms.append(
             TermView(

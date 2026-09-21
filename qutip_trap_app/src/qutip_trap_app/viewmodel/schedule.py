@@ -143,10 +143,12 @@ def pulse_view(
             SidebandView(
                 mode=m.index,
                 mode_frequency=Shown("mode_frequency", m.omega_hz, f"{m.family} {m.family_index}"),
+                # the tone's distance to the sideband on ITS side of the carrier: mu - omega for a blue tone (mu > 0), mu +
+                # omega for a red one (mu < 0), so that the two legs of a bichromatic pulse read as the mirror pair they are
                 detuning=Shown(
                     "sideband_detuning",
                     mu0 - m.omega_hz if mu0 >= 0 else mu0 + m.omega_hz,
-                    f"tone {k}, mode {m.index}",
+                    f"tone {k}, mode {m.index}: from the {'blue' if mu0 >= 0 else 'red'} sideband",
                 ),
                 role=_role(mu0 - m.omega_hz, mu0, m.omega_hz, sideband_tolerance_hz),
             )

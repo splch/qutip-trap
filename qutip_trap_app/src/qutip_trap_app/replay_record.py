@@ -42,9 +42,11 @@ from qutip_trap_app.replay import ChannelLibrary, ReplayOutcome
 from qutip_trap_app.viewmodel.circuit import fidelity_to_ket, target_ket
 
 
-def _bitstrings(levels_or_bits: np.ndarray) -> np.ndarray:
-    """Register-order rows (ion 0 first) to the Result convention (column j = qubit j) with qubit_to_ion the identity."""
-    return np.asarray(levels_or_bits, dtype=np.uint8)
+def _bitstrings(bits: np.ndarray, measured: tuple[int, ...]) -> np.ndarray:
+    """The declared bits of every ion (register order, ion 0 first) restricted to the measured qubits in ascending order: the
+    Result convention (column j = the j-th measured qubit; qubit q is ion q), the same columns the core's pipeline keeps."""
+    arr = np.asarray(bits, dtype=np.uint8)
+    return np.asarray(arr[:, list(measured)], dtype=np.uint8) if arr.ndim == 2 else arr
 
 
 def _counts(bits: np.ndarray) -> tuple[dict[str, int], dict[str, float], dict[str, float]]:
@@ -102,7 +104,7 @@ def build_replay_record(
     n = device.crystal.n_ions
     circuit = job.circuit.to_core()
     opts = job.solver_options()
-    bits = _bitstrings(outcome.bits)
+    bits = _bitstrings(outcome.bits, outcome.measured)
     counts, probs, bars = _counts(bits)
     sched_rec = schedule_record(outcome.schedule)
     ideal = target_ket([(t.unitary, t.ions) for t in sched_rec.targets], n)
@@ -184,7 +186,7 @@ def build_replay_record(
         discriminator="table (eps_B, eps_D) per ion",
         threshold=float(table.detection["threshold"].value) if "threshold" in table.detection else None,
         levels=np.asarray(outcome.levels, dtype=np.uint8),
-        bits_declared=bits,
+        bits_declared=np.asarray(outcome.bits, dtype=np.uint8),
         time_used_s=np.zeros((shots, n), dtype=float),
         photon_records=None,
         posteriors=None,

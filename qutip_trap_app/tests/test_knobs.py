@@ -45,7 +45,7 @@ def test_knob_catalogue_and_validation() -> None:
     }
     with pytest.raises(knobs.KnobError, match="unknown knob"):
         knobs.apply_overrides(preset, {"nope": 1.0})
-    with pytest.raises(knobs.KnobError, match="positive"):
+    with pytest.raises(knobs.KnobError, match="outside the knob's range"):
         knobs.apply_overrides(preset, {"trap.rf_amplitude_scale": -1.0})
     with pytest.raises(knobs.KnobError, match="finite"):
         knobs.validate({"field.b_gauss": float("nan")}, preset.device)

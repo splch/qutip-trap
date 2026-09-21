@@ -298,11 +298,27 @@ def parse_angle(text: str) -> float:
 HEADER = 'OPENQASM 2.0;\ninclude "qelib1.inc";\n'
 
 
+def _measures_everything(circuit: Circuit) -> bool:
+    """Whether the terminal measurement is the worked example's: every qubit into the one register ``c`` in qubit order."""
+    every = tuple(range(circuit.n_qubits))
+    return tuple(circuit.measure) == every and dict(circuit.registers) == {"c": every}
+
+
 def to_openqasm2(circuit: Circuit) -> str:
-    """The circuit as OpenQASM 2 in the form of the worked example: one register ``q``, one classical register ``c``, one
-    statement per operation, and ``measure q -> c;`` last. A ``recool`` has no OpenQASM form and is refused."""
+    """The circuit as OpenQASM 2 in the form of the worked example: one register ``q``, one statement per operation, and the
+    terminal measurement last: ``creg c[n]`` with ``measure q -> c;`` when every qubit is measured into ``c`` in order, else
+    the circuit's own classical registers, one ``creg`` each and one ``measure q[i] -> name[k];`` per written bit, so that
+    a program measuring a subset of its qubits (or into several registers) keeps that through every builder edit. A
+    ``recool`` has no OpenQASM form and is refused."""
     n = circuit.n_qubits
-    lines = [f"{HEADER}qreg q[{n}];\ncreg c[{n}];"]
+    lines = [f"{HEADER}qreg q[{n}];"]
+    # a register nothing writes into has no OpenQASM form (a creg of size 0 is refused by the loader): a program that
+    # measures nothing stays a program that measures nothing, and the machine then reads every ion out (the 0.1.0 rule)
+    registers = {name: tuple(qubits) for name, qubits in circuit.registers.items() if qubits}
+    if _measures_everything(circuit):
+        lines.append(f"creg c[{n}];")
+    else:
+        lines.extend(f"creg {name}[{len(qubits)}];" for name, qubits in registers.items())
     for op in circuit.ops:
         if op.name == "measure":
             lines.extend(f"measure q[{q}] -> c[{q}];" for q in op.qubits)
@@ -315,7 +331,11 @@ def to_openqasm2(circuit: Circuit) -> str:
             args = ",".join(f"q[{q}]" for q in op.qubits)
             params = f"({', '.join(qasm_angle(p) for p in op.params)})" if op.params else ""
             lines.append(f"{name}{params} {args};")
-    lines.append("measure q -> c;")
+    if _measures_everything(circuit):
+        lines.append("measure q -> c;")
+    else:
+        for name, qubits in registers.items():
+            lines.extend(f"measure q[{q}] -> {name}[{k}];" for k, q in enumerate(qubits))
     return "\n".join(lines) + "\n"
 
 
@@ -418,8 +438,19 @@ def qubits_for_move(op: Operation, wire: int, n_qubits: int) -> tuple[int, ...]:
 
 
 def _with_ops(circuit: Circuit, ops: Sequence[Operation], n_qubits: int | None = None) -> Circuit:
+    """The circuit with other operations (and, for a wire added or removed, another qubit count), its terminal measurement
+    kept: a program measuring a subset of its qubits, or into named registers, still does after every edit. When the
+    wire count changes, a circuit that measured every qubit measures every qubit of the new count; a subset loses the
+    qubits that no longer exist."""
     n = circuit.n_qubits if n_qubits is None else n_qubits
-    return Circuit(n, tuple(ops), tuple(range(n)))
+    if n == circuit.n_qubits:
+        return Circuit(n, tuple(ops), circuit.measure, circuit.registers)
+    if _measures_everything(circuit):
+        return Circuit(n, tuple(ops), tuple(range(n)))
+    measure = tuple(q for q in circuit.measure if q < n)
+    registers = {name: tuple(q for q in qubits if q < n) for name, qubits in circuit.registers.items()}
+    kept = {name: qubits for name, qubits in registers.items() if qubits}
+    return Circuit(n, tuple(ops), measure, kept or {"c": measure})
 
 
 def empty_circuit(n_qubits: int = 2) -> Circuit:

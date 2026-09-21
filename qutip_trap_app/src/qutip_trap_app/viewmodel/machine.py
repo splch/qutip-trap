@@ -61,7 +61,8 @@ def histogram(record: Record) -> Histogram:
     res = record.results
     keys = sorted(set(res.probabilities) | set(res.target_probabilities))
     bits = np.asarray(res.bitstrings)
-    n = record.n_qubits
+    # the keys are as long as the measured set (a subset of the circuit's qubits when the circuit says so): the columns
+    n = int(bits.shape[1]) if bits.ndim == 2 else record.n_qubits
     bars: list[Bar] = []
     tv = 0.0
     worst = 0.0

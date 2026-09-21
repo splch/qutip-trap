@@ -16,7 +16,7 @@ import numpy as np
 
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
-from qutip_trap_app.record import Record, TableRecord
+from qutip_trap_app.record import Record, StepRecord, TableRecord
 from qutip_trap_app.viewmodel.catalogue import Shown
 from qutip_trap_app.viewmodel.learn import DEVICE_PAGES
 from qutip_trap_app.viewmodel.physics import (
@@ -274,6 +274,7 @@ def KnobPanel(
             f"level4.knobs.{page_name}",
             controls,
             store=store,
+            level=4,
             session=session,
             title=f"{len(rows)} slider{'s' if len(rows) != 1 else ''} of this page",
             default_open=bool(layer.overrides) or store.learner.plan(4).chips_expanded,
@@ -340,6 +341,7 @@ def _species_page(
                         data_table(["line", "wavelength", "linewidth", "branching", "I_sat"], tr_rows),
                     ],
                     store=store,
+                    level=4,
                     session=session,
                     title="Identity, levels and transitions",
                 ),
@@ -373,6 +375,7 @@ def _species_page(
                         ),
                     ],
                     store=store,
+                    level=4,
                     session=session,
                     title="Sublevels and clock points",
                 ),
@@ -423,6 +426,7 @@ def _trap_page(
                     ]
                     + ([shown(v.stability_edge, index)] if v.stability_edge is not None else []),
                     store=store,
+                    level=4,
                     session=session,
                     title="Mathieu parameters and the rf record",
                 ),
@@ -442,7 +446,13 @@ def _trap_page(
         ft.Column(
             [
                 _tiles(v.fields, index, plain=plain),
-                details("level4.trap.fields", [_rows_table(v.fields, index)], store=store, session=session),
+                details(
+                    "level4.trap.fields",
+                    [_rows_table(v.fields, index)],
+                    store=store,
+                    level=4,
+                    session=session,
+                ),
             ],
             spacing=12,
         ),
@@ -544,6 +554,7 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
                         else status_line("no entangling Raman pair on this device"),
                     ],
                     store=store,
+                    level=4,
                     session=session,
                     title="Geometry, mode table and Lamb-Dicke parameters",
                 ),
@@ -695,6 +706,7 @@ def _light_page(
                         ),
                     ],
                     store=store,
+                    level=4,
                     session=session,
                     title="Beams, drives and crosstalk",
                 ),
@@ -782,6 +794,7 @@ def _noise_page(
                         "level4.noise.correlation",
                         [_rows_table((v.correlation,), index)],
                         store=store,
+                        level=4,
                         session=session,
                         title="Correlation length",
                     )
@@ -951,6 +964,7 @@ def _cooling_page(
                         else ft.Container(),
                     ],
                     store=store,
+                    level=4,
                     session=session,
                     title=f"The recipe, the stages and the Doppler stage ({v.doppler_method} rate equations)",
                 ),
@@ -1064,6 +1078,7 @@ def _readout_page(
                                 sat_curve,
                             ],
                             store=store,
+                            level=4,
                             session=session,
                             title="Rates, the best window, the error budget, the saturation curves",
                         ),
@@ -1137,6 +1152,7 @@ def _gates_card(
                             else status_line("no table entry for this pair yet"),
                         ],
                         store=store,
+                        level=4,
                         session=session,
                         title="Per-mode angles, the table's waveform and its closed form",
                     ),
@@ -1161,17 +1177,20 @@ def _hamiltonian_page(
     index: ProvenanceIndex,
     plain: bool,
 ) -> list[ft.Control]:
+    from qutip_trap_app.resim import hamiltonian_key
+
     page = ft.context.page
     record: Record | None = None
     ham = None
+    want: tuple[int, int, int] | None = None
+    """(step, sample, branch) Level 3 asked for; None when the page was opened on its own."""
     target = store.hamiltonian_target
-    if target is not None:
-        record = store.records.get(target[0])
-        if record is not None:
-            from qutip_trap_app.resim import hamiltonian_key
-
-            ham = record.hamiltonian(hamiltonian_key(target[1], target[2], target[3]))
-    if ham is None:
+    if target is not None and target[0] in store.records:
+        record = store.records[target[0]]
+        want = (int(target[1]), int(target[2]), int(target[3]))
+        ham = record.hamiltonian(hamiltonian_key(*want))
+    else:
+        # nothing asked for: the current record's equation, the last one built when several are
         record = store.record()
         if record is not None and record.hamiltonians:
             ham = record.hamiltonians[-1]
@@ -1185,17 +1204,23 @@ def _hamiltonian_page(
             )
         )
     elif ham is None:
+        # the step Level 3 asked for when there is one, else the first entangling step (the first gate step failing that)
         steps = [s for s in record.schedule.steps if s.kind == "gate"]
-        ent = next(
-            (s for s in steps if any(g.gate_id in s.target_ids for g in record.schedule.gates)),
-            steps[0] if steps else None,
-        )
+        if want is not None and 0 <= want[0] < len(record.schedule.steps):
+            ent: StepRecord | None = record.schedule.steps[want[0]]
+            sample_i, branch_i = want[1], want[2]
+        else:
+            ent = next(
+                (s for s in steps if any(g.gate_id in s.target_ids for g in record.schedule.gates)),
+                steps[0] if steps else None,
+            )
+            sample_i, branch_i = 0, store.branch
         building = store.running_of("zoom", key=record.key()) is not None
 
         def build(_e: Any) -> None:
             if ent is not None:
-                store.hamiltonian_target = (record.key(), ent.index, 0, store.branch)
-                session.submit_zoom(record.key(), ent.index, 0, store.branch)
+                store.hamiltonian_target = (record.key(), ent.index, sample_i, branch_i)
+                session.submit_zoom(record.key(), ent.index, sample_i, branch_i)
 
         out.append(
             card(
@@ -1433,6 +1458,7 @@ def _hamiltonian_page(
                                 ),
                             ],
                             store=store,
+                            level=4,
                             session=session,
                             title="Free terms, offsets, caps, segments and approximations",
                         ),
@@ -1541,6 +1567,7 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
                     shown(v.device_hash, index, size=theme.SIZE_SMALL),
                 ],
                 store=store,
+                level=4,
                 session=session,
             ),
         ],
@@ -1596,19 +1623,61 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
     )
     body: list[ft.Control] = [level_header(title, question), nav]
     if layer is None:
+        failed = next(
+            (
+                j
+                for j in store.jobs.values()
+                if j.request == "derive" and j.target.get("cache_key") == ck and j.done and j.error
+            ),
+            None,
+        )
+        if failed is None:
+            body.append(
+                card(
+                    "Deriving the device",
+                    ft.Column(
+                        [
+                            status_line("the eight pages, derived from the device model alone"),
+                            ProgressRows(store, session),
+                        ],
+                        spacing=6,
+                    ),
+                    key="deriving",
+                )
+            )
+            return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
+        # the device model refused these knob values (a trap without an rf record, an unstable chain, a mode the cooling
+        # beams do not reach, a Lamb-Dicke check failed): the reason is shown here, where the knobs are, and the knobs stay
+        # in reach on the last device that did derive, so the value can be moved back or every knob reset
+        reason = failed.error.strip().splitlines()[-1] if failed.error else "the worker failed"
         body.append(
             card(
-                "Deriving the device",
+                "The device could not be derived with these knob values",
                 ft.Column(
                     [
-                        status_line("the eight pages, derived from the device model alone"),
-                        ProgressRows(store, session),
+                        ft.Text(reason, size=theme.SIZE_BODY, color=ft.Colors.ERROR),
+                        ft.Row(
+                            [
+                                ft.FilledTonalButton(
+                                    content=ft.Text("Reset every knob"),
+                                    icon=ft.Icons.RESTART_ALT,
+                                    on_click=lambda e: session.reset_knobs(),
+                                    key="reset-knobs-failed",
+                                ),
+                                status_line("or move the knob back below"),
+                            ],
+                            spacing=theme.GAP,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                     ],
-                    spacing=6,
+                    spacing=theme.GAP,
                 ),
-                key="deriving",
+                key="derive-failed",
             )
         )
+        previous = list(store.layers.values())
+        if previous:
+            body.append(KnobPanel(store, session, previous[-1], name, index))
         return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
     table = store.table_for(layer.device_hash)
     current = store.record()

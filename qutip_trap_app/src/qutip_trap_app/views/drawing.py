@@ -76,8 +76,8 @@ def heatmap_png(
 ) -> bytes:
     """Rows are the vertical axis (drawn bottom-up: row 0 at the bottom), columns the horizontal one; log scale over six decades
     by default, because Fock populations span from 1 to 1e-6 and a linear ramp would show one bright cell."""
-    v = np.asarray(values, dtype=float)
-    top = float(vmax if vmax is not None else max(np.max(v), 1e-300))
+    v = np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    top = float(vmax if vmax is not None else max(float(np.max(v, initial=0.0)), 1e-300))
     if log:
         with np.errstate(divide="ignore"):
             t = (np.log10(np.clip(v, 1e-300, None)) - (math.log10(top) - 6.0)) / 6.0
@@ -654,11 +654,8 @@ def phase_space(loops: Sequence[PhaseLoop], *, width: float = 420.0, height: flo
     ring. One colour per mode; the pair's second ion dashed (its loop coincides with the first ion's on an in-phase mode and
     mirrors it on an out-of-phase one)."""
     palette = list(theme.series())
-    allv = (
-        np.concatenate([np.asarray(lp.alpha, dtype=complex) for lp in loops])
-        if loops
-        else np.zeros(1, complex)
-    )
+    filled = [np.asarray(lp.alpha, dtype=complex) for lp in loops if np.asarray(lp.alpha).size]
+    allv = np.concatenate(filled) if filled else np.zeros(1, complex)
     r = float(max(np.max(np.abs(allv.real)), np.max(np.abs(allv.imag)), 1e-3)) * 1.15
     # the frame stops 14 px above the canvas bottom so that the footer line sits below the x-axis title
     ax = Axes(width, height - 14.0, (-r, r), (-r, r), margin=(44.0, 12.0, 26.0, 12.0))
@@ -727,8 +724,8 @@ def line_chart(
     # the chart library prints raw tick values, which wrap onto two lines for tiny or huge ranges: a linear axis is drawn
     # in units of a power of ten and the axis title says which (a log axis already carries its scale)
     scale_note = ""
-    top = max((float(np.max(np.abs(ys))) for _xs, ys in prepared if ys.size), default=0.0)
-    if not log_y and top > 0.0 and (top < 1e-2 or top >= 1e4):
+    top = max((float(np.nanmax(np.abs(ys))) for _xs, ys in prepared if ys.size), default=0.0)
+    if not log_y and math.isfinite(top) and top > 0.0 and (top < 1e-2 or top >= 1e4):
         exponent = int(math.floor(math.log10(top)))
         prepared = [(xs, ys / 10.0**exponent) for xs, ys in prepared]
         scale_note = f" (x 1e{exponent})"
@@ -781,9 +778,10 @@ def two_histograms(
 ) -> ft.Control:
     """Bright and dark count distributions side by side per photon number, the threshold named."""
     n = max(bright.size, dark.size)
-    n_show = int(
-        min(n, max(np.flatnonzero(np.concatenate([bright, dark]) > 1e-6).max() % n + 3 if n else 1, 8))
-    )
+    # the last populated photon number of EITHER distribution (the bright one reaches further than the dark one), plus
+    # a margin; at least eight bins so a narrow pair still reads as a histogram
+    last = max((int(np.flatnonzero(a > 1e-6).max(initial=-1)) for a in (bright, dark)), default=-1)
+    n_show = int(min(n, max(last + 3, 8))) if n else 1
     groups = []
     for k in range(n_show):
         pb = float(bright[k]) if k < bright.size else 0.0
@@ -846,35 +844,37 @@ def two_histograms(
 
 
 def fock_bars(start: np.ndarray, end: np.ndarray, *, height: float = 150.0, n_show: int = 8) -> ft.Control:
+    """P(n) at the start (outlined) and the end (filled) of a step; a distribution given as an EMPTY array is not known
+    and gets no rods, rather than a row of zeros that would read as a measured vacuum."""
     groups = []
     for k in range(min(n_show, max(start.size, end.size))):
-        a = float(start[k]) if k < start.size else 0.0
-        b = float(end[k]) if k < end.size else 0.0
-        groups.append(
-            fc.BarChartGroup(
-                x=k,
-                rods=[
-                    fc.BarChartRod(
-                        from_y=0.0,
-                        to_y=a,
-                        width=10,
-                        color=ft.Colors.with_opacity(0.12, ft.Colors.TERTIARY),
-                        border_side=ft.BorderSide(1.5, ft.Colors.TERTIARY),
-                        tooltip=f"start: P({k}) = {a:.3e}",
-                        border_radius=_cap,
-                    ),
-                    fc.BarChartRod(
-                        from_y=0.0,
-                        to_y=b,
-                        width=10,
-                        color=ft.Colors.PRIMARY,
-                        tooltip=f"end: P({k}) = {b:.3e}",
-                        border_radius=_cap,
-                    ),
-                ],
-                spacing=1,
+        rods = []
+        if start.size:
+            a = float(start[k]) if k < start.size else 0.0
+            rods.append(
+                fc.BarChartRod(
+                    from_y=0.0,
+                    to_y=a,
+                    width=10,
+                    color=ft.Colors.with_opacity(0.12, ft.Colors.TERTIARY),
+                    border_side=ft.BorderSide(1.5, ft.Colors.TERTIARY),
+                    tooltip=f"start: P({k}) = {a:.3e}",
+                    border_radius=_cap,
+                )
             )
-        )
+        if end.size:
+            b = float(end[k]) if k < end.size else 0.0
+            rods.append(
+                fc.BarChartRod(
+                    from_y=0.0,
+                    to_y=b,
+                    width=10,
+                    color=ft.Colors.PRIMARY,
+                    tooltip=f"end: P({k}) = {b:.3e}",
+                    border_radius=_cap,
+                )
+            )
+        groups.append(fc.BarChartGroup(x=k, rods=rods, spacing=1))
     chart: ft.Control = fc.BarChart(
         groups=groups,
         bottom_axis=fc.ChartAxis(

@@ -51,6 +51,10 @@ FAST_OPTIONS = SolverOptions(branch_weight_min=1e-3)
 UNDO_DEPTH = 30
 """How many circuit edits the builder's Undo can take back."""
 
+MAX_SHOTS = 100_000
+"""The most shots one run takes: both engines read the register out shot by shot in Python, so a run of this many takes
+tens of seconds, and an unbounded count typed by hand would run for hours or exhaust memory."""
+
 LEARNER_KEY = "qutip_trap_app.learner.v1"
 """The SharedPreferences key under which the learner's settings and mastery log are kept on the device."""
 
@@ -72,7 +76,8 @@ class JobStatus:
     job: JobSpec | None = None
     engine: Engine = "full"
     target: dict[str, Any] = field(default_factory=dict)
-    """What the request was about (record key, step, sample, branch, device cache key), read back when its result lands."""
+    """What the request was about (record key, step, sample, branch, device cache key), read back when its result lands.
+    Only this field identifies the target: ``message`` is display text that every progress event overwrites."""
 
     @property
     def elapsed_s(self) -> float:
@@ -497,7 +502,7 @@ class Session:
     def submit_verify(self, key: str, shots: int | None = None) -> JobStatus:
         record = self.store.records[key]
         ticket = self.worker.submit("verify", key=key, record=record, shots=shots)
-        status = JobStatus(ticket.id, "verify", job=record.job)
+        status = JobStatus(ticket.id, "verify", job=record.job, target={"key": key})
         status.message = key
         self.store.jobs = {**self.store.jobs, ticket.id: status}
         return status
@@ -628,8 +633,10 @@ class Session:
             key = payload.key()
             self.store.records = {**self.store.records, key: payload}
             self.store.current = key
-            self.store.selected_bar = None
-            self.store.selected_shot = None
+            self._forget_selections()
+            # the last request was made against an earlier record; gate ids repeat across runs, so its note or refusal
+            # would otherwise show beside this record's gate (a request run keeps it: the note is about that run)
+            self.store.last_request = None
             # the pick made before this run is scored beside its histogram; the next run gets its own prompt
             self.store.scored_prediction = self.store.prediction
             self.store.prediction = None
@@ -639,8 +646,7 @@ class Session:
             key = payload.key()
             self.store.records = {**self.store.records, key: payload}
             self.store.current = key
-            self.store.selected_bar = None
-            self.store.selected_shot = None
+            self._forget_selections()
             self.store.scored_prediction = None
             if self.page is not None:
                 gate = str(status.target.get("gate_id", ""))
@@ -649,13 +655,13 @@ class Session:
             self.store.preset_results = {**self.store.preset_results, payload.preset_id: payload}
         elif status.request == "verify" and isinstance(payload, dict):
             report: VerifyReport = payload["report"]
-            key = status.message
+            key = str(status.target.get("key"))
             self.store.verify_reports = {**self.store.verify_reports, key: report}
             deep = payload.get("deep")
             if isinstance(deep, Record):
                 self.store.records = {**self.store.records, deep.key(): deep}
         elif status.request == "zoom" and isinstance(payload, dict):
-            key, _step = status.message.split(":")
+            key = str(status.target.get("key"))
             record = self.store.records.get(key)
             if record is not None:
                 merged = record.with_boundaries(payload["boundaries"]).with_zoom(payload["zoom"])
@@ -706,6 +712,19 @@ class Session:
             self.store.layers = layers
             self.submit_derive()
 
+    def _forget_selections(self) -> None:
+        """A new record is current: the selections that index INTO a record (a bar, a shot, an initial-mixture branch, a
+        Hamiltonian term or collapse channel, the step the Hamiltonian page shows) belonged to the previous one and are
+        dropped, so no screen indexes the new record with the old one's positions and the Hamiltonian page shows this
+        run's equation rather than the previous run's. The per-record caches keyed by record key (re-checks, closure
+        picks) stay."""
+        self.store.selected_bar = None
+        self.store.selected_shot = None
+        self.store.branch = 0
+        self.store.selected_term = None
+        self.store.selected_channel = None
+        self.store.hamiltonian_target = None
+
     def heartbeat(self, now: float, period_s: float = 1.0) -> bool:
         """Re-render the progress rows once per ``period_s`` while a job runs, so the elapsed time keeps moving between
         the worker's events (a long solver step emits none). Returns whether a re-render was requested."""
@@ -715,11 +734,32 @@ class Session:
         self.store.tick = self.store.tick + 1
         return True
 
+    def worker_died(self) -> bool:
+        """The worker process is gone while jobs are still running (a crash in a native library, the OS killing it): those
+        jobs would otherwise stay "running" for ever, since no error event will come. They are marked failed with the
+        reason, the worker is restarted for the next request, and True is returned; False when there is nothing to do."""
+        if self.worker.alive or not self.worker.started:
+            return False
+        running = self.store.running()
+        if not running:
+            return False
+        jobs = dict(self.store.jobs)
+        for status in running:
+            status.done, status.stage, status.error = True, "failed", "the worker process died"
+        self.store.jobs = jobs
+        self.store.error = (
+            "the worker process died; its live state is lost (run the job again to re-simulate)"
+        )
+        self.worker.start()
+        self.store.tick = self.store.tick + 1
+        return True
+
     async def poll_forever(self, interval_s: float = 0.2) -> None:
         while True:
             try:
                 self.apply_events(self.worker.poll())
                 self.heartbeat(time.monotonic())
+                self.worker_died()
             except (
                 Exception
             ) as exc:  # the loop must survive a worker hiccup; the error is shown, not swallowed
@@ -740,6 +780,7 @@ __all__ = [
     "FAST_OPTIONS",
     "KNOWLEDGE_VALUES",
     "LEARNER_KEY",
+    "MAX_SHOTS",
     "PRESETS",
     "THEME_VALUES",
     "UNDO_DEPTH",

@@ -45,7 +45,7 @@ from qutip_trap.noise.collisions import (
 )
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n, quiet_sample
 from qutip_trap.prep.recipe import recipe_of, run_preparation
-from qutip_trap.readout.detection import count_anomaly_band
+from qutip_trap.readout.detection import PhotonRecord, count_anomaly_band
 from qutip_trap.readout.discriminate import Discriminator, ReadoutOutcome, measure
 from qutip_trap.run.gate_local import EngineSetup, GateLocalReport, evolve_gate_local
 from qutip_trap.run.job import (
@@ -830,6 +830,13 @@ def execute(
     kick_quanta: list[float] = []
     reorders = 0
     outcome: ReadoutOutcome | None = None
+    # the readout runs once per (sample, branch) batch; the RunRecord carries the outcome of every KEPT shot in the Result's
+    # row order over every ion, so that the application's per-shot views line up with ``Result.bitstrings``
+    out_bits_kept: list[np.ndarray] = []
+    out_levels_kept: list[np.ndarray] = []
+    out_times_kept: list[np.ndarray] = []
+    out_posteriors_kept: list[np.ndarray] = []
+    out_records_kept: list[tuple[PhotonRecord, ...]] = []
     for s_idx, (smp, members) in enumerate(zip(samples_seq, register_states)):
         n_s = counts_per_sample[s_idx]
         if n_s == 0:
@@ -935,6 +942,16 @@ def execute(
                     continue
                 bits_kept.append(row)
                 levels_kept.append(np.asarray(outcome.levels[j, list(measured)], dtype=np.uint8).copy())
+                out_bits_kept.append(np.asarray(outcome.bits[j], dtype=np.uint8).copy())
+                out_levels_kept.append(np.asarray(outcome.levels[j], dtype=np.uint8).copy())
+                out_times_kept.append(np.asarray(outcome.time_used_s[j], dtype=float).copy())
+                out_posteriors_kept.append(
+                    np.asarray(outcome.posteriors[j], dtype=float).copy()
+                    if outcome.posteriors is not None
+                    else np.full(n_ions, np.nan)
+                )
+                if outcome.records is not None:
+                    out_records_kept.append(tuple(outcome.records[j]))
                 sample_bits.append(row)
                 heralds_kept.append(herald)
                 if outcome.posteriors is not None:
@@ -957,6 +974,19 @@ def execute(
         )
         notify("readout", s_idx + 1, len(samples_seq))
     assert outcome is not None
+    posts_all = np.asarray(out_posteriors_kept, dtype=float).reshape(-1, n_ions)
+    outcome_all = ReadoutOutcome(
+        bits=np.asarray(out_bits_kept, dtype=np.uint8).reshape(-1, n_ions),
+        levels=np.asarray(out_levels_kept, dtype=np.uint8).reshape(-1, n_ions),
+        posteriors=None if posts_all.size == 0 or np.all(np.isnan(posts_all)) else posts_all,
+        time_used_s=np.asarray(out_times_kept, dtype=float).reshape(-1, n_ions),
+        records=(
+            tuple(out_records_kept)
+            if out_records_kept and len(out_records_kept) == len(out_bits_kept)
+            else None
+        ),
+        mode=outcome.mode,
+    )
     bits = np.asarray(bits_kept, dtype=np.uint8).reshape(-1, len(measured))
     counts, probabilities = aggregate(bits)
     n_eff = effective_sample_size(bits_per_sample)
@@ -1148,7 +1178,7 @@ def execute(
         traces=tuple(traces_all),
         register_state=rho_register,
         readout=stage,
-        outcome=outcome,
+        outcome=outcome_all,
         table=table,
         qubit_shifts_hz=shifts,
         notes=tuple(notes),

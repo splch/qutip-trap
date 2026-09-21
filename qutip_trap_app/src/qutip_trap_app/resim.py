@@ -275,7 +275,12 @@ def options_digest(options: core.SolverOptions) -> str:
 def zoom_key(
     step_index: int, sample_index: int, branch: int, n_store: int, options: core.SolverOptions
 ) -> str:
-    return f"step{step_index}/s{sample_index}/b{branch}/n{n_store}/{options_digest(options)}"
+    """The cache key of a zoom made with ``options``. A zoom always stores the Fock marginals (0.4.0), so the key is taken
+    over the options WITH ``store_marginals`` on, whatever the caller passes: the run's own options name the same zoom as
+    the options the zoom actually ran with (Level 3 looks its zoom up with the record's options; until this was folded in
+    here the two digests never agreed and the fine zoom was computed but never found)."""
+    opts = dataclasses.replace(options, store_marginals=True)
+    return f"step{step_index}/s{sample_index}/b{branch}/n{n_store}/{options_digest(opts)}"
 
 
 @dataclass

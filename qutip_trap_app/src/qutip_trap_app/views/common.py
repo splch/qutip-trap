@@ -482,11 +482,13 @@ def details(
     *,
     store: Any,
     session: Any,
+    level: int = 0,
     title: str = "Details",
     default_open: bool | None = None,
 ) -> ft.Control:
-    """The Details disclosure (R3): closed by default, open for the physicist plan, the learner's own choice remembered."""
-    plan_default = bool(store.learner.plan(0).chips_expanded) if default_open is None else default_open
+    """The Details disclosure (R3): closed by default, open where the learner's plan for THIS level says so (the physicist
+    plan everywhere, the circuits plan from Level 3 down), the learner's own choice remembered."""
+    plan_default = bool(store.learner.plan(level).chips_expanded) if default_open is None else default_open
     expanded = store.details_open.get(tile_id, plan_default)
     return ft.ExpansionTile(
         title=ft.Text(title, size=theme.SIZE_SMALL + 1, color=MUTED),

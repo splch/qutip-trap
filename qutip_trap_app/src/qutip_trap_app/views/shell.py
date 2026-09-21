@@ -297,8 +297,8 @@ def RoutedContent(store: Store, session: Session, index: ProvenanceIndex, path: 
             return Level1Page(store, session, record, parts[3], index)
         if len(parts) >= 4 and parts[2] == "schedule":
             return Level2Page(store, session, record, parts[3], index)
-        if len(parts) >= 5 and parts[2] == "dynamics":
-            return Level3Page(store, session, record, parts[3], parts[4], index)
+        if len(parts) >= 4 and parts[2] == "dynamics":
+            return Level3Page(store, session, record, parts[3], parts[4] if len(parts) >= 5 else "0", index)
         return Level0Page(store, session, index)
     return Level0Page(store, session, index)
 
@@ -383,6 +383,11 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             page.navigate(f"/job/{key}/schedule/{pulse}")
         elif i == 3 and record is not None and record.schedule.pulses:
             page.navigate(f"/job/{key}/dynamics/{pulse}/0")
+        else:
+            # a record with no gate (a bare measurement) has nothing on Levels 1 to 3: stay with the job, and re-render
+            # so the rail's highlight follows the route rather than the click
+            page.navigate(f"/job/{key}")
+            store.tick = store.tick + 1
 
     def on_key(e: ft.KeyboardEvent) -> None:
         up = parent_route(store, path)

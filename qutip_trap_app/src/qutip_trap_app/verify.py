@@ -112,6 +112,11 @@ def verify_deeper(
             rec, conv = tolerance_recheck(rec, live, st.index)
             rec, trunc = truncation_recheck(rec, live, st.index)
         ok = bool(conv and conv.converged and trunc and trunc.converged)
+        if not steps:
+            # a circuit with no gate (a bare measurement): nothing was integrated, so there is nothing to re-check
+            verdict = "the schedule has no gate step: nothing to re-check"
+        else:
+            verdict = "converged" if ok else "NOT converged: see the numerics panel"
         return (
             VerifyReport(
                 shallow_level=shallow,
@@ -129,7 +134,7 @@ def verify_deeper(
                 truncation=trunc,
                 notes=(
                     "JOINT_EXACT is the deepest engine (Section 5.4): the Section 5.5 re-checks ran on the entangling steps instead",
-                    "converged" if ok else "NOT converged: see the numerics panel",
+                    verdict,
                 ),
             ),
             rec,

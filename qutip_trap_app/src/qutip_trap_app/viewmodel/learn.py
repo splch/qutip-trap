@@ -1181,7 +1181,10 @@ def score_closure(
     alpha_im(t) on the run's own modes (Section 4.4.1), keyed by (ion, mode); a loop counts as closed when its end-to-start
     distance is below ``tolerance`` of its largest excursion (an open loop at 5 % of its radius leaves 0.25 % of a quantum's
     worth of spin-motion entanglement per unit (2 nbar + 1), Section 4.4.3). The exact simulation's spin-averaged <a_m>(t)
-    is never scored: the branches' displacements cancel in it whenever the register has <S_phi> = 0."""
+    is never scored: the branches' displacements cancel in it whenever the register has <S_phi> = 0. A step without loops
+    (no entangling waveform) cannot score either answer: that is an error here, never a vacuous "every loop closes"."""
+    if not closes:
+        raise ValueError("no loops to score: the step plays no entangling waveform")
     all_closed = all(closes[m] <= tolerance * max(excursions.get(m, 0.0), 1e-12) for m in closes)
     if answer == "every loop closes":
         return all_closed

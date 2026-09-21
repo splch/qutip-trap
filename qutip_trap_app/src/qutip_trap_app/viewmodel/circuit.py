@@ -284,7 +284,7 @@ def target_ket(targets: Sequence[tuple[np.ndarray, tuple[int, ...]]], n_ions: in
 def target_ket_after(record: Record, gate_index: int) -> np.ndarray:
     """The target unitaries of gates 0..k applied to |0...0>, in the register order."""
     return target_ket(
-        [(tg.unitary, tg.ions) for tg in _target_by_time(record)[: gate_index + 1]], record.n_qubits
+        [(tg.unitary, tg.ions) for tg in _target_by_time(record)[: gate_index + 1]], record.n_ions
     )
 
 
@@ -319,8 +319,9 @@ def register_after(
     """The register after gate ``gate_index``: from the recorded traces (the reduced state at the gate's end time, weighted
     over the branches and samples unless one is selected); else from the channel replay's own register sequence for a
     CHANNEL_REPLAY record; else, for a GATE_LOCAL record, from its recorded step channels composed in time order (both
-    labelled derived in ``weights_note``). Raises :class:`RegisterUnavailable` when the record holds none of the three."""
-    n = record.n_qubits
+    labelled derived in ``weights_note``). Raises :class:`RegisterUnavailable` when the record holds none of the three. The
+    register spans every ion (``record.n_ions``): a circuit on fewer qubits leaves the trailing ions in |0>."""
+    n = record.n_ions
     tg = _target_by_time(record)[gate_index]
     t_end = tg.t_end_s
     if not record.traces and record.replay is not None:
@@ -347,7 +348,7 @@ def register_from_state(record: Record, gate_index: int, rho: np.ndarray) -> Reg
 
 
 def _register_view(record: Record, gate_index: int, t_s: float, rho: np.ndarray, note: str) -> RegisterView:
-    n = record.n_qubits
+    n = record.n_ions
     ket = target_ket_after(record, gate_index)
     return RegisterView(
         gate_index=gate_index,

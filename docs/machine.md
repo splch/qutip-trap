@@ -83,7 +83,7 @@ with the SDKs that put qubit 0 first. `Result.machine_hash`, `created_at` and `d
 and per readout: the `stage`, how many of `total` are `done`, the seconds elapsed, and `fraction`.
 
 What a run produced besides the `Result` is its `RunRecord` (the compile report, the schedule, the space selection, the
-preparation, the branches, the traces, the readout stage, the table it ran on, the GATE_LOCAL report), reachable through
+preparation, the branches, the traces, the readout stage and the readout outcome of every kept shot over every ion, the table it ran on, the GATE_LOCAL report), reachable through
 `last_record(result)` for a result of this process and through `Job.record()` for a submitted one; `RunState` is the
 persistent machine state a run threads through its shots (the ion order, the dark and lost flags, the events).
 `SpaceSelection` and `select_space` are the Section 5.2 selection of the joint space (resolved, frozen, dropped and ENR

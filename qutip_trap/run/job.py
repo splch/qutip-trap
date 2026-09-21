@@ -650,6 +650,10 @@ class RunRecord:
     """The recombined register density matrix; None when GATE_LOCAL carried a pure-state ensemble (Section 5.4)."""
     readout: ReadoutStage
     outcome: ReadoutOutcome
+    """The readout of every KEPT shot, in ``Result.bitstrings`` row order, over every ion (a discarded shot is left out, as
+    it is from the Result): the declared bits, the sampled levels behind them, the detection time used and the posteriors
+    and photon records where the discriminator produced them. The pipeline reads the register out once per (sample, branch)
+    batch; this is the concatenation of those batches."""
     table: CalibrationTable
     qubit_shifts_hz: dict[int, float]
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -966,21 +970,35 @@ def ideal_register_state(result_or_circuit: Result | Circuit) -> np.ndarray:
 def register_fidelity(result: Result, target: np.ndarray | qt.Qobj | None = None) -> float:
     """<target| rho |target> of the run's recombined register state (``keep_final_state=True``) against an ideal ket in the
     register order (ion 0 the first tensor factor); the default target is ``ideal_register_state(result)``, the compiled
-    circuit's state with its frame absorbed."""
+    circuit's state with its frame absorbed.
+
+    The register state spans every ion of the crystal, while the ideal ket spans the circuit's qubits (which address the
+    leading ions, qubit q on ion q) and is the same whether the circuit measures all of them or a subset. A circuit on fewer
+    qubits than ions leaves the remaining ions in the prepared state |0>, so its ket is embedded on the register with |0> on
+    those trailing factors before the overlap is taken; a qudit register (leakage levels, M7) places the ket on the qubit
+    levels 0 and 1 of every factor."""
     rho = result.final_state
     if rho is None:
         raise ValueError("run with keep_final_state=True to compare the register state")
-    n = result.n_qubits
     tgt = ideal_register_state(result) if target is None else target
     vec = np.asarray(tgt.full() if isinstance(tgt, qt.Qobj) else tgt, dtype=complex).ravel()
     dims = [int(x) for x in rho.dims[0]]
+    n_ions = len(dims)
+    n = int(round(math.log2(vec.size))) if vec.size else 0
+    if vec.size == 0 or 2**n != vec.size:
+        raise ValueError(f"the target ket has {vec.size} amplitudes, not a power of two")
+    if n > n_ions:
+        raise ValueError(f"the target ket spans {n} qubits but the register holds {n_ions} ions")
+    if n < n_ions:
+        idle = np.zeros(2 ** (n_ions - n), dtype=complex)
+        idle[0] = 1.0
+        vec = np.kron(vec, idle)  # ion 0 is the first factor, so the circuit's qubits are the leading ions
     if all(d == 2 for d in dims):
-        ket = qt.Qobj(vec.reshape(-1, 1), dims=[[2] * n, [1] * n])
+        ket = qt.Qobj(vec.reshape(-1, 1), dims=[dims, [1] * n_ions])
     else:
-        # a qudit register (leakage levels, M7): the ideal ket lives on the qubit levels 0 and 1 of every factor
         full = np.zeros(dims, dtype=complex)
-        full[tuple(slice(0, 2) for _ in dims)] = vec.reshape([2] * n)
-        ket = qt.Qobj(full.reshape(-1, 1), dims=[dims, [1] * n])
+        full[tuple(slice(0, 2) for _ in dims)] = vec.reshape([2] * n_ions)
+        ket = qt.Qobj(full.reshape(-1, 1), dims=[dims, [1] * n_ions])
     return float(np.real(qt.expect(rho, ket)))
 
 

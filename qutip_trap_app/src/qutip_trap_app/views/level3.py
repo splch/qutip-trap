@@ -196,20 +196,25 @@ def Level3Page(
     page = ft.context.page
     key = record.key()
     step, sample, branch = selection(store, record, pulse_param, sample_param)
-    st = record.step(step)
-    z, fine = current_zoom(record, step, sample, branch)
+    # a circuit that plays no pulse (a bare measurement, or virtual Z alone) has no step: reached by a deep link or a
+    # reload of a dynamics route, since the rail does not offer Level 3 for such a record
+    st = record.step(step) if record.schedule.steps else None
+    z, fine = (None, False) if st is None else current_zoom(record, step, sample, branch)
     plain = store.learner.plan(3).plain_labels_first
     header = level_header(
         "The dynamics",
         "What happened inside one pulse?",
-        note=f"step {st.gate_id}, sample {sample}, branch {branch}",
+        note=f"step {st.gate_id}, sample {sample}, branch {branch}"
+        if st is not None
+        else "no pulse was played",
     )
     if z is None:
-        why = (
-            "this run was made by channel replay (a derived engine): it stores no per-time trace inside a pulse"
-            if record.replay is not None
-            else "this GATE_LOCAL run stores no joint trace inside a pulse (a core gap, listed on the device card)"
-        )
+        if st is None:
+            why = "this circuit plays no pulse (a bare measurement, or virtual Z rotations alone): there is no dynamics to open"
+        elif record.replay is not None:
+            why = "this run was made by channel replay (a derived engine): it stores no per-time trace inside a pulse"
+        else:
+            why = "this GATE_LOCAL run stores no joint trace inside a pulse (a core gap, listed on the device card)"
         return ft.Column(
             [
                 header,
@@ -218,7 +223,11 @@ def Level3Page(
                     ft.Column(
                         [
                             ft.Text(why, size=theme.SIZE_BODY),
-                            status_line("set the engine to full simulation on Level 0, then zoom in"),
+                            status_line(
+                                "set the engine to full simulation on Level 0, then zoom in"
+                                if st is not None
+                                else "place a gate on Level 0 and run again"
+                            ),
                         ],
                         spacing=theme.GAP,
                     ),
@@ -343,6 +352,7 @@ def Level3Page(
             "level3.loops",
             [_loop_table(dyn, first_ion, index)],
             store=store,
+            level=3,
             session=session,
             title="Closure per loop",
         )
@@ -383,8 +393,10 @@ def Level3Page(
     movie = record.fock_movie(movie_key)
     fock_children: list[ft.Control] = []
     for m in sorted(set(dyn.fock_start) | set(dyn.fock_end)):
-        start = dyn.fock_start.get(m, np.zeros(1))
-        end = dyn.fock_end.get(m, np.zeros(1))
+        # a distribution the trace does not carry (the recorded coarse trace has no state at the step's end until the
+        # chain reaches it) is empty: the tile then reads unavailable and the chart draws no bar for it
+        start = dyn.fock_start.get(m, np.zeros(0))
+        end = dyn.fock_end.get(m, np.zeros(0))
         fock_children.append(
             ft.Column(
                 [
@@ -468,7 +480,11 @@ def Level3Page(
                 ft.Column(jump_controls, spacing=0),
                 stat_row(
                     [
-                        stat_tile(dyn.norm_deficit, index, plain=plain),
+                        *(
+                            [stat_tile(dyn.norm_deficit, index, plain=plain)]
+                            if dyn.norm_deficit is not None
+                            else []
+                        ),
                         stat_tile(dyn.wall_time, index, plain=plain),
                     ]
                     + [stat_tile(b, index, plain=plain) for b in dyn.boundary_population]
@@ -478,6 +494,7 @@ def Level3Page(
                     "level3.sample",
                     [kv_rows(sample_rows)] + ([kv_rows(dw_rows)] if dw_rows else []),
                     store=store,
+                    level=3,
                     session=session,
                     title="Quasi-static values and frozen spectators",
                 ),
@@ -545,6 +562,7 @@ def Level3Page(
                     status_line(pv.method),
                 ],
                 store=store,
+                level=3,
                 session=session,
                 title="Pauli twirl and the Choi matrices",
             ),

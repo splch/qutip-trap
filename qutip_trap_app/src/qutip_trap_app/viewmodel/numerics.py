@@ -9,6 +9,7 @@ adds never carries the meaning alone. A check that was not run is reported as no
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -73,11 +74,21 @@ def convergence_badge(
     truncation_check: TruncationCheck | None = None,
 ) -> Badge:
     reasons: list[str] = []
-    run: list[str] = ["boundary population against the Section 5.5 policy"]
+    run: list[str] = []
     not_run: list[str] = []
     boundary = zoom.trace.boundary_population if zoom is not None else record.diagnostics.boundary_population
+    if boundary:
+        run.append("boundary population against the Section 5.5 policy")
+    else:
+        # a replay record integrates nothing and reports no boundary population: the check did not run, and an empty
+        # report must never read as a pass (the module's rule)
+        not_run.append("boundary population against the Section 5.5 policy (no integrated mode)")
     for m, v in sorted(boundary.items()):
-        if v > POLICY_BOUNDARY_MAX:
+        if math.isnan(v):
+            reasons.append(
+                f"mode {m}: the boundary population is not a number (the integration did not finish)"
+            )
+        elif not v <= POLICY_BOUNDARY_MAX:
             reasons.append(
                 f"mode {m}: boundary population {v:.2e} exceeds the policy threshold {POLICY_BOUNDARY_MAX:.0e}"
             )
@@ -214,7 +225,7 @@ def numerics_panel(
         ),
         wall_time=Shown("wall_time", wall),
         norm_deficit=None
-        if zoom is None
+        if zoom is None or zoom.trace.final_internal.size == 0
         else Shown(
             "norm_deficit",
             1.0 - float(np.real(np.trace(zoom.trace.final_internal))),

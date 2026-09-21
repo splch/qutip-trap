@@ -274,7 +274,7 @@ def RequestOutcomeView(
                 ft.OutlinedButton(
                     content=ft.Text("Actual unitary (tomography)"),
                     icon=ft.Icons.GRID_4X4,
-                    on_click=lambda e: session.submit_tomography(key, step, 0, store.branch),
+                    on_click=lambda e: session.submit_tomography(key, step, 0, 0),
                     disabled=running,
                     tooltip="process tomography of this gate's pulses from the recorded motional state (Section 5.4)",
                     key="compute-actual",
@@ -371,6 +371,7 @@ def _register_card(
                         ),
                     ],
                     store=store,
+                    level=1,
                     session=session,
                     title="Pauli expectations and details",
                 ),
@@ -410,7 +411,7 @@ def Level1Page(
     lanes_width, _strip = content_widths(store, page, 1)
     frame = phase_register(record)
     residuals = compile_report(record)
-    n = record.n_qubits
+    n = record.n_ions
     why_register = lambda e: session.select_concept(  # noqa: E731
         1, "entanglement_by_ms" if selected.name.value in ("ms", "zz") else "bloch_vector"
     )
@@ -508,6 +509,7 @@ def Level1Page(
                 else []
             ),
             store=store,
+            level=1,
             session=session,
             title="Target unitary and details",
         )
@@ -537,6 +539,7 @@ def Level1Page(
                 ft.Row([shown(r, index, size=theme.SIZE_SMALL) for r in residuals], wrap=True, spacing=12),
             ],
             store=store,
+            level=1,
             session=session,
             title="Show",
         ),

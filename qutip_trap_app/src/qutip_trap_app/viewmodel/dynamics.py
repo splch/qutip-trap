@@ -86,15 +86,17 @@ class PulseDynamics:
     debye_waller: tuple[Shown, ...]
     engine: tuple[str, ...]
     wall_time: Shown
-    norm_deficit: Shown
-    """1 - Tr rho at the end of the step: the integrator's norm drift (normalize_output is off, Section 5.3), a numerics fact shown rather than hidden."""
+    norm_deficit: Shown | None
+    """1 - Tr rho at the end of the step: the integrator's norm drift (normalize_output is off, Section 5.3), a numerics fact
+    shown rather than hidden; None when the trace carries no register state at the step's end (a recorded coarse trace of a
+    run that stored none)."""
     unavailable: tuple[str, ...]
 
 
 def pulse_dynamics(record: Record, z: ZoomTrace) -> PulseDynamics:
     tr = z.trace
     step = record.step(z.step_index)
-    n = record.n_qubits
+    n = record.n_ions  # the traces' P1[i] and reduced internal states span every ion of the crystal
     t = tr.times_s
     pops = tuple(
         Series("P1", f"P1 ion {i}", t, np.asarray(np.real(tr.expectations[f"P1[{i}]"]), dtype=float))
@@ -180,9 +182,9 @@ def pulse_dynamics(record: Record, z: ZoomTrace) -> PulseDynamics:
         debye_waller=dw,
         engine=z.integrators + (z.method,),
         wall_time=Shown("wall_time", z.wall_time_s, f"re-simulation at dimension {z.engine_dimension}"),
-        norm_deficit=Shown(
-            "norm_deficit", 1.0 - float(np.real(np.trace(tr.final_internal))), "at the step's end"
-        ),
+        norm_deficit=None
+        if tr.final_internal.size == 0
+        else Shown("norm_deficit", 1.0 - float(np.real(np.trace(tr.final_internal))), "at the step's end"),
         unavailable=tuple(unavailable),
     )
 
@@ -192,7 +194,13 @@ def pulse_dynamics(record: Record, z: ZoomTrace) -> PulseDynamics:
 
 def recorded_zoom(record: Record, step_index: int, sample_index: int = 0, branch: int = 0) -> ZoomTrace:
     """The run's own stored points inside one step as a ZoomTrace-shaped object (the segment boundaries the run stored,
-    Section 14.3), so that :func:`pulse_dynamics` shows the recorded coarse trace before any re-simulation."""
+    Section 14.3), so that :func:`pulse_dynamics` shows the recorded coarse trace before any re-simulation. Raises
+    ``KeyError`` when the record has no such step (a circuit that plays no pulse) or stores no trace for the (sample,
+    branch), so that one exception names every "nothing to open" case."""
+    if not 0 <= step_index < len(record.schedule.steps):
+        raise KeyError(
+            f"the record has no step {step_index} ({len(record.schedule.steps)} steps: no pulse was played)"
+        )
     step = record.step(step_index)
     tr = record.trace(sample_index, branch)
     t = np.asarray(tr.times_s, dtype=float)
@@ -212,7 +220,11 @@ def recorded_zoom(record: Record, step_index: int, sample_index: int = 0, branch
         alpha_m={m: np.asarray(v)[keep] for m, v in tr.alpha_m.items()},
         jumps=tuple(j for j in tr.jumps if step.t_start_s <= j[0] <= step.t_end_s),
         boundary_population=dict(tr.boundary_population),
-        final_internal=tr.reduced_internal[keep[-1]] if tr.reduced_internal.size else tr.final_internal,
+        # the run's final internal state belongs to the END OF THE RUN, not to this step: with no stored register states
+        # inside the step the state at its end is unknown, and an empty array says so (the norm deficit then reads unavailable)
+        final_internal=tr.reduced_internal[keep[-1]]
+        if tr.reduced_internal.size
+        else np.zeros((0, 0), dtype=complex),
         final_mode_reduced={},
         final_nbar={m: float(np.asarray(v)[keep[-1]]) for m, v in tr.mode_nbar.items()},
         final_joint=None,

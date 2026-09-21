@@ -136,6 +136,7 @@ _FIXED: tuple[Knob, ...] = (
         10.0,
         1000.0,
         "recorded with the rf drive; on a trap declared by its secular frequencies it does not enter a, q or beta",
+        requires_rf=True,
     ),
     _k(
         "trap.stray_field_x_v_per_m",
@@ -383,14 +384,25 @@ def knob(id: str, device: core.Device | None = None) -> Knob:
 
 
 def validate(overrides: Mapping[str, float], device: core.Device) -> dict[str, float]:
+    """The overrides as floats, each a known knob of the device with a finite value inside the knob's declared range;
+    anything else is a :class:`KnobError` (the sliders keep to the range; a record written by another version, or an
+    edited export, may not)."""
     known = knobs_for(device)
     out: dict[str, float] = {}
     for key in sorted(overrides):
         if key not in known:
             raise KnobError(f"unknown knob {key!r} for this device; known: {sorted(known)}")
-        v = float(overrides[key])
+        try:
+            v = float(overrides[key])
+        except (TypeError, ValueError) as exc:
+            raise KnobError(f"{key}: the value {overrides[key]!r} is not a number") from exc
         if not math.isfinite(v):
             raise KnobError(f"{key}: the value must be finite")
+        k = known[key]
+        if not k.lo <= v <= k.hi:
+            raise KnobError(
+                f"{key}: {v:g} is outside the knob's range [{k.lo:g}, {k.hi:g}] {k.unit}".rstrip()
+            )
         out[key] = v
     return out
 

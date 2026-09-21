@@ -236,3 +236,38 @@ def builder_undo_depth() -> int:
     from qutip_trap_app.views.state import UNDO_DEPTH
 
     return UNDO_DEPTH
+
+
+def test_edits_and_the_text_keep_a_subset_measurement() -> None:
+    """An imported program measuring some of its qubits, or into named registers, keeps that through every edit and through
+    the text the builder writes (it used to become "measure everything" on the first edit, changing the run's histogram)."""
+    c = builder.parse_circuit_text(
+        "qreg q[3]; creg c[2]; h q[0]; cx q[0],q[1]; measure q[0] -> c[0]; measure q[1] -> c[1];"
+    )
+    assert c.measure == (0, 1)
+    for edited in (
+        builder.remove_gate(c, 1),
+        builder.append_gate(c, GATES["x"], (2,)),
+        builder.add_qubit(c),
+        builder.clear(c),
+        builder.remove_qubit(c),
+    ):
+        assert edited.measure == (0, 1) and dict(edited.registers) == {"c": (0, 1)}
+        back = builder.parse_circuit_text(builder.to_openqasm2(edited))
+        assert back.measure == (0, 1) and dict(back.registers) == {"c": (0, 1)}
+    named = builder.parse_circuit_text(
+        "qreg q[2]; creg a[1]; creg b[1]; h q[0]; measure q[1] -> a[0]; measure q[0] -> b[0];"
+    )
+    back = builder.parse_circuit_text(builder.to_openqasm2(named))
+    assert dict(back.registers) == {"a": (1,), "b": (0,)}
+    # a circuit measuring every qubit still writes the worked example's compact form, a wire added or removed included
+    assert builder.to_openqasm2(builder.add_qubit(_bell())).endswith(
+        "creg c[3];\nh q[0];\ncx q[0],q[1];\nmeasure q -> c;\n"
+    )
+    assert builder.remove_qubit(
+        builder.parse_circuit_text("qreg q[3]; creg c[3]; measure q -> c;")
+    ).measure == (0, 1)
+    # a program that measures nothing stays one (the machine then reads every ion out), with no zero-size register written
+    nothing = builder.parse_circuit_text("qreg q[2]; h q[0];")
+    assert nothing.measure == () and "creg" not in builder.to_openqasm2(nothing)
+    assert builder.parse_circuit_text(builder.to_openqasm2(nothing)).measure == ()

@@ -496,7 +496,7 @@ CATALOGUE: dict[str, Quantity] = {
         _q(
             "sideband_detuning",
             "How far the tone is from talking to this mode",
-            "delta_{i,m} = mu_i - omega_m",
+            "delta_{i,m} = mu_i - omega_m for a blue tone, mu_i + omega_m for a red one: the distance to its own sideband",
             "Hz",
             2,
             "4.4.1",

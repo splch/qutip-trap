@@ -39,7 +39,7 @@ from qutip_trap_app.views.common import (
     value_cell,
 )
 from qutip_trap_app.views.presets import comparison_table
-from qutip_trap_app.views.state import Session, Store
+from qutip_trap_app.views.state import MAX_SHOTS, Session, Store
 
 SKETCHES: dict[str, str] = {
     "ideal": "the ideal machine's distribution",
@@ -82,9 +82,13 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
 
     def set_shots(e: Any) -> None:
         try:
-            store.shots = max(1, int(str(e.control.value)))
+            shots = int(str(e.control.value))
         except ValueError:
             store.error = "shots must be a positive integer"
+            return
+        store.shots = min(max(1, shots), MAX_SHOTS)
+        if shots > MAX_SHOTS:
+            store.error = f"shots are capped at {MAX_SHOTS}: every shot is read out one by one"
 
     def set_engine(e: Any) -> None:
         store.engine = str(e.control.value)  # type: ignore[assignment]
@@ -414,7 +418,7 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
     h = histogram(record)
     key = record.key()
     report = store.verify_reports.get(key)
-    verifying = any(j.request == "verify" and j.message == key and not j.done for j in store.jobs.values())
+    verifying = store.running_of("verify", key=key) is not None
 
     def on_bar(k: str) -> None:
         store.selected_bar = k
@@ -505,7 +509,7 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
                 ft.context.page.navigate(f"/job/{k}")
 
             detail_controls.append(ft.TextButton(content=ft.Text("open the deeper run"), on_click=open_deep))
-    body.append(details("level0.results", detail_controls, store=store, session=session))
+    body.append(details("level0.results", detail_controls, store=store, level=0, session=session))
     verified_line = (
         status_line(
             f"verify deeper: {'within' if report.within_bound else 'OUTSIDE'} the bound"
@@ -588,7 +592,7 @@ def DeviceCardView(store: Store, session: Session, record: Record, index: Proven
             ),
             stat_row(tiles),
             status_line(f"modes: {modes} MHz"),
-            details("level0.device", detail_controls, store=store, session=session),
+            details("level0.device", detail_controls, store=store, level=0, session=session),
         ],
         spacing=theme.GAP,
     )

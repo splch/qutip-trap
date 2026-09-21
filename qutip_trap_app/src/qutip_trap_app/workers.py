@@ -374,6 +374,11 @@ class SimulationWorker:
     def alive(self) -> bool:
         return self._process is not None and bool(self._process.is_alive())
 
+    @property
+    def started(self) -> bool:
+        """Whether a worker process was started and not deliberately stopped; with ``alive`` False this means it died."""
+        return self._process is not None
+
     def start(self) -> None:
         if self.alive:
             return

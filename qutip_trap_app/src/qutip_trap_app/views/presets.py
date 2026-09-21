@@ -245,7 +245,7 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
         detail_controls.extend(ft.Text(n, size=theme.SIZE_SMALL) for n in result.notes)
         detail_controls.extend(ft.Text(w, size=theme.SIZE_SMALL) for w in why_nots)
         detail_controls.append(status_line(f"computed in {result.wall_time_s:.1f} s"))
-        body.append(details(f"preset.{preset_id}", detail_controls, store=store, session=session))
+        body.append(details(f"preset.{preset_id}", detail_controls, store=store, level=0, session=session))
     return ft.Column(
         [
             header,

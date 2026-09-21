@@ -1176,7 +1176,15 @@ class Record:
 
     @property
     def n_qubits(self) -> int:
+        """The circuit's qubits (its wires). The REGISTER the run carries spans every ion: see :attr:`n_ions`."""
         return self.job.circuit.n_qubits
+
+    @property
+    def n_ions(self) -> int:
+        """The ions of the crystal: the size of every register-order state on the record (``results.final_state``, the
+        traces' reduced internal states, the replay's register after each gate, ``readout.levels``). A circuit on fewer
+        qubits than ions (the app never runs fewer than two ions) addresses the leading ions and leaves the rest in |0>."""
+        return self.device_card.n_ions
 
     @property
     def n_samples(self) -> int:

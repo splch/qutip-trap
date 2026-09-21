@@ -655,9 +655,13 @@ def _code_panel(
             return
         fmt = vm.detect_format(text)
         try:
-            vm.parse_circuit_text(text, fmt)
+            parsed = vm.parse_circuit_text(text, fmt)
         except Exception as exc:  # a syntax error in the pasted program: shown, never a crash
             store.error = f"the pasted circuit could not be read: {exc}"
+            return
+        if parsed.n_qubits > vm.MAX_QUBITS:
+            # the same ceiling the + at the wires' end enforces: every ion adds modes and joint dimension
+            store.error = f"the pasted circuit has {parsed.n_qubits} qubits; at most {vm.MAX_QUBITS} run here"
             return
         session.edit_circuit(text + ("" if text.endswith("\n") else "\n"), fmt)
         set_import_text("")
@@ -920,6 +924,7 @@ def CircuitBuilder(store: Store, session: Session) -> ft.Control:
             "level0.code",
             _code_panel(store, session, import_text, set_import_text),
             store=store,
+            level=0,
             session=session,
             title="Code",
         )

@@ -352,7 +352,12 @@ class ReplayOutcome:
     """(n_gates, 2^n, 2^n): the register after each applied piece, register order."""
     final: np.ndarray
     levels: np.ndarray
+    """(shots, n_ions) the sampled computational level of every ion, register order (ion 0 first)."""
     bits: np.ndarray
+    """(shots, n_ions) the declared bit of every ion through the table's readout errors."""
+    measured: tuple[int, ...]
+    """The circuit's measured qubits in ascending order (its terminal ``measure`` plus every trailing measure operation, the
+    rule the core's pipeline applies): the columns of the record's bitstrings, a subset of the ions when the circuit says so."""
     bright_levels: tuple[int, ...]
     spam: dict[str, tuple[float, float]]
     residual_terms: dict[str, float]
@@ -522,6 +527,13 @@ def replay(
         is_bright = levels[:, i] == bright[i]
         flip = np.where(is_bright, rng.random(len(idx)) < eps_b, rng.random(len(idx)) < eps_d)
         bits[:, i] = np.where(flip, 1 - levels[:, i], levels[:, i])
+    # the measured set is the compiled circuit's terminal measure unioned with every trailing measure operation, exactly the
+    # rule the core's pipeline applies (run/pipeline.py), so the two engines histogram the same qubits
+    declared: list[int] = list(report.circuit.measure)
+    for op in report.circuit.ops:
+        if op.name == "measure":
+            declared.extend(int(q) for q in op.qubits if q not in declared)
+    measured = tuple(sorted(int(q) for q in declared)) if declared else tuple(range(n))
     total = float(sum(terms.values()))
     notes = tuple(library.notes) + (
         "channel replay (app-side, Section 5.4): every gate applied as the Section 6.8 channel of that gate kind extracted once by "
@@ -540,6 +552,7 @@ def replay(
         final=rho,
         levels=levels,
         bits=bits,
+        measured=measured,
         bright_levels=bright,
         spam=spam,
         residual_terms=terms,
