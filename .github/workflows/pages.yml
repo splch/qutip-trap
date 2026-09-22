@@ -39,7 +39,7 @@ jobs:
       - run: uv build --wheel --out-dir wheels
       - env:
           PIP_FIND_LINKS: ${{ github.workspace }}/wheels
-        run: uv run --project .. --extra gui flet build web --python-version 3.14 --base-url /qutip-trap/ --route-url-strategy hash --skip-flutter-doctor -o ../site
+        run: uv run --project .. --extra gui flet build web --yes --no-rich-output --python-version 3.14 --base-url /qutip-trap/ --route-url-strategy hash --skip-flutter-doctor -o ../site
         working-directory: qutip_trap_app
       - uses: actions/upload-pages-artifact@v3
         with:
