@@ -3,11 +3,11 @@ name = "qutip-trap-app"
 version = "0.1.0"
 description = "Zoomable trapped-ion simulator application (PLAN.md Section 14, milestone M11); consumes qutip-trap through its public API only"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.13,<3.15"
 authors = [{ name = "Spencer Churchill", email = "25377399+splch@users.noreply.github.com" }]
 dependencies = [
     "qutip-trap",
-    "flet[all]>=0.86,<1.0",
+    "flet>=0.86,<1.0",
     "flet-charts>=0.86,<1.0",
 ]
 

@@ -3,12 +3,12 @@ name = "qutip-trap"
 version = "0.4.0"
 description = "First-principles trapped-ion quantum computer simulator built on QuTiP (PLAN.md milestones M0 to M10; the Machine ladder of docs/api_proposal.md with its laboratory, error model, jobs and one documentation page per rung)"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.13,<3.15"
 authors = [{ name = "Spencer Churchill", email = "25377399+splch@users.noreply.github.com" }]
 dependencies = [
     "qutip>=5.3.1,<5.4",
-    "numpy>=2.5.2,<3",
-    "scipy>=1.18.1,<2",
+    "numpy>=2.4,<3",
+    "scipy>=1.18,<2",
     "pyyaml>=6.0.2",
 ]
 

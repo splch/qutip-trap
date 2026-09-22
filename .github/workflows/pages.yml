@@ -1,0 +1,56 @@
+name: pages
+
+# the Flet app as a static site (Pyodide 314 in the browser) at https://splch.github.io/qutip-trap/
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # QuTiP has no WebAssembly wheel on PyPI: build 5.3.1 for the Pyodide that Flet pairs with Python 3.14
+      - uses: actions/cache@v4
+        id: qutip
+        with:
+          path: wheels/qutip-*.whl
+          key: qutip-5.3.1-pyodide-314.0.3
+      - if: steps.qutip.outputs.cache-hit != 'true'
+        run: |
+          uv venv --python 3.14 .pyodide && source .pyodide/bin/activate && uv pip install pyodide-build pyodide-cli
+          git clone -q --depth 1 --branch v5.3.1 https://github.com/qutip/qutip /tmp/qutip
+          pyodide xbuildenv install 314.0.3
+          pyodide build /tmp/qutip -o wheels
+      - run: uv build --wheel --out-dir wheels
+      - env:
+          PIP_FIND_LINKS: ${{ github.workspace }}/wheels
+        run: uv run --project .. --extra gui flet build web --python-version 3.14 --base-url /qutip-trap/ --route-url-strategy hash --skip-flutter-doctor -o ../site
+        working-directory: qutip_trap_app
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

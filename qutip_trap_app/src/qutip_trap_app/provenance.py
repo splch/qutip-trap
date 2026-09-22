@@ -7,7 +7,7 @@ corrects the source." And: "Explain panel. At every level, the Part II subsectio
 beside it."
 
 The index is GENERATED (``python -m qutip_trap_app.provenance``) from two data files kept beside the plan, the ledger
-``docs/provenance/ledger.yaml`` and ``PLAN.md`` itself, into the asset ``src/assets/provenance_index.json`` that the
+``docs/provenance/ledger.yaml`` and ``PLAN.md`` itself, into the asset ``src/qutip_trap_app/provenance_index.json`` that the
 packaged application ships and reads at run time; ``--check`` exits 1 when the asset is stale, the way the core's
 ``tools/docs_from_ledger.py --check`` guards the documentation. From the plan it takes every numbered section header with
 its line and the count of provenance tags in its text, so a chip can name the subsection and a reader can see how much of
@@ -58,7 +58,7 @@ TAG_GLYPH: dict[str, str] = {
 }
 """One glyph per tag beside its word: meaning is never carried by colour alone (WCAG 1.4.1)."""
 
-ASSET_PATH = Path(__file__).resolve().parents[1] / "assets" / "provenance_index.json"
+ASSET_PATH = Path(__file__).resolve().with_name("provenance_index.json")
 """Where the generated index lives inside the app's ``src/`` tree (shipped by ``flet build``)."""
 
 PART_II_SECTIONS = ("4", "5", "6", "7", "8")

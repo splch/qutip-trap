@@ -15,7 +15,6 @@ test at 1e-12 rather than a bitwise one because sums over trajectories accumulat
 from __future__ import annotations
 
 import os
-import resource
 import sys
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Literal
@@ -39,7 +38,12 @@ MIN_PARENT_BYTES = 512 * 1024**2
 
 
 def peak_rss_bytes() -> int:
-    """This process's peak resident set size (``ru_maxrss``: bytes on macOS, kilobytes on Linux)."""
+    """This process's peak resident set size (``ru_maxrss``: bytes on macOS, kilobytes on Linux); 0 under WebAssembly,
+    which has no ``resource`` module (and one CPU, so no pool)."""
+    if sys.platform == "emscripten":
+        return 0
+    import resource
+
     peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return peak if sys.platform == "darwin" else peak * 1024
 

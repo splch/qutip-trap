@@ -38,7 +38,7 @@ request semantics, the explain drawer's specification text and the navigation te
   derivation residual; `verify.py` - verify deeper; `workers.py` - one worker process that holds the live state and streams
   progress (M11.4: the `request_run` and `preset` requests).
 - `provenance.py` - the index generated from `docs/provenance/ledger.yaml` and `PLAN.md` into
-  `src/assets/provenance_index.json`; (M11.4) every section's own Markdown, so the explain drawer's
+  `src/qutip_trap_app/provenance_index.json`; (M11.4) every section's own Markdown, so the explain drawer's
   Specification tile shows the text that governs the screen and a clicked chip opens the section it cites.
 - `viewmodel/` - `catalogue` (every displayed quantity with its ledger id, 221 of them), `machine`, `circuit`, `schedule`,
   `dynamics`, `physics`, `numerics`, `learn` (30 concepts, the six-click tour, the faded GHZ exercise, the free exercise, the
@@ -74,7 +74,7 @@ From the repository root:
     uv sync --all-packages --extra gui --group dev                 # installs the core, the app and Flet
     uv run --package qutip-trap-app pytest qutip_trap_app/tests -m 'not slow'   # the view-model tests (about twelve minutes)
     uv run --package qutip-trap-app pytest qutip_trap_app/tests               # with the hotter-state channel test
-    uv run python -m qutip_trap_app.provenance                     # regenerate src/assets/provenance_index.json
+    uv run python -m qutip_trap_app.provenance                     # regenerate src/qutip_trap_app/provenance_index.json
     uv run python -m qutip_trap_app.provenance --check             # CI: the asset is current with the ledger and the plan
     (cd qutip_trap_app && uv run mypy)                              # strict types for src/qutip_trap_app
     uv run ruff check qutip_trap_app && uv run ruff format --check qutip_trap_app
@@ -101,7 +101,7 @@ circuit takes about 20 s):
     cd qutip_trap_app && uv run --project .. flet run --web -p 8550 src/main.py   # browser served from the host
     cd qutip_trap_app && FLET_FORCE_WEB_SERVER=true FLET_SERVER_PORT=8550 uv run --project .. python src/main.py   # server only
 
-The static Pyodide web build is not a target (PLAN.md Section 1.5).
+The static Pyodide build is the GitHub Pages site, https://splch.github.io/qutip-trap/, deployed by `.github/workflows/pages.yml` on every push to `main`: QuTiP 5.3.1 compiled for Pyodide 314 with `pyodide build` (there is no WebAssembly wheel on PyPI), the core's wheel, then `flet build web --python-version 3.14 --base-url /qutip-trap/ --route-url-strategy hash`, both wheels offered to Flet's pip through `PIP_FIND_LINKS`. In the browser the worker runs in-process (`workers.IN_PROCESS`): the page waits for a request instead of streaming its progress.
 
 ## Using the record from Python
 

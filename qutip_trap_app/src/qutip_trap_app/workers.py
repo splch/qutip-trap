@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import queue
+import sys
 import time
 import traceback
 import uuid
@@ -47,6 +48,10 @@ class Event:
 
 class WorkerError(RuntimeError):
     """A request failed in the worker; the message carries the worker's traceback."""
+
+
+IN_PROCESS = sys.platform == "emscripten"
+"""WebAssembly has no processes: a request runs in the page's own thread at ``submit`` time, its events read afterwards."""
 
 
 # ---- the worker process ---------------------------------------------------------------------------------------------------------
@@ -319,49 +324,54 @@ def _worker_main(requests: Any, results: Any) -> None:
         item = requests.get()
         if item is None:
             return
-        ticket, request, payload = item
-        t0 = time.perf_counter()
+        _run(state, results, item)
 
-        def progress(
-            stage: str,
-            fraction: float | None,
-            message: str,
-            _ticket: str = ticket,
-            _request: str = request,
-            _t0: float = t0,
-        ) -> None:
-            results.put(
-                Event(
-                    "progress",
-                    _ticket,
-                    _request,
-                    stage=stage,
-                    fraction=fraction,
-                    message=message,
-                    wall_time_s=time.perf_counter() - _t0,
-                )
-            )
 
-        try:
-            value = _handle(state, request, payload, progress)
-            results.put(Event("result", ticket, request, payload=value, wall_time_s=time.perf_counter() - t0))
-        except Exception:
-            results.put(
-                Event(
-                    "error",
-                    ticket,
-                    request,
-                    message=traceback.format_exc(),
-                    wall_time_s=time.perf_counter() - t0,
-                )
+def _run(state: _LiveState, results: Any, item: tuple[str, str, dict[str, Any]]) -> None:
+    """One request: its progress events, then its result or its error, on ``results``."""
+    ticket, request, payload = item
+    t0 = time.perf_counter()
+
+    def progress(
+        stage: str,
+        fraction: float | None,
+        message: str,
+        _ticket: str = ticket,
+        _request: str = request,
+        _t0: float = t0,
+    ) -> None:
+        results.put(
+            Event(
+                "progress",
+                _ticket,
+                _request,
+                stage=stage,
+                fraction=fraction,
+                message=message,
+                wall_time_s=time.perf_counter() - _t0,
             )
+        )
+
+    try:
+        value = _handle(state, request, payload, progress)
+        results.put(Event("result", ticket, request, payload=value, wall_time_s=time.perf_counter() - t0))
+    except Exception:
+        results.put(
+            Event(
+                "error",
+                ticket,
+                request,
+                message=traceback.format_exc(),
+                wall_time_s=time.perf_counter() - t0,
+            )
+        )
 
 
 # ---- the UI-side handle -----------------------------------------------------------------------------------------------------------
 
 
 class SimulationWorker:
-    """One worker process; submit requests, poll events, or wait for one ticket."""
+    """One worker process; submit requests, poll events, or wait for one ticket (in-process under WebAssembly)."""
 
     def __init__(self) -> None:
         self._ctx = mp.get_context("spawn")
@@ -369,18 +379,24 @@ class SimulationWorker:
         self._results: Any = None
         self._process: Any = None
         self._buffer: list[Event] = []
+        self._state: _LiveState | None = None
 
     @property
     def alive(self) -> bool:
+        if IN_PROCESS:
+            return self._state is not None
         return self._process is not None and bool(self._process.is_alive())
 
     @property
     def started(self) -> bool:
         """Whether a worker process was started and not deliberately stopped; with ``alive`` False this means it died."""
-        return self._process is not None
+        return self._process is not None or self._state is not None
 
     def start(self) -> None:
         if self.alive:
+            return
+        if IN_PROCESS:
+            self._state, self._results = _LiveState(), queue.Queue()
             return
         self._requests = self._ctx.Queue()
         self._results = self._ctx.Queue()
@@ -393,7 +409,9 @@ class SimulationWorker:
         self._process.start()
 
     def stop(self, timeout_s: float = 5.0) -> None:
+        self._state = None
         if self._process is None:
+            self._results = None
             return
         try:
             if self.alive and self._requests is not None:
@@ -413,6 +431,7 @@ class SimulationWorker:
             self._process.terminate()
             self._process.join(2.0)
         self._process = None
+        self._state = None
         self._buffer.clear()
         self.start()
 
@@ -420,6 +439,10 @@ class SimulationWorker:
         if not self.alive:
             self.start()
         ticket = Ticket(uuid.uuid4().hex[:12], request)
+        if IN_PROCESS:
+            assert self._state is not None
+            _run(self._state, self._results, (ticket.id, request, payload))
+            return ticket
         assert self._requests is not None
         self._requests.put((ticket.id, request, payload))
         return ticket
