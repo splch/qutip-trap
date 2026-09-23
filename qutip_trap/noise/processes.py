@@ -1,19 +1,8 @@
-"""Stochastic time series for the sampled-trajectory route of Section 6.1 (d) (PLAN.md Sections 5.5, 6.1, 6.3, 6.4; M7).
+"""Stochastic time series for sampled noise.
 
-A ``Trajectory`` is a realization on a FIXED time grid with linear interpolation between the grid points, so that the
-values an integrator sees do not depend on its step sequence (Section 9.17 row "Seeds and reproducibility": an OU
-realization is identical under two integrator step sequences). Two generators:
-
-- ``synthesize``: a zero-mean Gaussian process with the two-sided density S(omega) of a ``NoiseSpectrum`` (its
-  tabulated band; the white level is routed to Lindblad operators, not sampled), by the spectral method
-  x(t) = sum_k sqrt(S(omega_k) Delta omega_k/pi) [a_k cos omega_k t + b_k sin omega_k t] with a_k, b_k standard
-  normal, so that <x^2> = (1/pi) int S d omega exactly (the Section 13 kernel) and <x(t) x(t')> is the inverse
-  transform of S; the frequency bins are log-spaced over the band with the bin width as the weight.
-- ``ou_process``: the exact Ornstein-Uhlenbeck recursion x_{n+1} = x_n e^{-dt/tau} + sigma sqrt(1 - e^{-2 dt/tau}) xi_n,
-  exact on any grid, the realization Section 6.3 names for laser phase noise with a configured linewidth.
-
-The grid must resolve the highest tabulated frequency (dt <= pi/omega_max, asserted), which is what bounds the
-band a trajectory can carry; anything faster belongs in ``white_level``.
+A ``Trajectory`` is a realization on a fixed time grid with linear interpolation, so the values an integrator sees do
+not depend on its step sequence. The grid must resolve the band's top (dt <= pi/omega_max); anything faster belongs in
+the spectrum's ``white_level``.
 """
 
 from __future__ import annotations
@@ -26,7 +15,7 @@ import numpy as np
 from qutip_trap.noise.spectra import Mains, NoiseSpectrum
 
 MAX_GRID_POINTS = 400_001
-"""The largest grid one trajectory may hold (a 1 ms shot at 2.5 ns steps); a finer request is refused with the remedy."""
+"""The largest grid one trajectory may hold; ``time_grid`` refuses a finer one."""
 
 
 @dataclass(frozen=True)
@@ -78,15 +67,10 @@ class Trajectory:
 
 
 MIN_GRID_POINTS = 65
-"""Every trajectory grid has at least this many points, so a slow process is still a smooth curve over the shot."""
+"""The fewest points of a trajectory grid, so a slow process is still a smooth curve over the shot."""
 
 TAU_C_OVERSAMPLE = 10.0 * math.pi
-"""``oversample`` that makes ``time_grid`` honour Section 5.5's ``Delta t <= tau_c/10``.
-
-The shortest correlation time a tabulated band carries is that of its fastest component, tau_c,min = 1/omega_max, so
-the rule reads dt <= 1/(10 omega_max); ``time_grid`` sets dt = pi/(omega_max x oversample), which meets it at
-oversample >= 10 pi = 31.4159. The historical default of 4 gave dt = 0.785/omega_max, 7.9x coarser than the rule
-(``conv.trajectory_grid_tau_c``)."""
+"""The ``time_grid`` oversampling that gives dt <= tau_c/10 for the band's fastest component (tau_c = 1/omega_max)."""
 
 
 def time_grid(
@@ -97,11 +81,8 @@ def time_grid(
     oversample: float = TAU_C_OVERSAMPLE,
     min_points: int = MIN_GRID_POINTS,
 ) -> np.ndarray:
-    """A uniform grid over [t0, t0 + duration] resolving omega_max with ``oversample`` points per half period.
-
-    The default is ``TAU_C_OVERSAMPLE`` = 10 pi, which is Section 5.5's ``Delta t <= tau_c/10`` for the band's fastest
-    component (tau_c,min = 1/omega_max); a caller that wants only Nyquist passes ``oversample=1``.
-    """
+    """A uniform grid over [t0, t0 + duration] with ``oversample`` points per half period of omega_max (``oversample=1``
+    is Nyquist) and at least ``min_points``; more than ``MAX_GRID_POINTS`` is refused."""
     if duration_s <= 0.0:
         raise ValueError("duration must be positive")
     if omega_max_rad_s <= 0.0:
@@ -126,14 +107,11 @@ def _check_resolves(times_s: np.ndarray, omega_max_rad_s: float) -> None:
 
 
 _SYNTH_BLOCK_ELEMENTS = 1 << 20
-"""Complex elements per block of the synthesis: the (times x bins) phase table is evaluated block by block instead of as one
-N_t x N_bins matrix (240k x 512 for a 20 s grid resolving omega_max = 1200 rad/s: two 1 GB temporaries per realization)."""
+"""Complex elements per block of the (times x bins) phase table ``_phased_sum`` evaluates, which bounds its memory."""
 
 
 def _phased_sum(tau: np.ndarray, omega: np.ndarray, coef: np.ndarray) -> np.ndarray:
-    """Re sum_k coef_k exp(i omega_k tau_j) on the grid ``tau``, block by block. On a uniform grid the block's phase table
-    exp(i omega_k j delta) is computed once and rotated by exp(i omega_k tau_start) per block, so no transcendental is evaluated
-    per element; the products differ from a direct evaluation by round-off only. A non-uniform grid evaluates each block directly."""
+    """Re sum_k coef_k exp(i omega_k tau_j) on the grid ``tau``, block by block (one rotated phase table if uniform)."""
     n_t = int(tau.size)
     n_w = int(omega.size)
     out = np.empty(n_t)
@@ -162,12 +140,9 @@ def synthesize(
     n_bins: int = 512,
     omega_min_rad_s: float | None = None,
 ) -> Trajectory:
-    """A Gaussian realization of the spectrum's TABULATED band on ``times_s`` (Section 6.1 route d).
-
-    Bins are log-spaced from ``omega_min`` (default: the band's lowest positive frequency, or 2 pi/(1000 T) for a band
-    that starts at zero, so that components slower than the grid appear as a constant offset with the right variance)
-    to the band's top; each bin carries S at its centre times its width; the sum of weights is (1/pi) int S d omega.
-    """
+    """A Gaussian realization x(t) = sum_k sqrt(S(omega_k) Delta omega_k/pi) [a_k cos omega_k t + b_k sin omega_k t],
+    a_k, b_k ~ N(0, 1), of the spectrum's tabulated band on ``times_s``, over bins log-spaced from ``omega_min``
+    (default: the lowest positive frequency, else 2 pi/(1000 T); at most a tenth of the top) to the band's top."""
     t = np.asarray(times_s, dtype=float)
     if t.ndim != 1 or t.size < 2:
         raise ValueError("times_s must be a one-dimensional grid of at least two points")
@@ -187,7 +162,7 @@ def synthesize(
     w_lo = min(w_lo, w_hi / 10.0)
     edges = np.geomspace(w_lo, w_hi, int(n_bins) + 1)
     if float(np.min(w_tab)) == 0.0 and omega_min_rad_s is None:
-        edges[0] = 0.0  # the band starts at dc: the first bin runs from 0
+        edges[0] = 0.0
     centres = 0.5 * (edges[1:] + edges[:-1])
     widths = np.diff(edges)
     s_c = np.asarray(spectrum.tabulated(centres), dtype=float)
@@ -225,8 +200,8 @@ def mains_trajectory(mains: Mains, times_s: np.ndarray, trigger_phase_rad: float
 
 
 def correlated_normals(rng: np.random.Generator, times_s: np.ndarray, tau_s: float, size: int) -> np.ndarray:
-    """Standard normals z[k, :] at the times ``times_s`` with <z_k z_l> = exp(-|t_k - t_l|/tau) per column: the raw draws
-    behind a quasi-static Drift sampled at the shot clock (Section 7.5), an OU chain on an irregular grid."""
+    """Standard normals z[k, :] at ``times_s`` with <z_k z_l> = exp(-|t_k - t_l|/tau) per column, an OU chain on any
+    grid (tau = inf holds the first draw)."""
     t = np.asarray(times_s, dtype=float)
     out = np.empty((t.size, size))
     out[0] = rng.standard_normal(size)

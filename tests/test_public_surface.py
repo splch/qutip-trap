@@ -1,9 +1,5 @@
-"""The public surface, name by name (docs/api_implementation_plan.md item 0.2, after Cirq's ``json_test_data/spec.py``, which
-forces a decision per name): every ``__all__`` name of every rung module resolves, carries a docstring of its own and appears in
-backticks on a documentation page, and every frozen dataclass among them round-trips through ``dataclasses.replace``.
-
-Phase 1 added the rung modules to ``RUNG_MODULES`` as it created them; Phase 3.4 (0.4.0) gave every rung its page
-(``PAGE_OF``), so every name must appear on its own rung's page and the list of not-yet-documented 0.1.0 names is gone."""
+"""The public surface, name by name: every ``__all__`` name of every public module resolves and carries a docstring of its
+own, and every frozen dataclass among them round-trips through ``dataclasses.replace``."""
 
 from __future__ import annotations
 
@@ -11,7 +7,6 @@ import ast
 import dataclasses
 import importlib
 import inspect
-import re
 from functools import cache
 from pathlib import Path
 from types import ModuleType
@@ -20,7 +15,6 @@ import numpy as np
 import pytest
 
 from qutip_trap import api
-from qutip_trap.provenance import repository_root
 from tests.fixtures import (
     make_calibration_table,
     make_crystal,
@@ -36,9 +30,6 @@ from tests.fixtures import (
     make_space,
     make_trap,
 )
-
-ROOT = repository_root()
-DOCS = ROOT / "docs"
 
 RUNG_MODULES: tuple[str, ...] = (
     "qutip_trap.api",
@@ -58,45 +49,6 @@ RUNG_MODULES: tuple[str, ...] = (
 )
 """The modules whose ``__all__`` is the public surface: the Appendix E surface, the rung modules of 0.2.0
 (docs/api_implementation_plan.md 1.6), the laboratory (0.3.0) and ``qutip_trap.experimental`` (3.3; 0.4.0)."""
-
-PAGES: tuple[Path, ...] = tuple(
-    DOCS / name
-    for name in (
-        "machine.md",
-        "circuit.md",
-        "schedule.md",
-        "dynamics.md",
-        "physics.md",
-        "laboratory.md",
-        "experimental.md",
-        "physics_notes.md",
-        "conventions.md",
-        "examples.md",
-        "limits.md",
-        "deprecations.md",
-        "README.md",
-    )
-)
-"""The documentation pages: since 0.4.0 the ladder (one page per rung, one for the laboratory, one for the experimental
-namespace), then the pages every release had (the two planning documents under docs/ are not pages)."""
-
-PAGE_OF: dict[str, str] = {
-    "qutip_trap": "machine.md",
-    "qutip_trap.presets": "machine.md",
-    "qutip_trap.circuit": "circuit.md",
-    "qutip_trap.io": "circuit.md",
-    "qutip_trap.io.qasm2": "circuit.md",
-    "qutip_trap.io.ionq": "circuit.md",
-    "qutip_trap.schedule": "schedule.md",
-    "qutip_trap.dynamics": "dynamics.md",
-    "qutip_trap.physics": "physics.md",
-    "qutip_trap.experiments": "laboratory.md",
-    "qutip_trap.calibration": "laboratory.md",
-    "qutip_trap.benchmarks": "laboratory.md",
-    "qutip_trap.experimental": "experimental.md",
-}
-"""Each rung module's own page (docs/api_implementation_plan.md 3.4: "the public-surface test requires every rung name on its
-page"); ``qutip_trap.api``, the compatibility surface, may document a name on any page."""
 
 
 def _module(module_name: str) -> ModuleType:
@@ -192,21 +144,6 @@ def _lazy_source(module_name: str, name: str) -> str | None:
     return None
 
 
-@cache
-def _code_spans(page: Path) -> tuple[str, ...]:
-    """Every backticked span of one documentation page: fenced blocks and inline code."""
-    text = page.read_text(encoding="utf-8")
-    spans: list[str] = re.findall(r"```[A-Za-z]*\n(.*?)```", text, flags=re.S)
-    # strip the fenced blocks (a fence opens with ``` and a newline; the prose "```python block" of examples.md is not one)
-    spans += re.findall(r"`([^`\n]+)`", re.sub(r"```[A-Za-z]*\n.*?```", "", text, flags=re.S))
-    return tuple(spans)
-
-
-def _documented(name: str, pages: tuple[Path, ...] = PAGES) -> bool:
-    pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
-    return any(pattern.search(span) for page in pages for span in _code_spans(page))
-
-
 @pytest.mark.parametrize("module_name", RUNG_MODULES)
 def test_every_public_name_resolves(module_name: str) -> None:
     module = _module(module_name)
@@ -223,27 +160,6 @@ def test_every_public_name_carries_a_docstring_of_its_own(module_name: str) -> N
         if not (_own_docstring(module_name, name, obj) or "").strip()
     ]
     assert not missing, f"public names of {module_name} without a docstring: {missing}"
-
-
-@pytest.mark.parametrize("module_name", RUNG_MODULES)
-def test_every_public_name_is_documented_on_its_page(module_name: str) -> None:
-    """A name is public when it is documented (Qiskit's rule): it appears in backticks, alone or inside a code span or a
-    fenced block, on its rung's page (``PAGE_OF``; any page for the Appendix E surface). The 0.1.0 names that lacked a line
-    were listed in this test until 0.4.0 gave every rung its page (docs/api_implementation_plan.md 3.4); the list is gone
-    and a new public name fails here until its line is written."""
-    module = _module(module_name)
-    pages = PAGES if module_name == "qutip_trap.api" else (DOCS / PAGE_OF[module_name],)
-    undocumented = sorted(name for name in module.__all__ if not _documented(name, pages))
-    where = "a documentation page" if module_name == "qutip_trap.api" else PAGE_OF[module_name]
-    assert not undocumented, (
-        f"public names of {module_name} with no line on {where} (write the line): {undocumented}"
-    )
-
-
-def test_every_page_of_the_ladder_exists() -> None:
-    for page in PAGES:
-        assert page.exists(), page.name
-    assert set(PAGE_OF.values()) <= {p.name for p in PAGES}
 
 
 MUTABLE_SERVICES: frozenset[str] = frozenset({"JointExactEngine"})

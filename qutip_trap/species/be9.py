@@ -1,34 +1,18 @@
-"""9Be+ species table (PLAN.md Sections 4.2.1, 4.2.2, 4.3.2, 4.5.1, 4.5.6, 9.13; Appendix E).
+"""9Be+ species table (I = 3/2).
 
-PLAN.md says of A(S1/2) and the g-factors that they "are not printed there [Langer 2005] and must be cited
-from elsewhere". The M0a fix pass of 2026-09-08 did that: Shiga, Itano and Bollinger 2011 for the
-zero-field A and the measured g_J, Dickopf et al. 2024 (with Wineland, Bollinger and Itano 1983) for mu_I,
-Noertershaeuser et al. 2009 for A(2p 2P1/2). The 2p 2P3/2 constants are THEORY ONLY (Puchalski and
-Pachucki 2009) and in tension with Bollinger et al. 1985's experimental bound |A(2P3/2)| < 0.6 MHz, so they
-are tagged ``background`` and the tension is recorded in the ledger. The P linewidth is CONTESTED across
-9%: 17.97 MHz (NIST ASD grade AAA, from Yan, Tambasco and Drake 1998), 19.4 MHz (Monroe et al. 1995,
-which PLAN.md 4.2.1 quotes and whose reading every Section 9.13 anchor assumes), 19.6 MHz (Ozeri Table I)
-and 19.64 MHz (Andersen et al. 1969). The record uses Monroe's 19.4 MHz; all four are stored.
-
-The g_J provenance was re-checked on 2026-09-08 (ledger ``conv.be9_g_j_provenance``) against a claim that
-Shiga et al. 2011 report only the RATIO g_I'/g_J and that the stored 2.00226239(31) was therefore
-mis-cited. That claim reads the abstract only. The paper's Sec. I body prints the absolute value and says
-where it comes from: the measurement is Wineland, Bollinger and Itano 1983's comparison of the 9Be+
-cyclotron frequency with a hyperfine-Zeeman transition frequency at the same field, and Shiga et al.
-re-reduce it with the CODATA-2006 proton-electron mass ratio. The citation therefore stands unchanged.
-Dickopf et al. 2024's 2.0022621287(24) is a CALCULATION, not a measurement, and is stored beside it as
-``S12.g_J_theory`` tagged ``background``; it agrees with the measurement at 0.84 sigma and moves the
-Section 9.13 clock point by 0.009 Hz, so it does not displace it.
+The 2p 2P3/2 hyperfine constants are theory only (Puchalski and Pachucki 2009), and the theory A exceeds the
+experimental bound |A| < 0.6 MHz. The P linewidth readings span 9% (17.97 to 19.64 MHz); the record uses Monroe et
+al. 1995's 19.4 MHz.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited
 from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
+    Cited,
     IncompleteSpeciesTable,
     MissingConstant,
     energy_hz,
@@ -274,7 +258,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 REQUIRED: dict[str, str] = {
     "be9.mass_atomic_u": "relative atomic mass of the neutral atom",
@@ -288,7 +272,7 @@ REQUIRED: dict[str, str] = {
     "be9.P32.energy_cm": "2p 2P3/2 level energy",
     "be9.P.linewidth_monroe_hz": "the P-level linewidth reading the record adopts",
 }
-"""The constants ``species()`` needs, so that :data:`MISSING` is DERIVED from :data:`TABLE` (audit item E21)."""
+"""The ids ``species()`` needs, each with a description; :data:`MISSING` is derived from it."""
 
 MISSING: tuple[MissingConstant, ...] = required_constants_missing(TABLE, REQUIRED, {})
 
@@ -308,11 +292,11 @@ _OPEN: tuple[MissingConstant, ...] = (
         "no measurement found; the Lande values are used and tagged [background]",
     ),
 )
-"""Gaps that are DECLARED but do not block the build: the record uses a documented substitute for each."""
+"""Declared gaps that do not block the build (the record uses a substitute for each)."""
 
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 9Be+, built from :data:`TABLE` alone."""
+    """The ``Species`` record for 9Be+, built from :data:`TABLE` alone."""
     if MISSING:
         raise IncompleteSpeciesTable(NAME, MISSING)
     t = TABLE
@@ -348,8 +332,7 @@ def species() -> Species:
         lande_g_j(1, half, Fraction(3, 2)),
         ("NIST_ASD_5_12", "PuchalskiPachucki2009", "Monroe1995", "PLAN_background"),
     )
-    # no D level lies below the 2p levels (Ozeri Table I), so each P level decays only to S1/2: the E1
-    # branchings are exactly 1 and there is no leakage channel at all
+    # no D level lies below 2p, so each P level decays only to S1/2
     cites = ("NIST_ASD_5_12", "Monroe1995", "Ozeri2007")
     transitions = (
         Transition("S1/2", "P1/2", wavelength_vac_m(0.0, e_p12), gamma, 1.0, "E1", cites),
@@ -362,8 +345,7 @@ def species() -> Species:
         mu_I_nuclear_magnetons=t["be9.mu_I_nuclear_magnetons"].value,
         levels=(s12, p12, p32),
         transitions=transitions,
-        # PLAN.md:633, 701, 1381: the |2,0> <-> |1,+1> clock qubit at 119.446 G, 313 nm sigma+ cycling
-        # through P3/2; there is no D level, hence no repump and no shelf
+        # the |2,0> <-> |1,+1> clock qubit (field-independent at 119.446 G); no D level, so no repump or shelf
         qubit=("S1/2 F=2 mF=0", "S1/2 F=1 mF=1"),
         cycling="S1/2-P3/2",
         repumps=(),

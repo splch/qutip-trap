@@ -1,24 +1,8 @@
-"""The played chain: from the pulses the scheduler requests to the fields the ions see (PLAN.md Sections 7.3, 7.5, 7.10; M8).
+"""The played chain: the scheduler's programmed drives (the CalibrationTable's beliefs) converted into what the ions see.
 
-Section 7.3 forbids the scheduler the device's true values: every pulse it emits carries the CalibrationTable's beliefs and is
-marked ``Drive.programmed``. Section 7.10 says the rf-power-to-Omega map "is calibrated by the Rabi scan of Section 7.5
-exactly as in the laboratory", which is the statement that a requested Rabi frequency is a number in the table's units: the
-control asks the modulator for the amplitude word that the table says gives Omega_req, and the ion sees
-
-    Omega_phys = Omega_req x Omega_derived(ion, beams) / Omega_table(ion, beams),
-
-the true rf-power-to-Omega map of the device (its beams and atomic structure, ``light/``) divided by the calibrated one.
-The differential light shift the ion sees is the derived shift of the beams at the played intensity, delta_derived x
-sum_tones (Omega_phys,tone/Omega_derived)^p with p the drive kind's scaling power (Section 4.3.2), whatever the table believes;
-the crosstalk the neighbours see is the derived intensity profile at the played light (the builder adds the sampled pointing
-factors on top). ``physical_schedule`` rewrites every programmed drive this way and leaves drives built from a
-``DerivedDrive`` (the experiments' own, already physical) alone. With a surrogate table (seeds = derived values) the chain is
-the identity, so milestones M2 to M7 see the pulses they specified; with a table fitted by simulated experiments the
-calibration's error becomes the over-rotation, detuning and crosstalk error a laboratory's would.
-
-Crosstalk policy: the chain replaces the ratios of the neighbours the pulse LISTS (the machine's model of which ions its beam
-reaches, from the table) by the derived values; it does not add neighbours the table does not carry, and reports the largest
-unlisted derived ratio so that a device model whose global beam drives every ion is never mistaken for an addressed one.
+Omega_phys = Omega_req x Omega_derived / Omega_table per (ion, beams); the light shift is the derived one at the played
+intensity, delta_derived sum_tones (Omega_phys,tone/Omega_derived)^p; listed neighbours' crosstalk ratios become the
+derived ones (unlisted ones are only reported). Drives not ``programmed`` are already physical and pass unchanged.
 """
 
 from __future__ import annotations
@@ -37,7 +21,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
 
 UNLISTED_CROSSTALK_REPORT = 1e-3
-"""A derived crosstalk ratio above this on a neighbour the table does not list is reported in the chain's notes."""
+"""A derived crosstalk ratio at least this large on a neighbour the table does not list is reported in the notes."""
 
 
 def _scale_envelope(
@@ -83,8 +67,7 @@ class _Truth:
         return self._rabi[key]
 
     def crosstalk(self, ion: int, beams: tuple[int, ...], kind: str) -> dict[int, complex] | None:
-        """The derived ratios, or None when the device derives no coupling for the addressed ion (a beam geometry whose quadrupole
-        coupling vanishes): the table's beliefs are then kept."""
+        """The derived crosstalk ratios, or None when the device derives no coupling for the addressed ion."""
         key = (ion, beams, kind)
         if key not in self._crosstalk:
             from qutip_trap.light.raman import crosstalk_ratios
@@ -105,20 +88,18 @@ def physical_drive(
     notes: list[str],
     tag: str,
 ) -> Drive:
-    """The drive as the ions see it: physical envelopes, light shift and crosstalk (module docstring)."""
+    """The drive as the ions see it, appending notes to ``notes``; ValueError when the table holds a usable Rabi entry for
+    beams the device derives no coupling for."""
     if not drive.programmed:
         return drive
     if drive.kind not in ("raman", "optical_E1", "optical_E2"):
-        # a microwave, gradient or light-shift drive has no derivable rf-power-to-Omega map here: the request is played as is
+        # no derivable rf-power-to-Omega map for these kinds: the request is played as is
         return replace(drive, programmed=False)
     ion = drive.ions[0]
     key = (ion, drive.beams[0] if drive.beams else MICROWAVE_BEAM_KEY)
     omega_true, stark_true = truth.rabi_and_stark(ion, drive.beams, drive.kind)
     belief = table.rabi.get(key)
     if usable(belief) and belief is not None and belief.value > 0.0 and omega_true == 0.0:
-        # the table believes the pulse can be driven and the DEVICE derives zero coupling for this beam geometry: playing
-        # the request as physical would deliver a pulse the beams cannot produce, under a note that says there is no
-        # usable entry when there is one. That is the default-value fallback that hides missing physics (M4 finding).
         raise ValueError(
             f"{tag}: the device derives no {drive.kind} coupling for beams {drive.beams} on ion {ion} (Omega = 0), while "
             f"the table carries a usable Rabi entry of {belief.value:.6g} Hz for {key}: the requested Rabi frequency "
@@ -140,7 +121,6 @@ def physical_drive(
         )
         for t in drive.tones
     )
-    # the physical light shift at the played intensity (Section 4.3.2 scaling with the drive kind's power)
     power = stark_scaling_power(drive.kind)
     if omega_true > 0.0 and stark_true != 0.0:
         envs = [t.envelope_hz for t in tones]
@@ -169,7 +149,6 @@ def physical_drive(
             stark = stark_fn
     else:
         stark = 0.0
-    # crosstalk: the derived ratios of the neighbours the table lists
     derived = truth.crosstalk(ion, drive.beams, drive.kind)
     if derived is None:
         notes.append(
@@ -198,7 +177,7 @@ def physical_drive(
 def physical_schedule(
     device: Device, schedule: Schedule, table: CalibrationTable
 ) -> tuple[Schedule, tuple[str, ...]]:
-    """The schedule as the ions see it: every programmed drive converted through the device's derived values (M8)."""
+    """The schedule as the ions see it and the chain's notes; the input schedule itself when no drive is programmed."""
     truth = _Truth(device)
     notes: list[str] = []
     seen: set[str] = set()

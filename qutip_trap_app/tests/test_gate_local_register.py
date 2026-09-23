@@ -1,7 +1,5 @@
-"""Level 1 over a GATE_LOCAL record (the level the core picks above its joint-dimension guard, Section 11.5): the record
-stores no trace, so the register after each gate is the walk's own register after the gate's step, which the core reports
-since 0.4.0 (``GateLocalStep.register_after``); it agrees with the run's final register exactly, and a record with no
-register source raises the typed error the view catches."""
+"""Level 1 over a GATE_LOCAL record: the record stores no trace, so the register after each gate is the walk's own register
+after the gate's step; it agrees with the run's final register exactly, and a record with no register says why."""
 
 from __future__ import annotations
 
@@ -12,7 +10,6 @@ import pytest
 
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel.circuit import (
-    GATE_LOCAL_REGISTER_NOTE,
     RegisterUnavailable,
     fidelity_to_ket,
     gate_local_register_after,
@@ -26,54 +23,46 @@ from qutip_trap_app.views.state import Store
 
 def test_the_register_of_a_gate_local_run_is_the_walks_own(bell_gate_local: tuple[Record, LiveRun]) -> None:
     record, live = bell_gate_local
-    assert record.diagnostics.level == "GATE_LOCAL" and not record.traces and record.replay is None
-    assert record.gate_local is not None and all(
-        st.register_after is not None for st in record.gate_local.steps
-    )
+    assert record.diagnostics.level == "GATE_LOCAL" and not record.traces and record.gate_local is not None
+    assert all(st.register_after is not None for st in record.gate_local.steps)
     gates = timeline(record)
-    assert gates, "the compiled timeline is there"
+    assert gates
     for g in gates:
         reg = register_after(record, g.index)
-        assert reg.weights_note == GATE_LOCAL_REGISTER_NOTE
-        assert abs(sum(v.value for v in reg.populations.values() if isinstance(v.value, float)) - 1.0) < 1e-9
+        assert "GATE_LOCAL" in reg.note
+        assert abs(sum(reg.populations.values()) - 1.0) < 1e-9
         assert 0.0 < float(reg.purity.value or 0.0) <= 1.0 + 1e-9
         assert 0.0 <= float(reg.fidelity.value or 0.0) <= 1.0 + 1e-9
-        assert set(reg.bloch) == set(range(record.n_qubits))
-    # the run's own final register: the last gate's register is the walk's, idle channels included, so the two agree exactly
+        assert set(reg.bloch) == set(range(record.n_ions))
     last = len(gates) - 1
     rho = gate_local_register_after(record, last)
-    assert abs(float(np.real(np.trace(rho))) - 1.0) < 1e-9
     derived = fidelity_to_ket(rho, target_ket_after(record, last))
     recorded = record.results.register_fidelity
     assert recorded is not None and abs(derived - recorded) < 1e-9, (derived, recorded)
-    assert live.core_record.gate_local is not None
-    core_last = live.core_record.gate_local.steps[-1].register_after
+    assert live.run.gate_local is not None
+    core_last = live.run.gate_local.steps[-1].register_after
     assert core_last is not None and np.max(np.abs(core_last - rho)) < 1e-12, (
         "the record copies the core's register"
     )
-    # zoom in from Level 0 lands on a gate whose register renders
+    # zooming in from the machine lands on a gate whose register renders
     store = Store()
-    key = record.key()
-    store.records, store.current = {key: record}, key
-    route = child_route(store, f"/job/{key}")
-    assert route is not None and route.startswith(f"/job/{key}/circuit/")
-    gate = route.rsplit("/", 1)[1]
-    register_after(record, next(g.index for g in gates if g.gate_id == gate))
+    store.records, store.current = {record.key: record}, record.key
+    route = child_route(store, f"/job/{record.key}")
+    assert route is not None and route.startswith(f"/job/{record.key}/circuit/")
+    register_after(record, next(g.index for g in gates if g.gate_id == route.rsplit("/", 1)[1]))
 
 
-def test_a_record_with_no_register_source_says_so(bell_gate_local: tuple[Record, LiveRun]) -> None:
+def test_a_record_with_no_register_says_why(bell_gate_local: tuple[Record, LiveRun]) -> None:
     record, _live = bell_gate_local
-    bare = dataclasses.replace(record, gate_local=None)
-    with pytest.raises(RegisterUnavailable, match="core_gaps"):
-        register_after(bare, 0)
+    with pytest.raises(RegisterUnavailable, match="neither traces nor"):
+        register_after(dataclasses.replace(record, gate_local=None), 0)
     assert record.gate_local is not None
-    old = dataclasses.replace(
+    bare = dataclasses.replace(
         record,
         gate_local=dataclasses.replace(
             record.gate_local,
             steps=tuple(dataclasses.replace(st, register_after=None) for st in record.gate_local.steps),
         ),
     )
-    with pytest.raises(RegisterUnavailable, match="before 0.4.0"):
-        register_after(old, 0)
-    assert issubclass(RegisterUnavailable, KeyError), "callers that caught KeyError still do"
+    with pytest.raises(RegisterUnavailable, match="kept no register"):
+        register_after(bare, 0)

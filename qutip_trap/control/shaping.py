@@ -1,48 +1,17 @@
-"""Closed-form gate integrals and the AM/FM/Fourier pulse solvers for multi-mode Molmer-Sorensen closure (PLAN.md
-Sections 4.4.1, 4.4.3, 7.4, 13; milestone M4).
+"""Closed-form Molmer-Sorensen gate integrals and the AM/PM/FM/Fourier pulse solvers for multi-mode closure.
 
-Conventions (Section 13, rows "Spin operator in MS formulas", "Entangling angle", "Waveform per (ion, leg)"): Omega is the
-per-tone Rabi frequency of the (hbar Omega/2) convention; the bichromatic tones sit at -/+ mu from the carrier with phases
-phi_s -/+ phi_m (Haljan's spin phase phi_s = (phi_b + phi_r)/2 and motion phase phi_m = (phi_b - phi_r)/2). Expanding the
-builder's drive (hbar/2) sum_tones Omega e^{-i(mu t - phi)} sigma_+ D(i eta) + h.c. to first order in eta in the interaction
-picture gives the spin-dependent force
+Omega is the per-tone Rabi frequency ((hbar Omega/2) convention); the tones sit at -/+ mu with phases phi_s -/+ phi_m. To
+first order in eta the drive is the force H/hbar = -sum_{i,m} (eta_im Omega_i(t)/2) sigma^i_{phi_s + pi/2}
+(a_m^dag e^{i psi_m(t)} + h.c.), psi_m = omega_m t - Theta(t) + phi_m, Theta = int mu dt, whose propagator is
+exp[sum_i sigma^i sum_m (alpha_im a_m^dag - h.c.)] exp[i sum_{i<j} chi_ij sigma^i sigma^j] with
 
-    H/hbar = -sum_i sum_m (eta_im Omega_i(t)/2) sigma^i_{phi_s + pi/2} (a_m^dag e^{i psi_m(t)} + a_m e^{-i psi_m(t)}),
-    psi_m(t) = omega_m t - Theta(t) + phi_m,   Theta(t) = int_0^t mu(t') dt',
+    alpha_im = i eta_im int_0^tau Omega_i(t) f_m(t) dt,
+    chi_ij   = sum_m eta_im eta_jm int_0^tau dt' int_0^t' dt [Omega_i(t) Omega_j(t') + Omega_j(t) Omega_i(t')] g_m(t, t'),
+    g_m      = Im[f_m(t') conj f_m(t)].
 
-whose Magnus series terminates: U = exp[sum_i sigma^i sum_m (alpha_im a_m^dag - alpha_im^* a_m)] exp[i sum_{i<j} chi_ij sigma^i
-sigma^j] (a global phase aside) with
-
-    alpha_im(tau) = i eta_im int_0^tau Omega_i(t) f_m(t) dt,
-    chi_ij(tau)   = sum_m eta_im eta_jm int_0^tau dt' int_0^{t'} dt [Omega_i(t) Omega_j(t') + Omega_j(t) Omega_i(t')] g_m(t, t'),
-    g_m(t, t')    = Im[f_m(t') conj(f_m(t))].
-
-The force is written with the MINUS of Section 13's row "Spin operator in MS formulas" (the plan's displayed
--(hbar eta Omega/2) S_phi), which is the sign that makes the alpha above the plan's alpha = (eta Omega/2 eps)(e^{i eps t} - 1)
-of Section 4.4.1. The builder's own sign is the opposite (+i eta from the i of i eta(a + a^dag), hence
-``schedule.FORCE_AXIS_OFFSET_RAD = pi/2``), so a comparison against the exact propagator negates alpha
-(tests/test_two_qubit_gates.py); nothing downstream of this module consumes anything but |alpha| (residual_error,
-excursion_by_mode and frequency_derivative_residuals all take moduli or null to zero), so the two coexist.
-
-Two kernels f_m, never mixed (Section 13): the exact first-order Lamb-Dicke form f_m = cos(Theta(t) - phi_m) e^{i omega_m t},
-which keeps the counter-rotating omega_m + mu term (Choi 2014 Eq. 3 is its phi_m = pi/2 case, sin(Theta) e^{i omega t}, the
-sine beat-note convention with the force zero at the pulse start), and the slow-envelope ("rwa") form f_m = (e^{i phi_m}/2)
-e^{i(omega_m t - Theta(t))}, its resonant part, with g_m = (1/4) sin[psi_m(t') - psi_m(t)] (Leung 2018). The pair sum runs
-over i < j, so the coefficient of sigma^a sigma^b is chi_ab itself and the kernel is SYMMETRIZED in the two envelopes:
-Choi's printed 2 Omega_i(t) Omega_j(t') holds only for proportional envelopes (derivation audit 2026-09-04, Section 9.16 row
-4.4-5). The motion phase is a convention for the closed forms but not for the exact dynamics: the carrier Omega cos(mu t -
-phi_m) sigma_phi_s rotates the spin at F(t) = (2 Omega/mu)[sin(mu t - phi_m) + sin phi_m], whose mean 2 Omega sin(phi_m)/mu
-tilts the force axis out of the equatorial plane by psi = (2 Omega/mu) sin phi_m (Roos 2008's psi = (4 Omega_Roos/delta)
-sin zeta with Omega_Roos = Omega/2 and zeta = -phi_m). At phi_m = pi/2 the ``check_ms_closure.py`` fixture (Omega/mu = 0.1)
-loses 4% of its concurrence (0.9597 against 0.9999); the waveforms therefore default to phi_m = 0 (phi_b = phi_r, the check
-script's convention), where the tilt vanishes and the anchor reproduces (Section 9.4; M4 finding). For a square pulse of duration tau with (omega_m - mu) tau = 2 pi K the rwa kernel gives chi = pi K
-(eta Omega/eps)^2, so eta Omega/eps = 1/(2 sqrt K) is the maximally entangling closure chi = pi/4 on sigma sigma
-(``check_ms_closure.py``; Section 9.4). The sign s of chi is set by the detuning side: exp(+i chi sigma sigma) = XX(-chi), and
-the scheduler folds s into the gate phases (a pi on one ion's tones flips it). Blumel 2021 write the kernel without the pair
-sum and target pi/8: double their kernel to convert, never halve ours (Section 13).
-
-The solvers act on the mode structure alone (omega_m, eta_im, nbar_m from the device's crystal and beams) and never import
-dynamics/: the exact verification of a solution through the PulseEngine protocol is ``qutip_trap.calibration.entangling``.
+Kernels: "choi" f_m = cos(Theta - phi_m) e^{i omega_m t} (exact first order), "rwa" f_m = (e^{i phi_m}/2) e^{i(omega_m t -
+Theta)} (Leung 2018). The builder's force has the opposite sign (its alpha is minus this one); phi_m = 0 by default, where
+the carrier term does not tilt the force axis (Roos 2008); exp(+i chi sigma sigma) = XX(-chi). No dynamics/ imports.
 """
 
 from __future__ import annotations
@@ -65,11 +34,11 @@ if TYPE_CHECKING:
 
 Kernel = Literal["rwa", "choi"]
 CHI_MAXIMAL_RAD = math.pi / 4.0
-"""|chi| of a maximally entangling XX(chi) = exp(-i chi sigma_x sigma_x) (Section 13)."""
+"""|chi| of a maximally entangling XX(chi) = exp(-i chi sigma_x sigma_x)."""
 SINE_MOTION_PHASE_RAD = math.pi / 2.0
 """phi_m = pi/2: the tone phases differ by pi, so the force is Omega sin(Theta) (Choi's sine beat-note convention)."""
 DEFAULT_MOTION_PHASE_RAD = 0.0
-"""phi_m = 0: equal tone phases, the force Omega cos(Theta) with no mean carrier rotation (the played default, see above)."""
+"""phi_m = 0: equal tone phases, the force Omega cos(Theta) with no mean carrier rotation (the played default)."""
 
 
 class ClosureError(ValueError):
@@ -85,10 +54,10 @@ class GateModes:
 
     ions: tuple[int, ...]
     modes: tuple[int, ...]
-    """Crystal mode indices (positions in Crystal.modes, Section 13)."""
+    """Crystal mode indices (positions in Crystal.modes)."""
     omega_rad_s: tuple[float, ...]
     eta: dict[int, tuple[float, ...]]
-    """ion -> eta_{ion, m} in the order of ``modes`` (C0 inside, Section 4.1.1)."""
+    """ion -> eta_{ion, m} in the order of ``modes`` (C0 included)."""
     nbar: tuple[float, ...]
 
     def __post_init__(self) -> None:
@@ -137,13 +106,8 @@ def gate_modes(
     eta_min: float = 0.0,
     mode_frequencies_hz: Mapping[int, float] | None = None,
 ) -> GateModes:
-    """The modes the Raman pair (beam 1, beam 2) couples to on ``ions``: every crystal mode with max_i |eta_im| > ``eta_min``
-    (default: every mode with any coupling), or the given ``modes``; C0 from the trap's Mathieu record (Section 4.1.1).
-
-    ``mode_frequencies_hz`` overrides the crystal's frequencies with calibrated values, so that a caller CAN work at what
-    the table says rather than at the device's hidden truth (Section 7.3). No production caller passes it today - the
-    surrogate calibration and the resolved-mode selection both build ``GateModes`` from the crystal - and there is no eta
-    override at all; that gap is recorded as ``conv.solvers_read_the_device_modes`` rather than papered over here."""
+    """The modes the Raman pair (beam 1, beam 2) couples to on ``ions``: every mode with max_i |eta_im| > ``eta_min``, or
+    the given ``modes``; ``mode_frequencies_hz`` overrides the crystal's frequencies, eta always comes from the device."""
     from qutip_trap.light.raman import lamb_dicke_parameters
 
     b1, b2 = beams
@@ -186,9 +150,8 @@ class SegmentedEnvelope:
     phi_m_rad: float = DEFAULT_MOTION_PHASE_RAD
     """The motion phase (phi_b - phi_r)/2: the force is Omega cos(mu t - phi_m)."""
     phase_rad: tuple[float, ...] | None = None
-    """Per-segment motion-phase OFFSET on top of ``phi_m_rad`` (the PM family, Section 4.4.3): the force of segment k is
-    Omega_k cos(mu t - phi_m - phi_k), so the segment enters every integral through the complex weight
-    z_k = Omega_k e^{i phi_k}. None = every offset zero (the AM family, real weights)."""
+    """Per-segment motion-phase offset phi_k on top of ``phi_m_rad`` (the PM family; None = all zero, the AM family): the
+    force of segment k is Omega_k cos(mu t - phi_m - phi_k), weight z_k = Omega_k e^{i phi_k} in every integral."""
 
     def __post_init__(self) -> None:
         if not self.durations_s or any(d <= 0.0 for d in self.durations_s):
@@ -201,7 +164,7 @@ class SegmentedEnvelope:
 
     @property
     def weights(self) -> dict[int, np.ndarray]:
-        """z_{i,k} = Omega_{i,k} e^{i phi_k}: the complex per-segment weight every integral of Section 4.4.3 sees."""
+        """z_{i,k} = Omega_{i,k} e^{i phi_k}: the complex per-segment weight the integrals see."""
         phase = (
             np.ones(len(self.durations_s), dtype=complex)
             if self.phase_rad is None
@@ -237,7 +200,7 @@ class SampledEnvelope:
     amplitude_rad_s: dict[int, np.ndarray]
     beat_phase_rad: np.ndarray
     phi_m_rad: float | np.ndarray = DEFAULT_MOTION_PHASE_RAD
-    """The motion phase, a constant or sampled on the grid (a phase-modulated pulse, Section 4.4.3)."""
+    """The motion phase, a constant or sampled on the grid (a phase-modulated pulse)."""
 
     def __post_init__(self) -> None:
         t = np.asarray(self.times_s, dtype=float)
@@ -259,8 +222,7 @@ class SampledEnvelope:
 
 
 Envelope = SegmentedEnvelope | SampledEnvelope
-"""A played waveform's envelope as the closed forms read it: piecewise constant (``SegmentedEnvelope``) or sampled by the
-hardware chain (``SampledEnvelope``); ``envelope_of`` builds one from a ``Waveform``."""
+"""An envelope as the closed forms read it, piecewise constant or sampled; ``envelope_of`` builds one from a ``Waveform``."""
 
 
 # ---- the kernels -----------------------------------------------------------------------------------------------------------------
@@ -308,7 +270,7 @@ def _segment_triangle(cs: tuple[complex, ...], nus: tuple[float, ...], a: float,
 
 @dataclass(frozen=True)
 class GateIntegrals:
-    """The Section 4.4.3 integrals of one pulse: alpha per (ion, mode), chi per pair, chi per (pair, mode)."""
+    """The gate integrals of one pulse: alpha per (ion, mode), chi per pair, chi per (pair, mode)."""
 
     alpha: dict[tuple[int, int], complex]
     chi: dict[tuple[int, int], float]
@@ -319,7 +281,7 @@ class GateIntegrals:
         return self.chi[(a, b)] if (a, b) in self.chi else self.chi[(b, a)]
 
     def residual_error(self, modes: GateModes, ions: Sequence[int] | None = None) -> float:
-        """epsilon_ent = sum_{i,m} |alpha_im|^2 (2 nbar_m + 1), the entanglement infidelity from open loops (Section 4.4.7 (8))."""
+        """epsilon_ent = sum_{i,m} |alpha_im|^2 (2 nbar_m + 1), the entanglement infidelity from open loops."""
         ions_ = tuple(ions) if ions is not None else modes.ions
         return float(
             sum(
@@ -360,13 +322,8 @@ def _segment_matrices(
 
 
 def integrals_segmented(env: SegmentedEnvelope, modes: GateModes, kernel: Kernel = "choi") -> GateIntegrals:
-    """alpha and chi of a piecewise-constant pulse at one beat note, analytically (the AM and PM families).
-
-    Each segment enters through its complex weight z_{i,k} = Omega_{i,k} e^{i phi_k} (``SegmentedEnvelope.weights``):
-    alpha_{i,m} = i eta_{i,m} sum_k z_{i,k} F_k^{(m)} and, since the two ions share the segment's motion phase, the
-    symmetrized double integral is
-    chi_m = eta_a eta_b [sum_k Omega_a^k Omega_b^k (2 T_k) + sum_{k<l} Im((conj(z_a^k) z_b^l + conj(z_b^k) z_a^l) F_l conj(F_k))],
-    which reduces to the real quadratic form amps_a^T G amps_b when every offset is zero (the AM family)."""
+    """alpha and chi of a piecewise-constant pulse at one beat note, analytically (AM and PM families): alpha_{i,m} =
+    i eta_{i,m} sum_k z_{i,k} F_k^{(m)}, and with no phase offsets chi_m = eta_a eta_b amps_a^T G amps_b."""
     fs, gs = _segment_matrices(env, modes, kernel)
     alpha: dict[tuple[int, int], complex] = {}
     chi: dict[tuple[int, int], float] = {}
@@ -438,7 +395,7 @@ def integrals_sampled(env: SampledEnvelope, modes: GateModes, kernel: Kernel = "
 
 
 def integrals(env: Envelope, modes: GateModes, kernel: Kernel | None = None) -> GateIntegrals:
-    """The Section 4.4.3 integrals of any envelope; default kernel: Choi's for segmented pulses, rwa for sampled ones."""
+    """The gate integrals of any envelope; default kernel: Choi's for segmented pulses, rwa for sampled ones."""
     if isinstance(env, SegmentedEnvelope):
         return integrals_segmented(env, modes, kernel or "choi")
     return integrals_sampled(env, modes, kernel or "rwa")
@@ -454,11 +411,11 @@ def trajectory_sampled(
     return np.asarray(1j * modes.eta[ion][k] * cum, dtype=complex)
 
 
-# ---- closed forms of the square pulse (Section 4.4.1) ---------------------------------------------------------------------------
+# ---- closed forms of the square pulse ----------------------------------------------------------------------------------------
 
 
 def closure_ratio(loops: int) -> float:
-    """eta Omega/eps = 1/(2 sqrt K): the maximally entangling closure in every spin normalization (Section 13)."""
+    """eta Omega/eps = 1/(2 sqrt K): the maximally entangling closure in every spin normalization."""
     if loops < 1:
         raise ValueError("at least one loop")
     return 1.0 / (2.0 * math.sqrt(loops))
@@ -467,7 +424,7 @@ def closure_ratio(loops: int) -> float:
 def closure_rabi_rad_s(
     eta: float, epsilon_rad_s: float, loops: int = 1, chi_rad: float = CHI_MAXIMAL_RAD
 ) -> float:
-    """The per-tone Omega that gives |chi| = chi_rad on ONE mode after K loops: chi = pi K (eta Omega/eps)^2 (Section 4.4.1)."""
+    """The per-tone Omega that gives |chi| = chi_rad on one mode after K loops: chi = pi K (eta Omega/eps)^2."""
     if eta == 0.0 or epsilon_rad_s == 0.0:
         raise ValueError("the gate mode needs eta != 0 and a detuning eps != 0 from its sideband")
     return math.sqrt(abs(chi_rad) / (math.pi * loops)) * abs(epsilon_rad_s) / abs(eta)
@@ -481,7 +438,7 @@ def closure_duration_s(epsilon_rad_s: float, loops: int = 1) -> float:
 def square_pulse_chi(
     eta_a: float, eta_b: float, omega_rad_s: float, epsilon_rad_s: float, loops: int
 ) -> float:
-    """chi of a square pulse closed on one mode, rwa kernel: pi K eta_a eta_b (Omega/eps)^2 with sign(eps) (Section 4.4.1)."""
+    """chi of a square pulse closed on one mode, rwa kernel: pi K eta_a eta_b (Omega/eps)^2 with sign(eps)."""
     return float(
         math.pi
         * loops
@@ -515,11 +472,9 @@ def waveform_from_segmented(
     pair: tuple[int, int] | None = None,
     provenance_id: str = "conv.entangling_angle",
 ) -> Waveform:
-    """A segmented ``Waveform`` from per-ion amplitudes: legs red/blue at -/+ mu with phases phi_s -/+ (phi_m + phi_k), a negative
-    amplitude played as |Omega| at phase + pi on BOTH legs (which moves the half-sum, the spin phase, and leaves the
-    half-difference alone); Kirchmair's imbalance Omega_b = Omega(1 + xi), Omega_r = Omega(1 - xi) (Section 4.4.1, Stark
-    compensation) on request. ``env.phase_rad``, the PM family's per-segment motion-phase offset phi_k, goes into the legs'
-    half-difference. A light-shift waveform has one leg ("blue", the beat note itself)."""
+    """A segmented ``Waveform``: legs red/blue at -/+ mu with phases phi_s -/+ (phi_m + phi_k), a negative amplitude played
+    as |Omega| at phase + pi on both legs, ``imbalance`` xi giving Omega_b = Omega(1 + xi), Omega_r = Omega(1 - xi)
+    (Kirchmair); a light-shift waveform has one leg, "blue"."""
     mu_hz = env.mu_rad_s / TWO_PI
     segments: list[Segment] = []
     offsets = env.phase_rad if env.phase_rad is not None else (0.0,) * len(env.durations_s)
@@ -616,12 +571,8 @@ def waveform_from_callables(
 def _chi_by_mode_for_pair(
     ints: GateIntegrals, modes: GateModes, pair: tuple[int, int] | None = None
 ) -> dict[int, float]:
-    """The per-mode entangling angles of the pair the pulse was SOLVED for (Section 9.17, "Waveform per (ion, leg)").
-
-    A ``GateModes`` built on more than two ions (a global beam on N > 2, the M4 "3 to 5 ions" bullet) carries an angle per
-    pair, and the scheduler reads ``Waveform.chi_total_rad`` for both the s^2 rescale and the kernel sign: storing the
-    wrong pair's angles is a factor-2 amplitude error and a wrong sign, so the solver's ``pair`` is threaded here and a
-    multi-pair ``GateModes`` with no pair named is refused rather than defaulted to the first pair (M4 finding)."""
+    """The per-mode angles of the pair the pulse was solved for (the scheduler rescales and signs the gate by them); with
+    several pairs and no ``pair``, ValueError."""
     pairs = modes.pairs()
     if pair is not None:
         a, b = int(pair[0]), int(pair[1])
@@ -653,24 +604,15 @@ PHASE_SPLIT_TOLERANCE_RAD = 1e-9
 
 
 def _split_phase(delta_rad: float) -> tuple[float, float]:
-    """(sign, residual) of a phase offset: the nearest multiple of pi is a sign (+-1) and what is left is a genuine phase.
-
-    A pi offset on BOTH tones is the reversed force the AM solvers encode as a negative amplitude; anything else is a real
-    phase, which a PM waveform carries and which the old sign-only reading collapsed (M4 finding, Section 4.4.3)."""
+    """(sign, residual) of a phase offset: the nearest multiple of pi is a sign (+-1), the rest a genuine phase."""
     residual = ((delta_rad + 0.5 * math.pi) % math.pi) - 0.5 * math.pi
     sign = 1.0 if math.cos(delta_rad - residual) >= 0.0 else -1.0
     return sign, residual
 
 
 def envelope_of(waveform: Waveform, ions: Sequence[int], *, n_samples: int = 20001) -> Envelope:
-    """Reconstruct the solver's envelope from a Waveform: segmented when every amplitude and detuning is constant, sampled
-    otherwise; a leg imbalance enters through the mean leg amplitude.
-
-    Per segment the two legs' half-SUM carries the ion's spin phase and their half-DIFFERENCE the motion phase (Section 13):
-    a pi offset of the half-sum relative to the first segment is the reversed force the AM solvers store as a negative
-    amplitude, while an offset of the half-difference is a genuine per-segment motion phase (the PM family) and is returned
-    in ``SegmentedEnvelope.phase_rad``. A half-sum offset that is neither 0 nor pi is a per-segment change of the FORCE AXIS,
-    which no envelope can express, and is refused rather than collapsed to a sign."""
+    """The solver's envelope of a Waveform (segmented when all is constant, else sampled; legs averaged): per segment a pi
+    offset of the legs' half-sum is a negative amplitude, any other raises; the half-difference is the motion phase."""
     if waveform.segments is None:
         raise ValueError(
             "Fourier-parameterized waveforms carry no explicit envelope; the solvers emit segments"
@@ -759,13 +701,12 @@ def envelope_of(waveform: Waveform, ions: Sequence[int], *, n_samples: int = 200
 
 
 def waveform_integrals(waveform: Waveform, modes: GateModes, kernel: Kernel | None = None) -> GateIntegrals:
-    """The Section 4.4.3 integrals of a stored Waveform on the given mode structure (the surrogate calibration's core)."""
+    """The gate integrals of a stored Waveform on the given mode structure."""
     return integrals(envelope_of(waveform, modes.ions), modes, kernel)
 
 
 LIGHT_SHIFT_FORCE_WEIGHT = 2.0
-"""The per-ion spectral radius of a light-shift force operator w_dn P_0 + w_up P_1 whose weights differ by exactly 2 and one of
-which vanishes (the archetype (-2, 0): a force on one qubit level only, Section 4.4.4)."""
+"""The per-ion spectral radius of a light-shift force w_dn P_0 + w_up P_1 with weights (-2, 0), a force on one level."""
 
 
 def excursion_by_mode(
@@ -776,20 +717,9 @@ def excursion_by_mode(
     kernel: Kernel = "choi",
     force_weight: float | None = None,
 ) -> dict[int, float]:
-    """Per mode, the largest coherent excursion of the pulse's phase-space trajectory: max over time of
-    ``force_weight`` sum_i |alpha_{i,m}(t)|, the displacement the extreme spin branch reaches (every ion's force adds on
-    that branch), from the trajectories of the Section 4.4.3 integrals on a sampled grid (Section 5.5: the populated range
-    a cap must hold is set by this excursion, not by the single-loop radius eta Omega/eps, which a segmented or modulated
-    pulse exceeds by factors; M9a).
-
-    ``force_weight`` is the per-ion spectral radius of the FORCE OPERATOR the builder applies, which the closed-form
-    alpha does not carry: 1 for a spin-flip MS or a sigma_z gradient force (eigenvalues +-1), but for a light shift the
-    operator is w_dn P_0 + w_up P_1 (``LightShiftCouplings.level_weights``, differing by exactly 2), whose radius is 2 in
-    the archetypal (-2, 0) case of a force on one level only - a spin-dependent force PLUS an equal spin-independent one,
-    so the |00> branch reaches twice the displacement the +-1 assumption predicts. ``None`` derives the weight from the
-    waveform kind (1 for ``ms`` and ``gradient``, :data:`LIGHT_SHIFT_FORCE_WEIGHT` for ``light_shift``); pass it
-    explicitly for level weights outside that archetype (M4 finding: with the default 1 a sigma_z-force gate at larger eta
-    or more loops could be silently under-truncated, the ``required_margin`` slack absorbing the factor 2 only by luck)."""
+    """Per mode, max over time of ``force_weight`` sum_i |alpha_{i,m}(t)|, the extreme spin branch's displacement, which
+    sets the populated Fock range; ``force_weight`` (the force operator's per-ion spectral radius) defaults to 1 for ``ms``
+    and ``gradient`` and to :data:`LIGHT_SHIFT_FORCE_WEIGHT` for ``light_shift``."""
     weight = (
         force_weight
         if force_weight is not None
@@ -807,7 +737,7 @@ def excursion_by_mode(
 
 
 def scaled(waveform: Waveform, factor: float) -> Waveform:
-    """Every amplitude times ``factor``: chi scales as factor^2 and every alpha as factor (the s^2 law of Section 4.4.7 (7))."""
+    """Every amplitude times ``factor``: chi scales as factor^2 and every alpha as factor."""
     if waveform.segments is None:
         raise ValueError("scaling a Fourier-parameterized waveform is not supported")
 
@@ -838,9 +768,7 @@ def scaled(waveform: Waveform, factor: float) -> Waveform:
 
 
 def phase_shifted(waveform: Waveform, offsets_rad: Mapping[int, float]) -> Waveform:
-    """Every segment's tone phases of ion i shifted by ``offsets_rad[i]`` on BOTH legs: the ion's spin phase (the half-sum)
-    moves by the offset, the motion phase (the half-difference) and every angle stay (Section 4.3.4); what the MS phase
-    scan of Section 7.5 step 3 stores (M8)."""
+    """Ion i's tone phases shifted by ``offsets_rad[i]`` on both legs: its spin phase moves, its motion phase stays."""
     if waveform.segments is None:
         raise ValueError("phase-shifting a Fourier-parameterized waveform is not supported")
     segs = tuple(
@@ -914,12 +842,9 @@ def solve_amplitude_modulation(
     null_tolerance: float = 1e-10,
     kind: Literal["ms", "light_shift"] = "ms",
 ) -> ShapedPulse:
-    """Segmented AM (Zhu-Monroe-Duan 2006; Choi 2014): equal segments, one beat note mu, Omega_b = ``amplitude_ratio`` x Omega_a.
-
-    Closure alpha_{a,m}(tau) = 0 for every mode is 2N real linear conditions on the n segment amplitudes (2N + 1 by default,
-    Section 4.4.3); within the null space the power-optimal direction (largest |chi| per unit sum Omega_k^2, the top
-    eigenvector of the projected kernel) is taken and scaled to |chi| = ``chi_target_rad``; the sign is the kernel's.
-    """
+    """Segmented AM (Choi 2014): equal segments, one beat note mu, Omega_b = ``amplitude_ratio`` x Omega_a; the power-optimal
+    direction in the null space of the 2N closure conditions (n = 2N + 1 segments by default) is scaled to |chi| =
+    ``chi_target_rad``, the sign being the kernel's."""
     a, b = _pair(modes, pair)
     n = segment_count(modes.n_modes) if n_segments is None else int(n_segments)
     if n < 1:
@@ -934,8 +859,7 @@ def solve_amplitude_modulation(
             rows.append(np.imag(fs[k]))
     if rows:
         amat = np.array(rows)
-        # |F_k| <= the segment duration, so the natural scale of a row is the pulse duration: an already-closed pulse
-        # (every F_k ~ 1e-16 tau) then has rank 0 rather than a spurious rank from its round-off
+        # rows scaled by the duration (|F_k| <= tau), so an already-closed pulse has rank 0, not a round-off rank
         _u, sing, vt = np.linalg.svd(amat / duration_s, full_matrices=True)
         rank = int(np.sum(sing > null_tolerance))
         null = vt[rank:].T  # n x (n - rank)
@@ -954,7 +878,7 @@ def solve_amplitude_modulation(
         raise ClosureError("the closed pulses carry no entangling angle (every eta_a eta_b product vanishes)")
     direction = null @ vecs[:, j]
     direction = direction / np.linalg.norm(direction)
-    # fix the overall sign so the first non-zero segment is positive (a convention; the physics is the same)
+    # sign convention: the first non-zero segment is positive
     first = direction[np.flatnonzero(np.abs(direction) > 1e-12)[0]]
     if first < 0.0:
         direction = -direction
@@ -1010,10 +934,9 @@ def symmetric_pulse(
     all_modes: bool = True,
     kind: Literal["ms", "light_shift"] = "ms",
 ) -> ShapedPulse:
-    """The square bichromatic pulse of Section 4.4.1 closed on ``gate_mode`` after ``loops`` loops: tau = 2 pi K/eps, tones at
-    -/+ (omega_g - eps) ("inside", the sideband detuning eps toward the carrier) or -/+ (omega_g + eps) ("outside"), and
-    the amplitude from |chi| = chi_target with chi = sum_m of the pair's per-mode angles (spectators included when
-    ``all_modes``): for one mode eta Omega/eps = 1/(2 sqrt K) exactly (``check_ms_closure.py``)."""
+    """The square bichromatic pulse closed on ``gate_mode`` after ``loops`` loops: tau = 2 pi K/eps, tones at
+    -/+ (omega_g - eps) ("inside", toward the carrier) or -/+ (omega_g + eps) ("outside"), and the amplitude from
+    |chi| = chi_target over the pair's per-mode angles (spectators included when ``all_modes``)."""
     a, b = _pair(modes, pair)
     k = modes.index(gate_mode)
     if epsilon_hz is None and duration_s is None:
@@ -1077,28 +1000,9 @@ def solve_phase_modulation(
     max_nfev: int = 400,
     kind: Literal["ms", "light_shift"] = "ms",
 ) -> ShapedPulse:
-    """Segmented PM: FIXED amplitude and beat note, the per-segment MOTION phase phi_k free (Section 4.4.3's third solver family).
-
-    The pulse is a square bichromatic drive whose tone phases step from segment to segment so that the legs'
-    half-difference is phi_m + phi_k while their half-sum, the spin phase, never moves: the force axis therefore stays put
-    and only the phase-space direction of each segment's push rotates. Every integral sees the complex segment weight
-    z_k = Omega e^{i phi_k}, so closure is
-
-        alpha_{i,m}(tau) = i eta_{i,m} Omega sum_k e^{i phi_k} F_k^{(m)} = 0,
-
-    2N real conditions on the n phases (one of which is a global phase the conditions are blind to), and the two-body angle
-    follows from the symmetrized double integral with the phases inside (``integrals_segmented``). The phases are solved by
-    least squares like the FM family's vertices, then Omega is set by |chi| = chi_target (chi ~ Omega^2 at fixed phases).
-
-    ``n_segments`` defaults to Choi's 2N + 1, which makes the system square in the n - 1 non-global phases (measured: both x
-    modes of the two-ion fixture close to |alpha| = 3e-17 with five segments). Milne et al. close N modes with N + 1 phase
-    segments by imposing a time-symmetric phase profile, which halves the conditions; this solver does NOT impose that
-    symmetry, and at N + 1 = 3 segments it leaves |alpha| ~ 1e-2 on the two-ion fixture (a recorded difference, not a
-    reproduction of their count: ledger ``conv.pm_solver``). Section 4.4.3
-    supplies no PM equations, so the family and its anchors are [background]: Milne et al., PRApplied 13, 024022 (2020)
-    (phase-modulated MS, N + 1 phase segments for N modes); Green and Biercuk, PRL 114, 120502 (2015) (phase-modulated
-    dynamically corrected gates); Lu et al., Nature 572, 363 (2019) (phase-modulated parallel gates on five ions).
-    """
+    """Segmented PM: fixed amplitude and beat note, the per-segment motion phases phi_k solved by least squares for
+    closure (the first held at 0), then Omega from |chi| = chi_target; ``n_segments`` defaults to 2N + 1 (no
+    time-symmetric profile is imposed, unlike Milne et al. 2020)."""
     a, b = _pair(modes, pair)
     n = 2 * modes.n_modes + 1 if n_segments is None else int(n_segments)
     if n < 2:
@@ -1196,7 +1100,6 @@ class FourierSineFn:
 
 
 def _cosine_interpolation(vertices: np.ndarray, duration_s: float) -> Callable[[float], float]:
-    """Leung's vertex parameterization: mu(t) between equally spaced vertices with (1 - cos)/2 interpolation."""
     return CosineVertexFn(tuple(float(x) for x in np.asarray(vertices, dtype=float)), float(duration_s))
 
 
@@ -1250,11 +1153,8 @@ def solve_frequency_modulation(
         )
         out: list[float] = []
         for k, m in enumerate(modes.modes):
-            # the FM family holds Omega constant and equal on both ions, so alpha_{i,m} ~ eta_{i,m} and one ion's
-            # trajectory closes the other's - EXCEPT where that ion sits at a node of the mode (eta = 0 exactly, the
-            # centre ion of an odd chain in a spatially antisymmetric mode, Section 7.8): the residual is therefore
-            # driven from whichever gate ion couples more strongly, and a row is skipped only when NEITHER couples
-            # (Section 4.4.3's closure condition alpha_{a,m}(tau) = 0 runs over the gate ions, plural)
+            # alpha_{i,m} ~ eta_{i,m} at equal constant Omega, so one ion closes both, unless it sits at a node of the
+            # mode (eta = 0): drive the residual from the more strongly coupled gate ion
             eta_a, eta_b = modes.eta[a][k], modes.eta[b][k]
             if eta_a == 0.0 and eta_b == 0.0:
                 continue
@@ -1266,7 +1166,7 @@ def solve_frequency_modulation(
                 out += [robust_weight * float(np.real(mean)), robust_weight * float(np.imag(mean))]
         return np.asarray(out)
 
-    # start from a gentle symmetric sweep (a flat schedule is the square pulse, whose Jacobian is degenerate for equal vertices)
+    # start from a gentle symmetric sweep: a flat schedule (the square pulse) has a degenerate Jacobian
     x0 = TWO_PI * 0.01 * abs(mu0_hz) * np.cos(np.linspace(0.0, math.pi, n_free)) if n_free else np.zeros(0)
     swing = TWO_PI * max(abs(mu0_hz) * 0.05, 1e3)
     sol = least_squares(
@@ -1274,11 +1174,8 @@ def solve_frequency_modulation(
         x0,
         max_nfev=max_nfev,
         x_scale=swing,
-        # the closure residual is alpha/(eta tau) of the UNIT-amplitude pulse, so the played alpha carries the factor
-        # Omega_0 ~ 1e6 rad/s: stopping at a relative cost reduction of 1e-12 leaves |alpha| ~ 1e-6 after the scale-up.
-        # The gradient test is what stops the descent first here (a small residual on a well-conditioned Jacobian makes
-        # J^T r tiny long before the residual is at its floor), so it is disabled and the step/cost tests do the work:
-        # the normalized closure then reaches 2e-14 (|alpha| < 1e-12 played) in about 50 function evaluations.
+        # the unit-amplitude residual is scaled up by Omega_0 ~ 1e6 rad/s when played, and the gradient test would stop
+        # the descent long before the residual reaches its floor: gtol is disabled
         ftol=1e-15,
         xtol=1e-15,
         gtol=None,
@@ -1344,11 +1241,9 @@ def solve_fourier_amplitude_modulation(
     phi_m_rad: float = DEFAULT_MOTION_PHASE_RAD,
     kind: Literal["ms", "light_shift"] = "ms",
 ) -> ShapedPulse:
-    """Blumel 2021's power-optimal stabilized AM: g(t) = sum_n A_n sin(2 pi n t/tau) at one beat note; closure and its first
-    K mode-frequency derivatives (d^k alpha_m/d omega_m^k = 0, k <= ``stabilization_order``) form the homogeneous system M A
-    = 0 (2N(K + 1) rows), the power-optimal solution is the top eigenvector of the kernel projected on the null space (or, with
-    ``relaxed_null_dimension``, on the lowest eigenvectors of Gamma = M^T M), and the scale follows from |chi| = chi_target
-    in the plan's pi/4 convention (their pi/8 kernel is half of ours: double it to convert, Section 13)."""
+    """Blumel 2021's power-optimal stabilized AM: g(t) = sum_n A_n sin(2 pi n t/tau) at one beat note, closing every mode
+    and its first ``stabilization_order`` mode-frequency derivatives (or keeping the lowest ``relaxed_null_dimension``
+    eigenvectors of M^T M), scaled to |chi| = chi_target (their pi/8 kernel is half of ours)."""
     a, b = _pair(modes, pair)
     tau = float(duration_s)
     t = np.linspace(0.0, tau, n_samples)
@@ -1438,8 +1333,7 @@ def solve_fourier_amplitude_modulation(
             "peak_rabi_hz": float(np.max(np.abs(g)) / TWO_PI),
             "power_integral_rad2_s": float(simpson(g * g, x=t)),
             "residual_error": ints.residual_error(modes),
-            # Blumel's f = (4/5) sum_p (|alpha_p^i|^2 + |alpha_p^j|^2) is Landsman's conversion of eps_ent at nbar = 0:
-            # residual_error carries the (2 nbar_m + 1) thermal weight, so it is NOT this quantity at nbar != 0
+            # Blumel's f = (4/5) sum |alpha|^2 at nbar = 0; residual_error carries the (2 nbar_m + 1) weight instead
             "zero_temperature_infidelity": 0.8
             * float(sum(abs(ints.alpha[(i, m)]) ** 2 for i in modes.ions for m in modes.modes)),
             **{f"A_{n + 1}": float(c) for n, c in enumerate(coeffs)},
@@ -1450,7 +1344,7 @@ def solve_fourier_amplitude_modulation(
 def frequency_derivative_residuals(
     env: SampledEnvelope, modes: GateModes, ion: int, mode: int, *, orders: int, kernel: Kernel = "rwa"
 ) -> tuple[complex, ...]:
-    """(d^k alpha/d omega_m^k)(tau) for k = 0..orders: the stabilization quantities Blumel's rows null (Section 4.4.3)."""
+    """(d^k alpha/d omega_m^k)(tau) for k = 0..orders: the stabilization quantities Blumel's rows null."""
     k = modes.index(mode)
     f = _kernel_samples(kernel, modes.omega_rad_s[k], env.times_s, env.beat_phase_rad, env.phi_m_rad)
     out = []

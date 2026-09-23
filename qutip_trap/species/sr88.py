@@ -1,22 +1,17 @@
-"""88Sr+ species table (PLAN.md Sections 4.5.7, 9.14, 12; Appendix E).
+"""88Sr+ species table (I = 0: Lande g_J).
 
-I = 0 (Lande g_J, [background]). The 674 nm quadrupole record is complete: the D5/2 lifetime 390.8(1.6) ms
-of Letchumanan et al. 2005 (read from the thesis, corroborated by Jiang 2009 and the NIST Sr II compilation),
-the clock frequency fixing lambda_vac = 674.025591 nm (which species() now uses for the 674 nm transition,
-not the 0.01 cm^-1 level energy), and the LS-estimated 9e-5 M1 branch to D3/2. The P-level lifetimes and
-branchings (422, 408, 1092, 1033 nm) are not in PLAN.md; they were added in the M0a fix pass of 2026-09-07
-from Pinnington et al. 1995 and Zhang et al. 2016, so 88Sr+ now has the E1 structure its designated cycling
-and repump lines need (audit items E6, E7, E13b) instead of building on level names alone.
+The 674 nm S1/2-D5/2 wavelength comes from the stored clock frequency, not the level energies; the D5/2 -> D3/2 M1
+branch is an LS-coupling estimate, and the D3/2 lifetime is not tabulated.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited
 from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
+    Cited,
     MissingConstant,
     energy_hz,
     gamma_hz_from_lifetime,
@@ -156,7 +151,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 MISSING: tuple[MissingConstant, ...] = (
     MissingConstant(
@@ -169,7 +164,7 @@ MISSING: tuple[MissingConstant, ...] = (
 
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 88Sr+: complete on the 674 nm quadrupole line, P levels without rates."""
+    """The ``Species`` record for 88Sr+, built from :data:`TABLE` alone."""
     t = TABLE
     half = Fraction(1, 2)
     e_d32 = energy_hz(t["sr88.D32.energy_cm"])
@@ -201,8 +196,7 @@ def species() -> Species:
             p_cites,
         ),
     )
-    # audit item E13b: the 674 nm wavelength comes from the stored clock FREQUENCY (1.3 ppb), not from the
-    # 0.01 cm^-1 level energy, which is 5.4e-7 away. Species.__post_init__ cross-checks the two at 1e-6.
+    # the 674 nm wavelength comes from the clock frequency; the level energy is 5.4e-7 away (Species checks 1e-6)
     lam_clock = C_M_PER_S / t["sr88.clock_frequency_hz"].value
     s_d52 = Transition(
         "S1/2",
@@ -213,8 +207,6 @@ def species() -> Species:
         "E2",
         ("NIST_ASD_5_12", "Letchumanan2005", "Sansonetti2012", "PLAN_background"),
     )
-    # the E1 structure (audit item E7: available() must mean usable, and E6: a designated cycling or repump
-    # line must be a tabulated Transition)
     g_p12 = gamma_hz_from_lifetime(t["sr88.P12.lifetime_s"])
     g_p32 = gamma_hz_from_lifetime(t["sr88.P32.lifetime_s"])
     b12_d32 = t["sr88.P12.branching_to_D32"].value

@@ -1,13 +1,8 @@
-"""Direct steady states without QuTiP's options context (performance pass 2026-09-09; PLAN.md Sections 4.2.8, 5.3, 8.1).
+"""Direct steady states and exponential-series spectra without QuTiP's options context.
 
-``qutip.steadystate(H, c_ops, method="direct")`` wraps its sparse solve in ``with CoreOptions(default_dtype_scope="creation")``,
-and entering or leaving that context re-runs the option setters, one of which rebuilds the dispatch table of EVERY data-layer
-function: 20 ms with QuTiP's own four types, 40 ms with the two this package registers (the factorized drive kernel and the
-rotating-frame sum), 80 ms under load, twice per call. A surrogate calibration spent 5 s of 19 s there for 32 steady states whose
-linear solves take milliseconds. The setting's default already IS "creation", in which case the context changes nothing, so
-:func:`steady_state_direct` performs the same steps as ``qutip.steadystate`` around the same solver call without the context; a
-process that changed the setting gets QuTiP's own path unchanged. The result is the same object QuTiP returns: the Liouvillian of
-Section 5.3, the trace-weighted direct solve, the hermitized density matrix.
+``qutip.steadystate(method="direct")`` wraps its solve in ``CoreOptions(default_dtype_scope="creation")``, whose entry and
+exit rebuild every data-layer dispatch table (tens of ms, twice per call). When the setting already is "creation" (the
+default) the context changes nothing, so these functions run QuTiP's own steps without it; otherwise they call QuTiP.
 """
 
 from __future__ import annotations
@@ -29,10 +24,7 @@ except ImportError:  # pragma: no cover
 
 
 def steady_state_direct(H: qt.Qobj, c_ops: Sequence[qt.Qobj]) -> qt.Qobj:
-    """``qutip.steadystate(H, c_ops, method="direct")``, without the options context that rebuilds every dispatcher.
-
-    ``H`` a Hamiltonian with ``c_ops`` its collapse operators, or a Liouvillian (then ``c_ops`` are added as dissipators).
-    """
+    """``qutip.steadystate(H, c_ops, method="direct")`` without the options context; ``H`` may be a Liouvillian."""
     ops = list(c_ops)
     if _steadystate_direct is None or qt.settings.core["default_dtype_scope"] != "creation":
         return qt.steadystate(H, ops, method="direct")
@@ -56,14 +48,8 @@ def spectrum_es(
     b_op: qt.Qobj,
     rho_ss: qt.Qobj | None = None,
 ) -> np.ndarray:
-    """``qutip.spectrum(H, wlist, c_ops, a_op, b_op, solver="es")`` with the steady state supplied.
-
-    QuTiP's exponential-series spectrum recomputes ``steadystate(L)`` (through the options context above) although every
-    caller of Section 4.2.8's spectrum path has just computed the same steady state for the same Liouvillian; ``rho_ss`` is
-    that state (the direct solve of :func:`steady_state_direct` on the same ``H`` and ``c_ops``, so the numbers are the
-    ones QuTiP would form), and the exponential series, the amplitude tidy-up at ``settings.core["atol"]`` and the
-    Lorentzian sum are QuTiP's own (``qutip.solver.spectrum._spectrum_es``).
-    """
+    """``qutip.spectrum(H, wlist, c_ops, a_op, b_op, solver="es")`` given the steady state ``rho_ss`` of the same ``H`` and
+    ``c_ops`` (solved with :func:`steady_state_direct` when None)."""
     ops = list(c_ops)
     w = np.asarray(wlist, dtype=float)
     if _diagonal_evolution is None or _steadystate_direct is None:

@@ -1,24 +1,7 @@
-"""The simulator's own error budget, reported beside every benchmark (PLAN.md Section 10 M10 "with the simulator's own error
-budget reported alongside"; Sections 6.8, 8.4, 9.6; Section 13 rows "RB error rate", "Depolarizing normalization").
-
-Three layers of the simulator's own accounting are composed into a prediction of what the benchmark should return, so that
-the benchmark measures the machine and the budget says what the machine's known physics accounts for:
-
-1. the closed-form scales of Section 9.6 that every run reports (``Diagnostics.intrinsic_budget``: residual displacement,
-   Debye-Waller loss, the off-resonant carrier scale, the frozen spectators' chi, the single-qubit pulses' sideband scale and
-   addressing crosstalk, the scattering probabilities), summed per native gate kind and per benchmark unit (a Clifford, a
-   circuit); these are SCALES that bound the coherent errors, not their values;
-2. the Section 6.8 channel summaries of the native gate set by state-based process tomography (Section 5.4): every native gate
-   kind the benchmark compiled to (``gpi2`` and ``gpi`` per ion, ``ms`` and ``zz`` per pair) is played once as a one-gate
-   circuit through ``run(level="GATE_LOCAL")`` from the device's prepared motional state, and the step's Choi matrix, reduced
-   to the benchmarked qubits with the crosstalk neighbours traced out in |0>, gives the gate's average infidelity against its
-   ideal unitary (the native gate at its frame-applied phase followed by the Stark frame, ``GateTarget``); the prediction
-   composes them to first order (average infidelities add for small independent errors, Magesan et al. 2011);
-3. the readout and preparation errors of Section 8.4 (``Result.spam``), which set the SPAM offsets of an RB curve and the
-   readout loss of a population or parity.
-
-Every prediction states its composition rule in ``predicted`` and ``notes``; none of it is fed back into the simulation.
-"""
+"""The simulator's own error budget beside a benchmark's measured number: the closed-form scales every run reports
+(``Diagnostics.intrinsic_budget``) summed per native gate kind, which bound the coherent errors rather than value them;
+each kind's GATE_LOCAL channel from a one-gate circuit, reduced to the benchmarked qubits, whose average infidelities
+compose to first order (Magesan et al. 2011); and the SPAM errors of ``Result.spam``."""
 
 from __future__ import annotations
 
@@ -48,7 +31,7 @@ if TYPE_CHECKING:
     from qutip_trap.machine import Machine
 
 FULL_MS_RAD = math.pi / 2.0
-"""The fully entangling native angle (Section 7.1): MS theta = pi/2, ZZ theta = pi/2."""
+"""The fully entangling native angle: MS theta = pi/2, ZZ theta = pi/2."""
 
 
 def kind_of(name: str, ions: Sequence[int]) -> str:
@@ -62,10 +45,8 @@ def kinds_of_schedule(schedule: Schedule) -> dict[str, str]:
 
 
 def gate_piece_of(key: str, gate_ids: Iterable[str]) -> str | None:
-    """The schedule ``gate_id`` an ``intrinsic_budget`` key belongs to: the LONGEST gate id that prefixes the key at a
-    separator. Splitting on the first ``/`` or ``.`` instead would lose every gate whose own id contains a slash -- the ZZ
-    wrapper's ``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/loop2`` (``control/schedule.py``) -- whose scales would then be dropped
-    from the per-kind budget and survive only inside ``intrinsic['total']``."""
+    """The schedule ``gate_id`` an ``intrinsic_budget`` key belongs to: the longest gate id that prefixes the key at a ``.``
+    or ``/`` separator (gate ids such as ``zz[k]/loop1`` contain a slash themselves)."""
     best: str | None = None
     for gid in gate_ids:
         if key == gid or (key.startswith(gid) and key[len(gid)] in "./"):
@@ -75,19 +56,14 @@ def gate_piece_of(key: str, gate_ids: Iterable[str]) -> str | None:
 
 
 def intrinsic_by_kind(diagnostics: Diagnostics, kinds: Mapping[str, str]) -> dict[str, float]:
-    """The Section 9.6 closed-form scales of one run summed per kind (the accounting of ``run.job.intrinsic_budget``: every
-    non-scattering entry, and of the scattering estimates the Raman, leakage and Rayleigh-dephasing probabilities).
-
-    Every entry is summed over the kind's WHOLE schedule entry, the crosstalk it inflicts on ions outside the benchmarked
-    set included (``gpi2[0].crosstalk`` is the rotation error on the neighbour), so the total bounds a LARGER error than the
-    channel infidelities of :meth:`StepChannel.infidelity_on`, which are reduced to the benchmarked qubits.
-    """
+    """One run's closed-form scales summed per kind: each gate's scale entries and its Raman, leakage and Rayleigh-dephasing
+    probabilities. Entries cover the gate's whole schedule entry, crosstalk on ions outside the benchmarked set included, so
+    the sum bounds a larger error than :meth:`StepChannel.infidelity_on`."""
     out: dict[str, float] = {}
     for key, val in diagnostics.intrinsic_budget.items():
         if key == "total":
             continue
-        # "ms[2].residual_displacement", "gpi2[0].crosstalk", "gpi2[0].ion0.P_raman", "ms[2]/seg0/ion0.ion0.P_raman",
-        # "zz[2]/loop1.residual_displacement"
+        # keys such as "ms[2].residual_displacement", "gpi2[0].ion0.P_raman", "zz[2]/loop1.residual_displacement"
         piece = gate_piece_of(key, kinds)
         if piece is None:
             continue
@@ -102,8 +78,8 @@ def intrinsic_by_kind(diagnostics: Diagnostics, kinds: Mapping[str, str]) -> dic
 
 
 def reduced_choi(choi: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.ndarray:
-    """The trace-1 Choi matrix of the channel reduced to the qubit factors ``keep`` (positions in the step's ion order) with the
-    other factors prepared in |0> and traced out after the map: E_keep(rho) = Tr_rest E(rho (x) |0><0|)."""
+    """The trace-1 Choi matrix of the channel reduced to the qubit factors ``keep`` (positions in the step's ion order):
+    E_keep(rho) = Tr_rest E(rho (x) |0><0|)."""
     d_all = 2**n_factors
     if choi.shape != (d_all * d_all, d_all * d_all):
         raise ValueError("Choi matrix and factor count disagree")
@@ -114,20 +90,18 @@ def reduced_choi(choi: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.nd
     del rest
     for i in range(d_k):
         for j in range(d_k):
-            # the input |i><j| on the kept factors (x) |0><0| on the rest, assembled in the step's factor order
             psi_i = _product_ket(i, len(keep), keep, n_factors)
             psi_j = _product_ket(j, len(keep), keep, n_factors)
             rho_in = np.outer(psi_i, psi_j.conj())
             rho_out = apply_choi(choi, rho_in)
             red = _partial_trace(rho_out, n_factors, keep)
             out[i * d_k : (i + 1) * d_k, j * d_k : (j + 1) * d_k] += red
-    # block (i, j) of the Choi matrix is E(|i><j|)/d in the convention of noise/summary.py (first factor the input copy)
+    # block (i, j) of a Choi matrix is E(|i><j|)/d in noise/summary.py's convention
     return np.asarray(out / d_k)
 
 
 def _product_ket(index: int, n_keep: int, keep: Sequence[int], n_factors: int) -> np.ndarray:
-    """The basis ket with the bits of ``index`` on the kept factors (first kept factor the most significant bit) and |0> on
-    every other factor, in the step's factor order."""
+    """The basis ket with ``index``'s bits on the kept factors (the first the most significant) and |0> on the others."""
     bits = [(index >> (n_keep - 1 - k)) & 1 for k in range(n_keep)]
     full = np.zeros([2] * n_factors, dtype=complex)
     idx: list[int] = []
@@ -154,25 +128,20 @@ def _partial_trace(rho: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.n
 
 @dataclass(frozen=True)
 class StepChannel:
-    """One gate step's channel (Section 6.8) with its ideal unitary on the step's ions."""
+    """One gate step's channel with its ideal unitary on the step's ions."""
 
     gate_id: str
     ions: tuple[int, ...]
     summary: ChannelSummary
     ideal: np.ndarray
-    """The ideal unitary on ``ions`` (first ion the first factor): the native gate at its frame-applied phase followed by the
-    Stark frame (``GateTarget.unitary``), identity on the crosstalk neighbours."""
+    """The ideal on ``ions`` (first ion the first factor): the ``GateTarget`` unitaries, identity on the neighbours."""
     engine_runs: int
     local_dimension: int
 
     def infidelity_on(self, qubits: Sequence[int]) -> float:
-        """The average gate infidelity of the channel reduced to the benchmarked ``qubits`` among the step's ions (the other
-        ions prepared in |0> and traced out), against the ideal's own factor on those qubits.
-
-        When the step's gate addresses an ion OUTSIDE ``qubits`` -- a neighbour's carrier pulse, which simultaneous RB
-        charges to the qubit it rotates by crosstalk -- that factor is the identity, and the number returned is the
-        crosstalk error per neighbour pulse in one-qubit units.
-        """
+        """Average gate infidelity of the channel reduced to ``qubits`` (the step's other ions prepared in |0> and traced
+        out) against the ideal's factor on them; for a gate on a neighbour of ``qubits`` that factor is the identity, so
+        this is the crosstalk error per neighbour pulse."""
         keep = [k for k, q in enumerate(self.ions) if q in set(int(x) for x in qubits)]
         if not keep:
             return 0.0
@@ -188,19 +157,8 @@ class StepChannel:
 
 
 def reduced_ideal(u: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.ndarray:
-    """The tensor factor of the ideal ``u`` on the qubit factors ``keep``, normalized to a unitary.
-
-    A step's ideal is the product over the step's ions of that ion's own target unitary -- the native gate on the addressed
-    ion, the identity on the crosstalk neighbours (``dynamics.tomography.local_ideal``) -- so it factors as
-    U_keep (x) U_rest, and the channel of :func:`reduced_choi` is to be compared with U_keep. The factorization is the
-    rank-one reshaping ``kron_factor`` uses, generalized to an arbitrary subset: U[(i, k), (j, l)] = U_keep[i, j]
-    U_rest[k, l] reshaped to R[(i, j), (k, l)] has rank one, and its leading left singular vector is U_keep up to a
-    scalar, which is normalized away (a global phase leaves ``choi_from_unitary`` unchanged).
-
-    Taking the <0_rest| U |0_rest> block instead -- which this did until the 2026-09-07 audit's simultaneous-RB fix --
-    is U_keep scaled by prod_rest <0|U_rest|0>, correct only when the traced-out ions' ideal is the identity: for a GPi2
-    on the other ion it scales U_keep by 1/sqrt 2 and for a GPi it gives exactly zero.
-    """
+    """The factor U_keep of the ideal ``u`` = U_keep (x) U_rest on the qubit factors ``keep``, up to a global phase: the
+    leading singular vector of the rank-one reshaping; raises ``ValueError`` when ``u`` does not factor into unitaries."""
     keep_list = [int(k) for k in keep]
     rest = [k for k in range(n_factors) if k not in keep_list]
     if not rest:
@@ -224,8 +182,8 @@ def reduced_ideal(u: np.ndarray, n_factors: int, keep: Sequence[int]) -> np.ndar
 
 @dataclass(frozen=True)
 class GateChannel:
-    """The Section 6.8 channels of one native gate kind, played once as a one-gate circuit at GATE_LOCAL (a kind whose
-    scheduler expansion has several pieces, the zz wrapper on an MS device, carries one step per piece)."""
+    """The GATE_LOCAL channels of one native gate kind played as a one-gate circuit, one step per scheduler piece (the zz
+    wrapper on an MS device has several)."""
 
     kind: str
     steps: tuple[StepChannel, ...]
@@ -249,9 +207,8 @@ _CHANNEL_CACHE: dict[tuple[object, ...], GateChannel] = {}
 
 
 def clear_budget_cache() -> None:
-    """Empty the process-wide cache of :func:`gate_channel` results, keyed by the device hash, the gate kind, the table's
-    identity and the run settings that shape the channel; a script that changes physics behind an unchanged device hash
-    calls it so that the next benchmark budget is recomputed."""
+    """Empty the process-wide :func:`gate_channel` cache (keyed by ``Machine.hash()`` and kind); call it after changing
+    physics the machine hash does not see."""
     _CHANNEL_CACHE.clear()
 
 
@@ -271,9 +228,8 @@ def one_gate_circuit(kind: str, n_qubits: int) -> Circuit:
 
 
 def gate_channel(machine: Machine | Device, kind: str, **run_kwargs: Any) -> GateChannel:
-    """The channel of one native gate kind by GATE_LOCAL tomography (module docstring item 2) on ``machine`` (a bare
-    ``Device`` is wrapped in a default machine; the 0.1.0 ``run_kwargs`` are rewritten onto it with a warning each), cached
-    per ``Machine.hash()`` (the device with its roles, the table and the option objects) and kind within the process."""
+    """The channel of one native gate kind by GATE_LOCAL tomography on ``machine``, cached per ``Machine.hash()`` and kind.
+    A bare ``Device`` (wrapped in a default machine) and legacy ``run_kwargs`` are accepted with a deprecation warning."""
     from dataclasses import replace
 
     from qutip_trap.run.levels import FidelityLevel
@@ -323,19 +279,18 @@ def gate_channel(machine: Machine | Device, kind: str, **run_kwargs: Any) -> Gat
 
 @dataclass(frozen=True)
 class BenchmarkBudget:
-    """What the simulator's own physics accounts for, beside a benchmark's measured number (module docstring)."""
+    """The simulator's own error budget beside a benchmark's measured number."""
 
     unit: str
-    """What the counts and scales are per: ``clifford`` or ``circuit``."""
+    """What counts and scales are per: ``clifford``, ``computational gate`` (Knill RB) or ``circuit``."""
     qubits: tuple[int, ...]
     counts: dict[str, float]
     """Average number of native gate pieces of each kind per unit."""
     intrinsic: dict[str, float]
-    """Section 9.6 closed-form scales per kind per unit, and ``total``."""
+    """Closed-form scales per kind per unit, and ``total``."""
     spam: dict[str, tuple[float, float]]
     """Per benchmarked qubit ``q{i}`` -> (eps_B, eps_D) and ``q{i}.state_preparation`` -> (eps_prep, 0)."""
     channels: dict[str, GateChannel] = field(default_factory=dict)
-    """Section 6.8 channels per kind (empty when tomography was not requested)."""
     channel_infidelity: dict[str, float] = field(default_factory=dict)
     """Per kind, the average infidelity of the channel reduced to the benchmarked qubits."""
     predicted: dict[str, float] = field(default_factory=dict)
@@ -350,7 +305,7 @@ class BenchmarkBudget:
 
     @property
     def readout_error_mean(self) -> dict[int, float]:
-        """Per benchmarked qubit, (eps_B + eps_D)/2 (Section 13 row 'Readout figure of merit')."""
+        """Per benchmarked qubit, (eps_B + eps_D)/2."""
         out: dict[int, float] = {}
         for q in self.qubits:
             eb, ed = self.spam.get(f"q{q}", (0.0, 0.0))
@@ -365,8 +320,7 @@ class BenchmarkBudget:
 def gather_counts_and_intrinsic(
     results: Sequence[Result], units: Sequence[int]
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Per kind, the average piece count and the average intrinsic scale per unit over several runs (``units[k]`` benchmark
-    units in run ``k``)."""
+    """Per kind, the average piece count and intrinsic scale per unit over runs (``units[k]`` units in run ``k``)."""
     counts: dict[str, float] = {}
     intrinsic: dict[str, float] = {}
     total_units = float(sum(units))
@@ -399,8 +353,7 @@ def spam_of(result: Result, qubits: Sequence[int]) -> dict[str, tuple[float, flo
 def channels_for(
     machine: Machine | Device, kinds: Sequence[str], qubits: Sequence[int], **run_kwargs: Any
 ) -> tuple[dict[str, GateChannel], dict[str, float]]:
-    """The Section 6.8 channels of every kind and their average infidelity reduced to ``qubits`` (``gate_channel`` per
-    kind on ``machine``)."""
+    """The :func:`gate_channel` of every kind and its average infidelity reduced to ``qubits``."""
     m = machine_with_run_kwargs(
         machine,
         run_kwargs,

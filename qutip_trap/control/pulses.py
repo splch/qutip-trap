@@ -1,10 +1,8 @@
-"""Tones, drives and pulses (PLAN.md Sections 3.3, 4.3, 5.2, 7.4; Appendix E).
+"""Tones, drives and pulses, and the picklable time functions they carry.
 
-Conventions (Section 13): a tone's detuning mu is measured from the carrier and delta_{i,m} = mu_i - omega_m is
-always two-indexed; the drive term is (hbar/2) sum_tones Omega(t) e^{-i(mu t - phi(t))} sigma_+ (x) prod_m
-D_m(i eta) + h.c. (Section 5.7); the effective wavevector is Delta k = k_1 - k_2 with beam 1 the higher-frequency
-beam absorbed from the lower qubit level (Wineland 2003 Eq. 2.3, Section 13; the row's 'coupling to the upper level'
-wording is ambiguous), |Delta k| = 2k sin(theta_cross/2) for a Raman pair, k for one beam and 0 for a microwave.
+A tone's detuning mu is measured from the carrier (delta_{i,m} = mu_i - omega_m); the drive term is (hbar/2) sum_tones
+Omega(t) e^{-i(mu t - phi(t))} sigma_+ (x) prod_m D_m(i eta) + h.c.; Delta k = k_1 - k_2 with beam 1 the higher-frequency
+beam absorbed from the lower qubit level (Wineland 2003 Eq. 2.3).
 """
 
 from __future__ import annotations
@@ -21,8 +19,7 @@ if TYPE_CHECKING:
     from qutip_trap.light.comb import CombSpec
 
 DriveKind = Literal["raman", "optical_E1", "optical_E2", "microwave", "gradient", "light_shift"]
-"""Appendix E's five kinds plus ``light_shift`` (M4, Section 4.4.4): a Raman beam pair whose beat note sits near a MODE
-frequency and drives the qubit through its state-dependent two-photon light shift instead of a spin flip."""
+"""The drive kinds; ``light_shift``: a Raman pair beating near a mode frequency, a state-dependent force, not a spin flip."""
 
 _BEAMS_PER_KIND: dict[str, int] = {
     "raman": 2,
@@ -36,17 +33,11 @@ _BEAMS_PER_KIND: dict[str, int] = {
 
 @dataclass(frozen=True)
 class LightShiftCouplings:
-    """The level structure of a light-shift (sigma_z sigma_z) drive relative to its force amplitude (Section 4.4.4).
-
-    With Omega_gg the two-photon self-coupling of qubit level g under the beam pair (light/raman.py) and Omega_LS =
-    (Omega_upup - Omega_dndn)/2 the tone's envelope, ``level_weights`` = (Omega_dndn, Omega_upup)/Omega_LS (they differ by
-    exactly 2), so the drive term on ion i is (1/2) sum_tones Omega_LS(t) e^{-i(mu t - phi)} [w_dn P_dn + w_up P_up] (x) D_i
-    + h.c. = Omega_LS cos(...) [sigma_z + (w_up + w_dn)/2] (x) ...: Zhu-Monroe-Duan's H = hbar Omega_j cos(Delta k . q_j +
-    mu t) sigma_z^j plus the spin-independent force. ``spin_flip_weight`` = Omega_R/Omega_LS is the ordinary Raman coupling
-    the same beams drive, far off resonance because the beat note mu sits near a mode and not near the qubit frequency
-    ``qubit_freq_hz``: in the qubit frame it rotates at mu - omega_0 and the builder keeps it unless its off-resonant
-    excitation is negligible (recorded either way).
-    """
+    """The level structure of a light-shift (sigma_z sigma_z) drive relative to its tone envelope Omega_LS = (Omega_upup -
+    Omega_dndn)/2, Omega_gg the two-photon self-coupling of level g: ``level_weights`` = (Omega_dndn, Omega_upup)/Omega_LS
+    differ by exactly 2, the drive term on ion i being (1/2) sum_tones Omega_LS(t) e^{-i(mu t - phi)} [w_dn P_dn + w_up P_up]
+    (x) D_i + h.c.; ``spin_flip_weight`` = Omega_R/Omega_LS is the same beams' ordinary Raman coupling, off resonant by
+    mu - omega_0 (omega_0 from ``qubit_freq_hz``)."""
 
     level_weights: tuple[complex, complex]
     spin_flip_weight: complex
@@ -64,48 +55,41 @@ class LightShiftCouplings:
 
 @dataclass(frozen=True)
 class Tone:
-    """One frequency component of a drive (Sections 4.3, 5.2): the detuning mu from the carrier (ordinary Hz), the phase phi in
-    the ion frame (radians) and the envelope Omega(t) as an ordinary frequency in the (hbar Omega/2) convention, each a
-    constant, an array sampled over the pulse or a callable of the time since the pulse start; ``theta_bessel_rad`` is the
-    kick backend's Bessel argument."""
+    """One frequency component of a drive; a callable field is a function of the time since the pulse start."""
 
     detuning_hz: Callable[[float], float] | float
-    """mu(t) from the carrier (ordinary Hz in the public API); for a ``light_shift`` drive the BEAT NOTE itself, which sits
-    near a mode frequency and not near the qubit frequency (Section 4.4.4)."""
+    """mu(t) from the carrier; for a ``light_shift`` drive the beat note itself, near a mode frequency."""
     phase_rad: Callable[[float], float] | float
-    """phi_tone(t) in the ion frame (Section 5.2)."""
+    """phi(t) in the ion frame."""
     envelope_hz: Callable[[float], float] | np.ndarray | float
-    """Omega(t), the Rabi frequency in the (hbar Omega/2) convention, as an ordinary frequency: a callable of the
-    time since the pulse start, an array uniformly sampled over the pulse (cubic spline), or a constant (square)."""
+    """Omega(t) in the (hbar Omega/2) convention: a callable, an array uniformly sampled over the pulse (cubic spline)
+    or a constant (square)."""
     theta_bessel_rad: float | None = None
-    """Kick backend: the Bessel argument of exp[i Theta_B sin(Delta k x + phi) sigma_x]; a perfect
-    spin-dependent kick sits at sum_k Theta_{B,k} = pi (Appendix E, Run 5 amendment)."""
+    """Kick backend: Theta_B in exp[i Theta_B sin(Delta k x + phi) sigma_x]; a perfect spin-dependent kick has
+    sum_k Theta_{B,k} = pi."""
 
 
 @dataclass(frozen=True)
 class Drive:
-    """A physical drive on a set of ions (Section 3.3)."""
+    """A physical drive on a set of ions."""
 
     kind: DriveKind
     ions: tuple[int, ...]
     tones: tuple[Tone, ...]
     beams: tuple[int, ...]
-    """Indices into Device.beams: one for optical_E1/E2, two for raman (k_1 - k_2), none for microwave."""
+    """Indices into Device.beams: two for raman and light_shift (k_1 - k_2), one for optical_E1/E2, none otherwise."""
     stark_shift_hz: Callable[[float], float] | float
     crosstalk: dict[int, complex]
-    """epsilon_ij onto neighbours: a Rabi (amplitude) ratio, not an intensity ratio (Section 13)."""
+    """epsilon_ij onto neighbour j: a Rabi (amplitude) ratio, not an intensity ratio."""
     rf_locked: bool = False
     rf_phase_rad: float | None = None
-    """Pulse start relative to the trap rf (Section 4.3.6); unlocked = averaged."""
+    """Pulse start relative to the trap rf, for an rf-locked pulse only (unlocked = averaged)."""
     comb: CombSpec | None = None
     """Set for a mode-locked Raman drive; then ``tones`` comes from comb.tones() and stark_shift_hz from comb.stark4_hz()."""
     light_shift: LightShiftCouplings | None = None
-    """Required for ``kind == "light_shift"`` and refused otherwise (Section 4.4.4)."""
+    """Required for ``kind == "light_shift"`` and refused otherwise."""
     programmed: bool = False
-    """True for a drive the scheduler built from the CalibrationTable (Section 7.3): its envelopes are REQUESTED Rabi
-    frequencies in the table's units, its Stark shift and crosstalk the table's beliefs, and the played chain of
-    ``control.played`` converts them into what the ions see through the device's derived values (M8). False for a drive built
-    from a derived ``DerivedDrive`` (the experiments), whose values are already physical."""
+    """True for the CalibrationTable's beliefs (requested Rabi frequencies, made physical by ``control.played``)."""
 
     def __post_init__(self) -> None:
         if not self.ions:
@@ -121,12 +105,7 @@ class Drive:
             raise ValueError("a light_shift drive carries its LightShiftCouplings and no other kind does")
 
     def delta_k(self, beams: Sequence[Beam]) -> np.ndarray:
-        """The effective wavevector, DERIVED from the beams' wavelengths and directions, never a free field.
-
-        Raman: k_1 - k_2 with beam 1 the higher-frequency beam absorbed from the lower qubit level (Section 13, "Effective wavevector");
-        single-photon optical: k k_hat; microwave and gradient: 0. Appendix E declares this as a property; it
-        takes the device's beam list here because a ``Drive`` stores indices into ``Device.beams``.
-        """
+        """The effective wavevector from ``Device.beams``: k_1 - k_2 for a beam pair, k k_hat for one beam, 0 for none."""
         if self.kind in ("raman", "light_shift"):
             k1 = beams[self.beams[0]].k_vector()
             k2 = beams[self.beams[1]].k_vector()
@@ -155,10 +134,7 @@ class Pulse:
         return self.t_end_s - self.t_start_s
 
 
-# ---- picklable time functions (PLAN.md Section 11.3 item 9; M9b) -----------------------------------------------------------------
-# The parallel maps of Section 11.3 pickle every QobjEvo coefficient, so nothing on the pulse path may be a lambda or a closure:
-# the envelopes, phases and detunings a pulse carries, the hardware chain's shaped and filtered envelopes, the played chain's
-# rescaled ones and the scattering channel's intensity scale are all instances of the classes below (or arrays and constants).
+# ---- picklable time functions: the parallel maps pickle every QobjEvo coefficient, so no lambdas or closures ----
 
 
 @dataclass(frozen=True)
@@ -183,8 +159,7 @@ class ScaledFn:
 
 
 class SplineFn:
-    """A uniformly sampled array over [0, duration] as a clamped cubic spline (Section 5.5: programmed envelopes are sampled
-    at 20 times their bandwidth and interpolated with the default cubic spline), times ``scale``."""
+    """A uniformly sampled array over [0, duration] as a cubic spline times ``scale``, with tau clamped to the interval."""
 
     __slots__ = ("_spline", "duration_s", "samples", "scale")
 
@@ -209,7 +184,7 @@ class SplineFn:
 
 
 class InterpFn:
-    """A uniformly sampled array over [0, duration] interpolated linearly (the scattering channel's intensity scale)."""
+    """A uniformly sampled array over [0, duration], interpolated linearly."""
 
     __slots__ = ("duration_s", "grid", "samples")
 
@@ -232,7 +207,7 @@ def as_time_function(
     value: Callable[[float], float] | np.ndarray | float, duration_s: float, *, scale: float = 1.0
 ) -> Callable[[float], float]:
     """A pulse-local callable of tau from a constant, a callable or a uniformly sampled array over [0, duration], times
-    ``scale``: the one conversion the builder, the hardware chain and the scattering channel share; picklable when its input is."""
+    ``scale``; picklable when its input is."""
     if callable(value):
         return ScaledFn(value, scale)
     if isinstance(value, np.ndarray):
@@ -241,9 +216,8 @@ def as_time_function(
 
 
 def fingerprint_pulse(pulse: Pulse, n_samples: int = 33) -> tuple[object, ...]:
-    """A value fingerprint of a pulse (the GATE_LOCAL extraction cache, the engine's propagator cache): kind, ions, beams,
-    absolute times, every tone sampled over the pulse (a callable envelope or detuning differs by its VALUES, never by the source
-    text a closure shares), the Stark shift, the crosstalk and the light-shift couplings."""
+    """A value fingerprint of a pulse for caches: every callable is sampled at ``n_samples`` points over the pulse, so
+    pulses compare by their values, never by function identity."""
     grid = np.linspace(0.0, pulse.duration_s, n_samples)
 
     def sampled(v: object) -> object:

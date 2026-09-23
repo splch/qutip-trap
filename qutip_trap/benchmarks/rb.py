@@ -1,35 +1,8 @@
-"""Randomized benchmarking on the simulated device (PLAN.md Section 10 M10; Section 7.9 "Randomized benchmarking variants";
-Section 13 row "RB error rate").
-
-Clifford RB (Magesan et al. 2011; Egan 2021's and Mount 2015's variant in Section 7.9): for every sequence length m and every
-random sequence, m uniform Cliffords followed by the inverse of THEIR PRODUCT (never the inverse of each Clifford), compiled
-to native gates by the compiler and played as pulses by ``run`` from the prepared |0...0>, measured in the computational basis;
-the survival probability is the fraction of shots in which every benchmarked qubit reads 0. The mean survival over the
-sequences is fitted to F(m) = A p^m + B (the SPAM-independent decay), with B fixed at 1/2^n when fewer than three lengths are
-scanned, and the reported error per Clifford is Section 13's r = (1 - p)(2^n - 1)/2^n (the average error per Clifford RB papers
-report: (1 - p)/2 for one qubit, (3/4)(1 - p) for two), beside the entanglement infidelity (4^n - 1)(1 - p)/4^n of the
-depolarizing channel with the same p, kept under that name.
-
-Single-qubit RB on several qubits at once (``pair=False``) interleaves independent sequences (simultaneous RB; Gambetta et
-al., PRL 109, 240504, 2012): every benchmarked qubit's
-OWN marginal survival P(qubit q reads its target bit) is fitted, and its r_q under simultaneous operation is reported (as
-``error_per_clifford``, the mean over the qubits) in the same unit -- one Clifford on one qubit -- as the budget's
-``r_channel``, so the number is comparable both with the r that qubit measures alone and with the composition. The JOINT
-survival P(every benchmarked qubit reads its target bit) is fitted too and kept as the correlation diagnostic
-(``joint_error_per_layer``): its (1 - p)(2^n - 1)/2^n is the error per LAYER of n Cliffords, the sum over the benchmarked
-qubits to first order, and NOT an n-qubit Clifford error rate, which the product group C1 x ... x C1 the sequences are drawn
-from does not define. Two-qubit RB (``pair=True``, the default on exactly two qubits) runs the 11520-element group on a pair.
-
-The Knill-style variant of Section 7.9 (``variant="knill"``; Knill et al., PRA 77, 012307, 2008; Harty et al. 2014 and
-Wright et al. 2019 as they run it) plays, per computational gate, a random Pauli (a pi rotation about +-x or +-y as one GPi
-pulse, about +-z as a virtual RZ, or an identity) followed by a random Clifford (one GPi2 pulse about +-x or +-y), and closes
-with ONE final pi/2 into the computational basis; the ideal state never leaves the six Pauli eigenstates, so the survival is
-the probability of the sequence's own target bitstring and the decay is fitted in the authors' form B p^L + 1/2.
-
-The budget reported alongside (``benchmarks.budget``): the Section 9.6 closed-form scales per Clifford, the Section 6.8
-channels of the native gate kinds the sequences compiled to, reduced to the benchmarked qubits and composed to first order into
-a predicted r and p, and the SPAM offsets A + B = F(0) that the preparation and readout errors predict.
-"""
+"""Randomized benchmarking on the simulated device. Clifford RB (Magesan et al. 2011) closes m uniform Cliffords by the
+inverse of their product, fits F(m) = A p^m + B and reports r = (1 - p)(2^n - 1)/2^n beside the depolarizing entanglement
+infidelity (4^n - 1)(1 - p)/4^n; simultaneous RB (Gambetta et al. 2012) fits each qubit's marginal, so its r is per
+Clifford on one qubit; the Knill-style variant (Knill et al. 2008) plays a random Pauli then a random pi/2 Clifford per
+computational gate, closes with one pi/2 into the computational basis and fits the authors' B p^L + 1/2."""
 
 from __future__ import annotations
 
@@ -74,14 +47,11 @@ class RBSequence:
     length: int
     qubits: tuple[int, ...]
     cliffords: tuple[Any, ...]
-    """Per benchmarked qubit a tuple of single-qubit Clifford indices, or one tuple of ``TwoQubitClifford`` for a pair."""
+    """Per qubit the Clifford indices (Knill: the Pauli and Clifford codes), or one tuple of ``TwoQubitClifford`` for a pair."""
     inverse: Any
     circuit: Circuit
-    """The standard/native-gate circuit as built (the compiler compiles and verifies it inside ``run``)."""
     target_key: str = ""
-    """The bitstring the sequence's ideal state reads, in the histogram's own order (the sorted measured qubits with the
-    lowest-indexed one RIGHTMOST, Section 13 "Result bit order"); ``""`` means ``"0" * len(qubits)`` (Clifford RB closes on
-    |0...0>). The Knill-style variant ends on |0> or |1> per qubit, as its own draw decided."""
+    """The ideal outcome in histogram order (the lowest-indexed measured qubit rightmost); ``""`` means all zeros."""
 
     @property
     def key(self) -> str:
@@ -135,13 +105,12 @@ def two_qubit_sequence(
 
 
 _KNILL_AZIMUTH: Final[tuple[float, ...]] = (0.0, 0.5 * math.pi, math.pi, 1.5 * math.pi)
-"""The four azimuths +-x, +-y of the Knill-style variant: a pi/2 or pi rotation about one of them maps a Pauli eigenstate to
-a Pauli eigenstate, so the ideal state never leaves the six poles of the Bloch sphere (Knill et al. 2008)."""
+"""The azimuths +-x, +-y of the Knill-style variant: pi/2 and pi rotations about them keep the ideal state on the six Pauli
+eigenstates."""
 
 
 def _knill_final(u: np.ndarray) -> tuple[float | None, int]:
-    """(the azimuth of the one final pi/2 pulse, the computational bit the ideal state then reads), or (None, bit) when
-    the ideal state u|0> already is a computational basis state."""
+    """(azimuth of the final pi/2 pulse, or None when u|0> is already a basis state; the bit the ideal state then reads)."""
     psi = np.asarray(u, dtype=complex)[:, 0]
     for bit in (0, 1):
         if abs(psi[bit]) > 1.0 - 1e-9:
@@ -159,15 +128,9 @@ def _knill_final(u: np.ndarray) -> tuple[float | None, int]:
 def knill_sequences(
     rng: np.random.Generator, qubits: Sequence[int], length: int, n_qubits: int
 ) -> RBSequence:
-    """Knill-style sequences (PLAN.md Section 7.9 first bullet; Knill et al. 2008; Harty et al. 2014; Wright et al. 2019),
-    one per qubit of ``qubits``, interleaved computational gate by computational gate.
-
-    ``length`` computational gates per qubit, each a random Pauli gate -- a pi rotation about +-x or +-y as one GPi pulse,
-    about +-z as a virtual RZ (no pulse), or an identity (no operation) -- followed by a random Clifford gate, one GPi2 pulse
-    about +-x or +-y; then ONE final pi/2 pulse per qubit that takes that qubit's ideal state to a computational basis state
-    (none when it already is one). ``RBSequence.target_key`` carries the bitstring the sequence returns to, so the survival
-    is the probability of the sequence's own outcome and the decay is fitted in the authors' form B p^L + 1/2.
-    """
+    """Knill-style sequences (Knill et al. 2008), one per qubit, interleaved: per computational gate a random Pauli (GPi
+    about +-x or +-y, a virtual RZ(+-pi), or nothing) then a GPi2 about +-x or +-y, and one final pi/2 into the
+    computational basis where needed; ``target_key`` is the outcome the ideal sequence ends on."""
     qs = tuple(int(q) for q in qubits)
     paulis = {q: tuple(int(rng.integers(0, 7)) for _ in range(length)) for q in qs}
     cliffords = {q: tuple(int(rng.integers(0, 4)) for _ in range(length)) for q in qs}
@@ -180,11 +143,11 @@ def knill_sequences(
                 phi = _KNILL_AZIMUTH[code]
                 ops.append(Operation("gpi", (q,), (phi,)))
                 ideal[q] = native.gpi(phi) @ ideal[q]
-            elif code < 6:  # +-z: a rotation of the logical frame, no pulse (Harty's +-z Pauli)
+            elif code < 6:  # +-z: a frame rotation, no pulse
                 theta = math.pi if code == 4 else -math.pi
                 ops.append(Operation("rz", (q,), (theta,)))
                 ideal[q] = native.rz(theta) @ ideal[q]
-            # code 6 is the identity Pauli: no operation at all
+            # code 6 is the identity Pauli: no operation
             phi_c = _KNILL_AZIMUTH[cliffords[q][k]]
             ops.append(Operation("gpi2", (q,), (phi_c,)))
             ideal[q] = native.gpi2(phi_c) @ ideal[q]
@@ -196,7 +159,7 @@ def knill_sequences(
         bits[q] = bit
         if phi_f is not None:
             ops.append(Operation("gpi2", (q,), (phi_f,)))
-    # the histogram key sorts the measured qubits and puts qubit 0 rightmost (Section 13 "Result bit order")
+    # histogram order: the sorted measured qubits, the lowest-indexed rightmost
     target = "".join(str(bits[q]) for q in sorted(qs)[::-1])
     return RBSequence(
         length=length,
@@ -222,8 +185,8 @@ def fit_decay(
     *,
     fix_offset: bool | None = None,
 ) -> tuple[dict[str, tuple[float, float]], bool, tuple[str, ...]]:
-    """Fit the mean survival per length to A p^m + B. ``fix_offset`` pins B at 1/2^n (the depolarizing floor, the usual
-    remedy when a tiny decay leaves A and B degenerate); None fixes it only when fewer than three lengths are scanned."""
+    """Fit the mean survival per length to A p^m + B. ``fix_offset`` pins B at the depolarizing floor 1/2^n; None pins it
+    only when fewer than three lengths are scanned."""
     m = np.asarray(lengths, dtype=float)
     y = np.asarray(survival, dtype=float)
     sg = np.asarray(sigma, dtype=float)
@@ -267,36 +230,30 @@ def fit_decay(
 
 @dataclass(frozen=True)
 class RBResult:
-    """A randomized-benchmarking run on the simulated device: the joint survival per (length, sequence) with its shot-noise
-    error, the A p^m + B fit, the error per Clifford r = (1 - p)(2^n - 1)/2^n of Section 13 beside the depolarizing
-    entanglement infidelity (4^n - 1)(1 - p)/4^n kept under that name, the per-qubit marginals of simultaneous RB, the
-    sequences, every ``Result`` and the budget alongside; ``variant`` names the Clifford or the Knill-style protocol."""
+    """A randomized-benchmarking run: the joint survival per (length, sequence), the A p^m + B fit, the error per Clifford,
+    the per-qubit marginals of simultaneous RB, the sequences, every ``Result`` and the budget."""
 
     qubits: tuple[int, ...]
     lengths: tuple[int, ...]
     n_sequences: int
     shots: int
     variant: str
-    """``clifford`` (the Clifford group) or ``knill`` (the Knill-style sequences of Section 7.9)."""
+    """``clifford`` or ``knill``."""
     survival: np.ndarray
-    """(n_lengths, n_sequences) JOINT survival probabilities P(every benchmarked qubit reads its target bit)."""
+    """(n_lengths, n_sequences) joint survival P(every benchmarked qubit reads its target bit)."""
     survival_sigma: np.ndarray
-    """Shot-noise standard error per point, from the run's effective sample size."""
     mean_survival: np.ndarray
     mean_sigma: np.ndarray
     fit: dict[str, tuple[float, float]]
-    """A, p, B and chi2_per_dof of the JOINT survival, with uncertainties."""
+    """A, p, B and chi2_per_dof of the joint survival, with uncertainties."""
     error_per_clifford: tuple[float, float]
-    """r, in the same unit as ``budget.predicted['r_channel']``: Section 13's r = (1 - p)(2^n - 1)/2^n of the fitted decay
-    for one qubit and for a pair; for simultaneous RB the mean over the benchmarked qubits of the per-qubit MARGINAL
-    r_q = (1 - p_q)/2 (Gambetta et al. 2012), one Clifford on one qubit the unit."""
+    """r = (1 - p)(2^n - 1)/2^n for one qubit or a pair; for simultaneous RB the mean of the marginal r_q = (1 - p_q)/2,
+    in the unit of ``budget.predicted['r_channel']``."""
     depolarizing_entanglement_infidelity: tuple[float, float]
-    """(4^n - 1)(1 - p)/4^n: the entanglement infidelity of the depolarizing channel with the same p (Section 13), NOT r;
-    for simultaneous RB the mean over the benchmarked qubits of the marginal (4 - 1)(1 - p_q)/4."""
+    """(4^n - 1)(1 - p)/4^n of the depolarizing channel with the same p (not r); the marginal mean for simultaneous RB."""
     joint_error_per_layer: tuple[float, float] | None
-    """Simultaneous RB only: (1 - p)(2^n - 1)/2^n of the JOINT survival, which to first order is sum_q r_q, the error per
-    LAYER of n Cliffords -- the correlation diagnostic, never an n-qubit Clifford error rate (the sequences are drawn from
-    the product group C1 x ... x C1, which defines no such rate). None for one qubit and for a pair."""
+    """Simultaneous RB only: (1 - p)(2^n - 1)/2^n of the joint survival, the error per layer of n Cliffords (sum_q r_q to
+    first order), not an n-qubit Clifford error rate."""
     pulses_per_clifford: float
     entangling_per_clifford: float
     converged: bool
@@ -304,13 +261,10 @@ class RBResult:
     results: tuple[Result, ...]
     """The runs, in (length, sequence) order."""
     marginal_survival: np.ndarray | None = None
-    """(n_qubits, n_lengths, n_sequences) per-qubit marginal survival P(qubit q reads its target bit); None for a pair,
-    whose group is the two-qubit Clifford group and whose marginals fit nothing."""
+    """(n_qubits, n_lengths, n_sequences) marginal survival P(qubit q reads its target bit); None for a pair."""
     marginal_fit: tuple[dict[str, tuple[float, float]], ...] = ()
-    """Per benchmarked qubit, the A, p, B and chi2_per_dof of its own marginal decay."""
     marginal_error_per_clifford: tuple[tuple[float, float], ...] = ()
-    """Per benchmarked qubit, r_q = (1 - p_q)/2 from its marginal decay: what that qubit's gates cost under simultaneous
-    operation, to be read beside the r the same qubit measures when benchmarked alone (Gambetta et al. 2012)."""
+    """Per benchmarked qubit, r_q = (1 - p_q)/2 from its marginal decay."""
     budget: BenchmarkBudget | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
 
@@ -319,7 +273,7 @@ class RBResult:
         return len(self.qubits)
 
     def fidelity_form(self) -> str:
-        """The decay in the form Wright et al. 2019 print it, B p^L + 1/2 (Section 7.9), with this run's fitted B."""
+        """The fitted decay as text, ``F(L) = A x p^L + B`` (Wright et al. 2019 print it as B p^L + 1/2)."""
         p, _ = self.fit["p"]
         a, _ = self.fit["A"]
         b, _ = self.fit["B"]
@@ -335,9 +289,8 @@ def _survival(res: Result, key: str) -> tuple[float, float]:
 
 
 def marginal_survival(res: Result, key: str, qubits: Sequence[int]) -> dict[int, tuple[float, float]]:
-    """Per benchmarked qubit, (P(that qubit reads its target bit), shot-noise sigma) from the histogram: the marginal
-    survival simultaneous RB fits per qubit (Gambetta et al. 2012). ``key`` is the target bitstring in the histogram's own
-    order (the sorted measured qubits, the lowest-indexed one rightmost, Section 13 "Result bit order")."""
+    """Per benchmarked qubit, (P(that qubit reads its target bit), shot-noise sigma); ``key`` is the target bitstring in
+    histogram order (the sorted measured qubits, the lowest-indexed rightmost)."""
     order = sorted(int(q) for q in qubits)[::-1]
     if len(order) != len(key):
         raise ValueError("the target key and the benchmarked qubits disagree in length")
@@ -350,10 +303,8 @@ def marginal_survival(res: Result, key: str, qubits: Sequence[int]) -> dict[int,
 
 
 def mean_survival_sigma(values: np.ndarray, sigma: np.ndarray, n_sequences: int, shots: int) -> np.ndarray:
-    """The standard error of the mean survival over sequences, per length: the between-sequence sample variance ALONE when
-    more than one sequence is drawn (that variance already contains each point's shot noise, so adding the within-sequence
-    variance would count the shot noise twice and widen the error bar by up to sqrt 2), the shot noise alone at one
-    sequence, and one count out of the whole run when both vanish."""
+    """The standard error of the mean survival per length: the between-sequence variance alone for several sequences (it
+    already contains the shot noise), the shot noise for one, and one count of the run when both vanish."""
     if n_sequences > 1:
         var = values.var(axis=1, ddof=1) / n_sequences
     else:
@@ -376,19 +327,12 @@ def randomized_benchmarking(
     pair: bool | None = None,
     **run_kwargs: Any,
 ) -> RBResult:
-    """Randomized benchmarking of one qubit (or several at once, simultaneous RB) or of a pair, through ``Machine.run``.
+    """Randomized benchmarking of one qubit, several at once (simultaneous RB) or a pair, through ``Machine.run``.
 
-    ``lengths`` are the Clifford counts m (the closing inverse not counted), or for ``variant="knill"`` the computational-gate
-    counts L (the closing pi/2 not counted); every (length, sequence) is one ``run`` of ``shots`` with its own keyed seed.
-    ``pair`` selects the protocol on exactly two qubits: ``pair=True`` (the default there) the 11520-element two-qubit
-    Clifford group, ``pair=False`` simultaneous single-qubit RB; ``pair=True`` on any other qubit count is an error.
-    ``machine`` carries the table, the level and the option objects (a bare ``Device`` is wrapped in a default machine;
-    docs/api_implementation_plan.md 2.2); the 0.1.0 ``run_kwargs`` (``table``, ``options``, ``level``, ``noise``, ...) are
-    still accepted, each rewritten onto the machine with a deprecation warning.
-    ``budget=True`` adds the Section 6.8 channels of the native gate kinds used (one GATE_LOCAL tomography per kind, cached
-    per device) and the predictions composed from them. ``fix_offset`` pins the fit's B at 1/2^n (always pinned for the
-    Knill-style variant, whose published form is B p^L + 1/2).
-    """
+    ``lengths`` count Cliffords m, or computational gates L for ``variant="knill"`` (the closing gate not counted); each
+    (length, sequence) is one run of ``shots`` with its own keyed seed. Two qubits run the two-qubit Clifford group unless
+    ``pair=False``; ``pair=True`` needs two qubits and the Clifford variant. ``fix_offset`` pins B at 1/2^n (by default
+    for Knill). A bare ``Device`` and legacy ``run_kwargs`` are accepted with a deprecation warning."""
     mach = machine_with_run_kwargs(
         machine,
         run_kwargs,
@@ -439,7 +383,7 @@ def randomized_benchmarking(
     k_run = 0
 
     def per_unit(m: int) -> int:
-        """Benchmark units in a sequence of length m: one Clifford on one qubit, or one Knill computational gate."""
+        """Benchmark units in a sequence of length m: Cliffords (per qubit in single-qubit RB) or Knill computational gates."""
         if variant == "knill":
             return m * n_q  # the closing pi/2 is not a computational gate
         return (m + 1) * (1 if two_qubit else n_q)  # the closing inverse Clifford counts
@@ -531,8 +475,7 @@ def randomized_benchmarking(
         for q in qs:
             eb, ed = spam.get(f"q{q}", (0.0, 0.0))
             prep = spam.get(f"q{q}.state_preparation", (0.0, 0.0))[0]
-            # survival to the target bit: prepared right and read right, or prepared wrong and read wrong; Clifford RB
-            # returns to the dark |0> (eps_D), the Knill-style variant to |0> or |1> with equal probability (the mean)
+            # prepared and read right, or both wrong; Clifford RB ends on the dark |0>, Knill on |0> or |1> equally often
             e_target = 0.5 * (eb + ed) if variant == "knill" else ed
             e_other = 0.5 * (eb + ed) if variant == "knill" else eb
             f0 *= (1.0 - prep) * (1.0 - e_target) + prep * e_other

@@ -1,21 +1,8 @@
-"""``RunSpec`` and ``Job``: the unit of submission and the handle on a run in a worker process (docs/api_proposal.md Section
-4.9; docs/api_implementation_plan.md 3.1; 0.4.0).
+"""``RunSpec``, the unit of submission, and ``Job``, the handle on ``Machine.run`` in a spawned worker process.
 
-``Machine.submit(circuit, shots, seed=)`` returns a ``Job``: ``Machine.run`` in a separate process (a spawned interpreter,
-so the run's own parallel maps of Section 11.3 item 9 fork inside it as they do in-process), its ``Progress`` streamed back
-per pulse, branch, sample and readout, cancellable between pulses, with the ``Result`` and the ``RunRecord`` behind it handed
-back when it is done. Braket's ``LocalQuantumTask`` and pytket's ``ResultHandle`` are the precedents: a local run gets the
-remote surface (``status``, ``result``, ``cancel``), so one code path serves both. The unit of submission is the frozen,
-JSON-serialisable ``RunSpec`` (the circuit, the shots, the seed, the machine's hash, the three option objects, the level,
-a label), the application's ``JobSpec`` moved to the core; ``docs/schemas/runspec.schema.json`` is its schema
-(``tools/schemas.py``) and ``RunSpec.to_dict`` refuses the two option values a JSON record cannot carry (explicit collapse
-operators, a declared ``HilbertSpace``, a discriminator object) by name rather than dropping them.
-
-The cancel is cooperative: the worker checks the flag every time the run reports progress, which the in-process engines do
-after every integrated pulse, so a cancelled job stops within one pulse; branches spread over a parallel map report when the
-map returns, so a cancel during such a map takes effect after it (``Job.cancel(terminate_after_s=...)`` is the hard stop).
-A script that submits jobs runs under ``if __name__ == "__main__":`` like every user of ``multiprocessing``'s spawn start
-method; jobs still running when the interpreter exits are terminated (``atexit``), so a forgotten job never holds the exit.
+Cancelling is cooperative: the worker checks at every progress report (after every pulse in-process; branches on a
+parallel map report only when the map returns); ``cancel(terminate_after_s=)`` is the hard stop. A submitting script
+needs ``if __name__ == "__main__":``; jobs still running at interpreter exit are terminated.
 """
 
 from __future__ import annotations
@@ -43,11 +30,11 @@ if TYPE_CHECKING:
     from qutip_trap.run.results import Progress, Result
 
 SPEC_SCHEMA_VERSION = 1
-"""The ``schema_version`` ``RunSpec.to_dict`` writes (``docs/schemas/runspec.schema.json``)."""
+"""The ``schema_version`` that ``RunSpec.to_dict`` writes and ``RunSpec.from_dict`` reads."""
 
 JobStatus = Literal["queued", "running", "done", "failed", "cancelled"]
-"""What ``Job.status()`` returns: ``queued`` before the worker started, ``running`` while it runs, then one of the three
-terminal states (``done`` with a ``Result``, ``failed`` with the worker's traceback, ``cancelled`` by ``Job.cancel``)."""
+"""What ``Job.status()`` returns: ``queued`` until the worker starts, ``running``, then ``done``, ``failed`` or
+``cancelled``."""
 
 TERMINAL_STATES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
 """The ``JobStatus`` values a job never leaves."""
@@ -66,12 +53,8 @@ class JobError(RuntimeError):
 
 @dataclass(frozen=True)
 class RunSpec:
-    """The unit of submission (docs/api_implementation_plan.md 3.1; 0.4.0): what ``Machine.submit`` runs, as a frozen record
-    a JSON document can carry and a run record can store beside its ``Result``. The circuit, the shots and the seed are the
-    request; ``machine_hash`` identifies the machine it was made for (``Machine.hash()``: the device, its roles, the table's
-    digest and the policy); the three option objects and the level are the policy spelled out, so that a reader of the
-    record does not need the machine to know how the run was configured; ``label`` is the caller's name for it.
-    ``RunSpec.of(machine, circuit, shots)`` builds one from a machine, ``to_dict``/``from_dict`` are the JSON form."""
+    """The unit of submission: what ``Machine.submit`` runs, as a frozen, JSON-serialisable record of the request and
+    the policy spelled out, so a reader of the record does not need the machine."""
 
     circuit: Circuit
     shots: int
@@ -109,8 +92,7 @@ class RunSpec:
         keep_final_state: bool = False,
         label: str = "",
     ) -> RunSpec:
-        """The spec of ``machine.run(circuit, shots, seed=seed, keep_final_state=keep_final_state)``: the machine's hash,
-        option objects and level copied onto the record (``Machine.spec`` is this call)."""
+        """The spec of ``machine.run(circuit, shots, ...)``, with the machine's hash, option objects and level."""
         return cls(
             circuit=circuit,
             shots=shots,
@@ -125,12 +107,8 @@ class RunSpec:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """The spec as plain JSON-able values under ``docs/schemas/runspec.schema.json`` (schema version 1): the identity
-        (``schema_version``, ``qutip_trap_version``, ``machine_hash``, ``label``), the request (``circuit`` with its
-        operations in radians, ``shots``, ``seed``, ``keep_final_state``) and the policy (``physics``, ``numerics`` with its
-        nested groups, ``readout``, ``level``). Tuples become lists and integer keys strings; a ``Physics.extra_channels``
-        with collapse operators, a ``Numerics.truncation.space`` or a ``Readout.discriminator`` object is refused by name,
-        because the record cannot carry it (build the machine with the table's threshold and the selected space instead)."""
+        """The spec as JSON-able values (gate parameters in radians); refuses by name what a record cannot carry:
+        collapse operators in ``Physics.extra_channels``, a ``Numerics.truncation.space``, a discriminator object."""
         from qutip_trap import __version__
 
         return {
@@ -301,9 +279,7 @@ def _readout_from_dict(d: Mapping[str, Any]) -> Readout:
 
 
 def spec_field_types() -> dict[str, dict[str, type]]:
-    """The scalar type of every field of the option objects, group by group (``tools/schemas.py`` renders the schema from
-    them; the fields a record cannot carry, ``extra_channels``, ``builder``, ``space``, ``discriminator``, are described
-    there by hand)."""
+    """The type of every option field's default value, group by group."""
     out: dict[str, dict[str, type]] = {}
     for name, cls in (
         ("physics", Physics),
@@ -323,8 +299,8 @@ def spec_field_types() -> dict[str, dict[str, type]]:
 
 
 def _worker_main(machine: Machine, spec: RunSpec, events: Any, cancel: Any) -> None:
-    """The worker process: ``machine.run`` with a progress callback that streams every ``Progress`` to the parent and stops
-    the run at the first report after a cancel; the ``Result`` and its ``RunRecord`` go back on the same queue."""
+    """The worker: ``machine.run`` streaming every ``Progress`` to the parent, stopped at the first report after a
+    cancel."""
     from qutip_trap.run.job import last_record
 
     def progress(p: Progress) -> None:
@@ -351,14 +327,7 @@ def _worker_main(machine: Machine, spec: RunSpec, events: Any, cancel: Any) -> N
 
 
 class Job:
-    """A run in a worker process (docs/api_implementation_plan.md 3.1; 0.4.0): the handle ``Machine.submit`` returns.
-
-    ``status()`` is one of ``JobStatus``; ``progress`` the latest ``Progress`` the run reported; ``result(timeout_s=)``
-    blocks for the ``Result`` (``JobCancelled`` after a cancel, ``JobError`` with the worker's traceback after a failure,
-    ``TimeoutError`` past the timeout); ``record()`` the ``RunRecord`` behind it, which ``last_record(job.result())`` also
-    finds; ``cancel()`` stops the run at its next progress report (within one pulse when the engines run in-process),
-    ``cancel(terminate_after_s=t)`` kills the worker if it has not stopped by then. ``spec`` is the ``RunSpec`` the job
-    runs and ``machine`` the machine it runs on. A service object with state, not one of the API's frozen records."""
+    """A run in a worker process, the handle ``Machine.submit`` returns; a stateful object, not a frozen record."""
 
     def __init__(self, machine: Machine, spec: RunSpec) -> None:
         self.machine = machine
@@ -390,7 +359,7 @@ class Job:
         self._process = self._ctx.Process(
             target=_worker_main,
             args=(self.machine, self.spec, self._events, self._cancel),
-            daemon=False,  # the run's own parallel maps fork inside the worker (Section 11.3 item 9)
+            daemon=False,  # the run's own parallel maps fork inside the worker
             name="qutip-trap-job",
         )
         self._process.start()
@@ -407,7 +376,7 @@ class Job:
 
     @property
     def progress(self) -> Progress | None:
-        """The latest ``Progress`` the run reported (per pulse, branch, sample and readout); None before the first."""
+        """The latest ``Progress`` the run reported; None before the first."""
         self._drain()
         return self._progress
 
@@ -417,9 +386,8 @@ class Job:
         return self._cancel_requested
 
     def result(self, timeout_s: float | None = None) -> Result:
-        """Block until the run is done and return its ``Result`` (the same ``machine.run`` would return, ``bitstring`` for
-        ``bitstring`` at the same seed); ``TimeoutError`` after ``timeout_s`` seconds, ``JobCancelled`` when the job was
-        cancelled before finishing, ``JobError`` with the worker's traceback when the run failed."""
+        """Block for the ``Result`` (the one ``machine.run`` returns at the same seed); raises ``TimeoutError`` after
+        ``timeout_s``, ``JobCancelled`` after a cancel and ``JobError`` (the worker's traceback) after a failure."""
         deadline = None if timeout_s is None else time.monotonic() + float(timeout_s)
         while self._status not in TERMINAL_STATES:
             self._drain(timeout_s=0.2)
@@ -437,16 +405,14 @@ class Job:
         raise JobError(self._error or "the worker failed without a traceback")
 
     def record(self) -> RunRecord:
-        """The ``RunRecord`` behind the result (``last_record(job.result())`` finds the same one), waiting for the run."""
+        """The ``RunRecord`` behind the result, waiting for the run."""
         self.result()
         assert self._record is not None
         return self._record
 
     def cancel(self, *, terminate_after_s: float | None = None) -> None:
-        """Ask the worker to stop: it raises out of the run at its next progress report (within one pulse when the engines
-        run in-process; after the current parallel map otherwise). With ``terminate_after_s`` the worker is killed if it is
-        still alive that many seconds later (0 kills it at once); a killed worker reports nothing, so the job is marked
-        cancelled here. A job that finished before the flag was seen keeps its result."""
+        """Ask the worker to stop at its next progress report; with ``terminate_after_s`` it is killed if still alive
+        that many seconds later (0: at once). A job that finished before the flag was seen keeps its result."""
         self._cancel_requested = True
         if self._cancel is not None:
             self._cancel.set()
@@ -464,9 +430,8 @@ class Job:
     # ---- internals ----------------------------------------------------------------------------------------------------
 
     def _drain(self, timeout_s: float = 0.0, *, check_exit: bool = True) -> None:
-        """Read the worker's events: every progress report and the one terminal message (a first blocking wait of
-        ``timeout_s`` when asked); a worker that died without a word marks the job failed, unless ``check_exit`` is off
-        (the caller killed it and knows why)."""
+        """Read the worker's events (waiting up to ``timeout_s`` for the first); a worker that died silently fails the
+        job unless ``check_exit`` is off."""
         if self._events is None or self._status in TERMINAL_STATES:
             return
         block = timeout_s > 0.0
@@ -496,8 +461,7 @@ class Job:
                 self._finish()
                 return
         if check_exit and self._process is not None and not self._process.is_alive():
-            # the worker exited: its queue feeder flushed before the exit, so one more (short) blocking read sees a
-            # terminal message that raced the exit check; nothing there means a crash (a signal, a hard kill)
+            # one short blocking read catches a terminal message that raced the exit check; nothing there means a crash
             try:
                 kind, payload = self._events.get(timeout=1.0)
             except queue.Empty:
@@ -517,7 +481,7 @@ class Job:
 
 
 _LIVE: weakref.WeakSet[Job] = weakref.WeakSet()
-"""The jobs whose worker may still be running; terminated at interpreter exit so that a forgotten job never holds it."""
+"""Jobs whose worker may still be running, terminated at interpreter exit."""
 
 
 def _terminate_live_jobs() -> None:

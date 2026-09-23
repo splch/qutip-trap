@@ -1,13 +1,9 @@
 """``Device.to_dict`` and ``Device.from_dict``: the JSON form of the device record.
 
-The device tree is dataclasses over simple leaves, so one walker driven by the field annotations (strings, under
-``from __future__ import annotations``) writes and reads every record: a dataclass is an object of its fields, a tuple a
-list, a ``dict`` an object whose keys are written as strings (an ``int`` key as its digits, a tuple key joined by commas),
-a ``Literal`` its value, a float a JSON number (the non-finite values as the strings ``"inf"``, ``"-inf"``, ``"nan"``, which
-JSON has no number for), a complex ``{"re", "im"}``, a numpy array ``{"dtype", "shape", "data"}`` with its values flattened
-in C order; ``None`` is ``null``. A field that holds callables (``Trap.basis_potentials``, the M12 basis potentials) has no
-JSON form and is refused when set. ``Device.hash()`` is the identity the envelope carries, and a record read back has the
-hash it was written with.
+One walker driven by the dataclass field annotations writes and reads every record: a dataclass is an object of its
+fields, a tuple a list, a dict an object with string keys (an int key as its digits, a tuple key joined by commas), a
+``Literal`` its value, a float a JSON number or ``"inf"``/``"-inf"``/``"nan"``, a complex ``{"re", "im"}``, a numpy array
+``{"dtype", "shape", "data"}`` flattened in C order, ``None`` ``null``. A field holding callables is refused when set.
 """
 
 from __future__ import annotations
@@ -106,8 +102,7 @@ _REGISTRY: dict[str, type] = {}
 
 
 def _registry() -> dict[str, type]:
-    """Every dataclass the device tree names, by class name: the Appendix E surface first, then the modules of the classes
-    already found (a name the surface does not export, such as ``Zone``, lives next to one that does)."""
+    """Every dataclass the device tree names, by class name: ``qutip_trap.api``'s and the others in their modules."""
     if _REGISTRY:
         return _REGISTRY
     import sys

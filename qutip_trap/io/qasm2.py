@@ -1,16 +1,7 @@
-"""OpenQASM 2 both ways, shaped like ``json`` (docs/api_implementation_plan.md 1.6; 0.2.0): ``loads(text)`` is the importer
-of ``qutip_trap.io.openqasm`` (the subset in that module's docstring, angles in radians, ``creg`` names into
-``Circuit.registers``) and ``dumps(circuit)`` the exporter, with the qelib1.inc names (``cx`` for ``cnot``), one ``creg``
-per register and the terminal measurements written into them.
-
-The four native gates have no qelib1.inc name. ``dumps(declare_native=True)`` (the default) declares the ones the circuit
-uses as ``gate`` definitions over ``u3``, ``rz``, ``rxx`` and ``rzz``, exact up to a global phase and the forms the client
-SDKs' exports declare (Section 7.6), so any OpenQASM 2 reader accepts the text; this package's own importer then inlines
-them, and the round trip is the same unitary rather than the same native operations. ``declare_native=False`` leaves them as
-bare gate names, which this package reads as its builtins: the exact round trip, for text that stays inside qutip-trap.
-Parameters are written with ``repr`` so that every float survives the round trip. ``recool`` has no OpenQASM 2 equivalent
-and is refused; a mid-circuit ``measure`` is written into the register that holds its qubit.
-"""
+"""OpenQASM 2 both ways, shaped like ``json``: ``loads`` is the importer of ``qutip_trap.io.openqasm`` and ``dumps`` the
+exporter (qelib1.inc names, one ``creg`` per register, parameters written with ``repr``, ``recool`` refused). By default
+``dumps`` declares the native gates it uses over ``u3``, ``rz``, ``rxx`` and ``rzz`` (the same unitary up to a global
+phase, for any reader); ``declare_native=False`` leaves bare native names, which this package reads back exactly."""
 
 from __future__ import annotations
 
@@ -30,10 +21,8 @@ NATIVE_DECLARATIONS: Final[dict[str, str]] = {
     "ms": "gate ms(phi0, phi1, theta) a, b { rz(-phi0) a; rz(-phi1) b; rxx(theta) a, b; rz(phi0) a; rz(phi1) b; }",
     "zz": "gate zz(theta) a, b { rzz(theta) a, b; }",
 }
-"""The native gates as qelib1.inc definitions (radians), each equal to ``control.native``'s matrix up to a global phase:
-GPi(phi) = U3(pi, phi, pi - phi) exactly, GPi2(phi) = U3(pi/2, phi - pi/2, pi/2 - phi) exactly, MS(phi0, phi1, theta) =
-[RZ(phi0) (x) RZ(phi1)] RXX(theta) [RZ(-phi0) (x) RZ(-phi1)] since GPi(phi) = RZ(phi) X RZ(-phi), and ZZ(theta) = rzz(theta)
-up to e^{i theta/2}; ``tests/test_openqasm.py`` checks each against the matrix."""
+"""The native gates as qelib1.inc definitions (radians), each equal to ``control.native``'s matrix up to a global phase
+(MS as RXX conjugated by RZ(phi0) (x) RZ(phi1); ZZ(theta) = rzz(theta) up to e^{i theta/2})."""
 
 
 def loads(text: str) -> Circuit:
@@ -42,8 +31,7 @@ def loads(text: str) -> Circuit:
 
 
 def dumps(circuit: Circuit, *, declare_native: bool = True) -> str:
-    """``Circuit`` -> OpenQASM 2 text (module docstring): the header, the native declarations the circuit needs, one
-    ``qreg``, one ``creg`` per register, the operations in order, and the terminal measurements into their registers."""
+    """``Circuit`` -> OpenQASM 2 text, the terminal measurements last, into their registers."""
     lines = ["OPENQASM 2.0;", 'include "qelib1.inc";']
     used = {op.name for op in circuit.ops}
     if declare_native:

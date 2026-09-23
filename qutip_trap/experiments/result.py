@@ -1,14 +1,5 @@
-"""The ``ExperimentResult`` record every simulated experiment returns, and one typed subclass per experiment (PLAN.md
-Appendix E; Sections 7.5, 7.9; docs/api_implementation_plan.md 2.3, 0.3.0).
-
-The base record keeps what 0.1.0 returned (``data``, ``fitted``, ``model``, ``provenance_id``, ``converged``, ``notes``,
-``sigma``, ``value()`` and ``uncertainty()``) and gains the scan as REQUESTED beside the scan as REALIZED (what the hardware
-chain of Section 7.10 could play: tone words, the DDS frequency grid), the reduced chi-square of the fit, the subject the
-experiment addressed as the calibration table keys it, a creation time and a ``quality`` verdict a caller can gate a table
-update on (Qibocal's rule: an update is a proposal). The subclasses (``RabiScan``, ``RamseyFringe``, ...) add the fitted
-parameters as typed attributes, each equal to ``value(key)`` where the fit produced the key and None where it did not,
-and ``plot()``, which needs matplotlib (the ``plot`` extra). ``calibration/`` reads ``fitted`` by key as before.
-"""
+"""``ExperimentResult``, the record every simulated experiment returns, and one typed subclass per experiment whose
+attributes are the fitted values (None where the fit did not produce the key)."""
 
 from __future__ import annotations
 
@@ -37,13 +28,10 @@ def _now() -> str:
 
 @dataclass(frozen=True)
 class ScanParameters:
-    """The parameters of a scan by name, one tuple each: one value per scan point for the scanned axis, one value for a
-    setting held over the scan. ``ExperimentResult.requested`` is what the experiment asked the electronics for and
-    ``realized`` what the hardware chain of Section 7.10 plays (``realized_drive``); attribute access is by name
-    (``scan.requested.durations_s[3]``)."""
+    """Scan parameters by name, one tuple of floats each: one value per point for the scanned axis, one for a setting
+    held over the scan; read by attribute (``scan.requested.durations_s[3]``)."""
 
     values: Mapping[str, Any] = field(default_factory=dict)
-    """Name -> the values, given as an array, a sequence or one number and stored as a tuple of floats."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -81,10 +69,8 @@ def _peak(envelope: Any, t_s: float) -> float:
 
 
 def realized_drive(device: Device, drive: Drive, duration_s: float) -> dict[str, float]:
-    """What the hardware chain of Section 7.10 plays for one square pulse of ``drive`` over ``duration_s``: the first
-    tone's detuning (Hz), phase (rad) and peak Rabi amplitude (Hz) after the DDS words and the amplifier saturation
-    (``HardwareChain``: the frequency grid f_clk/2^bits when declared, the phase word 2 pi/2^bits, the amplitude word);
-    the modulator response and the timing jitter shape the envelope in time and move no set point, so they are left out."""
+    """The first tone's detuning (Hz), phase (rad) and peak Rabi amplitude (Hz) the hardware chain plays for one square
+    pulse of ``drive``: after the DDS words and the amplifier saturation (response and jitter move no set point)."""
     from qutip_trap.control.hardware import apply_hardware_chain
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.control.schedule import Schedule
@@ -105,7 +91,7 @@ def realized_drive(device: Device, drive: Drive, duration_s: float) -> dict[str,
 
 
 def requested_drive(drive: Drive, duration_s: float) -> dict[str, float]:
-    """The same three numbers as ``realized_drive`` read from the drive as requested, for the ``requested`` record."""
+    """``realized_drive``'s three numbers read from the drive as requested."""
     tone = drive.tones[0]
     return {
         "detuning_hz": _scalar(tone.detuning_hz, duration_s),
@@ -116,38 +102,28 @@ def requested_drive(drive: Drive, duration_s: float) -> dict[str, float]:
 
 @dataclass(frozen=True)
 class ExperimentResult:
-    """What a simulated experiment returns (Sections 7.5, 7.9): the scan as measured (one row per point; the experiment
-    documents its columns and their units), the fitted parameters as (value, uncertainty) in the units the experiment
-    names, the fit model, the provenance id behind the fit, whether it converged (a failed or edge-of-scan fit leaves
-    its calibration entry ``uncalibrated``), notes, and the per-row statistical uncertainty when shots were drawn. Since
-    0.3.0: the scan as requested and as realized, the fit's reduced chi-square, the subject the experiment addressed, the
-    creation time and the ``quality`` verdict (docs/api_implementation_plan.md 2.3)."""
+    """What a simulated experiment returns: the measured scan (one row per point), the fitted parameters, the fit model,
+    whether it converged, notes, and the scan as requested and as the hardware realized it."""
 
     data: np.ndarray
-    """The scan as measured: one row per point (columns documented per experiment)."""
     fitted: dict[str, tuple[float, float]]
-    """Parameter -> (value, uncertainty)."""
+    """Parameter -> (value, uncertainty), in the units the key names."""
     model: str
     provenance_id: str
     converged: bool = True
-    """False when a fit failed, landed at the edge of its scan range or violated the experiment's own consistency check: the
-    entry it feeds is then ``uncalibrated`` (Section 7.5; M8)."""
+    """False when a fit failed, landed at its scan edge or failed a consistency check; its entry is then ``uncalibrated``."""
     notes: tuple[str, ...] = ()
     sigma: np.ndarray | None = None
-    """Per-row statistical uncertainty of the measured column when shots were drawn (None for exact populations)."""
+    """Per-row statistical uncertainty of the measured column (None for exact populations)."""
     requested: ScanParameters | None = None
-    """The scan the experiment asked for: the scanned axis and the settings it held (units in the names)."""
     realized: ScanParameters | None = None
-    """The scan the electronics could play (``realized_drive``: the tone words of the hardware chain); None where the axis
-    is not a drive parameter (a detection window, a shim voltage, an image) or the experiment does not report it."""
+    """The scan the electronics could play; None where the axis is not a drive parameter."""
     chi2: float | None = None
-    """The reduced chi-square of the principal fit (``FitResult.chi2_per_dof``); None when no weighted fit was made (exact
-    populations, a peak search, a count)."""
+    """The reduced chi-square of the principal fit; None when no weighted fit was made."""
     subject: dict[str, Any] = field(default_factory=dict)
-    """What the experiment addressed, as the calibration table keys it: ``{"ion": 0, "beam": 2}``, ``{"pair": (0, 1)}``,
-    ``{"mode": 3}``; empty for a whole-crystal experiment."""
+    """What the experiment addressed, keyed as in the table: ``{"ion": 0, "beam": 2}``, ``{"pair": (0, 1)}``, ..."""
     created_at: str = field(default_factory=_now, compare=False)
-    """The wall-clock time the record was made (ISO 8601, UTC); not part of equality."""
+    """ISO 8601 UTC wall-clock time; not part of equality."""
 
     x_label: ClassVar[str] = ""
     y_label: ClassVar[str] = ""
@@ -166,14 +142,12 @@ class ExperimentResult:
 
     @property
     def experiment(self) -> str:
-        """The experiment that made this result (the name the calibration table's entries carry), from the type and the
-        model where one type serves two experiments."""
+        """The name of the experiment that made this result, from the type (and the model where a type serves two)."""
         return (
             EXPERIMENT_OF.get((type(self).__name__, self.model)) or EXPERIMENT_OF[(type(self).__name__, "")]
         )
 
     def _entry(self, key: str, *, fitted_at_s: float, sample_id: int) -> CalEntry:
-        """A ``CalEntry`` for the fitted ``key``: ``calibrated`` when the fit converged, else ``uncalibrated``."""
         value, uncertainty = self.fitted[key]
         return CalEntry(
             value=float(value),
@@ -186,18 +160,16 @@ class ExperimentResult:
         )
 
     def table_updates(self, *, fitted_at_s: float, sample_id: int) -> dict[str, Any]:
-        """The calibration-table fields this result sets (``CalibrationTable.updated_with``): ``{field: {key: CalEntry}}``
-        for the mapping fields and ``{"field": CalEntry}`` for the field; the base class and the results that set no entry
-        (a parity scan, an image, a population scan whose waveform ``calibrate(method="experiments")`` builds) refuse."""
+        """The table fields this result sets, for ``CalibrationTable.updated_with``: ``{field: {key: CalEntry}}``, or
+        ``{"field": CalEntry}`` for the magnetic field; a result that sets no entry raises ``ValueError``."""
         raise ValueError(
             f"{type(self).__name__} ({self.experiment}) sets no calibration table entry directly"
         )
 
     @property
     def quality(self) -> Quality:
-        """``"failed"`` when the fit did not converge, ``"exact"`` when the populations were exact (no shots drawn, so no
-        chi-square), ``"good"`` when the reduced chi-square is at most ``CHI2_GOOD_MAX`` (or the experiment made no weighted
-        fit), else ``"poor"``: the acceptance test a caller applies before adopting ``CalibrationTable.updated_with``."""
+        """``"failed"`` if the fit did not converge, ``"exact"`` for exact populations (no shots, no chi-square), ``"good"``
+        when the reduced chi-square is at most ``CHI2_GOOD_MAX`` or no weighted fit was made, else ``"poor"``."""
         if not self.converged:
             return "failed"
         if self.sigma is None and self.chi2 is None:
@@ -207,10 +179,9 @@ class ExperimentResult:
         return "poor"
 
     def plot(self, ax: Any = None) -> Any:
-        """The measured column against the scanned column with its error bars, on ``ax`` (a new figure when None); needs
-        matplotlib (``uv sync --extra plot``). Returns the axes."""
+        """Plot the measured column against the scanned one on ``ax`` (a new figure when None) and return the axes."""
         try:
-            import matplotlib.pyplot as plt  # the optional 'plot' extra
+            import matplotlib.pyplot as plt
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise ImportError("ExperimentResult.plot needs matplotlib: install the 'plot' extra") from exc
         if ax is None:
@@ -348,8 +319,7 @@ class SidebandSpectrum(ExperimentResult):
         return self._get("linewidth_hz")
 
     def table_updates(self, *, fitted_at_s: float, sample_id: int) -> dict[str, Any]:
-        """``modes[mode]`` from ``mode_hz``, ``nbar[mode]`` from ``nbar`` and ``lamb_dicke[(ion, mode)]`` from ``eta``,
-        each where the experiment fitted it."""
+        """``modes[mode]``, ``nbar[mode]``, ``lamb_dicke[(ion, mode)]`` from ``mode_hz``, ``nbar``, ``eta`` if fitted."""
         if "mode" not in self.subject:
             raise ValueError("SidebandSpectrum: the scan drove no mode, so it sets no mode entry")
         mode = int(self.subject["mode"])
@@ -486,8 +456,7 @@ class ParityScan(ExperimentResult):
 
 @dataclass(frozen=True)
 class DetectionHistogram(ExperimentResult):
-    """``detection_histogram``: the bright and dark photon-count histograms at the chosen window and the threshold,
-    window and error rates the calibration fitted (Section 8.3)."""
+    """``detection_histogram``: the bright and dark count histograms and the fitted threshold, window and error rates."""
 
     @property
     def threshold(self) -> float | None:
@@ -506,8 +475,7 @@ class DetectionHistogram(ExperimentResult):
         return self._get("eps_D")
 
     def table_updates(self, *, fitted_at_s: float, sample_id: int) -> dict[str, Any]:
-        """``detection[name]`` for every entry the detection calibration fitted (threshold, window_s, eps_B, eps_D, the
-        rates); the scattered rate reported beside them is not a table entry."""
+        """``detection[name]`` for every fitted entry except the scattered rate, which is not a table entry."""
         names = [k for k in self.fitted if k != "R_bright_scattered_per_s"]
         return {"detection": {n: self._entry(n, fitted_at_s=fitted_at_s, sample_id=sample_id) for n in names}}
 
@@ -520,8 +488,8 @@ class DetectionHistogram(ExperimentResult):
 
 @dataclass(frozen=True)
 class StarkScan(ExperimentResult):
-    """``stark_scan``: the differential light shift of the ion's gate beams (``stark_shift_hz``; per beam
-    ``stark_shift_hz[b]``) and the coupling shift when a far-detuned probe was used."""
+    """``stark_scan``: the differential light shift ``stark_shift_hz`` (per beam ``stark_shift_hz[b]``) and, in beat-note
+    mode, the coupling shift."""
 
     @property
     def stark_shift_hz(self) -> float | None:
@@ -552,8 +520,7 @@ class StarkScan(ExperimentResult):
 
 @dataclass(frozen=True)
 class CrosstalkScan(ExperimentResult):
-    """``crosstalk_scan``: the driven ion's Rabi rate (``rate_hz``) and per neighbour the rate, the ratio epsilon and the
-    crosstalk axis (``rate_hz[j]``, ``eps[j]``, ``phase_rad[j]``)."""
+    """``crosstalk_scan``: the driven ion's ``rate_hz`` and per neighbour ``rate_hz[j]``, ``eps[j]`` and ``phase_rad[j]``."""
 
     @property
     def rate_hz(self) -> float | None:
@@ -698,7 +665,7 @@ for _cls, _x, _y in (
     (MicromotionScan, "shim voltage (V)", "signal"),
     (CrystalImage, "column", "counts"),
 ):
-    _cls.x_label = _x  # the class-level default of a frozen dataclass field, set once at import
+    _cls.x_label = _x
     _cls.y_label = _y
 
 EXPERIMENT_OF: dict[tuple[str, str], str] = {
@@ -740,7 +707,7 @@ RESULT_TYPES: dict[str, type[ExperimentResult]] = {
     "micromotion_scan": MicromotionScan,
     "crystal_image": CrystalImage,
 }
-"""Experiment -> the result type it returns (docs/api_implementation_plan.md 2.3); the laboratory test reads it."""
+"""Experiment name -> the result type it returns."""
 
 __all__ = [
     "CHI2_GOOD_MAX",

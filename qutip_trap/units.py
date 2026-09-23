@@ -1,22 +1,9 @@
-"""Units, physical constants and the frequency convention (PLAN.md Sections 5.6 and 13).
+"""Units, CODATA 2022 constants (via ``scipy.constants``) and the frequency convention.
 
-Convention (Section 13, row "Frequencies"; Section 5.6): internally every frequency is ANGULAR, in
-rad/s, and every energy is divided by hbar so that Hamiltonians are in rad/s; the PUBLIC API takes and
-returns ORDINARY frequencies in Hz and converts at the boundary with an explicit 2 pi. Factor-of-2 pi
-errors are the single most common bug in this domain, so the two are distinct static types here,
-:data:`Hz` and :data:`RadPerS`: a type checker refuses an ``Hz`` where a ``RadPerS`` is expected, and
-the only way across is :func:`rad_s_from_hz` / :func:`hz_from_rad_s`. Magnetic fields follow the same
-pattern (:data:`Gauss` in the atomic-physics API, :data:`Tesla` where SI is needed). ``NewType`` costs
-nothing at run time; the enforcement is ``mypy --strict`` in CI.
-
-Physical constants are the CODATA 2022 recommended values as shipped by ``scipy.constants`` (SciPy
-1.18.1 on the pinned toolchain); :data:`CODATA_SOURCE` records that, and ``tests/test_units.py`` pins
-the values so a silent change of edition fails loudly. Atomic masses are NOT here: they are cited per
-isotope in each species module (Section 5.6, "atomic masses from the AME tables with citation").
-
-Sign convention for the electron g-factor (Section 13, row "Sign of A_hfs and the g-factors"): the
-module uses Steck's g_S = +2.0023193..., the negative of CODATA's g_e, so that the Zeeman Hamiltonian
-reads H_Z = mu_B (g_J J_z + g_I I_z) B / hbar with one sign for both g factors.
+Internally frequencies are angular (rad/s) and Hamiltonians are energies over hbar; the public API
+speaks Hz. :data:`Hz` and :data:`RadPerS` (likewise :data:`Gauss`, :data:`Tesla`) are distinct
+static types, crossed only by the converters below. g_S = +2.0023193... takes Steck's sign
+(CODATA's g_e is negative), so H_Z = mu_B (g_J J_z + g_I I_z) B / hbar.
 """
 
 from __future__ import annotations
@@ -63,13 +50,13 @@ from scipy.constants import (
 # ---- frequency and field types --------------------------------------------------------------------
 
 Hz = NewType("Hz", float)
-"""An ordinary (cycle) frequency. The public API speaks Hz (Section 5.6)."""
+"""An ordinary (cycle) frequency in Hz, the public API's unit."""
 
 RadPerS = NewType("RadPerS", float)
-"""An angular frequency or a rate in rad/s (equivalently an energy divided by hbar). Internal only."""
+"""An angular frequency or a rate in rad/s (an energy divided by hbar); internal only."""
 
 Gauss = NewType("Gauss", float)
-"""A magnetic field in gauss, the unit of the atomic-physics sources the plan cites (Section 4.5)."""
+"""A magnetic field in gauss, the unit of the atomic-physics API."""
 
 Tesla = NewType("Tesla", float)
 """A magnetic field in tesla (SI)."""
@@ -78,12 +65,12 @@ TWO_PI: Final[float] = 2.0 * math.pi
 
 
 def rad_s_from_hz(f: Hz) -> RadPerS:
-    """The one conversion from the public Hz convention to the internal rad/s convention: 2 pi f."""
+    """Hz to rad/s: 2 pi f."""
     return RadPerS(TWO_PI * f)
 
 
 def hz_from_rad_s(w: RadPerS) -> Hz:
-    """The inverse of :func:`rad_s_from_hz`: w / (2 pi)."""
+    """rad/s to Hz: w / (2 pi)."""
     return Hz(w / TWO_PI)
 
 
@@ -126,9 +113,9 @@ M_E_KG: Final[float] = _m_e
 M_P_KG: Final[float] = _m_p
 """Proton mass, kg."""
 ELECTRON_MASS_U: Final[float] = _m_e / _atomic_mass
-"""Electron mass in u; an ion's mass is the cited atomic mass minus this (species tables)."""
+"""Electron mass in u; an ion's mass is the atomic mass minus this."""
 M_E_OVER_M_P: Final[float] = _m_e / _m_p
-"""Electron-to-proton mass ratio, used in g_I = -(mu_I/(I mu_N))(m_e/m_p) (Section 4.5.1)."""
+"""Electron-to-proton mass ratio, as in g_I = -(mu_I/(I mu_N))(m_e/m_p)."""
 
 MU_B_J_PER_T: Final[float] = _pc["Bohr magneton"][0]
 """Bohr magneton, J/T."""
@@ -137,11 +124,11 @@ MU_N_J_PER_T: Final[float] = _pc["nuclear magneton"][0]
 MU_B_OVER_H_HZ_PER_T: Final[float] = _pc["Bohr magneton in Hz/T"][0]
 """mu_B/h in Hz/T."""
 MU_B_OVER_H_MHZ_PER_G: Final[float] = MU_B_OVER_H_HZ_PER_T * 1e-6 * 1e-4
-"""mu_B/h = 1.399624... MHz/G, the number Section 4.5.1 prints for the Zeeman Hamiltonian in Hz."""
+"""mu_B/h in MHz/G (1.399624...)."""
 A_0_M: Final[float] = _pc["Bohr radius"][0]
 """Bohr radius, m."""
 G_S: Final[float] = -_pc["electron g factor"][0]
-"""Electron spin g-factor in Steck's sign convention, +2.0023193... (Section 13). CODATA's g_e is negative."""
+"""Electron spin g-factor in Steck's sign convention, +2.0023193... (CODATA's g_e is negative)."""
 G_L: Final[float] = 1.0
 """Orbital g-factor used by the Lande formula (the finite-mass correction 1 - m_e/M is neglected)."""
 
@@ -155,11 +142,8 @@ def hz_from_wavenumber_cm(wavenumber_cm: float) -> Hz:
 
 
 def wavelength_vac_m_from_hz(delta_hz: Hz) -> float:
-    """Vacuum wavelength of a transition of ordinary frequency delta_hz: lambda_vac = c / nu.
-
-    Section 13 (row "Quadrupole (E2) coupling" and Section 4.5.7): wavelengths are VACUUM wavelengths
-    everywhere; an air wavelength used as vacuum biases k by about 274 ppm at 729 nm.
-    """
+    """Vacuum wavelength c / nu (m) of a transition of ordinary frequency ``delta_hz`` (never an air
+    wavelength, which would bias k by about 274 ppm at 729 nm)."""
     if delta_hz <= 0.0:
         raise ValueError(f"transition frequency must be positive, got {delta_hz!r} Hz")
     return float(C_M_PER_S) / float(delta_hz)
@@ -168,12 +152,9 @@ def wavelength_vac_m_from_hz(delta_hz: Hz) -> float:
 def lande_g_j(
     L: float | Fraction, S: float | Fraction, J: float | Fraction, *, g_s: float = G_S, g_l: float = G_L
 ) -> float:
-    """The LS-coupling Lande factor g_J (a [background] formula, PLAN.md Section 4.5.7).
+    """The LS-coupling Lande factor (Steck's positive g_S):
 
-    g_J = g_L [J(J+1) - S(S+1) + L(L+1)] / (2J(J+1)) + g_S [J(J+1) + S(S+1) - L(L+1)] / (2J(J+1)),
-    with Steck's positive g_S. The plan prefers a MEASURED g_J wherever a source prints one (Section
-    4.5.6: "the measured g_J replaces the Lande formula"); species tables tag Lande values [background].
-    """
+    g_J = g_L [J(J+1) - S(S+1) + L(L+1)] / (2J(J+1)) + g_S [J(J+1) + S(S+1) - L(L+1)] / (2J(J+1))."""
     lf, sf, jf = float(L), float(S), float(J)
     if jf <= 0.0:
         raise ValueError("lande_g_j needs J > 0")

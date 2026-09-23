@@ -1,21 +1,5 @@
-"""Entangling-gate experiments: the MS amplitude and detuning scan, the parity scan and the MS phase scan (PLAN.md Section
-7.5 items 3 and 4, Section 7.9; M4, extended by M8).
-
-``ms_scan`` plays the pair's waveform at scaled amplitudes and detuning offsets and records P_00, P_01 + P_10, P_11 from |00>:
-the closure point is the offset at which the leakage P_01 + P_10 (open loops) is smallest (a parabola fit), the entangling
-amplitude the scale at which (P_00 - P_11)/(P_00 + P_11) = cos(2 chi) with chi = chi_1 s^2 crosses zero, i.e. chi = pi/4 (the
-s^2 law, fitted rather than interpolated, with its uncertainty). ``parity_scan`` follows the gate with a pi/2 analysis pulse
-of scanned phase on both ions and fits Pi(phi) = C cos(2 phi + phi_0) + B, whose contrast bounds the Bell fidelity
-F = (P_00 + P_11 + C)/2 (Wright 2019). ``ms_phase_scan`` is Section 7.5 step 3: the gate's spin phases are scanned against a
-FIXED analysis pulse played by the single-qubit drives, and the parity's phase offset against the same scan on ideal
-matrices is the misalignment of the entangling axis relative to the single-qubit frame (the beam-path phase between the
-entangling and the addressing beams, which the native MS(phi_0, phi_1) definition absorbs); from |00> the scan measures the
-SUM of the two ions' offsets, from |01> (a GPi on the second ion first) their DIFFERENCE, so both per-ion corrections follow.
-All three read the populations through the observation model (``shots``, ``readout``) and report uncertainties, and all
-three run in the frame the machine programs (``qubit_shifts_hz``, the true transition minus the table's belief per ion) at
-the mode frequencies the table believes (``mode_frequencies_hz``), never in a perfect frame at the crystal's hidden
-truth: the spin-phase corrections they write therefore carry the frame error ``run()`` will apply (Section 7.3).
-"""
+"""Entangling-gate experiments: the MS amplitude and detuning scan, the parity scan and the MS phase scan, all in the
+frame the machine programs (``qubit_shifts_hz``) at the mode frequencies the table believes (``mode_frequencies_hz``)."""
 
 from __future__ import annotations
 
@@ -57,9 +41,7 @@ def _entangling_setup(
     if len(beams) != 2:
         raise ValueError("the entangling experiments take a Raman (two-beam) entangling drive")
     nbar: dict[int, float] = {int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()}
-    # the mode frequencies the machine BELIEVES (the calibrated table's), never the crystal's hidden truth (Section 7.3): the
-    # gate space and every solver these experiments run are built at them. Refuse rather than swallow: a supplied GateModes
-    # already carries its frequencies, so accepting both would discard one of them silently (M8 audit B5).
+    # built at the mode frequencies the machine believes; a supplied GateModes carries its own, so both at once is refused
     mode_hz = {int(k): float(v) for k, v in dict(kw.get("mode_frequencies_hz") or {}).items()}
     supplied = kw.get("modes")
     if supplied is not None and mode_hz:
@@ -79,9 +61,7 @@ def _entangling_setup(
 
 
 def _solver_options(kw: Mapping[str, Any]) -> Any:
-    """The SolverOptions of an entangling experiment: the caller's, else the defaults with ``branch_weight_min`` (default 1e-3,
-    the single-ion experiments' default) for the Fock branches of the thermal initial mixture (Section 5.3; the engine
-    evolves a thermal state as weighted pure branches and reports the dropped weight)."""
+    """The caller's SolverOptions, else the defaults with ``branch_weight_min`` (default 1e-3) for the thermal branches."""
     from qutip_trap.dynamics.engine import SolverOptions
 
     options = kw.get("options")
@@ -95,9 +75,7 @@ def _pops4(pops: Mapping[str, float]) -> np.ndarray:
 
 
 def _frame_shifts(kw: Mapping[str, Any]) -> dict[int, float]:
-    """The true transition minus the table's frame per ion (Section 7.3), the channel by which a wrong ``table.qubit_freq``
-    reaches the physics: these experiments run in the SAME imperfect frame ``run()`` will, so the corrections they write
-    include the frame error (``calibration.experiments.frame_shifts`` produces it)."""
+    """``qubit_shifts_hz``: the true transition minus the table's frame per ion."""
     return {int(k): float(v) for k, v in dict(kw.get("qubit_shifts_hz") or {}).items()}
 
 
@@ -110,11 +88,8 @@ def _observe_pops(
 
 @dataclass(frozen=True, eq=False)
 class OffsetFn:
-    """tau -> fn(tau) + offset: a frequency-modulated leg's detuning shifted by a scan offset (picklable when ``fn`` is).
-
-    Section 11.3 item 9 and ``control.pulses`` require every coefficient on the pulse path to be picklable, because
-    ``SolverOptions.map`` defaults to ``"parallel"``: a lambda here made an ``ms_scan`` over detuning offsets on an FM
-    waveform unpicklable (M4 finding)."""
+    """tau -> fn(tau) + offset: an FM leg's detuning shifted by a scan offset, picklable when ``fn`` is (unlike a lambda)
+    for the default parallel solver map."""
 
     fn: Callable[[float], float]
     offset: float
@@ -124,7 +99,7 @@ class OffsetFn:
 
 
 def _shift_detuning(waveform: Any, offset_hz: float) -> Any:
-    """Every blue leg + offset, every red leg - offset (the symmetric detuning scan of Section 7.5)."""
+    """Every blue leg + offset, every red leg - offset."""
     from qutip_trap.control.table import Segment
 
     if offset_hz == 0.0 or waveform.segments is None:
@@ -154,15 +129,12 @@ def ms_scan(
     detunings_hz: Sequence[float],
     **kw: Any,
 ) -> ExperimentResult:
-    """Populations after the pair's waveform at amplitude scale factors ``amplitudes`` and detuning offsets ``detunings_hz`` (added to
-    every leg's beat note, red legs moving opposite so the tones stay symmetric); data columns (scale, offset_hz, P00, P01 + P10, P11).
+    """Scan the pair's waveform over amplitude scales ``amplitudes`` and detuning offsets ``detunings_hz`` (blue legs +,
+    red legs -) from |00>; returns an ``MSScan``. Data columns (scale, offset_hz, P00, P01 + P10, P11).
 
-    Fitted: ``closure_offset_hz`` (the leakage minimum over the offsets, a parabola fit, when three or more offsets are scanned),
-    ``chi_unit_rad`` (the entangling angle at unit scale from (P00 - P11)/(P00 + P11) = cos(2 chi_1 s^2) at the closure offset) and
-    ``closure_scale`` = sqrt((pi/4)/chi_1) with its uncertainty (Section 7.5 item 4); ``converged`` is False when a fit failed or the
-    closure scale lies at the edge of the scanned amplitudes. ``closure_offset_used_hz`` is the offset the scale was measured
-    at, which is the FITTED closure offset whenever the parabola converged (one extra amplitude scan is run there when the
-    scanned grid does not already carry it), so the table may apply the two together.
+    Fitted ``closure_offset_hz`` (the leakage minimum, a parabola over three or more offsets), ``chi_unit_rad`` from
+    (P00 - P11)/(P00 + P11) = cos(2 chi_1 s^2) and ``closure_scale`` = sqrt((pi/4)/chi_1), measured at
+    ``closure_offset_used_hz`` (the fitted offset when the parabola converged, so the table may apply the two together).
     """
     device, kw = laboratory_kwargs(machine, kw, caller=ms_scan)
     from qutip_trap.calibration.entangling import exact_gate_check
@@ -237,10 +209,7 @@ def ms_scan(
             and fit.params[0] > 0.0
             and not at_scan_edge(off0, float(x.min()), float(x.max()), 0.02)
         ):
-            # the amplitude is measured AT the fitted closure offset, which is the offset the table then applies: with the
-            # scale taken at the nearest SCANNED offset instead, a fixture whose parabola minimum sat 222 Hz off a 2 kHz
-            # grid measured the scale at 0 Hz and applied it at +222 Hz (M8 audit B6). One extra amplitude scan when the
-            # grid does not already carry the fitted offset.
+            # measure the scale at the fitted offset the table will apply (one extra scan when the grid lacks it)
             off_used = float(off0)
             step = float(np.min(np.diff(np.asarray(offsets)))) if len(offsets) > 1 else 0.0
             if min(abs(off_used - o) for o in offsets) > 1e-3 * max(step, 1.0):
@@ -330,10 +299,9 @@ def _analysis_beliefs(
 def parity_scan(
     machine: Machine | Device, pair: tuple[int, int], analysis_phases_rad: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """Parity after the gate and a pi/2 analysis pulse of phase phi on both ions (Section 7.9); data columns (phi, parity, P00, P11);
-    fitted: contrast C, phase phi_0 and offset of Pi(phi) = C cos(2 phi + phi_0) + B, and the Bell-fidelity bound (P_00 + P_11 + C)/2
-    with the populations read without the analysis pulse. The analysis pulses are played by the single-qubit drives
-    (``gate_drives``) at the table's Rabi frequencies with the table's Stark shifts compensated."""
+    """Scan the phase of a pi/2 analysis pulse on both ions after the gate; returns a ``ParityScan`` fitted with
+    Pi(phi) = C cos(2 phi + phi_0) + B and the Bell-fidelity bound (P_00 + P_11 + C)/2 (populations without the analysis
+    pulse). The analysis pulses use the single-qubit drives at the table's Rabi frequencies and Stark shifts."""
     device, kw = laboratory_kwargs(machine, kw, caller=parity_scan)
     from qutip_trap.calibration.entangling import exact_gate_check, parity_after_analysis_pulse
 
@@ -470,14 +438,11 @@ def _fit_periodic(
 def ms_phase_scan(
     machine: Machine | Device, pair: tuple[int, int], spin_phases_rad: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """Section 7.5 step 3: the MS gate's spin phases scanned against a fixed analysis pulse of the single-qubit drives.
+    """Scan the MS gate's spin phases against a fixed analysis pulse; returns an ``MSScan`` with ``correction_rad[i]``,
+    the phase to add to ion i's legs.
 
-    ``inputs`` (default ``("00",)``; ``("00", "01")`` for both): from |00> the spin phases (phi, phi) give the parity
-    C cos(2 phi + phi_0), whose offset against the ideal scan is the SUM of the two ions' frame misalignments; from |01>
-    (a GPi(0) on the second ion before the gate) the phases (phi, 0) give C cos(phi + phi_0') and the DIFFERENCE. Fitted
-    ``offset_sum_rad`` and, with both inputs, ``offset_diff_rad`` and the per-ion corrections ``correction_rad[i]`` to ADD to the
-    ion's leg phases (``control.shaping.phase_shifted``) so that the re-measured offsets vanish; ``contrast_00``/``contrast_01``.
-    Data rows (input, spin phase, parity).
+    Against the same scan on ideal matrices, the phases (phi, phi) from |00> measure the sum of the ions' frame
+    misalignments and (phi, 0) from |01> (``inputs`` including "01") their difference. Data rows (input, phase, parity).
     """
     device, kw = laboratory_kwargs(machine, kw, caller=ms_phase_scan)
     from qutip_trap.calibration.entangling import parity_after_analysis_pulse

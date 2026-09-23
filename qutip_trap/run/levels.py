@@ -1,6 +1,4 @@
-"""Fidelity levels JOINT_EXACT and GATE_LOCAL, the AUTO policy and the Section 11.5 budget that decides between them (PLAN.md
-Sections 5.4, 11.5; Appendix E; M6 for the budget, M9a for GATE_LOCAL itself; docs/api_implementation_plan.md 1.2 for the
-enum and the reason a decision carries)."""
+"""Fidelity levels JOINT_EXACT and GATE_LOCAL, the AUTO policy and the size budget that decides between them."""
 
 from __future__ import annotations
 
@@ -16,12 +14,9 @@ if TYPE_CHECKING:
 
 
 class FidelityLevel(StrEnum):
-    """The level a run integrates at (Section 5.4), or the policy that picks one. ``JOINT_EXACT`` evolves every branch of
-    the initial mixture on the joint space of the ions and the resolved modes; ``GATE_LOCAL`` walks the circuit gate by gate
-    on exact gate-local spaces and carries the register between them; ``AUTO`` takes JOINT_EXACT inside the Section 11.5
-    guards (``SolverOptions.joint_dimension_max`` and ``nnz_max``) and GATE_LOCAL above them. The members equal the strings
-    the code accepted before 0.2.0 (``"auto"``, ``"JOINT_EXACT"``, ``"GATE_LOCAL"``), so ``Diagnostics.level == "GATE_LOCAL"``
-    still holds; docs/conventions.md ("Vocabulary") records why the enum is not named ``Level``."""
+    """The level a run integrates at, or the policy that picks one: ``JOINT_EXACT`` evolves every branch of the initial
+    mixture on the joint space of ions and resolved modes, ``GATE_LOCAL`` walks the circuit gate by gate on exact
+    gate-local spaces, ``AUTO`` takes JOINT_EXACT inside the size guards. Members equal their strings."""
 
     AUTO = "auto"
     JOINT_EXACT = "JOINT_EXACT"
@@ -32,14 +27,13 @@ M9A = "milestone M9a (GATE_LOCAL: state-based process tomography and the motiona
 
 ESTIMATE_RESOLVED_MODES = 2
 ESTIMATE_MODE_DIMENSION = 12
-"""Without a schedule the level is estimated for the Section 9.6 fixture rule: two resolved modes at d_m = 12."""
+"""The Fock dimension of each resolved mode in the level estimate made without a space."""
 
 
 @dataclass(frozen=True)
 class LevelDecision:
-    """Why a run integrates at the level it does (Section 11.5): the level, the joint dimension and the drive-operator
-    non-zero count that were compared, the two guards they were compared against, and whether the numbers are the declared
-    space's or the Section 9.6 estimate; ``reason`` is the sentence ``Diagnostics.level_reason`` carries."""
+    """Why a run integrates at the level it does: the numbers compared, the guards and whether the numbers are the
+    declared space's or an estimate; ``reason`` is the sentence ``Diagnostics.level_reason`` carries."""
 
     level: FidelityLevel
     dimension: int
@@ -47,7 +41,7 @@ class LevelDecision:
     joint_dimension_max: int
     nnz_max: int
     estimated: bool
-    """True when no space was given and the numbers are the fixture estimate (two resolved modes at d_m = 12)."""
+    """True when no space was given and the numbers are the estimate."""
 
     @property
     def reason(self) -> str:
@@ -62,11 +56,8 @@ class LevelDecision:
 
 
 def within_budget(space: HilbertSpace, options: SolverOptions) -> tuple[bool, int, int]:
-    """(inside the Section 11.5 guards, joint dimension, drive-operator non-zero estimate) of a DECLARED space.
-
-    Both numbers are arithmetic in the declaration's ion dimensions, resolved caps and ENR group, and a ``HilbertSpace``
-    allocates no operator when it is constructed, so this decides whether to build anything at all - which is what Section
-    11.5's "refuses to build" requires (M9b audit B2)."""
+    """(inside the guards, joint dimension, drive-operator non-zero estimate) of a declared space: arithmetic on the
+    declaration, so it decides whether to build before anything is allocated."""
     from qutip_trap.run.space import drive_operator_nonzeros
 
     dim = space.dimension
@@ -77,10 +68,9 @@ def within_budget(space: HilbertSpace, options: SolverOptions) -> tuple[bool, in
 def decide_level(
     device: Device, circuit: Circuit, options: SolverOptions, *, space: HilbertSpace | None = None
 ) -> LevelDecision:
-    """The Section 11.5 decision with its numbers: JOINT_EXACT when the joint dimension <= ``options.joint_dimension_max``
-    and the drive-operator non-zeros <= ``options.nnz_max``, else GATE_LOCAL (Sections 5.4, 11.5). With ``space`` (the run's
-    actual selection) the guards are exact; without one they are estimated for N ions with two resolved modes at d_m = 12,
-    the Section 9.6 fixture rule."""
+    """The level decision with its numbers: JOINT_EXACT when the joint dimension and the drive-operator non-zeros are
+    within ``options.joint_dimension_max`` and ``nnz_max``, else GATE_LOCAL. Exact with ``space``; estimated without one
+    (``ESTIMATE_RESOLVED_MODES`` modes of ``ESTIMATE_MODE_DIMENSION``, one mode without an entangling gate)."""
     if space is not None:
         ok, dim, nnz = within_budget(space, options)
         estimated = False
@@ -105,8 +95,7 @@ def decide_level(
 def resolve_level(
     device: Device, circuit: Circuit, options: SolverOptions, *, space: HilbertSpace | None = None
 ) -> FidelityLevel:
-    """The level of :func:`decide_level` alone (Appendix E's signature): JOINT_EXACT inside the Section 11.5 guards, GATE_LOCAL
-    above them, exact with ``space`` and estimated without one; the member compares equal to the strings."""
+    """The level of :func:`decide_level` alone."""
     return decide_level(device, circuit, options, space=space).level
 
 

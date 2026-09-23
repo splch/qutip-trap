@@ -1,20 +1,18 @@
-"""171Yb+ species table (PLAN.md Sections 4.5.6, 8.1, 9.12, 9.13, 9.15; Appendix E).
+"""171Yb+ species table (I = 1/2).
 
-Every number is a :class:`~qutip_trap.provenance.Cited` constant with its source and provenance tag;
-nothing hyperfine-resolved is typed in (Section 4.5.6: the module "shrinks to a table of cited constants").
-Level energies are NIST ASD 5.12 values in cm^-1; the hyperfine constants, lifetimes and branchings are
-the Run 4 extractions from Olmschenk et al. 2007; g_J of the ground state is the adopted Han et al. 2025
-value. The conversions applied at ingest are those of :mod:`qutip_trap.species.table` only.
+Level energies are NIST ASD 5.12 values in cm^-1; the ground-state g_J is the calculated value of Han et al. 2025.
+Excited-level g_J are rounded NIST ASD values, not measurements.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited, Tag
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
+    Cited,
     MissingConstant,
+    Tag,
     a_hfs_from_two_manifold_splitting,
     energy_hz,
     gamma_hz_from_lifetime,
@@ -40,7 +38,7 @@ def _c(
         value=value,
         unit=unit,
         source=source,
-        ledger_id=_P + suffix,
+        key=_P + suffix,
         tag=tag,
         uncertainty=uncertainty,
         note=note,
@@ -297,7 +295,7 @@ _ENTRIES: tuple[Cited, ...] = (
     _c("bracket_1D52_52.g_J", 1.113, "", "NIST_ASD_5_12"),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 MISSING: tuple[MissingConstant, ...] = (
     MissingConstant("1D[5/2]5/2 lifetime and hyperfine A (638.6 nm clear-out)", "not in PLAN.md"),
@@ -316,7 +314,7 @@ MISSING: tuple[MissingConstant, ...] = (
 
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 171Yb+, built from :data:`TABLE` alone."""
+    """The ``Species`` record for 171Yb+, built from :data:`TABLE` alone."""
     t = TABLE
     half = Fraction(1, 2)
     nuclear_spin = Fraction(t[_P + "nuclear_spin"].value).limit_denominator(2)
@@ -387,8 +385,7 @@ def species() -> Species:
         g_J=t[_P + "F72.g_J"].value,
         citations=("NIST_ASD_5_12", "Lange2021", "Taylor1999"),
     )
-    # the 297.143 nm 3[3/2]1/2 -> S1/2 channel carries A tau of the decay and is DECLARED rather than
-    # tabulated (see the note on bracket_3D32_12.A_297nm_per_s), so the branchings still sum to 1
+    # the 297 nm 3[3/2]1/2 -> S1/2 channel (A tau of the decay) is declared, not tabulated, so the branchings sum to 1
     b_297 = t[_P + "bracket_3D32_12.A_297nm_per_s"].value * t[_P + "bracket_3D32_12.lifetime_s"].value
     bracket = Level(
         name="3D[3/2]1/2",
@@ -409,7 +406,7 @@ def species() -> Species:
     s_p = Transition("S1/2", "P1/2", wavelength_vac_m(0.0, e_p12), gamma_p12, 1.0 - b_d, "E1", cites)
     d_p = Transition("D3/2", "P1/2", wavelength_vac_m(e_d32, e_p12), gamma_p12, b_d, "E1", cites)
 
-    # the P3/2 doublet partner (audit item E4): three E1 channels whose branchings sum to 1 exactly
+    # the P3/2 doublet partner, the second path of the Raman intermediate sum
     gamma_p32 = gamma_hz_from_lifetime(t[_P + "P32.lifetime_s"])
     b32_d32 = t[_P + "P32.branching_to_D32"].value
     b32_d52 = t[_P + "P32.branching_to_D52"].value
@@ -419,7 +416,7 @@ def species() -> Species:
     )
     d32_p32 = Transition("D3/2", "P3/2", wavelength_vac_m(e_d32, e_p32), gamma_p32, b32_d32, "E1", p32_cites)
     d52_p32 = Transition("D5/2", "P3/2", wavelength_vac_m(e_d52, e_p32), gamma_p32, b32_d52, "E1", p32_cites)
-    # the 935.2 nm repump line: the designated repump must be a tabulated Transition (audit item E6)
+    # the 935.2 nm repump line
     d32_br = Transition(
         "D3/2",
         "3D[3/2]1/2",

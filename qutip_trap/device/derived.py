@@ -1,11 +1,5 @@
-"""``Device.derived()``: every computed number of a device with its provenance id (PLAN.md Sections 3.1, 3.3, 14.5; M8).
-
-Design principle (Section 3.1): device parameters in, everything else derived. The dictionary this module returns is the
-device's self-description in derived quantities, keyed like the calibration table's entries so that the surrogate's ``seed``
-entries and a full calibration's ``calibrated`` ones can be compared entry by entry; every key carries the ledger id of the
-convention or anchor it follows (``docs/provenance/ledger.yaml``). A quantity the device cannot derive (a microwave drive's Rabi
-frequency, a detection rate without a detection beam) is absent and named in ``provenance["notes"]``.
-"""
+"""``Device.derived()``: every computed number of a device with its provenance id; a quantity the device cannot derive is
+absent and the reason is in ``DerivedQuantities.notes``."""
 
 from __future__ import annotations
 
@@ -21,21 +15,8 @@ if TYPE_CHECKING:
 
 
 def _put_trap_geometry(device: Device, put: Callable[[str, float, str], None], notes: list[str]) -> None:
-    """The Section 4.1 quantities that are "reported with every device that uses" the trap module.
-
-    - 4.1.6: "the module reports h and the trap depth with every device that uses it" -> ``ion_height_m`` and
-      ``trap_depth_ev`` on the surface path (the rf-null height above the electrode plane and the pseudopotential
-      barrier at the escape point);
-    - 4.1.1: "reports the implied second-order Doppler shift for completeness" -> ``second_order_doppler[i]``,
-      <Delta nu/nu> = -<v^2>/(2 c^2) of the excess micromotion, negative by construction;
-    - 4.1.7 close: "reports the pseudopotential error estimate (q/2 times the configured off-null displacement, in
-      units of the mode spacing) with every device" -> ``pseudopotential_error``, |u_1|/s with u_1 = -(q/2) u_0 the
-      signed micromotion amplitude and s the smallest inter-ion distance. That ratio is the small parameter of
-      Kaufmann's mechanism: the Coulomb curvature ~ 1/r^3 is rf-modulated at fractional depth ~3 |u_1|/s wherever the
-      ions sit off the rf null, and the pseudopotential modes of 4.1.3 are exact only at |u_1|/s = 0. "Mode spacing"
-      is read as the ION spacing, the only length in the clause; a single ion has no Coulomb coupling to modulate and
-      gets a note instead of a number.
-    """
+    """Put ion height and trap depth (surface path), each ion's second-order Doppler shift, and the pseudopotential error
+    |u_1|/s: the largest micromotion amplitude over the smallest ion spacing, which the pseudopotential modes neglect."""
     from qutip_trap.trap.micromotion import second_order_doppler_fraction
 
     trap = device.trap
@@ -114,14 +95,12 @@ def derived_quantities(device: Device) -> DerivedQuantities:
     n = crystal.n_ions
     b = device.field.B_gauss
     put("field_gauss", b, "conv.curvature_naming")
-    # the qubit transitions and their Zeeman sensitivities (Section 4.5.1)
     for i in range(n):
         sp = crystal.species[i]
         f0, d1, d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], b)
         put(f"qubit_freq_hz[{i}]", f0, "conv.frequencies")
         put(f"dnu_dB_hz_per_g[{i}]", d1, "conv.curvature_naming")
         put(f"d2nu_dB2_hz_per_g2[{i}]", d2, "conv.curvature_naming")
-    # the trap: secular frequencies, Mathieu parameters and C0 when the rf record exists (Section 4.1.1)
     ref = crystal.species[0]
     try:
         sec = device.trap.secular_hz(ref)
@@ -136,13 +115,10 @@ def derived_quantities(device: Device) -> DerivedQuantities:
                 put(f"mathieu_q[{ax}]", float(params.q_effective[k]), "conv.mathieu_sign")
                 put(f"mathieu_beta[{ax}]", float(params.beta[k]), "conv.mathieu_sign")
                 put(f"C0[{ax}]", float(params.C0[k]), "conv.micromotion_correction")
-        # ValueError is the layer's own "this device has no rf record / lies outside the stability region" signal
-        # (UnstableMathieuError subclasses it); an AttributeError, IndexError or TypeError would be a BUG in Trap.mathieu
-        # and must surface as one rather than as a line on the device card (M8 audit B9)
+        # ValueError means no rf record or outside the stability region; anything else is a bug and must propagate
         except ValueError as exc:
             notes.append(f"Mathieu parameters: {exc}")
     _put_trap_geometry(device, put, notes)
-    # the modes and their heating rates (Sections 4.1.3, 4.1.5)
     for m, mode in enumerate(crystal.modes):
         put(f"mode_hz[{m}]", mode.omega_hz, "conv.mode_index")
     heating = (
@@ -153,8 +129,7 @@ def derived_quantities(device: Device) -> DerivedQuantities:
     for m, rate in heating.items():
         put(f"heating_rate_per_s[{m}]", rate, "conv.electric_field_noise")
     if not heating and not device.noise.S_E.is_zero():
-        # no correlation length, so no multi-ion projection: the single-ion rate per mode, with the SAME S_E adapter the
-        # heating layer uses (the record's own folding, zero above the band, white level once; conv.electric_field_noise_adapter)
+        # no correlation length, so no multi-ion projection: the single-ion rate per mode, with the heating layer's S_E
         s_e = single_sided_from_spectrum(device.noise.S_E)
         for m, mode in enumerate(crystal.modes):
             w = mode.omega_rad_s
@@ -164,7 +139,6 @@ def derived_quantities(device: Device) -> DerivedQuantities:
                 heating_rate_quanta_per_s(s_e(w), float(crystal.masses_kg[ion]), w),
                 "conv.electric_field_noise",
             )
-    # the single-qubit drives the beams identify (Section 4.3.2): Rabi frequencies, Stark shifts, crosstalk, Lamb-Dicke parameters
     try:
         drives = default_gate_drives(device)
     except ScheduleError as exc:
@@ -190,7 +164,6 @@ def derived_quantities(device: Device) -> DerivedQuantities:
             put(f"micromotion_beta[{i}]", dd.micromotion.total, "conv.micromotion_amplitude_convention")
         for j, eps in crosstalk_ratios(device, i, spec.beams, kind=spec.kind).items():
             put(f"crosstalk[({i}, {j})]", abs(eps), "conv.crosstalk_ratio")
-    # the detection rates (Section 8.1)
     for i in range(n):
         try:
             idx = detection_beams(device, i)

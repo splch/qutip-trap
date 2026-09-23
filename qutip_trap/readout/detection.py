@@ -1,23 +1,8 @@
-"""The photon-record layer: the bright/dark/shelf Markov chain, photon counts, background, detector non-idealities, camera
-images and readout crosstalk (PLAN.md Sections 8.2, 8.5, 8.8; Appendix E ``Detector``; milestone M5).
+"""The photon-record layer of readout: the bright/dark/shelf Markov chain, counts, detector non-idealities, cameras.
 
-Given each ion's start class (sampled from the joint internal outcome through the scheme of Section 8.1), the record over
-a window t is a piecewise-constant-rate Poisson process driven by the bright-dark(-shelf) continuous-time Markov chain plus
-background. The FAST path samples that chain exactly (alternating exponential holding times until the window closes) and
-draws Poisson counts at the piecewise rates, so that windows with k tau not small carry as many transitions as the physics
-gives them; the TRAJECTORY path runs ``mcsolve`` on the reduced class space with a photon-counting collapse operator and
-records arrival times; both are asserted against the closed forms kept here as oracles: Crain's single-jump count
-distribution with its missing no-jump branch restored, Acton's Poisson-exponential mixtures, the zero-threshold errors with
-epsilon_sys restored in the final exponent, and Wineland's P_N(0) = (1 - eta_d)^N. The exact count distribution of the
-chain with ANY number of jumps is the Markov-modulated Poisson process solved by one matrix exponential
-(:meth:`RecordModel.count_distribution`), which is what the threshold optimizer and the POVM fast path integrate.
-
-Conventions (Section 13): epsilon_sys is applied once, at scattered -> detected rate, and R_bg is separate; a bright
-neighbour's leaked light is ADDED COUNTS on a dark neighbour PLUS extra off-resonant pumping on its chain (both halves of
-Wineland's mechanism, Section 8.5: "added counts on a dark neighbour plus depumping-reduced N"), never a change of the
-instrumental efficiency; the camera background is a detector property, spread over the pixels once per exposure rather
-than once per ion; detector dead time, afterpulsing and SNSPD recovery are an optional model whose parameters the user
-must supply (Section 8.8, a named gap of the sources).
+Readout layers: rates (``fluorescence``) -> photon record (here) -> discriminator -> POVM and budget (``discriminate``).
+The record is a Poisson process at the rate of the bright-dark(-shelf) chain plus background (epsilon_sys applied once);
+a bright neighbour's leaked light adds counts and pumping, never a change of efficiency.
 """
 
 from __future__ import annotations
@@ -44,26 +29,22 @@ CLASS_INDEX: dict[ReadoutClass, int] = {c: k for k, c in enumerate(CLASSES)}
 
 @dataclass(frozen=True)
 class Detector:
-    """The photon detector of the device (Sections 8.2, 8.5, 8.8): its kind, the total system detection efficiency, the
-    background rate (counts/s), the point-spread leakage onto neighbours by distance, the optional dead time (s) and
-    afterpulse probability, the detection window (s) and, for a camera, the numerical aperture, the object-plane pixel
-    pitch (m) and the read noise per pixel per readout (counts)."""
+    """The photon detector: kind, efficiency, background, neighbour leakage, dead time, afterpulsing, window, optics."""
 
     kind: Literal["pmt", "camera", "snspd"]
     efficiency: float
-    """Total system detection efficiency epsilon_sys (Section 8.2)."""
+    """Total system detection efficiency epsilon_sys."""
     background_cps: float
     psf_leakage: dict[int, float]
-    """Neighbour distance -> fraction of one ion's light landing on the neighbour's detector (Section 8.5)."""
+    """Neighbour distance (in ion indices) -> fraction of one ion's detected light on the neighbour's detector."""
     dead_time_s: float | None
     afterpulse_prob: float | None
     window_s: float
     numerical_aperture: float | None = None
-    """Objective NA, for the Airy point-spread function of a camera and the geometric efficiency chain (M5 amendment)."""
     pixel_m: float | None = None
-    """Object-plane pixel pitch of a camera (Burrell: 2.6 um per pixel)."""
+    """Object-plane pixel pitch of a camera."""
     read_noise_counts: float = 0.0
-    """Camera clock-induced-charge / read noise per pixel per readout, as an equivalent mean count (Section 8.3)."""
+    """Camera clock-induced-charge / read noise per pixel per readout, as an equivalent mean count."""
 
     def __post_init__(self) -> None:
         if not 0.0 < self.efficiency <= 1.0:
@@ -93,9 +74,6 @@ class Detector:
         return float(self.psf_leakage.get(abs(int(distance)), 0.0))
 
 
-# ---- Poisson helpers -------------------------------------------------------------------------------------------------------
-
-
 def poisson_pmf(n: np.ndarray | int, mean: float) -> np.ndarray | float:
     """P_p(n; mu) = e^{-mu} mu^n/n!, evaluated in the log domain (mu = 0 gives delta_{n0})."""
     k = np.asarray(n, dtype=float)
@@ -118,14 +96,10 @@ def log_poisson_pmf(n: np.ndarray | int, mean: float) -> np.ndarray | float:
 
 
 def zero_photon_probability(n_photons: int, detection_efficiency: float) -> float:
-    """Wineland 1998: P_N(0) = (1 - eta_d)^N for N emitted photons, ~ e^{-n_d} with n_d = N eta_d when eta_d << 1
-    (e^{-10} = 4.5400e-5, e^{-100} = 3.7201e-44): a binomial over a fixed photon number (Section 8.2)."""
+    """P_N(0) = (1 - eta_d)^N, the probability of detecting none of N emitted photons (Wineland 1998)."""
     if n_photons < 0 or not 0.0 <= detection_efficiency <= 1.0:
         raise ValueError("N is non-negative and eta_d lies in [0, 1]")
     return (1.0 - detection_efficiency) ** n_photons
-
-
-# ---- closed forms of the sources (oracles for the exact chain) ---------------------------------------------------------------
 
 
 def single_jump_count_distribution(
@@ -138,12 +112,8 @@ def single_jump_count_distribution(
     include_no_jump: bool = True,
     nodes: int = 96,
 ) -> np.ndarray:
-    """P(n; t) = e^{-R_T t} P_p(n; R_1 t) + int_0^t dtau R_T e^{-R_T tau} P_p(n; R_1 tau + R_2 (t - tau)), n = 0..n_max.
-
-    Crain 2019 Eq. 1 with its missing no-jump branch restored (Section 8.2 [corrected]); the printed form
-    (``include_no_jump=False``) sums to 1 - e^{-R_T t}. The sum over k of P_p(k; R_1 tau) P_p(n - k; R_2 (t - tau)) is the
-    Poisson convolution P_p(n; R_1 tau + R_2 (t - tau)), so the integrand is smooth and Gauss-Legendre integrates it.
-    """
+    """P(n; t) = e^{-R_T t} P_p(n; R_1 t) + int_0^t dtau R_T e^{-R_T tau} P_p(n; R_1 tau + R_2 (t - tau)), n = 0..n_max:
+    Crain 2019 Eq. 1 with its missing no-jump branch restored (``include_no_jump=False`` is the printed form)."""
     if n_max < 0 or window_s < 0.0 or min(rate_before_per_s, rate_after_per_s, jump_rate_per_s) < 0.0:
         raise ValueError("counts, window and rates are non-negative")
     n = np.arange(n_max + 1)
@@ -163,11 +133,8 @@ def single_jump_count_distribution(
 
 
 def acton_dark_distribution(n_max: int, lambda0: float, alpha1_over_eta: float) -> np.ndarray:
-    """Acton 2006 Eq. 5: p_dark(n) = e^{-a lambda_0}[delta_n0 + a/(1 - a)^{n+1} P(n + 1, (1 - a) lambda_0)], a = alpha_1/eta.
-
-    The dark ion leaks to the bright cycle at rate a x (detected rate) and then scatters for the rest of the window; the
-    regularized incomplete gamma P is scipy's ``gammainc``. Normalized to 1 exactly; requires a < 1.
-    """
+    """Acton 2006 Eq. 5: p_dark(n) = e^{-a lambda_0}[delta_n0 + a/(1 - a)^{n+1} P(n + 1, (1 - a) lambda_0)] with
+    a = alpha_1/eta < 1 and P the regularized incomplete gamma function."""
     a = alpha1_over_eta
     if not 0.0 <= a < 1.0 or lambda0 < 0.0:
         raise ValueError("alpha_1/eta lies in [0, 1) and lambda_0 is non-negative")
@@ -181,7 +148,7 @@ def acton_dark_distribution(n_max: int, lambda0: float, alpha1_over_eta: float) 
 
 def acton_bright_distribution(n_max: int, lambda0: float, alpha2_over_eta: float) -> np.ndarray:
     """Acton 2006 Eq. 6: p_bright(n) = e^{-(1 + a) lambda_0} lambda_0^n/n! + a/(1 + a)^{n+1} P(n + 1, (1 + a) lambda_0),
-    a = alpha_2/eta: the never-leaving Poisson term plus the smeared pumped-dark term (re-pumping neglected)."""
+    a = alpha_2/eta, re-pumping neglected."""
     a = alpha2_over_eta
     if a < 0.0 or lambda0 < 0.0:
         raise ValueError("alpha_2/eta and lambda_0 are non-negative")
@@ -202,13 +169,9 @@ def zero_threshold_errors(
     bright_pumping_per_s: float,
     background_per_s: float,
 ) -> tuple[float, float]:
-    """(epsilon_B, epsilon_D) of the zero-threshold discriminator (any photon -> bright), Crain 2019 Eqs. 2-3 [corrected].
-
-    epsilon_B = P(n = 0 | bright) = e^{-R_bg t}[e^{-(eps R_o + R_d) t} + R_d/(eps R_o + R_d) (1 - e^{-(eps R_o + R_d) t})];
-    epsilon_D = 1 - P(n = 0 | dark), P(n = 0 | dark) = e^{-R_bg t}[e^{-R_b t} + R_b/(eps R_o - R_b)(e^{-R_b t} - e^{-eps R_o t})].
-    The printed Eq. 3 carries e^{-(R_o + R_bg) t} with the SCATTERED rate in the no-jump term (see
-    :func:`crain_printed_bright_error`), which changes the bright error at 11 us by a factor of about 9.
-    """
+    """(epsilon_B, epsilon_D) of the zero-threshold discriminator (any photon -> bright), after Crain 2019 Eqs. 2-3:
+    epsilon_B = e^{-R_bg t}[e^{-(eps R_o + R_d) t} + R_d/(eps R_o + R_d) (1 - e^{-(eps R_o + R_d) t})] and
+    epsilon_D = 1 - e^{-R_bg t}[e^{-R_b t} + R_b/(eps R_o - R_b)(e^{-R_b t} - e^{-eps R_o t})]."""
     t = window_s
     r0, rd, rb, rbg = detected_bright_per_s, dark_pumping_per_s, bright_pumping_per_s, background_per_s
     if min(t, r0, rd, rb, rbg) < 0.0:
@@ -231,8 +194,7 @@ def crain_printed_bright_error(
     dark_pumping_per_s: float,
     background_per_s: float,
 ) -> float:
-    """Crain Eq. 3 as printed: the no-jump term e^{-R_d t} e^{-(R_o + R_bg) t} with the scattered R_o, which is ~ 0 at
-    any useful window and leaves only the pumped term R_d/(eps R_o + R_d) (the negative control of Section 9.5)."""
+    """Crain Eq. 3 as printed, with the scattered R_o in its no-jump term: a negative control for the corrected form."""
     t = window_s
     k = detected_bright_per_s + dark_pumping_per_s
     pumped = math.exp(-background_per_s * t) * dark_pumping_per_s / k * (1.0 - math.exp(-k * t))
@@ -244,19 +206,15 @@ def crain_printed_bright_error(
 def first_photon_cutoff_s(
     dark_pumping_per_s: float, dark_count_per_s: float, detected_bright_per_s: float
 ) -> float:
-    """Noek 2013 Eq. 6: tau_c = ln(R_d/R_dc)/(eps R_o), before which a single detected photon more likely came from a
-    bright ion that then pumped dark than from a background count on a dark ion."""
+    """Noek 2013 Eq. 6: tau_c = ln(R_d/R_dc)/(eps R_o), before which a lone photon likelier came from a bright ion."""
     if dark_pumping_per_s <= 0.0 or dark_count_per_s <= 0.0 or detected_bright_per_s <= 0.0:
         raise ValueError("rates are positive")
     return math.log(dark_pumping_per_s / dark_count_per_s) / detected_bright_per_s
 
 
-# ---- the record model: the Markov chain and its exact count statistics ---------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class ClassPath:
-    """One realization of the readout chain over a window: the start class and the jumps (Section 8.2)."""
+    """One realization of the readout chain over a window: the start class and the jumps."""
 
     window_s: float
     start: ReadoutClass
@@ -342,7 +300,7 @@ class CountDistribution:
 
 @dataclass(frozen=True)
 class RecordModel:
-    """The chain and the detected rates of ONE ion: epsilon_sys R_o, R_bg and the (from, to) transition rates (Section 8.2)."""
+    """The chain and the detected rates of one ion: epsilon_sys R_o, R_bg and the (from, to) transition rates."""
 
     detected_bright_per_s: float
     background_per_s: float
@@ -359,7 +317,7 @@ class RecordModel:
 
     @classmethod
     def from_rates(cls, rates: FluorescenceRates, detector: Detector) -> RecordModel:
-        """epsilon_sys applied once here (Section 13); the detector's dead time and afterpulsing carried along."""
+        """The record model of ``rates`` under ``detector``, epsilon_sys applied once, here."""
         detected, background = rates.detected(detector)
         return cls(
             detected_bright_per_s=detected,
@@ -368,8 +326,6 @@ class RecordModel:
             dead_time_s=detector.dead_time_s,
             afterpulse_prob=detector.afterpulse_prob,
         )
-
-    # ---- the chain -------------------------------------------------------------------------------------------------
 
     def generator(self) -> np.ndarray:
         """The 3 x 3 generator Q (rows sum to zero) in the CLASSES order."""
@@ -411,7 +367,7 @@ class RecordModel:
         return float(self._start_vector(start) @ block[:, CLASS_INDEX["bright"]])
 
     def mean_counts(self, start: ReadoutClass | Sequence[float], window_s: float) -> float:
-        """E[n] = eps R_o E[bright time] + R_bg t (exact; for a bright start it is Section 8.2's n̄(τ) when only R_d, R_b act)."""
+        """E[n] = eps R_o E[bright time] + R_bg t, exact."""
         return (
             self.detected_bright_per_s * self.bright_occupancy_mean_s(start, window_s)
             + self.background_per_s * window_s
@@ -422,11 +378,8 @@ class RecordModel:
         return int(math.ceil(mu + sigmas * math.sqrt(mu + 1.0))) + 5
 
     def _augmented_generator(self, n_max: int, lam: np.ndarray) -> csr_matrix:
-        """The generator of the Markov-modulated Poisson process on (count n, class), sparse: blocks Q - diag(lambda) on the
-        diagonal, diag(lambda) one block up (a count increments n), and the bare Q on the last block, which absorbs n > n_max
-        without counting further (its mass is the overflow). Block-bidiagonal, so its exponential is applied to a vector with
-        ``expm_multiply`` rather than formed: the dense ``expm`` of the 3 (n_max + 2)-square matrix cost 30 s at n_max ~ 2000
-        for the same numbers to one part in 1e14."""
+        """The sparse generator of the Markov-modulated Poisson process on (count n, class): blocks Q - diag(lambda) on
+        the diagonal, diag(lambda) one block up (a count increments n) and a bare-Q last block absorbing n > n_max."""
         q = np.asarray(self.generator(), dtype=float)
         counting = csr_matrix(q - np.diag(lam))
         diagonal = block_diag([kron(identity(n_max + 1, format="csr"), counting), csr_matrix(q)])
@@ -441,12 +394,7 @@ class RecordModel:
         n_max: int | None = None,
         background: bool = True,
     ) -> CountDistribution:
-        """Exact P(n | start) of the Markov-modulated Poisson process over the window, by one matrix exponential.
-
-        The augmented generator on (count n, class): blocks Q - diag(lambda) on the diagonal and diag(lambda) one block
-        up (a count increments n); the last block absorbs n > n_max without counting further, so its mass is the reported
-        overflow. Exact for any number of jumps (the single-jump closed forms are its small-k-tau oracles, Section 8.2).
-        """
+        """Exact P(n | start) of the Markov-modulated Poisson process over the window, overflow above ``n_max``."""
         if window_s < 0.0:
             raise ValueError("the window is non-negative")
         nmax = self.suggested_n_max(window_s) if n_max is None else int(n_max)
@@ -468,8 +416,7 @@ class RecordModel:
         )
 
     def sub_bin_matrices(self, sub_bin_s: float, n_max: int) -> np.ndarray:
-        """M[n, i, j] = P(n counts in a sub-bin and class j at its end | class i at its start): the exact HMM emission and
-        transition kernel of the time-resolved record (the continuous-time likelihood no source gives, Section 8.7)."""
+        """M[n, i, j] = P(n counts in a sub-bin and class j at its end | class i at its start), the HMM kernel."""
         lam = self.class_count_rates()
         d = 3
         size = d * (n_max + 2)
@@ -482,8 +429,6 @@ class RecordModel:
         for n in range(n_max + 2):
             out[n] = rows[:, n * d : (n + 1) * d]
         return out
-
-    # ---- sampling ---------------------------------------------------------------------------------------------------
 
     def sample_path(self, start: ReadoutClass, window_s: float, rng: np.random.Generator) -> ClassPath:
         """Gillespie sampling of the chain: exponential holding times at the total exit rate, targets by rate ratio."""
@@ -525,9 +470,8 @@ class RecordModel:
         path: ClassPath | None = None,
         extra_rate: Sequence[tuple[float, float, float]] = (),
     ) -> PhotonRecord:
-        """One record: Poisson counts at the piecewise rate of the (given or sampled) path, plus background and any
-        ``extra_rate`` segments [(t_start, t_end, rate)] from neighbours (Section 8.5); dead time and afterpulsing act on
-        arrival times, which are then always generated."""
+        """One record: Poisson counts at the (given or sampled) path's rate plus background and the neighbours'
+        ``extra_rate`` segments [(t_start, t_end, rate)]; dead time or afterpulsing forces arrival times."""
         p = path if path is not None else self.sample_path(start, window_s, rng)
         need_arrivals = arrivals or self.dead_time_s is not None or self.afterpulse_prob is not None
         cells = _rate_cells(
@@ -546,9 +490,7 @@ class RecordModel:
                 n_bins = int(round(window_s / sub_bin_s))
                 sub = np.histogram(arr, bins=n_bins, range=(0.0, window_s))[0]
             return PhotonRecord(ion, window_s, int(arr.size), sub_bin_s, sub, arr, p)
-        # one vectorized Poisson draw over the cells: NumPy's Generator draws the elements of an array in order, exactly as
-        # the scalar draws per cell did, so the counts and the generator's state afterwards are unchanged (checked against
-        # the scalar loop; performance pass 2026-09-09)
+        # one vectorized draw consumes the generator exactly as one scalar Poisson draw per cell would
         means = np.array([rate * (b - a) for a, b, rate in cells], dtype=float)
         counts = rng.poisson(means) if means.size else np.zeros(0, dtype=int)
         if sub_bin_s is None:
@@ -562,7 +504,7 @@ class RecordModel:
 
 @lru_cache(maxsize=64)
 def _sub_bin_edges(window_s: float, sub_bin_s: float) -> frozenset[float]:
-    """The interior sub-bin edges k x sub_bin of a window (the same floats every record of a calibration adds)."""
+    """The interior sub-bin edges k x sub_bin of a window, cached: every record of a calibration asks for the same."""
     n_bins = int(round(window_s / sub_bin_s))
     if abs(n_bins * sub_bin_s - window_s) > 1e-9 * window_s:
         raise ValueError("the window must be an integer number of sub-bins")
@@ -585,11 +527,7 @@ def _rate_cells(
     if sub_bin_s is not None:
         edges.update(_sub_bin_edges(window_s, sub_bin_s))
     grid = sorted(e for e in edges if 0.0 <= e <= window_s)
-    # the class of each cell from ONE pass over the path's segments (contiguous, ordered; the midpoints increase): the same
-    # class ``path.class_at(mid)`` returns and the same additions in the same order per cell, so the cells, and the Poisson
-    # draws taken from them, are unchanged (performance pass 2026-09-09; the per-cell lookup rebuilt the segment list 200
-    # times per record and was 60% of a detection calibration). A hand-built path whose jumps are not ordered takes the
-    # general lookup.
+    # each cell's class by one search over the ordered segments (what class_at returns); an unordered path uses class_at
     segments = path.segments()
     starts = [seg[0] for seg in segments]
     g = np.asarray(grid, dtype=float)
@@ -619,8 +557,8 @@ def apply_detector_nonidealities(
     rng: np.random.Generator,
     window_s: float,
 ) -> np.ndarray:
-    """Non-paralyzable dead time (a photon within tau_dead of the last ACCEPTED one is lost) and afterpulsing (each accepted
-    photon spawns a spurious count right after the dead time with probability p_ap), Section 8.8's optional model."""
+    """Non-paralyzable dead time (a photon within tau_dead of the last ACCEPTED one is lost) and afterpulsing (each
+    accepted photon spawns a spurious count right after the dead time with probability p_ap)."""
     arr = np.sort(np.asarray(arrivals_s, dtype=float))
     if dead_time_s is None and afterpulse_prob is None:
         return arr
@@ -648,9 +586,6 @@ def apply_detector_nonidealities(
     return np.asarray(kept)
 
 
-# ---- registers: neighbour-coupled records (Section 8.5) ---------------------------------------------------------------------
-
-
 def count_anomaly_band(
     model: RecordModel,
     window_s: float,
@@ -658,13 +593,8 @@ def count_anomaly_band(
     *,
     quantile: float = 1e-6,
 ) -> tuple[int, int]:
-    """The [q, 1 - q] band of totals that ANY of the hypotheses in ``starts`` can produce over the window.
-
-    A record whose total lies outside it is the "count anomaly" of Section 8.6's herald list: neither the bright nor the
-    dark hypothesis explains it, which in a laboratory is a cosmic ray, an afterpulse burst or a stray-light flash
-    (Section 8.8 names detector non-idealities as a gap of the sources, and Myerson attributes about 20 % of his dark
-    error to cosmic rays). Computed once per ion from the exact count distributions, so the per-shot test is a comparison.
-    """
+    """The [q, 1 - q] band of totals any hypothesis in ``starts`` can produce; a total outside it is a count anomaly
+    (in a laboratory a cosmic ray, an afterpulse burst or a stray-light flash)."""
     if not 0.0 < quantile < 0.5:
         raise ValueError("the quantile lies in (0, 0.5)")
     lo, hi = None, None
@@ -681,9 +611,8 @@ def count_anomaly_band(
 
 
 Depumping = Mapping[int, tuple[float, float]]
-"""Neighbour distance -> (Delta R_d, Delta R_b) that ONE bright neighbour's leaked light adds to an ion's chain: the
-depumping half of Wineland's crosstalk mechanism (Section 8.5), built by
-:func:`~qutip_trap.readout.fluorescence.neighbour_pumping_rates`."""
+"""Neighbour distance -> (Delta R_d, Delta R_b) that one bright neighbour's leaked light adds to an ion's chain, as
+:func:`~qutip_trap.readout.fluorescence.neighbour_pumping_rates` computes it."""
 
 
 def depumped_model(
@@ -692,13 +621,8 @@ def depumped_model(
     classes: Sequence[ReadoutClass],
     depumping: Depumping | None,
 ) -> RecordModel:
-    """Ion ``ion``'s chain with the extra off-resonant pumping every BRIGHT neighbour's leaked light drives (Section 8.5's
-    "depumping-reduced N"), the neighbours frozen at ``classes`` (the same first-order form as the added counts).
-
-    R_d and R_b are linear in intensity with no saturation denominator (Section 8.1), so the contributions of several
-    bright neighbours add; R_o is untouched, because the leaked light is far too weak to change the cycling rate (the
-    bound is I_ion/I_sat ~ 1e-4) and Wineland's mechanism is a degradation of DISCRIMINATION, never of eta_d.
-    """
+    """Ion ``ion``'s chain plus the pumping of each bright neighbour's leaked light, neighbours frozen at ``classes``;
+    the R_d and R_b of several neighbours add, and R_o is untouched."""
     m = models[ion]
     if not depumping:
         return m
@@ -735,15 +659,8 @@ def sample_register_records(
     sub_bin_s: float | None = None,
     arrivals: bool = False,
 ) -> list[PhotonRecord]:
-    """Records of every ion in one shot: each chain sampled from its own generator first, then each ion's counts at its own
-    rate plus the leaked light of every bright neighbour (fraction ``leakage[|i - j|]`` of the neighbour's detected rate),
-    so the records are neighbour-coupled and the joint confusion is not a product (Section 5.7).
-
-    ``depumping`` adds the other half of Wineland's mechanism (Section 8.5): the leaked light also pumps the neighbour
-    between the bright and dark manifolds, so a bright ion beside a bright one loses photons as well (the
-    "depumping-reduced N"). The pumping is frozen at the neighbours' START classes, the first-order form the factored
-    confusion tensor uses, because the chain of one ion is sampled before its neighbours' paths are known.
-    """
+    """Records of every ion in one shot: the chains first, then each ion's counts plus the leaked light of every bright
+    neighbour (``leakage[|i - j|]`` of its detected rate); ``depumping`` pumping is frozen at the start classes."""
     n = len(models)
     if len(starts) != n or len(rngs) != n:
         raise ValueError("one start class and one generator per ion")
@@ -782,9 +699,8 @@ def neighbourhood_model(
     leakage: Mapping[int, float],
     depumping: Depumping | None = None,
 ) -> RecordModel:
-    """Ion ``ion``'s record model with its neighbours FROZEN in ``classes``: the leaked light of every bright neighbour is a
-    constant added background and (with ``depumping``) extra pumping on the ion's own chain, the first-order form of the
-    neighbour coupling used by the factored confusion tensor (Section 8.5, both halves of Wineland's mechanism)."""
+    """Ion ``ion``'s record model with its neighbours frozen in ``classes``: every bright neighbour's leaked light as
+    constant added background and (with ``depumping``) extra pumping, the first-order form of the factored confusion."""
     extra = 0.0
     for j, c in enumerate(classes):
         if j != ion and c == "bright":
@@ -793,9 +709,6 @@ def neighbourhood_model(
     return RecordModel(
         m.detected_bright_per_s, m.background_per_s + extra, m.rates, m.dead_time_s, m.afterpulse_prob
     )
-
-
-# ---- the trajectory path (mcsolve on the reduced class space) -----------------------------------------------------------------
 
 
 def mcsolve_records(
@@ -807,14 +720,9 @@ def mcsolve_records(
     seed: int = 0,
     sub_bin_s: float | None = None,
 ) -> list[PhotonRecord]:
-    """The trajectory path of Section 8.2: ``mcsolve`` on |bright>, |dark>, |shelf> with H = 0, a photon-counting collapse
-    operator sqrt(eps R_o) |B><B|, a background operator sqrt(R_bg) 1 and the chain's transitions as jump operators;
-    every jump time and type is read back from the trajectory, so the arrival record is the quantum-jump record.
-
-    The solve runs in units of the window (rates x window, time in [0, 1]): mcsolve's collapse-time search has an ABSOLUTE
-    time tolerance (``norm_t_tol``, 1e-6 by default) that a 20 us window in SI seconds cannot satisfy (QuTiP 5.3.1 raises
-    "Could not find the collapse time"), while the scaled problem is well conditioned.
-    """
+    """The trajectory path: ``mcsolve`` on |bright>, |dark>, |shelf> with H = 0, photon counting sqrt(eps R_o) |B><B|,
+    background sqrt(R_bg) 1 and the chain's jumps; time is in units of the window, since mcsolve's collapse-time search
+    has an absolute tolerance."""
     if n_records <= 0:
         raise ValueError("at least one trajectory")
     d = 3
@@ -854,38 +762,31 @@ def mcsolve_records(
     return records
 
 
-# ---- spectator dephasing during a neighbour's readout (Section 8.5) --------------------------------------------------------------
-
-
 def spectator_coherence(tau_s: float, alpha_s: float) -> float:
-    """exp(-tau^2/alpha^2): a data qubit's Ramsey contrast while a neighbour is detected decays as a GAUSSIAN, not an
-    exponential (Crain 2019: alpha = 94(5) ms at 200 um and 814(77) ms at 370 um from the detected ion, 1716 ms baseline)."""
+    """exp(-tau^2/alpha^2): a spectator's Gaussian Ramsey decay while a neighbour is detected (Crain 2019)."""
     if alpha_s <= 0.0 or tau_s < 0.0:
         raise ValueError("alpha is positive and tau non-negative")
     return math.exp(-((tau_s / alpha_s) ** 2))
 
 
 def spectator_offset_sigma_rad_s(alpha_s: float) -> float:
-    """The quasi-static frequency offset that reproduces the Gaussian decay: a per-shot draw delta ~ N(0, sigma) with
-    sigma = sqrt(2)/alpha gives <cos(delta tau)> = exp(-sigma^2 tau^2/2) = exp(-tau^2/alpha^2); a constant-rate sigma_z
-    Lindblad term would give an exponential lineshape instead (Section 8.5)."""
+    """sigma = sqrt(2)/alpha, so a per-shot offset delta ~ N(0, sigma) gives <cos(delta tau)> = exp(-tau^2/alpha^2)."""
     if alpha_s <= 0.0:
         raise ValueError("alpha is positive")
     return math.sqrt(2.0) / alpha_s
 
 
 def sample_spectator_offset_rad_s(alpha_s: float, rng: np.random.Generator) -> float:
-    """One shot's quasi-static offset of a spectator qubit during its neighbour's detection (Section 5.7 stochastic elements)."""
+    """One shot's quasi-static frequency offset of a spectator qubit during its neighbour's detection."""
     return float(rng.normal(0.0, spectator_offset_sigma_rad_s(alpha_s)))
 
 
 CRAIN_SPECTATOR_ANCHORS_S: tuple[tuple[float, float], ...] = ((200e-6, 94e-3), (370e-6, 814e-3))
-"""(distance, alpha) measured by Crain 2019 for the spectator's Gaussian coherence time, apparatus data."""
+"""(distance in m, alpha in s) of the spectator's Gaussian coherence time as Crain 2019 measured it (apparatus data)."""
 
 
 def crain_spectator_alpha_s(distance_m: float) -> float:
-    """alpha(d) interpolated as a power law through Crain's two anchors (exponent ln(814/94)/ln(370/200) = 3.5): the wing of
-    the detection beam at the data qubit falls steeply with distance; an interpolation of apparatus data, not physics."""
+    """alpha(d) as a power law through Crain's two anchors (exponent 3.5), an interpolation of apparatus data."""
     (d1, a1), (d2, a2) = CRAIN_SPECTATOR_ANCHORS_S
     if distance_m <= 0.0:
         raise ValueError("distance is positive")
@@ -893,19 +794,10 @@ def crain_spectator_alpha_s(distance_m: float) -> float:
     return float(a1 * (distance_m / d1) ** p)
 
 
-# ---- camera images (Sections 8.3, 8.5) -----------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class CameraGeometry:
-    """A pixel grid in the object plane with the ions' point-spread functions (Burrell 2010; Section 8.3).
-
-    Pixels are ``n_rows x n_columns`` of pitch ``pixel_m`` centred on the chain; the PSF is the normalized Airy pattern of
-    an objective of numerical aperture ``numerical_aperture`` at ``wavelength_m``, or a Gaussian of width ``psf_sigma_m``
-    (an aberrated system, Burrell's, sits well above the diffraction limit). ``weights(ion)`` integrates the PSF over each
-    pixel with a sub-grid, so PSF leakage into a neighbour's region of interest emerges from the optics without a free
-    parameter (Section 8.3 [verified]).
-    """
+    """A pixel grid in the object plane, centred on the chain, with the ions' point-spread functions (Burrell 2010): an
+    Airy pattern of ``numerical_aperture`` or a Gaussian of width ``psf_sigma_m``, exactly one of the two."""
 
     ion_positions_m: tuple[float, ...]
     pixel_m: float
@@ -969,14 +861,8 @@ class CameraGeometry:
         return self.brightness_order(ion)[: max(1, min(n_pixels, self.n_pixels))]
 
     def leakage_fraction(self, ion: int, other: int, n_pixels: int) -> float:
-        """Signal of ``other`` inside ion ``ion``'s ROI RELATIVE TO THE ION'S OWN signal there (Burrell: 4.0 % nearest,
-        0.9 % next-nearest at 14 um for an ROI of one spacing's diameter).
-
-        This is the ratio the source quotes and is NOT :attr:`Detector.psf_leakage`, which is the ABSOLUTE fraction of the
-        neighbour's total detected light that lands in the region of interest; the two differ by the ion's own ROI
-        collection efficiency (0.757 in a Burrell-like geometry, so feeding 4.0 % straight in overstates the leak by 32 %).
-        :meth:`absolute_leakage_fraction` and :func:`psf_leakage_from_geometry` do the conversion once.
-        """
+        """Signal of ``other`` in ion ``ion``'s ROI relative to the ion's own signal there (Burrell's ratio), not the
+        absolute fraction of :attr:`Detector.psf_leakage` (:meth:`absolute_leakage_fraction`)."""
         roi = self.roi(ion, n_pixels)
         own = float(self.weights(ion).ravel()[roi].sum())
         return float(self.weights(other).ravel()[roi].sum()) / own if own > 0.0 else 0.0
@@ -986,8 +872,7 @@ class CameraGeometry:
         return float(self.weights(ion).ravel()[self.roi(ion, n_pixels)].sum())
 
     def absolute_leakage_fraction(self, ion: int, other: int, n_pixels: int) -> float:
-        """Fraction of ``other``'s TOTAL detected light that lands in ion ``ion``'s region of interest: the convention
-        :attr:`Detector.psf_leakage` and the added counts of Section 8.5 use."""
+        """Fraction of ``other``'s total detected light in ion ``ion``'s ROI, as in :attr:`Detector.psf_leakage`."""
         roi = self.roi(ion, n_pixels)
         return float(self.weights(other).ravel()[roi].sum())
 
@@ -996,12 +881,7 @@ def psf_leakage_from_geometry(
     geometry: CameraGeometry, n_pixels: int, *, max_distance: int | None = None
 ) -> dict[int, float]:
     """:attr:`Detector.psf_leakage` derived from the optics: distance -> the absolute fraction of a neighbour's detected
-    light that falls in an ion's region of interest, averaged over the pairs at that distance.
-
-    Section 8.3: "crosstalk then emerges from PSF overlap without a free parameter". The values are ABSOLUTE fractions of
-    the neighbour's total light (:meth:`CameraGeometry.absolute_leakage_fraction`), not the ROI-relative ratios the source
-    quotes, so the conversion happens once, here.
-    """
+    light that falls in an ion's region of interest, averaged over the pairs at that distance."""
     if geometry.n_ions < 2:
         return {}
     limit = geometry.n_ions - 1 if max_distance is None else int(max_distance)
@@ -1027,13 +907,11 @@ def sample_camera_image(
     read_noise_counts: float = 0.0,
     t_start_s: float = 0.0,
 ) -> np.ndarray:
-    """One exposure: per pixel Poisson(sum_i w_i[p] eps R_o,i T_bright,i + background share + read noise), with T_bright,i
-    the bright occupancy of ion i's path within the exposure (Section 8.3)."""
+    """One exposure: per pixel Poisson(sum_i w_i[p] eps R_o,i T_bright,i + background share + read noise), with
+    T_bright,i the bright occupancy of ion i's path within the exposure."""
     if len(models) != geometry.n_ions or len(paths) != geometry.n_ions:
         raise ValueError("one record model and one class path per ion")
-    # the background is a DETECTOR property, so it is spread over the pixels once per exposure and not once per ion (a
-    # register of N ions used to collect N x R_bg; audit 2026-09-07 B12). Models may disagree on it only through their
-    # detectors, so the maximum is the detector's rate.
+    # the background is the detector's: spread over the pixels once per exposure, not once per ion
     background = max((m.background_per_s for m in models), default=0.0)
     mean = np.full(
         (geometry.n_rows, geometry.n_columns),

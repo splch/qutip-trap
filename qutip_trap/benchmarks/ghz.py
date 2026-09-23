@@ -1,31 +1,7 @@
-"""GHZ-state fidelity on the simulated device (PLAN.md Section 10 M10; Section 7.9 "Entangling gate"; Section 9.6 rows 1 and 2).
-
-The laboratory protocol (Sackett et al. 2000; Leibfried et al. 2005; Wright et al. 2019 for the two-qubit case in Section
-7.9): prepare the GHZ state with the circuit H(q_0), CNOT(q_0, q_1), ..., CNOT(q_{N-2}, q_{N-1}) and measure the populations
-P_0 = P(0...0) and P_1 = P(1...1); then, on fresh shots, follow the same circuit by a pi/2 analysis pulse GPi2(phi) on every
-qubit and measure the parity Pi(phi) = <prod_q Z_q>, which oscillates as C cos(N phi + phi_0) with the contrast C = 2 |rho_{0...0,
-1...1}| (only the sigma_+^{ox N} term carries e^{iNphi}; every other coherence lands in the phase-independent offset).
-
-Which fidelity (P_0 + P_1 + C)/2 bounds. Since P_0 = rho_{0...0,0...0}, P_1 = rho_{1...1,1...1} and C = 2|rho_{0...0,1...1}|,
-
-    (P_0 + P_1 + C)/2 = (rho_{0...0,0...0} + rho_{1...1,1...1})/2 + |rho_{0...0,1...1}|
-                      = max_theta <GHZ_theta| rho |GHZ_theta>,   |GHZ_theta> = (|0...0> + e^{i theta}|1...1>)/sqrt 2,
-
-an EQUALITY with the phase-optimised GHZ-class fidelity and therefore an UPPER bound on the fidelity against any fixed-phase
-GHZ state -- the direction opposite to the one Section 7.9's wording suggests, whose "lower bound (Wright 2019)" is about an
-imperfect analysis pulse degrading the measured contrast, not about the inequality (``conv.ghz_parity_bound``). The result
-therefore reports both: ``register_fidelity_max_phase``, the exact max_theta <GHZ_theta| rho |GHZ_theta> the bound estimates,
-and ``register_fidelity``, the exact fidelity against the compiled circuit's own fixed-phase target, which the bound exceeds
-by |rho_{0...0,1...1}| minus its phase-projected part (the committed three-ion run: bound 0.9935 against a fixed-phase
-0.98520). Every point is one ``run`` of ``shots`` (the analysis pulses are ordinary native gates of the circuit, so their
-phases are frame-propagated by the compiler exactly as the laboratory's are), and the simulator adds what no laboratory has:
-the exact register state behind both numbers.
-
-The budget alongside: the Section 9.6 closed-form scales of the circuit, the Section 6.8 channels of its native gate kinds
-composed into the product floor F_gates = prod_gates (1 - eps_gate) (the crosstalk-free composite of Wright et al. 2019 in
-Section 7.9, with the simulator's own per-gate channels in place of the published fidelities), and the readout loss
-(P_0 + P_1) x (1 - sum_q eps_q) and C x prod_q (1 - 2 eps_q) with eps_q = (eps_B + eps_D)/2 per qubit.
-"""
+"""GHZ-state fidelity on the simulated device (Sackett et al. 2000; Leibfried et al. 2005): P_0 = P(0...0) and
+P_1 = P(1...1) after H and a CNOT chain, and the contrast C of the parity C cos(N phi + phi_0) + B with GPi2(phi) on every
+qubit after it. (P_0 + P_1 + C)/2 is the fidelity with the best-phase GHZ state (|0...0> + e^{i theta}|1...1>)/sqrt 2,
+so it is an UPPER bound on the fixed-phase GHZ fidelity; both exact register fidelities are reported beside it."""
 
 from __future__ import annotations
 
@@ -70,9 +46,8 @@ def parity_circuit(qubits: Sequence[int], n_qubits: int, phi_rad: float) -> Circ
 
 
 def ghz_coherence(result: Result) -> tuple[float, float, float]:
-    """(rho_{0...0,0...0}, rho_{1...1,1...1}, |rho_{0...0,1...1}|) of the run's recombined register state
-    (``keep_final_state=True``), in the register order (ion 0 the first tensor factor; the qubit levels 0 and 1 of a qudit
-    register). The three numbers the parity bound is built from, read exactly instead of measured."""
+    """(rho_{0...0,0...0}, rho_{1...1,1...1}, |rho_{0...0,1...1}|) of the run's register state (``keep_final_state=True``),
+    ion 0 the first tensor factor, the levels 0 and 1 of each qudit."""
     rho = result.final_state
     if rho is None:
         raise ValueError("run with keep_final_state=True to read the register state's GHZ coherence")
@@ -124,10 +99,8 @@ def fit_parity(
 
 @dataclass(frozen=True)
 class GHZResult:
-    """The GHZ-state benchmark of Section 7.9 on the simulated device: the populations P_0 and P_1, the parity fringe against
-    the analysis phase (radians) with its fit, the laboratory bound (P_0 + P_1 + C)/2 with its uncertainty, the two exact
-    register fidelities the simulator adds (module docstring: the bound equals the phase-optimised one and is an upper bound
-    on the fixed-phase one), the budget alongside and every ``Result`` behind the numbers."""
+    """The GHZ benchmark: the populations, the parity fringe against the analysis phase (radians) with its fit, the bound
+    (P_0 + P_1 + C)/2, the two exact register fidelities, the budget and every ``Result`` behind them."""
 
     qubits: tuple[int, ...]
     shots: int
@@ -139,15 +112,11 @@ class GHZResult:
     fit: dict[str, tuple[float, float]]
     """contrast, phi0_rad, offset, chi2_per_dof."""
     fidelity_bound: tuple[float, float]
-    """(P_0 + P_1 + C)/2 with its uncertainty: the laboratory's number, which is max_theta <GHZ_theta| rho |GHZ_theta>
-    (compare ``register_fidelity_max_phase``) and therefore an UPPER bound on the fixed-phase ``register_fidelity``."""
+    """(P_0 + P_1 + C)/2 with its uncertainty, an estimate of ``register_fidelity_max_phase``."""
     register_fidelity: float
-    """<GHZ| rho |GHZ> of the exact register state of the populations run against the compiled circuit's own FIXED-phase
-    target (simulator only)."""
+    """Exact <GHZ| rho |GHZ> of the populations run against the compiled circuit's own fixed-phase target."""
     register_fidelity_max_phase: float
-    """max_theta <GHZ_theta| rho |GHZ_theta> = (rho_{0...0,0...0} + rho_{1...1,1...1})/2 + |rho_{0...0,1...1}| of the same
-    exact register state: the quantity ``fidelity_bound`` estimates, by the identity of the module docstring (simulator
-    only). Never below ``register_fidelity``."""
+    """Exact max_theta <GHZ_theta| rho |GHZ_theta> of the same state; never below ``register_fidelity``."""
     converged: bool
     results: tuple[Result, ...]
     """The populations run first, then one per analysis phase."""
@@ -169,12 +138,9 @@ def ghz_fidelity(
     budget: bool = True,
     **run_kwargs: Any,
 ) -> GHZResult:
-    """The GHZ benchmark of the module docstring on ``qubits`` (two or more), every point a ``Machine.run`` of ``shots``.
-
-    ``analysis_phases_rad`` default to eight phases over one period 2 pi/N of the parity oscillation. ``machine`` carries the
-    table, the level and the option objects (a bare ``Device`` is wrapped in a default machine); the 0.1.0 ``run_kwargs``
-    are still accepted, each rewritten onto the machine with a deprecation warning; ``keep_final_state`` is forced on for
-    the populations run (the exact register fidelity)."""
+    """The GHZ benchmark on ``qubits`` (two or more), every point a ``Machine.run`` of ``shots``; the analysis phases
+    default to eight over one parity period 2 pi/N. A bare ``Device`` (wrapped in a default machine) and legacy
+    ``run_kwargs`` are accepted with a deprecation warning."""
     m = machine_with_run_kwargs(
         machine, run_kwargs, caller="qutip_trap.benchmarks.ghz.ghz_fidelity", stacklevel=2, call_keywords=True
     )

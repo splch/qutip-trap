@@ -1,17 +1,6 @@
-"""Background-gas collisions as a discrete event process (PLAN.md Section 6.7, Section 6.1 route (e); M7).
-
-Langevin capture (the ion-induced-dipole collision that dominates for a neutral of polarizability alpha_p): the rate
-coefficient k_L = (e/(2 eps_0)) sqrt(alpha_SI/mu_r) with alpha_SI = 4 pi eps_0 alpha_vol (alpha_vol the polarizability
-volume) and mu_r the reduced mass, independent of the collision energy; the rate per ion is Gamma_L = sum_s n_s k_L,s with
-n_s = f_s p/(k_B T) (``check_collisions.py``: H2 at 1e-11 torr and 300 K on 171Yb+ gives k_L = 1.48e-9 cm^3/s,
-n = 3.22e5 cm^-3, Gamma_L = 4.78e-4 s^-1 per ion, one event per 35 minutes per ion). The polarizability volumes are
-textbook values (CRC Handbook) **[background]**; the outcome distribution conditional on a collision (heating kick,
-reorder, loss, dark ion) is a device input, because no source quantifies it (Section 6.7).
-
-Per shot the event count is Poisson with mean N Gamma_L T_shot; the event time is uniform in the shot; the run
-(``run/job.py``) turns the outcome into a herald, a discarded shot, a permuted ion order or a dark/lost flag that
-persists for every later shot (Appendix E ``RunState``).
-"""
+"""Background-gas collisions as a discrete event process: per ion and shot a Poisson number of Langevin-capture events
+at Gamma_L = sum_s n_s k_L,s, uniform in time, with an outcome distribution (heating kick, reorder, loss, dark ion) that
+is a device input."""
 
 from __future__ import annotations
 
@@ -38,7 +27,7 @@ POLARIZABILITY_VOLUME_M3: dict[str, float] = {
     "Ar": 1.64e-30,
     "CH4": 2.59e-30,
 }
-"""Static polarizability volumes (m^3 = 1e-30 x A^3), CRC Handbook of Chemistry and Physics [background]."""
+"""Static polarizability volumes in m^3 (1 A^3 = 1e-30 m^3), from the CRC Handbook of Chemistry and Physics."""
 
 GAS_MASS_U: dict[str, float] = {
     "H2": 2.016,
@@ -54,7 +43,7 @@ GAS_MASS_U: dict[str, float] = {
 
 
 def langevin_rate_coefficient_m3_s(alpha_volume_m3: float, ion_mass_kg: float, gas_mass_kg: float) -> float:
-    """k_L = (e/(2 eps_0)) sqrt(4 pi eps_0 alpha_vol/mu_r), m^3/s (Section 6.7)."""
+    """Langevin rate coefficient k_L = (e/(2 eps_0)) sqrt(4 pi eps_0 alpha_vol/mu_r) in m^3/s."""
     if alpha_volume_m3 <= 0.0 or ion_mass_kg <= 0.0 or gas_mass_kg <= 0.0:
         raise ValueError("polarizability volume and masses are positive")
     mu = ion_mass_kg * gas_mass_kg / (ion_mass_kg + gas_mass_kg)
@@ -67,7 +56,7 @@ def number_density_per_m3(pressure_pa: float, temperature_k: float) -> float:
 
 
 def collision_rate_per_ion(collisions: Collisions, ion_mass_kg: float) -> float:
-    """Gamma_L = sum_s f_s n k_L,s per ion in s^-1 for the configured gas mixture and pressure."""
+    """Gamma_L = sum_s f_s n k_L,s in s^-1 per ion for the configured gas mixture (KeyError for an untabulated gas)."""
     n = number_density_per_m3(collisions.pressure_pa, collisions.temperature_k)
     total = 0.0
     for gas, fraction in collisions.gas.items():
@@ -83,13 +72,8 @@ def collision_rate_per_ion(collisions: Collisions, ion_mass_kg: float) -> float:
 
 
 def mean_kick_energy_j(collisions: Collisions, ion_mass_kg: float) -> float:
-    """<E_kick> = k_B T (m_gas/m_ion) x multiplier, Section 6.7's "the neutral's thermal energy times the mass ratio".
-
-    The gas mixture's mass is its partial-pressure-weighted mean. The mass ratio is the fraction of the neutral's kinetic
-    energy an elastic head-on collision transfers to a much heavier ion in the small-mass-ratio limit (4 m_g m_i/(m_g +
-    m_i)^2 -> 4 m_g/m_i, whose orientation average over impact parameters is of order m_g/m_i); the plan states the scale,
-    not the O(1) coefficient, so the coefficient is 1 and ``kick_scale_multiplier`` is the device's handle on it.
-    """
+    """<E_kick> = k_B T (m_gas/m_ion) x ``kick_scale_multiplier``, m_gas the partial-pressure-weighted mean; the O(1)
+    prefactor of this mass-ratio scale is unknown, hence the multiplier."""
     if ion_mass_kg <= 0.0:
         raise ValueError("the ion mass is positive")
     if not collisions.gas:
@@ -99,11 +83,7 @@ def mean_kick_energy_j(collisions: Collisions, ion_mass_kg: float) -> float:
 
 
 def mean_kick_quanta(collisions: Collisions, ion_mass_kg: float, mode_omega_rad_s: float) -> float:
-    """<delta nbar> = <E_kick>/(hbar omega_m): the mean number of quanta a kick adds to a mode of that frequency.
-
-    Section 6.7's "tens to thousands of quanta": H2 at 300 K on 171Yb+ gives k_B T (2.016/171) = 4.9e-23 J, which is
-    2.3e3 quanta of a 3 MHz mode (``tests/test_m7_collisions_physics.py``).
-    """
+    """<delta nbar> = <E_kick>/(hbar omega_m): the mean number of quanta a kick adds to a mode of that frequency."""
     if mode_omega_rad_s <= 0.0:
         raise ValueError("the mode frequency is positive")
     return mean_kick_energy_j(collisions, ion_mass_kg) / (HBAR_J_S * mode_omega_rad_s)
@@ -112,7 +92,7 @@ def mean_kick_quanta(collisions: Collisions, ion_mass_kg: float, mode_omega_rad_
 def sample_kick_quanta(
     rng: np.random.Generator, collisions: Collisions, ion_mass_kg: float, mode_omega_rad_s: float
 ) -> float:
-    """One draw of the kick's added nbar on a mode, from the configured ``kick_distribution`` at the Section 6.7 scale."""
+    """One draw of the nbar a kick adds to a mode, from the configured ``kick_distribution``."""
     mean = mean_kick_quanta(collisions, ion_mass_kg, mode_omega_rad_s)
     if mean <= 0.0:
         return 0.0
@@ -125,11 +105,8 @@ def sample_kick_quanta(
 def sample_reorder(
     rng: np.random.Generator, collisions: Collisions, order: Sequence[int], ion: int
 ) -> tuple[int, ...]:
-    """The permuted ion order after a reorder event (Section 6.7).
-
-    With ``reorder_permutations`` configured, one is drawn uniformly and applied as ``new[k] = order[perm[k]]``; without
-    one, the adjacent transposition at the struck ion is used, which is the single swap a marginal Langevin kick makes.
-    """
+    """The ion order after a reorder event: a ``reorder_permutations`` entry drawn uniformly, new[k] = order[perm[k]],
+    else the struck ion swapped with the next one in the order (the previous one at the end)."""
     current = list(order)
     perms = [p for p in collisions.reorder_permutations if len(p) == len(current)]
     if perms:
@@ -144,12 +121,10 @@ def sample_reorder(
 
 @dataclass(frozen=True)
 class CollisionEvent:
-    """One background-gas collision within a shot (Section 6.7): when it happened (seconds from the start of the preparation),
-    which ion it hit, and its outcome, ``heating_kick``, ``reorder``, ``loss`` or ``dark_ion``; the run turns it into a
-    herald, a discarded shot, a permuted ion order or a dark/lost flag that persists for every later shot."""
+    """One background-gas collision within a shot: its time, the ion it hit and its outcome."""
 
     time_s: float
-    """Time within the shot (0 = the start of the preparation)."""
+    """Seconds from the start of the shot's preparation."""
     ion: int
     outcome: Outcome
 
@@ -157,8 +132,8 @@ class CollisionEvent:
 def sample_collisions(
     rng: np.random.Generator, collisions: Collisions, rates_per_ion: dict[int, float], duration_s: float
 ) -> tuple[CollisionEvent, ...]:
-    """The collision events of one shot of length ``duration_s``: Poisson per ion at its rate, uniform times, outcomes from
-    the configured conditional distribution; sorted in time."""
+    """The collision events of one shot of ``duration_s``, sorted in time: a Poisson count per ion at its rate (s^-1),
+    uniform times, outcomes drawn from ``outcome_probabilities`` (``heating_kick`` when none is configured)."""
     outcomes = list(collisions.outcome_probabilities)
     probs = np.array([collisions.outcome_probabilities[o] for o in outcomes], dtype=float)
     events: list[CollisionEvent] = []

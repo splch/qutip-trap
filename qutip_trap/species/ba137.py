@@ -1,33 +1,17 @@
-"""137Ba+ species table (PLAN.md Sections 3.2, 4.3.2; Appendix E) - COMPLETE (I = 3/2).
+"""137Ba+ species table (I = 3/2).
 
-PLAN.md names 137Ba+ as a preset and stores Ozeri's Table I P -> D branching (f^-1 = 3) for it; no
-hyperfine constant, lifetime or g factor for this isotope appears in the plan. The M0a fix pass of
-2026-09-08 added the ones the literature supplies: Blatt and Werth 1982 for A(6s), Villemoes et al. 1993
-for the 6p constants, Lewty et al. 2013 for the 5d constants (which supersede Silverans et al. 1986 by
-about 1000x and correct the same authors' two earlier Opt. Express papers), and the Barrett group's
-lifetimes and branching fractions. It still raised for want of a ground-state g_J.
-
-The species-gaps pass of the same day closed that: the measured g_J(6s 2S1/2) = 2.00249192(3) of Marx,
-Tommaseo and Werth 1998 exists and is a factor 40 better than the 2.0024906 of Hubrich et al. 1991 that
-still circulates. Two D-state g_J had also been read off the NIST ASD Lande column (0.79 and 1.12); a
-direct re-query of ASD confirms the transcription was faithful but the 1.12 is ASD's OWN error, 6.7% from
-four independent determinations of the same quantity, so both are replaced by the measured
-g_J(5d 2D3/2) = 0.7993278(3) (Knoell et al. 1996) and g_J(5d 2D5/2) = 1.20036739(24) (Arnold et al. 2020)
-and kept beside them as ``*_g_J_asd`` cross-checks tagged ``contested``. All three measured g factors come
-from OTHER Ba+ isotopes (138Ba+, 135Ba+) and are applied here as isotope-independent to their quoted
-precision, which is the field's stated expectation and not a measurement on 137Ba+; that assumption is
-what ``_OPEN`` and the ledger record ``anchor.species.ba_g_factors`` carry. The record now BUILDS -- and
-PLAN.md prints no Section 9.13 clock-point anchor for it, so nothing published pins the result.
+The measured g_J of 6s 2S1/2, 5d 2D3/2 and 5d 2D5/2 come from 138Ba+ and 135Ba+ and are taken as isotope-independent;
+the 6p g_J are the LS Lande values. The qubit pair is this package's choice: no published clock point pins it.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited
 from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
+    Cited,
     IncompleteSpeciesTable,
     MissingConstant,
     energy_hz,
@@ -323,7 +307,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 REQUIRED: dict[str, str] = {
     "ba137.mass_atomic_u": "relative atomic mass of the neutral atom",
@@ -351,7 +335,7 @@ REQUIRED: dict[str, str] = {
     "ba137.P12.energy_cm": "6p 2P1/2 level energy",
     "ba137.P32.energy_cm": "6p 2P3/2 level energy",
 }
-"""The constants ``species()`` needs, so that :data:`MISSING` is DERIVED from :data:`TABLE` (audit item E21)."""
+"""The ids ``species()`` needs, each with a description; :data:`MISSING` is derived from it."""
 
 _CONSULT: dict[str, str] = {}
 
@@ -385,11 +369,11 @@ _OPEN: tuple[MissingConstant, ...] = (
         "137Ba+ counterpart to pin",
     ),
 )
-"""Gaps that are DECLARED but do not block the build: the record uses a documented substitute for each."""
+"""Declared gaps that do not block the build (the record uses a substitute for each)."""
 
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 137Ba+, built from :data:`TABLE` alone."""
+    """The ``Species`` record for 137Ba+, built from :data:`TABLE` alone."""
     if MISSING:
         raise IncompleteSpeciesTable(NAME, MISSING)
     t = TABLE
@@ -465,12 +449,7 @@ def species() -> Species:
         mu_I_nuclear_magnetons=t["ba137.mu_I_nuclear_magnetons"].value,
         levels=(s12, d32, d52, p12, p32),
         transitions=transitions,
-        # PLAN.md prints no 137Ba+ qubit, field-independent point or laser set (see _OPEN), so the DECLARED
-        # choice is the mF = 0 <-> mF = 0 ground-state hyperfine pair, which carries no first-order Zeeman
-        # shift as B -> 0, with the Ba+ scheme the plan does state for 133Ba+ (8.1, 8.4): 493.5 nm cycling
-        # through P1/2, 649.9 and 614.3 nm repumps, shelving through P3/2 at 455.5 nm. F = 1 comes FIRST
-        # because A(6s) > 0 here puts it BELOW F = 2, and every table lists the lower state first (the
-        # opposite order from 43Ca+ and 9Be+, whose multiplets are inverted)
+        # a declared choice: the mF = 0 pair, lower state first (A > 0 puts F = 1 below F = 2)
         qubit=("S1/2 F=1 mF=0", "S1/2 F=2 mF=0"),
         cycling="S1/2-P1/2",
         repumps=("D3/2-P1/2", "D5/2-P3/2"),

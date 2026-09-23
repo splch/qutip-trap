@@ -1,8 +1,5 @@
-"""Bibliographic sources cited by the species tables (PLAN.md Section 15 and Appendix D).
-
-Keys are what ``Cited.source`` and ``Level.citations`` / ``Transition.citations`` carry. Where PLAN.md
-names a source only loosely ("Pinnington et al."), the entry says so rather than inventing a locator.
-"""
+"""Bibliographic sources cited by the species tables, keyed as ``Cited.source`` and ``Level.citations`` /
+``Transition.citations`` carry them."""
 
 from __future__ import annotations
 
@@ -141,7 +138,6 @@ SOURCES: Final[dict[str, str]] = {
         "D. A. Steck, Quantum and Atom Optics (revision 0.16.10, 27 June 2026) and the alkali D-line data notes; "
         "the convention source of PLAN.md Section 4.5 and Section 13."
     ),
-    # ---- primary literature added by the M0a fix pass of 2026-09-07 (audit items E4, E6, E24, E25) ----
     "Pinnington1997": (
         "E. H. Pinnington, G. Rieger, J. A. Kernahan, Beam-laser measurements of the lifetimes of the 6p levels "
         "in Yb II, Phys. Rev. A 56, 2421 (1997); doi:10.1103/PhysRevA.56.2421. tau(6p 2P1/2) = 8.07(9) ns and "
@@ -247,7 +243,6 @@ SOURCES: Final[dict[str, str]] = {
         "the 5p 2P1/2 state of 88Sr+, Phys. Rev. A 93, 052507 (2016): p(S1/2) = 0.9449(5) as PUBLISHED (the "
         "arXiv:1511.07686 preprint prints 0.9453(+7/-5); the published value is the one NIST ASD uses)."
     ),
-    # ---- 43Ca+, 9Be+, 25Mg+ and Ba+ primaries added by the M0a fix pass of 2026-09-07 (M0 bullet 6) ----
     "Arbes1994": (
         "F. Arbes, M. Benzing, T. Gudjons, F. Kurth, G. Werth, Precise determination of the ground state "
         "hyperfine structure splitting of 43Ca II, Z. Phys. D 31, 27 (1994); doi:10.1007/BF01426573. "
@@ -441,7 +436,6 @@ SOURCES: Final[dict[str, str]] = {
         "N. Yu, W. Nagourney, H. Dehmelt, Radiative lifetime measurement of the Ba+ metastable D3/2 state, "
         "Phys. Rev. Lett. 78, 4898 (1997): tau(5d 2D3/2) = 79.8(4.6) s."
     ),
-    # ---- the three measured Ba+ Lande g factors, added by the species-gaps pass of 2026-09-08 ----
     "Marx1998": (
         "G. Marx, G. Tommaseo, G. Werth, Precise g_J- and g_I-factor measurements of Ba+ isotopes, "
         "Eur. Phys. J. D 4, 279 (1998); doi:10.1007/s100530050210: g_J(6s 2S1/2) = 2.00249192(3), MEASURED "
@@ -485,7 +479,7 @@ SOURCES: Final[dict[str, str]] = {
         "Auchter, Jayakumar, Williams, Blinov, Fortson, Phys. Rev. A 88, 025401 (2013), arXiv:1306.3518 "
         "measured the same quantity earlier as 1.200372(4)stat(7)sys."
     ),
-    # ---- databases, retrieved for this table on 2026-09-04 ----
+    # ---- databases ----
     "NIST_ASD_5_12": (
         "A. Kramida, Yu. Ralchenko, J. Reader, and NIST ASD Team (2024), NIST Atomic Spectra Database (ver. 5.12), "
         "energy-level tables, https://physics.nist.gov/asd, retrieved 2026-09-04. Level energies in cm^-1 and, "
@@ -498,7 +492,7 @@ SOURCES: Final[dict[str, str]] = {
         "Evaluation; the edition was not read from the page)."
     ),
     "CODATA2022_scipy": "CODATA 2022 recommended values via scipy.constants (SciPy 1.18.1); see qutip_trap.units.",
-    # ---- the plan itself, where it carries a value without naming the primary source ----
+    # ---- values carried without a named primary source ----
     "PLAN_4_5_1": (
         "PLAN.md Section 4.5.1 (this repository): the value is used there and in Section 13 without a named "
         "primary source; it stands until a primary citation is added."

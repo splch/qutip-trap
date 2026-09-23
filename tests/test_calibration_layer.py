@@ -298,17 +298,12 @@ def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  
 # ---- Device.derived() -----------------------------------------------------------------------------------------------------------------
 
 
-def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -> None:  # type: ignore[no-untyped-def]
-    from qutip_trap.provenance import load_ledger
+def test_device_derived_reports_the_calibration_seeds(two_ion) -> None:  # type: ignore[no-untyped-def]
     from tests.m2_fixtures import single_ion_raman_device
 
     fx, sur = two_ion
-    ledger = load_ledger()
     d = fx.device.derived()
     assert set(d.values) == set(d.provenance)
-    assert all(pid in ledger for pid in d.provenance.values()), sorted(
-        set(d.provenance.values()) - set(ledger)
-    )
     assert d.values["qubit_freq_hz[0]"] == pytest.approx(sur.table.qubit_freq[0].value)
     assert d.values["mode_hz[3]"] == pytest.approx(sur.table.modes[3].value)
     assert d.values["R_bright_per_s[0]"] > 1e6

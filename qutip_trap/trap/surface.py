@@ -1,28 +1,10 @@
-"""Electrode geometry: gapless-plane surface-electrode traps and the rod/blade map (PLAN.md Section 4.1.6; 13; M1).
+"""Electrode geometry: gapless-plane surface-electrode traps (House 2008) and the rod/blade parameters.
 
-Coordinates: the substrate is the plane y = 0, y is the height above it, z is the trap axis (along the rf
-rails, the axial direction of the crystal module) and x the in-plane transverse coordinate; House 2008's
-(x, y) transverse plane is this one. Every electrode is a set of INFINITE STRIPS along z, {x1 < x < x2}, or of
-finite RECTANGLES {x1 < x < x2, z1 < z < z2}; gaps have zero width and the plane outside the electrodes is
-grounded (House 2008, Wesenberg 2008), and finite gaps and thickness are outside the first release, which is
-why ``Electrodes.parameters`` also accepts externally solved dc curvatures.
-
-Conventions (Section 13, row "Surface-electrode geometry"): widths from gap centre to gap centre (second-order
-accuracy in the gap); the ion at the minimum of the TOTAL potential, not at the rf null; the escape point a
-saddle, found for the strip model from the algebraic condition f''(w) = 0 (a polynomial of degree 2(K - 1) in
-the K finite edges, degree six for two rails) rather than by a search constrained to x = x0; the unit-voltage
-basis functions Theta = phi/V stored dimensionless with sum_i Theta_i = 1 on the plane when every region has a
-strip; House's four-arctan rectangle on the principal branch of arctan, corners ordered, odd in the height. The
-five-wire null height is h = sqrt(a(a + 2b))/2 for FULL widths a (centre) and b (rails); the two-rail null is
-x0 = ac/(b + c), y0 = sqrt(abc(a + b + c))/(b + c) in House's coordinates (rails at -c < x < 0 and
-a < x < a + b), the null moving toward the narrower rail. The rf pseudopotential is exactly isotropic in the
-transverse plane at a two-dimensional rf null, so the transverse principal axes are set by the dc potential
-alone (Section 4.1.6).
-
-Strip potentials use the complex potential f(w) = (i/pi) sum_k sigma_k V_k ln(w - e_k), w = x + i y, with
-sigma = +1 at a left edge and -1 at a right edge (Wesenberg 2008); phi = Re f, E_x - i E_y = -f'(w), and
-d^m_x d^n_y phi = Re[i^n f^(m+n)], so every derivative is analytic. Rectangles use the closed-form gradient of
-the solid-angle potential and a complex-step derivative of that gradient for the Hessian (exact to round-off).
+The substrate is the plane y = 0, y the height, z the trap axis (along the rf rails), x the in-plane transverse
+coordinate. Electrodes are infinite strips {x1 < x < x2} along z or finite rectangles; gaps have zero width, widths run
+gap centre to gap centre, and the rest of the plane is grounded. Strips use the complex potential
+f(w) = (i/pi) sum_k sigma_k V_k ln(w - e_k), w = x + i y, sigma = +1 at a left edge and -1 at a right edge (Wesenberg
+2008), phi = Re f.
 """
 
 from __future__ import annotations
@@ -44,25 +26,15 @@ _CURVATURE_KEYS = ("dc_curvature_xx_v_per_m2", "dc_curvature_yy_v_per_m2", "dc_c
 
 @dataclass(frozen=True)
 class Electrodes:
-    """Electrode geometry; ``parameters`` are the named lengths of the layout in metres (and, for surface kinds,
-    optional externally solved dc curvatures in V/m^2).
+    """Electrode geometry; ``parameters`` are the layout's named lengths in metres, plus optional external traceless dc
+    curvatures ``dc_curvature_xx/yy/zz_v_per_m2`` (V/m^2) added to the dc Hessian at the null.
 
-    - ``rod_quadrupole`` and ``blade``: parameters ``R_m`` (radial scale R' ~ R), ``Z0_m`` (endcap scale), ``kappa``
-      (endcap efficiency) and optionally ``alpha`` (the rf geometry factor of Berkeland's phi_ac term); the dc
-      record carries the single endcap voltage U0 under any name.
-    - ``surface_five_wire``: ``a_m`` (centre electrode FULL width), ``b_m`` (right rail width), optional ``c_m``
-      (left rail width, default b): rf rails at -c < x < 0 and a < x < a + b, dc strips "centre" (0 < x < a),
-      "left" (x < -c) and "right" (x > a + b), all infinite along z.
-    - ``surface_four_wire``: ``a_m`` and ``c_m``: rails at -c < x < 0 and x > a (semi-infinite), dc "centre" and
-      "left".
-    - ``surface_general``: the layout is given explicitly by ``strips`` and ``rectangles``.
-
-    ``strips`` maps an electrode name to its x-intervals (``math.inf`` allowed for a semi-infinite strip),
-    ``rectangles`` maps a name to (x1, x2, z1, z2) patches; the parametric kinds may add either. The rf electrode
-    is the one named ``rf_name``. Externally solved dc curvatures ``dc_curvature_xx/yy/zz_v_per_m2`` (one set,
-    traceless, from an FEM solution of electrodes the strip model cannot represent, Section 4.1.6) add to the
-    dc Hessian at the null.
-    """
+    - ``rod_quadrupole``, ``blade``: ``R_m``, ``Z0_m``, ``kappa``, optional ``alpha``; the dc record holds the endcap U0.
+    - ``surface_five_wire``: ``a_m`` (centre full width), ``b_m``, optional ``c_m`` (default b): rf rails at -c < x < 0 and
+      a < x < a + b, dc strips "centre", "left", "right".
+    - ``surface_four_wire``: ``a_m``, ``c_m``: rails at -c < x < 0 and x > a, dc "centre" and "left".
+    - ``surface_general``: ``strips`` (name -> x-intervals) and ``rectangles`` (name -> (x1, x2, z1, z2)), which the
+      parametric kinds may also add; the rf electrode is ``rf_name``."""
 
     kind: Kind
     parameters: dict[str, float]
@@ -145,13 +117,8 @@ class Electrodes:
 
 
 def _edges(intervals: tuple[tuple[float, float], ...]) -> tuple[np.ndarray, np.ndarray]:
-    """The FINITE edges with their signs (+1 left, -1 right) of a strip set.
-
-    A semi-infinite edge contributes only an additive constant to the potential itself (arctan((x1 - x)/y) -> -pi/2,
-    i.e. +1/2 per infinite edge in units of V) and nothing to any derivative, so it carries no edge here. Every caller
-    is a derivative (the complex derivative of order >= 1, the rf null, the escape saddle), which is why the constant
-    is not returned: a caller that ever needs the potential must use ``strip_potential``, which handles +-inf directly.
-    """
+    """The finite edges of a strip set with their signs (+1 left, -1 right). An infinite edge adds only a constant to the
+    potential and nothing to its derivatives, so it is omitted: use ``strip_potential`` for the potential itself."""
     e: list[float] = []
     s: list[float] = []
     for x1, x2 in intervals:
@@ -191,10 +158,8 @@ def strip_derivative_xy(w: complex, intervals: tuple[tuple[float, float], ...], 
 
 
 def rectangle_potential(x: float, y: float, z: float, x1: float, x2: float, z1: float, z2: float) -> float:
-    """phi = (1/2pi) sum_{ij} (-1)^{i+j} arctan[(x_i - x)(z_j - z)/(y R_ij)] at unit voltage (House 2008), principal arctan.
-
-    Needs x1 < x2 and z1 < z2 (one swap negates the potential); odd in y (returns -phi below the plane).
-    """
+    """phi = (1/2pi) sum_{ij} (-1)^{i+j} arctan[(x_i - x)(z_j - z)/(y R_ij)] at unit voltage (House 2008), principal arctan;
+    needs x1 < x2 and z1 < z2, and is odd in y."""
     tot = 0.0
     for i, xi in enumerate((x1, x2)):
         for j, zj in enumerate((z1, z2)):
@@ -242,10 +207,8 @@ def rectangle_hessian(x: float, y: float, z: float, x1: float, x2: float, z1: fl
 
 
 class GaplessPlaneTrap:
-    """Unit-voltage basis functions Theta_k(r) of every electrode of a gapless-plane layout and what follows from them.
-
-    Positions are laboratory (x, y, z) triples in metres with y the height. All potentials are per volt.
-    """
+    """Unit-voltage basis functions Theta_k(r) of a gapless-plane layout's electrodes and what follows from them; positions
+    are laboratory (x, y, z) in metres, y the height."""
 
     def __init__(self, electrodes: Electrodes) -> None:
         if not electrodes.is_surface:
@@ -329,7 +292,6 @@ class GaplessPlaneTrap:
                     hp += rectangle_hessian(rp[0], rp[1], rp[2], x1, x2, z1, z2)
                     hm += rectangle_hessian(rm[0], rm[1], rm[2], x1, x2, z1, z2)
                 t[:, :, axis] += (hp - hm) / (2.0 * h)
-            # symmetrize
             t = (
                 t
                 + t.transpose(0, 2, 1)
@@ -341,7 +303,7 @@ class GaplessPlaneTrap:
         return t
 
     def sum_of_basis(self, r: np.ndarray) -> float:
-        """sum_i Theta_i(r): 1 on the electrode plane when every region is assigned a strip (Section 13)."""
+        """sum_i Theta_i(r): 1 on the electrode plane when every region is assigned a strip."""
         return sum(self.potential(n, r) for n in self.names)
 
     # -- rf --
@@ -404,15 +366,8 @@ class GaplessPlaneTrap:
         return min(xs), max(xs), (0.5 * (min(zs) + max(zs)) if zs else 0.0)
 
     def _null_seed(self, n: int = 61) -> np.ndarray:
-        """The best point of a coarse (x, y) grid inside the rf electrode's transverse span, as a Newton seed.
-
-        |E_rf| falls to zero both at the null and at infinity, so a search seeded from a single point above the
-        electrodes runs away upward (the Newton step follows the decaying tail) and a global minimum over an unbounded
-        grid is the far corner. The seed is therefore taken from a BOUNDED box: x across the rf electrode's own finite
-        edges and y log-spaced over 0.02 to 1 times that span, at the axial centre of the rf patches - a surface trap's
-        null sits at a height of order the electrode widths (House 2008). A caller with a better estimate passes
-        ``guess`` to ``rf_null``.
-        """
+        """A Newton seed: the best point of a bounded (x, y) grid over the rf electrode's span (|E_rf| also vanishes at
+        infinity), y log-spaced from 0.02 to 1 times the span."""
         x_lo, x_hi, z_c = self._rf_extent()
         span = x_hi - x_lo
         if span <= 0.0:
@@ -428,14 +383,8 @@ class GaplessPlaneTrap:
         return best_r
 
     def escape_point(self, null: np.ndarray | None = None) -> np.ndarray:
-        """The saddle of |E_rf|^2 above the plane (the pseudopotential escape point).
-
-        Strip rf electrodes take the algebraic route: where E != 0 the critical points of |f'|^2 are the zeros of f''
-        (Section 13, "escape point a saddle from G'(Z) = 0"), a polynomial of degree 2(K - 1) in the K finite edges, and
-        the escape point is the upper-half-plane zero of lowest pseudopotential. Rectangles (a segmented trap) take the
-        numerical route of ``_escape_saddle_numeric``; PLAN 4.1.6 requires h and the trap depth to be reported with
-        every device that uses this module, so a segmented trap cannot be left without one.
-        """
+        """The saddle of |E_rf|^2 above the plane (the pseudopotential escape point). For strip rf electrodes it is the
+        upper-half-plane zero of f'' of lowest pseudopotential; layouts with rectangles take ``_escape_saddle_numeric``."""
         if not self.translation_invariant:
             return self._escape_saddle_numeric(null)
         e, s = _edges(self.strips[self.electrodes.rf_name])
@@ -457,16 +406,9 @@ class GaplessPlaneTrap:
         return np.asarray(-2.0 * (self.rf_hessian_unit(r) @ self.rf_field_unit(r)), dtype=float)
 
     def _escape_saddle_numeric(self, null: np.ndarray | None = None) -> np.ndarray:
-        """The escape saddle of Psi ~ |E_rf|^2 for a layout with rectangles, by a bracketed climb plus Newton.
-
-        Psi is 0 at the rf null, rises with height and decays as the field does, so d Psi/dy has exactly one sign change
-        on the vertical line above the null: that root is the escape height (and the escape point itself for a layout
-        mirror-symmetric about that line). A Newton step on grad Psi = 0 with a finite-difference Jacobian and a
-        least-squares solve (a long rail leaves the axial row of the Jacobian near zero, as in ``rf_null``) then moves
-        it off the line when the layout is not symmetric. The result is accepted only if the Hessian of Psi there has
-        exactly ONE negative eigenvalue - a saddle, which is what an escape point is (Section 13); a maximum finder
-        would return the wrong point, the error the 2026-09-04 critique flagged for the strip route.
-        """
+        """The escape saddle of Psi ~ |E_rf|^2 for a layout with rectangles: the sign change of d Psi/dy on the vertical
+        line above the null, refined by Newton on grad Psi = 0 (least squares, finite-difference Jacobian). Accepted only
+        if Psi's Hessian there has exactly one negative eigenvalue."""
         r0 = self.rf_null() if null is None else np.asarray(null, dtype=float)
         y0 = float(r0[1])
         if y0 <= 0.0:
@@ -487,8 +429,7 @@ class GaplessPlaneTrap:
             raise ValueError("Psi does not turn over above the rf null: the layout has no bounded depth")
         y_e = float(brentq(dpsi_dy, lo, hi, xtol=1e-14 * y0, rtol=1e-15))
         r = np.array([r0[0], y_e, r0[2]])
-        # Newton on grad Psi = 0 with a finite-difference Jacobian (grad Psi already needs the Hessian, so its
-        # derivative is a third derivative and is taken numerically)
+        # grad Psi already needs the Hessian, so its Jacobian (a third derivative) is taken by finite differences
         step_h = 1e-6 * y0
         for _ in range(50):
             g = self._grad_psi_unit(r)
@@ -525,13 +466,8 @@ class GaplessPlaneTrap:
     # -- dc --
 
     def dc_potential(self, r: np.ndarray, voltages: dict[str, float]) -> float:
-        """The full static potential in volts: the named electrodes plus the externally solved dc curvature.
-
-        The external quadratic term (1/2)(r - r_null) . H_ext . (r - r_null) is part of the dc potential exactly as
-        ``dc_field`` and ``dc_hessian`` treat it; leaving it out here made this the one dc accessor that returned an
-        incomplete potential (``total_energy_j`` used to add the quadratic term back itself, which is why the assembled
-        trap was still consistent).
-        """
+        """The full static potential in volts: the named electrodes plus the external dc curvature term
+        (1/2)(r - r_null) . H_ext . (r - r_null)."""
         tot = 0.0
         for name, v in voltages.items():
             if name == self.electrodes.rf_name or v == 0.0:
@@ -583,7 +519,7 @@ class GaplessPlaneTrap:
         stray_field_v_per_m: np.ndarray | None = None,
         charge: int = 1,
     ) -> float:
-        """Psi + Q Phi_dc - Q E_stray . (r - r_null): the ion sits at its minimum, not at the rf null (Section 13)."""
+        """Psi + Q Phi_dc - Q E_stray . (r - r_null): the ion sits at its minimum, not at the rf null."""
         u = self.pseudopotential_j(r, v_rf_peak_v, mass_kg, omega_rf_rad_s, charge=charge)
         u += charge * E_C * self.dc_potential(r, voltages)  # the external dc curvature is inside dc_potential
         d = np.asarray(r, dtype=float) - self.rf_null()
@@ -629,7 +565,7 @@ class GaplessPlaneTrap:
         charge: int = 1,
     ) -> np.ndarray:
         """Hess U = (Q^2 V^2/(2 m Omega^2)) [H_rf^2 - sum_c E_u,c T_abc] + Q H_dc + Q ext (T the third derivatives of Theta_rf);
-        at the rf null the second term vanishes and this is the pseudopotential-route secular matrix (Section 4.1.6)."""
+        at the rf null the second term vanishes and this is the pseudopotential-route secular matrix."""
         r = np.asarray(r, dtype=float)
         qe = charge * E_C
         h_rf = self.rf_hessian_unit(r)
@@ -692,12 +628,8 @@ def minimum_norm_dc_voltages(
     curvature_zz_v_per_m2: float,
     at: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """House 2008 Eq. 30: the minimum-norm voltages that give a chosen axial curvature with zero field at the null.
-
-    Minimize sum_i V_i^2 subject to sum_i V_i grad Theta_i(r) = 0 (no stray field, hence no excess micromotion) and
-    sum_i V_i d^2 Theta_i/dz^2(r) = curvature; a linear system solved by the pseudo-inverse (equivalently Lagrange
-    multipliers) that needs at least four independent electrodes.
-    """
+    """House 2008 Eq. 30: the minimum-norm dc voltages giving axial curvature ``curvature_zz_v_per_m2`` with zero field at
+    the null (by the pseudo-inverse; at least four electrodes)."""
     r = model.rf_null() if at is None else np.asarray(at, dtype=float)
     if len(names) < 4:
         raise ValueError(
@@ -713,27 +645,19 @@ def minimum_norm_dc_voltages(
     return {n: float(x) for n, x in zip(names, v)}
 
 
-# ---- closed forms of House 2008, Nizamani 2012, Wesenberg 2008 (Section 4.1.6) ---------------------------------------------
+# ---- closed forms of House 2008, Nizamani 2012, Wesenberg 2008 -------------------------------------------------------------
 
 
 def five_wire_null_height_m(a_m: float, b_m: float) -> float:
-    """h = sqrt(a(a + 2b))/2 for FULL widths a (centre) and b (rails) (House 2008; PLAN.md M1 tests).
-
-    The first version of the plan wrote sqrt(a(a + b)), the same formula with a as a half-width, unstated
-    (caught by the 2026-09-04 critique); ``check_surface_mixed.py`` gives y0 = 0.921954 for a = 1, b = 1.2.
-    """
+    """h = sqrt(a(a + 2b))/2 for full widths a (centre) and b (rails) (House 2008)."""
     if a_m <= 0.0 or b_m <= 0.0:
         raise ValueError("widths must be positive")
     return math.sqrt(a_m * (a_m + 2.0 * b_m)) / 2.0
 
 
 def two_rail_null(a_m: float, b_m: float, c_m: float) -> tuple[float, float]:
-    """(x0, y0) = (ac/(b + c), sqrt(abc(a + b + c))/(b + c)) for rails at -c < x < 0 and a < x < a + b (House Eqs. 24-27).
-
-    The null moves toward the narrower rail by a|b - c|/(2(b + c)); Nizamani and Hensinger's x0 = ac/(b + c) under a
-    figure with mirrored rail labels reads ab/(b + c) in their own labelling (Section 4.1.6), the reason this module
-    stores edges rather than widths.
-    """
+    """(x0, y0) = (ac/(b + c), sqrt(abc(a + b + c))/(b + c)) for rails at -c < x < 0 and a < x < a + b (House Eqs. 24-27);
+    the null moves toward the narrower rail."""
     if min(a_m, b_m, c_m) <= 0.0:
         raise ValueError("widths must be positive")
     return a_m * c_m / (b_m + c_m), math.sqrt(a_m * b_m * c_m * (a_m + b_m + c_m)) / (b_m + c_m)
@@ -755,12 +679,8 @@ def five_wire_depth_j(
 
 
 def nizamani_kappa(a_m: float, b_m: float, c_m: float) -> float:
-    """kappa = [2 sqrt(abc(a+b+c))/((2a+b+c)(2a+b+c+2 sqrt(a(a+b+c))))]^2 of Xi = e^2 V^2 kappa/(pi^2 m Omega^2 y0^2).
-
-    Algebraically House's Eq. 29 for c = b (Section 4.1.6); for c != b it extrapolates a formula House derived for
-    equal rails, so the module's numerical saddle is the reference there. Its maximum over b/a at fixed ion height
-    is (5 sqrt 5 - 11)/8 = 0.0225425, the geometry-independent bound.
-    """
+    """kappa = [2 sqrt(abc(a+b+c))/((2a+b+c)(2a+b+c+2 sqrt(a(a+b+c))))]^2 of Xi = e^2 V^2 kappa/(pi^2 m Omega^2 y0^2):
+    House's Eq. 29 for c = b, an extrapolation for c != b (where the numerical saddle is the reference)."""
     s = 2.0 * a_m + b_m + c_m
     return (
         2.0
@@ -770,8 +690,7 @@ def nizamani_kappa(a_m: float, b_m: float, c_m: float) -> float:
 
 
 KAPPA_MAX: float = (5.0 * math.sqrt(5.0) - 11.0) / 8.0
-"""The maximal depth coefficient at fixed ion height, House's four-wire 1/(2(11 + 5 sqrt 5)) = Wesenberg's optimal
-quadrupole bound = the numerical maximum for every rail ratio (Section 4.1.6)."""
+"""The maximal depth coefficient at fixed ion height (House 2008; Wesenberg's optimal quadrupole bound)."""
 
 
 def depth_optimal_b_over_a() -> float:
@@ -783,11 +702,8 @@ def depth_optimal_b_over_a() -> float:
 def nizamani_q(
     v_rf_peak_v: float, mass_kg: float, omega_rf_rad_s: float, height_m: float, *, charge: int = 1
 ) -> float:
-    """Nizamani and Hensinger's rf stability factor q_N = 2 e V_rf/(m Omega^2 h^2), normalized by the ion height.
-
-    NOT the trap's Mathieu q (Section 4.1.6): it exceeds the principal-axis q = sqrt(Q11^2 + Q12^2) by a geometry-set
-    factor (3.2002 for their own trap) and must never enter omega = q Omega/(2 sqrt 2) or a stability boundary.
-    """
+    """Nizamani and Hensinger's rf stability factor q_N = 2 e V_rf/(m Omega^2 h^2), normalized by the ion height; not the
+    trap's Mathieu q, so it must never enter omega = q Omega/(2 sqrt 2) or a stability boundary."""
     return 2.0 * charge * E_C * v_rf_peak_v / (mass_kg * omega_rf_rad_s**2 * height_m**2)
 
 

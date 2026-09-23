@@ -1,23 +1,7 @@
-"""The Section 4.2.8 (vii) validity conditions as run-time assertions (PLAN.md Section 4.2.8; milestone M3).
+"""Validity conditions of the cooling closed forms and rate models, asserted at run time.
 
-Section 4.2.8 (vii) lists the conditions "the module asserts at run time rather than documents":
-
-    eta_ij^2 (2 n + 1) << 1 per transition including the emitted photon, Omega << Gamma for every closed form,
-    the cooling rate W << nu and W << every internal rate for the adiabatic elimination, Gamma', gamma' << nu for
-    resolved sidebands and Gamma > omega_R for Doppler cooling, s_aux << 1 and |delta_aux| << Gamma_10 + Gamma_12
-    for the three-level reduction.
-
-Every one of them lives here as an ``assert_*`` that raises :class:`ValidityError` (a ``ValueError``, so the
-existing ``pytest.raises(ValueError)`` guards keep matching) with the measured ratio in the message, and every one
-takes an escape hatch keyword so a caller that deliberately probes the boundary - a source's own published fixture
-that violates its own regime, a saturation-error study, the algebraic normalization of a floor - says so explicitly
-instead of the guard being weakened for everybody. ``<<`` is taken as "below one tenth" throughout, except for the
-resolved-sideband condition, where :meth:`EffectiveTwoLevel.resolved` already fixed one fifth; the booleans the
-plan's report functions return (``EffectiveTwoLevel.resolved``, ``effective_two_level_valid``,
-``StageRates.lamb_dicke_guard``) are kept, so a caller can test a configuration without catching an exception.
-
-Section 13 symbol note: ``Gamma`` is the FULL (angular) linewidth and ``Omega`` the (hbar Omega/2)-convention Rabi
-frequency throughout, so ``Omega/Gamma`` here is sqrt(s/2) and not the saturation parameter itself.
+Each ``assert_*`` raises :class:`ValidityError` (a ``ValueError``) with the measured ratio unless its escape keyword is
+passed; ``<<`` means below ``SMALL`` (one tenth) unless a constant below says otherwise.
 """
 
 from __future__ import annotations
@@ -30,16 +14,10 @@ from qutip_trap.light.recoil import free_recoil_energy_j
 from qutip_trap.units import HBAR_J_S
 
 SMALL = 0.1
-"""The plan's "<<": a ratio below one tenth (the same number as ``bloch.WEAK_DRIVE_MAX``)."""
+"""The "<<" threshold: a ratio below one tenth (the same number as ``bloch.WEAK_DRIVE_MAX``)."""
 
 LAMB_DICKE_MAX = 0.25
-"""eta^2 (2 nbar + 1) above which the Lamb-Dicke expansion of Section 4.2.8 (i) is refused.
-
-Equivalently eta sqrt(2 nbar + 1) < 1/2: the exact carrier element e^{-eta^2/2} L_n(eta^2) = 1 - eta^2(n + 1/2) + ...
-then departs from its Lamb-Dicke value by under 12.5 %. This is the bound the plan's own anchors sit inside - the
-171Yb+ polarization-gradient triple reports eta sqrt(2 nbar + 1) = 0.09023 sqrt(21) = 0.413 (Section 9.15, so
-eta^2 (2 nbar + 1) = 0.171) and the nu = Gamma/20 Doppler fixtures 0.242 and 0.35 (Section 9.3, 0.059 and 0.123) -
-while a genuinely non-Lamb-Dicke configuration (eta sqrt(2 nbar + 1) of order 1) is refused."""
+"""eta^2 (2 nbar + 1) above which the Lamb-Dicke expansion is refused (the carrier element then errs by over 12.5 %)."""
 
 ADIABATIC_MAX = SMALL
 """W/nu and W/Gamma above which the adiabatic elimination behind the rate equation is refused."""
@@ -49,7 +27,7 @@ RESOLVED_MAX = 0.2
 
 
 class ValidityError(ValueError):
-    """A Section 4.2.8 (vii) validity condition of a closed form or rate model is violated."""
+    """A validity condition of a closed form or rate model is violated."""
 
 
 def assert_weak_drive(
@@ -60,7 +38,7 @@ def assert_weak_drive(
     what: str = "this closed form",
     maximum: float = WEAK_DRIVE_MAX,
 ) -> None:
-    """Omega << Gamma for every closed form (Section 4.2.8 vii); the saturation error is of order (Omega/Gamma)^2."""
+    """Omega << Gamma (Omega/Gamma = sqrt(s/2)) for every closed form; the saturation error is of order (Omega/Gamma)^2."""
     if allow_saturation:
         return
     if gamma_rad_s <= 0.0:
@@ -81,7 +59,7 @@ def assert_lamb_dicke(
     what: str = "the rate model",
     maximum: float = LAMB_DICKE_MAX,
 ) -> None:
-    """eta^2 (2 nbar + 1) << 1 per transition, the emitted photon included (Section 4.2.8 i, vii)."""
+    """eta^2 (2 nbar + 1) << 1 per transition, the emitted photon included."""
     if allow_strong_coupling:
         return
     if nbar < 0.0:
@@ -104,11 +82,7 @@ def assert_adiabatic(
     what: str = "the rate equation",
     maximum: float = ADIABATIC_MAX,
 ) -> None:
-    """W << nu and W << every internal rate: the adiabatic elimination behind the Fock rate equation (Section 4.2.8 vii).
-
-    ``internal_rates_rad_s`` is the build's ``level_rates_rad_s`` (or any iterable of decay rates); an empty set
-    checks W << nu alone.
-    """
+    """W << nu and W << every rate in ``internal_rates_rad_s``: the adiabatic elimination behind the Fock rate equation."""
     if allow_fast_cooling:
         return
     if nu_rad_s <= 0.0:
@@ -141,7 +115,7 @@ def assert_resolved(
     what: str = "the effective two-level system",
     maximum: float = RESOLVED_MAX,
 ) -> None:
-    """Gamma' << nu and gamma' << nu separately: resolved sidebands after the adiabatic elimination (Section 4.2.8 v, vii)."""
+    """Gamma' << nu and gamma' << nu separately: resolved sidebands after the adiabatic elimination."""
     if allow_unresolved:
         return
     if nu_rad_s <= 0.0:
@@ -157,7 +131,7 @@ def assert_resolved(
 def assert_resolved_linewidth(
     gamma_rad_s: float, nu_rad_s: float, *, allow_unresolved: bool = False, maximum: float = SMALL
 ) -> None:
-    """Gamma << nu: the resolved-sideband condition of the bare linewidth (Section 4.2.8 vii; Stenholm's floor regime)."""
+    """Gamma << nu: the resolved-sideband condition of the bare linewidth (the sideband-floor regime)."""
     if allow_unresolved:
         return
     if nu_rad_s <= 0.0:
@@ -177,7 +151,7 @@ def assert_three_level_valid(
     *,
     allow_invalid: bool = False,
 ) -> None:
-    """s_aux << 1 and |delta_aux| << Gamma_10 + Gamma_12: the three-level reduction of Marzoli Eqs. 12, 15 (Section 4.2.8 vii)."""
+    """s_aux << 1 and |delta_aux| << Gamma_10 + Gamma_12: the three-level reduction of Marzoli et al. 1994 Eqs. 12, 15."""
     if allow_invalid:
         return
     total = gamma_10_rad_s + gamma_12_rad_s
@@ -193,7 +167,7 @@ def assert_three_level_valid(
 
 
 def recoil_frequency_rad_s(k_rad_per_m: float, mass_kg: float) -> float:
-    """omega_R = hbar k^2/(2 m) = E_R/hbar: the single-photon recoil frequency (Section 4.2.1)."""
+    """omega_R = hbar k^2/(2 m) = E_R/hbar: the single-photon recoil frequency."""
     return free_recoil_energy_j(k_rad_per_m, mass_kg) / HBAR_J_S
 
 
@@ -205,8 +179,7 @@ def assert_doppler_recoil_limit(
     allow_recoil_limited: bool = False,
     maximum: float = 1.0,
 ) -> None:
-    """Gamma > omega_R for Doppler cooling (Section 4.2.8 vii): below it the single-photon recoil exceeds the linewidth
-    and the Doppler limit is replaced by the recoil limit."""
+    """Gamma > omega_R for Doppler cooling: below it the recoil limit replaces the Doppler limit."""
     if allow_recoil_limited:
         return
     omega_r = recoil_frequency_rad_s(k_rad_per_m, mass_kg)

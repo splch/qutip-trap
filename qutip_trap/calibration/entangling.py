@@ -1,18 +1,4 @@
-"""Entangling-gate calibration by exact spot checks, and the thermal robustness curve (PLAN.md Sections 4.4.1, 4.4.7, 7.5, 9.4; M4).
-
-Section 7.5: the default calibration is a surrogate, the closed-form alpha_m and chi_m integrals of Section 4.4.3 on the
-mode structure (``control.shaping``), corrected by a small number of exact spot checks through the ``PulseEngine`` protocol.
-This module is the spot check: it plays a Waveform on the pair through the JOINT_EXACT engine from |00>|n = 0> (or from the
-thermal state, the ``reference`` the plan asks the device to record, Section 4.4.7 (1)), reads |chi| from P_11 = sin^2 chi
-(an equatorial two-body rotation exp(+-i chi sigma_phi sigma_phi) takes |00> to cos chi |00> -/+ i e^{...} sin chi |11>,
-so P_11 is the entangling angle and P_01 + P_10 the leakage from open loops and off-resonant excitation), rescales every
-amplitude by sqrt(chi_target/chi) (chi ~ Omega^2, the s^2 law) and iterates. The residual displacement it reports is
-exact: for the |00> input the final mean excitation of a mode is sum_j |alpha_jm|^2 (the spin-conditioned displacements
-+-alpha_j add in quadrature, <a> alone averages to zero), which is eps_ent at nbar = 0.
-
-This package sits above control/ and dynamics/ (Section 3.2) and never writes the CalibrationTable directly: it returns
-the corrected Waveform and the checks behind it for calibrate() (M8) to store.
-"""
+"""Exact spot checks of entangling waveforms, which correct the closed-form surrogate (the default calibration)."""
 
 from __future__ import annotations
 
@@ -69,11 +55,9 @@ def gate_space(
     extra_levels: int = 0,
     force_weight: float | None = None,
 ) -> HilbertSpace:
-    """A joint space resolving every mode of ``modes``: the cap follows the pulse's coherent excursion (the S = +-2 branch moves
-    by sum_i |alpha_im(t)|, whose maximum over the pulse the closed-form trajectories give) through the populated range of the
-    displaced thermal mode at the boundary threshold, plus the Section 5.1.1 margin for the mode's eta (Section 5.5; M9a); every
-    other crystal mode is frozen. ``waveform`` supplies the trajectory; ``force_weight`` is the per-ion spectral radius of
-    the force operator (``control.shaping.excursion_by_mode``), derived from the waveform kind when omitted."""
+    """A joint space resolving every mode of ``modes`` (the rest frozen), each cap covering the thermal mode displaced by
+    the pulse's maximum excursion max_t sum_i |alpha_im(t)|, plus ``required_margin(eta)``; ``force_weight`` is the
+    per-ion spectral radius of the force operator, derived from the waveform kind when omitted."""
     nb = dict(nbar or {})
     resolved: list[ModeTruncation] = []
     excursion = (
@@ -83,11 +67,9 @@ def gate_space(
     )
     for k, m in enumerate(modes.modes):
         eta_max = max(abs(modes.eta[i][k]) for i in modes.ions)
-        # the coherent excursion max_t sum_i |alpha_im(t)| of the pulse's trajectory, not the single-loop radius (M9a)
         radius = float(excursion.get(m, 0.0))
         n_th = nb.get(m, 0.0)
-        # the populated range of the displaced thermal mode at the boundary threshold (Section 5.5; the same definition the
-        # engine's margin check and run.space.cap_for read, M9a)
+        # the same populated range the engine's margin check and run.space.cap_for read
         n_hi = populated_range(radius, max(n_th, 0.0))
         d = min(max(n_hi + 1 + required_margin(eta_max) + extra_levels, d_min), d_max)
         resolved.append(ModeTruncation(m, d, (0, min(n_hi, d - 1)), max(eta_max * 1.5, 1e-3)))
@@ -107,8 +89,8 @@ def ms_schedule(
     gate_id: str = "ms",
     response_delay_s: float = 0.0,
 ) -> Schedule:
-    """The bare MS(phi_0, phi_1, .) pulse train of ``waveform`` on ``pair`` (no rescaling), as the scheduler would play it;
-    ``response_delay_s`` is the modulator delay the tone phases compensate (``control.schedule.response_phase_rad``, M7)."""
+    """The bare MS(phi_0, phi_1, .) pulse train of ``waveform`` on ``pair`` as the scheduler plays it (no rescaling);
+    ``response_delay_s`` is the modulator delay the tone phases compensate."""
     n = max(pair) + 1
     if waveform.kind == "ms":
         spins, _chi = ms_spin_phases(waveform, pair, phases_rad, PhaseFrame())
@@ -139,9 +121,8 @@ def light_shift_echo_schedule(
     response_delay_s: float = 0.0,
     gate_id: str = "zz",
 ) -> Schedule:
-    """Section 4.4.4's spin-echo form of the sigma_z sigma_z gate: the waveform, GPi(0) on both ions, the waveform again, GPi(pi) on
-    both (R_x(pi) U R_{-x}(pi) U); the single-qubit sigma_z phases of the light-shift force (four times its two-body angle for a
-    force on one level) cancel and the two-body angle doubles."""
+    """The spin-echo sigma_z sigma_z gate: the waveform, GPi(0) on both ions, the waveform again, GPi(pi) on both; the
+    light-shift force's single-qubit sigma_z phases cancel and the two-body angle doubles."""
     n = max(pair) + 1
     from qutip_trap.control.schedule import carrier_rabi_hz
 
@@ -207,16 +188,16 @@ def light_shift_echo_schedule(
 
 @dataclass(frozen=True)
 class GateCheck:
-    """One exact spot check of an entangling waveform (Section 7.5)."""
+    """One exact spot check of an entangling waveform."""
 
     populations: dict[str, float]
-    """P_00, P_01, P_10, P_11 in the computational basis (0 = lower qubit level)."""
+    """P00, P01, P10, P11 (0 = the lower qubit level), in the x basis for a light-shift waveform."""
     chi_rad: float
-    """|chi| = arcsin(sqrt(P_11)) of the |00> input."""
+    """The measured |chi|; per echo pulse for a light-shift waveform."""
     leakage: float
     """P_01 + P_10: open loops and off-resonant excitation."""
     residual_quanta: dict[int, float]
-    """Final mean excitation minus the initial one, per resolved mode: sum_j |alpha_jm|^2 at nbar = 0."""
+    """Final minus initial mean excitation per resolved mode (sum_j |alpha_jm|^2 at nbar = 0)."""
     fidelity: float
     """Overlap of the reduced internal state with the ideal native gate's output for the same input."""
     internal: qt.Qobj
@@ -235,8 +216,7 @@ def _ideal_target(
     pair: tuple[int, int],
     internal: Sequence[int] | qt.Qobj,
 ) -> qt.Qobj:
-    """The native gate's output for the input ``internal``: MS(phi_0, phi_1, 2 chi) or ZZ(2 chi) on the pair, identity elsewhere.
-    ``pair`` are FACTOR positions in the space's ion order (the device ions themselves on a full space)."""
+    """The native gate's output for ``internal``: MS(phi_0, phi_1, 2 chi) or ZZ(4 chi) on ``pair`` (factor positions)."""
     a, b = _internal_reference(n_ions, pair)
     if kind == "ms":
         mat = native_ms(phases_rad[0], phases_rad[1], 2.0 * chi_target_rad)
@@ -274,15 +254,14 @@ def exact_gate_check(
     channels: Sequence[object] = (),
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> tuple[GateCheck, Traces]:
-    """Play ``waveform`` on ``pair`` through the JOINT_EXACT engine and read chi, leakage, residual quanta and the fidelity.
+    """Play ``waveform`` on ``pair`` through the JOINT_EXACT engine and read chi, leakage, residual quanta and fidelity.
 
-    An MS waveform is played once from |00>: P_11 = sin^2 chi. A light-shift waveform is played in the spin-echo pair of Section
-    4.4.4 (``single_qubit_drives`` supply the GPi echo pulses) from |+x +x> and read in the x basis: P_11 = sin^2(2 chi) with chi the
-    two-body angle of ONE pulse, so the reported ``chi_rad`` is per pulse and the fidelity is against ZZ(4 chi_target).
+    An MS waveform is played once from |00> (P_11 = sin^2 chi); a light-shift waveform as the spin-echo pair from |+x +x>
+    (``single_qubit_drives`` play the GPi pulses), read in the x basis: P_11 = sin^2(2 chi) with chi per pulse.
     """
     n_ions = space.n_ions
     x_basis = waveform.kind == "light_shift"
-    # the tone phases compensate the modulator's envelope delay exactly as the scheduler does (Section 7.10; M7)
+    # the tone phases compensate the modulator's envelope delay, as the scheduler does
     delay = float(device.hardware.aom_rise_s) if (options or SolverOptions()).hardware_chain else 0.0
     if x_basis:
         if single_qubit_drives is None:
@@ -300,8 +279,7 @@ def exact_gate_check(
         )
     else:
         sched = ms_schedule(waveform, pair, gate_drives, table, phases_rad=phases_rad, response_delay_s=delay)
-    # the pair's FACTOR positions: the device ions on a full space, their positions in ``space.ions`` on a GATE_LOCAL space
-    # over the pair alone (the spot check of a pair whose full space exceeds the guards, Section 5.4; M9a)
+    # the pair's factor positions: the device ions on a full space, their positions in ``space.ions`` on a GATE_LOCAL one
     fa, fb = space.ion_factor(pair[0]), space.ion_factor(pair[1])
     if internal is None:
         # an equatorial force needs a sigma_z eigenstate input, a sigma_z force an equatorial one: |+x +x> on the pair
@@ -325,7 +303,6 @@ def exact_gate_check(
         device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
     )
     rho = traces.final.internal
-    # populations in the computational basis (MS) or the x basis (light shift): P_11 = sin^2 chi either way
     read = rho
     if x_basis:
         h = qt.Qobj(np.array([[1.0, 1.0], [1.0, -1.0]]) / math.sqrt(2.0))
@@ -348,11 +325,8 @@ def exact_gate_check(
 
 
 def frame_rotated(target: qt.Qobj, phase_frame: Mapping[int, float]) -> qt.Qobj:
-    """The ideal ``target`` (a register ket, ion 0 the first factor) as the physical state carries it after the scheduler absorbed a
-    frame offset theta_q per ion: a virtual RZ(theta) leaves the state as RZ(-theta) times the ideal one (Section 7.6: the M6 pin
-    GPi2(0) RZ(0.1) = RZ(0.1) GPi2(-0.1)), so the compensated light shifts' rotation e^{-i (2 pi delta t/2) sigma_z} with the
-    builder's sigma_z = |1><1| - |0><0|, i.e. RZ(-2 pi delta t) in the native convention, is absorbed as the offset +2 pi delta t
-    and reproduced here as RZ(-theta_q)."""
+    """The ideal ``target`` ket (ion 0 the first factor) as the physical state carries it after the scheduler absorbed a
+    frame offset theta_q per ion: a virtual RZ(theta) leaves the state as RZ(-theta) times the ideal one."""
     dims = [int(d) for d in target.dims[0]]
     ops = []
     for q, d in enumerate(dims):
@@ -373,9 +347,8 @@ def _internal_projector(n_ions: int, a: int, sa: int, b: int, sb: int) -> qt.Qob
 
 @dataclass(frozen=True)
 class CalibrationRun:
-    """The record of an entangling-gate spot check (Sections 4.4.7, 7.5): the corrected ``Waveform``, the exact ``GateCheck``
-    of every iteration, the amplitude factors applied, whether the angle converged, the reference state the checks started
-    from (``n0`` or ``thermal``) and the closed-form angle the waveform came in with (radians)."""
+    """An entangling-gate spot check: the corrected ``Waveform``, the ``GateCheck`` of every iteration, the cumulative
+    amplitude factors, whether the angle converged and the reference state (``n0`` or ``thermal``)."""
 
     waveform: Waveform
     checks: tuple[GateCheck, ...]
@@ -384,11 +357,11 @@ class CalibrationRun:
     reference: Reference
 
     surrogate_chi: float = 0.0
-    """The closed-form angle of the waveform as handed in (before any rescaling)."""
+    """The closed-form angle (rad) of the waveform as handed in."""
 
     @property
     def surrogate_error(self) -> float:
-        """|chi_exact - chi_surrogate|/|chi_surrogate| of the FIRST check: how far the closed forms were from the exact gate."""
+        """|chi_exact - chi_surrogate|/|chi_surrogate| of the first check."""
         return abs(self.checks[0].chi_rad - abs(self.surrogate_chi)) / abs(self.surrogate_chi)
 
 
@@ -411,19 +384,17 @@ def calibrate_entangling_angle(
     experiment: str = "exact_spot_check",
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> CalibrationRun:
-    """Correct the surrogate waveform's amplitude until the exact |chi| equals ``chi_target_rad``: Newton on the s^2 law,
-    chi ~ Omega^2, from |00>|0> (``reference="n0"``, Ballance's convention) or from the thermal state of ``nbar`` (the
-    power-optimized reference of Sorensen-Molmer); the phase entries are stamped with the experiment name."""
+    """Rescale the waveform's amplitude until the exact |chi| equals ``chi_target_rad`` (Newton on chi ~ Omega^2), from
+    |00>|0> (``reference="n0"``) or from the thermal state of ``nbar``; the phase entries are stamped ``calibrated``
+    under ``experiment``."""
     current = waveform
     checks: list[GateCheck] = []
     factors: list[float] = []
     total = 1.0
     thermal = dict(nbar or {}) if reference == "thermal" else {}
     converged = False
+    # the waveform checks[-1] measured: a run out of iterations returns it, not the unmeasured final rescale
     checked = current
-    """The waveform the LAST element of ``checks`` measured: on a converged run it is ``current``, and when the iteration
-    budget runs out it is the one before the final rescale, so that a non-converged run never stamps an angle that was
-    measured on a different amplitude (M4 finding)."""
     for _ in range(max_iterations):
         check, _traces = exact_gate_check(
             device,
@@ -451,10 +422,7 @@ def calibrate_entangling_angle(
         total *= factor
         factors.append(total)
     current = checked
-    # the calibrated waveform carries the EXACT two-body angle (the sign from the surrogate, the per-mode split proportional to it),
-    # so that the scheduler's s^2 rescaling starts from the measured angle and MS(., ., 2 chi_target) plays this amplitude unchanged.
-    # ``current`` is the waveform checks[-1] was measured ON, so a run that exhausted max_iterations returns the last CHECKED
-    # amplitude with its own measured angle rather than the final rescale stamped with the previous one's measurement
+    # stamp the measured angle (the surrogate's sign and per-mode split) so the scheduler's s^2 rescaling starts from it
     surrogate_total = current.chi_total_rad
     exact_total = math.copysign(checks[-1].chi_rad, surrogate_total if surrogate_total != 0.0 else 1.0)
     ratio = exact_total / surrogate_total if surrogate_total != 0.0 else 1.0
@@ -470,7 +438,7 @@ def calibrate_entangling_angle(
 
 
 def surrogate_check(waveform: Waveform, modes: GateModes) -> dict[str, float]:
-    """The closed-form side of the spot check: |chi| and eps_ent of the waveform on the mode structure (the surrogate)."""
+    """The closed-form |chi| and residual error eps_ent of ``waveform`` on the mode structure."""
     ints = waveform_integrals(waveform, modes)
     a, b = modes.ions[0], modes.ions[1]
     return {"chi_rad": ints.chi_of(a, b), "residual_error": ints.residual_error(modes)}
@@ -492,8 +460,7 @@ def thermal_robustness(
     d_max: int = 64,
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> list[tuple[float, GateCheck]]:
-    """The gate's exact populations and fidelity against the mode's nbar (the thermal robustness curve of the M4 roadmap): a thermal
-    initial state of the gate mode, the joint space grown with nbar, the Bell-state fidelity against the ideal gate."""
+    """The exact gate check at each thermal occupation of ``gate_mode`` in ``nbars``, on a joint space grown with it."""
     out: list[tuple[float, GateCheck]] = []
     for nb in nbars:
         space = gate_space(modes, device.crystal.n_ions, nbar={gate_mode: nb}, waveform=waveform, d_max=d_max)
@@ -534,13 +501,9 @@ def parity_after_analysis_pulse(
     analysis_stark_hz: Mapping[int, float] | None = None,
     qubit_shifts_hz: Mapping[int, float] | None = None,
 ) -> tuple[float, dict[str, float]]:
-    """Parity P_00 + P_11 - P_01 - P_10 after the gate and a pi/2 analysis pulse of phase ``analysis_phase_rad`` on both ions
-    (Section 7.9); the analysis pulses use ``analysis_drives`` (default the gate drives' beams) at the given carrier Rabi
-    frequencies, with the believed Stark shifts ``analysis_stark_hz`` compensated. ``spin_phases_rad`` are the MS gate's
-    (phi_0, phi_1) and ``internal`` the register's initial levels (default |0...0>), for the phase scans of Section 7.5 (M8).
-    ``qubit_shifts_hz`` is the true transition minus the table's frame per ion (Section 7.3), the same channel ``run()`` and
-    ``exact_gate_check`` use: without it the phase scans would measure the entangling axis in a PERFECT qubit frame and write
-    corrections that omit the frame error the run then applies (M8 audit B5)."""
+    """(parity P_00 + P_11 - P_01 - P_10, populations) after the gate and a pi/2 analysis pulse of phase
+    ``analysis_phase_rad`` on both ions, played by ``analysis_drives`` (default the gate drives) at ``analysis_rabi_hz``
+    with the Stark shifts ``analysis_stark_hz`` compensated; ``qubit_shifts_hz`` is the true transition minus the frame."""
     n_ions = space.n_ions
     sched_ms = ms_schedule(waveform, pair, gate_drives, table, phases_rad=spin_phases_rad)
     dead = float(device.hardware.dead_time_s)

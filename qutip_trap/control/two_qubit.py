@@ -1,24 +1,9 @@
-"""Arbitrary two-qubit unitaries as native gates: the KAK (Cartan) decomposition in the magic basis (PLAN.md Section 7.2, the
-compiler's "standard set" extended to an arbitrary SU(4) the way item 1 extends it to an arbitrary U3; Section 13 rows
-"Rotation generators", "Entangling angle", "Operator order in templates"; milestone M10).
+"""Arbitrary two-qubit unitaries as native gates: the KAK (Cartan) decomposition in the magic basis.
 
-Every U in U(4) is, up to a global phase, U = (A (x) B) exp[-i (a XX + b YY + c ZZ)] (C (x) D) with A, B, C, D in SU(2) and
-the canonical class (a, b, c) in the Weyl chamber pi/4 >= a >= b >= |c| >= 0 (Khaneja-Glaser; Kraus-Cirac 2001; Zhang et
-al. 2003). The construction here is the magic-basis one: in the Bell basis M the local group SU(2) (x) SU(2) is the real
-orthogonal group SO(4) and the canonical exponential is diagonal, so Q = M^dag U M factors as O_1 D O_2^T with O_1, O_2 real
-orthogonal and D diagonal unitary. O_2 and D^2 come from the eigen-decomposition of the complex-symmetric unitary Q^T Q =
-O_2 D^2 O_2^T (its real and imaginary parts commute and are diagonalized together by one real orthogonal matrix), O_1 =
-Q O_2 D^-1, the determinants are fixed to +1 (an O(4) matrix of determinant -1 is not a tensor product), and (a, b, c) and the
-global phase follow from the four phases of D through the +-1 table of XX, YY and ZZ on the Bell states.
-
-The canonical part is emitted as the standard gates the compiler already verifies (Section 7.7): exp(-i a XX) = rxx(2a);
-exp(-i b YY) = (S (x) S) rxx(2b) (S^dag (x) S^dag) since S X S^dag = Y, in time order sdg, sdg, rxx(2b), s, s; exp(-i c ZZ) =
-rzz(2c), which the compiler realizes as the native zz or the M4 wrapper. With the chamber normalization every rxx angle is at
-most pi/2, so every Moelmer-Soerensen gate is played at an angle in [0, pi/2] (Section 7.1) and a generic SU(4) costs THREE
-entangling gates, a class with c = 0 two, the CNOT class one and a local unitary none. The local factors go through
-``decompose_single_qubit`` (at most two GPi2 pulses each plus virtual RZ). Section 7.2 item 3 applies: the emitted block is
-verified against the target up to a global phase before it is returned, and a decomposition that does not reproduce its
-target raises ``CompileError``.
+Every U in U(4) is, up to a global phase, (A (x) B) exp[-i (a XX + b YY + c ZZ)] (C (x) D) with A, B, C, D in SU(2) and
+(a, b, c) in the Weyl chamber pi/4 >= a >= b >= |c| >= 0 (Kraus and Cirac 2001). The canonical part is emitted as
+rxx(2a); sdg, sdg, rxx(2b), s, s; rzz(2c) (every rxx angle in [0, pi/2]), verified up to a global phase (else
+``CompileError``).
 """
 
 from __future__ import annotations
@@ -64,13 +49,12 @@ _SOLVE: Final[np.ndarray] = np.linalg.inv(np.hstack([-_T, np.ones((4, 1))]))
 _S: Final[np.ndarray] = np.diag([1.0, 1.0j]).astype(complex)
 _H: Final[np.ndarray] = np.array([[1.0, 1.0], [1.0, -1.0]], dtype=complex) * SQRT_HALF
 _RX_HALF: Final[np.ndarray] = native.r_phi(math.pi / 2.0, 0.0)
-"""exp(-i pi/4 X): conjugation maps Y -> Z and Z -> -Y, so (R (x) R) swaps the YY and ZZ coefficients."""
 
 _DIAGONALIZATION_MIXES: Final[tuple[float, ...]] = (0.7132, 0.3117, 1.9143, 0.1289, 2.7731)
 
 
 def canonical_unitary(a: float, b: float, c: float) -> np.ndarray:
-    """exp[-i (a XX + b YY + c ZZ)] (the three terms commute), first qubit the first tensor factor."""
+    """exp[-i (a XX + b YY + c ZZ)] (the three terms commute)."""
     out = _I4.copy()
     for coef, p in ((a, _XX), (b, _YY), (c, _ZZ)):
         out = (math.cos(coef) * _I4 - 1j * math.sin(coef) * p) @ out
@@ -78,9 +62,7 @@ def canonical_unitary(a: float, b: float, c: float) -> np.ndarray:
 
 
 def kron_factor(u: np.ndarray, *, tol: float = 1e-9) -> tuple[np.ndarray, np.ndarray] | None:
-    """(A, B) with u = A (x) B up to a global phase, both unitary, or None when ``u`` is not a tensor product.
-
-    The 4 x 4 matrix reshaped as R[(i, k), (j, l)] = u[(i, j), (k, l)] has rank one exactly for a product A[i, k] B[j, l]."""
+    """(A, B) with u = A (x) B up to a global phase, both unitary, or None when ``u`` is not a tensor product."""
     m = np.asarray(u, dtype=complex)
     if m.shape != (4, 4):
         raise ValueError("a 4 x 4 matrix")
@@ -208,7 +190,7 @@ def kak_decomposition(u: np.ndarray, *, tol: float = 1e-9) -> KAK:
         if k % 2 == 1 or k % 2 == -1:
             left_a = left_a @ paulis[j]
             left_b = left_b @ paulis[j]
-        # k even (k = 2n): K(x + n pi) = (-1)^n K(x), a global phase only
+        # k even: K(x + n pi) = (-1)^n K(x), a global phase only
 
     def conjugate(w: np.ndarray, v: np.ndarray, perm: tuple[int, int, int]) -> None:
         """K(c) = (W (x) V)^dag K(c') (W (x) V) with c' = c permuted: left <- left (W^dag (x) V^dag), right <- (W (x) V) right."""
@@ -219,16 +201,14 @@ def kak_decomposition(u: np.ndarray, *, tol: float = 1e-9) -> KAK:
         right_d = v @ right_d
         coefs[:] = [coefs[perm[0]], coefs[perm[1]], coefs[perm[2]]]
 
-    # 2. sort |a| >= |b| >= |c| by the local Cliffords that permute the Pauli axes
-    #    (S (x) S): XX <-> YY;  (H (x) H): XX <-> ZZ;  (R_x(pi/2) (x) R_x(pi/2)): YY <-> ZZ
+    # 2. sort |a| >= |b| >= |c| by local Cliffords: S swaps XX and YY, H swaps XX and ZZ, R_x(pi/2) swaps YY and ZZ
     swaps = {(0, 1): (_S, (1, 0, 2)), (0, 2): (_H, (2, 1, 0)), (1, 2): (_RX_HALF, (0, 2, 1))}
     for _ in range(3):
         for i, j in ((0, 1), (1, 2)):
             if abs(coefs[j]) > abs(coefs[i]) + 1e-15:
                 w, perm = swaps[(i, j)]
                 conjugate(w, w, perm)
-    # 3. a >= 0 and b >= 0 by conjugation with one Pauli on the FIRST qubit, which negates two coefficients:
-    #    (Z (x) 1) negates (a, b); (Y (x) 1) negates (a, c); (X (x) 1) negates (b, c)
+    # 3. a, b >= 0: a Pauli on the first qubit negates two coefficients (Z: a, b; Y: a, c; X: b, c)
     if coefs[0] < -1e-15 and coefs[1] < -1e-15:
         conjugate(native.PAULI_Z, np.eye(2, dtype=complex), (0, 1, 2))
         coefs[0], coefs[1] = -coefs[0], -coefs[1]
@@ -275,7 +255,7 @@ def decompose_two_qubit_unitary(
     u: np.ndarray, pair: tuple[int, int], *, tol: float = 1e-9
 ) -> list[Operation]:
     """Native single-qubit operations and standard two-qubit gates (time order) for the 4 x 4 unitary ``u`` on ``pair`` (its
-    first factor the first listed qubit); verified against ``u`` up to a global phase (Section 7.2 item 3)."""
+    first factor the first listed qubit); verified against ``u`` up to a global phase."""
     kak = kak_decomposition(u, tol=tol)
     q0, q1 = pair
     ops: list[Operation] = []
@@ -291,8 +271,7 @@ def decompose_two_qubit_unitary(
 def verify_operations(
     ops: list[Operation], target: np.ndarray, qubits: tuple[int, ...], *, tol: float = 1e-8
 ) -> float:
-    """max |U_ops - e^{i alpha} target| on the qubits ``qubits`` (target's first factor the first listed qubit); raises
-    ``CompileError`` above ``tol``."""
+    """max |U_ops - e^{i alpha} target| on ``qubits`` (the target's first factor first); CompileError above ``tol``."""
     local = {q: k for k, q in enumerate(qubits)}
     n = len(qubits)
     relabelled = [Operation(op.name, tuple(local[q] for q in op.qubits), op.params) for op in ops]
@@ -305,8 +284,7 @@ def verify_operations(
 
 
 def haar_random_unitary(rng: np.random.Generator, dim: int) -> np.ndarray:
-    """A Haar-random unitary from the QR decomposition of a complex Ginibre matrix with the phases of R's diagonal removed
-    (Mezzadri 2007)."""
+    """A Haar-random dim x dim unitary: QR of a complex Ginibre matrix, R's diagonal phases removed (Mezzadri 2007)."""
     z = (rng.normal(size=(dim, dim)) + 1j * rng.normal(size=(dim, dim))) * SQRT_HALF
     q, r = np.linalg.qr(z)
     d = np.diag(r)

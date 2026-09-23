@@ -1,24 +1,10 @@
-"""Cached operators and the exact displacement operator (PLAN.md Section 5.1.1; milestone M2).
+"""The displacement operator, its exact elements and truncation tolerances, Debye-Waller factors and qubit operators.
 
-Conventions restated here (Section 13 rows "Ladder operators", "Rabi frequency"; Sections 4.3.1, 5.1.1):
-
-- x = x0 (a + a^dagger) with x0 = sqrt(hbar/(2 m omega)); the motional operator of one running-wave drive is
-  exp[i eta (a + a^dagger)] = D(i eta), the displacement operator D(alpha) = exp(alpha a^dagger - alpha^* a) at
-  alpha = i eta.
-- Exact elements: <n'|D(alpha)|n> = sqrt(n!/n'!) e^{-|alpha|^2/2} alpha^{n'-n} L^{(n'-n)}_n(|alpha|^2) for
-  n' >= n (row n', column n) and sqrt(n'!/n!) e^{-|alpha|^2/2} (-alpha^*)^{n-n'} L^{(n-n')}_{n'}(|alpha|^2) for
-  n' < n; at alpha = i eta both branches carry (i eta)^{|n'-n|} because -alpha^* = i eta (the second revision of
-  the plan interchanged the two labels; derivation audit 2026-09-04).
-- The Rabi frequency of |down, n> <-> |up, n'> is Omega |<n'|D(i eta)|n>|, the MODULUS; the SIGNED element is what
-  the Hamiltonian carries (the modulus-versus-signed-Laguerre correction of Section 4.3.1).
-- Rules (i) to (iv) of Section 5.1.1: the operator in the Hamiltonian is the matrix EXPONENTIAL of the truncated
-  generator (exactly unitary, wrong near the boundary); the analytic elements are the test ORACLE (exact element by
-  element, not unitary: the top column loses norm); the Rabi table and every closed form use the analytic elements;
-  the boundary monitor of Section 5.5 is what makes either construction trustworthy.
-- Qubit operators in the COMPUTATIONAL ordering: index 0 is the lower qubit level |0> = |down> (Species.qubit[0]),
-  index 1 the upper level |1> = |up>; sigma_+ = |1><0| raises; the ENERGY operator sigma_z = |1><1| - |0><0| is the
-  negative of the computational Pauli Z of control/native.py (Z|0> = +|0>), so that H_int = (Delta/2) sigma_z puts
-  the upper level Delta/2 above the frame (Section 5.7) while the native-gate matrices act on (|0>, |1>) as printed.
+x = x0 (a + a^dagger), x0 = sqrt(hbar/(2 m omega)); a running-wave drive's motional operator is D(i eta), with
+D(alpha) = exp(alpha a^dagger - alpha^* a). The Hamiltonian uses the matrix exponential of the truncated generator
+(unitary, wrong near the cap); the analytic elements (exact, not unitary once truncated) are the oracle and give the
+Rabi frequencies Omega |<n'|D(i eta)|n>|. Qubit index 0 is the lower level |0> = |down> (``Species.qubit[0]``);
+sigma_+ = |1><0|, and the energy operator sigma_z = |1><1| - |0><0| is the negative of the computational Pauli Z.
 """
 
 from __future__ import annotations
@@ -34,7 +20,7 @@ from scipy.special import erf, eval_genlaguerre, gammaln
 
 M2 = "milestone M2 (hilbert/operators.py, PLAN.md Section 5.1.1)"
 
-# ---- Section 5.1.1 table [recomputed here, bench_numerics.py]: max |D_expm - D_analytic| over the block n, n' < d/2 -------
+# ---- truncation table, rows d, columns TABLE_ETA: max |D_expm - D_analytic| over n, n' < d/2, and the norm loss -------
 TABLE_ETA: Final[tuple[float, ...]] = (0.1, 0.5, 1.0)
 TABLE_ELEMENT_ERROR: Final[dict[int, tuple[float, ...]]] = {
     8: (2e-13, 2e-6, 1e-3),
@@ -49,20 +35,18 @@ TABLE_NORM_LOSS: Final[dict[int, tuple[float, ...]]] = {
     40: (1e-15, 4e-16, 3e-9),
 }
 ORACLE_FLOOR: Final[float] = 1e-12
-"""The tolerance is 10^-12 where the table reaches it, the table's own value otherwise (Section 5.1.1 rule ii)."""
+"""The oracle tolerance floor: 1e-12 where the table reaches it, the table's value otherwise."""
 MARGIN_POINTS: Final[tuple[tuple[float, int], ...]] = ((0.1, 6), (0.5, 10), (1.0, 20))
-"""The margins the table implies, stored as a fixture with interpolation in eta rather than a rule of thumb."""
+"""(|eta|, margin levels) points the table implies, interpolated in eta by ``required_margin``."""
 
 
 # ---- analytic elements ---------------------------------------------------------------------------------------------------
 
 
 def displacement_element_analytic(n_row: int, n_col: int, alpha: complex) -> complex:
-    """<n_row|D(alpha)|n_col>, the exact infinite-space element (Section 5.1.1, both branches).
-
-    Row index n' = ``n_row``, column index n = ``n_col``: alpha^{n'-n} below the diagonal (n' > n) and (-alpha^*)^{n-n'}
-    above it (n' < n). For alpha = i eta the two coincide as (i eta)^{|n'-n|}.
-    """
+    """<n_row|D(alpha)|n_col>, the exact infinite-space element: for n' = ``n_row`` >= n = ``n_col``,
+    sqrt(n!/n'!) e^{-|alpha|^2/2} alpha^{n'-n} L^{(n'-n)}_n(|alpha|^2); for n' < n the factor is (-alpha^*)^{n-n'} with n
+    and n' interchanged elsewhere. At alpha = i eta both carry (i eta)^{|n'-n|}."""
     if n_row < 0 or n_col < 0:
         raise ValueError("Fock indices are non-negative")
     a = complex(alpha)
@@ -108,7 +92,7 @@ def displacement_operator(d: int, alpha: complex, *, construction: str = "expm")
 
 
 def oracle_check(d: int, alpha: complex, n_hi: int, tolerance: float) -> float:
-    """Max |D_expm - D_analytic| over the block n, n' <= n_hi; raises if it exceeds ``tolerance`` (Section 5.1.1 rule ii)."""
+    """Max |D_expm - D_analytic| over the block n, n' <= n_hi; raises ValueError if it exceeds ``tolerance``."""
     if not 0 <= n_hi < d:
         raise ValueError("the populated range must lie inside the truncated space")
     exp_ = displacement_operator(d, alpha).full()
@@ -140,12 +124,9 @@ def _interp_log(x: float, xs: Sequence[float], ys: Sequence[float]) -> float:
 
 
 def interior_tolerance(margin_levels: int, eta: float) -> float:
-    """The Section 5.1.1 tolerance for interior elements ``margin_levels`` below the cap at Lamb-Dicke parameter |eta|.
-
-    The table's block n, n' < d/2 sits d/2 levels below the cap, so a margin m reads the row d = 2m, interpolated
-    log-linearly in |eta| and in d and floored at ORACLE_FLOOR = 1e-12; margins below the smallest row (m < 4) are
-    outside the table and take its d = 8 row, which the truncation monitor reports separately.
-    """
+    """The oracle tolerance for interior elements ``margin_levels`` below the cap at Lamb-Dicke parameter |eta|: the table
+    row d = 2 * margin (its block n, n' < d/2 sits d/2 below the cap), interpolated log-linearly in |eta| and d, clamped to
+    the table's rows and floored at ``ORACLE_FLOOR``."""
     if margin_levels < 1:
         raise ValueError("an interior element needs at least one level of margin")
     e = max(abs(eta), 1e-3)
@@ -164,17 +145,9 @@ def interior_tolerance(margin_levels: int, eta: float) -> float:
 def required_margin(
     eta: float, *, tail: float | None = None, n_hi: int = 0, element_tol: float | None = None
 ) -> int:
-    """Levels above the populated range a resolved mode's cap keeps (Section 5.1.1 rule ii).
-
-    Without keywords, the fixture the plan stores: 6 at |eta| <= 0.1, 10 at 0.5, 20 at 1.0, interpolated (the margins at which
-    the table's interior elements reach the 10^-12 floor); this is what every JOINT_EXACT run and every Section 9 validation
-    case uses. With ``element_tol`` and/or ``tail`` the margin is DERIVED for the declared accuracy instead (performance pass
-    2026-09-09, the GATE_LOCAL step spaces): the smallest margin m at which (a) the interior elements of the matrix exponential
-    over the block n, n' <= ``n_hi`` agree with the analytic elements to ``element_tol`` (measured directly, since the error at a
-    fixed margin grows with the populated range: 9e-11 at n_hi = 2 but 6e-8 at n_hi = 20 for margin 3 at eta = 0.1) and (b) one
-    displacement from the top populated level ``n_hi`` leaks less than ``tail`` past the cap (``displacement_leakage``, the
-    analytic elements); never more than the fixture, which is the 10^-12 rule and always sufficient. Memoized: the engine's
-    margin check asks once per segment."""
+    """Levels above the populated range a resolved mode's cap keeps: the ``MARGIN_POINTS`` fixture, or with ``element_tol``
+    and/or ``tail`` the smallest (memoized) margin at which the expm and analytic elements over n, n' <= ``n_hi`` agree to
+    ``element_tol`` and one displacement from ``n_hi`` leaks less than ``tail`` past the cap, at most the fixture."""
     fixture = _fixture_margin(eta)
     if tail is None and element_tol is None:
         return fixture
@@ -188,7 +161,6 @@ def _fixture_margin(eta: float) -> int:
     if e <= xs[0]:
         return int(ys[0])
     if e > xs[-1]:
-        # beyond the table: extend the last slope, which is what "about 20 at eta ~ 1" licenses at most
         slope = (ys[-1] - ys[-2]) / (xs[-1] - xs[-2])
         return int(math.ceil(ys[-1] + slope * (e - xs[-1])))
     return int(math.ceil(float(np.interp(e, xs, ys)) - 1e-9))
@@ -214,9 +186,8 @@ def _derived_margin(
 
 
 def displacement_leakage(eta: float, n_hi: int, margin: int, *, terms: int = 60) -> float:
-    """sum_{dn > margin} |<n_hi + dn|D(i eta)|n_hi>|^2: the population one displacement moves from the top populated level to
-    more than ``margin`` levels above it, from the analytic elements (Section 5.1.1 rule iii); what the derived margin holds
-    below the boundary threshold."""
+    """sum_{dn > margin} |<n_hi + dn|D(i eta)|n_hi>|^2 over ``terms`` analytic elements: the population one displacement
+    moves from level ``n_hi`` to more than ``margin`` levels above it."""
     if n_hi < 0 or margin < 0:
         raise ValueError("n_hi and margin are non-negative")
     alpha = 1j * abs(float(eta))
@@ -229,8 +200,7 @@ def displacement_leakage(eta: float, n_hi: int, margin: int, *, terms: int = 60)
 
 
 def interior_element_error(d: int, eta: float, n_hi: int) -> float:
-    """max |D_expm - D_analytic| over the block n, n' <= n_hi in a space of ``d`` levels at alpha = i eta: what rule (ii)'s oracle
-    measures, evaluated directly (the table of Section 5.1.1 tabulates it for the block below d/2 only)."""
+    """max |D_expm - D_analytic| over the block n, n' <= n_hi in a space of ``d`` levels at alpha = i eta."""
     if not 0 <= n_hi < d:
         raise ValueError("the populated range must lie inside the truncated space")
     exp_ = displacement_operator(d, 1j * abs(float(eta))).full()
@@ -238,7 +208,7 @@ def interior_element_error(d: int, eta: float, n_hi: int) -> float:
     return float(np.max(np.abs(exp_[: n_hi + 1, : n_hi + 1] - ana[: n_hi + 1, : n_hi + 1])))
 
 
-# ---- Rabi table and Debye-Waller factors (Section 4.3.1) -----------------------------------------------------------------
+# ---- Rabi table and Debye-Waller factors -------------------------------------------------------------------------------
 
 
 def rabi_matrix_element(n_row: int, n_col: int, eta: float) -> float:
@@ -247,7 +217,7 @@ def rabi_matrix_element(n_row: int, n_col: int, eta: float) -> float:
 
 
 def rabi_table(d: int, eta: float) -> np.ndarray:
-    """|<n'|D(i eta)|n>| for n, n' < d, from the analytic form (rule iii of Section 5.1.1)."""
+    """|<n'|D(i eta)|n>| for n, n' < d, from the analytic elements."""
     return np.abs(displacement_matrix_analytic(d, 1j * eta))
 
 
@@ -276,8 +246,7 @@ def thermal_populations(nbar: float, d: int) -> np.ndarray:
 
 def displaced_thermal_populations(alpha_abs: float, nbar: float, d: int) -> np.ndarray:
     """P(n) of a thermal state at ``nbar`` displaced by |alpha|: sum_k P_th(k) |<n|D(alpha)|k>|^2 over ``d`` levels, from the
-    analytic elements (Section 5.1.1 rule iii). The Fock distribution a spin-dependent force of loop radius |alpha| produces on a
-    thermal mode at the far point of its loop, whichever spin branch."""
+    analytic elements."""
     p_th = thermal_populations(nbar, d)
     p_th = p_th / p_th.sum()
     mat = np.abs(displacement_matrix_analytic(d, 1j * abs(alpha_abs))) ** 2
@@ -285,9 +254,8 @@ def displaced_thermal_populations(alpha_abs: float, nbar: float, d: int) -> np.n
 
 
 def populated_range(alpha_abs: float, nbar: float, *, tail: float = 1e-6) -> int:
-    """The highest Fock index a thermal mode displaced by |alpha| populates above ``tail``: the smallest n whose population
-    above it is below ``tail`` (Section 5.5, the range the Section 5.1.1 margin is measured from; the cap rule of
-    ``run.space.cap_for`` and the engine's margin check read the same definition, so a first attempt does not trip)."""
+    """The highest Fock index a thermal mode displaced by |alpha| populates: the smallest n whose population above it is
+    below ``tail``. The margin is measured from this index."""
     if alpha_abs < 0.0 or nbar < 0.0:
         raise ValueError("|alpha| and nbar are non-negative")
     if not 0.0 < tail < 1.0:
@@ -316,10 +284,8 @@ def thermal_debye_waller_approx(eta: float, nbar: float) -> float:
 
 
 def debye_waller_rms_fraction(etas: Sequence[float], nbars: Sequence[float]) -> float:
-    """rms fractional Rabi-frequency spread over frozen thermal spectators, sqrt(sum_p eta_p^4 nbar_p (nbar_p + 1)) (Wineland 1998 Eq. 127).
-
-    Var(n) of a thermal state is nbar(nbar + 1) and the leading fluctuation of e^{-eta^2 (n + 1/2)} is eta^2 delta n.
-    """
+    """rms fractional Rabi-frequency spread over frozen thermal spectators, sqrt(sum_p eta_p^4 nbar_p (nbar_p + 1))
+    (Wineland 1998 Eq. 127)."""
     if len(etas) != len(nbars):
         raise ValueError("one nbar per spectator mode")
     return math.sqrt(sum(float(e) ** 4 * float(nb) * (float(nb) + 1.0) for e, nb in zip(etas, nbars)))
@@ -333,7 +299,7 @@ def probability_within(delta: float, rms: float) -> float:
 
 
 def sideband_operators(matrix: np.ndarray) -> dict[int, np.ndarray]:
-    """Split a single-mode operator into its sideband parts A_k with n' - n = k (the interaction-picture decomposition, Section 5.2)."""
+    """Split a single-mode operator into its sideband parts A_k with n' - n = k (the interaction-picture decomposition)."""
     d = matrix.shape[0]
     out: dict[int, np.ndarray] = {}
     for k in range(-(d - 1), d):
@@ -376,7 +342,7 @@ def qudit_sigma_z(d: int = 2) -> qt.Qobj:
 
 
 def qudit_sigma_phi(phi_rad: float, d: int = 2) -> qt.Qobj:
-    """sigma_phi = e^{i phi} sigma_+ + e^{-i phi} sigma_- = cos(phi) X + sin(phi) Y on the qubit pair (Section 4.3.5)."""
+    """sigma_phi = e^{i phi} sigma_+ + e^{-i phi} sigma_- = cos(phi) X + sin(phi) Y on the qubit pair."""
     return np.exp(1j * phi_rad) * qudit_sigma_plus(d) + np.exp(-1j * phi_rad) * qudit_sigma_minus(d)
 
 

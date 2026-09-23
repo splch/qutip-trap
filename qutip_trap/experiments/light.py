@@ -1,22 +1,4 @@
-"""Light-and-field experiments: the Stark scan, the crosstalk scan and the field scan (PLAN.md Section 7.5 items 7, 8, 9; M8).
-
-- ``stark_scan``: a Ramsey experiment with ONE beam of the gate drive on during the delay (the other blocked, so no
-  two-photon coupling exists): the fringe shift is that beam's differential light shift, the drive's is the sum over its
-  beams, per (ion, beam) as item 7 asks. The fringe fit returns |delta - probe|, so the scan is run at BOTH probe signs and
-  the shift is the half-difference (``ramsey_frequency``'s estimator); the sum of the two fringes and the delay grid's
-  Nyquist frequency bound the range the estimator is valid on. The alternative both-beams-on measurement with the beat note detuned far from the
-  carrier at both signs (the light shift even in the detuning, the coupling shift Omega^2/(2 delta) odd) is kept as
-  ``mode="beat_note"``.
-- ``crosstalk_scan``: drive ion i on its carrier with the light its addressing beams put on the neighbours (the derived
-  intensity profile) and fit every neighbour's Rabi flopping: the rate ratio is epsilon_ij (item 8); the phase of the
-  crosstalk axis relative to the neighbour's own frame comes from a pi/2 - crosstalk pulse - pi/2(phi) sequence on the
-  neighbour, compared with the same sequence on ideal matrices.
-- ``field_scan``: the Ramsey-frequency experiment on the qubit transition with the frame at the transition frequency of a
-  SEED field, inverted through the exact hyperfine-Zeeman diagonalization nu(B) of the atomic layer (Section 4.5.1) for B and
-  its uncertainty sigma_nu/|d nu/dB| (item 9, "run first because every other fit reads the Zeeman sensitivities"); a
-  clock qubit at 5 G has d nu/dB = 2 x 310.87 B = 3.1 kHz/G, a transition at an exact clock point cannot fix the field and
-  the entry is left uncalibrated with a note.
-"""
+"""Light and field experiments: the Stark scan, the crosstalk scan and the field scan."""
 
 from __future__ import annotations
 
@@ -64,19 +46,12 @@ def _nyquist_hz(delays_s: Sequence[float]) -> float | None:
 
 
 def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """The differential light shift of ``ion``'s gate beams (Section 7.5 item 7), per (ion, beam) as the plan asks.
+    """Scan the Ramsey delay with ``ion``'s gate-beam light on; returns a ``StarkScan`` of the differential light shift.
 
-    ``mode="per_beam"`` (default): a Ramsey experiment with ONE beam of the drive on during the delay at a time (the other
-    blocked), so that no two-photon coupling exists and the fringe shift is that beam's differential light shift alone, run at
-    BOTH probe signs so the branch of the fitted |fringe| is resolved (delta = (f_minus - f_plus)/2, exact while
-    |delta| < probe, with f_plus + f_minus = 2 probe as the out-of-range detector and the delay grid's Nyquist frequency as
-    the upper guard); the drive's shift is the sum over its beams (linear in intensity). ``mode="beat_note"``: both beams on with the beat note
-    detuned by ``stark_detuning_hz`` (default the highest mode frequency plus ten Rabi frequencies) at both signs; the light
-    shift is the even part of the two fringe shifts and the odd part is the off-resonant coupling shift Omega^2/(2 delta), a
-    check of the Rabi frequency (the delays must then resolve a fringe at probe minus that shift). ``probe_hz`` the Ramsey probe
-    (default 1 kHz, below the Nyquist frequency of nine delays over 2 ms; the fringe runs at probe minus the shift), ``rabi_hz_belief`` the table's Rabi frequency for the pi/2 pulses.
-    Data rows (beam or sign, delay_s, P1); fitted stark_shift_hz (the drive's total), stark_shift_hz[beam] per beam
-    (per_beam), coupling_shift_hz and coupling_shift_expected_hz (beat_note).
+    ``mode="per_beam"`` (default): one beam on at a time, at both probe signs so shift = (f_minus - f_plus)/2 keeps its
+    sign, valid while |shift| < ``probe_hz`` (1 kHz) and the fringe is below the delay grid's Nyquist frequency.
+    ``mode="beat_note"``: both beams on, beat note at +-``stark_detuning_hz``; the even part of the two shifts is the
+    light shift, the odd part the coupling shift Omega^2/(2 delta).
     """
     device, kw = laboratory_kwargs(machine, kw, caller=stark_scan)
     from qutip_trap.control.pulses import Drive, Pulse, Tone
@@ -108,12 +83,11 @@ def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
     fitted: dict[str, tuple[float, float]] = {}
     converged = True
 
-    # ``mode`` is this experiment's own switch; ``_setup`` reads a ``mode`` keyword as a driven mode INDEX, so it must not
-    # reach the Ramsey sub-runs (``mode="beat_note"`` raised int('beat_note') before this)
+    # ``mode`` is this experiment's switch; ``_setup`` would read it as a driven-mode index
     base_kw = {k: v for k, v in kw.items() if k != "mode"}
 
     def run_with(label: float, delay_pulses: Any, tag: str, detuning_hz: float) -> tuple[float, float, bool]:
-        # every sub-run draws its own shot noise (the two beams' Ramseys are separate experiments)
+        # every sub-run draws its own shot noise
         res = ramsey(
             as_machine(device),
             ion,
@@ -148,11 +122,7 @@ def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
                 )
                 return [Pulse(drive, t0, t1, f"stark_probe[beam {_b}]", ())]
 
-            # the branch of |fringe| is resolved by the two probe signs exactly as ``ramsey_frequency`` resolves a qubit
-            # offset: the fringe runs at |probe - delta| for the + probe and at |probe + delta| for the -, so the
-            # half-DIFFERENCE is delta with its sign and the SUM is 2 probe only while |delta| < probe. A single probe sign
-            # loses the sign of (delta - probe) and aliases a shift above the probe onto one below it (delta = 1.5 probe
-            # was written as 0.5 probe with converged=True).
+            # fringes at |probe - delta| and |probe + delta|: half their difference is delta while |delta| < probe
             f_p, s_p, ok_p = run_with(float(b), delay_pulses, f"beam{b}/plus", +probe)
             f_m, s_m, ok_m = run_with(float(b), delay_pulses, f"beam{b}/minus", -probe)
             shift = 0.5 * (f_m - f_p)
@@ -245,8 +215,7 @@ def _rabi_rate_fit(
 
 
 def _ideal_phase_response(alpha_rad: float, axis_rad: float, phases: np.ndarray) -> np.ndarray:
-    """P1 of |0> after GPi2(0), a rotation by ``alpha`` about the equatorial axis at ``axis``, and GPi2(phi): the neighbour's
-    Ramsey signal under a crosstalk rotation, on ideal matrices."""
+    """Ideal P1 of |0> after GPi2(0), a rotation by ``alpha`` about the equatorial axis ``axis``, and GPi2(phi)."""
     from qutip_trap.control.native import gpi2
 
     x = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
@@ -277,15 +246,9 @@ def _fit_phase(phases: np.ndarray, signal: np.ndarray, sigma: np.ndarray | None)
 def crosstalk_scan(
     machine: Machine | Device, ion: int, durations_s: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """Drive ``ion`` on its carrier and fit the Rabi rate on every neighbour the light reaches (Section 7.5 item 8): epsilon_ij =
-    f_j/f_i; with ``phase=True`` (default) the crosstalk axis on each neighbour from a pi/2 - crosstalk pulse - pi/2(phi) scan.
-
-    ``nbar`` the mode occupations (the fixed-nbar Rabi model), ``rabi_hz_belief`` the table's Rabi frequency of ``ion``
-    (the pi/2 pulses and the phase-pulse duration), ``analysis_phases_rad`` (default 8 phases), ``phase_duration_s`` (default
-    a pi/2 crosstalk rotation from the fitted rate). Data rows (t, P1 of every ion...); fitted rate_hz (the driven ion),
-    eps[j], rate_hz[j], phase_total_rad[j] (the axis relative to j's frame), phase_rad[j] (minus the geometric phase
-    Delta k . (x_j - x_i) the beam's wavefront gives, i.e. arg epsilon_ij).
-    """
+    """Scan the duration of a carrier pulse on ``ion`` and fit every reached neighbour's Rabi rate; returns a
+    ``CrosstalkScan`` with eps[j] = f_j/f_i and, with ``phase=True`` (default), each neighbour's crosstalk axis from a
+    pi/2 - crosstalk pi pulse - pi/2(phi) scan (phase_rad[j], the axis minus the geometric phase Delta k . (x_j - x_i))."""
     device, kw = laboratory_kwargs(machine, kw, caller=crosstalk_scan)
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.light.raman import lamb_dicke_parameters
@@ -335,8 +298,7 @@ def crosstalk_scan(
         fitted[f"eps[{j}]"] = (eps, s_eps)
         converged = converged and ok_j and math.isfinite(eps)
         if kw.get("phase", True) and ok_j and f_j > 0.0:
-            # a PI rotation about the crosstalk axis reflects the neighbour's Bloch vector across it (a pi/2 one would map the
-            # equatorial state onto the pole for an axis parallel to the preparation pulse's and give no fringe)
+            # a pi (not pi/2) rotation about the crosstalk axis, which leaves a fringe for every axis
             t_x = float(kw.get("phase_duration_s") or 0.5 / f_j)
             phases = np.asarray(
                 kw.get("analysis_phases_rad", np.linspace(0.0, 2.0 * math.pi, 8, endpoint=False))
@@ -363,9 +325,7 @@ def crosstalk_scan(
             alpha = 2.0 * math.pi * f_j * t_x
             phi_ideal0, _s0, _ok0 = _fit_phase(phases, _ideal_phase_response(alpha, 0.0, phases), None)
             phi_ideal1, _s1, _ok1 = _fit_phase(phases, _ideal_phase_response(alpha, 0.1, phases), None)
-            response = (
-                _wrap(phi_ideal1 - phi_ideal0) / 0.1
-            )  # d phi_0 / d axis: +-2 for a pi rotation (the reflection doubles it)
+            response = _wrap(phi_ideal1 - phi_ideal0) / 0.1  # d phi_0 / d axis: +-2 for a pi rotation
             # the fringe phase carries twice the axis angle, so the axis is defined modulo pi: wrap the phase difference first
             axis = _wrap(_wrap(phi_meas - phi_ideal0) / response) if abs(response) > 0.1 else math.nan
             geometric = float(
@@ -396,11 +356,11 @@ def crosstalk_scan(
 
 
 def field_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """B from the qubit transition frequency (Section 7.5 item 9): the Ramsey-frequency experiment with the frame at nu(B_seed),
-    inverted through nu(B) of the atomic layer. ``b_seed_gauss`` (default the device's field: the table's seed), ``probe_hz``,
-    ``sigma_max_gauss`` above which the entry is uncalibrated (default 0.05 G), ``sensitivity_min_hz_per_g`` below which the
-    transition cannot fix the field (default 10 Hz/G). Fitted B_gauss, qubit_freq_hz (at the measured field), dnu_dB_hz_per_g,
-    qubit_offset_hz (the measured transition minus the seed frame)."""
+    """Two-probe Ramsey delay scan with the frame at nu(B_seed), inverted through nu(B); returns a ``FieldScan`` (B_gauss).
+
+    ``b_seed_gauss`` (default the device's field), ``sigma_max_gauss`` above which the entry is uncalibrated (0.05 G),
+    ``sensitivity_min_hz_per_g`` below which the transition (a clock point) cannot fix the field (10 Hz/G).
+    """
     device, kw = laboratory_kwargs(machine, kw, caller=field_scan)
     sp = device.crystal.species[ion]
     lower, upper = sp.qubit

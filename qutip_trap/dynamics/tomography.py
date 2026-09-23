@@ -1,44 +1,6 @@
-"""State-based process tomography, Choi reconstruction, CP/TP projection and Kraus application (PLAN.md Section 5.4, GATE_LOCAL
-item (a); Section 6.8; Section 9.17 row "GATE_LOCAL tomography"; milestone M9a).
+"""GATE_LOCAL process tomography: the CPTP map a pulse applies to the addressed ions' internal states.
 
-The GATE_LOCAL level extracts the reduced operation of a pulse on the addressed ions' internal states as a completely positive
-trace-preserving map, from the pulse's exact evolution on its own joint space (Section 5.4):
-
-- ``input_states``: prod_i d_i^2 linearly independent pure internal inputs (for a qubit |0>, |1>, |+>, |+i>: the sixteen
-  product states of a pair), each propagated as a state vector by the JOINT_EXACT engine from the tracked motional state,
-  through ``mesolve`` or ``mcsolve`` where channels are active (n_traj = ceil(1/epsilon_map) per input on the trajectory
-  path, the map-accuracy rule; the populations of every input are the engine's ``e_ops``, and the trajectory count is fixed
-  from the keyed seed list rather than ``target_tol``, which ``mcsolve`` refuses without ``e_ops``);
-- ``choi_least_squares``: the Choi matrix from the input-output pairs, E(rho) = d Tr_1[(rho^T (x) 1) C] in the trace-1
-  convention of ``noise/summary.py`` (the first factor the input copy), exact when the inputs span the operator space and the
-  outputs are deterministic, least squares under trajectory noise;
-- ``project_cptp``: Dykstra's alternating projection onto the intersection of the positive-semidefinite cone and the
-  trace-preserving affine set Tr_out C = 1/d, reporting the residual against BOTH constraints, because a PSD projection alone
-  leaves Tr_out(Choi) != 1 and a map that changes the register's normalization on every application (Section 5.4
-  [corrected: critique, 2026-09-04]); the plan's target ||Tr_out(Choi) - 1|| < 1e-10 is stated in the trace-d normalization
-  and ``tp_residual`` reports it there;
-- ``kraus_operators``: the eigen-decomposition of the projected Choi matrix, applied to a density-matrix register on its local
-  factors (``apply_kraus_dm``) or by Kraus SAMPLING to one member of a pure-state ensemble (``apply_kraus_ket``), the two
-  register representations of Section 5.4;
-- ``expansion_coefficients``: the register's local marginal expanded in the input basis, so that the motional outputs of the
-  tomography runs (linear in the input) give the reduced motional state the register actually leaves (item (b)).
-
-M9b: the engine runs of a step with resolved modes are independent and are spread over the workers of ``SolverOptions.workers``
-through QuTiP's map (Section 11.3 item 9), each worker running its own trajectories in-process; a step on an internal-state-only
-space runs in-process (Section 11.3 item 5).
-
-Performance pass 2026-09-09 (``SolverOptions.tomography_isometry``, the default): when the step's evolution is unitary (no
-collapse operator on any segment, ``JointExactEngine.is_unitary``) the final state is linear in the initial ket, so the channel is
-read off the propagated INTERNAL BASIS instead of the prod_i d_i^2 input states. Per motional branch b (weight w_b, motional ket
-|m_b>) the prod_i d_i basis kets |j> (x) |m_b> are propagated and their finals stacked into the Stinespring isometry V_b, whose
-slices by motional output index are the Kraus operators K_{b,a} = sqrt(w_b) (<a|_mot (x) 1) V_b (``choi_from_isometry``); the
-outputs, reduced motional states and residual displacements of the d_int^2 inputs the map is stated on follow by linearity
-(``_extract_from_columns``), so ``TomographyRecord`` keeps its meaning. On an internal-state-only space (a carrier step, an idle)
-the segment propagator IS the branch's Kraus operator and ``JointExactEngine.propagator`` returns it without propagating a state:
-one engine call per branch. The three routes are named in ``TomographyRecord.route`` ("states" is the M9a reference, which a
-dissipative step always takes) and agree to the solver tolerance (``tests/test_tomography.py``). The Choi matrix of the isometry
-routes is completely positive by construction; the CP/TP projection is still applied so that the register's normalization stays
-exact, and ``tp_residual(choi_raw)`` is the norm the propagated columns lost (the motional truncation's leakage, the solver's drift).
+Choi matrices are trace-1, E(rho) = d Tr_1[(rho^T (x) 1) C] with the input copy the first factor (as in ``noise.summary``).
 """
 
 from __future__ import annotations
@@ -83,9 +45,9 @@ if TYPE_CHECKING:
 M9A = "milestone M9a (dynamics/tomography.py, PLAN.md Section 5.4)"
 
 TomographyRoute = Literal["states", "isometry", "propagator"]
-"""How a channel was extracted: every input state propagated ("states", the M9a reference and the dissipative route), the internal
-basis propagated per branch and the channel read off the Stinespring isometry ("isometry"), or the segment propagator of an
-internal-state-only space taken as the branch's Kraus operator ("propagator")."""
+"""How a channel was extracted: every input state propagated and the Choi matrix fit by least squares ("states", the only
+route for a dissipative step), the internal basis propagated per branch as a Stinespring isometry ("isometry"), or the
+segment propagator of an internal-state-only space as the branch's Kraus operator ("propagator")."""
 
 
 # ---- input states ----------------------------------------------------------------------------------------------------------------
@@ -93,7 +55,7 @@ internal-state-only space taken as the branch's Kraus operator ("propagator").""
 
 def single_qudit_inputs(d: int) -> list[tuple[str, np.ndarray]]:
     """d^2 pure states spanning the Hermitian d x d matrices over the reals: |j>, (|j> + |k>)/sqrt 2 and (|j> + i|k>)/sqrt 2 for
-    j < k; for a qubit |0>, |1>, |+>, |+i> (the sixteen product inputs of a pair, Section 5.4)."""
+    j < k; for a qubit |0>, |1>, |+>, |+i>."""
     if d < 2:
         raise ValueError("a register factor has at least two levels")
     out: list[tuple[str, np.ndarray]] = []
@@ -127,15 +89,14 @@ def input_states(ion_dims: Sequence[int]) -> list[tuple[str, np.ndarray]]:
 
 
 def internal_basis(ion_dims: Sequence[int]) -> list[np.ndarray]:
-    """The prod_i d_i computational-basis kets of the internal space (first ion the first tensor factor), in the order of
-    ``computational_labels``: the columns the isometry route propagates (``SolverOptions.tomography_isometry``)."""
+    """The prod_i d_i computational-basis kets (first ion the first factor), in the order of ``computational_labels``."""
     d = int(np.prod([int(x) for x in ion_dims]))
     eye = np.eye(d, dtype=complex)
     return [eye[:, j].copy() for j in range(d)]
 
 
 def computational_labels(ion_dims: Sequence[int]) -> list[str]:
-    """The labels of the computational-basis inputs among ``input_states`` (the spin eigenstates of Section 5.4's report)."""
+    """The labels of the computational-basis inputs among ``input_states``."""
     return [
         ",".join(str(j) for j in combo) for combo in itertools.product(*[range(int(d)) for d in ion_dims])
     ]
@@ -161,13 +122,9 @@ def choi_least_squares(inputs: Sequence[np.ndarray], outputs: Sequence[np.ndarra
 
 
 def choi_from_isometry(v: np.ndarray, d_int: int) -> np.ndarray:
-    """The trace-1 Choi matrix of rho -> Tr_mot[V rho V^dag] for the (d_int d_mot) x d_int isometry V (Stinespring).
-
-    The columns of V are the propagated internal basis kets U(T)(|j> (x) |m_b>) of one motional branch (the joint basis is
-    ordered ions first, so a column reshapes to (internal out, motional out)), the Kraus operators K_a = (<a|_mot (x) 1) V are
-    its slices by motional output index a, and C = (1/d_int) sum_a |phi_a><phi_a| with phi_a = sum_i |i> (x) K_a|i> is the
-    convention of ``noise.summary.choi_from_kraus``, formed as one product without materializing the d_mot Kraus operators.
-    Completely positive by construction; trace preserving up to the norm the columns lost (``tp_residual``)."""
+    """The trace-1 Choi matrix of rho -> Tr_mot[V rho V^dag] for the (d_int d_mot) x d_int isometry V (ions first):
+    C = (1/d_int) sum_a |phi_a><phi_a|, phi_a = sum_i |i> (x) K_a|i>, K_a = (<a|_mot (x) 1) V. Completely positive by
+    construction; trace preserving up to the norm the columns lost."""
     arr = np.asarray(v, dtype=complex)
     if arr.ndim != 2 or arr.shape[1] != d_int or arr.shape[0] % d_int != 0:
         raise ValueError(
@@ -194,7 +151,7 @@ def cp_residual(choi: np.ndarray) -> float:
 
 
 def tp_residual(choi: np.ndarray) -> float:
-    """||d Tr_out(C) - 1||_F in the trace-d normalization of Section 5.4 (Tr_out of the trace-1 C is 1/d for a TP map)."""
+    """||d Tr_out(C) - 1||_F, in the trace-d normalization (Tr_out of the trace-1 C is 1/d for a TP map)."""
     d = int(round(math.sqrt(choi.shape[0])))
     return float(np.linalg.norm(d * _trace_out(choi, d) - np.eye(d)))
 
@@ -218,7 +175,7 @@ def project_cptp(
     choi: np.ndarray, *, tol: float = 1e-13, max_iter: int = 20000
 ) -> tuple[np.ndarray, float, float, int]:
     """Dykstra's alternating projection of ``choi`` onto CP (PSD) and TP (affine); returns (C, cp_residual, tp_residual,
-    iterations) with the residuals of the returned matrix against both constraints (Section 5.4; Section 9.17)."""
+    iterations) with the residuals of the returned matrix against both constraints."""
     x = np.asarray(choi, dtype=complex)
     p = np.zeros_like(x)
     q = np.zeros_like(x)
@@ -272,10 +229,7 @@ def apply_kraus_dm(
     rho: np.ndarray, kraus: Sequence[np.ndarray], dims: Sequence[int], factors: Sequence[int]
 ) -> np.ndarray:
     """sum_a K_a rho K_a^dag with the Kraus operators acting on the tensor ``factors`` (in the Kraus operators' own order) of a
-    register density matrix over ``dims``: ONE product of the d_loc^2 x d_loc^2 superoperator (``kraus_superoperator``) with the
-    register reshaped to (local row, local column) x (rest row, rest column). The per-operator ``einsum`` this replaces
-    (performance pass 2026-09-09) looped over all six indices without a matrix product, 19 times slower at ten qubits and
-    the dominant cost of a twelve-qubit GATE_LOCAL walk; the two agree to round-off (``tests/test_tomography.py``)."""
+    register density matrix over ``dims``, as one product with ``kraus_superoperator``."""
     n = len(dims)
     total = int(np.prod(dims))
     fac = [int(f) for f in factors]
@@ -299,7 +253,7 @@ def apply_kraus_ket(
     factors: Sequence[int],
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, int]:
-    """Kraus SAMPLING on one pure register member: K_a drawn with probability ||K_a psi||^2, the result renormalized."""
+    """Kraus sampling on one pure register member: K_a drawn with probability ||K_a psi||^2; returns (renormalized ket, a)."""
     n = len(dims)
     total = int(np.prod(dims))
     fac = [int(f) for f in factors]
@@ -369,13 +323,10 @@ def motional_branches(
     *,
     dropped_weight_max: float | None = None,
 ) -> tuple[list[MotionalBranch], float, tuple[str, ...]]:
-    """The motional input of a gate-local space as weighted pure branches (Section 5.3's Fock-sum path made general):
-    every resolved mode's tracked reduced density matrix (thermal at its nbar when none is tracked) in its eigenbasis, every
-    coupled frozen mode's Fock populations (the diagonal of its tracked state, else thermal); products of weight >= ``weight_min``
-    kept and renormalized, the dropped weight reported. With ``dropped_weight_max`` the lightest of the kept branches are dropped
-    too, one at a time, while the total dropped weight stays at or below it (``SolverOptions.tomography_dropped_weight_max``,
-    the tail rule of the performance pass 2026-09-09): the channel is a convex mixture over the branches, so dropping weight w
-    and renormalizing changes it by at most 2w in diamond norm, the bound the caller reports."""
+    """The motional input of a gate-local space as weighted pure branches: every resolved mode's tracked reduced state
+    (thermal at its nbar when none is tracked) in its eigenbasis, every coupled frozen mode's Fock populations. Products of
+    weight >= ``weight_min`` are kept and renormalized; with ``dropped_weight_max`` the lightest kept branches go too while
+    the total dropped weight w stays within it. Dropping w changes the channel by at most 2w in diamond norm."""
     notes: list[str] = []
     per_mode: list[tuple[int, str, list[tuple[float, object]]]] = []
     for tr in space.resolved:
@@ -441,7 +392,7 @@ def motional_branches(
     branches.sort(key=lambda b: -b.weight)
     dropped = float(max(1.0 - total, 0.0))
     if dropped_weight_max is not None and dropped_weight_max > 0.0:
-        # the tail rule: the lightest branches go while the total dropped weight stays inside the budget (always one branch left)
+        # the tail rule: drop the lightest while the total stays inside the budget, keeping at least one branch
         n_tail = 0
         while len(branches) - n_tail > 1 and dropped + branches[-1 - n_tail].weight <= dropped_weight_max:
             dropped += branches[-1 - n_tail].weight
@@ -462,7 +413,7 @@ def motional_branches(
 
 @dataclass(frozen=True)
 class TomographyRecord:
-    """What the state-based process tomography of one pulse group produced (Section 5.4 (a) and (b))."""
+    """What the process tomography of one pulse group produced."""
 
     space: HilbertSpace
     """The gate-local space the runs were made on (grown by the truncation monitor where it tripped)."""
@@ -490,31 +441,21 @@ class TomographyRecord:
     branches: int
     dropped_branch_weight: float
     engine_runs: int
-    """Engine calls: d_int^2 x branches state propagations on the "states" route, d_int x branches on the "isometry" route, one
-    propagator per branch on the "propagator" route (``route``)."""
     notes: tuple[str, ...]
     approximations: tuple[str, ...]
     integrators: tuple[str, ...]
     reports: tuple[EngineReport, ...]
     workers: int = 1
-    """Processes the runs actually used: the inputs spread over a parallel map, or the trajectories inside one engine run
-    (M9b audit B10). 1 = everything in-process, which is every carrier step, whose local space has no resolved mode."""
+    """Processes the runs actually used (1 = in-process)."""
     route: TomographyRoute = "states"
-    """How the channel was extracted (performance pass 2026-09-09): "states" propagates every input (the M9a reference, and
-    every dissipative step), "isometry" the internal basis per branch (Stinespring), "propagator" reads the branch's Kraus
-    operator off the segment propagator of an internal-state-only space. ``choi_raw`` is the least-squares fit on the first
-    route and the isometries' Choi matrix, completely positive by construction, on the other two."""
+    """How the channel was extracted (``choi_raw`` is a least-squares fit only on the "states" route)."""
     branch_error_bound: float = 0.0
-    """2 x ``dropped_branch_weight``: the diamond-norm bound on the channel error of dropping and renormalizing the motional
-    branches (the floor ``branch_weight_min`` and the tail rule ``tomography_dropped_weight_max``); a term of
-    ``GateLocalReport.discrepancy_bound``."""
+    """2 x ``dropped_branch_weight``: the diamond-norm bound on the error of dropping motional branches."""
     tolerances: tuple[float, float] = (SolverOptions.atol, SolverOptions.rtol)
-    """(atol, rtol) the engine runs integrated at: the caller's, or the map-accuracy-keyed pair of
-    ``SolverOptions.tomography_tolerance_keyed`` on a unitary step with resolved modes."""
+    """(atol, rtol) the engine runs integrated at: the caller's, or the keyed pair of ``keyed_tolerances``."""
     tolerance_change: float | None = None
-    """The Section 5.5 convergence statement for the keyed tolerance: d times the trace norm of the change in the Choi matrix
-    when the dominant branch's columns are re-integrated ten times tighter (a bound on the diamond-norm change), weighted by
-    that branch's share of the mixture; None when the tolerance was not keyed (the caller's tolerance is the caller's contract)."""
+    """d x the trace norm of the Choi change when the dominant branch is re-integrated ten times tighter (a diamond-norm
+    bound), weighted by that branch's share; None when the tolerance was not keyed."""
 
     @property
     def dimension(self) -> int:
@@ -528,9 +469,7 @@ class TomographyRecord:
         return expansion_coefficients(rho_local, self.inputs)
 
     def motional_for(self, rho_local: np.ndarray) -> tuple[dict[int, np.ndarray], dict[int, complex]]:
-        """The reduced motional state and the residual displacement every resolved mode is left in when the register's local
-        marginal is ``rho_local`` (Section 5.4 (b)): the tomography outputs are linear in the input, so the expansion of the
-        marginal in the input basis carries over."""
+        """Each resolved mode's reduced state and residual displacement after the pulse, given the local marginal."""
         c = self.coefficients(rho_local)
         out: dict[int, np.ndarray] = {}
         alpha: dict[int, complex] = {}
@@ -545,8 +484,7 @@ class TomographyRecord:
         return out, alpha
 
     def residual_displacement(self) -> dict[int, float]:
-        """Per resolved mode, max over the computational-basis inputs of |<a_m>| after the pulse: the residual displacement per
-        spin eigenstate that Section 5.4 asks GATE_LOCAL to report."""
+        """Per resolved mode, max over the computational-basis inputs of |<a_m>| after the pulse."""
         comp = set(computational_labels(self.space.ion_dims))
         out: dict[int, float] = {}
         for m, alphas in self.alpha_out.items():
@@ -555,9 +493,8 @@ class TomographyRecord:
         return out
 
     def summary(self, ideal: np.ndarray | None = None) -> ChannelSummary:
-        """The Section 6.8 summary: the average gate infidelity, the Pauli twirl of the ERROR channel E o U^dag and the depolarizing
-        rate (the entanglement infidelity) against ``ideal``; without an ideal the twirl is of the channel itself and the
-        infidelities are NaN."""
+        """The average gate infidelity, the Pauli twirl of the error channel E o U^dag and the entanglement infidelity against
+        ``ideal``; without an ideal the twirl is of the channel itself and the infidelities are NaN."""
         d = self.dimension
         n_qubits = len(self.space.ion_dims)
         all_qubits = all(int(x) == 2 for x in self.space.ion_dims)
@@ -623,8 +560,7 @@ class _TomographyTask:
 
 
 def _branch_sample(sample: NoiseSample, branch: MotionalBranch) -> NoiseSample:
-    """The sample of one motional branch: the frozen coupled modes' Fock states and the branch weight (which scales the boundary
-    threshold, Section 5.5) on top of the run's values."""
+    """The run's sample plus one branch's frozen Fock states and weight (the weight scales the boundary threshold)."""
     values = dict(sample.values)
     values.update({key_frozen_n(m): float(n) for m, n in branch.frozen_n.items()})
     values[KEY_BRANCH_WEIGHT] = float(branch.weight)
@@ -636,7 +572,7 @@ def _engine_run(
         JointExactEngine, Device, Schedule, object, HilbertSpace, NoiseSample, SeedSpec, SolverOptions
     ],
 ) -> tuple[Traces, EngineReport]:
-    """One engine run as a map task (module-level so that it pickles under ``map="parallel"``; Section 11.3 item 9)."""
+    """One engine run as a map task (module-level so that it pickles under ``map="parallel"``)."""
     engine, device, sched, state, space, smp, seeds, opts = payload
     traces = engine.run_pulses(device, sched, state, space, smp, seeds, opts)  # type: ignore[arg-type]
     rep = engine.last_report
@@ -653,11 +589,8 @@ def _run_tasks(
     seeds: SeedSpec,
     opts: SolverOptions,
 ) -> tuple[list[tuple[Traces, EngineReport]], int]:
-    """The tomography's engine runs and the number of PROCESSES they actually used (M9b audit B10: ``Diagnostics.workers``
-    reported ``worker_count(options)`` for a GATE_LOCAL run whether or not anything ran in parallel).
-
-    In-process on the shared engine (its propagator cache serves an internal-state-only space from one integration), or spread
-    over the workers when the space has resolved modes and a parallel map is configured."""
+    """The tomography's engine runs and the processes they used: in-process on the shared engine (whose propagator cache
+    serves internal-state-only spaces), or over the workers when the space has resolved modes."""
     workers = worker_count(opts)
     if opts.map == "serial" or workers <= 1 or len(payloads) < 2 or not space.resolved:
         out: list[tuple[Traces, EngineReport]] = []
@@ -718,7 +651,7 @@ def _extract_from_states(
     seeds: SeedSpec,
     opts: SolverOptions,
 ) -> _Extraction:
-    """The "states" route (M9a): every input of ``labels_kets`` propagated for every branch, the outputs averaged with the branch
+    """The "states" route: every input of ``labels_kets`` propagated for every branch, the outputs averaged with the branch
     weights; the Choi matrix is left to the least-squares fit."""
     d_int = int(np.prod(current.ion_dims))
     dims_int = [list(current.ion_dims), [1] * len(current.ion_dims)]
@@ -731,7 +664,6 @@ def _extract_from_states(
     margins: dict[int, int] = {}
     n_traj = 1
     method = "sesolve"
-    # every (input, branch) run is independent: prepare them all, run them through the map, then accumulate in order
     payloads: list[_TomographyTask] = []
     for lab_idx, (_lab, ket) in enumerate(labels_kets):
         internal = qt.Qobj(ket.reshape(-1, 1), dims=dims_int)
@@ -817,9 +749,9 @@ def _isometry_columns(
     seeds: SeedSpec,
     opts: SolverOptions,
 ) -> tuple[list[np.ndarray], list[EngineReport], dict[int, float], int, HilbertSpace | None]:
-    """The "isometry" route's runs: the d_int internal basis kets of every branch through the engine (the same map as the state
-    route), their final joint kets stacked into one D x d_int isometry per branch. Returns (isometries, reports, the boundary
-    populations the engine's monitor saw on those kets, processes used, the grown space or None)."""
+    """The "isometry" route's runs: the d_int internal basis kets of every branch through the engine, their final joint kets
+    stacked into one D x d_int isometry per branch. Returns (isometries, reports, the boundary populations seen on those
+    kets, processes used, the grown space or None)."""
     d_int = int(np.prod(current.ion_dims))
     dims_int = [list(current.ion_dims), [1] * len(current.ion_dims)]
     payloads: list[_TomographyTask] = []
@@ -859,8 +791,8 @@ def _propagator_columns(
     opts: SolverOptions,
     motional_model: MotionalModel,
 ) -> tuple[list[np.ndarray], list[EngineReport]]:
-    """The "propagator" route: on an internal-state-only space the segment propagator of each branch IS its isometry (d_mot = 1),
-    read off ``JointExactEngine.propagator`` without propagating a state (one engine call per branch)."""
+    """The "propagator" route: on an internal-state-only space each branch's segment propagator is its isometry
+    (d_mot = 1), one ``JointExactEngine.propagator`` call per branch."""
     columns: list[np.ndarray] = []
     reports: list[EngineReport] = []
     for br in branches:
@@ -886,14 +818,8 @@ def _extract_from_columns(
     workers: int,
     route: TomographyRoute,
 ) -> _Extraction:
-    """The channel and the record's per-input quantities from one isometry V_b per branch, by linearity (Stinespring).
-
-    The Choi matrix is sum_b w_b C(V_b) (``choi_from_isometry``); for every input ket psi_k of ``labels_kets`` the output joint
-    ket of branch b is V_b psi_k, whose internal marginal, reduced motional states, <a_m> and boundary populations are the same
-    functions the engine evaluates on its final states, averaged with the branch weights, so ``outputs``, ``motional_out``,
-    ``alpha_out`` and ``nbar_out`` keep the meaning of the state route. ``boundary_seen`` is what the engine's monitor recorded on
-    the propagated basis kets at every segment end; the d_int^2 inputs' final-time values are folded in, and a superposition's
-    boundary population is bounded by d_int times the basis kets' maximum (Cauchy-Schwarz), which the record notes."""
+    """The channel and per-input quantities from one isometry V_b per branch, by linearity (input psi_k leaves V_b psi_k).
+    A superposition's boundary population at a segment end is at most d_int times the maximum in ``boundary_seen``."""
     d_int = int(np.prod(current.ion_dims))
     dim = current.dimension
     d_mot = dim // d_int
@@ -975,18 +901,9 @@ def tomography(
     seeds: SeedSpec,
     options: SolverOptions,
 ) -> TomographyRecord:
-    """State-based process tomography of ``pulse`` on ``space`` from the motional state of ``motional_model`` (Section 5.4).
-
-    For every motional branch of ``motional_branches`` (weights >= ``options.branch_weight_min``) the channel is extracted by one
-    of three routes (``TomographyRecord.route``): when the evolution is unitary and ``options.tomography_isometry`` holds, the
-    internal basis is propagated and the channel read off the Stinespring isometry (or, on an internal-state-only space, off the
-    segment propagator itself, no state propagated); otherwise every input of ``input_states`` is propagated by
-    ``engine.run_pulses`` and the Choi matrix fit by least squares. The outputs are averaged with the branch weights, the Choi
-    matrix is projected onto CP and TP, and the motional outputs and residual displacements per input are kept for the
-    register-weighted update. When the truncation monitor grows the space during a run, every run is repeated on the grown
-    space so that all outputs share one space. On the trajectory path the engine's trajectory count is raised to
-    ceil(1/epsilon_map) (``options.map_accuracy``).
-    """
+    """Process tomography of ``pulse`` on ``space`` from the motional state of ``motional_model``: the isometry or
+    propagator route for a unitary step under ``options.tomography_isometry``, else the states route; every run is
+    repeated when the truncation monitor grows the space."""
     sched = _as_schedule(pulse)
     dissipative = bool(engine.channels) or bool(engine.device_channels)
     opts = options
@@ -994,14 +911,13 @@ def tomography(
         options.lindblad_method == "mcsolve"
         or (options.lindblad_method == "auto" and space.dimension > options.mesolve_dimension_max)
     ):
-        # the map-accuracy rule of Section 5.4: n_traj = ceil(1/epsilon_map) per input replaces the general trajectory count
+        # the map-accuracy rule: n_traj = ceil(1/epsilon_map) per input
         opts = replace(options, ntraj=int(math.ceil(1.0 / options.map_accuracy)))
     labels_kets = input_states(space.ion_dims)
     labels = tuple(lab for lab, _k in labels_kets)
     inputs = tuple(np.outer(k, k.conj()) for _l, k in labels_kets)
     frozen_coupled = coupled_frozen_modes(device, space, sched.pulses)
-    # the tail rule's budget (Section 5.4, performance pass 2026-09-09): the bound 2w on the dropped weight stays inside half the
-    # map accuracy unless the caller set the budget (0.0 keeps every branch above the floor)
+    # the tail budget keeps the bound 2w inside half the map accuracy unless the caller set it (0.0 keeps every branch)
     tail_budget = (
         options.map_accuracy / 4.0
         if options.tomography_dropped_weight_max is None
@@ -1016,8 +932,7 @@ def tomography(
         route: TomographyRoute = "states"
         if opts.tomography_isometry and engine.is_unitary(device, current, opts):
             route = "propagator" if (not current.resolved and current.enr_group is None) else "isometry"
-        # the map-accuracy-keyed tolerance of a unitary step with resolved modes (never a tolerance the caller chose, never a
-        # propagator at dimension 4 to 16, never a dissipative step): the ten-times-tighter probe below reports its effect
+        # keyed tolerances on the isometry route only; the ten-times-tighter probe below reports their effect
         keyed = keyed_tolerances(options) if route == "isometry" else None
         run_opts = replace(opts, atol=keyed[0], rtol=keyed[1]) if keyed is not None else opts
         if route == "states":
@@ -1045,8 +960,7 @@ def tomography(
         tolerance_change: float | None = None
         probe_notes: list[str] = []
         if keyed is not None and route == "isometry":
-            # the Section 5.5 statement for the keyed tolerance: the dominant branch's columns ten times tighter, the change in
-            # the branch's Choi matrix (d times its trace norm bounds the diamond norm) weighted by the branch's share
+            # the dominant branch ten times tighter: d x the trace norm of its Choi change bounds the diamond norm
             tight = replace(run_opts, atol=run_opts.atol / 10.0, rtol=run_opts.rtol / 10.0)
             probe_cols, probe_reports, _seen, _w, probe_grown = _isometry_columns(
                 engine, device, sched, current, branches[:1], thermal_frozen, sample, seeds, tight
@@ -1119,10 +1033,9 @@ def tomography(
 
 
 def keyed_tolerances(options: SolverOptions) -> tuple[float, float] | None:
-    """(atol, rtol) the GATE_LOCAL tomography integrates a unitary step with resolved modes at under
-    ``SolverOptions.tomography_tolerance_keyed``: 1e-5 and 1e-3 of the map accuracy where the caller left the engine defaults,
-    the caller's own value where not (a chosen tolerance is never overridden, the Section 5.3 precedent); None when the switch
-    is off or neither tolerance would move."""
+    """(atol, rtol) for the tomography of a unitary step with resolved modes under ``tomography_tolerance_keyed``: 1e-5 and
+    1e-3 of the map accuracy where the caller left the engine defaults, the caller's own value otherwise; None when the
+    switch is off or neither tolerance would move."""
     if not options.tomography_tolerance_keyed:
         return None
     defaults = SolverOptions()
@@ -1134,7 +1047,7 @@ def keyed_tolerances(options: SolverOptions) -> tuple[float, float] | None:
 
 
 def _trace_norm(h: np.ndarray) -> float:
-    """The trace norm of a Hermitian matrix (the sum of |eigenvalues|); the difference of two Choi matrices is Hermitian."""
+    """The trace norm of a Hermitian matrix: the sum of |eigenvalues|."""
     sym = 0.5 * (h + h.conj().T)
     return float(np.sum(np.abs(np.linalg.eigvalsh(sym))))
 
@@ -1210,9 +1123,7 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "lindblad_method": options.lindblad_method,
         "mesolve_dimension_max": options.mesolve_dimension_max,
         "ntraj": options.ntraj,
-        # the trajectory ENSEMBLE differs with these two, so an extraction cached under one must not serve the other:
-        # improved_sampling adds the deterministic no-jump member and reweights the rest (Section 5.3), and
-        # trajectory_target_tol changes how many trajectories phase two replays (Section 3.4)
+        # these two change the trajectory ensemble, so an extraction cached under one setting must not serve the other
         "improved_sampling": options.improved_sampling,
         "trajectory_target_tol": options.trajectory_target_tol,
         "map_accuracy": options.map_accuracy,
@@ -1223,7 +1134,7 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "margin_check": options.margin_check,
         # the routes agree to the solver tolerance, but a record extracted by one must not answer for the other's report
         "tomography_isometry": options.tomography_isometry,
-        # the Tier 2 relaxations change the branches kept, the tolerance integrated at and the caps built (Section 5.4)
+        # these change the branches kept, the tolerance integrated at and the caps built
         "tomography_dropped_weight_max": options.tomography_dropped_weight_max,
         "tomography_tolerance_keyed": options.tomography_tolerance_keyed,
         "margin_element_tol": options.margin_element_tol,

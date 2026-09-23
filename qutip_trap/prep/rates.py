@@ -1,33 +1,7 @@
-"""Level-A rate coefficients per mode from the Bloch model, with the per-ion participation (PLAN.md Sections 4.2.1,
-4.2.2, 4.2.8; milestone M3).
+"""Level-A cooling rates per mode from the Bloch model, weighted by each illuminated ion's participation c_{i,m}.
 
-For every illuminated ion i and mode m the phonon heating and cooling rates are, with eta^2 INSIDE,
-
-    heating_{i,m} = c_{i,m}^2 [S_i(+nu_m) + 2 D_i,m],   cooling_{i,m} = c_{i,m}^2 [S_i(-nu_m) + 2 D_i,m],
-
-S_i the dipole-force fluctuation spectrum of ion i's internal steady state under all the beams it sees (the semi-analytic
-path of Section 4.2.8 iii, exact in the saturation, QuTiP's spectrum(omega) = W(Delta - omega) pinned by the M3a
-tests) and 2 D_i,m the emission recoil diffusion with one alpha per channel and one wavenumber per line (Section 4.2.8
-ii); the participation enters through the ion's mass-weighted eigenvector component c_{i,m} of Section 4.1.3 folded
-into the zero-point length, so the rates carry the weight W_k = sum_{i illuminated} c_{i,m}^2 (...) of Section 4.2
-and the steady state nbar_m = sum_i heating/(sum_i cooling - sum_i heating) is independent of the participation
-when every ion sees the same light (Section 4.2.2: the b cancels between eta~ and eta). The alternative ``closed_form``
-method is the W(Delta -+ nu) form of Section 4.2.2 with each beam shifted in turn on the full multi-level model
-(the repumpers stay in place, so a Lambda-type scheme keeps scattering), refused above Omega/Gamma = 0.1 unless the
-caller allows the saturation error (Section 4.2.8 vii; the M3a finding that the saturated W is off by 1 + s).
-
-A mode whose projection on every cooling beam and every illuminated ion is below the threshold is not cooled: the
-module raises ``UncooledModeError`` rather than returning a steady state for it (Section 4.2, first paragraph). The
-same refusal covers the mixed-species case of Section 4.2.5: a mode the ILLUMINATED ions barely participate in
-(sum_i c_{i,m}^2 below ``PARTICIPATION_THRESHOLD``) carries a mathematically consistent nbar - the participation
-cancels between eta~ and eta - at a relaxation rate of order 1e-2 s^-1, i.e. tens of seconds, so reporting it as the
-prepared occupation of a microsecond stage is exactly what "such a mode is not cooled at all" forbids; ``min_rate_per_s``
-adds the direct bound on W_m for a caller that knows its stage duration. The Section 4.2.8 (vii) conditions
-eta^2 (2 nbar + 1) << 1 and W << nu, W << every internal rate are asserted here too (:mod:`qutip_trap.prep.validity`).
-
-``stage_rates`` and ``models_per_ion`` take either one ``AtomicStructure`` for every illuminated ion or a per-ion
-mapping, so one stage call can hold a coolant species and a qubit species that the cooling light does not address
-(Section 4.2.5: the coolant is the illuminated set and the shared modes take their nbar from its stage).
+heating_{i,m} = c_{i,m}^2 [S_i(+nu_m) + 2 D_i,m] and cooling uses S_i(-nu_m), eta^2 inside; a mode the cooling light
+does not reach raises ``UncooledModeError`` rather than returning a steady state.
 """
 
 from __future__ import annotations
@@ -56,17 +30,14 @@ from qutip_trap.units import HBAR_J_S
 Method = Literal["spectrum", "closed_form"]
 
 PROJECTION_THRESHOLD = 1e-2
-"""(k_hat . e_m)^2 below which a beam does not address a mode (Section 4.2: an uncooled mode raises)."""
+"""(k_hat . e_m)^2 below which a beam does not address a mode."""
 
 PARTICIPATION_THRESHOLD = 1e-4
-"""sum_i c_{i,m}^2 over the ILLUMINATED ions below which the cooling light does not reach the mode (Section 4.2.5).
-
-A mixed 171Yb+/40Ca+ pair cooled on the Ca+ leaves the two Yb-dominated radial modes at a coolant participation of
-about 1e-5 and a relaxation rate of 3.4e-2 s^-1 (30 s); this threshold refuses them (the M3 finding)."""
+"""sum_i c_{i,m}^2 over the illuminated ions below which the cooling light does not reach the mode."""
 
 
 class UncooledModeError(CoolingError):
-    """No cooling beam projects on the mode at any illuminated ion: the mode is not cooled at all (Section 4.2)."""
+    """The cooling light does not reach the mode: the mode is not cooled at all."""
 
 
 @dataclass(frozen=True)
@@ -89,7 +60,7 @@ class IonModeRates:
 
 @dataclass(frozen=True)
 class ModeRates:
-    """The level-A description of one mode under the cooling light (Section 4.2, level A)."""
+    """The level-A description of one mode under the cooling light."""
 
     mode: int
     omega_rad_s: float
@@ -104,12 +75,12 @@ class ModeRates:
 
     @property
     def rate_per_s(self) -> float:
-        """W_m = cooling - heating: the exponential relaxation rate of <n_m> (Cirac Eqs. 29-32)."""
+        """W_m = cooling - heating: the exponential relaxation rate of <n_m>."""
         return self.cooling_per_s - self.heating_per_s
 
     @property
     def nbar(self) -> float:
-        """heating/(cooling - heating); raises CoolingError when the mode heats (Section 4.2.8)."""
+        """heating/(cooling - heating); raises CoolingError when the mode heats."""
         if self.cooling_per_s <= self.heating_per_s:
             raise CoolingError(
                 f"mode {self.mode}: cooling {self.cooling_per_s:.4g} <= heating {self.heating_per_s:.4g} s^-1: no steady state"
@@ -117,13 +88,13 @@ class ModeRates:
         return self.heating_per_s / (self.cooling_per_s - self.heating_per_s)
 
     def lamb_dicke_thermal(self) -> float:
-        """eta sqrt(2 nbar + 1), the Lamb-Dicke expansion parameter at the steady state (Section 4.2.8 vii)."""
+        """eta sqrt(2 nbar + 1), the Lamb-Dicke expansion parameter at the steady state."""
         return self.lamb_dicke_max * math.sqrt(2.0 * self.nbar + 1.0)
 
 
 def ion_mode_spec(crystal: Crystal, ion: int, mode: int) -> ModeSpec | None:
-    """A ModeSpec whose axis is ion i's displacement direction in mode m and whose zero-point length carries the participation,
-    x0_eff = |c_{i,m}| sqrt(hbar/(2 m_i omega_m)) (through an effective mass m_i/c^2); None when the ion sits at a node."""
+    """A ModeSpec along ion i's displacement direction in mode m whose zero-point length carries the participation,
+    x0_eff = |c_{i,m}| sqrt(hbar/(2 m_i omega_m)) (an effective mass m_i/c^2); None when the ion sits at a node."""
     m = crystal.modes[mode]
     pattern = np.asarray(m.displacement_pattern()[ion], dtype=float)
     c = float(np.linalg.norm(pattern))
@@ -195,14 +166,8 @@ def mode_rates(
     allow_strong_coupling: bool = False,
     allow_fast_cooling: bool = False,
 ) -> ModeRates:
-    """Sum the illuminated ions' contributions to mode m; raise UncooledModeError when the cooling light does not reach it.
-
-    Three refusals, all of them Section 4.2's "such a mode is not cooled at all": no cooling beam projects on the
-    mode at any illuminated ion (``projection_threshold`` on (k_hat . e_m)^2), the illuminated ions barely participate
-    in it (``participation_threshold`` on sum_i c_{i,m}^2, the mixed-species case of Section 4.2.5) and - when the
-    caller states one - the relaxation rate W_m = cooling - heating falls below ``min_rate_per_s``. The Section 4.2.8
-    (vii) Lamb-Dicke and adiabatic conditions are asserted on the result unless their escapes are passed.
-    """
+    """Sum the illuminated ions' contributions to mode m; raises UncooledModeError below ``projection_threshold``,
+    ``participation_threshold`` or a given ``min_rate_per_s``, then asserts the Lamb-Dicke and adiabatic conditions."""
     contributions: list[IonModeRates] = []
     for ion, model in models.items():
         r = ion_mode_rates(model, crystal, ion, mode, method=method, allow_saturation=allow_saturation)
@@ -265,7 +230,7 @@ def mode_rates(
 
 @dataclass(frozen=True)
 class StageRates:
-    """The level-A description of one cooling stage: every mode's rates and the objective's weights (Section 4.2)."""
+    """The level-A description of one cooling stage: every mode's rates and the objective's weights."""
 
     modes: tuple[ModeRates, ...]
     weights: tuple[float, ...]
@@ -286,13 +251,13 @@ class StageRates:
 
     @property
     def weighted_nbar(self) -> float:
-        """sum_m w_m nbar_m / sum_m w_m: the objective the beam parameters are chosen to minimize (Section 4.2.1)."""
+        """sum_m w_m nbar_m / sum_m w_m: the objective the beam parameters are chosen to minimize."""
         w = np.asarray(self.weights)
         n = np.array([m.nbar for m in self.modes])
         return float(np.dot(w, n) / np.sum(w))
 
     def lamb_dicke_guard(self) -> dict[int, float]:
-        """eta sqrt(2 nbar + 1) per mode: Section 4.2.8 (vii) requires this << 1 for the level-A/B description."""
+        """eta sqrt(2 nbar + 1) per mode, which the level-A/B description needs << 1."""
         return {m.mode: m.lamb_dicke_thermal() for m in self.modes}
 
     def mode(self, index: int) -> ModeRates:
@@ -322,13 +287,8 @@ def stage_rates(
     allow_strong_coupling: bool = False,
     allow_fast_cooling: bool = False,
 ) -> tuple[StageRates, dict[int, BlochModel]]:
-    """The rates of every mode (or of ``modes``) under ``beams`` at the illuminated ions, and the per-ion models used.
-
-    ``beams`` are all the beams the ions see, repumpers included; ``cooling_beams`` restricts the projection guard to the
-    beams meant to cool. ``weights`` (mode -> weight) is the objective's participation weighting, uniform when None.
-    ``structure`` is one atomic structure for every illuminated ion, or a per-ion mapping for a mixed crystal
-    (Section 4.2.5: pass ``illuminated=`` the coolant ions, so the qubit species need not be addressed by the light).
-    """
+    """The rates of every mode (or of ``modes``) under all ``beams`` at the illuminated ions, and the per-ion models;
+    ``cooling_beams`` restricts the projection guard, and ``structure`` may map ion -> structure for a mixed crystal."""
     ions = tuple(illuminated) if illuminated is not None else illuminated_ions(beams, crystal)
     if not ions:
         raise ValueError("no ion is illuminated by the beams")
@@ -397,12 +357,7 @@ def models_per_ion(
     states: Sequence[str] | None = None,
     options: MultiLevelOptions | None = None,
 ) -> dict[int, BlochModel]:
-    """One internal-only Bloch model per ion, the beams evaluated at that ion's equilibrium position (crosstalk-exact).
-
-    ``structure`` is one ``AtomicStructure`` shared by every ion in ``ions``, or a mapping ion -> structure for a
-    mixed crystal (Section 4.2.5). Every ion of ``ions`` must appear in the mapping: an ion the cooling light does
-    not address belongs outside the illuminated set, not in it with a guessed structure.
-    """
+    """One internal-only Bloch model per ion at its equilibrium position; a ``structure`` mapping must cover every ion."""
     opts = options or MultiLevelOptions()
     if opts.recoil != "off":
         raise ValueError(

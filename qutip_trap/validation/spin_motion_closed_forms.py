@@ -1,6 +1,6 @@
-"""Closed forms of Section 4.3 used as test oracles for the Hamiltonian builder (PLAN.md Sections 4.3.1, 4.2.7, 6.2, 9.2).
+"""Spin-motion closed forms used as oracles for the Hamiltonian builder.
 
-All frequencies angular (rad/s) and the plan's (hbar Omega/2) convention: a resonant carrier flops as sin^2(Omega t/2).
+All frequencies angular (rad/s), in the (hbar Omega/2) convention: a resonant carrier flops as sin^2(Omega t/2).
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from qutip_trap.hilbert.operators import displacement_element_analytic
 
 
 def generalized_rabi_rad_s(omega_rad_s: float, detuning_rad_s: float) -> float:
-    """sqrt(Omega^2 + Delta^2) in the plan's convention (Wineland's (Delta^2 + 4 Omega_W^2)^{1/2} with Omega = 2 Omega_W)."""
+    """sqrt(Omega^2 + Delta^2), Wineland's (Delta^2 + 4 Omega_W^2)^{1/2} with Omega = 2 Omega_W."""
     return math.sqrt(omega_rad_s**2 + detuning_rad_s**2)
 
 
 def two_level_population(omega_rad_s: float, detuning_rad_s: float, t_s: float) -> float:
-    """P_up(t) = [Omega^2/(Omega^2 + Delta^2)] sin^2((t/2) sqrt(Omega^2 + Delta^2)) from |down> (Section 13 lineshape row)."""
+    """P_up(t) = [Omega^2/(Omega^2 + Delta^2)] sin^2((t/2) sqrt(Omega^2 + Delta^2)) from |down>."""
     g = generalized_rabi_rad_s(omega_rad_s, detuning_rad_s)
     if g == 0.0:
         return 0.0
@@ -47,11 +47,8 @@ def lamb_dicke_sideband_rabi_rad_s(omega_rad_s: float, eta: float, n_from: int, 
 def resonant_transition_amplitude(
     omega_rad_s: float, eta: float, phi_rad: float, n_from: int, n_to: int, t_s: float
 ) -> complex:
-    """<up, n'| U(t) |down, n> on the resonant sideband: -i e^{i phi} (M/|M|) sin(|M| Omega t/2) with M = <n'|D(i eta)|n>.
-
-    The drive phase enters as phi + arg M = phi + (pi/2)|n' - n| (+ pi where the Laguerre polynomial is negative),
-    Wineland Eq. 21 / RMP Eq. 84 in the plan's convention (Section 4.3.1).
-    """
+    """<up, n'| U(t) |down, n> on the resonant sideband: -i e^{i phi} (M/|M|) sin(|M| Omega t/2), M = <n'|D(i eta)|n>, with
+    arg M = (pi/2)|n' - n| (+ pi where the Laguerre polynomial is negative) (Wineland Eq. 21 / RMP Eq. 84)."""
     m = displacement_element_analytic(n_to, n_from, 1j * eta)
     if m == 0.0:
         return 0.0j
@@ -63,12 +60,12 @@ def carrier_debye_waller(n: int, eta: float) -> float:
 
 
 def thermal_debye_waller(eta: float, nbar: float) -> float:
-    """The thermal average of e^{i eta (a + a^dag)}: exp[-eta^2 (nbar + 1/2)], an identity for a thermal state (Section 9.12)."""
+    """The thermal average of e^{i eta (a + a^dag)}: exp[-eta^2 (nbar + 1/2)], exact for a thermal state."""
     return math.exp(-(eta**2) * (nbar + 0.5))
 
 
 def cetina_theta(b_im: float, xi_m: float, kappa_per_m2: float, nbar: float) -> float:
-    """theta_im = -b_im^2 xi_m^2 (Omega''/Omega) nbar (Cetina 2022; Section 6.2)."""
+    """theta_im = -b_im^2 xi_m^2 (Omega''/Omega) nbar (Cetina 2022)."""
     return -(b_im**2) * xi_m**2 * kappa_per_m2 * nbar
 
 
@@ -90,7 +87,7 @@ def cetina_population(thetas: Sequence[float], omega_rad_s: float, t_s: float) -
 
 
 def gaussian_curvature_per_m2(waist_m: float, offset_m: float = 0.0) -> float:
-    """Omega''/Omega of a Gaussian FIELD profile: -(2/w^2)(1 - 2 x^2/w^2); the intensity form is exactly twice (Section 6.2)."""
+    """Omega''/Omega of a Gaussian FIELD profile: -(2/w^2)(1 - 2 x^2/w^2); the intensity form is exactly twice."""
     return -(2.0 / waist_m**2) * (1.0 - 2.0 * offset_m**2 / waist_m**2)
 
 

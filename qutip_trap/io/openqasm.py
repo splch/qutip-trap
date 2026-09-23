@@ -1,16 +1,9 @@
-"""OpenQASM 2 importer, a subset (PLAN.md Sections 1.4, 7.2, 7.6; milestone M6).
-
-Accepted: the ``OPENQASM 2.0;`` header, ``include`` statements (ignored: the qelib1.inc gates are built in), ``qreg`` and
-``creg`` declarations (qubit registers are flattened in declaration order; the classical registers a terminal measurement
-writes into become ``Circuit.registers``, name -> the measured qubits in bit order, 0.2.0), ``gate`` declarations with parameters (expanded
-by inlining, so the client SDKs' OpenQASM 2 export, which declares gpi, gpi2, ms and zz as custom gates built from u, rz,
-rxx and rzz, imports through its own definitions, Section 7.6), gate applications with register broadcasting, ``barrier``
-(ignored), ``measure`` (a trailing measurement is the circuit's terminal ``measure``; one followed by a later gate on the
-same qubit stays a mid-circuit ``measure`` operation the scheduler refuses), ``reset`` (a mid-circuit operation) and
-parameter expressions over pi with + - * / ^, unary minus, parentheses and sin, cos, tan, exp, ln, sqrt. Built-in gates:
-U/u3/u, u2, u1, CX/cx/cnot, id, x, y, z, h, s, sdg, t, tdg, sx, rx, ry, rz, cz, swap, cp/cu1, rxx, rzz and the native gpi,
-gpi2, ms, zz (radians when undeclared, the IR convention). Classical control (``if``) and ``opaque`` are refused.
-"""
+"""OpenQASM 2 importer for a subset: ``include`` (ignored; qelib1.inc is built in), ``qreg`` (flattened in declaration
+order), ``creg``, ``gate`` declarations (inlined, so the client SDKs' own gpi, gpi2, ms and zz definitions import),
+register broadcasting, ``barrier`` (ignored), ``measure``, ``reset`` and parameter expressions over pi with + - * / ^ and
+sin, cos, tan, exp, ln, sqrt. A measurement followed by a gate on its qubit stays a mid-circuit ``measure``; the others are
+terminal, and the cregs they write become ``Circuit.registers``. Undeclared gpi, gpi2, ms and zz are the native gates in
+radians; ``if`` and ``opaque`` are refused."""
 
 from __future__ import annotations
 
@@ -116,7 +109,6 @@ class _Parser:
         self.cbits: dict[int, tuple[str, int]] = {}  # position in ops of a measure -> (creg, bit) it writes
         self.n_qubits = 0
 
-    # ---- token helpers
     def peek(self, k: int = 0) -> _Tok:
         return self.toks[min(self.i + k, len(self.toks) - 1)]
 
@@ -137,7 +129,6 @@ class _Parser:
             raise OpenQASMError(f"expected {kind} at offset {t.pos}, found {t.text!r}")
         return t
 
-    # ---- grammar
     def program(self) -> Circuit:
         if self.peek().text == "OPENQASM":
             self.take()
@@ -174,10 +165,8 @@ class _Parser:
             else:
                 keep.append(op)
         measure = tuple(sorted(terminal))
-        # the registers: every creg a measurement writes into, in declaration order, its written bits in bit order (a
-        # declared bit nothing writes is left out; a creg nothing writes into is not a register of the circuit; with no
-        # creg written at all the circuit gets the default register over its terminal targets, which is empty when the
-        # program measures nothing: run() then measures every ion, the 0.1.0 rule)
+        # every creg a measurement writes, its written bits in bit order; with none, the default register over the
+        # terminal targets (empty when nothing is measured: run() then measures every ion)
         registers = {
             name: tuple(written[bit] for bit in sorted(written)) for name, written in bits.items() if written
         }
@@ -402,9 +391,6 @@ def builtin_operations(name: str, values: tuple[float, ...], qubits: tuple[int, 
     return [Operation(name, qubits, values)]
 
 
-# ---- parameter expressions --------------------------------------------------------------------------------------------------
-
-
 def evaluate(tokens: Sequence[_Tok], env: dict[str, float]) -> float:
     """Evaluate an OpenQASM 2 real expression: numbers, pi, identifiers of ``env``, + - * / ^, unary minus, functions."""
     if not tokens:
@@ -493,7 +479,7 @@ def evaluate(tokens: Sequence[_Tok], env: dict[str, float]) -> float:
 
 def load_openqasm2(text: str) -> Circuit:
     """Import OpenQASM 2 text (the subset in the module docstring) into the IR: angles in radians, the terminal measurements
-    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers`` (0.2.0)."""
+    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers``."""
     return _Parser(text).program()
 
 

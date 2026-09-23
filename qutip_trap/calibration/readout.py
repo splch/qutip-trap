@@ -1,16 +1,5 @@
-"""Detection calibration: histogram bright and dark records, fit the rates, choose threshold and window (PLAN.md Section 7.5
-item 5; milestone M5).
-
-The calibration draws ``n_records`` bright and ``n_records`` dark records from the simulated readout model (the laboratory's
-10^4 and 10^4), fits the mean-count curve n̄(τ) = εR_o[(R_b/k) τ + (R_d/k^2)(1 - e^{-kτ})] of Section 8.2 to the bright
-records over several windows for (εR_o, R_d, R_b), and chooses (n_c, t_b) at the minimum of the average error of the FITTED
-MODEL's exact count distributions. The histograms are the laboratory's own estimate of (eps_B, eps_D) at that point and are
-reported beside the model's (``histogram_errors``, and the sigma of the table's ``eps_B``/``eps_D`` entries), so the two
-agree only to counting statistics: the choice of (n_c, t_b) is the model's, never the histogram's (M5 fix 2026-09-07; the
-first version of this docstring claimed both chose). The entries are stored in ``CalibrationTable.detection`` with their
-uncertainties, status and provenance, and the POVM of Section 5.7 is what the fast path of ``run`` reads. Sits above
-``control`` and ``dynamics`` like the rest of ``calibration/`` (Section 3.2).
-"""
+"""Detection calibration: fit the rates to the bright mean-count curve, then choose the threshold and window (n_c, t_b)
+on the fitted model's exact count distributions, never on the histograms'."""
 
 from __future__ import annotations
 
@@ -34,7 +23,7 @@ from qutip_trap.readout.fluorescence import ReadoutClass, ReadoutScheme, fit_mea
 
 @dataclass(frozen=True)
 class DetectionCalibration:
-    """What the detection experiment fits (Section 7.5 item 5)."""
+    """What the detection calibration fits."""
 
     entries: dict[str, CalEntry]
     """threshold, window_s, eps_B, eps_D, R_bright_detected_per_s, R_dark_pumping_per_s, R_bright_pumping_per_s."""
@@ -43,10 +32,9 @@ class DetectionCalibration:
     optimum: ThresholdOptimum
     povm: POVM
     fitted_model: RecordModel
-    """The record model rebuilt from the FITTED rates (what the scheduler and the fast path see), not the true one."""
+    """The record model rebuilt from the fitted rates, not the true one."""
     histogram_errors: tuple[float, float] = (0.0, 0.0)
-    """(eps_B, eps_D) read straight off the two histograms at the chosen (n_c, t_b), the laboratory's own estimate; the
-    table's entries carry the fitted MODEL's values, whose difference from these is counting statistics (Section 7.5 item 5)."""
+    """(eps_B, eps_D) read off the histograms at the chosen (n_c, t_b); ``entries`` carry the fitted model's values."""
 
     @property
     def discriminator(self) -> ThresholdDiscriminator:
@@ -73,12 +61,8 @@ def calibrate_detection(
     sample_id: int = 0,
     dark_start: ReadoutClass | None = None,
 ) -> DetectionCalibration:
-    """Draw records, fit (εR_o, R_d, R_b) from the bright mean-count curve, pick (n_c, t_b) on the fitted model.
-
-    ``windows_s`` are the candidate bin times; the records are drawn at the longest one and truncated for the shorter ones
-    (as a time-tagged laboratory record would be), so one set of 2 x n_records shots serves every window. ``dark_start`` is
-    the class the scheme's dark qubit level starts in ("dark" or "shelf"); inferred from the scheme when None.
-    """
+    """Draw records, fit (eps R_o, R_d, R_b) from the bright mean-count curve, pick (n_c, t_b) on the fitted model.
+    ``windows_s`` are the candidate bin times; ``dark_start`` ("dark" or "shelf") is inferred from the scheme when None."""
     if n_records < 100:
         raise ValueError("a calibration needs at least 100 records per state (Section 7.5 draws 1e4)")
     gen = rng if rng is not None else np.random.default_rng(0)
@@ -103,14 +87,13 @@ def calibrate_detection(
         return np.vstack(rows)
 
     def counts_at(records: np.ndarray, t: float, bin_s: float) -> np.ndarray:
-        """Per record, the count within ``t`` of the window start (the sub-bin sums, exact integers)."""
+        """Per record, the count within ``t`` of the window start."""
         k = int(round(t / bin_s))
         return np.asarray(records[:, :k].sum(axis=1), dtype=np.int64)
 
     bright_stack, dark_stack = stacked(bright_records), stacked(dark_records)
 
-    # the mean-count fit needs windows long against 1/R_d and 1/R_b (Noek fitted n̄(τ) out to 60 ms): at bin-time windows the
-    # curvature is invisible and (R_d, R_b) are degenerate, so a separate, longer set of bright records serves the fit
+    # (R_d, R_b) are degenerate at bin-time windows, so a separate set of long bright records serves the fit
     fit_windows = sorted(
         float(w)
         for w in (fit_windows_s if fit_windows_s is not None else np.geomspace(t_max, 300.0 * t_max, 12))

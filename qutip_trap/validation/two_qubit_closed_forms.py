@@ -1,11 +1,7 @@
-"""Closed forms of Section 4.4 used as test oracles for the two-qubit gates (PLAN.md Sections 4.4.1-4.4.7, 6.2, 9.4, 9.16).
-
-All frequencies angular (rad/s), the plan's per-tone (hbar Omega/2) convention and S_alpha = sum_i sigma_alpha^i (Section 13,
-"Spin operator in MS formulas"): the bichromatic force is -(hbar eta Omega/2) S_phi (a^dag e^{i eps t} + h.c.), the sign
-of Section 13's own row (the builder's is the opposite, from the i of i eta(a + a^dag), and only |alpha| is consumed
-downstream), the loop closes at eps t = 2 pi K, the two-body angle on sigma sigma is pi K (eta Omega/eps)^2 and eta Omega/eps = 1/(2 sqrt K) is
-maximally entangling (chi = pi/4; ``check_ms_closure.py``).
-"""
+"""Two-qubit-gate closed forms used as oracles for the entangling gates. Frequencies are angular (rad/s), per-tone
+(hbar Omega/2) and S_alpha = sum_i sigma_alpha^i: the bichromatic force is -(hbar eta Omega/2) S_phi (a^dag e^{i eps t} +
+h.c.) (the builder's sign is the opposite; only |alpha| is used), the loop closes at eps t = 2 pi K, the two-body angle on
+sigma sigma is pi K (eta Omega/eps)^2, and eta Omega/eps = 1/(2 sqrt K) is maximally entangling (chi = pi/4)."""
 
 from __future__ import annotations
 
@@ -20,11 +16,9 @@ from scipy.special import jn_zeros, jv
 
 from qutip_trap.hilbert.operators import displacement_element_analytic, thermal_populations
 
-# ---- Section 4.4.1: the exact Molmer-Sorensen propagator and its observables ---------------------------------------------------------
-
 
 def ms_closure_ratio(loops: int = 1) -> float:
-    """eta Omega/eps = 1/(2 sqrt K) in every spin normalization (Sorensen-Molmer 2000 with J_y ingested unchanged; Section 13)."""
+    """eta Omega/eps = 1/(2 sqrt K) in every spin normalization (Sorensen-Molmer 2000 with J_y ingested unchanged)."""
     return 1.0 / (2.0 * math.sqrt(loops))
 
 
@@ -72,8 +66,8 @@ def ms_two_body_angle(
 def spin_projectors(
     phi_rad: float = math.pi / 2.0, phi2_rad: float | None = None
 ) -> tuple[qt.Qobj, qt.Qobj, qt.Qobj, qt.Qobj]:
-    """(S, P_0, P_+2, P_-2) for S = sigma_phi^1 + sigma_phi2^2 (phi2 defaults to phi): P_0 = 1 - S^2/4, P_{+-2} = (S^2 +- 2S)/8
-    (Section 4.4.1); the scheduler's MS(0, 0) plays phi = 0 on the first ion and pi on the second when the kernel sign is positive."""
+    """(S, P_0, P_+2, P_-2) for S = sigma_phi^1 + sigma_phi2^2 (phi2 defaults to phi): P_0 = 1 - S^2/4, P_{+-2} = (S^2 +- 2S)/8;
+    the scheduler's MS(0, 0) plays phi = 0 on the first ion and pi on the second when the kernel sign is positive."""
     phi2 = phi_rad if phi2_rad is None else phi2_rad
     s1 = math.cos(phi_rad) * qt.sigmax() + math.sin(phi_rad) * qt.sigmay()
     s2 = math.cos(phi2) * qt.sigmax() + math.sin(phi2) * qt.sigmay()
@@ -103,9 +97,7 @@ def ms_propagator(
 def kirchmair_populations(alpha_abs: float, gamma: float, nbar: float) -> tuple[float, float, float]:
     """(p_0, p_1, p_2) populations with zero, one and two ions BRIGHT from |dd> with a thermal mode (Kirchmair 2009 Eq. 14):
     p_2 = (1/8)(3 + e^{-16|a|^2(n+1/2)} + 4 cos(4 gamma) e^{-4|a|^2(n+1/2)}), p_1 = (1/4)(1 - e^{-16|a|^2(n+1/2)}).
-
-    Bright is the fluorescing S1/2 state, the LOWER qubit level |d> of 40Ca+: p_2 = P(dd) = P_00 in the computational ordering,
-    p_0 = P(uu) = P_11; at t = 0 the formula gives p_2 = 1."""
+    Bright is the lower 40Ca+ qubit level |d>, so p_2 = P(dd) = P_00 and p_0 = P(uu) = P_11."""
     x = alpha_abs**2 * (nbar + 0.5)
     p2 = (3.0 + math.exp(-16.0 * x) + 4.0 * math.cos(4.0 * gamma) * math.exp(-4.0 * x)) / 8.0
     p1 = (1.0 - math.exp(-16.0 * x)) / 4.0
@@ -170,30 +162,26 @@ def roos_sz2_coupling_rad_s(eta: float, omega_rad_s: float, delta_rad_s: float) 
     return (2.0 * eta**2 * omega_rad_s**2 / (3.0 * delta_rad_s)) * float(jv(1, x)) ** 2
 
 
-# ---- thermal (Debye-Waller) infidelities: one formula, three references (Section 4.4.7 (1)) -----------------------------------------
-
-
 def chi_of_n(chi0: float, eta: float, n: int) -> float:
-    """chi(n) = chi_0 [1 - eta^2 (2n + 1)]: the Debye-Waller law behind every thermal gate infidelity (derivation audit)."""
+    """chi(n) = chi_0 [1 - eta^2 (2n + 1)]: the Debye-Waller law behind every thermal gate infidelity."""
     return chi0 * (1.0 - eta**2 * (2 * n + 1))
 
 
 def sideband_coupling_squared_difference(eta: float, n: int) -> float:
-    """|M_n|^2 - |M_{n-1}|^2 with M_n = <n+1|D(i eta)|n>: eta^2 [1 - eta^2 (2n + 1)] + O(eta^6) (Section 9.16 row 4.4-7)."""
+    """|M_n|^2 - |M_{n-1}|^2 with M_n = <n+1|D(i eta)|n>: eta^2 [1 - eta^2 (2n + 1)] + O(eta^6)."""
     m_n = abs(displacement_element_analytic(n + 1, n, 1j * eta)) ** 2
     m_prev = abs(displacement_element_analytic(n, n - 1, 1j * eta)) ** 2 if n >= 1 else 0.0
     return float(m_n - m_prev)
 
 
 ThermalReference = Literal["mean", "n0", "minus_half"]
-"""Which occupation the thermal Debye-Waller infidelity is referred to: the mean nbar, the ground state, or nbar - 1/2
-(the three conventions of the two-qubit gate literature, Section 9.4)."""
+"""Which occupation the thermal Debye-Waller infidelity is referred to: the mean nbar, the ground state, or nbar - 1/2."""
 
 
 def thermal_debye_waller_infidelity(eta: float, nbar: float, reference: ThermalReference) -> float:
     """(pi^2/4) eta^4 <(n - n_ref)^2> over the thermal distribution: n_ref = nbar (Sorensen-Molmer, re-optimized duration:
     nbar^2 + nbar), 0 (Ballance, calibrated at n = 0: 2 nbar^2 + nbar), -1/2 (Zhu, referenced to eta^2 (2n + 1) = 0:
-    2 nbar^2 + 2 nbar + 1/4), in units of (pi^2/4) eta^4 (Section 4.4.7 (1))."""
+    2 nbar^2 + 2 nbar + 1/4), in units of (pi^2/4) eta^4."""
     pref = (math.pi**2 / 4.0) * eta**4
     var = nbar * (nbar + 1.0)
     if reference == "mean":
@@ -216,11 +204,8 @@ def ballance_thermal_error(eta: float, nbar: float) -> float:
 
 
 def recalibrated_gate_time_s(t_g0_s: float, eta: float, nbar: float) -> float:
-    """t_g(nbar) = t_g(0)(1 + eta^2 (2 nbar + 1)) after heating: the recalibration rule without Bermudez's 1/N (Section 4.4.7)."""
+    """t_g(nbar) = t_g(0)(1 + eta^2 (2 nbar + 1)) after heating: the recalibration rule without Bermudez's 1/N."""
     return t_g0_s * (1.0 + eta**2 * (2.0 * nbar + 1.0))
-
-
-# ---- residual displacement: one quantity in three fidelity measures (Section 4.4.7 (8)) ----------------------------------------------
 
 
 def entanglement_infidelity_from_displacements(alphas: Sequence[complex], nbars: Sequence[float]) -> float:
@@ -261,7 +246,7 @@ def overlap_fidelity(alpha: complex) -> float:
 
 
 def traced_out_fidelity(alpha: complex) -> float:
-    """(1/2)(1 + e^{-2|alpha|^2}) after tracing the motion out (Section 4.4.3)."""
+    """(1/2)(1 + e^{-2|alpha|^2}) after tracing the motion out."""
     return 0.5 * (1.0 + math.exp(-2.0 * abs(alpha) ** 2))
 
 
@@ -279,11 +264,8 @@ def state_infidelity_uniform_input(alphas_per_ion: Sequence[complex], nbar: floa
     return 1.0 - total / len(signs) ** 2
 
 
-# ---- light-shift gate closed forms (Section 4.4.4) --------------------------------------------------------------------------------
-
-
 def ballance_heating_error(ndot_per_s: float, t_g_s: float, loops: int) -> float:
-    """eps_h = ndot t_g/(2K), stated for eps_h << 0.1 only (Ballance 2016 supplement; Section 6.2)."""
+    """eps_h = ndot t_g/(2K), stated for eps_h << 0.1 only (Ballance 2016 supplement)."""
     if loops < 1:
         raise ValueError("at least one loop")
     val = ndot_per_s * t_g_s / (2.0 * loops)
@@ -293,12 +275,12 @@ def ballance_heating_error(ndot_per_s: float, t_g_s: float, loops: int) -> float
 
 
 def ballance_dephasing_coefficient(loops: int) -> float:
-    """alpha_K = 1/(2K) + 3/(16 K^2) = (8K + 3)/(16 K^2): 11/16, 19/64, 35/256 for K = 1, 2, 4 (derivation audit; Ballance prints 0.686)."""
+    """alpha_K = 1/(2K) + 3/(16 K^2) = (8K + 3)/(16 K^2): 11/16, 19/64, 35/256 for K = 1, 2, 4 (Ballance prints 0.686)."""
     return (8.0 * loops + 3.0) / (16.0 * loops**2)
 
 
 def ballance_dephasing_error(t_g_s: float, tau_s: float, loops: int) -> float:
-    """eps_d = alpha_K t_g/tau for the Lindblad operator L = a^dag a sqrt(2/tau) (Section 6.2)."""
+    """eps_d = alpha_K t_g/tau for the Lindblad operator L = a^dag a sqrt(2/tau)."""
     return ballance_dephasing_coefficient(loops) * t_g_s / tau_s
 
 
@@ -358,7 +340,7 @@ def zhu_lab_frame_force_rad_s(omega_ls_rad_s: float, eta: float) -> float:
 def srinivas_gradient_rabi_rad_s(
     r0_m: float, gradient_t_per_m: float, field_sensitivity_rad_s_per_t: float
 ) -> float:
-    """Omega_g = (r_0/4) [grad(B_g . r_q) . r] (d omega_0/dB) (Srinivas 2021 Eq. 1; r_0 carries the TOTAL two-ion mass there, Section 13)."""
+    """Omega_g = (r_0/4) [grad(B_g . r_q) . r] (d omega_0/dB) (Srinivas 2021 Eq. 1; r_0 carries the TOTAL two-ion mass there)."""
     return 0.25 * r0_m * gradient_t_per_m * field_sensitivity_rad_s_per_t
 
 
@@ -383,7 +365,7 @@ def hughes_gate_angle_printed(
     alpha_dot: Callable[[float], float],
     tau_s: float,
 ) -> float:
-    """theta_g ~ int (Omega_g^2 + alpha_dot^2)/delta dt as Hughes 2025 print it (Section 4.4.6)."""
+    """theta_g ~ int (Omega_g^2 + alpha_dot^2)/delta dt as Hughes 2025 print it."""
     val, _err = quad(
         lambda t: (omega_g_rad_s(t) ** 2 + alpha_dot(t) ** 2) / delta_rad_s(t), 0.0, tau_s, limit=400
     )
@@ -393,18 +375,17 @@ def hughes_gate_angle_printed(
 def hughes_gate_angle_derived(
     omega_g_rad_s: Callable[[float], float], delta_rad_s: Callable[[float], float], tau_s: float
 ) -> float:
-    """theta_g = int Omega_g^2/(2 delta) dt for H_g = hbar delta a^dag a + (hbar Omega_g/2) S (a^dag + a): the displaced-oscillator energy
-    shift -s^2 (Omega_g/2)^2/delta gives (Omega_g^2/(4 delta)) t on S^2, i.e. Omega_g^2 t/(2 delta) on S^2/2, whose maximal value is
-    pi/4 (S^2 has eigenvalues 0 and 4); the printed form is twice this for the displayed Hamiltonian (recorded in the ledger)."""
+    """theta_g = int Omega_g^2/(2 delta) dt for H_g = hbar delta a^dag a + (hbar Omega_g/2) S (a^dag + a), the angle on S^2/2
+    (maximally entangling at pi/4); Hughes 2025 print twice this for the displayed Hamiltonian."""
     val, _err = quad(lambda t: omega_g_rad_s(t) ** 2 / (2.0 * delta_rad_s(t)), 0.0, tau_s, limit=400)
     return float(val)
 
 
 HUGHES_MAXIMAL_ANGLE_RAD = math.pi / 4.0
-"""theta_g = pi/4 is maximally entangling in Hughes Eq. 4 (S_alpha^2 has eigenvalues 0 and 4), not pi/2 [corrected]."""
+"""theta_g = pi/4 is maximally entangling in Hughes Eq. 4 (S_alpha^2 has eigenvalues 0 and 4), not pi/2."""
 
 
-# ---- Bermudez 2017 budgets: the derived forms and the printed ones (Section 4.4.7) -----------------------------------------------
+# ---- Bermudez 2017 budgets: the derived forms and the printed ones -------------------------------------------------------------
 
 
 def spectator_loop_error(
@@ -468,9 +449,6 @@ def kirchmair_heating_error(gamma_h_per_s: float, t_g_s: float) -> float:
     return 0.5 * gamma_h_per_s * t_g_s
 
 
-# ---- segment and constraint counting (Section 4.4.7 (2)) ------------------------------------------------------------------------------
-
-
 def choi_segment_count(n_ions: int, transverse_families: int = 1) -> int:
     """2N + 1 segments for one transverse family, 4N + 1 with both (35 -> 69 at N = 17)."""
     return 2 * n_ions * transverse_families + 1
@@ -486,7 +464,7 @@ PUBLISHED_RECORDS: dict[str, tuple[float, str]] = {
     "lowest_error_2025": (8.4e-5, "8.4(7) x 10^-5 two-qubit error (2025)"),
     "helios_2025": (7.9e-4, "7.9(2) x 10^-4 two-qubit error, Quantinuum Helios"),
 }
-"""Consistency anchors of Section 9.4 (tracked, never reproduced from first principles)."""
+"""Published two-qubit gate records: consistency anchors, never reproduced from first principles."""
 
 
 def thermal_average(values_by_n: Sequence[float], nbar: float) -> float:
@@ -566,9 +544,6 @@ __all__ = [
     "zhu_state_infidelity_as_printed",
 ]
 
-# ---- crosstalk, parallel gates and field-noise heating (Sections 6.2, 6.6; Section 9.7 rows 'Crosstalk unitary', 'Parallel gates';
-# Section 9.16 rows 4.1-3, 6-4; M7) ------------------------------------------------------------------------------------------------
-
 
 def _pauli(name: str) -> np.ndarray:
     return {
@@ -589,7 +564,7 @@ def sigma_phi(phi: float) -> np.ndarray:
 
 def fang_crosstalk_unitary(theta: float, theta_13: float, theta_23: float, phi_beam: float) -> np.ndarray:
     """U_xtalk = XX(theta) exp[-i(theta_13 X^(1) sigma_phi^(3) + theta_23 X^(2) sigma_phi^(3))] on ions (1, 2, 3), the leading-order
-    crosstalk model of Fang et al. 2022 (Section 6.6): XX(theta) = exp(-i theta X1 X2) with no 1/2 (Section 13)."""
+    crosstalk model of Fang et al. 2022, with XX(theta) = exp(-i theta X1 X2) (no 1/2)."""
     from scipy.linalg import expm
 
     x1x2 = _kron3(_pauli("X"), _pauli("X"), _pauli("I"))
@@ -602,13 +577,13 @@ def fang_crosstalk_unitary(theta: float, theta_13: float, theta_23: float, phi_b
 
 def fang_bell_fidelity(theta_13: float, theta_23: float) -> float:
     """The exact Bell-state fidelity of the pair under the crosstalk unitary: cos^2 theta_13 cos^2 theta_23 (0.900790 at
-    (0.1644, -0.2763)); Fang's printed form carries half the angles (0.974422) [corrected]."""
+    (0.1644, -0.2763)); Fang's printed form carries half the angles (0.974422)."""
     return math.cos(theta_13) ** 2 * math.cos(theta_23) ** 2
 
 
 def fang_spectator_excitation(theta_13: float, theta_23: float) -> float:
     """P_ion3 = [1 - cos(2 theta_13) cos(2 theta_23)]/2 exactly (0.097217 at the quoted angles; 0 at theta = pi/2 where the
-    printed halved form gives 0.5) [corrected]."""
+    printed halved form gives 0.5)."""
     return 0.5 * (1.0 - math.cos(2.0 * theta_13) * math.cos(2.0 * theta_23))
 
 
@@ -622,22 +597,20 @@ def fang_printed_spectator_excitation(theta_13: float, theta_23: float) -> float
 
 
 def landsman_parallel_gate_bound(inter_pair_phases_rad: Sequence[float]) -> tuple[float, bool]:
-    """(1/2)||E||_diamond <= sum_rs |Theta_rs| over the four inter-pair phases of two parallel gates (Landsman 2019; the 1/2 is
-    load-bearing [corrected]); returns the bound on (1/2)||E||_diamond and whether it is vacuous (above 1, since
-    ||E||_diamond <= 2 always), in which case the simulator reports the exact simulated channel instead."""
+    """(1/2)||E||_diamond <= sum_rs |Theta_rs| over the four inter-pair phases of two parallel gates (Landsman 2019): the
+    bound and whether it is vacuous (above 1, since ||E||_diamond <= 2)."""
     bound = float(sum(abs(t) for t in inter_pair_phases_rad))
     return bound, bound > 1.0
 
 
 def inter_pair_phase_scaling(n_sites: float, theta_adjacent: float) -> float:
-    """Theta proportional to 1/n^3 with the ion separation in sites (Landsman 2019; Section 9.7 row 'Parallel gates')."""
+    """Theta proportional to 1/n^3 with the ion separation in sites (Landsman 2019)."""
     return theta_adjacent / float(n_sites) ** 3
 
 
 def ou_field_heating_slope(sigma2: float, tau_c: float, omega: float) -> float:
-    """d<n>/dt = e^2 S_E^(1)(omega)/(4 m hbar omega) for Ornstein-Uhlenbeck field noise of variance sigma^2 and correlation time
-    tau_c in units e = m = hbar = 1: S_E^(1) = 4 sigma^2 tau_c/(1 + omega^2 tau_c^2), so the slope is sigma^2 tau_c/(1 + omega^2
-    tau_c^2) (Section 9.16 row 4.1-3: 9.97506e-4 at sigma^2 = 0.02, tau_c = 0.05, omega = 1)."""
+    """d<n>/dt = e^2 S_E^(1)(omega)/(4 m hbar omega) = sigma^2 tau_c/(1 + omega^2 tau_c^2) for Ornstein-Uhlenbeck field noise
+    of variance sigma^2 and correlation time tau_c (S_E^(1) = 4 sigma^2 tau_c/(1 + omega^2 tau_c^2)), units e = m = hbar = 1."""
     return sigma2 * tau_c / (1.0 + (omega * tau_c) ** 2)
 
 

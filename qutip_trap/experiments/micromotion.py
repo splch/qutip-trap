@@ -1,41 +1,7 @@
-"""Micromotion compensation: scan the shims, null the excess micromotion, store shims and the residual beta (PLAN.md Sections
-4.1.1, 4.3.6, 7.5; Berkeland et al. 1998; M8).
+"""Micromotion compensation by three of Berkeland et al. 1998's methods: scan the shims, null the excess micromotion.
 
-Three of Berkeland's methods, each computed from the physics the simulator already carries rather than from a signal model:
-
-- ``rf_photon_correlation``: the detection beam's photon rate over one rf period. An ion whose excess micromotion has the
-  signed amplitude u_1 along the beam sees the laser phase modulated as k . u(t) = beta cos(Omega t), i.e. the beam frequency
-  shifted by beta Omega sin(Omega t); the multi-level Bloch model of the beam (``light/bloch.py``) is propagated with that
-  time-periodic detuning to its periodic steady state. The measurement is made with the beam retuned to Berkeland's working
-  point, half a linewidth to the red (``correlation_detuning_gammas``, default -0.5), where the rate's slope in detuning is
-  largest: on resonance the first-order response vanishes and only the second harmonic (even in beta) survives, a thousand
-  times smaller on the two-ion fixture (|S_1| = 3.2e-5 at beta = 0.045 against 3.4e-2 at -Gamma/2). The photon rate's first
-  harmonic at the rf frequency, normalized by the mean rate, is a complex number whose phase is the atom's response lag
-  (141 degrees at Omega_rf = 1.5 Gamma; a fixed sin projection would keep 63 % of it): the correlation signal S is its
-  projection on the response phase the model gives at a reference beta, so S is odd in beta with the full amplitude, a shim
-  scan crosses zero at the compensated setting (a line fit gives the null and its uncertainty), and the residual beta is read
-  back from S through the same model. Photon shot noise on ``acquisition_s`` of counts sets the statistical uncertainty.
-- ``doppler_nulling``: the same periodic steady state's MEAN photon rate, even in beta (the Doppler sidebands at
-  +-Omega_rf take weight from the carrier), extremal at the null: a parabola fit per shim direction.
-- ``sideband_ratio``: the gate drive rf-locked with the builder's exact modulation e^{i beta cos(Omega_rf t + delta)}
-  (``BuilderOptions(micromotion="modulated")``): the first micromotion sideband at detuning Omega_rf/2 pi flops at
-  J_1(beta) Omega against the carrier's J_0(beta) Omega, so the sideband excitation after a fixed pulse is even in beta and its
-  ratio to the carrier rate inverts J_1/J_0 for |beta| (Section 4.1.1, "J_1^2/J_0^2 ~ (beta/2)^2").
-
-Shims: on the geometry path the scan variables are the named shim electrodes' voltages (``Trap.shim_voltages_v``); on the
-explicit-frequency path, which has no electrode model (``Trap`` refuses non-zero shim voltages there), the names ``Ex``,
-``Ey``, ``Ez`` are the components of the compensation FIELD in V/m added to the stray field, the equivalent knob (Appendix E
-lists the scan as ``shim_ranges_v``; the unit follows the path and is recorded in the notes). A trial device re-solves its
-crystal at every setting, so the ions' displacement, the beams' intensity at the ions and the Lamb-Dicke parameters all move
-together. A trap without an rf record has no micromotion to compensate (C0 = 1, beta = 0) and the scan returns exact zeros
-with no measurement behind them, which ``calibration.experiments`` stores as ``seed`` entries, not ``calibrated`` ones
-(Section 7.5: an entry carries the experiment that produced it, and none ran here).
-
-The calibrated ``shim[...]`` entries are what the machine PROGRAMS: ``run()`` applies them to the device it evolves through
-``device_with_compensation``, so a compensation fitted at one time against a stray field that has since drifted leaves the
-residual excess micromotion a laboratory would have (the loop of Section 7.5). ``signed_beta`` and ``MicromotionIndex``
-carry the sign of the index, so the correlation signal's pi step across the null is preserved; the fitted null itself is a
-zero crossing and does not depend on it.
+``rf_photon_correlation`` reads the detection photon rate's first harmonic at the rf frequency (odd in beta),
+``doppler_nulling`` its mean (even in beta) and ``sideband_ratio`` the first micromotion sideband against the carrier.
 """
 
 from __future__ import annotations
@@ -72,9 +38,8 @@ def _sine(t: float, amplitude: float, omega: float, **_: object) -> float:
 def periodic_scattering(
     model: BlochModel, beam_index: int, amplitude_rad_s: float, omega_rf_rad_s: float, *, n_points: int = 32
 ) -> tuple[np.ndarray, np.ndarray]:
-    """(times over one rf period, total photon rate) of the periodic steady state of ``model`` with beam ``beam_index``'s
-    frequency modulated as ``amplitude`` sin(Omega_rf t): the fixed point of the one-period propagator (as ``steadystate`` finds
-    a Floquet fixed point) followed by one period of ``mesolve``."""
+    """(times over one rf period, total photon rate) in the periodic steady state of ``model`` with beam ``beam_index``'s
+    frequency modulated as ``amplitude`` sin(Omega_rf t): the one-period propagator's fixed point, then one period."""
     b = model.build
     if not b.static or b.space is not None:
         raise NotImplementedError(
@@ -148,13 +113,8 @@ def device_with_compensation(device: Device, shims: Mapping[str, float]) -> Devi
 
 
 def signed_beta(device: Device, ion: int, k_vector: np.ndarray) -> float:
-    """k . u_1: the signed modulation index along ``k_vector`` (peak), 0 without an rf record.
-
-    The sign is the plan's, not a free choice: u_1 = -(1/2) Q u_0 under the adopted Mathieu origin a - 2q cos 2xi
-    (Section 13, "Floquet function and rf phase origin"), so sign(beta) = -sign(q_x E_x) and beta steps by pi as a
-    shim crosses the compensated value. The rf-photon correlation signal is odd in beta, so that pi step is what the
-    servo reads (Section 9.17); the fitted null is a zero crossing and does not depend on it.
-    """
+    """k . u_1, the signed peak modulation index along ``k_vector`` (0 without an rf record); with u_1 = -(1/2) Q u_0 under
+    the Mathieu origin a - 2q cos 2 xi, sign(beta) = -sign(q_x E_x), so beta changes sign as a shim crosses the null."""
     if device.trap.rf is None:
         return 0.0
     amp = device.trap.micromotion_amplitude_m(device.crystal.species[ion])
@@ -187,9 +147,7 @@ class _Correlation:
         )
         self.omega_rf = float(device.trap.rf.omega_rad_s) if device.trap.rf is not None else 0.0
         self.k_vec = np.asarray(device.beams[beam].k_vector(), dtype=float)
-        # Berkeland's working point: the beam retuned half a linewidth to the red of the detection transition for this
-        # measurement (the lab's AOM), where the rate's slope in detuning is largest; on resonance the first-order response
-        # vanishes and the first harmonic is a thousand times smaller (module docstring)
+        # Berkeland's working point, half a linewidth to the red: on resonance the first-order response vanishes
         gamma = max(self.model.build.level_rates_rad_s.values())
         self.detuning_rad_s = float(kw.get("correlation_detuning_gammas", -0.5)) * gamma
         if self.detuning_rad_s != 0.0:
@@ -212,7 +170,7 @@ class _Correlation:
         return self._cache[key]
 
     def reference_phase(self, beta_ref: float = 0.05) -> float:
-        """The atom's response phase: arg S_1 at a positive reference beta (the lab calibrates it with a deliberate offset)."""
+        """The atom's response phase, arg S_1 at a positive reference beta."""
         if self._reference_phase is None:
             s_ref, _ = self.harmonic(beta_ref)
             self._reference_phase = float(np.angle(s_ref)) if abs(s_ref) > 0.0 else 0.0
@@ -238,7 +196,7 @@ class _Correlation:
 
 
 def _invert_j1_over_j0(ratio: float) -> float:
-    """|beta| from J_1(beta)/J_0(beta) = ratio on (0, 1.8) (the first sideband over the carrier, Section 4.1.1)."""
+    """|beta| from J_1(beta)/J_0(beta) = ratio on (0, 1.8), the first sideband's rate over the carrier's."""
     if ratio <= 0.0:
         return 0.0
 
@@ -259,15 +217,12 @@ def micromotion_scan(
     method: str = "rf_photon_correlation",
     **kw: Any,
 ) -> ExperimentResult:
-    """Scan the shims over ``shim_ranges_v`` (name -> (low, high)), null the excess micromotion along ``beam`` by ``method`` and
-    return the compensated shim settings and the residual beta (Section 7.5).
+    """Scan the shims over ``shim_ranges_v`` (name -> (low, high)) to null the excess micromotion along ``beam`` by
+    ``method``; returns a ``MicromotionScan`` with shim[name] and the residual peak index beta[beam].
 
-    ``points`` per shim (default 5), ``passes`` over the shim set (default 1), ``acquisition_s`` of photons per point for the
-    correlation and Doppler methods (default 1 s, sets the shot-noise uncertainty), ``gate_drive`` and ``sideband_duration_s``
-    for the sideband-ratio method (``beam`` then names the drive's table-key beam). Fitted: ``shim[name]`` (the null and its
-    uncertainty), ``beta[beam]`` (the residual index along the beam at the null, peak convention), ``beta_before``; data rows
-    (pass, shim index, setting, signal, sigma). A trap without an rf record returns exact zeros with no scan behind them
-    (the caller stores them as seeds, not as a measurement).
+    ``points`` per shim (default 5), ``passes`` (default 1), ``acquisition_s`` of photons per point (default 1 s, sets
+    the shot noise), ``gate_drive`` and ``sideband_duration_s`` for ``sideband_ratio`` (``beam`` then names the drive's
+    table-key beam). Data rows (pass, shim index, setting, signal, sigma). Without an rf record: exact zeros, no scan.
     """
     device, kw = laboratory_kwargs(machine, kw, caller=micromotion_scan)
     if method not in METHODS:
@@ -369,7 +324,7 @@ def micromotion_scan(
         if method == "rf_photon_correlation" and abs(slope) > 0.0:
             beta_res, s_beta = s_final / slope, sg_final / abs(slope)
         else:
-            # the Doppler method's mean rate is even in beta: the residual is read from the parabola's curvature
+            # the Doppler method's mean rate is even in beta: it gives no signed residual
             beta_res, s_beta = 0.0, math.nan
             notes.append(
                 "the Doppler-nulling method reports the null; the residual |beta| needs the correlation or sideband method"
@@ -420,7 +375,7 @@ def micromotion_scan(
 
     scan_kw = {
         k: v for k, v in base_kw.items() if k != "gate_drive"
-    }  # rabi_scan reads the drive from the roles (0.3.0)
+    }  # rabi_scan reads the drive from the roles
 
     def with_role(trial: Device) -> Device:
         gate = dict(trial.roles.gate) if trial.roles.gate is not None else default_gate_drives(trial)

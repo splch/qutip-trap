@@ -1,15 +1,5 @@
-"""Optical pumping and internal-state preparation from first principles (PLAN.md Section 4.2.6; milestone M3).
-
-The pumping beams' polarization-resolved Rabi frequencies, the branching ratios of Section 4.5.2 and the frame of
-Section 4.2.8 are the ``BlochModel`` of M3a; its time evolution from the scrambled state Doppler cooling leaves (a
-uniform mixture over the ground manifold the cooling light drove, by default) gives the residual population in
-non-target states (the SPAM preparation error of Section 8), the pumping time, the mean number of scattered photons
-and, through the recoil kernel with the ion's participation (``light.recoil``), the motional heating of the pump
-(Section 4.2.8: a few photons at k x0 = 0.053 leave Delta n ~ 3e-3, the quantitative content of the sources' "Delta n ~ 0").
-
-Species anchors (Section 4.2.6): 171Yb+ pumps to |F=0, m=0> with a 2.1 GHz sideband on S1/2 F=1 -> P1/2 F=1 (1/3 branching
-into |0> per excitation, three photons; the M3a test), 9Be+ into |2,2> in about 7 us, 43Ca+ prepares the stretch state
-with error below 1e-4. The stage order (Doppler first, pump last) is enforced by ``prep.sequence``, never here.
+"""Optical pumping evolved on the multi-level ``BlochModel`` from the state Doppler cooling leaves: the preparation
+error, the pumping time, the scattered photons and their recoil heating.
 """
 
 from __future__ import annotations
@@ -40,7 +30,7 @@ class PumpingResult:
     """The internal density matrix at the end of the pump (the full included manifold)."""
     populations: dict[str, float]
     preparation_error: float
-    """1 - P(target) at the end of the pump: the SPAM preparation error of Section 8."""
+    """1 - P(target) at the end of the pump: the SPAM preparation error."""
     steady_state_error: float
     """1 - P(target) of the beams' steady state: the floor from off-resonant excitation of the target."""
     time_to_reach_s: float | None
@@ -53,12 +43,8 @@ class PumpingResult:
     approximations: tuple[str, ...] = ()
 
     def qubit_density_matrix(self, qubit: tuple[str, str], *, leak: LeakToQubit = "to_upper") -> qt.Qobj:
-        """The 2 x 2 state on the qubit pair (index 0 the lower level, Section 13 computational ordering).
-
-        Population outside the pair (leaked Zeeman sublevels) is counted as the upper qubit state (``to_upper``, the worst
-        case for a preparation-error budget), folded back proportionally (``renormalize``), or refused (``full``, which
-        asks the caller for a d > 2 register factor instead).
-        """
+        """The 2 x 2 state on the qubit pair (index 0 the lower level); population outside it counts as upper
+        (``to_upper``, the worst case), is folded back proportionally (``renormalize``) or is refused (``full``)."""
         lower, upper = qubit
         p_lower = self.populations.get(lower, 0.0)
         p_upper = self.populations.get(upper, 0.0)
@@ -77,13 +63,12 @@ class PumpingResult:
                 )
         else:
             raise ValueError("leak is 'to_upper', 'renormalize' or 'full'")
-        # the pumped state carries no coherence between the qubit levels (the pump erases it): a diagonal state
+        # the pump erases the coherence between the qubit levels, so the state is diagonal
         return qt.Qobj(np.diag([p_lower, p_upper]), dims=[[2], [2]])
 
     def qudit_density_matrix(self, labels: Sequence[str]) -> qt.Qobj:
-        """The d x d diagonal state on a register factor with the given level labels (``noise/levels.py``; M7): every resolved
-        atomic label takes its pumped population, the SINK (if present) the remainder, and without a SINK the remainder is
-        counted as the upper qubit level (the ``to_upper`` policy)."""
+        """The d x d diagonal state on a register factor with the given level labels: each label takes its pumped
+        population and the SINK (if present) the remainder; without a SINK the remainder goes to the upper qubit level."""
         from qutip_trap.noise.levels import SINK
 
         pops = [0.0 if lab == SINK else float(self.populations.get(lab, 0.0)) for lab in labels]
@@ -122,12 +107,8 @@ def optical_pumping(
     crystal: Crystal | None = None,
     ion: int = 0,
 ) -> PumpingResult:
-    """Evolve the internal state under the pumping beams for ``duration`` and read off the preparation error, time, photons and recoil.
-
-    ``initial``: a density matrix on the model's internal factor, state labels to scramble over, or None (the resonant ground
-    manifold). The sampling must resolve the coherent oscillations of the photon rate for an accurate photon count (the M3a
-    finding: 5 ns steps; 100 ns aliased 3.00 photons to 2.83), hence the default of 4001 samples.
-    """
+    """Pump for ``duration_s`` from ``initial`` (an internal density matrix, labels to scramble over, or None: the
+    resonant ground manifold); ``samples`` must resolve the photon rate's oscillations for an accurate photon count."""
     b = model.build
     if b.space is not None:
         raise ValueError(
@@ -166,8 +147,8 @@ def optical_pumping(
 def pump_recoil_heating(
     model: BlochModel, trace: PumpingTrace, crystal: Crystal, ion: int
 ) -> dict[int, float]:
-    """Delta n_m = sum_operators N_k alpha_q(k)(chi_m) eta_em,{i,m}^2: each emitted photon's mean recoil into every mode, with the
-    channel's own wavenumber and polarization index and the ion's participation (Section 4.2.8, "Sizes")."""
+    """Delta n_m = sum_k N_k alpha_q(k)(chi_m) eta_em,{i,m}^2: the emitted photons' mean recoil into every mode, with each
+    channel's own wavenumber and polarization index."""
     b = model.build
     photons = trace.photons_per_operator()
     b_hat = model.structure.b_hat
@@ -187,9 +168,7 @@ def pump_recoil_heating(
 
 
 def pumping_time_scale_s(model: BlochModel) -> float:
-    """1/(slowest nonzero Liouvillian rate) of the pump: the exponential time scale of the approach to the target.
-
-    A property of the Liouvillian alone, so it takes no target state (the dead ``target`` argument is dropped)."""
+    """1/(slowest nonzero Liouvillian rate): the exponential time scale of the pump's approach to its steady state."""
     b = model.build
     L = np.asarray(b.liouvillian().full())
     vals = np.linalg.eigvals(L)

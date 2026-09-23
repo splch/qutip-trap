@@ -1,24 +1,10 @@
-"""Single-ion experiments on the JOINT_EXACT engine: Rabi flopping, Ramsey, the Ramsey-frequency experiment and sideband
-spectroscopy (PLAN.md Sections 4.2.7, 7.5, 7.9, 13; M2, extended by M8).
+"""Single-ion experiments on the JOINT_EXACT engine: Rabi flopping, Ramsey, the Ramsey frequency, sideband spectroscopy.
 
-The experiments drive one ion of the device with the drive ``light/`` derives from its beams (Raman or single-photon optical;
-a microwave drive from a supplied Rabi frequency) from an initial internal |0> and per-mode thermal occupations. The mode the
-drive couples to most strongly (or the one asked for) is resolved; the other coupled modes are frozen and their thermal
-Debye-Waller statistics are averaged exactly as a weighted sum over their Fock states (Section 5.2), the resolved mode's
-thermal state as the Fock-sum of Section 5.3 (pure branches, dropped weight reported) or as a density matrix. Populations
-are read through the observation model of ``experiments.fitting`` (``shots``, ``readout``), so every fit carries the
-statistical uncertainty a laboratory would quote (Section 7.5). Fits use the plan's own conventions (Section 13): the carrier
-Rabi curve with the thermal Debye-Waller envelope sum_n P_n sin^2(Omega_n t/2), Omega_n = Omega e^{-eta^2/2} L_n(eta^2)
-(Section 4.2.7), the Ramsey fringe P = A cos(2 pi delta t + phi_0) + B, and the excitation lineshape
-P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)).
-
-Keyword arguments shared by the experiments (``**kw``): ``nbar`` (thermal occupation per mode), ``gate_drive`` (the
-``GateDrive``; default the device's inferred one), ``rabi_hz`` (a microwave drive's Rabi frequency), ``detuning_hz``,
-``phase_rad``, ``include_stark``, ``space``, ``d``, ``mode`` (the mode to resolve), ``crosstalk`` (include the derived crosstalk
-onto the neighbours), ``rf_locked`` and ``rf_phase_rad``, ``sample`` (the NoiseSample the experiment runs under), ``table``
-(the CalibrationTable, for programmed pulses and the readout errors), ``qubit_shifts_hz`` (the true transition minus the
-frame), ``frame`` or ``builder_options``, ``options``, ``shots``, ``readout`` (True, False or a ``ReadoutErrors``), ``seed``,
-``branch_weight_min``, ``fock_branches``, ``device_channels`` (assemble the device's collapse operators), ``internal``.
+The most strongly coupled mode (or ``mode``) is resolved; the other coupled modes are frozen and their thermal
+Debye-Waller statistics averaged exactly. Shared ``**kw``: ``nbar``, ``gate_drive``, ``rabi_hz`` (microwave),
+``detuning_hz``, ``phase_rad``, ``include_stark``, ``space``, ``d``, ``crosstalk``, ``rf_locked``, ``rf_phase_rad``,
+``sample``, ``table``, ``qubit_shifts_hz``, ``frame``, ``builder_options``, ``options``, ``shots``, ``readout``, ``seed``,
+``branch_weight_min``, ``fock_branches``, ``device_channels``, ``internal``.
 """
 
 from __future__ import annotations
@@ -73,19 +59,16 @@ class _Setup:
     eta_driven: float
     driven_mode: int | None
     rabi_hz: float
-    """The PHYSICAL carrier Rabi frequency the derived drive gives the ion (what the flopping measures)."""
+    """The physical carrier Rabi frequency of the drive, not the table's belief."""
     nbar: dict[int, float]
     etas: dict[int, float]
     stark_shift_hz: float
     gate_drive: GateDrive
-    """The single-qubit drive the experiment resolved (the table keys the Rabi entry by its first beam)."""
 
 
 def thermal_n_max(nbar: float, tail: float = 1e-7) -> int:
-    """The Fock level above which a thermal state of ``nbar`` holds less than ``tail`` of its population: the geometric tail
-    (nbar/(nbar + 1))^(n + 1) < tail, i.e. n > ln(tail)/ln(nbar/(nbar + 1)) - 1 (about 145 at nbar = 10, 41 at nbar = 2), plus two;
-    a Gaussian rule nbar + 5 sqrt(nbar(nbar + 1)) under-sizes a hot thermal state's exponential tail by a factor two and trips the
-    boundary monitor of Section 5.5."""
+    """The Fock level above which a thermal state of ``nbar`` holds less than ``tail`` of its population, plus two, from
+    the geometric tail (nbar/(nbar + 1))^(n + 1) < tail (a Gaussian rule under-sizes a hot state's exponential tail)."""
     if nbar <= 0.0:
         return 2
     return int(math.ceil(math.log(tail) / math.log(nbar / (nbar + 1.0)))) + 2
@@ -125,9 +108,7 @@ def _observation(device: Device, kw: dict[str, Any]) -> Observation:
 
 
 def sub_stream(kw: Mapping[str, Any], label: str) -> dict[str, Any]:
-    """The keyword arguments of a sub-experiment with its own shot-noise stream (Section 3.4): the observation model keys its
-    draws by (sample, point index, ion, outcome), which repeat when an experiment runs a scan more than once (a Ramsey per
-    beam of the Stark scan, a Rabi scan per shim point), so a sub-run appends ``label`` to the stream of its parent."""
+    """``kw`` for a sub-experiment with its own shot-noise stream: ``label`` appended to the parent's stream."""
     parent = str(kw.get("stream", ""))
     return {**kw, "stream": f"{parent}/{label}" if parent else label}
 
@@ -175,9 +156,7 @@ def _setup(device: Device, ion: int, kw: dict[str, Any]) -> _Setup:
             if kw.get("crosstalk", False)
             else None
         )
-        scale = float(
-            kw.get("amplitude_scale", 1.0)
-        )  # the rf amplitude relative to the beams' nominal power (a laboratory attenuates)
+        scale = float(kw.get("amplitude_scale", 1.0))  # the rf amplitude relative to the beams' nominal power
         drive = square_drive(
             derived,
             detuning_hz=detuning,
@@ -189,7 +168,7 @@ def _setup(device: Device, ion: int, kw: dict[str, Any]) -> _Setup:
             rf_phase_rad=kw.get("rf_phase_rad") if kw.get("rf_locked", False) else None,
         )
         if scale != 1.0 and kw.get("include_stark", True):
-            # a two-photon shift scales with the intensity, a single-photon one with its square (Section 4.3.2)
+            # a two-photon shift scales with the intensity, a single-photon one with its square
             power = 1 if derived.kind == "raman" else 2
             drive = replace(drive, stark_shift_hz=float(derived.stark_shift_hz) * scale**power)
         etas = derived.etas
@@ -210,8 +189,7 @@ def _setup(device: Device, ion: int, kw: dict[str, Any]) -> _Setup:
             space = HilbertSpace(ion_dims, (), None, tuple(range(n_modes)))
             driven = None
         else:
-            # the cold Fock-branch experiments: a Gaussian rule sized for the branches that carry weight; the boundary monitor
-            # of Section 5.5 guards it (a hot thermal mixture under mesolve takes ``thermal_n_max``, motion.heating_rate)
+            # a Gaussian cap for the cold Fock-branch experiments (a hot mixture under mesolve takes ``thermal_n_max``)
             nb = nbar.get(driven, 0.0)
             n_hi = int(math.ceil(nb + 5.0 * math.sqrt(nb * (nb + 1.0)) + 2.0))
             if kw.get("n_max") is not None:
@@ -260,9 +238,8 @@ def _branches(
     weight_min: float,
     fock_resolved: bool,
 ) -> tuple[list[tuple[float, dict[int, int], dict[int, int]]], float]:
-    """(weight, resolved Fock states, frozen Fock states) of the thermal initial mixture over the modes the drive couples to:
-    the frozen coupled modes always (Wineland's shot-to-shot Debye-Waller statistics as a weighted sum, Section 5.2), the
-    resolved modes when ``fock_resolved`` (the Fock-sum path of Section 5.3); the dropped weight is returned beside them."""
+    """(weight, resolved Fock states, frozen Fock states) of the thermal initial mixture over the coupled modes, and the
+    dropped weight: the frozen coupled modes always, the resolved modes when ``fock_resolved``."""
     from qutip_trap.hilbert.operators import thermal_populations
 
     options: list[tuple[int, bool, list[tuple[int, float]]]] = []
@@ -364,13 +341,9 @@ def _run(
 def rabi_scan(
     machine: Machine | Device, ion: int, durations_s: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """Carrier (or sideband, with ``detuning_hz``) Rabi flopping of ``ion`` against pulse duration, fitted with the thermal
-    Debye-Waller envelope (Section 4.2.7): fitted f_rabi_hz, nbar and contrast; data columns (t, P1).
-
-    Section 7.5's bootstrap: with ``nbar_fixed`` the occupation is taken from the sideband-ratio thermometry and the fit has
-    (f_rabi, contrast, offset) only, since the Debye-Waller decay over about 1/(eta^2 nbar) Rabi periods makes a three-parameter
-    fit to less than one period degenerate; the scan should span at least ten pi times.
-    """
+    """Scan the pulse duration of Rabi flopping (carrier, or sideband with ``detuning_hz``) on ``ion``; returns a
+    ``RabiScan`` fitted with the thermal Debye-Waller envelope (f_rabi_hz, nbar, contrast). ``nbar_fixed`` (from the
+    thermometry) fits (f_rabi, contrast, offset) instead: a free-nbar fit over too short a scan is degenerate."""
     device, kw = laboratory_kwargs(machine, kw, caller=rabi_scan)
     from qutip_trap.control.pulses import Pulse
 
@@ -418,8 +391,7 @@ def rabi_scan(
                 "contrast": fit.value(2),
             }
         else:
-            # every coupled mode's Debye-Waller factor (Section 4.2.7 iii): the driven mode at nbar_fixed, the spectators at
-            # the occupations of ``nbar`` (from the thermometry), all fixed; the fit has (f, contrast, offset)
+            # every coupled mode's Debye-Waller factor: the driven mode at nbar_fixed, the spectators at ``nbar``
             nb_fixed = float(nbar_fixed)
             etas_all = [abs(e) for m, e in sorted(setup.etas.items()) if e != 0.0]
             nbars_all = [
@@ -463,11 +435,9 @@ def rabi_scan(
 
 
 def ramsey(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """pi/2 - delay - pi/2(phase ``analysis_phase_rad``) on ``ion`` at drive detuning ``detuning_hz``; data columns (delay, P1);
-    fitted fringe P = A cos(2 pi delta t + phi_0) + B: delta_hz, contrast (Section 7.5, the Ramsey-frequency experiment's core).
-
-    ``pi_half_s`` overrides the pi/2 duration (default 1/(4 f) at the physical Rabi frequency; a laboratory uses its table's,
-    ``rabi_hz_belief``); ``delay_pulses`` is a callable (start, end) -> list of pulses filling the delay (the Stark scan)."""
+    """Scan the delay of pi/2 - delay - pi/2(``analysis_phase_rad``) on ``ion``; returns a ``RamseyFringe`` fitted with
+    P = A cos(2 pi delta t + phi_0) + B. ``pi_half_s`` defaults to 1/(4 f) at ``rabi_hz_belief`` (else the physical Rabi
+    frequency); ``delay_pulses`` is a callable (start, end) -> pulses filling the delay."""
     device, kw = laboratory_kwargs(machine, kw, caller=ramsey)
     from qutip_trap.control.pulses import Pulse
 
@@ -537,8 +507,8 @@ def ramsey(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw:
 def ramsey_frequency(
     machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """Qubit frequency for the table: the frame (drive reference) frequency plus the fitted Ramsey fringe frequency, with the
-    sign resolved by two scans at drive detunings +-``probe_hz`` (default 1 kHz); the scheduler never reads the true value."""
+    """Two Ramsey delay scans at drive detunings +-``probe_hz`` (default 1 kHz); returns a ``RamseyFringe`` with
+    qubit_freq_hz = ``frame_hz`` plus the signed fringe offset (valid while |offset| < probe)."""
     device, kw = laboratory_kwargs(machine, kw, caller=ramsey_frequency)
     probe = abs(float(kw.get("probe_hz", 1e3)))
     frame_hz = float(kw.get("frame_hz", 0.0))
@@ -586,10 +556,9 @@ def ramsey_frequency(
 def sideband_spectroscopy(
     machine: Machine | Device, ion: int, detunings_hz: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """P1 after a pulse of ``duration_s`` (default the carrier pi time) against the drive detuning; the fitted entries are the
-    detunings of the local maxima nearest the carrier and the driven mode's first sidebands (Section 7.9); with ``fit=True``
-    the blue sideband and the carrier are fitted with the plan's lineshape (``fit_lineshape``) where the scan has at least five
-    points within a quarter of the mode frequency of them: blue_sideband_fit_hz, omega_bsb_hz, carrier_fit_hz."""
+    """Scan the drive detuning of a pulse of ``duration_s`` (default the carrier pi time); returns a ``SidebandSpectrum``
+    with the peaks nearest the carrier and the driven mode's sidebands; ``fit=True`` also fits the blue-sideband and
+    carrier lineshapes where five points lie near them (blue_sideband_fit_hz, omega_bsb_hz, carrier_fit_hz)."""
     device, kw = laboratory_kwargs(machine, kw, caller=sideband_spectroscopy)
     from qutip_trap.control.pulses import Pulse
 

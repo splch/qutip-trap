@@ -1,27 +1,8 @@
-"""Electric-field noise spectra to heating rates (PLAN.md Section 4.1.5; Section 13; milestone M1).
+"""Electric-field noise spectra to heating rates.
 
-Conventions (Section 13, rows "Electric-field noise density", "Heating-rate meaning", "Heating master equation"):
-
-- S_E is SINGLE-sided, S_E(omega) = 2 int dtau <dE(tau) dE(0)> e^{-i omega tau} in (V/m)^2/Hz, and
-  Gamma_h = e^2 S_E(omega)/(4 m hbar omega) (Brownnutt 2015 Eqs. 11-12; the published Turchette 2000 agrees, only
-  its arXiv preprint prints an inconsistent Eq. 3). A two-sided density S^(2) = S^(1)/2 gives e^2 S^(2)/(2 m hbar omega),
-  which is how ``NoiseSpectrum`` (ALWAYS two-sided, angular frequency, e^{-i omega t} kernel) converts at the boundary.
-- A quoted heating rate is d<n>/dt at n = 0, i.e. Gamma N_bar, not the thermal diffusion rate Gamma(2 N_bar + 1);
-  the master equation carries Gamma(N_bar + 1) on a and Gamma N_bar on a^dagger, both -> Gamma_h for N_bar >> 1
-  (RMP 2003's high-temperature amplitude damping), and the coherence of (|n0> + |m0>)/sqrt 2 decays at
-  Gamma_h (n0 + m0 + 1) in that limit (2.01, 4.03, 10.09 Gamma_h for (0, 1), (1, 2), (3, 6); Section 4.1.5).
-- Multi-ion (Brownnutt Eqs. 19-23; Kielpinski Eq. 20): mode k heats at e^2/(4 hbar omega_k) sum_ij c_i c_j S_E^{ij}(omega_k)/sqrt(m_i m_j)
-  with the mass-weighted eigenvector c and the cross-spectral density S_E^{ij}; spatially uniform noise
-  (correlation length -> infinity) heats only the centre-of-mass modes of an EQUAL-mass chain, at N times the
-  single-ion rate (Lechner 2016: 9 x 7.2 = 65 quanta/s), while every mode of a mixed crystal with a non-zero
-  sum_j c_j/sqrt(m_j) heats; uncorrelated noise (correlation length 0) heats every mode of an equal-mass chain at the
-  single-ion rate. The simulator never defaults to the uniform limit: the correlation length is a required argument.
-- With rf drive present the rate sums over micromotion sidebands, Gamma_h = (e^2/(4 m hbar omega)) sum_j |C_2j|^2 S_E(|omega + j Omega|)
-  with the Wronskian-normalized Floquet weights |c_j/c_0|^2 of ``trap/mathieu.py``; Turchette's leading correction
-  (omega^2/(2 Omega^2)) S_E(Omega +- omega) is the same j = +-1 weight q^2/16 at lowest order and must never be added to it.
-- Empirical S_E ~ omega^-alpha d^-beta T^gamma (Brownnutt Eq. 30) with no a-priori justification; Johnson noise
-  S_E = 4 k_B T R/d^2; the fluctuating-patch model S_E = 3 C S_V r_p^2/(4 a^4). Named models with literature parameters,
-  never a prediction from materials (Section 12).
+S_E is single-sided, S_E(omega) = 2 int dtau <dE(tau) dE(0)> e^{-i omega tau} in (V/m)^2/Hz, and
+Gamma_h = e^2 S_E(omega)/(4 m hbar omega) (Brownnutt 2015 Eqs. 11-12); ``NoiseSpectrum`` is two-sided, S^(2) = S^(1)/2.
+A quoted heating rate is d<n>/dt at n = 0 (Gamma N_bar), not the thermal diffusion rate Gamma(2 N_bar + 1).
 """
 
 from __future__ import annotations
@@ -44,11 +25,7 @@ SpectralDensity = Callable[[float], float]
 
 
 def heating_rate_quanta_per_s(s_e_single_sided_v2_m2_hz: float, mass_kg: float, omega_rad_s: float) -> float:
-    """n_dot = e^2 S_E(omega)/(4 m hbar omega) for a single ion (Brownnutt Eqs. 11-12; Section 9.15 round trip).
-
-    ``omega_rad_s`` is ANGULAR. Section 9.15: S_E = 2.2250e-13 (V/m)^2/Hz for 9Be+ at omega_z/2pi = 3.6 MHz
-    gives 40 quanta/s, the round-trip test.
-    """
+    """n_dot = e^2 S_E(omega)/(4 m hbar omega) for a single ion (Brownnutt Eqs. 11-12), ``omega_rad_s`` angular."""
     if omega_rad_s <= 0.0 or mass_kg <= 0.0:
         raise ValueError("mass and angular frequency must be positive")
     if s_e_single_sided_v2_m2_hz < 0.0:
@@ -75,16 +52,9 @@ def two_sided_from_single_sided(s_single_sided: float) -> float:
 
 
 def single_sided_from_spectrum(spectrum: NoiseSpectrum) -> SpectralDensity:
-    """S_E(omega) = 2 S^(2)(|omega|) from a two-sided ``NoiseSpectrum``, its band edges and its white level.
-
-    The evaluation is the spectrum's OWN ``value`` (Section 6.1): the tabulated part folded onto |omega| and ZERO above
-    the tabulated band, plus ``white_level`` everywhere - which is the split the two fields declare, the tabulated band
-    being the sampled-trajectory route and the white level the Lindblad route. The caller must therefore not add the
-    white level a second time. Taking the record rather than its arrays is what keeps the folding in one place: a
-    symmetric tabulation running from -omega_max to +omega_max has a non-monotonic ``|omega_rad_s|``, on which a bare
-    ``np.interp`` silently returns garbage, and ``np.interp`` clamps at the top of the band where the physics is the
-    white level alone (the micromotion-sideband sum of ``micromotion_sideband_heating_rate`` evaluates S_E at tens of MHz).
-    """
+    """S_E(omega) = 2 S^(2)(|omega|) from a two-sided ``NoiseSpectrum``, by the spectrum's own ``value``: the tabulated part
+    folded onto |omega| and zero above the band, plus ``white_level`` everywhere (so callers must not add the white level
+    again)."""
 
     def s_e(omega: float) -> float:
         return 2.0 * float(spectrum.value(abs(omega)))
@@ -95,12 +65,8 @@ def single_sided_from_spectrum(spectrum: NoiseSpectrum) -> SpectralDensity:
 def thermal_collapse_rates(
     heating_rate_quanta_per_s: float, n_bar_bath: float | None = None
 ) -> tuple[float, float]:
-    """(rate on a, rate on a^dagger) = (Gamma (N_bar + 1), Gamma N_bar) with Gamma N_bar = the quoted heating rate.
-
-    ``None`` is the N_bar -> infinity limit of electric-field noise (Section 4.1.5): both rates equal Gamma_h, the
-    collapse operators sqrt(Gamma_h) a and sqrt(Gamma_h) a^dagger. A finite N_bar must not be imported from a transport
-    source's equal-rate pair (Section 13): it adds unphysical damping on microsecond timescales.
-    """
+    """(rate on a, rate on a^dagger) = (Gamma (N_bar + 1), Gamma N_bar) with Gamma N_bar the quoted heating rate; ``None``
+    is the N_bar -> infinity limit of electric-field noise, where both equal the heating rate."""
     if heating_rate_quanta_per_s < 0.0:
         raise ValueError("heating rate is non-negative")
     if n_bar_bath is None:
@@ -114,15 +80,15 @@ def thermal_collapse_rates(
 def coherence_decay_rate(
     heating_rate_quanta_per_s: float, n0: int, m0: int, n_bar_bath: float | None = None
 ) -> float:
-    """Short-time decay rate of the coherence of (|n0> + |m0>)/sqrt 2: (Gamma/2)[(2 N_bar + 1)(n0 + m0) + 2 N_bar]
-    -> Gamma_h (n0 + m0 + 1) for N_bar >> 1 (Section 4.1.5, with the +1 the 2026-09-04 critique restored)."""
+    """Short-time decay rate of the coherence of (|n0> + |m0>)/sqrt 2: (Gamma/2)[(2 N_bar + 1)(n0 + m0) + 2 N_bar],
+    -> Gamma_h (n0 + m0 + 1) for N_bar >> 1 (``n_bar_bath=None``)."""
     if n_bar_bath is None:
         return heating_rate_quanta_per_s * (n0 + m0 + 1)
     gamma = heating_rate_quanta_per_s / n_bar_bath
     return gamma / 2.0 * ((2.0 * n_bar_bath + 1.0) * (n0 + m0) + 2.0 * n_bar_bath)
 
 
-# ---- multi-ion generalization (Section 4.1.5; Kielpinski Eq. 20; Brownnutt Eqs. 19-23) ---------------------------------
+# ---- multi-ion generalization (Brownnutt Eqs. 19-23) --------------------------------------------------------------------
 
 
 def correlation_matrix(positions_m: np.ndarray, correlation_length_m: float) -> np.ndarray:
@@ -145,13 +111,8 @@ def heating_rates_per_mode(
     *,
     modes: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    """n_dot_k = e^2/(4 hbar omega_k) sum_a sum_ij c_{ia} c_{ja} g_ij S_E(omega_k)/sqrt(m_i m_j), quanta/s per mode (Section 4.1.5).
-
-    ``s_e_single_sided`` is a single-sided density in (V/m)^2/Hz, either a constant or a callable of angular frequency,
-    the same along every axis (isotropic, uncorrelated field components); ``correlation_length_m`` is REQUIRED
-    (inf: uniform, 0: uncorrelated). For an equal-mass chain in uniform noise only the three centre-of-mass modes heat,
-    at N times the single-ion rate; for a mixed crystal every mode with a non-zero mass-weighted sum heats (Section 4.1.7).
-    """
+    """n_dot_k = e^2/(4 hbar omega_k) sum_a sum_ij c_{ia} c_{ja} g_ij S_E(omega_k)/sqrt(m_i m_j), quanta/s per mode, with
+    S_E single-sided and isotropic; ``correlation_length_m`` is required (inf: uniform, 0: uncorrelated)."""
     masses = crystal.masses_kg
     g = correlation_matrix(crystal.positions_m, correlation_length_m)
     idx = range(len(crystal.modes)) if modes is None else modes
@@ -175,11 +136,8 @@ def micromotion_sideband_heating_rate(
     *,
     n_max: int = 6,
 ) -> float:
-    """Gamma_h = (e^2/(4 m hbar omega)) sum_j |c_j/c_0|^2 S_E(|omega + j Omega|) with the exact Floquet weights (Brownnutt; Section 4.1.5).
-
-    Reduces to the single-frequency formula for q = 0. The j = +-1 weight is q^2/16 at lowest order, Turchette's
-    omega^2/(2 Omega^2) at a = 0 (they agree to 0.4% at q = 0.1); never add the two.
-    """
+    """Gamma_h = (e^2/(4 m hbar omega)) sum_j |c_j/c_0|^2 S_E(|omega + j Omega|) with the exact Floquet weights (Brownnutt);
+    the j = +-1 term is Turchette's correction at lowest order, so never add the two."""
     if q == 0.0:
         if a <= 0.0:
             raise ValueError(
@@ -201,8 +159,8 @@ def micromotion_sideband_heating_rate(
 def turchette_micromotion_correction(
     s_e_single_sided: SpectralDensity, mass_kg: float, omega_rad_s: float, omega_rf_rad_s: float
 ) -> float:
-    """n_dot = (e^2/(4 m hbar omega))[S_E(omega) + (omega^2/(2 Omega^2))(S_E(Omega - omega) + S_E(Omega + omega))] (Turchette Eq. 4),
-    the leading micromotion-sideband correction, absent for axial motion; a CHECK on the Floquet sum, not an addend."""
+    """n_dot = (e^2/(4 m hbar omega))[S_E(omega) + (omega^2/(2 Omega^2))(S_E(Omega - omega) + S_E(Omega + omega))]
+    (Turchette Eq. 4): a check on the Floquet sum, not an addend."""
     w = omega_rad_s
     s = s_e_single_sided(w) + (w * w / (2.0 * omega_rf_rad_s**2)) * (
         s_e_single_sided(omega_rf_rad_s - w) + s_e_single_sided(omega_rf_rad_s + w)
@@ -210,7 +168,7 @@ def turchette_micromotion_correction(
     return E_C * E_C * s / (4.0 * mass_kg * HBAR_J_S * w)
 
 
-# ---- empirical models of S_E (Section 4.1.5; Brownnutt Eq. 30 and Sec. IV) --------------------------------------------------
+# ---- empirical models of S_E (Brownnutt Eq. 30 and Sec. IV) ---------------------------------------------------------------
 
 
 def power_law_s_e(
@@ -223,9 +181,8 @@ def power_law_s_e(
     t0_k: float | None = None,
     gamma: float = 0.0,
 ) -> Callable[..., float]:
-    """S_E(omega, d, T) = S0 (omega/omega0)^-alpha (d/d0)^-beta (T/T0)^gamma, Brownnutt's empirical form with its ranges
-    (alpha 0.57 to 1.5 and unstable under surface treatment, beta 2.6 to 4.0; a quoted exponent may refer to S_E or to
-    n_dot ~ omega^-(alpha+1)). Returns f(omega, d=d0, T=T0)."""
+    """S_E(omega, d, T) = S0 (omega/omega0)^-alpha (d/d0)^-beta (T/T0)^gamma, Brownnutt's empirical form. Returns
+    f(omega, d, T); d and T are needed only when beta or gamma is non-zero."""
     if s0_v2_m2_hz < 0.0 or omega0_rad_s <= 0.0:
         raise ValueError("S0 non-negative, omega0 positive")
 
@@ -261,11 +218,11 @@ BROWNNUTT_MEDIANS_V2_M2_HZ: dict[Literal["room_temperature", "cryogenic_6k"], fl
     "room_temperature": 40e-12,
     "cryogenic_6k": 0.2e-12,
 }
-"""Brownnutt 2015's median S_E for 30-230 um traps at 300 K and 6 K (Section 4.1.5), device-preset seeds with their conditions."""
+"""Brownnutt 2015's median S_E in (V/m)^2/Hz for 30-230 um traps at 300 K and 6 K."""
 
 
 def n_dot_exponent_from_s_e_exponent(alpha: float) -> float:
-    """n_dot ~ omega^-(alpha+1) when S_E ~ omega^-alpha (Section 13, "Heating-rate meaning")."""
+    """n_dot ~ omega^-(alpha+1) when S_E ~ omega^-alpha."""
     return alpha + 1.0
 
 

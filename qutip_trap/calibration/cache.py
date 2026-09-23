@@ -1,14 +1,4 @@
-"""The calibration cache: tables kept per device configuration and per noise seed (PLAN.md Section 7.5; milestone M8).
-
-Section 7.5: "Calibrations are cached per device configuration and per noise seed", "cached, invalidated rather than
-silently regenerated when a device parameter changes, and run as an explicit job". The identity of a device configuration is
-``Device.hash()`` (Appendix E's canonical digest, ``qutip_trap.hashing``); a table whose ``device_hash`` differs from the
-device it is asked for is never returned, so a changed trap voltage, beam power or detection window invalidates every table
-of the old configuration without touching it, and the new configuration has no table until ``calibrate`` is run for it
-(``run(table=None)`` builds the surrogate, which is what the plan makes the default). The cache is in-process and keyed by
-(device hash, seed, surrogate flag, experiment set, t0, a digest of the calibration keyword arguments); ``CalibrationTable``
-carries callables in FM waveforms, so nothing is pickled to disk here.
-"""
+"""The in-process calibration cache: a table is returned only for the device whose ``Device.hash()`` it was fitted for."""
 
 from __future__ import annotations
 
@@ -24,7 +14,6 @@ if TYPE_CHECKING:
 
 
 def _kwargs_digest(kwargs: Mapping[str, Any]) -> str:
-    """A canonical digest of the calibration's keyword arguments (dataclasses, mappings, sequences, floats, callables)."""
     return canonical_digest({k: v for k, v in sorted(kwargs.items())})
 
 
@@ -32,9 +21,7 @@ CacheKey = tuple[str, int, bool, tuple[str, ...], float, str]
 
 
 class CalibrationCache:
-    """Tables per (device hash, seed, surrogate, experiments, t0, kwargs digest); ``device_hash`` mismatches never hit.
-
-    A service object with state (the stores and the hit/miss counters), not one of the API's frozen value dataclasses."""
+    """Tables and reports keyed by (device hash, seed, surrogate, experiments, t0, kwargs digest), with hit/miss counts."""
 
     __slots__ = ("hits", "misses", "reports", "tables")
 
@@ -64,7 +51,7 @@ class CalibrationCache:
         )
 
     def get(self, key: CacheKey, device: Device) -> CalibrationTable | None:
-        """The cached table for ``key`` when it was fitted for ``device`` (hash equality), else None."""
+        """The table cached under ``key`` if it was fitted for ``device``, else None."""
         table = self.tables.get(key)
         if table is None or not table.is_current_for(device.hash()):
             self.misses += 1

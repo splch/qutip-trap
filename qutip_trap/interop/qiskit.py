@@ -1,26 +1,7 @@
-"""A Qiskit ``BackendV2`` over a :class:`qutip_trap.machine.Machine`: the gate-model SDKs' door into the simulator (PLAN.md
-Section 1.4 names the importers and the ``run`` entry point; this is the same door with Qiskit on the other side;
-docs/api_implementation_plan.md 2.7).
-
-    from qiskit import QuantumCircuit, transpile
-    from qutip_trap.interop.qiskit import QutipTrapProvider
-
-    backend = QutipTrapProvider().get_backend("yb171_chain", n_ions=2)      # a backend on presets.yb171_chain(2)
-    bell = QuantumCircuit(2); bell.h(0); bell.cx(0, 1); bell.measure_all()
-    job = backend.run(transpile(bell, backend), shots=2000)
-    job.result().get_counts()          # {'00': ..., '11': ..., '01': ..., '10': ...}
-    job.results[0].diagnostics.level   # the qutip-trap Result behind every experiment, with its diagnostics
-
-The circuit crosses as OpenQASM 2 text (``qiskit.qasm2.dumps`` -> :func:`load_openqasm2`), so the ``Target`` advertises
-exactly the gates the importer and the Section 7.7 compiler accept, and ``transpile(circuit, backend)`` rewrites anything
-else into them. Bit order needs no conversion: qutip-trap's bitstrings and Qiskit's both put qubit 0 in the
-least-significant (rightmost) position, provided qubit i is measured into clbit i, as ``measure_all`` does (the importer
-flattens classical registers in declaration order). Run options: ``shots``, ``seed``, ``level`` and ``table`` per call, and
-the option objects ``physics``, ``numerics`` and ``readout`` (objects or mappings) as per-call overrides of the machine's,
-Aer's convention; the 0.1.0 keywords of ``run`` (``options=SolverOptions(...)``, ``readout="full"``, ``noise=False``, ...)
-are still accepted and rewritten onto the machine with a deprecation warning each. The simulation is ``Machine.run``
-(Section 3.4 is synchronous), so the job comes back finished.
-"""
+"""A Qiskit ``BackendV2`` over a :class:`qutip_trap.machine.Machine`, and a provider of backends on the presets
+(``QutipTrapProvider().get_backend("yb171_chain", n_ions=2)``). Circuits cross as OpenQASM 2, so the ``Target`` advertises
+the gates the importer accepts. Bitstrings need no conversion: both put qubit 0 in the least-significant (rightmost)
+position, provided qubit i is measured into clbit i. Per-call options override the machine's; jobs come back finished."""
 
 from __future__ import annotations
 
@@ -72,8 +53,7 @@ PRESETS: dict[str, Any] = {"yb171_chain": yb171_chain, "ca40_optical": ca40_opti
 
 
 def qutip_trap_target(n_qubits: int) -> Target:
-    """The gates the OpenQASM 2 importer and the compiler accept (``STANDARD_GATES`` of ``control/compiler.py``), on every
-    qubit and every ordered pair: the crystal is all-to-all and the compiler carries the Section 7.7 templates."""
+    """The gates the OpenQASM 2 importer and the compiler accept, on every qubit and every ordered pair (all-to-all)."""
     theta, phi, lam = Parameter("theta"), Parameter("phi"), Parameter("lam")
     one = {(q,): None for q in range(n_qubits)}
     two = {(a, b): None for a in range(n_qubits) for b in range(n_qubits) if a != b}
@@ -95,7 +75,7 @@ class QutipTrapJob(JobV1):
         super().__init__(backend, job_id)
         self._result = result
         self.results: tuple[Result, ...] = tuple(results)
-        """The qutip-trap ``Result`` of every circuit, in order: probabilities, SPAM, photon records, diagnostics."""
+        """The qutip-trap ``Result`` of every circuit, in order."""
 
     def submit(self) -> None:
         """Nothing to do: the simulation ran when the backend created the job."""
@@ -108,10 +88,8 @@ class QutipTrapJob(JobV1):
 
 
 class QutipTrapBackend(BackendV2):
-    """A ``Machine`` as a Qiskit backend (0.3.0). ``table`` pins a calibration on the machine (else the machine's own, or
-    the closed-form surrogate cached per device); ``run_options`` are defaults for every ``run`` (``physics``, ``numerics``,
-    ``readout``, ``level``, ``seed``, ``shots``, and the 0.1.0 keywords of ``run`` with a warning each). A ``DevicePreset`` is
-    accepted for one release and wrapped with a warning: pass ``preset.machine()``."""
+    """A ``Machine`` as a Qiskit backend. ``table`` pins a calibration on the machine and ``run_options`` are defaults for
+    every ``run``; a ``DevicePreset`` is still accepted, with a deprecation warning."""
 
     def __init__(
         self, machine: Machine | DevicePreset, *, table: CalibrationTable | None = None, **run_options: Any
@@ -160,7 +138,7 @@ class QutipTrapBackend(BackendV2):
         physics = kwargs.pop("physics", None)
         numerics = kwargs.pop("numerics", None)
         readout = kwargs.pop("readout", None)
-        if isinstance(readout, str):  # the 0.1.0 string form shares the name of the object
+        if isinstance(readout, str):  # the legacy string form shares the option object's name
             kwargs["readout"] = readout
             readout = None
         machine = machine_with_run_kwargs(
@@ -188,15 +166,14 @@ class QutipTrapBackend(BackendV2):
 
 
 class QutipTrapProvider:
-    """The example devices as backends. Qiskit 2 has no provider base class; this is the conventional pair of methods."""
+    """The example devices as backends (Qiskit 2 has no provider base class)."""
 
     def backends(self, name: str | None = None) -> list[str]:
         return [n for n in PRESETS if name is None or n == name]
 
     def get_backend(self, name: str = "yb171_chain", **preset_kwargs: Any) -> QutipTrapBackend:
-        """``get_backend("yb171_chain", n_ions=2)``: a backend on ``presets.yb171_chain(2)``; the keyword arguments are the
-        preset's device knobs (``noise=``, ``hardware=``, ``omega_hz=``, ...). A backend around your own machine is
-        ``QutipTrapBackend(machine)``."""
+        """A backend on a preset: ``get_backend("yb171_chain", n_ions=2)`` builds ``presets.yb171_chain(n_ions=2)``, the
+        keywords being the preset's device knobs."""
         if name not in PRESETS:
             raise KeyError(f"unknown backend {name!r}; known: {sorted(PRESETS)}")
         return QutipTrapBackend(PRESETS[name](**preset_kwargs).machine())

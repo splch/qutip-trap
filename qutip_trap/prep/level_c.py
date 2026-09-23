@@ -1,17 +1,7 @@
-"""Level-C cooling solve with one mode, and the level-B Fock rate equation it is checked against (PLAN.md Section 4.2; M3a).
+"""Level-C cooling solve (the master equation of the internal levels plus one mode) and the level-B Fock rate equation.
 
-Level C is the full master equation of the internal levels plus one mode built by the multi-level mode of the ONE
-builder with the drive's exact displacement operators and the recoil-resolved emission operators of Section 4.2.8;
-``steadystate`` gives the final mean phonon number and ``mesolve`` the relaxation <n>(t), which Section 9.3 requires to
-reproduce the level-A/B coefficients to O(eta^2) in their stated regimes. Level B is the birth-death equation on Fock
-populations,
-
-    dP(n)/dt = eta^2 [A_-((n+1)P(n+1) - nP(n)) + A_+(nP(n-1) - (n+1)P(n))],
-
-with the bare A_+- of Section 4.2.2 and eta^2 OUTSIDE (Section 13, "Cooling coefficients A_+-"); its mean obeys
-d<n>/dt = -W(<n> - nbar) with W = eta^2 (A_- - A_+) and nbar = A_+/(A_- - A_+), which is the closed form the
-``mesolve`` run on {sqrt(eta^2 A_+) a^dagger, sqrt(eta^2 A_-) a} must reproduce to 1e-12 (Section 9.3, "Phonon rate
-equation"). A configuration with A_- <= A_+ raises rather than returning a negative occupation.
+Level B is dP(n)/dt = eta^2 [A_-((n+1)P(n+1) - nP(n)) + A_+(nP(n-1) - (n+1)P(n))], bare A_+- with eta^2 outside; a
+configuration with A_- <= A_+ raises rather than returning a negative occupation.
 """
 
 from __future__ import annotations
@@ -36,7 +26,7 @@ class LevelCSteadyState:
     populations: dict[str, float]
     fock_populations: np.ndarray
     boundary_population: float
-    """Population of the top two Fock levels: the truncation check of Section 5.5."""
+    """Population of the top two Fock levels (the truncation check)."""
 
 
 @dataclass(frozen=True)
@@ -70,7 +60,7 @@ def _joint_initial(build: MultiLevelBuild, internal: str, fock: int | None, ther
 
 
 def level_c_steady_state(build: MultiLevelBuild) -> LevelCSteadyState:
-    """The joint steady state and its mean phonon number (direct sparse solve; Section 5.3)."""
+    """The joint steady state and its mean phonon number (direct sparse solve)."""
     if build.space is None:
         raise ValueError("the level-C solve needs a build with a mode")
     if not build.static:
@@ -95,7 +85,7 @@ def level_c_trace(
     fock: int | None = None,
     thermal: float | None = None,
 ) -> LevelCTrace:
-    """<n>(t) and the excited population from a Fock or thermal start (``mesolve`` with the plan's defaults)."""
+    """<n>(t) and the excited population from a Fock or thermal start (``mesolve``)."""
     times = np.asarray(times_s, dtype=float)
     rho0 = _joint_initial(build, internal, fock, thermal)
     excited = [lab for lab in build.labels if build.level_of(lab) in build.level_rates_rad_s]
@@ -118,12 +108,8 @@ def level_c_trace(
 
 
 def level_c_relaxation_rate(build: MultiLevelBuild, *, k: int = 6) -> float:
-    """W = -Re of the slowest nonzero Liouvillian eigenvalue: the phonon relaxation rate of the level-C solve (s^-1).
-
-    Shift-invert ARPACK about zero on the sparse Liouvillian; valid when the motional relaxation is the slowest mode
-    (W << every internal rate, the adiabatic-elimination condition of Section 4.2.8 vii), which the cooling regimes
-    the closed forms cover all satisfy.
-    """
+    """W = -Re of the slowest nonzero Liouvillian eigenvalue (s^-1, by shift-invert ARPACK): the phonon relaxation rate,
+    valid when the motional relaxation is the slowest mode."""
     if build.space is None:
         raise ValueError("the level-C solve needs a build with a mode")
     if not build.static:
@@ -131,12 +117,12 @@ def level_c_relaxation_rate(build: MultiLevelBuild, *, k: int = 6) -> float:
     from scipy.sparse.linalg import eigs
 
     L = build.liouvillian().to("CSR").data.as_scipy().tocsc()
-    # the shift sits just below zero: a shift AT the stationary eigenvalue makes the shift-invert factorization singular
+    # shift just below zero: at the stationary eigenvalue itself the shift-invert factorization is singular
     gamma_max = max(build.level_rates_rad_s.values())
     sigma = -1e-7 * gamma_max
     vals = eigs(L, k=k, sigma=sigma, return_eigenvectors=False)
     rates = np.sort(-np.real(vals))
-    # drop the stationary state (|lambda| below the shift-invert resolution) and any mode oscillating at the trap frequency
+    # drop the stationary state (|lambda| below the shift-invert resolution)
     keep = [r for r, v in zip(rates, vals[np.argsort(-np.real(vals))]) if r > 10.0 * abs(sigma)]
     if not keep:
         raise RuntimeError("no nonzero Liouvillian eigenvalue found near zero; increase k")
@@ -156,11 +142,8 @@ def fit_relaxation(times_s: np.ndarray, nbar: np.ndarray) -> RelaxationFit:
     return RelaxationFit(float(popt[0]), float(popt[1]), float(popt[2]), float(np.sqrt(np.mean(resid**2))))
 
 
-# ---- level B ------------------------------------------------------------------------------------------------------------
-
-
 def phonon_generator(a_plus_per_s: float, a_minus_per_s: float, eta: float, d: int) -> np.ndarray:
-    """The birth-death generator M on Fock populations (dP/dt = M P) with eta^2 outside A_+- (Section 4.2.3)."""
+    """The birth-death generator M on Fock populations (dP/dt = M P) with eta^2 outside A_+-."""
     if d < 2:
         raise ValueError("at least two Fock levels")
     up = eta**2 * a_plus_per_s
@@ -177,7 +160,7 @@ def phonon_generator(a_plus_per_s: float, a_minus_per_s: float, eta: float, d: i
 
 
 def phonon_steady_state(a_plus_per_s: float, a_minus_per_s: float) -> float:
-    """nbar = A_+/(A_- - A_+), eta-independent; raises when the configuration heats (Section 4.2.8)."""
+    """nbar = A_+/(A_- - A_+), eta-independent; raises CoolingError when the configuration heats."""
     if a_minus_per_s <= a_plus_per_s:
         raise CoolingError(f"A_- = {a_minus_per_s:.4g} <= A_+ = {a_plus_per_s:.4g}: no cooling steady state")
     return a_plus_per_s / (a_minus_per_s - a_plus_per_s)
@@ -186,7 +169,7 @@ def phonon_steady_state(a_plus_per_s: float, a_minus_per_s: float) -> float:
 def phonon_mean_closed_form(
     a_plus_per_s: float, a_minus_per_s: float, eta: float, n0: float, times_s: np.ndarray
 ) -> np.ndarray:
-    """<n>(t) = nbar + (n0 - nbar) exp(-W t), W = eta^2 (A_- - A_+) (Cirac Eqs. 29-32; Eschner Eqs. 7-8)."""
+    """<n>(t) = nbar + (n0 - nbar) exp(-W t), W = eta^2 (A_- - A_+) (Cirac et al. 1992 Eqs. 29-32)."""
     nb = phonon_steady_state(a_plus_per_s, a_minus_per_s)
     w = eta**2 * (a_minus_per_s - a_plus_per_s)
     return nb + (n0 - nb) * np.exp(-w * np.asarray(times_s, dtype=float))

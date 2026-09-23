@@ -1,38 +1,10 @@
-"""Photon-scattering collapse operators of a pulse: Raman spin flips, leakage, Rayleigh, differential-Rayleigh dephasing and
-recoil (PLAN.md Sections 4.2.8, 4.5.5, 6.5, 12; Section 13 rows "Rayleigh dephasing dissipator", "Recoil kernel
-discretization"; milestone M7).
+"""Photon-scattering collapse operators of a pulse: Rayleigh dephasing, Raman spin flips, leakage and recoil.
 
-For every ion the beams of a pulse illuminate (the addressed ions and the crosstalk neighbours, at the intensity each sees
-from the beam profile) and every beam of the drive, the atomic layer supplies the signed Kramers-Heisenberg amplitudes
-r_{a -> b, q'} (units sqrt(1/s)) of scattering a photon of emitted polarization q' from register level a to level b
-(``AtomicStructure.scattering_amplitudes``, sqrt(Gamma_e) inside the coherent sum). Three kinds of jump operator follow,
-one per emitted (polarization q', direction k_hat) mode:
-
-- Rayleigh (b = a for every a): the DIAGONAL operator sum_a r_{aa q'} |a><a| (x) K: Uys et al. 2010's form, whose
-  (r_up + r_dn)/2 part heats only and whose (r_up - r_dn)/2 sigma_z part dephases the qubit at Gamma_el/2 with the
-  Gamma_el/4 dissipator prefactor of Section 13, both automatically; the plan's separate 1/2 sqrt(Gamma_el) sigma_z operator
-  is the same channel for two levels.
-- Raman a -> b with b a resolved register level: r_{ab q'} |b><a| (x) K, one operator per (a, b) (photons of different
-  frequency are distinguishable environment states, so different final energies never share an operator).
-- Leakage a -> outside the resolved levels: sqrt(sum_b |r_{ab q'}|^2) |SINK><a| (x) K when the register factor carries a
-  SINK (d > 2, ``noise/levels.py``); at d = 2 the rate is reported as an estimate and no operator is built (Section 12).
-
-K is the recoil operator: the absorbed photon's e^{+i k_b . x} (the beam's single-photon wavevector, C0 inside its
-Lamb-Dicke parameters) times the emitted photon's e^{-i k_em k_hat . x}, so K = prod_m D_m(i(eta_abs,m - eta_em,m(k_hat)))
-over the resolved modes. The absorption factor belongs in an ELIMINATED jump operator (the excited state is not in the
-space) and is the plan's own construction **[background]**: Section 13's rule "absorption recoil only through e^{i k x} in
-the Hamiltonian, never both in a collapse operator" is stated for the explicit multi-level builder, where absorption is a
-Hamiltonian process; here a scattering event absorbs one photon of the drive and the net kick is hbar(k_b - k_em), Ozeri
-2007's recoil operator. The emission direction is discretized (Section 4.2.8): ``minimal`` uses the six axis directions
-about B with weights alpha_par/2 (+-B) and alpha_perp/2 (the four perpendicular ones), exact in the first and second moments
-of every dipole pattern for every mode axis (sum_k w_k = alpha_par + 2 alpha_perp = 1); ``vector`` the product quadrature of
-``light/recoil.py`` with the pattern density as weight; ``off`` no motional factor (Uys's and Ozeri's internal-state-only
-dissipators, an approximation recorded in the notes).
-
-Rates scale with the played intensity: the amplitudes are computed at the beams' configured power, and the pulse plays
-Omega(t) against the derived nominal Omega_nom of the addressed ion, so every amplitude carries sqrt(s(t)) with
-s(t) = sum_tones (Omega_k(t)/Omega_nom)^p and p = ``stark_scaling_power(kind)`` (1 for a two-photon drive, whose Rabi
-frequency is proportional to the intensity, 2 for a single-photon one), a QobjEvo coefficient for a shaped pulse.
+From the atomic layer's Kramers-Heisenberg amplitudes r_{a -> b, q'} (sqrt(1/s)), per illuminated ion, beam and emitted
+mode (q', k_hat): a diagonal Rayleigh operator sum_a r_{aa q'} |a><a| (Uys et al. 2010), a Raman operator
+r_{ab q'} |b><a| per resolved final level, and a leakage operator into the SINK (at d = 2 leakage is only reported).
+Each carries the recoil K = prod_m D_m(i(eta_abs,m - eta_em,m)) of the absorbed and emitted photons (Ozeri 2007) and
+sqrt(s(t)) of the played intensity, s(t) = sum_tones (Omega_k(t)/Omega_nom)^p with p = ``stark_scaling_power(kind)``.
 """
 
 from __future__ import annotations
@@ -68,16 +40,17 @@ RecoilOption = Literal["off", "minimal", "vector"]
 
 @dataclass(frozen=True)
 class ScatteringOptions:
-    """How the photon-scattering collapse operators of a pulse are built (Sections 4.5.5, 6.5): the recoil discretization
-    (``off``; ``minimal``, the six axis directions about B; ``vector``, the (n_theta, n_phi) product quadrature), whether
-    the crosstalk neighbours scatter the light they see, and whether the Rayleigh and the Raman operators are built."""
+    """How the photon-scattering collapse operators of a pulse are built.
+
+    ``recoil``: ``minimal`` the six axis directions about B (exact first and second moments of every dipole pattern),
+    ``vector`` the (n_theta, n_phi) product quadrature, ``off`` no motional factor.
+    """
 
     recoil: RecoilOption = "minimal"
     n_theta: int = 3
     n_phi: int = 5
-    """The ``vector`` quadrature (exact for the dipole patterns' second moments at these minima)."""
     neighbours: bool = True
-    """Crosstalk neighbours scatter the light they see (at their own position on the beam profile)."""
+    """Crosstalk neighbours scatter the light they see at their own position on the beam profile."""
     rayleigh: bool = True
     raman: bool = True
 
@@ -90,7 +63,7 @@ class RecoilNode:
 
 
 def recoil_nodes(q: int, b_hat: Sequence[float], options: ScatteringOptions) -> tuple[RecoilNode, ...]:
-    """The emission-direction quadrature for polarization ``q``: weights sum to one (Section 4.2.8)."""
+    """The emission-direction quadrature for polarization ``q``: weights sum to one."""
     if options.recoil == "off":
         return (RecoilNode(1.0, np.zeros(3)),)
     b = np.asarray(b_hat, dtype=float)
@@ -117,7 +90,7 @@ def recoil_nodes(q: int, b_hat: Sequence[float], options: ScatteringOptions) -> 
 
 
 def nominal_rabi_hz(device: Device, ion: int, pulse: Pulse) -> float | None:
-    """The derived carrier Rabi frequency of the addressed ion under the drive's beams at their configured power."""
+    """The derived carrier Rabi frequency of ``ion`` under the drive's beams, or None when it cannot be derived."""
     drive = pulse.drive
     try:
         if drive.kind == "raman":
@@ -249,7 +222,7 @@ def _make_op(ctx: _OpContext, matrix: np.ndarray, name: str) -> CollapseOp:
     else:
         full = qt.QobjEvo([root_w * op, qt.coefficient(_scale_coef, args={"scale": ctx.time_scale})])
         rate = scale_rate * float(ctx.time_scale(ctx.t_start)) ** 2
-    # a scattering rate is already s^-1: Section 5.6's 2 pi rule converts angular frequencies, not rates (audit E-18)
+    # a scattering rate is already s^-1: no 2 pi conversion, which is for angular frequencies
     return CollapseOp(full, float(rate), name, ctx.ion, None)
 
 
@@ -277,7 +250,7 @@ def scattering_channels(
         ions += [j for j in drive.crosstalk if j not in ions]
     outside = [j for j in ions if not space.has_ion(j)]
     if outside:
-        # a GATE_LOCAL space carries a subset of the ions (Section 5.4): neighbours outside it scatter in reality, not here
+        # a GATE_LOCAL space carries a subset of the ions: neighbours outside it scatter in reality, not here
         notes.append(f"pulse {pulse.gate_id!r}: scattering of ions {outside} outside the space dropped")
         ions = [j for j in ions if space.has_ion(j)]
     b_hat = (
@@ -356,9 +329,8 @@ def scattering_channels(
 
 
 def scattering_estimates(device: Device, pulse: Pulse) -> dict[str, float]:
-    """Per-pulse probabilities of the Section 9.7 row 'Scattering' for the addressed ion(s): P_raman (spin flip), P_leak (out
-    of the pair, the D-level branching f P_total included when the species table resolves the D channel), P_rayleigh, and the
-    differential-Rayleigh coherence loss Gamma_el t/2 (the coherence decays at Gamma_el/2); all at the played intensity."""
+    """Per-pulse scattering probabilities of each addressed ion at the played intensity: P_raman (spin flip), P_leak
+    (out of the pair), P_rayleigh and the differential-Rayleigh coherence loss Gamma_el t/2."""
     drive = pulse.drive
     out: dict[str, float] = {}
     if drive.kind in ("microwave", "gradient") or not drive.beams:

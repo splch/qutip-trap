@@ -1,12 +1,5 @@
-"""Truncation policy: n_max caps, the boundary-population monitor and adaptive growth (PLAN.md Section 5.5; M2, M9a).
-
-The monitor records, per mode and per pulse, the population in the top two Fock levels (or the top ENR shell);
-above the threshold (default 1e-6 of the population the pulse moves, with per-test overrides for hot modes) or when
-the cap's margin above the populated range falls below the Section 5.1.1 margin for the pulse's eta, the run is
-repeated with the cap raised, up to a configured limit, and both numbers are reported (Section 5.5). Tolerance
-convergence repeats a run with tolerances tightened by a factor of 10 and reports the change in final
-probabilities; the test suite does this for every validation case (Section 5.5).
-"""
+"""Truncation policy: the boundary-population monitor (the top two Fock levels of a resolved mode, or the top ENR shell),
+cap growth, and the tolerance and cap convergence checks."""
 
 from __future__ import annotations
 
@@ -26,19 +19,17 @@ M2 = "milestone M2 (hilbert/truncation.py, PLAN.md Section 5.5)"
 
 
 class TruncationError(RuntimeError):
-    """The boundary monitor tripped and the configured growth limit was reached (Section 5.5)."""
+    """The boundary monitor tripped and the configured growth limit was reached."""
 
 
 class TruncationWarning(QutipTrapWarning):
-    """A truncation the run could not make exact and reports (Section 5.5; docs/api_implementation_plan.md 1.9): a cap the
-    rule wanted larger than ``SolverOptions.mode_dimension_max`` allowed, or a boundary population above
-    ``boundary_population_max`` after the cap-raising retries. The ``Diagnostics`` carry the numbers as before; the warning
-    names the mode and both numbers so that silence means the caps held."""
+    """A truncation the run could not make exact: a cap clamped by ``SolverOptions.mode_dimension_max``, or a boundary
+    population above ``boundary_population_max`` after the cap-raising retries."""
 
 
 def warn_cap_clamped(mode: int, d_wanted: int, n_hi_wanted: int, d: int, d_max: int) -> None:
-    """Issue the :class:`TruncationWarning` of a cap clamped by ``mode_dimension_max`` (``run.space.select_space`` and the
-    GATE_LOCAL step spaces), attributed to the caller of the selection."""
+    """Issue the :class:`TruncationWarning` of a cap clamped by ``mode_dimension_max``, attributed to the caller of the
+    space selection."""
     warnings.warn(
         TruncationWarning(
             f"mode {mode}: the cap rule asks for d = {d_wanted} (expected occupation up to n = {n_hi_wanted}) but "
@@ -50,9 +41,7 @@ def warn_cap_clamped(mode: int, d_wanted: int, n_hi_wanted: int, d: int, d_max: 
 
 
 def warn_if_boundary_exceeds(boundary: Mapping[int, float], threshold: float) -> None:
-    """Issue one :class:`TruncationWarning` per mode whose reported boundary population exceeds ``threshold``
-    (``SolverOptions.boundary_population_max``) after the run's cap-raising retries; nothing is issued when every mode is
-    below it, so a silent run kept its caps."""
+    """Issue one :class:`TruncationWarning` per mode whose boundary population exceeds ``threshold``."""
     for mode, value in sorted(boundary.items()):
         if value > threshold:
             warnings.warn(
@@ -106,7 +95,7 @@ class MarginReport:
 
 
 def margin_reports(space: HilbertSpace, etas: Mapping[int, float] | None = None) -> tuple[MarginReport, ...]:
-    """The Section 5.1.1 margin check per resolved mode for the given |eta| (default: the declared eta_max)."""
+    """The margin check per resolved mode for the given |eta| (default: the declared eta_max)."""
     deficits = space.margin_deficits(etas)
     return tuple(
         MarginReport(m.mode, m.margin_levels, m.margin_levels + deficits[m.mode]) for m in space.resolved
@@ -114,7 +103,7 @@ def margin_reports(space: HilbertSpace, etas: Mapping[int, float] | None = None)
 
 
 def grow_for_margins(space: HilbertSpace, etas: Mapping[int, float] | None = None) -> HilbertSpace:
-    """Raise every resolved cap whose margin is below the Section 5.1.1 requirement (no-op when all margins hold)."""
+    """Raise every resolved cap whose margin is below its required margin (no-op when all margins hold)."""
     out = space
     for rep in margin_reports(space, etas):
         if not rep.ok:
@@ -140,12 +129,8 @@ def halving_test(
     factor: float = 10.0,
     tol: float = 1e-6,
 ) -> tuple[bool, float, SolverOptions]:
-    """The tolerance-convergence test of Section 5.5 behind the convergence badge (Section 14.5).
-
-    Runs ``run`` at ``options`` and again with atol and rtol tightened by ``factor`` (10 by default; the name keeps
-    the plan's historical "halving" label for the step-density halving it generalizes) and returns (converged,
-    max |delta probability|, the tightened options) with converged = the change is below ``tol``.
-    """
+    """Run ``run`` at ``options`` and with atol and rtol divided by ``factor``; return (converged, max |delta p|, the
+    tightened options), converged meaning the change is below ``tol``."""
     if factor <= 1.0:
         raise ValueError("the tightening factor exceeds one")
     tight = replace(options, atol=options.atol / factor, rtol=options.rtol / factor)
@@ -158,13 +143,8 @@ def halving_test(
 
 
 def grown_caps(space: HilbertSpace, add: int = 2, *, dimension_max: int | None = None) -> HilbertSpace:
-    """Every resolved cap of ``space`` (and the ENR group's excitation cap) raised by ``add``: the truncation half of Section
-    9.9's convergence regime.
-
-    Section 9.9 asks for the comparison "where the doubled cap stays within the dimension ceiling; otherwise the check runs
-    on the reduced mode set", so with ``dimension_max`` the modes are grown one at a time in resolved order and a mode whose
-    growth would cross the ceiling is left at its cap.
-    """
+    """Every resolved cap of ``space`` (and the ENR group's excitation cap) raised by ``add``. With ``dimension_max`` the
+    modes grow one at a time in resolved order, and a mode whose growth would cross the ceiling keeps its cap."""
     if add <= 0:
         raise ValueError("grow by a positive number of levels")
     out = space
@@ -182,20 +162,15 @@ def grown_caps(space: HilbertSpace, add: int = 2, *, dimension_max: int | None =
 
 @dataclass(frozen=True)
 class ConvergenceRegime:
-    """The three comparisons Section 9.9 asks of every validation case, each one a ``dynamics.evolve.ConvergenceReport``.
-
-    - ``tightened``: atol and rtol divided by ``factor`` (Section 5.5's second bullet, the run-level check
-      ``SolverOptions.convergence_check`` reports on its own);
-    - ``loosened``: both multiplied by ``factor``, which Section 9.9 asks for "for the integrator ladder";
-    - ``caps``: every resolved cap and the ENR excitation cap raised by ``add`` at UNCHANGED tolerances, so its report's
-      ``tolerances`` and ``tightened_tolerances`` are equal and ``grown_modes`` names what moved instead.
-    """
+    """Three convergence comparisons, each a ``dynamics.evolve.ConvergenceReport``: ``tightened`` (atol and rtol divided by
+    ``factor``), ``loosened`` (multiplied by ``factor``) and ``caps`` (caps raised by ``add`` at unchanged tolerances, so
+    its ``tolerances`` and ``tightened_tolerances`` are equal)."""
 
     tightened: ConvergenceReport
     loosened: ConvergenceReport
     caps: ConvergenceReport
     grown_modes: tuple[int, ...]
-    """The resolved modes whose caps were actually raised (a mode whose growth would cross the dimension ceiling is left)."""
+    """The resolved modes whose caps were raised (not those the dimension ceiling held back)."""
     add: int
 
     @property
@@ -224,19 +199,8 @@ def convergence_report(
     add: int = 2,
     tol: float = 1e-6,
 ) -> ConvergenceRegime:
-    """Section 9.9's convergence regime for one validation case, all three arms through
-    :class:`~qutip_trap.dynamics.evolve.ConvergenceReport`.
-
-    ``run(options, space)`` returns the case's reported probabilities keyed by observable, as the engine keys them. The
-    tolerance arms are ``dynamics.evolve.convergence_check`` on a closure that holds the space fixed; the loosened arm is
-    that same comparison started from ``options`` scaled UP by ``factor``, so its pair is (loose, options) and |delta p| is
-    the same number the plan asks for. The cap arm raises the caps at fixed tolerances (``grown_caps``); a case that carries
-    a fixed joint state regrids it inside its own closure (``regrid_state(state, space, grown)``), which is what makes that
-    arm comparable at all.
-
-    ``halving_test`` is the single-array form of the first comparison; this is the whole Section 9.9 row, and the tests that
-    call it carry the ``convergence`` marker so the CI convergence-report artifact means something (Sections 5.5, 14.5).
-    """
+    """The three comparisons of :class:`ConvergenceRegime` for one case; ``run(options, space)`` returns probabilities by
+    observable. The cap arm grows the caps (``grown_caps``), so a case with a fixed joint state regrids it in ``run``."""
     from qutip_trap.dynamics.evolve import convergence_check
 
     if factor <= 1.0:
@@ -269,9 +233,7 @@ def convergence_report(
 
 def regrid_state(joint: qt.Qobj, old: HilbertSpace, new: HilbertSpace) -> qt.Qobj:
     """Embed a joint state of ``old`` into ``new``, a copy of it with larger caps: zero-padded Fock factors for the resolved
-    modes, and for an ENR group a larger excitation cap, every old Fock tuple mapped to its index in the new group's
-    dictionary (``enr_state_dictionaries``; M9a). The caps may only grow; ions, frozen modes and the ENR modes are unchanged.
-    """
+    modes and, for an ENR group, each old Fock tuple mapped to its index in the new group. Only the caps may change."""
     if old.ion_dims != new.ion_dims or old.frozen != new.frozen or old.ion_labels != new.ion_labels:
         raise ValueError("regrid_state changes the motional caps only")
     if [m.mode for m in old.resolved] != [m.mode for m in new.resolved]:

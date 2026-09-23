@@ -1,31 +1,19 @@
-"""40Ca+ species table (PLAN.md Sections 4.5.2, 4.5.7, 8.1, 9.13, 9.14, 9.15, 12; Appendix E).
+"""40Ca+ species table (I = 0: no hyperfine structure, Lande g_J).
 
-I = 0, so there is no hyperfine structure and the Lande formula supplies g_J ([background]; the measured
-g_S ~ 2.00226 and g_D ~ 1.20033 the plan mentions were "not verified here", Section 4.5.7). The metastable
-D lifetimes are Kreuter et al. 2005's single-ion measurements with the theoretical values stored
-separately as cross-checks and never as lifetimes (Section 4.5.7).
-
-The P-level TOTAL rates come from MEASURED lifetimes -- Hettrich et al. 2015's tau(P1/2) = 6.904(26) ns
-(gamma/2pi = 23.0526 MHz) and Meir et al. 2020's tau(P3/2) = 6.639(42) ns (23.9727 MHz) -- and Section
-9.13's "quoted" 21.57 and 23.4 MHz are read as PARTIAL rates into S1/2, the reading the plan's own text
-uses for both and the one Hettrich prints for the 397 nm line (gamma_PS = 2 pi x 21.57(8) MHz). Reading
-21.57 MHz as a total would demand tau(P1/2) = 7.379 ns, which no measurement supports. With Ramm et al.
-2013's branching 0.06435(7) the 397 nm partial rate comes out at 21.5691 MHz, reproducing Hettrich's
-printed value to 4e-5, so Section 9.13's 2.045 e a0 and 45.11 mW/cm^2 anchors now come out of this TABLE
-(exactly 2.0446 / 45.106 at the plan's own AIR 396.85 nm, 2.0455 / 45.069 at the vacuum wavelength the
-table stores). The 393 nm pair does not: Meir's lifetime with Gerritsma's branching gives a partial rate
-of 22.4071 MHz, 4.2 % below the plan's unsourced 23.4 MHz, so the plan's 2.972 e a0 / 50.25 mW/cm^2 are a
-closed form at its own number and not the table's (ledger anchor.ca40.p32_linewidth_readings).
+The P-level TOTAL rates come from measured lifetimes (Hettrich et al. 2015, Meir et al. 2020); the quoted 21.57 and
+23.4 MHz linewidths are read as partial rates into S1/2 and kept as cross-checks. The D lifetimes are Kreuter et al.
+2005's measurements; theory values are stored as cross-checks, never as lifetimes.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited, Tag
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
+    Cited,
     MissingConstant,
+    Tag,
     energy_hz,
     gamma_hz_from_lifetime,
     ion_mass_u,
@@ -51,7 +39,7 @@ def _c(
         value=value,
         unit=unit,
         source=source,
-        ledger_id=_P + suffix,
+        key=_P + suffix,
         tag=tag,
         uncertainty=uncertainty,
         note=note,
@@ -353,7 +341,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 MISSING: tuple[MissingConstant, ...] = (
     MissingConstant(
@@ -373,7 +361,7 @@ MISSING: tuple[MissingConstant, ...] = (
 
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 40Ca+, built from :data:`TABLE` alone."""
+    """The ``Species`` record for 40Ca+, built from :data:`TABLE` alone."""
     t = TABLE
     half = Fraction(1, 2)
     e_d32 = energy_hz(t[_P + "D32.energy_cm"])
@@ -420,8 +408,7 @@ def species() -> Species:
         ("NIST_ASD_5_12", "Meir2020", "PLAN_background"),
     )
 
-    # the TOTAL rates come from the MEASURED lifetimes, never from Section 9.13's "quoted" linewidths, which
-    # are partial rates into S1/2 (module docstring; ledger conv.ca40_linewidth_reading)
+    # TOTAL rates from the measured lifetimes, never from the quoted linewidths (partial rates into S1/2)
     g_p12 = gamma_hz_from_lifetime(t[_P + "P12.lifetime_s"])
     g_p32 = gamma_hz_from_lifetime(t[_P + "P32.lifetime_s"])
     b_p12_d = t[_P + "P12.branching_to_D32"].value
@@ -456,13 +443,10 @@ def species() -> Species:
         "E1",
         p32_cites,
     )
-    # the 854 nm D5/2 repump (the designated repump line, audit item E6) and the 850 nm D3/2 branch: the
-    # P3/2 branching split PLAN.md leaves open and Gerritsma et al. 2008 measured
+    # the 854 nm D5/2 repump line and the 850 nm D3/2 branch (Gerritsma et al. 2008)
     d52_p32 = Transition("D5/2", "P3/2", wavelength_vac_m(e_d52, e_p32), g_p32, b_p32_d52, "E1", p32_cites)
     d32_p32 = Transition("D3/2", "P3/2", wavelength_vac_m(e_d32, e_p32), g_p32, b_p32_d32, "E1", p32_cites)
-    # the D5/2 -> D3/2 magnetic-dipole branch (Section 4.5.7): A12 tau(D5/2) = 2.9e-6 of the decay, the channel the
-    # blackbody mixing rate of MetastableChannels multiplies by the Bose occupation; unit E2 branching into S1/2 holds
-    # "to 1e-5 for the Ca+ D5/2 level" (Section 4.5.7) and the two branchings sum to exactly 1 here
+    # the D5/2 -> D3/2 M1 branch carries A12 tau(D5/2) = 2.9e-6 of the decay; the E2 branch into S1/2 the rest
     b_m1 = t[_P + "D52_D32.M1_rate_s"].value * t[_P + "D52.lifetime_s"].value
     d32_d52 = Transition(
         "D3/2",

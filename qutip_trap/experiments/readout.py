@@ -1,4 +1,4 @@
-"""The detection-histogram experiment (PLAN.md Section 7.5 item 5; M5)."""
+"""The detection-histogram experiment."""
 
 from __future__ import annotations
 
@@ -15,15 +15,11 @@ if TYPE_CHECKING:
 
 
 def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
-    """Section 7.5 item 5 (M5): histogram bright and dark photon counts on the simulated readout model of ion ``ion`` and
-    choose the threshold and window minimizing the average error.
+    """Histogram ``n_records`` bright and dark photon counts of ``ion`` over candidate windows; returns a
+    ``DetectionHistogram`` with the threshold and window minimizing the average error, and the fitted rates.
 
-    The rates come from the M3a Bloch model of the device's detection beams at the ion (``detection_beams`` overrides the
-    beams near the species' cycling wavelength; ``scheme`` a :class:`~qutip_trap.readout.fluorescence.ReadoutScheme`;
-    ``levels`` the included fine-structure levels; ``windows_s`` the candidate bin times, default 0.25 to 2.5 times the
-    detector's window; ``seed`` the record generator), with the micromotion factor of Section 8.8 applied exactly as the
-    readout stage of ``run`` applies it. ``data`` holds the bright and dark histograms at the chosen window
-    (rows) and ``fitted`` the threshold, window, eps_B, eps_D and the fitted rates with their uncertainties.
+    ``detection_beams`` overrides the device's, ``scheme`` the ``ReadoutScheme``, ``levels`` the fine-structure levels,
+    ``windows_s`` the candidate bin times (default 0.25 to 2.5 detector windows); ``data`` rows are the two histograms.
     """
     device, kw = laboratory_kwargs(machine, kw, caller=detection_histogram)
     from qutip_trap.calibration.readout import calibrate_detection
@@ -36,8 +32,7 @@ def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **k
     beams = kw.get("detection_beams")
     if beams is None:
         beams = [device.beams[k] for k in detection_beams(device, ion)]
-    # the same J_0^2/J_1^2 factor the readout stage of ``run`` applies (Section 8.8), so the table this experiment fits and
-    # the run that reads it see one rate object
+    # the micromotion factor the readout stage of ``run`` applies, so the fitted table matches the run that reads it
     beta, omega_rf = detection_micromotion(device, ion, beams)
     rates, scheme, _model = detection_rates_for_ion(
         species,

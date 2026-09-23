@@ -1,32 +1,8 @@
-"""Resolved, frozen and dropped modes for a schedule, and the joint space that carries them (PLAN.md Sections 5.1, 5.2,
-5.4, 5.5, 11.3, 11.5; Appendix E ``HilbertSpace.for_``; milestone M6).
+"""Mode selection for a schedule: each crystal mode is resolved, frozen, dropped or carried in an ENR group.
 
-Every crystal mode is assigned to exactly one of three classes per run (Section 5.2 [corrected: critique, 2026-09-04]),
-from the closed-form residual displacement and entangling-angle contribution of the Section 4.4.3 integrals evaluated with
-each played waveform's actual detuning schedule and the prepared occupations (``control.shaping.waveform_integrals``):
-
-- dropped when max_gates |alpha_m|^2 (2 nbar_m + 1) < 1e-6 and |chi_m| < 1e-4 (nothing absorbs a dropped mode's loss);
-- frozen when above that pair but |alpha_m|^2 (2 nbar_m + 1) < ``SolverOptions.freeze_alpha_max`` and |chi_m| <
-  ``SolverOptions.freeze_chi_max_rad`` (default 0.05 rad, the miscalibration the entangling-gate calibration absorbs): the
-  mode leaves the joint space, its Fock state is drawn per shot and enters through the exact Debye-Waller factor, and its
-  chi_m is reported as the frozen contribution;
-- resolved otherwise: carried in the product space with a cap that follows the loop radius eta Omega/epsilon of the gate
-  that drives it hardest, the thermal occupation and the Section 5.1.1 margin for its eta.
-
-The contribution pair decides alone; the coupling test (|eta| > 1e-12 for some drive) only classifies the modes NO entangling
-gate touches: modes that only single-qubit carrier pulses touch are frozen (their Debye-Waller factor is what the carrier
-sees), modes no drive couples to are dropped. A mode an entangling gate touches but whose pair sits below (1e-6, 1e-4) is
-dropped whatever couples to it. ``HilbertSpace.for_(device, schedule, options)`` is this selection with the device's prepared
-occupations; the dimension and non-zero guards of Section 11.5 are ``resolve_level``'s.
-
-M9a adds what Sections 5.2 and 11.3 ask the selection to report and offer: the summed contribution of the dropped modes
-(``SpaceSelection.dropped_contribution``: nothing absorbs it), the off-resonant excitation bound of every frozen spectator,
-sum over the tones, the gate ions and the nearest sidebands of (eta_m Omega sqrt(nbar_m + 1)/(mu - l omega_m))^2, with the
-detuning guard |mu - l omega_m| > 20 eta_m Omega sqrt(n + 1) kept as the sanity check whose violations are noted
-(``frozen_excitation_bounds``), and the ENR option (``enr``): a group of cold modes carried dynamically as ONE
-excitation-number-restricted factor with the sum-generator displacement (Sections 5.1, 5.1.1; 11.3 item 1), a fourth class
-``enr`` beside resolved, frozen and dropped, never composed with the product-space treatment on the same modes.
-"""
+A resolved mode is carried with a Fock cap, a frozen one leaves the joint space (its Fock state entering through the
+exact Debye-Waller factor) and a dropped one the dynamics; :func:`classify` decides from the played entangling
+waveforms' closed-form contributions."""
 
 from __future__ import annotations
 
@@ -51,38 +27,26 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.engine import SolverOptions
 
 ModeClass3 = Literal["resolved", "frozen", "dropped", "enr"]
-"""The three classes of Section 5.2 plus ``enr``, the ENR option's class (Section 11.3 item 1; M9a)."""
+"""A mode's class: resolved, frozen, dropped, or ``enr`` (in an excitation-number-restricted group)."""
 
 DETUNING_GUARD_FACTOR = 20.0
-"""Section 5.2: |mu_tone - l omega_m| > 20 eta_m Omega sqrt(n_m + 1) is the frozen-spectator sanity check, (1/20)^2 = 2.5e-3 of
-off-resonant excitation per sideband; violations are reported, never enforced (the contribution criterion decides)."""
+"""The frozen-spectator sanity check |mu - l omega_m| > 20 eta_m Omega sqrt(n_m + 1), at most (1/20)^2 = 2.5e-3 of
+off-resonant excitation per sideband; violations are reported, never enforced."""
 
 DROP_ALPHA_MAX = 1e-6
-"""|alpha|^2 (2 nbar + 1) below which, together with DROP_CHI_MAX_RAD, a mode is dropped (Section 11.3 item 2)."""
+"""|alpha|^2 (2 nbar + 1) below which, with ``DROP_CHI_MAX_RAD`` and ``DW_SPREAD_DROP_MAX``, a mode is dropped."""
 DROP_CHI_MAX_RAD = 1e-4
 
 DW_SPREAD_DROP_MAX = 3e-4
-"""The third drop condition (M6 finding, M9 fix): the SHOT-TO-SHOT spread of a mode's Debye-Waller factor, in radians of
-rotation angle, that a dropped mode is allowed to carry.
-
-Section 11.3 item 2's pair reads the Section 4.4.3 LOOP integrals only, so a pulse that closes a mode's loop exactly leaves
-|alpha_m|^2 (2 nbar_m + 1) ~ 1e-33 however strongly the mode is coupled, and the mode is dropped - taking its exact
-Debye-Waller factor e^{-eta^2/2} L_{n}(eta^2) out of every carrier pulse with it, which is precisely what Section 5.2 keeps
-the FROZEN class for ("samples n_m once per shot and multiplies Omega_i by the exact Debye-Waller factor of that Fock
-state"). The MEAN of that factor is absorbed by the calibration, since the spot check and the run drop the same mode; the
-spread over the thermal distribution is not. To leading order in eta the factor is 1 - eta^2 (n + 1/2), so the rotation
-angle's standard deviation over a thermal state of mean nbar is eta^2 sqrt(nbar (nbar + 1)) (Var n = nbar(nbar + 1) for a
-thermal state). Measured on the three-ion fixture, whose tilt mode (mode 4) has eta = 0.0809 and whose AM pulse closes its
-loop to |alpha|^2 (2 nbar + 1) = 3.5e-33: at the prepared nbar = 0.0214 the spread is 9.69e-4 rad, and it scales to
-1.500e-3 at nbar = 0.05, 9.256e-3 at nbar = 1 and 6.864e-2 at nbar = 10 - as the infidelity sin^2(delta theta / 2) of a pi
-pulse, 2.3e-7, 5.6e-7, 2.1e-5 and 1.2e-3. 3e-4 rad is the threshold matched to the 1e-6 of the alpha^2 row: (3e-4/2)^2 =
-2.3e-8 of infidelity, comfortably below it. Above the threshold the mode is FROZEN, so the per-shot draw of Section 5.2
-carries the spread; below it, dropping the mode costs less than the pair's own tolerance."""
+"""The largest shot-to-shot spread of its Debye-Waller factor (rad of rotation angle) that a dropped mode may carry: a
+pulse that closes a mode's loop leaves |alpha|^2 (2 nbar + 1) near zero however strongly it couples, and the calibration
+absorbs the factor's mean but not its thermal spread eta^2 sqrt(nbar (nbar + 1)). Above it the mode is frozen instead;
+(3e-4/2)^2 = 2.3e-8 of pi-pulse infidelity sits below ``DROP_ALPHA_MAX``."""
 
 
 @dataclass(frozen=True)
 class ModeContribution:
-    """One mode's closed-form contribution to one played gate (Section 4.4.3 integrals)."""
+    """One mode's closed-form contribution to one played gate."""
 
     mode: int
     alpha2_weighted: float
@@ -90,14 +54,12 @@ class ModeContribution:
     chi_rad: float
     """|chi_m| of the pair."""
     radius: float
-    """The coherent excursion that sizes the cap: max over the pulse of sum_i |alpha_{i,m}(t)|, the displacement of the S = +-N
-    spin branch from the closed-form trajectories (``control.shaping.excursion_by_mode``; M9a. M6 used the single-loop radius
-    eta_max Omega_peak/epsilon_m, which a segmented pulse exceeds by factors, so the Section 5.5 margin check tripped)."""
+    """The coherent excursion that sizes the cap: max over the pulse of sum_i |alpha_{i,m}(t)|
+    (``control.shaping.excursion_by_mode``)."""
     eta_max: float
     dw_spread_rad: float = 0.0
-    """max over the gate ions of eta_{i,m}^2 sqrt(nbar_m (nbar_m + 1)): the shot-to-shot spread of the mode's Debye-Waller
-    factor in radians of rotation angle, the third drop condition (``DW_SPREAD_DROP_MAX``). Zero by default, so a caller that
-    constructs a contribution from the loop pair alone gets the plan's two-row behaviour."""
+    """max over the gate ions of eta_{i,m}^2 sqrt(nbar_m (nbar_m + 1)), the Debye-Waller spread (rad) that
+    ``DW_SPREAD_DROP_MAX`` bounds; zero by default."""
 
 
 def waveform_contributions(
@@ -116,7 +78,6 @@ def waveform_contributions(
             al = ints.alpha.get((i, m), 0.0)
             alpha2 = max(alpha2, abs(al) ** 2 * (2.0 * nbar + 1.0))
         chi = abs(ints.chi_by_mode.get((a, b, m), ints.chi_by_mode.get((b, a, m), 0.0)))
-        # the Debye-Waller spread the drop test needs: eta^2 sqrt(nbar (nbar + 1)) in rotation angle (DW_SPREAD_DROP_MAX)
         spread = eta_max**2 * math.sqrt(max(nbar, 0.0) * (max(nbar, 0.0) + 1.0))
         out[m] = ModeContribution(m, alpha2, chi, float(excursion.get(m, 0.0)), eta_max, float(spread))
     return out
@@ -129,22 +90,10 @@ def classify(
     freeze_alpha_max: float,
     freeze_chi_max_rad: float,
 ) -> ModeClass3:
-    """One mode's class from Section 5.2's criterion (PLAN.md line 822): the pair (|alpha_m|^2 (2 nbar_m + 1), |chi_m|) of the
-    played entangling waveforms decides alone - dropped below (1e-6, 1e-4), frozen above that pair but below
-    (``freeze_alpha_max``, ``freeze_chi_max_rad``), resolved otherwise. ``coupled`` (any drive has |eta_m| > 1e-12 on an
-    addressed ion) only decides the modes no entangling gate touches at all (``contribution is None``): a mode a single-qubit
-    carrier pulse couples to is frozen so that its Debye-Waller factor is applied, one no drive couples to is dropped.
-
-    A mode below the drop pair is dropped even when a carrier pulse couples to it: nothing absorbs a dropped mode's loss, and
-    at |alpha|^2 (2 nbar + 1) < 1e-6 there is nothing to absorb (M6 fix: intersecting the drop test with ``coupled`` made the
-    dropped branch dead, since a contribution only ever exists for a coupled mode, so ``dropped_contribution`` - the quantity
-    Section 11.3 item 2 asks the report to state - was identically zero and such modes still cost a Fock branch each).
-
-    The drop test carries a THIRD condition the plan does not state (``DW_SPREAD_DROP_MAX``, a strengthening recorded in the
-    ledger): the loop pair reads the Section 4.4.3 integrals alone, so a pulse that closes a mode's loop exactly leaves the
-    pair at ~1e-33 however strongly the mode couples, and dropping the mode takes its exact Debye-Waller factor out of every
-    carrier pulse. Above ``DW_SPREAD_DROP_MAX`` radians of shot-to-shot spread in that factor the mode is frozen instead, so
-    the per-shot draw of Section 5.2 - the reason the frozen class exists - carries it."""
+    """One mode's class from its contribution over the played entangling waveforms: dropped below (``DROP_ALPHA_MAX``,
+    ``DROP_CHI_MAX_RAD``) with a Debye-Waller spread below ``DW_SPREAD_DROP_MAX``, frozen below (``freeze_alpha_max``,
+    ``freeze_chi_max_rad``), else resolved. A mode no entangling gate touches (``contribution is None``) is frozen when
+    ``coupled`` (a carrier pulse needs its Debye-Waller factor), else dropped."""
     if contribution is None:
         return "frozen" if coupled else "dropped"
     if (
@@ -167,9 +116,9 @@ def cap_requirement(
     extra: int = 0,
     tail: float = 1e-6,
 ) -> tuple[int, int]:
-    """What the cap rule asks for BEFORE any ceiling: (d, highest expected Fock index) of the thermal mode displaced by the
-    loop radius at the boundary threshold ``tail``, plus the Section 5.1.1 margin for the mode's eta (M9a audit D1: the caller
-    compares this with ``SolverOptions.mode_dimension_max`` and reports the clamp, which used to be silent)."""
+    """(d, highest expected Fock index) the cap rule asks for before any ceiling: the populated range at ``tail`` (the
+    definition the engine's margin check reads) of the thermal mode displaced by ``radius``, plus the margin for its
+    eta."""
     n_hi = populated_range(max(radius, 0.0), max(nbar, 0.0), tail=tail)
     return max(n_hi + 1 + required_margin(eta_max) + extra, d_min), n_hi
 
@@ -184,13 +133,8 @@ def cap_for(
     extra: int = 0,
     tail: float = 1e-6,
 ) -> ModeTruncation:
-    """The cap rule (Sections 5.1.1, 5.5): the populated range of the thermal mode displaced by the loop radius, at the boundary
-    threshold ``tail`` (``hilbert.operators.populated_range``, the same definition the engine's margin check reads), plus the
-    Section 5.1.1 margin for the mode's eta; the M6 rule (radius + sqrt nbar)^2 + 2 sqrt(radius^2 + nbar + 1/4) + 1 sat one
-    level under the margin check on the two-ion fixture and cost every pulse a cap-raising retry (M9a).
-
-    ``d_max`` is the ceiling of ``SolverOptions.mode_dimension_max``; when the rule wants more, both d and the declared
-    expected range are clamped, and the CALLER reports it from ``cap_requirement`` (M9a audit D1)."""
+    """The cap rule, :func:`cap_requirement` clamped to ``d_max`` (the declared range too; the caller reports a clamp),
+    as a ``ModeTruncation`` with mode -1 for the caller to set."""
     d_want, n_hi = cap_requirement(radius, nbar, eta_max, d_min=d_min, extra=extra, tail=tail)
     d = min(d_want, d_max)
     return ModeTruncation(-1, d, (0, min(n_hi, d - 1)), max(eta_max * 1.5, 1e-3))
@@ -198,13 +142,8 @@ def cap_for(
 
 @dataclass(frozen=True)
 class SpaceSelection:
-    """The joint space of a run and the class of every mode (Section 5.2), with the frozen contributions reported.
-
-    ``space`` is a DECLARATION: ``HilbertSpace`` holds the ion dimensions, the resolved truncations, the ENR group and the
-    frozen modes and validates them arithmetically, and every operator on it is built lazily and cached, so nothing here has
-    allocated the joint space yet. ``budget`` is the Section 11.5 verdict on that declaration, evaluated by ``select_space``
-    BEFORE anything allocates, which is what lets the monitor "refuse to build" a space above the guards (M9b audit B2).
-    """
+    """The joint space of a run (a declaration: no operator on it is allocated yet) and the class of every mode, with
+    the contributions and the size-guard verdict (``budget``)."""
 
     space: HilbertSpace
     mode_class: dict[int, ModeClass3]
@@ -213,17 +152,14 @@ class SpaceSelection:
     nbar: dict[int, float]
     notes: tuple[str, ...] = field(default_factory=tuple)
     frozen_excitation: dict[int, float] = field(default_factory=dict)
-    """Per frozen mode, the summed off-resonant excitation bound of Section 5.2 over the schedule's pulses (M9a)."""
+    """Per frozen mode, the off-resonant excitation bound summed over the schedule's pulses."""
     guard_violations: tuple[str, ...] = field(default_factory=tuple)
-    """The detuning-guard sanity check of Section 5.2 where it fails (reported, never enforced; M9a)."""
+    """The detuning-guard failures (reported, never enforced)."""
     budget: tuple[bool, int, int] = (True, 0, 0)
-    """(inside the Section 11.5 guards, joint dimension, drive-operator non-zero estimate) of the declared space, from
-    ``run.levels.within_budget`` (M9b audit B2). A caller that supplies its own space leaves the default and evaluates the
-    guards itself."""
+    """(inside the guards, joint dimension, drive-operator non-zero estimate) of the declared space
+    (``run.levels.within_budget``); a caller that supplies its own space keeps the default."""
     dw_spread: dict[int, float] = field(default_factory=dict)
-    """Per mode touched by an entangling gate, the shot-to-shot spread of its Debye-Waller factor in radians of rotation
-    angle, eta^2 sqrt(nbar (nbar + 1)): the third drop condition (``DW_SPREAD_DROP_MAX``) and, summed over the dropped
-    modes, the part of their loss the calibration cannot absorb (``dropped_dw_spread_rad``)."""
+    """Per mode touched by an entangling gate, the Debye-Waller spread (rad), eta^2 sqrt(nbar (nbar + 1))."""
 
     @property
     def frozen_contribution(self) -> dict[int, tuple[float, float]]:
@@ -235,18 +171,15 @@ class SpaceSelection:
 
     @property
     def dropped_contribution(self) -> tuple[float, float]:
-        """(sum |alpha_m|^2 (2 nbar_m + 1), sum |chi_m|) over the dropped modes: the summed dropped contribution Section 11.3
-        item 2 asks the report to state, since nothing absorbs a dropped mode's loss (M9a)."""
+        """(sum |alpha_m|^2 (2 nbar_m + 1), sum |chi_m|) over the dropped modes, whose loss nothing absorbs."""
         a = sum(c[0] for m, c in self.contribution.items() if self.mode_class[m] == "dropped")
         x = sum(c[1] for m, c in self.contribution.items() if self.mode_class[m] == "dropped")
         return float(a), float(x)
 
     @property
     def dropped_dw_spread_rad(self) -> float:
-        """Summed shot-to-shot Debye-Waller spread of the DROPPED modes, in radians of rotation angle: the part of a dropped
-        mode's loss that the calibration cannot absorb, since the calibration takes the mean of the factor and this is its
-        spread (``DW_SPREAD_DROP_MAX``). Each term is below that threshold by construction; the sum is what a 9.8 row 3
-        comparison should add to the loop-pair bound to be honest."""
+        """Summed Debye-Waller spread (rad) of the dropped modes: the part of their loss the calibration, which absorbs
+        the factor's mean, cannot."""
         return float(sum(self.dw_spread.get(m, 0.0) for m, c in self.mode_class.items() if c == "dropped"))
 
     @property
@@ -341,11 +274,9 @@ def frozen_excitation_bounds(
     *,
     sidebands: Sequence[int] = (-1, 1),
 ) -> tuple[dict[int, float], tuple[str, ...]]:
-    """Section 5.2's error bound of the frozen-spectator option, per frozen mode: the off-resonant excitation probability
-    (eta_m Omega sqrt(n_m + 1)/(mu - l omega_m))^2 summed over the pulses, their tones, the addressed ions and the nearest
-    sidebands l = -/+ 1 (n_m = nbar_m, the thermal mean), together with the detuning-guard violations
-    |mu - l omega_m| <= 20 eta_m Omega sqrt(n_m + 1) as notes. A pulse whose tone sits exactly ON a sideband of a frozen
-    mode has an unbounded excitation and is reported as such (inf): the mode cannot be frozen for that pulse."""
+    """Per frozen mode, the off-resonant excitation bound: (eta_m Omega sqrt(nbar_m + 1)/(mu - l omega_m))^2 summed
+    over the pulses, tones, addressed ions and ``sidebands`` l, with the detuning-guard violations as notes. A tone
+    exactly on a sideband gives inf."""
     from qutip_trap.light.raman import lamb_dicke_parameters
 
     bounds: dict[int, float] = {int(m): 0.0 for m in frozen}
@@ -398,17 +329,9 @@ def select_space(
     ion_dims: Sequence[int] | None = None,
     enr: tuple[Sequence[int], int] | None = None,
 ) -> SpaceSelection:
-    """Classify every mode for ``schedule`` and declare the product space of the resolved ones (Sections 5.2, 5.5).
-
-    ``enr`` = (modes, N_exc) carries the named modes as one ENR factor instead of their criterion class (Section 11.3 item 1,
-    the option for cold undriven groups); a mode the criterion would resolve may be placed there, with a note, since the top
-    ENR shell is then the boundary the monitor watches (Section 5.1: the ENR displacement is silently wrong near the cap).
-
-    ``d_max`` = None reads ``options.mode_dimension_max`` (default 64); where the cap rule wants more, the clamp is named in
-    ``notes`` with the range it asked for and the range that survives (M9a audit D1: it used to narrow the declared expected
-    occupation range silently, so the Section 5.1.1 oracle check and the Section 5.5 margin check ran over less than the
-    physics). The Section 11.5 verdict on the declaration is computed here, before any operator is allocated, and returned as
-    ``SpaceSelection.budget`` (M9b audit B2)."""
+    """Classify every mode for ``schedule`` and declare the product space of the resolved ones; ``enr`` = (modes, N_exc)
+    carries the named modes as one ENR factor whatever their class. A clamped cap (``d_max`` None: the options'
+    ceiling) warns and is noted; the size-guard verdict is taken before any operator is allocated."""
     from qutip_trap.run.levels import within_budget
 
     d_ceiling = int(options.mode_dimension_max if d_max is None else d_max)
@@ -447,8 +370,7 @@ def select_space(
         if classes[m] != "resolved":
             continue
         c = best[m]
-        # the same boundary threshold the engine's margin check reads (Section 5.5's per-test override reaches both; M9a
-        # audit B4: cap_for's hard-coded 1e-6 gave a loosened run an over-large cap and a tightened one a retry)
+        # the same boundary threshold the engine's margin check reads
         tail = float(options.boundary_population_max)
         d_want, n_hi_want = cap_requirement(
             c.radius, nb[m], c.eta_max, d_min=d_min, extra=extra_levels, tail=tail
@@ -466,12 +388,10 @@ def select_space(
             )
         resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
     frozen = tuple(m for m in range(n_modes) if classes[m] in ("frozen", "dropped"))
-    # a dropped mode leaves the dynamics entirely: no tensor factor (like a frozen one), and additionally no Debye-Waller
-    # factor and no Fock branch, since "nothing absorbs a dropped mode's loss" (Section 5.2; M6 fix)
+    # a dropped mode is in ``frozen`` too (no tensor factor) and in addition has no Debye-Waller factor or Fock branch
     dropped = tuple(m for m in range(n_modes) if classes[m] == "dropped")
     dims = tuple(int(x) for x in (ion_dims if ion_dims is not None else [2] * n_ions))
-    # the declaration: HilbertSpace validates its invariants arithmetically and allocates no operator, so the Section 11.5
-    # guards below are evaluated before anything is built (M9b audit B2)
+    # HilbertSpace allocates no operator, so the guards below are evaluated before anything is built
     space = HilbertSpace(dims, tuple(resolved), enr_group, frozen, (), dropped)
     budget = within_budget(space, options)
     if not budget[0]:
@@ -511,8 +431,8 @@ def select_space(
 
 
 def drive_operator_nonzeros(space: HilbertSpace) -> int:
-    """The Section 11.2 estimate of the merged drive operator's non-zeros: N 2^N prod_m d_m^2 for two-level ions, times the
-    square of the ENR factor's dimension when a group is carried (its sum-generator exponential is dense within the block)."""
+    """The estimated non-zeros of the merged drive operator: N 2^N prod_m d_m^2 for two-level ions, times the square of
+    the ENR factor's dimension when a group is carried (its sum-generator exponential is dense within the block)."""
     n = space.n_ions
     prod = 1
     for m in space.resolved:

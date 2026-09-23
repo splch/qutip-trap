@@ -1,38 +1,10 @@
-"""IonQ circuit JSON importer and exporter (PLAN.md Sections 7.6, 8.6, 9.13).
+"""IonQ circuit JSON importer and exporter, and IonQ v0.4 job bodies. IonQ gate phases and angles are in TURNS (``ms``
+defaults to ``angle`` 0.25, maximally entangling; the qis gateset's ``rotation`` is in radians) and the IR in radians;
+exported turns are rounded to 12 significant digits so values such as 0.75 round-trip exactly.
 
-Encoding (verified against the IonQ OpenAPI v0.4 specification and the qiskit-ionq, ionq-core-python and
-PennyLane-IonQ clients, Section 7.6): the native gate names are ``gpi``, ``gpi2``, ``ms``, ``zz`` and ``nop``;
-``gpi``/``gpi2`` take a scalar ``target`` and a scalar ``phase`` in TURNS; ``ms`` takes ``targets`` (two),
-``phases`` (two, turns) and ``angle`` (turns, default 0.25, maximally entangling); ``zz`` takes ``targets`` and
-``angle`` and no phases. The job body is ``{"input": {"gateset": "native" | "qis", "qubits": N, "circuit":
-[...]}}``; the qis gateset's rotations (``rotation``) are radians. Internally every parameter is radians
-(Section 13, "Gate parameters"); exported turns are rounded to 12 significant digits so that a value such as
-0.75 round-trips exactly (the 9.13 test).
-
-Result formats (Section 8.6; the exporters live on ``Result`` in ``run/results.py``). v1, the format
-``ionq.result.probabilities.json.v1`` and its histogram and shots forms: decimal-integer keys, qubit 0 the
-least-significant bit (``to_ionq_json``, ``to_ionq_histogram``, ``to_ionq_shots``). v2, the format
-``ionq.result.probabilities.json.v2``: the envelope ``{"probabilities": {"registers": {<register>: {<bitstring>: p}}}}``
-with zero-padded bitstrings per named classical register and ``output_all`` the whole-circuit register (the histogram
-form under ``"histogram"`` with counts, the shots form as per-shot bit arrays). Character order of a v2 bitstring,
-settled 2026-09-11 (docs/api_implementation_plan.md item 0.4): WIRE order, q[0] the first (leftmost) character, the
-reverse of this package's ``bitstring_key``, so ``x q[0]`` on three qubits is ``"1"`` in v1 and ``"100"`` in v2.
-Sources: IonQ's documentation, the OpenQASM 3 page of the v0.4 API reference under "Reading results"
-(https://docs.ionq.com/api-reference/v0.4/openqasm3: "q[0] is the leftmost character of the bitstring. A three-qubit
-circuit applying x q[0]; and measuring all three returns {"100": 1.0}"), and qiskit-ionq 1.1.1, whose
-``_decode_distribution_artifact`` in ``ionq_job.py`` reverses every ``output_all`` key before converting it to the
-decimal form ("Result artifacts use wire-order bitstrings (qubit 0 first)"). The OpenAPI v0.4 document itself (spec
-dated 2026-09-10) does not state the order and its example is the symmetric Bell state. ``Result.to_ionq_v2_probabilities``,
-``to_ionq_v2_histogram`` and ``to_ionq_v2_shots`` emit the envelope in this order (0.2.0); the 0.1.0 ``Result.to_ionq_v2``
-kept this package's own order and is deprecated; ``tests/test_m6_results_export.py`` holds the fixture.
-
-Job bodies (the v0.4 ``CircuitJobCreationPayload``): ``dump_job`` writes ``{"type": "ionq.circuit.v1", "backend": ...,
-"shots": ..., "input": {...}}`` plus the optional ``name``, ``metadata``, ``noise`` (``{"model": ..., "seed": ...}``),
-``settings`` (``compilation``, ``error_mitigation``) and ``dry_run``; the spec sets ``additionalProperties: false`` on the
-body, the input and the settings, so every key is checked here and a v0.3 ``target`` is written as ``backend``.
-``load_job`` reads either (``target`` or ``backend``). ``loads`` and ``dumps`` are the circuit importer and exporter in the
-shape of ``json`` (a string in, a string out).
-"""
+Result bit order (the exporters live on ``Result``): v1 keys are decimal integers with qubit 0 the least-significant bit;
+v2 bitstrings are in wire order, q[0] the leftmost character (IonQ v0.4 API reference, "Reading results"), so ``x q[0]``
+on three qubits is ``"1"`` in v1 and ``"100"`` in v2."""
 
 from __future__ import annotations
 
@@ -52,8 +24,7 @@ JOB_TYPE: Final[str] = "ionq.circuit.v1"
 JOB_KEYS: Final[frozenset[str]] = frozenset(
     {"type", "backend", "input", "shots", "name", "metadata", "noise", "settings", "dry_run", "session_id"}
 )
-"""The keys of the v0.4 ``CircuitJobCreationPayload`` (``additionalProperties: false``); ``target`` is the v0.3 spelling of
-``backend``, accepted on input and never written."""
+"""The keys of the v0.4 ``CircuitJobCreationPayload``, which allows no others; the v0.3 ``target`` is read, never written."""
 NOISE_KEYS: Final[frozenset[str]] = frozenset({"model", "seed"})
 """The keys of a job's ``noise`` object: the model name (``ideal``, ``aria-1``, ``forte-1``, ...) and an optional seed."""
 SETTINGS_KEYS: Final[dict[str, frozenset[str]]] = {
@@ -162,9 +133,7 @@ def dump_ionq_json(circuit: Circuit) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class IonQJob:
-    """A circuit job as IonQ's REST API takes it (v0.4 ``CircuitJobCreationPayload``; ``target`` of v0.3 read as
-    ``backend``): the circuit (radians; the wire carries turns), the backend name, the shots, the optional name, metadata
-    (string values), noise (``{"model": ..., "seed": ...}``), settings and dry-run flag."""
+    """A circuit job as IonQ's REST API takes it (v0.4 ``CircuitJobCreationPayload``), the circuit in radians."""
 
     circuit: Circuit
     backend: str | None = None
@@ -197,8 +166,7 @@ def dumps(circuit: Circuit, *, indent: int | None = None) -> str:
 
 
 def load_job(obj: str | Mapping[str, Any]) -> IonQJob:
-    """A v0.3 or v0.4 job body (text or mapping) -> :class:`IonQJob`: the circuit from ``input`` and the fields around it,
-    ``target`` (v0.3) or ``backend`` (v0.4) as the backend."""
+    """A v0.3 or v0.4 job body (text or mapping) -> :class:`IonQJob`, the v0.3 ``target`` read as the backend."""
     body = json.loads(obj) if isinstance(obj, str) else dict(obj)
     if "input" not in body:
         raise ValueError("a job body carries its circuit under 'input'")
@@ -231,10 +199,8 @@ def dump_job(
     metadata: Mapping[str, str] | None = None,
     dry_run: bool | None = None,
 ) -> dict[str, Any]:
-    """The v0.4 job body for a native circuit: ``type``, ``backend`` (``simulator``, ``qpu.forte-1``, ...), ``shots`` and
-    ``input``, plus ``name``, ``metadata``, ``noise`` (``{"model": "aria-1", "seed": 7}``: the model is required when noise
-    is given), ``settings`` (``compilation`` and ``error_mitigation`` groups) and ``dry_run`` when given; every key is checked
-    against the spec, which rejects unknown ones."""
+    """The v0.4 job body for a native circuit: ``type``, ``backend``, ``shots`` and ``input``, plus the optional fields that
+    are given (``noise`` needs its ``model``); every key is checked against the spec, which rejects unknown ones."""
     if shots < 1:
         raise ValueError("shots is a positive count")
     body: dict[str, Any] = {

@@ -1,17 +1,7 @@
-"""The preparation sequence and its hand-off (PLAN.md Sections 4.2, 4.2.6, 4.2.7, 5.7; Appendix E ``State``; M3).
+"""The preparation sequence and its hand-off state.
 
-Stage order is a constraint, not prose (Section 4.2.6 [corrected: critique, 2026-09-04]): Doppler cooling runs on a
-repumped cycling transition and scrambles the internal state, so a pump done before it is erased; sideband, EIT and
-polarization-gradient cooling run with their own repump and scramble it too; the final optical pump comes immediately
-before the circuit. ``PreparationSequence`` therefore refuses a pump placed before a cooling stage without a later pump,
-a sub-Doppler stage with no Doppler precooling before it, and a sequence that does not start with Doppler cooling.
-The hand-off state is a product of per-mode thermal states with the mean occupations of the LAST stage that addressed
-each mode, and the pumped internal state of every ion (Section 4.2.7); ``prepare_state`` builds the Appendix E
-``State`` through ``HilbertSpace.initial_state`` with the stages' provenance ids; a stage that produced a level-B Fock
-distribution or a level-C reduced motional state carries it in ``PreparationStage.motional`` and it reaches
-``initial_state(states=...)`` unchanged instead of being collapsed to its mean (Section 4.2, 4.2.7). Sympathetic cooling (Section 4.2.5)
-is the same bookkeeping with the coolant as the illuminated set: the shared modes take their nbar from the coolant's
-stage and the qubit ions' internal states are whatever the (separate) pump of those ions produced.
+Stage order is enforced: Doppler first (it scrambles the internal state), Doppler before every sub-Doppler stage, and a
+pump that a later cooling stage scrambles must be followed by another pump.
 """
 
 from __future__ import annotations
@@ -36,7 +26,7 @@ SUB_DOPPLER_KINDS: frozenset[str] = frozenset({"sideband", "eit", "polarization_
 
 
 class StageOrderError(ValueError):
-    """The preparation sequence violates the Section 4.2.6 order (Doppler -> sideband/EIT -> final pump)."""
+    """The preparation sequence violates the stage order (Doppler, then sub-Doppler cooling, then the final pump)."""
 
 
 @dataclass(frozen=True)
@@ -45,7 +35,7 @@ class PreparationStage:
 
     kind: StageKind
     provenance: str
-    """The ledger id or stage id recorded in ``State.provenance`` (Section 4.2.6 order)."""
+    """The stage id recorded in ``State.provenance``."""
     nbar: Mapping[int, float] | None = None
     """Per-mode mean occupations a cooling stage leaves (None for a pump)."""
     ions: tuple[int, ...] = ()
@@ -53,14 +43,7 @@ class PreparationStage:
     pump: PumpingResult | None = None
     rates: StageRates | None = None
     motional: Mapping[int, qt.Qobj] | None = None
-    """Optional per-mode motional density matrix, overriding ``nbar`` on those modes in the hand-off.
-
-    Section 4.2: "The output of every stage is a per-mode thermal density matrix (OR THE FOCK DISTRIBUTION FROM
-    LEVEL B)"; Section 4.2.7: the hand-off state is a product of per-mode thermal states "OR THE LEVEL-C REDUCED
-    MOTIONAL STATE". A level-B Fock distribution (a diagonal matrix built from ``prep.sideband``'s populations or
-    ``prep.level_c.phonon_generator``'s stationary vector) or a level-C reduced motional state goes here and reaches
-    ``HilbertSpace.initial_state(states=...)`` unchanged; ``nbar`` is still required, because the frozen modes and
-    the provenance bookkeeping read it, and it is what a mode NOT in this mapping falls back to."""
+    """Optional per-mode motional states (level-B Fock or level-C reduced) replacing the thermal state at ``nbar``."""
 
     def __post_init__(self) -> None:
         if self.kind == "pump" and self.pump is None:
@@ -100,8 +83,7 @@ def sideband_stage(
 
 
 def fock_distribution_state(populations: Sequence[float] | np.ndarray) -> qt.Qobj:
-    """The diagonal density matrix of a level-B Fock distribution (``prep.sideband``'s populations, or the stationary
-    vector of ``prep.level_c.phonon_generator``), normalized: the "Fock distribution from level B" of Section 4.2."""
+    """The normalized diagonal density matrix of a level-B Fock distribution."""
     p = np.asarray(populations, dtype=float)
     if p.ndim != 1 or p.size < 2:
         raise ValueError("a Fock distribution is a one-dimensional array of at least two populations")
@@ -143,7 +125,7 @@ def pump_stage(
 
 @dataclass(frozen=True)
 class PreparationSequence:
-    """The ordered stages of one preparation; ``validate`` enforces Section 4.2.6."""
+    """The ordered stages of one preparation; ``validate`` enforces the stage order."""
 
     stages: tuple[PreparationStage, ...]
 
@@ -154,7 +136,7 @@ class PreparationSequence:
         if not self.stages:
             raise StageOrderError("a preparation sequence has at least one stage")
         kinds = [s.kind for s in self.stages]
-        # the three rules of Section 4.2.6, each stated separately so that none is only implied by another
+        # three rules, each checked separately so that none is only implied by another
         if kinds[0] == "pump":
             raise StageOrderError(
                 "the sequence starts with a pump: Doppler cooling comes first and scrambles the internal state, so a "
@@ -182,7 +164,7 @@ class PreparationSequence:
         return self.stages[-1].kind == "pump"
 
     def final_nbar(self) -> dict[int, float]:
-        """Per mode, the occupation of the LAST cooling stage that addressed it."""
+        """Per mode, the occupation of the last cooling stage that addressed it."""
         out: dict[int, float] = {}
         for stage in self.stages:
             if stage.nbar is not None:
@@ -190,8 +172,7 @@ class PreparationSequence:
         return out
 
     def final_motional(self) -> dict[int, qt.Qobj]:
-        """Per mode, the explicit motional state of the LAST stage that gave one (a level-B Fock distribution or a
-        level-C reduced state, Section 4.2/4.2.7); a mode a later thermal stage re-cooled loses its explicit state."""
+        """Per mode, the explicit motional state of the last stage that gave one, unless a later stage re-cooled it."""
         out: dict[int, qt.Qobj] = {}
         for stage in self.stages:
             if stage.nbar is None:
@@ -223,11 +204,8 @@ def prepare_state(
     extra_nbar: Mapping[int, float] | None = None,
     levels: Mapping[int, Sequence[str]] | None = None,
 ) -> State:
-    """The Appendix E ``State`` after the sequence: per-mode thermal states at the final nbar, each ion's internal state from its
-    last pump (or from ``internal`` for ions the sequence never pumped, e.g. an explicitly prepared qubit next to a coolant);
-    ``extra_nbar`` adds quanta per mode on top of the last cooling stage (the pumps' recoil heating of Section 4.2.8, M6);
-    ``levels`` gives the register labels of every ion whose factor has d > 2 (the pumped populations land on the resolved
-    sublevels and the remainder in the SINK, M7)."""
+    """The ``State`` after the sequence: modes at the final nbar (plus ``extra_nbar``) and each ion's last pumped state
+    (``internal`` for ions never pumped, ``levels`` for register factors with d > 2)."""
     nbar = sequence.final_nbar()
     for m, dn in (extra_nbar or {}).items():
         if int(m) in nbar:

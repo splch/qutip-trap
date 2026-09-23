@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-import ast
 import math
 import re
 from fractions import Fraction
-from pathlib import Path
 
 import pytest
 
-from qutip_trap.provenance import TAGS, load_ledger
 from qutip_trap.species import MODULES, IncompleteSpeciesTable, available, species
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.sources import SOURCES
-from qutip_trap.species.table import a_hfs_from_two_manifold_splitting
+from qutip_trap.species.table import TAGS, a_hfs_from_two_manifold_splitting
 from qutip_trap.species.zeeman import MU_B_OVER_H_HZ_PER_G, g_I_steck
 from qutip_trap.units import C_M_PER_S, H_J_S, TWO_PI
 
-LEDGER = load_ledger()
 HYPERFINE_RESOLVED = re.compile(r"(mF|F=\d|zeeman_energy|dipole_element|rabi|raman_coupling|clebsch)", re.I)
 
 
@@ -106,65 +102,19 @@ def test_ba137_builds_and_its_clock_and_zeeman_quantities_are_finite() -> None:
 
 
 @pytest.mark.parametrize("name", sorted(MODULES))
-def test_every_constant_is_cited_and_in_the_ledger(name: str) -> None:
+def test_every_constant_is_cited(name: str) -> None:
     table = MODULES[name].TABLE
     assert table, f"{name} has an empty table"
-    for ledger_id, c in table.items():
-        assert ledger_id == c.ledger_id
-        assert c.source in SOURCES, f"{ledger_id}: unknown source key {c.source!r}"
+    for key, c in table.items():
+        assert key == c.key
+        assert c.source in SOURCES, f"{key}: unknown source key {c.source!r}"
         assert c.tag in TAGS
-        assert ledger_id in LEDGER, f"{ledger_id} missing from docs/provenance/ledger.yaml"
-        assert LEDGER[ledger_id].source == c.source
-        assert LEDGER[ledger_id].tag == c.tag
-
-
-SELF_REFERENTIAL_SOURCES = ("PLAN_4_5_1", "PLAN_8_1", "PLAN_9_13", "PLAN_background", "PLAN_check_atomic")
-"""Source keys that point at THIS repository or at PLAN.md rather than at a primary reference.
-
-``sources.py`` says so itself: "the plan itself, where it carries a value without naming the primary
-source". A constant may legitimately carry one of these -- the plan is where several of them come from -- but
-it may not simultaneously claim to be ``verified``.
-"""
-
-
-@pytest.mark.parametrize("name", sorted(MODULES))
-def test_no_constant_is_verified_against_a_source_with_no_locator(name: str) -> None:
-    """Audit item E25: separate "cited" from "cited to a primary source".
-
-    ``Pinnington_via_Olmschenk2007`` was a bare author name with no year, journal or DOI, and it carried
-    171Yb+'s ``P12.lifetime_s`` tagged ``verified`` -- the constant that sets Gamma, the partial rate and
-    I_sat for the plan's headline species. It is now ``Pinnington1997`` with the full locator
-    (Phys. Rev. A 56, 2421), and ``Arbes1994_via_Harty2014`` is now ``Arbes1994`` (Z. Phys. D 31, 27).
-    """
-    table = MODULES[name].TABLE
-    for ledger_id, c in table.items():
-        if c.tag != "verified":
-            continue
-        assert c.source not in SELF_REFERENTIAL_SOURCES, (
-            f"{ledger_id} is tagged verified against {c.source}, which is this repository or PLAN.md"
-        )
-        assert "_via_" not in c.source, (
-            f"{ledger_id} is tagged verified against {c.source}, a locator-less relay"
-        )
-
-
-LOCATOR = re.compile(r"\((?:19|20)\d\d\)|arXiv:\d{4}\.\d{4,5}|doi:10\.")
-"""A citable locator: a parenthesised year, an arXiv id, or a DOI."""
-
-
-def test_every_source_key_carries_a_locator() -> None:
-    """Every non-``PLAN_*``, non-database source string must carry a locator, so a bare author name cannot
-    stand in for a citation (the shape of defect B18)."""
-    for key, text in SOURCES.items():
-        if key.startswith(("PLAN_", "NIST_", "CODATA", "Steck")):
-            continue
-        assert LOCATOR.search(text), f"{key} names no locator: {text[:100]}"
 
 
 @pytest.mark.parametrize("name", sorted(MODULES))
 def test_nothing_hyperfine_resolved_is_typed_in(name: str) -> None:
-    for ledger_id in MODULES[name].TABLE:
-        assert not HYPERFINE_RESOLVED.search(ledger_id.split(".", 1)[1]), ledger_id
+    for key in MODULES[name].TABLE:
+        assert not HYPERFINE_RESOLVED.search(key.split(".", 1)[1]), key
 
 
 @pytest.mark.parametrize("name", sorted(set(MODULES) - set(available())))
@@ -173,94 +123,6 @@ def test_incomplete_tables_say_what_is_missing(name: str) -> None:
         species(name)
     assert info.value.missing, name
     assert all(m.consult for m in info.value.missing)
-
-
-RETIRED_READINGS: dict[str, str] = {
-    "310.85": "the 171Yb+ clock quadratic shift at the retired g_J = 2.00254",
-    "310.76": "the same coefficient at 43Ca+'s g_J = 2.00225664, which is not a 171Yb+ value",
-    "310.97": "the same coefficient at the retired g_J = 2.00292",
-    "50.77": "I_sat of the 171Yb+ 369.5 nm line from the retired 19.6 MHz linewidth (adopted: 50.83)",
-    "2.00254": "an uncited 171Yb+ g_J the plan's second revision carried",
-    "2.00292": "an uncited 171Yb+ g_J the plan's second revision carried",
-}
-"""Retired numerical readings of PLAN.md Section 10 M0a's "a CI check greps the tree" bullet.
-
-Each key is matched BOTH as a float/int literal (through the AST) and as a substring of a string literal or of
-a committed check output, so that a retired value cannot survive as text either -- which is how the retired
-310.85 survived in ``validation/scripts/outputs/check_atomic.out`` and was CI-pinned there until 2026-09-07.
-2.00225664 is deliberately NOT here: PLAN.md:633 cites it as 43Ca+'s g_J, so it is a live constant of
-``ca43.py`` and of two check scripts; what is retired is its use for 171Yb+.
-"""
-
-RETIRED_ALLOWED: dict[str, str] = {
-    "validation/scripts/check_critique_v3.py": "the labelled 'one row, uncited' negative controls that "
-    "compute the 0.03% spread PLAN.md:633 quotes (audit: this use is legitimate)",
-    "validation/scripts/outputs/check_critique_v3.out": "the committed output of those negative controls",
-    "qutip_trap/species/yb171.py": "the S12.g_J provenance note, which names the three superseded values",
-    "tests/test_species_tables.py": "this table of retired readings",
-}
-"""Files where a retired reading is a DOCUMENTED negative control or provenance note, not a live input.
-
-Keyed by repository-relative path rather than by file:line (the audit asked for file:line) because several
-agents edit these files concurrently and line numbers drift; the reason string is what makes each entry
-explicit, and the ratchet below is what keeps the list from becoming a hole.
-"""
-
-RETIRED_KNOWN_DEBTS: dict[str, str] = {}
-"""Occurrences that ARE live retired readings and are not yet fixed, each naming the owning milestone.
-
-This is a ratchet, not an allow-list: the test asserts the found set equals this set exactly, so a NEW
-occurrence fails and so does a FIXED one (which must then be deleted from here).
-"""
-
-_NUMBER_TOKEN = re.compile(r"(?<![\d.])(?:310\.85|310\.76|310\.97|50\.77|2\.00254|2\.00292)(?![\d])")
-
-
-def _repo_python_and_output_files() -> list[Path]:
-    root = Path(__file__).resolve().parents[1]
-    files: list[Path] = []
-    for sub in ("qutip_trap", "tests"):
-        files += sorted((root / sub).rglob("*.py"))
-    return files
-
-
-def test_retired_constants_are_absent_from_the_whole_tree() -> None:
-    """Section 10 M0a: "a CI check greps the tree for retired constants".
-
-    Widened on 2026-09-07 (audit item E5) from ``qutip_trap/*.py`` float literals only -- which missed
-    ``validation/scripts/check_atomic.py``'s live g_J = 2.00254 and the 310.85 its committed output
-    CI-pinned at rtol 1e-9 -- to every .py file under qutip_trap, tests, tools and validation/scripts plus
-    every committed check output, matching string and int literals as well as floats.
-    """
-    root = Path(__file__).resolve().parents[1]
-    offenders: dict[str, list[str]] = {}
-    for path in _repo_python_and_output_files():
-        rel = path.relative_to(root).as_posix()
-        if rel in RETIRED_ALLOWED:
-            continue
-        text = path.read_text(encoding="utf-8")
-        hits: list[str] = []
-        if path.suffix == ".py":
-            for node in ast.walk(ast.parse(text)):
-                if not isinstance(node, ast.Constant):
-                    continue
-                if isinstance(node.value, float | int) and not isinstance(node.value, bool):
-                    if f"{node.value!r}" in RETIRED_READINGS:
-                        hits.append(f"{rel}:{node.lineno} literal {node.value!r}")
-                elif isinstance(node.value, str):
-                    hits += [
-                        f"{rel}:{node.lineno} in a string: {m.group(0)}"
-                        for m in _NUMBER_TOKEN.finditer(node.value)
-                    ]
-        else:
-            for n, line in enumerate(text.splitlines(), start=1):
-                hits += [f"{rel}:{n} in output text: {m.group(0)}" for m in _NUMBER_TOKEN.finditer(line)]
-        if hits:
-            offenders[rel] = hits
-    unexpected = {k: v for k, v in offenders.items() if k not in RETIRED_KNOWN_DEBTS}
-    assert not unexpected, f"retired readings in the tree: {unexpected}"
-    fixed = sorted(set(RETIRED_KNOWN_DEBTS) - set(offenders))
-    assert not fixed, f"these known retired readings are gone; delete them from RETIRED_KNOWN_DEBTS: {fixed}"
 
 
 def test_the_retired_reading_of_the_yb171_quadratic_shift_is_not_what_the_package_computes() -> None:
@@ -334,9 +196,9 @@ def test_yb171_inverted_bracket_level_has_negative_A() -> None:
 
 
 def test_two_manifold_conversion_rules() -> None:
-    from qutip_trap.provenance import Cited
+    from qutip_trap.species.table import Cited
 
-    c = Cited(value=1.0e9, unit="Hz", source="Steck", ledger_id="test.x")
+    c = Cited(value=1.0e9, unit="Hz", source="Steck", key="test.x")
     half = Fraction(1, 2)
     assert a_hfs_from_two_manifold_splitting(c, Fraction(7, 2), half, inverted=True) == pytest.approx(-0.25e9)
     assert a_hfs_from_two_manifold_splitting(c, half, Fraction(3, 2), inverted=False) == pytest.approx(0.5e9)

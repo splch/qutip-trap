@@ -1,30 +1,7 @@
-"""Resolved-sideband and Raman sideband cooling (PLAN.md Sections 4.2.2, 4.2.7 and the pulsed schemes of 4.2.8; M3).
+"""Resolved-sideband and Raman sideband cooling: continuous closed forms, pulsed transfer matrices and thermometry.
 
-Continuous cooling (level A) runs the rate machinery of ``prep.rates`` on a Bloch model whose cooling beam sits on
-a red sideband, Delta = -k nu, with the quench or repump beams present in the same model; the closed forms it is
-checked against are Stenholm's floor (Gamma/2 nu)^2 [(eta~/eta)^2 + 1/4] (``prep.closed_forms``), the saturating
-rate R_n and Marzoli's effective two-level parameters. The Raman scheme (Monroe 1995; Wineland 1998) has the
-two-photon Rabi frequency Omega = Omega_1 Omega_2/(2 Delta) in plan units (Monroe's g_1 g_2/Delta with g = Omega/2,
-Section 13 "Single-photon coupling symbol g"), eta against the two-photon wavevector difference and a repump that
-returns the spin with the recoil of its few photons (Section 4.2.8: Delta n ~ 3e-3 for 171Yb+ on a 3 MHz mode).
-
-Pulsed schedules (Che et al. 2017; Rasmusson et al. 2021): one cycle, a k-th-order red-sideband pulse of duration t
-followed by fast pumping that erases the coherences, is the column-stochastic transfer matrix W_k(t) on the Fock
-populations with diagonal a_n = cos^2(Omega_{n,n-k} t/2) and k-th upper diagonal b_n = sin^2(Omega_{n,n-k} t/2), built
-from the EXACT Omega_{n,n-k} = Omega_0 |<n-k|D(i eta)|n>| of Section 4.3.1 (never the Lamb-Dicke sqrt n); N pulses
-compose as an ordered matrix product. Because Omega_{n,n-k} is proportional to L^{(k)}_{n-k}(eta^2), which has zeros,
-single-order cooling strands population at the Rabi node (first zeros as a continuous degree 39.79 and 71.77 at eta =
-0.3, 112.29 at eta = 0.18; Section 9.12), so higher orders are applied first; the transfer probability is
-sin^2(Omega t/2) in this plan's Rabi convention and a fixed pulse area traps population wherever Omega_{n-1,n} t = 2 m pi
-(m pi in the sources' half-Rabi convention, Section 13 "Sideband-cooling trapping condition").
-
-Thermometry (Section 4.2.7): the sideband ratio P_rsb/P_bsb = [nbar/(nbar + 1)]^k is exact for a thermal state at every
-pulse duration and eta because the same Omega_{m+k,m} appears on both sides (Turchette 2000 Eqs. 8-11), and its
-constancy under a varying pulse time is the test of thermality; Rasmusson's time-averaged red-sideband signal on
-order m converges to half the tail sum, (1/2) sum_{n >= m} p(n), so stepping m extracts individual populations; the
-blue-sideband flopping P_down(tau) = (1/2)(1 + sum_n P_n e^{-gamma_n tau} cos(Omega_{n+1,n} tau)) is inverted by
-non-negative least squares on the cosine basis (Wineland 1998 Eq. 42, whose 2 Omega is this plan's Omega_{n+1,n});
-the double-thermal model p = a p_th(nbar_l) + (1 - a) p_th(nbar_h) is the fit for post-cooling distributions.
+Pulses use the exact Omega_{n,n-k} = Omega_0 |<n-k|D(i eta)|n>|, never the Lamb-Dicke sqrt n; its Laguerre zeros strand
+population, so higher orders go first. Transfer is sin^2(Omega t/2) in the (hbar Omega/2) convention.
 """
 
 from __future__ import annotations
@@ -41,45 +18,37 @@ from qutip_trap.hilbert.operators import rabi_matrix_element, thermal_population
 from qutip_trap.light.recoil import Quadrature1D, recoil_kernel_matrix
 from qutip_trap.prep.closed_forms import EffectiveTwoLevel
 
-# ---- continuous schemes: closed forms ----------------------------------------------------------------------------------------
-
 
 def raman_two_photon_rabi_rad_s(omega_1_rad_s: float, omega_2_rad_s: float, delta_rad_s: float) -> float:
-    """Omega = Omega_1 Omega_2/(2 Delta) in the plan's (hbar Omega/2) convention (Section 13 "Two-photon Rabi frequency"):
-    Monroe 1995's Omega = g_1 g_2/Delta with g = Omega/2, whose pi pulse is Omega t = pi/2 in his P = sin^2(Omega tau)."""
+    """Omega = Omega_1 Omega_2/(2 Delta) in the (hbar Omega/2) convention: Monroe 1995's g_1 g_2/Delta with g = Omega/2."""
     if delta_rad_s == 0.0:
         raise ValueError("the Raman detuning is nonzero")
     return omega_1_rad_s * omega_2_rad_s / (2.0 * delta_rad_s)
 
 
 def monroe_half_rabi(omega_plan_rad_s: float) -> float:
-    """The ingest map g = Omega/2 for Monroe 1995 and Wineland 1998 (Section 13 "Single-photon coupling symbol g")."""
+    """g = Omega/2: the single-photon coupling in the convention of Monroe 1995 and Wineland 1998."""
     return 0.5 * omega_plan_rad_s
 
 
 def stenholm_floor_half_width(gamma_half_rad_s: float, nu_rad_s: float, carrier_weight: float) -> float:
-    """nbar = (gamma/nu)^2 [(eta~/eta)^2 + 1/4] with the HALF width gamma (Stenholm Eqs. 5.49-5.54): for an effective two-level
-    system after adiabatic elimination the half width is Marzoli's gamma' (Section 4.2.8 v), not Gamma'/2."""
+    """nbar = (gamma/nu)^2 [(eta~/eta)^2 + 1/4] with the half width gamma (Stenholm 1986 Eqs. 5.49-5.54)."""
     return (gamma_half_rad_s / nu_rad_s) ** 2 * (carrier_weight + 0.25)
 
 
 def quenched_floor(effective: EffectiveTwoLevel, nu_rad_s: float, carrier_weight: float) -> float:
-    """The sideband floor of a quenched (Xi) or repumped (V) scheme with Marzoli's gamma' as the half width; the carrier weight
-    carries the FAST level's recoil photon, (eta~/eta)^2 = alpha (k_em/k_L)^2/cos^2 theta_L = 1.376 for quenched 40Ca+ (Section 4.2.2)."""
+    """The sideband floor of a quenched (Xi) or repumped (V) scheme, with Marzoli's gamma' (not Gamma'/2) as half width."""
     return stenholm_floor_half_width(effective.gamma_coherence_rad_s, nu_rad_s, carrier_weight)
 
 
 def trapping_pulse_areas(n: int, eta: float, omega0_rad_s: float, duration_s: float) -> float:
-    """Omega_{n-1,n} t / (2 pi): an integer means the population of |n> is trapped by the fixed pulse (plan convention 2 m pi)."""
+    """Omega_{n-1,n} t / (2 pi): an integer means the fixed pulse traps the population of |n>."""
     return sideband_rabi_rad_s(omega0_rad_s, eta, n, 1) * duration_s / (2.0 * math.pi)
-
-
-# ---- pulsed schemes: exact transfer matrices --------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class SidebandPulse:
-    """One k-th-order red-sideband pulse of the pulsed schedule (Che Eq. 2; Rasmusson Eqs. 6-7)."""
+    """One k-th-order red-sideband pulse of a pulsed schedule (Che et al. 2017 Eq. 2)."""
 
     order: int
     duration_s: float
@@ -99,8 +68,8 @@ def sideband_rabi_rad_s(omega0_rad_s: float, eta: float, n: int, order: int) -> 
 
 
 def transfer_matrix(d: int, eta: float, omega0_rad_s: float, order: int, duration_s: float) -> np.ndarray:
-    """W_k(t): column n holds cos^2(Omega_{n,n-k} t/2) at (n, n) and sin^2 at (n - k, n); columns n < k are the absorbing
-    identity block (Rasmusson Eqs. 6-7, column stochastic to round-off)."""
+    """W_k(t): column n holds cos^2(Omega_{n,n-k} t/2) at (n, n) and sin^2 at (n - k, n); columns n < k are the identity
+    (Rasmusson et al. 2021 Eqs. 6-7)."""
     if d < 2:
         raise ValueError("at least two Fock levels")
     w = np.eye(d)
@@ -120,8 +89,7 @@ def apply_pulses(
     *,
     repump: np.ndarray | None = None,
 ) -> np.ndarray:
-    """The Fock populations after the ordered pulses, each followed by the repump kernel (identity: coherences discarded, no
-    recoil; a column-stochastic recoil kernel: the pumping photons' kicks, Section 4.2.8)."""
+    """The Fock populations after the ordered pulses, each followed by the ``repump`` kernel (None: no recoil)."""
     p = np.asarray(p0, dtype=float).copy()
     d = p.size
     if repump is not None and repump.shape != (d, d):
@@ -140,7 +108,7 @@ def apply_pulses(
 
 
 def mean_occupation(p: np.ndarray) -> float:
-    """sum_n n p_n of a Fock distribution ``p`` (the nbar after a pulsed sideband-cooling schedule, Section 4.2.2)."""
+    """sum_n n p_n of a Fock distribution ``p``."""
     return float(np.dot(np.arange(p.size), p))
 
 
@@ -150,13 +118,12 @@ def thermal_distribution(nbar: float, d: int) -> np.ndarray:
 
 
 def truncated_tail(nbar: float, d: int) -> float:
-    """1 - sum_{n < d} P_n = [nbar/(nbar + 1)]^d: the probability the truncation drops (7e-5 at nbar = 15.36, d = 151)."""
+    """1 - sum_{n < d} P_n = [nbar/(nbar + 1)]^d: the probability the truncation drops."""
     return (nbar / (nbar + 1.0)) ** d if nbar > 0.0 else 0.0
 
 
 def repump_kernel(d: int, eta_em: float, quad: Quadrature1D, mean_photons: float) -> np.ndarray:
-    """The Fock kernel of a repump step scattering a Poisson-distributed number of photons of mean ``mean_photons``, each kicking
-    with the one-dimensional recoil quadrature: sum_k Poisson(k) K^k, truncated at 1e-12 of the Poisson weight."""
+    """sum_k Poisson(k) K^k: the Fock kernel of a repump scattering a Poisson number of photons of mean ``mean_photons``."""
     k1 = recoil_kernel_matrix(d, eta_em, quad)
     out = np.zeros((d, d))
     power = np.eye(d)
@@ -173,8 +140,7 @@ def repump_kernel(d: int, eta_em: float, quad: Quadrature1D, mean_photons: float
 
 
 def laguerre_first_zero(order: int, eta: float, *, n_max: float = 1e4) -> float:
-    """The smallest continuous degree n' > 0 at which L^{(k)}_{n'}(eta^2) vanishes (scipy's real-degree Laguerre through 1F1):
-    39.7908 (k = 1) and 71.7720 (k = 2) at eta = 0.3, 112.2895 and 202.0112 at eta = 0.18 (Section 9.12)."""
+    """The smallest continuous degree n' > 0 at which L^{(k)}_{n'}(eta^2) vanishes (scipy's real-degree Laguerre)."""
     x = eta * eta
 
     def f(n: float) -> float:
@@ -193,8 +159,7 @@ def laguerre_first_zero(order: int, eta: float, *, n_max: float = 1e4) -> float:
 
 
 def stranded_index(order: int, eta: float) -> int:
-    """The Fock state whose k-th red-sideband Rabi frequency sits at the first zero: round(zero + k) with the degree n' = n - k
-    (41 and 74 at eta = 0.3, 113 at eta = 0.18; Che's printed 40 and 72 label the degree, Section 4.2.8)."""
+    """The Fock state whose k-th red-sideband Rabi frequency sits at the first zero, round(zero + k)."""
     return int(round(laguerre_first_zero(order, eta) + order))
 
 
@@ -213,9 +178,6 @@ def accumulation_centre(p: np.ndarray, order: int, eta: float) -> float | None:
     return float(np.dot(np.arange(lo, p.size), tail)) / total
 
 
-# ---- schedule optimizations (Section 4.2.8: shared time, independent times, one time per order) ---------------------------------
-
-
 def _final_nbar(
     p0: np.ndarray,
     orders: Sequence[int],
@@ -229,8 +191,7 @@ def _final_nbar(
 
 
 GRID_POINTS = 64
-"""Coarse grid of the scalar searches: the occupation is oscillatory in the pulse time, so a bounded minimizer alone lands in
-a local minimum (the M3 finding on Rasmusson's fixed-pulse schedule: 6.7 against the global 3.2)."""
+"""Coarse-grid size of the pulse-time searches (the occupation oscillates in the pulse time)."""
 
 
 def _scalar_minimum(
@@ -295,8 +256,8 @@ def optimize_per_order(
     *,
     repump: np.ndarray | None = None,
 ) -> tuple[list[SidebandPulse], float]:
-    """One pulse time per sideband order, higher orders applied first (the optimum the sources find): each order's time is chosen
-    by scalar minimization of the occupation after its own block, the previous blocks fixed. Returns (pulses, final nbar)."""
+    """One pulse time per sideband order, higher orders first, each minimizing the occupation after its own block with
+    the earlier blocks fixed; returns (pulses, final nbar)."""
     pulses: list[SidebandPulse] = []
     p = np.asarray(p0, dtype=float)
     for order in sorted(counts, reverse=True):
@@ -316,20 +277,17 @@ def optimize_per_order(
 
 
 def pi_time_s(omega0_rad_s: float, eta: float, n: int, order: int) -> float:
-    """pi/Omega_{n,n-k}: the pulse that empties |n> on the k-th sideband (plan convention)."""
+    """pi/Omega_{n,n-k}: the pulse that empties |n> on the k-th sideband."""
     om = sideband_rabi_rad_s(omega0_rad_s, eta, n, order)
     if om <= 0.0:
         raise ValueError(f"|{n}> has no {order}-th red sideband")
     return math.pi / om
 
 
-# ---- thermometry (Section 4.2.7; Turchette 2000; Rasmusson 2021; Wineland 1998 Eq. 42) ------------------------------------------
-
-
 def sideband_excitations(
     p: np.ndarray, eta: float, omega0_rad_s: float, order: int, duration_s: float
 ) -> tuple[float, float]:
-    """(P_rsb, P_bsb): the excitation after a pulse of ``duration`` on the k-th red and blue sidebands, exact in eta."""
+    """(P_rsb, P_bsb): the excitation after a pulse of ``duration_s`` on the k-th red and blue sidebands, exact in eta."""
     d = p.size
     rsb = 0.0
     bsb = 0.0
@@ -348,7 +306,7 @@ def sideband_ratio(p: np.ndarray, eta: float, omega0_rad_s: float, order: int, d
 
 
 def thermal_ratio(nbar: float, order: int) -> float:
-    """[nbar/(nbar + 1)]^k, the exact thermal sideband ratio for every pulse duration and eta (Turchette Eqs. 8-11)."""
+    """[nbar/(nbar + 1)]^k, the exact thermal sideband ratio for every pulse duration and eta (Turchette et al. 2000)."""
     return (nbar / (nbar + 1.0)) ** order
 
 
@@ -361,8 +319,7 @@ def nbar_from_ratio(ratio: float, order: int) -> float:
 
 
 def time_averaged_rsb_signal(p: np.ndarray, order: int) -> float:
-    """Rasmusson's P-bar^{RSB}_{up,m} = (1/2) sum_{n >= m} p(n): the time-averaged excitation on the m-th red sideband, independent
-    of the decoherence rate and of the pulse time once the oscillations average out."""
+    """(1/2) sum_{n >= m} p(n): the time-averaged m-th red-sideband excitation (Rasmusson et al. 2021)."""
     return 0.5 * float(np.sum(p[order:]))
 
 
@@ -381,7 +338,7 @@ def blue_sideband_flopping(
     *,
     decoherence_per_s: Callable[[int], float] | None = None,
 ) -> np.ndarray:
-    """P_down(tau) = (1/2)(1 + sum_n P_n e^{-gamma_n tau} cos(Omega_{n+1,n} tau)) in the plan's convention (Wineland Eq. 42 with his 2 Omega)."""
+    """P_down(tau) = (1/2)(1 + sum_n P_n e^{-gamma_n tau} cos(Omega_{n+1,n} tau)) (Wineland 1998 Eq. 42)."""
     t = np.asarray(times_s, dtype=float)
     out = np.full(t.shape, 0.5)
     for n in range(p.size):
@@ -415,7 +372,7 @@ def invert_flopping(
 def double_thermal_fit(
     p: np.ndarray, *, initial: tuple[float, float, float] = (0.5, 0.1, 5.0)
 ) -> tuple[float, float, float]:
-    """(a, nbar_l, nbar_h) of p = a p_th(nbar_l) + (1 - a) p_th(nbar_h) by least squares (the post-cooling fit of Section 4.2.8)."""
+    """(a, nbar_l, nbar_h) of p = a p_th(nbar_l) + (1 - a) p_th(nbar_h) by least squares (the post-cooling fit)."""
     d = p.size
 
     def resid(x: np.ndarray) -> np.ndarray:

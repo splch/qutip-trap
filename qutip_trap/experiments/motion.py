@@ -1,19 +1,4 @@
-"""Motional experiments: sideband-ratio thermometry, mode spectroscopy and the heating-rate measurement (PLAN.md Sections
-4.1.5, 4.2.7, 7.5 items 2 and 6, 7.9, 9.1, 9.3, 9.17; M8).
-
-- ``thermometry``: P_rsb/P_bsb = nbar/(nbar + 1) at equal pulse durations on the first sidebands, exact in eta and in the
-  pulse duration because the same Omega_{n+1,n} appears on both sides (Turchette 2000 Eqs. 8-11; Section 4.2.7), inverted as
-  nbar = R/(1 - R); the constancy of the ratio under a second duration is the thermality test.
-- ``mode_spectroscopy``: Section 7.5's coarse scan (+-``span`` about the seed frequency, stepped at the pulse's linewidth)
-  followed by a fine scan of the blue sideband and of the carrier, each fitted with the plan's lineshape
-  P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)) (never the half-Rabi form); the mode frequency is the
-  blue centre minus the carrier centre, so the frame error and the light shift cancel, the sideband Rabi frequency gives
-  |eta| = |Omega_bsb|/(sqrt(nbar + 1) Omega e^{-eta^2/2}) (Section 7.9, C0 inside), and the red and blue excitations at the fitted
-  centres give nbar.
-- ``heating_rate``: Section 4.1.5's procedure, a delay scan of the sideband asymmetry with the device's heating channels
-  active during the delay (the engine's own collapse operators), nbar against delay by weighted linear regression; the
-  interaction frame (H_0 removed, exact without k_max or rwa) makes a 100 ms idle affordable.
-"""
+"""Motional experiments: sideband-ratio thermometry, mode spectroscopy and the heating-rate measurement."""
 
 from __future__ import annotations
 
@@ -59,12 +44,11 @@ def _excitation(
 
 
 def thermometry(machine: Machine | Device, ion: int, mode: int, **kw: Any) -> ExperimentResult:
-    """nbar of ``mode`` from the red/blue sideband ratio after equal pulses (Section 4.2.7; Turchette 2000).
+    """Red and blue sideband pulses of equal duration on ``mode``; returns a ``ThermometryResult`` with nbar = R/(1 - R),
+    R = P_rsb/P_bsb, exact in eta and in the duration (Turchette et al. 2000 Eqs. 8-11).
 
-    ``mode_hz`` and ``carrier_hz`` are the BELIEVED mode frequency and carrier offset the probes are placed at (default the
-    crystal's frequency and 0); ``duration_s`` the probe duration (default the n = 0 blue pi time at ``rabi_hz_belief``, else
-    the physical Rabi frequency); ``check_durations_s`` extra durations for the thermality check. Data rows
-    (detuning_hz, duration_s, P1); fitted nbar, ratio, P_rsb, P_bsb.
+    ``mode_hz`` and ``carrier_hz`` are the believed mode frequency and carrier offset (default the crystal's and 0);
+    ``check_durations_s`` adds durations over which a thermal state's ratio must not change.
     """
     device, kw = laboratory_kwargs(machine, kw, caller=thermometry)
     kw2 = {**kw, "mode": mode, "detuning_hz": 0.0, "branch_weight_min": kw.get("branch_weight_min", 1e-6)}
@@ -145,14 +129,11 @@ def _solve_eta(ratio: float) -> float:
 
 
 def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any) -> ExperimentResult:
-    """Section 7.5 item 2 for one mode: coarse scan, fine scans of the blue sideband and the carrier fitted with the plan's
-    lineshape, the mode frequency as their difference, |eta| from the sideband Rabi frequency and nbar from the sideband ratio.
+    """Coarse and fine detuning scans of ``mode``'s blue sideband and of the carrier; returns a ``SidebandSpectrum``.
 
-    ``seed_hz`` the believed mode frequency (default the crystal's), ``span`` the coarse half-range (default 10 %),
-    ``coarse_step_hz`` (default the pulse linewidth Omega_bsb/2pi) or ``coarse_points``, ``fine_points`` (15), ``fine_span_linewidths``
-    (2), ``rabi_hz_belief`` the believed carrier Rabi frequency (default the physical one), ``carrier_hz`` the believed carrier
-    offset (default 0), ``uncertainty_max_hz`` above which the entry is uncalibrated (1 kHz, the FM solvers' need). Data rows
-    (detuning_hz, P1, kind) with kind 0 coarse blue, 1 fine blue, 2 carrier, 3 red, 4 thermometry.
+    mode_hz is the blue centre minus the carrier centre, eta comes from the sideband Rabi frequency and nbar from the
+    red/blue ratio; ``seed_hz`` is the believed mode frequency. Data rows (detuning_hz, P1, kind), kind 0 coarse blue,
+    1 fine blue, 2 carrier, 3 red, 4 thermometry.
     """
     device, kw = laboratory_kwargs(machine, kw, caller=mode_spectroscopy)
     kw2 = {**kw, "mode": mode, "detuning_hz": 0.0}
@@ -190,10 +171,8 @@ def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any)
     at_edge = k_peak in (0, len(grid) - 1)
     if at_edge:
         notes.append("the coarse scan's maximum sits at its edge: widen span")
-    # fine scans of the blue sideband at full and at reduced rf amplitude: a resonant sideband pulse light-shifts the qubit
-    # through its own off-resonant CARRIER coupling by Omega^2/(2 omega_m) (1.7 kHz at Omega = 100 kHz, omega_m = 3 MHz), which
-    # pulls the sideband resonance toward the carrier; a laboratory extrapolates the centre to zero power (the shift scales as the
-    # intensity, the amplitude scale squared), and so does this scan (``power_scales``, default (1, 1/2))
+    # fine blue scans at ``power_scales``, extrapolated to zero power: the off-resonant carrier coupling pulls the line
+    # by Omega^2/(2 omega_m), which scales as the amplitude squared
     n_fine = int(kw.get("fine_points", 15))
     half = float(kw.get("fine_span_linewidths", 2.0)) * linewidth
     scales = tuple(float(x) for x in kw.get("power_scales", (1.0, 0.5)))
@@ -243,8 +222,7 @@ def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any)
     else:
         f_blue, s_blue = fit_b.value(0)
     omega_bsb, s_omega = fit_b.value(1)
-    # the carrier at reduced rf amplitude (``carrier_amplitude_scale``, default 1/10): a pi pulse ten times longer has a line
-    # ten times narrower, comparable to the sideband's, so the two centres carry similar uncertainties
+    # the carrier at a tenth of the amplitude, so its line is about as narrow as the sideband's
     car_scale = float(kw.get("carrier_amplitude_scale", 0.1))
     t_car = 0.5 / (rabi_belief * car_scale)
     lw_car = 0.5 / t_car
@@ -268,9 +246,7 @@ def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any)
     )
     f_car, s_car = fit_c.value(0)
     omega_car, s_omega_car = fit_c.value(1)
-    f_blue_full = centres[0][
-        0
-    ]  # the resonance at the full-power probe (where the thermometry probes must sit)
+    f_blue_full = centres[0][0]  # the full-power resonance, where the thermometry probes sit
     # the red sideband on the mirrored grid (fitted when it carries a peak); its resonance is pulled toward the carrier too
     red_grid = 2.0 * f_car - fine
     red = [probe(float(mu), duration, 3, k) for k, mu in enumerate(red_grid)]
@@ -310,11 +286,7 @@ def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any)
     ratio_omega = omega_bsb / denom
     eta_fit = _solve_eta(ratio_omega)
     g_prime = math.exp(-0.5 * eta_fit**2) * (1.0 - eta_fit**2)
-    # eta solves g(eta) = eta e^{-eta^2/2} = Omega_bsb/(Omega sqrt(nbar + 1)), so d eta = d ratio / g'(eta) with
-    # d ratio/d Omega_bsb = 1/(Omega sqrt(nbar + 1)) - the sqrt(nbar + 1) the VALUE divides by was missing from the
-    # uncertainty, which left s_eta high by that factor (1 % at nbar = 0.02, 22 % at nbar = 0.5) - and
-    # d ratio/d nbar = -ratio/(2 (nbar + 1)), the thermometry's own uncertainty, which was ignored entirely. The two
-    # terms are added in quadrature although both come from the same sideband probes, so the pair is mildly correlated.
+    # d eta = d ratio / g'(eta), the Omega_bsb and nbar terms in quadrature (both from the same probes: mildly correlated)
     s_ratio_omega = math.hypot(s_omega / denom, ratio_omega * s_nbar / (2.0 * (1.0 + max(nbar, 0.0))))
     s_eta = s_ratio_omega / max(abs(g_prime), 1e-6)
     unc_max = float(kw.get("uncertainty_max_hz", 1e3))
@@ -360,8 +332,7 @@ def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any)
 
 
 def _density_matrix_options(options: Any) -> Any:
-    """``options`` (or the defaults) with the Lindblad method pinned to ``mesolve`` and a dimension cap that never routes the
-    thermal probe to trajectories."""
+    """``options`` (or the defaults) with the Lindblad method pinned to ``mesolve``, never routed to trajectories."""
     from dataclasses import replace
 
     from qutip_trap.dynamics.engine import SolverOptions
@@ -375,11 +346,11 @@ def _density_matrix_options(options: Any) -> Any:
 def heating_rate(
     machine: Machine | Device, mode: int, delays_s: Sequence[float], **kw: Any
 ) -> ExperimentResult:
-    """n_dot of ``mode`` from a delay scan of the sideband asymmetry with the device's heating channels active during the delay
-    (Section 4.1.5, Turchette Eqs. 8-11; Section 7.5 item 6): nbar(delay) by the sideband ratio, the rate by weighted linear
-    regression. ``ion`` the probe ion (default the one with the largest participation), ``nbar0`` the prepared occupation
-    (default the device recipe's), ``ndot_seed`` sizes the truncation (default the noise model's rate). Data rows
-    (delay_s, nbar, sigma, P_rsb, P_bsb); fitted ndot_per_s, nbar0 (the intercept), the linear fit's chi^2.
+    """Scan the delay (the device's heating channels active) before a sideband-ratio thermometry of ``mode``; returns a
+    ``HeatingRateFit`` with ndot_per_s from a weighted linear fit of nbar against delay.
+
+    ``ion`` the probe ion (default the largest participation), ``nbar0`` the prepared occupation (default the recipe's),
+    ``ndot_seed`` sizes the truncation (default the noise model's rate). Data rows (delay_s, nbar, sigma, P_rsb, P_bsb).
     """
     device, kw = laboratory_kwargs(machine, kw, caller=heating_rate)
     from qutip_trap.control.pulses import Pulse
@@ -408,17 +379,14 @@ def heating_rate(
         "frame": kw.get("frame", "interaction"),
         "device_channels": True,
         "fock_branches": False,
-        # the thermal probe is a density matrix, so the scan integrates it as one (Section 5.3) whatever options it was handed:
-        # a machine's defaults (laboratory_kwargs) would route a state above mesolve_dimension_max to the trajectory path,
-        # which cannot start from a mixture; the caller's tolerances and every other choice are kept
+        # the thermal probe is a density matrix: trajectories cannot start from a mixture, so pin mesolve
         "options": _density_matrix_options(kw.get("options")),
     }
     base = _setup(device, ion, probe_kw)
     eta = base.eta_driven
 
     def space_for(delay: float) -> HilbertSpace:
-        # the geometric tail of the hottest state THIS delay reaches (Section 5.5): a density matrix costs d^4 per step, so the
-        # early delays are not made to pay for the last one's cap
+        # capped for the hottest state this delay reaches (d^4 per step), not the last delay's
         n_hi = thermal_n_max(nbar0 + float(ndot_seed) * delay)
         d = int(kw.get("d", n_hi + 1 + required_margin(eta)))
         return HilbertSpace(

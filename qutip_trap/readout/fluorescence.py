@@ -1,25 +1,8 @@
-"""The atomic-rate layer of readout: scattering rate, pumping rates, detected rate, shelving (PLAN.md Sections 8.1, 8.8; M5).
+"""The atomic-rate layer of readout: scattering, pumping and detected rates, and shelving.
 
-Three conventions are pinned before anything else (Section 8): bright/dark polarity is a property of the readout
-SCHEME (:class:`ReadoutScheme`), never of the qubit, because direct fluorescence and shelving invert it within the same
-papers; Gamma is an angular population decay rate in s^-1 (the species tables assert Gamma/2 pi against the quoted
-linewidth); and the system detection efficiency epsilon_sys enters exactly once, at the conversion from scattered to
-detected rate (:meth:`FluorescenceRates.detected`), with the background rate kept separate.
-
-The rates themselves come from the M3a scattering-rate object: :func:`scattering_rate` builds the multi-level
-optical-Bloch model of the detection beams (Section 4.2.8) and reads R_o (the photon rate of the CONDITIONAL bright
-state), R_d (bright -> dark pumping) and R_b (dark -> bright) from its slow-manifold coarse graining, asserting the
-photon rate against the equal-population ceiling n_e/(n_e + n_g) of the closed manifold (Gamma/4 for the 171Yb+
-F = 1 -> F' = 0 detection cycle, Section 13). The closed forms of the sources (Noek's and Crain's (Gamma/18, 2/9) form,
-Acton's lambda_0, alpha_1, alpha_2 with the angular factors M_1, M_2pi, M_2-, the 4/9 clock-state ceiling) are kept
-here as the oracles the exact solve is tested against, never as the rates the simulator runs on; apparatus numbers
-(detected rates, efficiencies, backgrounds) enter through :func:`rates_from_detected` and the presets of
-:mod:`qutip_trap.readout.presets`, tagged as apparatus data and never as species constants (Section 8.8).
-
-Symbol collisions (Section 13): R_o here is a photon rate in s^-1; eta is the DETECTION efficiency in Acton's
-alpha/eta (never the Lamb-Dicke parameter); alpha_1, alpha_2 are leak probabilities per emitted photon (never the recoil
-angular factor); tau_D is the detection window in Acton and the shelf lifetime in Myerson, so the code names them
-``window_s`` and ``shelf_lifetime_s``.
+Readout layers: rates (here) -> photon record (``detection``) -> discriminator -> POVM and budget (``discriminate``).
+Polarity belongs to the readout scheme, never to the qubit; Gamma is an angular decay rate in s^-1; epsilon_sys enters
+once, at scattered -> detected rate. The closed forms of the sources are test oracles for :func:`scattering_rate`.
 """
 
 from __future__ import annotations
@@ -47,17 +30,14 @@ M5 = "milestone M5 (readout/fluorescence.py, PLAN.md Section 8.1)"
 
 ReadoutClass = Literal["bright", "dark", "shelf"]
 CLASSES: tuple[ReadoutClass, ...] = ("bright", "dark", "shelf")
-"""The three classes of the readout continuous-time Markov chain (Section 8.2): the fluorescing manifold, the dark
-ground manifold reached by off-resonant pumping, and the metastable shelf that decays back to bright."""
+"""The readout Markov chain's classes: the fluorescing manifold, the pumped-dark ground manifold and the shelf."""
 
 ALL_LINES = "all"
-"""``line=ALL_LINES`` sums the photon rate over every non-sink decay line of the build: the total scattering rate
-W(Delta) of Section 4.2.2, a DIAGNOSTIC and not a detected rate, because epsilon_sys carries exactly one
-epsilon_filter and the filter passes one wavelength (Section 8.1, "Detected rate and background")."""
+"""``line=ALL_LINES`` sums every non-sink decay line: the total scattering rate, a diagnostic, not a detected rate."""
 
 
 def saturation_ceiling(n_ground: int, n_excited: int) -> float:
-    """P_f^max = n_e/(n_e + n_g), the equal-population ceiling of a closed manifold (Section 13; Berkeland Eqs. 13-14, 21)."""
+    """P_f^max = n_e/(n_e + n_g), the equal-population ceiling of a closed manifold (Berkeland Eqs. 13-14, 21)."""
     if n_ground <= 0 or n_excited <= 0:
         raise ValueError("a closed manifold has at least one ground and one excited state")
     return n_excited / (n_excited + n_ground)
@@ -65,15 +45,14 @@ def saturation_ceiling(n_ground: int, n_excited: int) -> float:
 
 @dataclass(frozen=True)
 class DarkStateReport:
-    """Returned by the CPT solve so the ceiling is never assumed (Section 8.1)."""
+    """Returned by the CPT solve so the ceiling is never assumed."""
 
     n_ground: int
     n_excited: int
     ceiling: float
-    """n_e/(n_e + n_g); the photon rate must satisfy Gamma*P_f <= Gamma*ceiling."""
     dark_dimension: int
     dark_basis: np.ndarray
-    """(dark_dimension, n_ground) complex amplitudes c_m, STRAIGHT pairing (Section 13)."""
+    """(dark_dimension, n_ground) complex amplitudes c_m, straight pairing."""
     delta_over_omega: float
     theta_be_deg: float
     """Angle between the linear polarization and B; optimum 54.7356 degrees."""
@@ -85,42 +64,28 @@ class DarkStateReport:
             raise ValueError(f"ceiling must be n_e/(n_e + n_g) = {expected}, got {self.ceiling}")
 
 
-# ---- closed forms of Section 8.1 (oracles for the exact solve) --------------------------------------------------------------
-
-
 def saturation_intensity_w_m2(gamma_partial_rad_s: float, wavelength_m: float) -> float:
-    """I_sat = pi h c Gamma/(3 lambda^3) with the ANGULAR partial rate (Section 13, "Saturation intensity").
-
-    87Rb D2 (Gamma = 2 pi x 6.0666 MHz, 780.241 nm) gives 1.669 mW/cm^2 (Steck); 171Yb+ 369.5 nm with the partial rate
-    2 pi x 19.62 MHz gives 50.83 mW/cm^2 (Section 9.12). Acton's printed form carries hbar for h and is 2 pi too small.
-    """
+    """I_sat = pi h c Gamma/(3 lambda^3) with the angular partial rate Gamma (87Rb D2: 1.669 mW/cm^2, Steck)."""
     if gamma_partial_rad_s <= 0.0 or wavelength_m <= 0.0:
         raise ValueError("Gamma and the wavelength are positive")
     return math.pi * H_J_S * C_M_PER_S * gamma_partial_rad_s / (3.0 * wavelength_m**3)
 
 
 def yb171_bright_rate_closed(s_o: float, gamma_rad_s: float, detuning_rad_s: float = 0.0) -> float:
-    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] for the 171Yb+ F = 1 -> F' = 0 cycle (Section 8.1).
-
-    ``s_o = I/I_sat = 2 Omega^2/Gamma^2`` with the FULL-LINE Rabi frequency and the two-level I_sat of the partial
-    rate; saturates at Gamma/4 (three ground plus one excited state), not Gamma/2, with half maximum at s_o = 4.5.
-    The prefactor Gamma/18 = Gamma x 1/2 x 1/3 x 1/3 carries the hyperfine reduced element |<F=1||d||F'=0>|^2 =
-    |<J||d||J'>|^2/3 and the magic-angle polarization share |eps_q|^2 = 1/3 of each ground sublevel (Section 4.5.2;
-    derivation audit 2026-09-04). The exact four-level steady state sits 0.15 to 0.5 % BELOW this form at its optimum
-    field (M3a finding, ``check_bloch.py``), so this is the CEILING of the exact rate, used as an oracle only.
-    """
+    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] for the 171Yb+ F = 1 -> F' = 0 cycle, saturating at
+    Gamma/4; s_o = I/I_sat = 2 Omega^2/Gamma^2 with the full-line Omega and the two-level I_sat of the partial rate."""
     if s_o < 0.0 or gamma_rad_s <= 0.0:
         raise ValueError("s_o is non-negative and Gamma positive")
     return (gamma_rad_s / 18.0) * s_o / (1.0 + (2.0 / 9.0) * s_o + (2.0 * detuning_rad_s / gamma_rad_s) ** 2)
 
 
 def noek_saturation_from_s_o(s_o: float) -> float:
-    """Noek's s = 2 Omega^2/Gamma^2 in his (Gamma/6, 2/3) form is s_o/3 (Section 8.8: two saturation parameters, never aliased)."""
+    """Noek's s = 2 Omega^2/Gamma^2 in his (Gamma/6, 2/3) form: s_o/3."""
     return s_o / 3.0
 
 
 def crain_saturation_from_s_o(s_o: float) -> float:
-    """Crain's s~ = I/(229 mW/cm^2) in the (Gamma/4, 1) form is (2/9) s_o (Section 8.1)."""
+    """Crain's s~ = I/(229 mW/cm^2) in the (Gamma/4, 1) form: (2/9) s_o."""
     return 2.0 * s_o / 9.0
 
 
@@ -137,12 +102,8 @@ def yb171_bright_rate_crain_form(s_tilde: float, gamma_rad_s: float, detuning_ra
 def yb171_leakage_rates_closed(
     s_o: float, gamma_rad_s: float, delta_hfp_rad_s: float, delta_hfs_rad_s: float
 ) -> tuple[float, float]:
-    """(R_d, R_b) of Section 8.1 with the prefactors the angular algebra settles in Noek's favour (M3a finding).
-
-    R_d = (2/3)(1/3)(Gamma/2) s (Gamma/(2 Delta_HFP))^2 is the bright state's off-resonant F = 1 -> F' = 1 channel with
-    its 1/3 branching into F = 0; R_b = (2/3)(Gamma/2) s (Gamma/(2(Delta_HFP + Delta_HFS)))^2 the dark state's only
-    dipole-allowed channel; both with s = s_o/3, linear in intensity with no saturation denominator (Section 8.1).
-    """
+    """(R_d, R_b) of the 171Yb+ detection cycle, linear in intensity with s = s_o/3:
+    R_d = (2/3)(1/3)(Gamma/2) s (Gamma/(2 Delta_HFP))^2, R_b = (2/3)(Gamma/2) s (Gamma/(2(Delta_HFP + Delta_HFS)))^2."""
     s = noek_saturation_from_s_o(s_o)
     r_d = (2.0 / 3.0) * (1.0 / 3.0) * (gamma_rad_s / 2.0) * s * (gamma_rad_s / (2.0 * delta_hfp_rad_s)) ** 2
     r_b = (
@@ -155,8 +116,7 @@ def yb171_leakage_rates_closed(
 
 
 def crain_dark_pumping_form(s_o: float, gamma_rad_s: float, delta_hfp_rad_s: float) -> float:
-    """Crain 2019 Eq. 7 as printed, (1/3)(Gamma/2) s (Gamma/2 Delta_HFP)^2 with s = s_o/3: the prefactor pair the exact
-    solve refutes (Section 8.8; the negative control of the leakage test)."""
+    """Crain 2019 Eq. 7 as printed, (1/3)(Gamma/2) s (Gamma/2 Delta_HFP)^2, s = s_o/3, which the exact solve refutes."""
     s = noek_saturation_from_s_o(s_o)
     return (1.0 / 3.0) * (gamma_rad_s / 2.0) * s * (gamma_rad_s / (2.0 * delta_hfp_rad_s)) ** 2
 
@@ -168,7 +128,7 @@ def yb171_leakage_ratio(delta_hfp_rad_s: float, delta_hfs_rad_s: float) -> float
 
 @dataclass(frozen=True)
 class ActonAngularFactors:
-    """Acton 2006 Eqs. 9, 12, 13 normalized so the cycling line has unit strength (Section 8.8 [corrected])."""
+    """Acton 2006 Eqs. 9, 12, 13 normalized so the cycling line has unit strength."""
 
     M1: float
     """Dark (|I-1/2, I-1/2>) -> bright leak through P3/2 |I+1/2, I+1/2>: 4I(3 + 2I)/(9(1 + 2I)^2)."""
@@ -179,11 +139,7 @@ class ActonAngularFactors:
 
 
 def acton_angular_factors(nuclear_spin: float) -> ActonAngularFactors:
-    """The closed-form Clebsch-Gordan combinations of the sigma+ stretch-state scheme; 2/9, 1/9, 1/9 at I = 1/2.
-
-    The paper's printed normalization gives M_1 = 8/9 unless C -> C/2; the code pins the normalization by reproducing
-    (2/9, 1/9, 1/9) at I = 1/2 (Section 8.1 [corrected]).
-    """
+    """Acton's Clebsch-Gordan factors of the sigma+ stretch-state scheme, normalized to (2/9, 1/9, 1/9) at I = 1/2."""
     i = float(nuclear_spin)
     if i <= 0.0:
         raise ValueError("the stretch-state scheme needs a nonzero nuclear spin")
@@ -195,15 +151,13 @@ def acton_angular_factors(nuclear_spin: float) -> ActonAngularFactors:
 
 
 ACTON_P12_FACTORS: tuple[float, float] = (2.0 / 9.0, 2.0 / 9.0)
-"""M_1' = M_2' = 1/3 x (1/3 + 1/3) = 2/9 for the I = 1/2 clock-state scheme through P1/2 (Acton Eqs. 15-16), where
-alpha_2' > alpha_1' always because Delta_1' = omega_HFS + omega_HFP' exceeds Delta_2' = omega_HFP'."""
+"""M_1' = M_2' = 1/3 x (1/3 + 1/3) = 2/9 for the I = 1/2 clock-state scheme through P1/2 (Acton Eqs. 15-16)."""
 
 
 def acton_mean_count(
     window_s: float, efficiency: float, s: float, gamma_rad_s: float, detuning_rad_s: float = 0.0
 ) -> float:
-    """lambda_0 = tau_D eta (s gamma/2)/(1 + s + (2 delta/gamma)^2), Acton Eq. 7: the mean detected count of a bright ion
-    on a closed two-level cycling line (s = I/I_sat exact there, Section 4.5.2)."""
+    """lambda_0 = tau_D eta (s gamma/2)/(1 + s + (2 delta/gamma)^2), the mean bright count (Acton Eq. 7)."""
     return (
         window_s
         * efficiency
@@ -244,8 +198,7 @@ def acton_leak_bright_to_dark(
 
 
 def acton_clock_state_ceiling(gamma_rad_s: float, omega_hfp_rad_s: float) -> float:
-    """F_max = 1 - (4/9)(gamma/(2 omega_HFP))^2 for direct clock-state readout through P3/2 (Acton Eq. 20 [corrected]):
-    the 4/9 is 2 x (1/3) x (2/3) of squared Clebsch-Gordan factors and event multiplicity; 99.9375 % for 111Cd+."""
+    """F_max = 1 - (4/9)(gamma/(2 omega_HFP))^2 for direct clock-state readout through P3/2 (after Acton Eq. 20)."""
     return 1.0 - (4.0 / 9.0) * (gamma_rad_s / (2.0 * omega_hfp_rad_s)) ** 2
 
 
@@ -257,9 +210,7 @@ def acton_optimal_light_level(alpha1_over_eta: float) -> float:
 
 
 def neighbour_intensity_ratio(wavelength_m: float, spacing_m: float) -> float:
-    """I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2): the resonant light of a saturated bright neighbour at distance x relative to
-    I_sat = pi h c Gamma/(3 lambda^3) (Section 8.5 [corrected]: Acton's hbar for h makes the printed 3 lambda^2/(4 pi x^2)
-    and its 7e-4 estimate 2 pi too large; 1.1e-4 for 111Cd+ at 4 um)."""
+    """I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2): the resonant light of a saturated bright neighbour at distance x."""
     return 3.0 * wavelength_m**2 / (8.0 * math.pi**2 * spacing_m**2)
 
 
@@ -271,17 +222,8 @@ def neighbour_pumping_rates(
     *,
     polarization_purity: float = 1.0,
 ) -> tuple[float, float]:
-    """(Delta R_d, Delta R_b) that ONE saturated bright neighbour at ``spacing_m`` adds to an ion's chain: the DEPUMPING
-    half of Wineland's readout-crosstalk mechanism (Section 8.5).
-
-    Section 8.5: the mechanism "is a degradation of state-discrimination efficiency by a neighbour's scattered light of
-    different polarization, not a change in the instrumental eta_d ... modelled as added counts on a dark neighbour PLUS
-    DEPUMPING-REDUCED N", with the radiative pumping "bounded by I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2)". Section 8.1
-    makes R_d and R_b linear in intensity with no saturation denominator, so the leaked light drives the same two channels
-    at the intensity ratio s_neighbour/s_beam of its own saturation parameter to the detection beam's. The neighbour's
-    fluorescence is unpolarized in the atomic frame, so ``polarization_purity`` = 1 is the BOUND the plan states, and a
-    smaller value is the share of the leaked light that reaches the pumping polarization at the ion.
-    """
+    """(Delta R_d, Delta R_b) one saturated bright neighbour at ``spacing_m`` adds: R_d and R_b scaled by the leaked
+    over the detection beam's intensity, times ``polarization_purity`` (1, the bound, by default)."""
     if s_beam <= 0.0:
         raise ValueError("the detection beam's saturation parameter is positive")
     if not 0.0 <= polarization_purity <= 1.0:
@@ -290,9 +232,6 @@ def neighbour_pumping_rates(
         raise ValueError("the spacing and the wavelength are positive")
     scale = polarization_purity * neighbour_intensity_ratio(wavelength_m, spacing_m) / s_beam
     return rates.R_dark_pumping_per_s * scale, rates.R_bright_pumping_per_s * scale
-
-
-# ---- the detection-efficiency chain (Section 8.1 "Detected rate and background") --------------------------------------------
 
 
 def geometric_efficiency(numerical_aperture: float) -> float:
@@ -305,15 +244,14 @@ def geometric_efficiency(numerical_aperture: float) -> float:
 def emccd_effective_quantum_efficiency(
     quantum_efficiency: float, excess_noise_factor: float = math.sqrt(2.0)
 ) -> float:
-    """QE/F^2: an EM register's stochastic gain is an excess noise factor F = sqrt 2 at high gain, equivalent to halving
-    the quantum efficiency for photon counting (Burrell 2010; Section 8.1)."""
+    """QE/F^2, F the excess noise factor of an EM register's gain (sqrt 2 at high gain; Burrell 2010)."""
     if not 0.0 < quantum_efficiency <= 1.0 or excess_noise_factor < 1.0:
         raise ValueError("QE lies in (0, 1] and the excess noise factor is at least 1")
     return quantum_efficiency / excess_noise_factor**2
 
 
 def system_efficiency(*factors: float) -> float:
-    """epsilon_sys = epsilon_geom epsilon_optics epsilon_filter epsilon_det, the product entered ONCE (Section 13)."""
+    """epsilon_sys = epsilon_geom epsilon_optics epsilon_filter epsilon_det, the product entered once."""
     out = 1.0
     for f in factors:
         if not 0.0 < f <= 1.0:
@@ -323,20 +261,15 @@ def system_efficiency(*factors: float) -> float:
 
 
 def camera_snr(mean_counts: float, gain: float, read_noise: float, n_readouts: int) -> float:
-    """SNR = g lambda_0/sqrt(g^2 lambda_0 + (k r)^2): shot noise plus read noise r per pixel readout over k readouts, the
-    read-noise term (kr)^2 linear in the number of readouts (Acton Eq. 21 [corrected]); sqrt(lambda_0) when read-noise free."""
+    """SNR = g lambda_0/sqrt(g^2 lambda_0 + (k r)^2): shot noise plus read noise r over k readouts (Acton Eq. 21)."""
     if mean_counts < 0.0 or gain <= 0.0 or read_noise < 0.0 or n_readouts < 0:
         raise ValueError("counts and read noise are non-negative, gain positive")
     return gain * mean_counts / math.sqrt(gain**2 * mean_counts + (n_readouts * read_noise) ** 2)
 
 
 def airy_first_zero_radius_m(wavelength_m: float, numerical_aperture: float) -> float:
-    """0.61 lambda/NA, the first zero of the Airy pattern (diameter 1.22 lambda/NA). Burrell prints 1.22 lambda/tan alpha
-    [contested]; the code carries NA = sin alpha, so the two coincide only for small apertures."""
+    """0.61 lambda/NA, the first zero of the Airy pattern, NA = sin alpha."""
     return 0.61 * wavelength_m / numerical_aperture
-
-
-# ---- micromotion and Doppler factors on the detection line (Sections 8.8, 4.1.1) --------------------------------------------
 
 
 def micromotion_detection_rate(
@@ -345,8 +278,7 @@ def micromotion_detection_rate(
     omega_rf_rad_s: float,
     detuning_rad_s: float = 0.0,
 ) -> float:
-    """J_0(beta)^2 R(Delta) + J_1(beta)^2 [R(Delta - Omega_rf) + R(Delta + Omega_rf)]: the carrier and first-sideband channels
-    of a detection beam under excess micromotion of modulation index beta, like every other drive (Section 8.8)."""
+    """J_0(beta)^2 R(Delta) + J_1(beta)^2 [R(Delta - Omega_rf) + R(Delta + Omega_rf)] at micromotion index beta."""
     if beta < 0.0:
         raise ValueError("the modulation index is non-negative")
     carrier = float(j0(beta)) ** 2 * rate_at_detuning(detuning_rad_s)
@@ -362,8 +294,7 @@ def rms_velocity_m_per_s(
     nbars: Sequence[float],
     projections: Sequence[float] | None = None,
 ) -> float:
-    """v_rms = sqrt(sum_m hbar omega_m (2 nbar_m + 1) (k^ . e_m)^2/(2 m)) along a beam direction (Section 8.8 [background]):
-    the thermal plus zero-point velocity variance of the modes the detection k-vector projects onto."""
+    """v_rms = sqrt(sum_m hbar omega_m (2 nbar_m + 1) (k^ . e_m)^2/(2 m)) along a beam: thermal plus zero-point."""
     if len(omegas_rad_s) != len(nbars):
         raise ValueError("one nbar per mode")
     proj = np.ones(len(omegas_rad_s)) if projections is None else np.asarray(projections, dtype=float)
@@ -376,20 +307,15 @@ def rms_velocity_m_per_s(
 
 
 def doppler_width_hz(v_rms_m_per_s: float, wavelength_m: float) -> float:
-    """k v_rms/2 pi = v_rms/lambda: the first-order Doppler width of the detection or shelving line (Section 8.8)."""
+    """k v_rms/2 pi = v_rms/lambda: the first-order Doppler width of the detection or shelving line."""
     return v_rms_m_per_s / wavelength_m
 
 
 def thermal_transfer_probability(
     rabi_rad_s: float, duration_s: float, k_rad_per_m: float, v_rms_m_per_s: float, *, nodes: int = 48
 ) -> float:
-    """A resonant pulse's transfer probability averaged over a Maxwell-Boltzmann velocity along k (Section 8.8,
-    "motion-to-readout coupling": the thermal Doppler profile of the shelving transition).
-
-    P(delta) = Omega^2/(Omega^2 + delta^2) sin^2(sqrt(Omega^2 + delta^2) t/2) with delta = k v, Gauss-Hermite averaged over
-    v ~ N(0, v_rms^2). Derived here from first principles, tagged [background]: no source gives a functional form and the
-    coupling is flagged UNTESTED against data (Harty et al. observe the degradation without an equation).
-    """
+    """Omega^2/(Omega^2 + delta^2) sin^2(sqrt(Omega^2 + delta^2) t/2), delta = k v, Gauss-Hermite averaged over
+    v ~ N(0, v_rms^2): a resonant pulse's thermal transfer probability (untested against data)."""
     if rabi_rad_s <= 0.0 or duration_s <= 0.0 or nodes < 4:
         raise ValueError("Rabi frequency and duration are positive; at least four quadrature nodes")
     x, w = np.polynomial.hermite_e.hermegauss(nodes)
@@ -401,12 +327,8 @@ def thermal_transfer_probability(
     return total / math.sqrt(2.0 * math.pi)
 
 
-# ---- shelving (Section 8.1 "Shelving") ------------------------------------------------------------------------------------
-
-
 def shelf_decay_error(window_s: float, shelf_lifetime_s: float) -> float:
-    """epsilon_decay = 1 - exp(-t_det/tau_D): the shelf decays during the window (Christensen et al. print the exponent
-    with the wrong sign [corrected]); 1.5e-4 for 133Ba+ at 4.5 ms and 30 s."""
+    """epsilon_decay = 1 - exp(-t_det/tau_D): the probability that the shelf decays during the window."""
     if window_s < 0.0 or shelf_lifetime_s <= 0.0:
         raise ValueError("window non-negative, lifetime positive")
     return 1.0 - math.exp(-window_s / shelf_lifetime_s)
@@ -414,14 +336,8 @@ def shelf_decay_error(window_s: float, shelf_lifetime_s: float) -> float:
 
 @dataclass(frozen=True)
 class ShelvingBranching:
-    """Shelving by optical pumping through an excited level (Section 8.1, 133Ba+ through P3/2).
-
-    Each excitation ends in the shelf (``to_shelf``), back in the bright ground manifold (``to_bright``, re-excited),
-    in another metastable level (``to_other_metastable``, re-excited only when ``repump_other``) or in the dark ground
-    state (``to_dark_ground``, stranded: the off-resonant path through the wrong hyperfine level). The end state of the
-    absorbing chain is the shelving fidelity; 0.74/0.23/0.03 gives 0.885 with the D3/2 population stranded (Christensen's
-    "F = 0.88") and 1 with it repumped, before the off-resonant leak.
-    """
+    """Shelving by optical pumping through an excited level: each excitation ends in the shelf, back in the bright
+    manifold (re-excited), in another metastable level (re-excited only when ``repump_other``) or stranded dark."""
 
     to_shelf: float
     to_bright: float
@@ -459,8 +375,8 @@ def mean_count_curve(
     dark_pumping_per_s: float,
     bright_pumping_per_s: float,
 ) -> np.ndarray | float:
-    """n̄(τ) = εR_o [(R_b/k) τ + (R_d/k^2)(1 - e^{-kτ})], k = R_b + R_d: the mean detected count of a bright-prepared ion
-    from the two-state rate equation ṗ_1 = R_b p_0 - R_d p_1 (Noek Eq. 4; Section 8.2), the calibration layer's fit model."""
+    """nbar(tau) = eps R_o [(R_b/k) tau + (R_d/k^2)(1 - e^{-k tau})], k = R_b + R_d: the mean detected count of a
+    bright-prepared ion under the two-state rate equation dp_1/dt = R_b p_0 - R_d p_1 (Noek 2013 Eq. 4)."""
     tau = np.asarray(tau_s, dtype=float)
     k = dark_pumping_per_s + bright_pumping_per_s
     if k <= 0.0:
@@ -475,7 +391,7 @@ def mean_count_curve(
 def fit_mean_count_curve(
     tau_s: Sequence[float], mean_counts: Sequence[float], *, guess: tuple[float, float, float] | None = None
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-    """Fit (εR_o, R_d, R_b) to n̄(τ) samples (Section 8.2, the calibration fit); returns values and 1-sigma uncertainties."""
+    """Fit (eps R_o, R_d, R_b) to nbar(tau) samples; returns the values and their 1-sigma uncertainties."""
     tau = np.asarray(tau_s, dtype=float)
     n = np.asarray(mean_counts, dtype=float)
     if tau.shape != n.shape or tau.size < 4:
@@ -499,20 +415,10 @@ def fit_mean_count_curve(
     return (float(values[0]), abs(float(values[1])), abs(float(values[2]))), tuple(float(s) for s in sigma)  # type: ignore[return-value]
 
 
-# ---- the readout scheme: polarity as an enum ---------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class ReadoutScheme:
-    """Which internal level fluoresces, and how each level starts the photon record (Sections 8.1, 8.4, 13).
-
-    ``classes[l]`` is the ideal readout class of internal level l of the ion's qudit (levels 0 and 1 the qubit, the rest
-    leakage levels); ``kind`` names the scheme. For shelving schemes the transfer is imperfect and only partially
-    state-selective (43Ca+ at 146 G: non-stretch ground states shelve with up to about 30 % probability), so
-    ``transfer`` carries the START distribution over classes per level and the dark-outcome operator
-    Pi_dark = sum_l p_l |l><l| is not a rank-one projector (Section 8.1); the post-measurement state is discarded because
-    shelving readout is not QND (Section 8.4).
-    """
+    """Which internal level fluoresces and how each level starts the photon record: ``classes[l]`` is level l's ideal
+    class (0 and 1 the qubit), and ``transfer`` each level's start distribution when shelving is imperfect."""
 
     kind: Literal["direct", "shelving"]
     classes: tuple[ReadoutClass, ...]
@@ -542,7 +448,7 @@ class ReadoutScheme:
 
     @property
     def bright_level(self) -> int:
-        """The computational level (0 or 1) whose ideal class is bright; the polarity of Section 13."""
+        """The computational level (0 or 1) whose ideal class is bright: the polarity."""
         for lev in (0, 1):
             if self.classes[lev] == "bright":
                 return lev
@@ -560,16 +466,14 @@ class ReadoutScheme:
 
     @property
     def dark_class(self) -> ReadoutClass:
-        """The non-bright class the other qubit level starts in: "shelf" for a shelving scheme, "dark" for direct
-        fluorescence (the class whose 1/tau the time-resolved discriminators of Section 8.3 need; with an imperfect
-        transfer it is the MOST LIKELY non-bright start, the one that carries the decay term)."""
+        """The most likely non-bright start class of the other qubit level (its decay feeds the time-resolved ML)."""
         dist = {c: p for c, p in self.start_distribution(1 - self.bright_level).items() if c != "bright"}
         if not dist:
             return "dark" if self.kind == "direct" else "shelf"
         return max(dist, key=dist.__getitem__)
 
     def dark_weights(self) -> tuple[float, ...]:
-        """The weights p_l of Pi_dark = sum_l p_l |l><l| (Section 8.1): the probability that level l starts NON-bright."""
+        """The weights p_l of Pi_dark = sum_l p_l |l><l|: the probability that level l starts non-bright."""
         return tuple(1.0 - self.start_distribution(lev).get("bright", 0.0) for lev in range(self.n_levels))
 
     def bit_of_class(self, cls: ReadoutClass) -> int:
@@ -595,12 +499,8 @@ class ReadoutScheme:
         leak_classes: Sequence[ReadoutClass] = (),
         leak_shelving: Sequence[float] = (),
     ) -> ReadoutScheme:
-        """Shelving readout: ``shelved_level`` is transferred to the metastable shelf with ``transfer_probability`` and the
-        other qubit level is shelved off-resonantly with ``off_resonant_shelving`` (Harty's 1.7e-4 and Christensen's rows).
-
-        For an optical qubit whose upper level IS the shelf (40Ca+ S1/2-D5/2) the transfer probability is 1 and the
-        polarity inverts: |0> = S1/2 is bright.
-        """
+        """Shelving readout: ``shelved_level`` goes to the shelf with ``transfer_probability``, the other level with
+        ``off_resonant_shelving``; an optical qubit (40Ca+ S1/2-D5/2) has transfer 1 and |0> = S1/2 bright."""
         if shelved_level not in (0, 1):
             raise ValueError("shelved_level is a qubit level, 0 or 1")
         if not 0.0 <= transfer_probability <= 1.0 or not 0.0 <= off_resonant_shelving <= 1.0:
@@ -634,11 +534,8 @@ class ReadoutScheme:
     def for_species(
         cls, species: Species, bright_labels: Sequence[str], *, labels: Sequence[str] | None = None
     ) -> ReadoutScheme:
-        """The ideal scheme of a species: a label in the bright manifold is bright, one in a metastable D level is the shelf
-        (optical qubits), any other is dark (hyperfine qubits under direct fluorescence). ``labels`` extends the classes to
-        every level of a register factor with d > 2 (``noise/levels.py``, M7): a leaked F = 1 sublevel of 171Yb+ is bright,
-        the SINK is read as dark (a D-level population is repumped during detection; the scheme records the approximation
-        through its class, not its dynamics)."""
+        """The ideal scheme of a species: a label in ``bright_labels`` is bright, one in a D level the shelf, any other
+        dark. ``labels`` extends the classes to every level of a d > 2 register factor; the SINK is read as dark."""
         from qutip_trap.noise.levels import SINK
         from qutip_trap.species.model import parse_state_label
 
@@ -658,20 +555,13 @@ class ReadoutScheme:
         kind: Literal["direct", "shelving"] = "shelving" if "shelf" in classes else "direct"
         if kind == "direct":
             return cls(kind, tuple(classes))
-        # a shelving scheme with leaked D-sublevels: those are shelf too, and the direct-scheme check on 'shelf' does not apply
         return cls(kind, tuple(classes))
-
-
-# ---- the rate object ------------------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class FluorescenceRates:
-    """R_o, R_d, R_b and the shelf rates of one ion under its detection beams (Section 8.1), all in s^-1, SCATTERED photons.
-
-    ``ceiling`` is the equal-population ceiling the photon rate was asserted against (None when the rates were ingested
-    from a measurement rather than solved); ``provenance`` names the ledger records and the source of each number.
-    """
+    """R_o, R_d, R_b and the shelf rates of one ion under its detection beams, all SCATTERED-photon rates in s^-1;
+    ``ceiling`` is the ceiling the photon rate was checked against (None for measured rates)."""
 
     R_bright_per_s: float
     """R_o: photon scattering rate of the conditional bright state."""
@@ -680,9 +570,8 @@ class FluorescenceRates:
     R_bright_pumping_per_s: float
     """R_b: dark -> bright off-resonant pumping."""
     shelf_decay_per_s: float = 0.0
-    """1/tau_D: the shelf decays back into the bright manifold (Myerson's 1168 ms, Christensen's 30 s)."""
+    """1/tau_D: the shelf's decay back into the bright manifold."""
     shelf_pumping_per_s: float = 0.0
-    """Bright -> shelf during detection (Myerson measures < 1e-3 s^-1 for 40Ca+; the detection light's D5/2 channel)."""
     ceiling: float | None = None
     excited_population: float | None = None
     provenance: tuple[str, ...] = ()
@@ -701,7 +590,7 @@ class FluorescenceRates:
             raise ValueError("a bright state that scatters nothing cannot be read out")
 
     def transition_rates(self) -> dict[tuple[ReadoutClass, ReadoutClass], float]:
-        """The continuous-time Markov chain of Section 8.2: (from, to) -> rate, zero rates omitted."""
+        """The readout continuous-time Markov chain: (from, to) -> rate, zero rates omitted."""
         pairs: dict[tuple[ReadoutClass, ReadoutClass], float] = {
             ("bright", "dark"): self.R_dark_pumping_per_s,
             ("dark", "bright"): self.R_bright_pumping_per_s,
@@ -732,8 +621,7 @@ def rates_from_detected(
     shelf_pumping_per_s: float = 0.0,
     provenance: tuple[str, ...] = (),
 ) -> FluorescenceRates:
-    """Ingest an apparatus's MEASURED detected rate (Myerson's R_B, Crain's 472 kcps) by dividing the efficiency out once, so
-    that the record layer applies it once again and the scattered rate can be compared with the Bloch solve (Section 8.8)."""
+    """Rates from a measured detected rate with the efficiency divided out once (the record layer reapplies it)."""
     if not 0.0 < efficiency <= 1.0:
         raise ValueError("efficiency lies in (0, 1]")
     return FluorescenceRates(
@@ -749,13 +637,8 @@ def rates_from_detected(
 
 
 def detected_line(model: BlochModel) -> str:
-    """The one decay line whose photons the detector counts, when the model carries only one (Section 8.1).
-
-    R_det = epsilon_sys R_o with epsilon_filter INSIDE epsilon_sys: the interference filter passes one wavelength, so
-    photons emitted on a repump line (866 nm beside 40Ca+'s detected 397 nm, 935 nm beside 171Yb+'s 369.5 nm) must not be
-    counted in R_o. When the build carries several non-sink lines the choice is a device property and cannot be derived
-    here, so the caller must name it (or ask for :data:`ALL_LINES` explicitly, as a diagnostic).
-    """
+    """The one decay line the detector counts; a model with several is refused, because the filter passes one wavelength
+    and the caller must name it (or pass :data:`ALL_LINES` for the diagnostic sum)."""
     from qutip_trap.dynamics.multilevel import SINK
 
     lines = []
@@ -784,15 +667,8 @@ def rates_from_bloch(
     shelf_pumping_per_s: float = 0.0,
     provenance: tuple[str, ...] = ("conv.scattering_rate_object",),
 ) -> FluorescenceRates:
-    """R_o, R_d, R_b from one Liouvillian (the M3a slow-manifold analysis), the photon rate asserted against the ceiling.
-
-    With no dark labels (a shelving scheme whose bright manifold is everything the beams drive, 40Ca+ under 397 + 866 nm)
-    the steady state is the bright state and the pumping rates vanish.
-
-    ``line`` names the DETECTED line "lower<-upper" (level names); None derives it with :func:`detected_line` and refuses
-    a model with several lines; :data:`ALL_LINES` sums every non-sink line, which is the total scattering rate of Section
-    4.2.2 and a diagnostic, NOT a detected rate (the single epsilon_sys of Section 8.1 has one epsilon_filter in it).
-    """
+    """R_o, R_d, R_b from one Liouvillian's slow-manifold analysis (no pumping without dark labels). ``line`` names the
+    detected line "lower<-upper"; None derives it (:func:`detected_line`), :data:`ALL_LINES` sums every line."""
     if line == ALL_LINES:
         chosen: str | None = None
     else:
@@ -822,7 +698,7 @@ def rates_from_bloch(
 def ground_manifold_labels(
     structure: AtomicStructure, level: str, hyperfine_f: float | None = None
 ) -> tuple[str, ...]:
-    """The dressed sublevel labels of ``level`` (optionally one hyperfine F only), the bright and dark manifolds of Section 8.1."""
+    """The dressed sublevel labels of ``level`` (optionally one hyperfine F only), for the bright and dark manifolds."""
     from qutip_trap.species.zeeman import parse_quantum_numbers
 
     out: list[str] = []
@@ -847,14 +723,8 @@ def scattering_rate(
     position_m: Sequence[float] | None = None,
     shelf_lifetime_s: float | None = None,
 ) -> tuple[FluorescenceRates, BlochModel]:
-    """The Section 8.1 rate object from first principles: the multi-level Bloch model of ``beams`` on ``structure``.
-
-    The bright manifold defaults to the ground states the beams drive resonantly (``BlochModel.resonant_manifold``) and
-    the dark manifold to the remaining sublevels of the same levels (171Yb+: F = 1 bright, F = 0 dark). ``line`` names the
-    DETECTED decay line; None derives it when the model carries one line and refuses to guess when it carries several
-    (:func:`detected_line`), and :data:`ALL_LINES` opts into the all-line diagnostic sum. Returns the rates and the model
-    so callers can read the steady state, the dark states and the ceiling report from the same object.
-    """
+    """The rates and the multi-level Bloch model of ``beams`` on ``structure`` behind them. The bright manifold defaults
+    to the resonantly driven ground states, the dark one to the other sublevels of their levels."""
     from qutip_trap.dynamics.multilevel import SINK, MultiLevelOptions
     from qutip_trap.light.bloch import BlochModel
 
@@ -890,17 +760,9 @@ def detection_rates_for_ion(
     micromotion_beta: float = 0.0,
     omega_rf_rad_s: float = 0.0,
 ) -> tuple[FluorescenceRates, ReadoutScheme, BlochModel]:
-    """Rates and scheme for one ion of a device: the species' cycling and repump lines under the detection beams, the shelf
-    lifetime from the species' metastable level when the scheme shelves (the D level of an optical qubit).
-
-    R_o counts photons on the species' CYCLING line only, because epsilon_sys carries one epsilon_filter and the filter
-    passes one wavelength (Section 8.1): counting the repump line as well makes R_o 6.9 % high for 40Ca+ under 397 + 866 nm
-    (it was 6.4 % until 2026-09-08, when the 866 nm branching became Ramm et al. 2013's 0.06435 in place of Section 8.1's
-    0.06; ledger conv.ca40_branching).
-    ``micromotion_beta`` > 0 applies Section 8.8's "R_o carries J_0(beta)^2 and a first-sideband channel J_1(beta)^2, like
-    every other drive": the detection drive as a whole is phase-modulated at ``omega_rf_rad_s``, so every rate the Bloch
-    solve returns becomes J_0^2 R(Delta) + J_1^2 [R(Delta - Omega_rf) + R(Delta + Omega_rf)] over three solves.
-    """
+    """Rates and scheme for one ion: the cycling line (the only one R_o counts) and the driven repumps under the
+    detection beams, and the shelf lifetime when the scheme shelves. ``micromotion_beta`` > 0 phase-modulates the
+    detection drive at ``omega_rf_rad_s``, each rate then from three solves (:func:`micromotion_detection_rate`)."""
     from qutip_trap.light.bloch import shifted_beam
     from qutip_trap.light.roles import RESONANT_WINDOW
     from qutip_trap.species.model import parse_state_label, parse_transition_label
@@ -914,11 +776,7 @@ def detection_rates_for_ion(
             tr = next((t for t in species.transitions if t.label == rep and t.multipole == "E1"), None)
             if tr is None:
                 continue
-            # a repump's manifold enters the detection model only when this device actually shines that light on the ion.
-            # Without the beam the metastable level is a dead end whose own lifetime (52.7 ms for 171Yb+ D3/2) becomes the
-            # slowest Liouvillian mode, so the bright/dark coarse graining of Section 8.1 has no two-manifold slow mode at
-            # all; Section 8.1's "a mis-set or failed repump is a simulable fault" is a property of the BEAMS, not of the
-            # species table (M5 fix, 2026-09-07: tabulating the 935.2 nm line made every 171Yb+ readout raise).
+            # a repump's levels enter only when a beam drives it: an undriven one breaks the bright/dark coarse graining
             if not any(
                 abs(b.wavelength_m - tr.wavelength_vac_m) < RESONANT_WINDOW * tr.wavelength_vac_m
                 for b in beams

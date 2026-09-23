@@ -1,30 +1,7 @@
-"""The full calibration by simulated experiments (PLAN.md Section 7.5; milestone M8).
+"""The alternative calibration by simulated experiments (``method="experiments"``), starting from the surrogate table.
 
-``full_calibration`` starts from the surrogate table of ``calibration.surrogate`` (every derived value a ``seed``, the
-closed-form waveforms, the detection threshold) and replaces its entries with the results of the simulated experiments
-of ``qutip_trap.experiments``, in the dependency order Section 7.5 fixes and never reorders:
-
-    crystal_image -> field_scan -> micromotion_scan -> mode spectroscopy (modes, nbar, eta) -> rabi_scan, stark_scan,
-    ramsey_frequency -> crosstalk_scan -> ms_scan, parity_scan, ms_phase_scan -> detection_histogram, heating_rate
-
-A downstream fit refuses to run while an upstream entry it reads is ``uncalibrated`` (a mode-frequency fit on an
-uncompensated ion carries J_1 micromotion sidebands; a Ramsey pulse with an uncalibrated Rabi entry has no pi/2 time), and
-every entry group it would have written (``PRODUCES``) is then marked ``uncalibrated`` under its name, with the reason in
-``CalibrationReport.refused`` and in the notes, so that what the calibration could not establish refuses to schedule instead
-of falling back to the derived seed (Section 7.3). The refusal cascades: a refused ``field_scan`` leaves the field
-uncalibrated, which refuses ``rabi_scan``, whose uncalibrated Rabi entry then makes ``schedule()`` raise. A group that is a
-``seed`` because the caller never asked for its experiment is untouched (that is the surrogate bootstrap). Every
-experiment reads only the table's beliefs for what the machine programs (the frame at the table's qubit frequency, the
-believed Rabi frequency for pi times, the believed mode frequency for the sideband probes) and starts from the derived
-values as initial guesses; the physics comes from the device through the engine. Every fit reports an uncertainty and a fit
-that fails to converge or lands at the edge of its scan marks its entry ``uncalibrated`` (Section 7.5, "Bootstrap, fits and
-failure"). The calibration is fitted under one dynamical sample of the device's noise model at ``t0_s`` (the field, mode and
-beam offsets of that moment), whose id every entry carries (``CalEntry.sample_id``), so that a table is a snapshot with an age.
-
-The scan sizes default to the plan's (ten pi times for the carrier, +-10 % coarse and a linewidth-stepped fine scan for the
-modes, +-30 % in amplitude for the entangling gate, 10^4 records for detection, delays up to 10/n_dot for heating) and are
-all overridable through ``CalibrationScans``, because a full calibration is hours of pulse integrations at the Section 11.1
-rates and the tests run reduced scans.
+The experiments read only the table's beliefs. One whose upstream entries are uncalibrated is refused and what it writes
+is marked ``uncalibrated``, as is the entry of a fit that fails or lands at its scan edge: such entries refuse to schedule.
 """
 
 from __future__ import annotations
@@ -62,7 +39,7 @@ ORDER: tuple[str, ...] = (
     "detection_histogram",
     "heating_rate",
 )
-"""The dependency order of Section 7.5 (``ms_scan`` runs the amplitude, detuning and phase scans of the entangling gate)."""
+"""The dependency order of the experiments (``ms_scan`` also runs the MS phase scan)."""
 
 UPSTREAM: dict[str, tuple[str, ...]] = {
     "crystal_image": (),
@@ -78,7 +55,7 @@ UPSTREAM: dict[str, tuple[str, ...]] = {
     "detection_histogram": (),
     "heating_rate": ("modes", "nbar", "rabi"),
 }
-"""The table entries each experiment reads: a fit refuses to run while one of them is ``uncalibrated``."""
+"""The entry groups each experiment reads; it is refused while one of them is ``uncalibrated``."""
 
 PRODUCES: dict[str, tuple[str, ...]] = {
     "crystal_image": (),
@@ -94,13 +71,9 @@ PRODUCES: dict[str, tuple[str, ...]] = {
     "detection_histogram": ("detection",),
     "heating_rate": ("heating",),
 }
-"""The entry groups each experiment writes: a REFUSED experiment marks exactly these ``uncalibrated``, so that the mode
-frequencies a refused fit could not establish refuse to schedule instead of falling back to the derived seeds (Section 7.3,
-"an entry the calibration could not establish is uncalibrated and refuses to schedule rather than falling back to them").
-A group that is a ``seed`` because the caller did not ASK for its experiment stays a seed: only the refusal path marks."""
+"""The entry groups each experiment writes; a refused experiment marks exactly these ``uncalibrated``."""
 
 _PRODUCER: dict[str, str] = {g: name for name, groups in PRODUCES.items() for g in groups}
-"""Entry group -> the experiment that writes it (the inverse of PRODUCES; every group has exactly one producer)."""
 
 ALIASES: dict[str, str] = {
     "mode_spectroscopy": "sideband_spectroscopy",
@@ -108,19 +81,16 @@ ALIASES: dict[str, str] = {
     "crosstalk_phase": "crosstalk_scan",
     "ms_phase_scan": "ms_scan",
 }
-"""Accepted ``experiments`` names that are PARTS of an experiment in ``ORDER``, mapped to the one that runs them: the mode
-frequency, the occupation and the Lamb-Dicke parameter are all fitted by the sideband spectroscopy, the crosstalk axis by
-the crosstalk scan, and the MS phase alignment of Section 7.5 step 3 runs inside ``ms_scan``. They are resolved before
-``wanted`` is formed: accepting a name and running nothing returned a pure surrogate table with no error and no note."""
+"""Accepted ``experiments`` names for parts of an experiment in ``ORDER``, mapped to the experiment that runs them."""
 
 
 class CalibrationError(RuntimeError):
-    """An experiment refused to run because an upstream entry it reads is uncalibrated (Section 7.5)."""
+    """An experiment needs a table entry that does not exist (the Rabi entry its pulses are timed by)."""
 
 
 @dataclass(frozen=True)
 class CalibrationScans:
-    """The scan sizes of the full calibration (the plan's defaults; the tests reduce them)."""
+    """The scan sizes and settings of ``full_calibration``."""
 
     shots: int | None = 500
     """Shots per scan point (None: exact populations, no statistical uncertainty)."""
@@ -132,7 +102,7 @@ class CalibrationScans:
     field_probe_hz: float = 1e3
     stark_delays_s: tuple[float, ...] = tuple(float(x) for x in np.linspace(0.0, 2e-3, 9))
     stark_probe_hz: float = 1e3
-    """The Ramsey probe of the Stark scan: below the Nyquist frequency of the delay grid (a 3 kHz probe aliases on nine points over 2 ms)."""
+    """The Ramsey probe of the Stark scan, below the delay grid's Nyquist frequency."""
     mode_span: float = 0.1
     mode_coarse_points: int | None = None
     mode_fine_points: int = 15
@@ -156,7 +126,7 @@ class CalibrationScans:
 
 @dataclass(frozen=True)
 class CalibrationReport:
-    """The table with what every experiment measured, what was refused and why (Section 7.5's audit trail)."""
+    """The calibrated table with every experiment's result, what was refused and why."""
 
     table: CalibrationTable
     surrogate: SurrogateReport
@@ -168,7 +138,7 @@ class CalibrationReport:
     experiments: tuple[str, ...]
 
     def surrogate_error(self) -> dict[str, float]:
-        """Per entry, |calibrated - seed|/|seed| where both exist (the surrogate's error the plan asks the full path to report)."""
+        """Per calibrated entry, |calibrated - seed|/|seed| where the seed exists and is non-zero."""
         seeds = self.surrogate.table.entries()
         out: dict[str, float] = {}
         for key, entry in self.table.entries().items():
@@ -211,11 +181,7 @@ def _uncalibrated(entry: CalEntry, experiment: str, t0_s: float, sample_id: int)
 def refused_table(
     table: CalibrationTable, groups: Sequence[str], experiment: str, t0_s: float, sample_id: int
 ) -> CalibrationTable:
-    """``table`` with every entry of the groups a REFUSED ``experiment`` would have written marked ``uncalibrated``.
-
-    Section 7.3: an entry the calibration could not establish refuses to schedule rather than falling back to the derived
-    value. The seeds of an experiment the caller never asked for are untouched (that is the surrogate bootstrap); only the
-    refusal path passes through here."""
+    """``table`` with every entry of ``groups`` marked ``uncalibrated`` under the refused ``experiment``."""
     for group in groups:
         if group == "field":
             table = replace(table, field=_uncalibrated(table.field, experiment, t0_s, sample_id))
@@ -258,7 +224,7 @@ def upstream_status(table: CalibrationTable, needs: Sequence[str]) -> str | None
 
 
 def frame_shifts(device: Device, table: CalibrationTable) -> dict[int, float]:
-    """The true transition minus the table's frame per ion (what the engine adds to H_int, Section 7.3)."""
+    """The true qubit transition minus the table's frame per ion (Hz), the shift the engine adds to H_int."""
     out: dict[int, float] = {}
     for i in range(device.crystal.n_ions):
         sp = device.crystal.species[i]
@@ -284,7 +250,7 @@ def full_calibration(
     surrogate: SurrogateReport | None = None,
     **surrogate_kwargs: Any,
 ) -> CalibrationReport:
-    """Calibrate ``device`` by simulated experiments in the dependency order of Section 7.5 (module docstring)."""
+    """Calibrate ``device`` by the simulated ``experiments`` (default all), run in ``ORDER``."""
     from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
     from qutip_trap.experiments import (
@@ -312,8 +278,7 @@ def full_calibration(
             f"unknown calibration experiments {sorted(unknown)}; known: {ORDER} and the aliases {sorted(ALIASES)}"
         )
     drives, ent = resolve_drives(device, gate_drives, entangling_drives)
-    # the experiments read the drives from the device's roles (0.3.0): the resolved maps become the roles of the device
-    # this calibration runs on; the roles are not part of the device digest, so the table's device_hash is unchanged
+    # the experiments read the drives from the device's roles, which are not part of the device hash
     device = replace(device, roles=replace(device.roles, gate=drives, entangling=ent))
     n = device.crystal.n_ions
     sur = surrogate or surrogate_table(
@@ -331,7 +296,7 @@ def full_calibration(
     notes: list[str] = list(sur.notes)
     results: dict[str, ExperimentResult] = {}
     refused: dict[str, str] = {}
-    # the dynamical sample the calibration is fitted under (Section 7.5: every entry carries it)
+    # the one noise sample every fit runs under; its id goes on every entry
     if sample is None:
         if device.noise.is_quiet(device):
             sample = quiet_sample(0, t0_s)
@@ -354,7 +319,6 @@ def full_calibration(
         nonlocal table
         refused[name] = reason
         notes.append(f"{name} refused: {reason}")
-        # the refused experiment's OWN entries: uncalibrated with its name, never left as schedulable seeds (Section 7.3)
         table = refused_table(table, keys, name, t0_s, sid)
 
     def check(name: str) -> bool:
@@ -362,11 +326,7 @@ def full_calibration(
         bad = upstream_status(table, needs)
         reason = f"upstream entry group {bad!r} is uncalibrated (Section 7.5)"
         if bad is None:
-            # a group whose own experiment was refused is not established either, even when the group carries no entry for
-            # the marking to have touched (an EMPTY dict: ``refused_table`` is then a no-op and the status check above sees
-            # nothing wrong). No group in the present graph both starts empty and has a refusable producer, so this is a
-            # guard on the graph rather than a path the suite reaches; without it, adding an upstream to
-            # ``micromotion_scan`` would silently reopen B2 for the surrogate's empty ``micromotion``.
+            # a group whose producer was refused is not established, even with no entries for the marking to touch
             for group in needs:
                 producer = _PRODUCER.get(group)
                 if producer is not None and producer in refused:
@@ -426,10 +386,7 @@ def full_calibration(
             ranges = {"Ex": (-50.0, 50.0), "Ey": (-50.0, 50.0)} if device.trap.path == "explicit" else {}
         entries: dict[str, CalEntry] = {}
         if device.trap.rf is None:
-            # a trap with no rf record has no excess micromotion to compensate: beta = 0 and C0 = 1 identically. That is a
-            # statement of the DEVICE MODEL, not a measurement, so the entries are ``seed`` - a "calibrated" 0 +- 0 under an
-            # experiment name that never ran would claim a null nothing measured (M8 audit B8). ``seed`` is usable, so the
-            # sideband spectroscopy downstream still runs (the Section 7.5 bootstrap).
+            # no rf record: beta = 0 by the device model, stored as usable seeds rather than as a measurement
             for name in ranges:
                 entries[f"shim[{name}]"] = CalEntry(
                     0.0,
@@ -516,7 +473,7 @@ def full_calibration(
         table = replace(table, modes=modes_entries, nbar=nbar_entries, lamb_dicke=eta_entries)
         nbar_belief = {m: float(e.value) for m, e in table.nbar.items() if usable(e)}
         common["nbar"] = nbar_belief
-    # 4. carrier Rabi frequencies (nbar from the thermometry, Section 7.5 bootstrap), then Stark and the qubit frequencies
+    # 4. carrier Rabi frequencies (nbar from the thermometry), then Stark shifts and the qubit frequencies
     if "rabi_scan" in wanted and check("rabi_scan"):
         rabi_entries = dict(table.rabi)
         for i in range(n):
@@ -618,10 +575,7 @@ def full_calibration(
                         res, f"phase_rad[{j}]", "crosstalk_scan", "conv.crosstalk_ratio", t0_s, sid
                     )
         table = replace(table, crosstalk=xt_entries, crosstalk_phase=ph_entries)
-    # 6. the entangling gates: detuning and amplitude, parity, the phase alignment. Both scans read the same entry groups
-    # and run in one block, but each is CHECKED under its own name so that a caller who asked for parity_scan alone is told
-    # that parity_scan was refused (it used to be recorded under 'ms_scan', a name it never asked for); the list keeps both
-    # checks running rather than short-circuiting on the first refusal, so each marks the groups it would have written.
+    # 6. the entangling gates; both checks run (no short circuit) so each scan is refused under its own name
     entangling_checks = [check(name) for name in ("ms_scan", "parity_scan") if name in wanted]
     if entangling_checks and all(entangling_checks):
         ms_entries: dict[tuple[int, int], Waveform] = dict(table.ms)
@@ -632,12 +586,8 @@ def full_calibration(
                 )
                 continue
             modes_hz = {m: float(e.value) for m, e in table.modes.items() if usable(e)}
-            # Section 7.5 item 4 asks for "the closure amplitude the pulse solver predicts AT THE CALIBRATED MODE
-            # FREQUENCIES": re-solve the pair's pulse at what the table now believes, then let the scan refine the closure
-            # offset and the amplitude. For a single symmetric mode a rigid detuning shift of the surrogate's solution is
-            # equivalent; for a multi-segment AM pulse closed on several modes it is not, because the segment amplitudes
-            # depend on the mode SPACING, which the sideband spectroscopy has just re-measured (M8 audit B5). Only when the
-            # amplitude scan follows: a re-solved pulse the scan does not then calibrate would be an unmeasured table entry.
+            # re-solve at the calibrated mode frequencies (AM segment amplitudes depend on the mode spacing), and only
+            # when the amplitude scan follows, so no re-solved pulse is stored unmeasured
             if "ms_scan" in wanted:
                 wf = _resolved_at_calibrated_modes(
                     device, pair, wf, ent, modes_hz, nbar_belief, surrogate_kwargs.get("ms_mu_hz"), notes
@@ -667,8 +617,7 @@ def full_calibration(
                     s_cl, s_unc = res.fitted["closure_scale"]
                     from qutip_trap.experiments.entangling import _shift_detuning
 
-                    # the offset the SCALE was measured at, which the scan guarantees is the fitted closure offset when the
-                    # parabola converged: applying a different one would store a scale measured elsewhere (M8 audit B6)
+                    # apply the offset the scale was measured at (the fitted closure offset when the parabola converged)
                     off = res.fitted.get("closure_offset_used_hz", (0.0, 0.0))[0]
                     current = scaled(_shift_detuning(wf, off), s_cl)
                     chi = math.copysign(math.pi / 4.0, wf.chi_total_rad)
@@ -786,9 +735,7 @@ def full_calibration(
         for m in _coupled_modes(device, drives):
             ndot_seed = float(table.heating[m].value) if m in table.heating else 0.0
             if ndot_seed <= 0.0:
-                # the delay scan spans 10/ndot: with a derived rate of zero (a quiet device) there is no scan to run, so
-                # the entry stays the surrogate's SEED instead of claiming a "calibrated" 0 +- 0 no measurement produced
-                # (M8 audit B8). A device with a non-zero S_E runs the experiment below.
+                # the delay scan spans 10/ndot, so a zero derived rate leaves no scan: the entry stays the seed
                 notes.append(
                     f"heating_rate[{m}]: the derived rate is zero (a quiet device); the delay scan (span 10/ndot) does not "
                     "exist and the entry is left as the surrogate's seed"
@@ -841,14 +788,8 @@ def _resolved_at_calibrated_modes(
     mu_hz: float | None,
     notes: list[str],
 ) -> Waveform:
-    """``wf`` re-solved at the table's mode frequencies, keeping its duration, beat-note placement rule and phase entries.
-
-    Section 7.5 item 4: the closure amplitude is the one "the pulse solver predicts at the calibrated mode frequencies".
-    The surrogate solved at the DERIVED frequencies; the sideband spectroscopy has since measured them, so a laboratory
-    re-runs its solver before the amplitude scan. Only the amplitudes and beat notes are re-derived - the phase entries
-    (``phi_s``, ``phi_m``) are the surrogate's, because ``calibrate_entangling_angle`` only rescales amplitudes and the MS
-    phase scan aligns the axis afterwards. A single-segment symmetric pulse is unchanged by construction (a rigid detuning
-    shift is exact there); a solver failure keeps the surrogate's waveform with a note."""
+    """``wf`` re-solved at the table's mode frequencies, keeping its duration, beat-note rule and phase entries (the MS
+    phase scan aligns the axis afterwards); ``wf`` itself if it is not a segmented MS pulse or the solver fails."""
     from qutip_trap.calibration.surrogate import surrogate_waveform
     from qutip_trap.control.shaping import ClosureError
 

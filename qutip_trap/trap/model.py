@@ -1,26 +1,11 @@
-"""The ``Trap`` record (PLAN.md Section 3.3; Appendix E; Sections 4.1.1, 4.1.6; milestone M1).
+"""The ``Trap`` record and its two paths to Mathieu parameters.
 
-Two paths lead from a ``Trap`` to Mathieu parameters (Section 3.3):
+- Explicit: ``omega_hz`` are one species' measured secular frequencies; with an ``RfDrive`` the exact exponents are
+  inverted for (a, q) (``mathieu_from_secular``), without one there are no Mathieu parameters (C0 = 1).
+- Geometry: ``rf`` + ``geometry`` (+ ``dc``), a rod or blade trap (``linear_trap_parameters``) or a surface layout
+  (``trap/surface.py``).
 
-- the EXPLICIT path, ``omega_hz`` = measured secular frequencies (x', y', z) of one species with the radial
-  principal axes rotated about z by ``axis_angle_rad``; with an ``RfDrive`` (its frequency) the exact exponents are
-  inverted for (a, q) under the linear-trap structure q_z = 0, q_y = -q_x, a_x + a_y + a_z = 0
-  (``mathieu_from_secular``), which is what gives C0 and the micromotion amplitudes; without an rf frequency there
-  are no Mathieu parameters and ``Crystal.lamb_dicke`` runs with ``micromotion=None`` (C0 = 1);
-- the GEOMETRY path, ``rf`` + ``geometry`` (+ ``dc``): a rod or blade trap through Berkeland's map
-  (``linear_trap_parameters``), or a surface-electrode layout through the gapless-plane field solution of
-  ``trap/surface.py``: rf null, static and rf Hessians there, A = 4Q H_dc/(m Omega^2), Q = 2Q H_rf/(m Omega^2), the
-  coupled Mathieu system by monodromy, the principal axes from the pseudopotential Hessian (Section 4.1.6).
-
-The stray field and the shims exist because compensation is something a laboratory measures and re-nulls
-(2026-09-04 experimentalist critique); the residual field is stray + shim response, where the shim response is the
-field of the named electrodes at the null on the SURFACE path and undefined on the explicit and rod/blade paths
-(non-zero shim voltages on either is refused, not dropped: Berkeland's rod map carries no shim -> field response, and
-PLAN 4.1.1 states that no source gives the geometry factors kappa, R', Z0 or Phi'' for any electrode design). The scheduler never sees ``stray_field_v_per_m`` (Section 7.3). The residual field
-displaces the ion to u_0 = Q E/(m omega^2) per axis and the in-phase micromotion index of a drive is
--delta_k . sum_i (q_i/2) u_0i e_i (peak, signed; the minus sign is the adopted rf phase origin of Section 13, under which
-the in-phase micromotion is a contraction); the out-of-phase index comes from Berkeland's (1/4) q_x R alpha phi_ac term
-and needs the rod geometry factors (Section 4.1.1).
+The residual field is stray + shim response; only the surface path has a shim -> field model.
 """
 
 from __future__ import annotations
@@ -62,30 +47,23 @@ def rotation_about_z(angle_rad: float) -> np.ndarray:
 
 @dataclass(frozen=True)
 class Trap:
-    """Either explicit secular frequencies or voltages plus geometry (Section 3.3).
-
-    ``omega_hz`` are ordinary frequencies (x', y', z) with z the trap axis (Section 5.6); ``axis_angle_rad`` rotates
-    the radial principal axes about z on the explicit path (a mode with no projection on any cooling beam is
-    uncoolable, so the frame must be free). ``anharmonic_terms`` is the opt-in H_anh/H_curv record of Section 5.7
-    (``anharmonic.coulomb_anharmonic_terms`` computes the Coulomb couplings of a crystal); None switches the term off.
-    """
+    """A trap given by secular frequencies ``omega_hz`` (x', y', z; z the trap axis) or by voltages plus geometry."""
 
     omega_hz: tuple[float, float, float] | None
     axis_angle_rad: float
-    """Rotation of the radial principal axes about z (explicit-frequency path)."""
+    """Rotation of the radial principal axes about z (explicit and rod/blade paths)."""
     rf: RfDrive | None
     dc: DcElectrodes | None
     geometry: Electrodes | None
     stray_field_v_per_m: tuple[float, float, float]
-    """The TRUE stray field, hidden from the scheduler (Section 7.3)."""
+    """The true stray field (laboratory frame), hidden from the scheduler."""
     shim_voltages_v: dict[str, float]
-    """Compensation applied; residual = stray + shim response."""
     dc_schedule: dict[str, np.ndarray] | None = None
-    """M12: V_n(t) per electrode, sampled."""
+    """V_n(t) per electrode, sampled."""
     basis_potentials: dict[str, Callable[..., float]] | None = None
-    """M12: phi_tilde_n(r) per electrode, plus "rf" for phi_tilde_rf (Section 4.1.6)."""
+    """phi_tilde_n(r) per electrode, plus "rf" for phi_tilde_rf."""
     anharmonic_terms: AnharmonicTerms | None = None
-    """Opt-in anharmonic couplings for H_anh/H_curv (Section 5.7); what ``anharmonic()`` returns."""
+    """Opt-in anharmonic couplings for H_anh/H_curv (``anharmonic.coulomb_anharmonic_terms``); None switches them off."""
 
     def __post_init__(self) -> None:
         explicit = self.omega_hz is not None
@@ -96,11 +74,7 @@ class Trap:
             raise ValueError("secular frequencies must be positive (ordinary Hz)")
         if len(self.stray_field_v_per_m) != 3:
             raise ValueError("stray_field_v_per_m is a laboratory-frame 3-vector")
-        # Only the SURFACE path has an electrode field model at the null. The explicit path has no electrodes, and the
-        # rod/blade map is Berkeland's (kappa, R', Z0) quadrupole map with no shim -> field response: PLAN 4.1.1, "No
-        # source gives the geometry factors kappa, R', Z0 or Phi'' for any electrode design". A non-zero shim there
-        # contributed nothing to residual_field_v_per_m and, when named like the endcap, silently changed a_z instead of
-        # producing a field, so it is refused rather than dropped (audit item E.4).
+        # only the surface path has an electrode field model at the null; a shim elsewhere is refused rather than dropped
         surface = geometry and self.geometry is not None and self.geometry.is_surface
         if not surface and any(v != 0.0 for v in self.shim_voltages_v.values()):
             which = "the explicit-frequency path" if explicit and not geometry else "a rod or blade trap"
@@ -137,10 +111,7 @@ class Trap:
         return np.zeros(3)
 
     def residual_field_v_per_m(self) -> np.ndarray:
-        """stray + the dc and shim electrodes' field at the rf null (SURFACE path); stray alone otherwise.
-
-        The explicit and rod/blade paths carry no shim -> field response (``__post_init__`` refuses non-zero shims there),
-        so nothing is silently dropped here."""
+        """stray + the dc and shim electrodes' field at the rf null on the surface path; stray alone otherwise."""
         e = np.asarray(self.stray_field_v_per_m, dtype=float)
         if self.path == "surface":
             model = self.surface_model()
@@ -159,10 +130,10 @@ class Trap:
             )
         return self.mathieu(species).principal_axes
 
-    # ---- Appendix E methods -----------------------------------------------------------------------------------
+    # ---- Mathieu parameters, frequencies and micromotion ------------------------------------------------------
 
     def mathieu(self, species: Species) -> MathieuParameters:
-        """a, q (matrices), beta, secular frequencies, C0 (Section 4.1.1) for ``species`` in this trap."""
+        """a, q (matrices), beta, secular frequencies and C0 for ``species`` in this trap."""
         mass = species.mass_u * ATOMIC_MASS_KG
         if self.path == "explicit":
             if self.rf is None or self.omega_hz is None:
@@ -214,12 +185,8 @@ class Trap:
     def single_ion_frequencies_rad_s(
         self, species: tuple[Species, ...], *, reference: int = 0
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(omega (N, 3) in rad/s along the principal axes, axes, residual field) for the crystal solver (Section 4.1.7).
-
-        Explicit path: the frequencies describe ``species[reference]``; other species need the rf frequency, from
-        which (a, q) scale as m_ref/m_i and the exact exponents give their frequencies. Geometry path: per species
-        from the field solution; the reference species' principal axes are the crystal frame.
-        """
+        """(omega (N, 3) in rad/s along the principal axes, axes, residual field) for the crystal solver; on the explicit
+        path other species than ``species[reference]`` need the rf frequency, their (a, q) scaling as m_ref/m_i."""
         n = len(species)
         ref = species[reference]
         field = self.residual_field_v_per_m()
@@ -254,19 +221,14 @@ class Trap:
         return omega, cache[ref.mass_u].principal_axes, field
 
     def micromotion_amplitude_m(self, species: Species) -> np.ndarray:
-        """The SIGNED in-phase excess-micromotion amplitude vector u_1 in the laboratory frame, peak convention (Section 4.1.1):
-        -(1/2) Q u_0 with u_0 the static displacement of the residual field against the pseudopotential spring. The minus
-        sign is the adopted Mathieu origin a - 2q cos 2xi (Section 13, "Floquet function and rf phase origin"), under which
-        the in-phase micromotion at the rf phase origin is a contraction, x_mu(t) = -(q_x/2) x_sec(t) cos(omega_rf t); beta
-        along a wavevector k is the signed k . u_1 (``micromotion_beta``), and that sign is what an rf-photon-correlation
-        signal crosses through at the compensated shim voltage (M8)."""
+        """The signed in-phase excess-micromotion amplitude u_1 = -(1/2) Q u_0 (laboratory frame, peak), u_0 the residual
+        field's static displacement against the pseudopotential spring. The minus sign follows the Mathieu origin
+        a - 2q cos 2xi: the in-phase micromotion at the rf phase origin is a contraction."""
         params = self.mathieu(species)
         mass = species.mass_u * ATOMIC_MASS_KG
         axes = params.principal_axes
         e_res = axes.T @ self.residual_field_v_per_m()
-        # a static force is balanced by the PSEUDOPOTENTIAL spring m (Omega/2)^2 (a + q^2/2) + O(q^4), the period average of
-        # the driven Mathieu equation's particular solution, not by the exact exponent beta^2 (they differ by 0.39 q^2);
-        # Berkeland's per-axis -(1/2) q_i u_0i is the matrix form -(1/2) Q u_0 when the dc axes are rotated against the rf Hessian
+        # a static force is balanced by the pseudopotential spring m (Omega/2)^2 (a + q^2/2), not by the exponent beta^2
         spring = params.pseudopotential_spring()
         confined = np.diag(spring) > 0.0
         u0 = np.zeros(3)
@@ -277,14 +239,9 @@ class Trap:
         return np.asarray(axes @ amp, dtype=float)
 
     def micromotion_beta(self, species: Species, delta_k: np.ndarray) -> MicromotionIndex:
-        """Residual beta = delta_k . u_1 for the FULL wavevector, as (SIGNED in_phase, out_of_phase), peak convention (Section 4.1.1).
-
-        in_phase: the stray-field part, -delta_k . (1/2) Q u_0 with u_0 the static displacement against the pseudopotential
-        spring m (Omega/2)^2 (a + q^2/2) (Berkeland's per-axis -(1/2) q_i u_0i when the dc and rf axes coincide), nullable by shims
-        and SIGNED, so that it steps by pi across the compensated shim (Section 9.17);
-        out_of_phase: Berkeland's (1/4) q_x R alpha phi_ac along x', from ``RfDrive.phase_imbalance_rad`` and the rod
-        geometry factors, not nullable. The two never collapse into one number.
-        """
+        """Residual beta = delta_k . u_1 for the full wavevector as (signed in_phase, out_of_phase), peak convention:
+        in_phase from the stray field (nullable by shims), out_of_phase Berkeland's (1/4) q_x R alpha phi_ac along x'
+        (needs the rod geometry factors ``R_m`` and ``alpha``; not nullable)."""
         params = self.mathieu(species)
         axes = params.principal_axes
         amp_lab = self.micromotion_amplitude_m(species)
@@ -307,15 +264,15 @@ class Trap:
         return MicromotionIndex(in_phase=in_phase, out_of_phase=out_of_phase, convention="peak")
 
     def anharmonic(self) -> AnharmonicTerms | None:
-        """The opt-in anharmonic record (Section 5.7); None means the term is off."""
+        """The opt-in anharmonic record; None means the term is off."""
         return self.anharmonic_terms
 
     def pseudopotential_v(self, r_m: np.ndarray, species: Species) -> float:
-        """M12: phi_ps in VOLTS (Section 13, "Junction pseudopotential")."""
+        """phi_ps in volts; not implemented."""
         raise NotImplementedError(f"Trap.pseudopotential_v is {M12}")
 
     def split_coefficients(self, t_s: float) -> tuple[float, float, float]:
-        """M12: (alpha, beta, gamma) of the volt potential beta x^4 + alpha x^2 + gamma x (Section 13)."""
+        """(alpha, beta, gamma) of the volt potential beta x^4 + alpha x^2 + gamma x; not implemented."""
         raise NotImplementedError(f"Trap.split_coefficients is {M12}")
 
 

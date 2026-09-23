@@ -1,35 +1,8 @@
-"""Mode-factorized application of sigma_+ (x) prod_m D_m for matrix-free propagation (PLAN.md Section 11.3 item 4; Sections
-5.1.1, 11.1, 11.2, 11.5; milestone M9b).
+"""Mode-factorized drive operators sigma_+ (x) prod_m D_m, applied axis by axis without assembling the matrix.
 
-The drive operator of Section 5.2, sigma_+^i (x) prod_m D_m(i eta_im), is a tensor product, so applying it to a state costs
-sum_m d_m multiply-adds per amplitude when it is applied mode by mode instead of prod_m d_m when it is assembled: 24 against
-512 for three modes at d_m = 8 (Section 11.3). This module holds the operator as its factors and applies them one axis at a
-time, as a QuTiP data-layer type, so that the one builder, ``sesolve``, ``mcsolve`` and the integrator ladder of Section 5.3
-run unchanged on it:
-
-- :class:`FactorizedOperator` is a :class:`qutip.core.data.Data` subclass: the tensor dims of the joint space, a small dense
-  matrix per factor it acts on (identities elsewhere) and a scalar. Its application slices the ion factor when that factor has
-  a single non-zero element (sigma_+, sigma_-: the block of the source level is mapped into the target level and the rest of the
-  output is zero), multiplies a diagonal factor (a light-shift projector) by broadcasting, and applies every other factor as one
-  batched matrix product along its axis, never forming a transpose or the assembled matrix.
-- The type is registered with QuTiP's dispatchers at import: ``matmul`` on a Dense state (the right-hand side), ``matmul`` of two
-  factorized operators (factor by factor: the c^dag c of a factorized collapse operator stays factorized), scalar ``mul`` and
-  ``neg``, ``adjoint``, ``conj``, ``transpose``, ``trace``, ``iszero``, ``isherm``, ``isequal`` and ``expect``, plus conversions to
-  Dense and CSR. Anything else (a sum of two factorized operators, a Liouvillian) converts to Dense through QuTiP's own
-  shortest-path conversion, which assembles the matrix: that is the correct fallback and the reason the engine builds the
-  assembled CSR operator on every ``mesolve`` path (Section 5.3: there the Liouvillian's memory decides, not the product).
-  ``QobjEvo.compress`` compares elements with ``Qobj.__eq__``, so ``isequal`` is exact and cheap when the two operators share
-  their factor structure and otherwise a deterministic probe test (two fixed random vectors), never an assembly.
-- The cost model of Section 11.2 with the constants of ``bench_ms_timing_v5.py`` (Appendix D) decides the ``auto`` choice of
-  ``BuilderOptions.kernel``: an assembled CSR term costs its non-zeros times a memory-bound 0.57 ns, a factorized term a
-  fixed dispatch cost plus, per factor, a call cost and the block size times the factor dimension times 0.6 ns. On the
-  Section 11.1 fixture that puts the crossover between the 256 and 440 rows: through ``QobjEvo.matmul`` one term costs 22 us
-  factorized against 304 us CSR at dimension 2048 (the bare products 17 and 313 us, the dense product 691 us) and 3.3 against
-  0.8 us at dimension 48, where the assembled operators win **[recomputed here]**.
-
-The Section 5.1.1 rules hold unchanged: the factors ARE the per-mode matrix exponentials the space builds and oracle-checks
-(``HilbertSpace.displacement_factor``), the product form is the physical operator in a product space, and an ENR group's
-sum-generator exponential is not a product of per-mode factors, so a drive that couples to an ENR mode is never factorized.
+:class:`FactorizedOperator` is a QuTiP data-layer type registered at import; an unsupported operation (a sum, a
+Liouvillian) converts to Dense, so mesolve segments use the assembled CSR operator. A drive coupling to an ENR mode is
+never factorized (an ENR displacement is not a product of per-mode factors).
 """
 
 from __future__ import annotations
@@ -47,20 +20,17 @@ M9B = "milestone M9b (dynamics/kernels.py, PLAN.md Section 11.3 item 4)"
 
 KernelChoice = Literal["auto", "factorized", "assembled"]
 
-# ---- the cost model of Section 11.2 with the constants of bench_ms_timing_v5.py [recomputed here] --------------------------
-# Per drive term, through QobjEvo.matmul (dispatch included), least-squares fit over eleven spaces from dimension 48 to 8192:
-# factorized ~ 2.9 us per factor step + 0.58 ns per complex multiply-add; CSR ~ 0.57 ns per non-zero. The fit reproduces the
-# measured choice on every space; the crossover on the Section 11.1 fixture sits between the 256 and 440 rows.
+# ---- cost model per drive term through QobjEvo.matmul, fit over spaces of dimension 48 to 8192 ----------------------------
 COST_CSR_US = 0.5
 """Fixed cost of one assembled CSR term."""
 COST_CSR_NS_PER_NNZ = 0.57
-"""A CSR product costs 0.5 to 0.6 ns per non-zero, memory-bound (Section 11.2; 304 us for 524288 non-zeros at dimension 2048)."""
+"""Cost per non-zero of an assembled CSR product (memory-bound)."""
 COST_TERM_US = 2.0
-"""Dispatch, allocation and the zero fill of the output per factorized term (the QuTiP element loop's fixed cost)."""
+"""Fixed cost per factorized term: dispatch, allocation and the zero fill of the output."""
 COST_STEP_US = 2.5
-"""One batched matrix product call per factor."""
+"""Cost of the one batched matrix product call per factor."""
 COST_NS_PER_MAC = 0.6
-"""Per complex multiply-add of the batched products (small matrices through the vendor BLAS)."""
+"""Cost per complex multiply-add of the batched products."""
 
 
 def _prod(values: Sequence[int]) -> int:
@@ -71,11 +41,8 @@ def _prod(values: Sequence[int]) -> int:
 
 
 def kernel_costs_us(dims: Sequence[int], ion_factor: int, mode_factors: Sequence[int]) -> tuple[float, float]:
-    """(assembled CSR, factorized) microseconds per application of one drive term sigma_+^i (x) prod_m D_m on ``dims``.
-
-    The assembled term has D prod_m d_m / d_ion non-zeros (2^{N-1} prod_m d_m^2 for two-level ions, Section 5.1.1); the
-    factorized term applies each mode factor to the D/d_ion amplitudes of the source level.
-    """
+    """(assembled CSR, factorized) microseconds per application of one drive term sigma_+^i (x) prod_m D_m on ``dims``:
+    D prod_m d_m / d_ion non-zeros against each mode factor applied to the D/d_ion source-level amplitudes."""
     d = _prod(dims)
     d_ion = int(dims[ion_factor])
     block = d // d_ion
@@ -99,12 +66,8 @@ def prefer_factorized(dims: Sequence[int], ion_factor: int, mode_factors: Sequen
 
 
 class FactorizedOperator(Data):  # type: ignore[misc]
-    """A tensor-product operator on a product space, held as its factors and applied axis by axis (Section 11.3 item 4).
-
-    ``dims`` are the tensor dimensions of the joint space (``HilbertSpace.dims``: ions, then resolved modes), ``factors`` map a
-    factor index to its square matrix (the identity on every factor not named) and ``scale`` multiplies the whole operator.
-    The matrix it represents is scale x (x)_f A_f with A_f the identity where absent.
-    """
+    """scale x (x)_f A_f on the joint space of ``dims`` (ions, then resolved modes), held as its factors (A_f the identity
+    where ``factors`` has no entry) and applied axis by axis."""
 
     def __init__(self, dims: Sequence[int], factors: Mapping[int, np.ndarray], scale: complex = 1.0) -> None:
         dims_t = tuple(int(d) for d in dims)
@@ -126,13 +89,11 @@ class FactorizedOperator(Data):  # type: ignore[misc]
         super().__init__((n, n))
         self._plan = _ApplicationPlan(dims_t, facs, self.scale)
 
-    # -- Data protocol -----------------------------------------------------------------------------------------------------
-
     def copy(self) -> FactorizedOperator:
         return FactorizedOperator(self.dims, {k: v.copy() for k, v in self.factors.items()}, self.scale)
 
     def to_array(self) -> np.ndarray:
-        """The assembled dense matrix scale x (x)_f A_f (tests and conversions only; never on the propagation path)."""
+        """The assembled dense matrix scale x (x)_f A_f (for conversions, never on the propagation path)."""
         out = np.array([[self.scale]], dtype=complex)
         for f, d in enumerate(self.dims):
             a = self.factors.get(f)
@@ -168,15 +129,13 @@ class FactorizedOperator(Data):  # type: ignore[misc]
             f"shape={self.shape})"
         )
 
-    # -- the matrix-free product ---------------------------------------------------------------------------------------------
-
     def apply(self, arr: np.ndarray) -> np.ndarray:
         """(scale x (x)_f A_f) @ arr for ``arr`` of shape (D,) or (D, ncols), returned in the same shape (C order)."""
         return self._plan.apply(arr)
 
     @property
     def max_abs(self) -> float:
-        """The largest element modulus of the represented matrix: |scale| prod_f max|A_f| (the identity contributes 1)."""
+        """The largest element modulus of the represented matrix: |scale| prod_f max|A_f|."""
         out = abs(self.scale)
         for a in self.factors.values():
             out *= float(np.max(np.abs(a))) if a.size else 0.0
@@ -184,7 +143,7 @@ class FactorizedOperator(Data):  # type: ignore[misc]
 
     @property
     def nnz_assembled(self) -> int:
-        """Non-zeros the assembled operator would have (the Section 11.5 memory the kernel avoids)."""
+        """Non-zeros the assembled operator would have."""
         out = 1
         for f, d in enumerate(self.dims):
             a = self.factors.get(f)
@@ -193,15 +152,9 @@ class FactorizedOperator(Data):  # type: ignore[misc]
 
 
 class _ApplicationPlan:
-    """How to apply (x)_f A_f to an array reshaped to ``dims + (ncols,)``: which axes are sliced (a factor with one non-zero
-    element), which are scaled by a diagonal (broadcast) and which take a matrix product, precomputed once.
-
-    The products are arranged so that each factor costs one BLAS call where the layout allows it (M9b performance pass):
-    the trailing factor of the block is applied as one (lead, d) @ A^T product instead of a batch of lead tiny (d, d) @ (d, 1)
-    products (the batched form cost 9.0 against 2.1 us at d_m = 8, lead = 128, measured 2026-09-09), a leading factor as one A @ (d, trail)
-    product, and only a middle factor as a batched product. The operator's scalar prefactor is folded into the first
-    factor matrix at construction (d^2 multiplications once) so that no pass over the output is spent on it.
-    """
+    """How to apply (x)_f A_f to an array reshaped to ``dims + (ncols,)``: a factor with one non-zero element is sliced, a
+    diagonal one broadcast, any other one BLAS call where the layout allows (only a middle factor is batched); the scalar
+    prefactor is folded into the first factor matrix."""
 
     __slots__ = (
         "block_dims",
@@ -257,8 +210,7 @@ class _ApplicationPlan:
         self.slices_out: tuple[int | slice, ...] = tuple(slices_out)
         self.prefactor = prefactor
         self.tail_scale = 1.0 + 0.0j if folded else prefactor
-        """What still multiplies the block after the steps: 1 once the prefactor is folded into a factor, the prefactor
-        itself for a pure slice (a bare sigma_+ with no mode factor)."""
+        """1 once the prefactor is folded into a factor; the prefactor itself for a pure slice (no mode factor)."""
 
     def _transform(self, a: np.ndarray, ncols: int, alpha: complex = 1.0) -> np.ndarray:
         """alpha x (prefactor (x)_kept A_f) applied to the sliced-in block of ``a`` (shape (D, ncols), C order), returned with
@@ -307,8 +259,7 @@ class _ApplicationPlan:
         return out.reshape(-1) if vector else out.reshape(-1, ncols)
 
     def apply_into(self, a: np.ndarray, alpha: complex, out: np.ndarray) -> None:
-        """``out += alpha x (self @ a)`` for C-contiguous complex ``a`` and ``out`` of one shape (D, ncols): the accumulating
-        form the rotating-frame composite of ``dynamics.rotating`` uses, one zero fill for all its terms."""
+        """``out += alpha x (self @ a)`` for C-contiguous complex ``a`` and ``out`` of one shape (D, ncols)."""
         if self.prefactor == 0.0 or alpha == 0.0:
             return
         y = self._transform(a, a.shape[1], complex(alpha))
@@ -408,7 +359,7 @@ def _iszero(matrix: FactorizedOperator, tol: float = -1) -> bool:
 
 
 def _probe(dimension: int, k: int) -> np.ndarray:
-    """A fixed complex Gaussian probe vector (deterministic: the equality tests below are reproducible)."""
+    """A fixed complex Gaussian probe vector, deterministic so that the probe tests are reproducible."""
     rng = np.random.default_rng([20260907, dimension, k])
     return np.asarray(rng.normal(size=(dimension, 1)) + 1j * rng.normal(size=(dimension, 1)))
 
@@ -430,19 +381,8 @@ def _scalar_ratio(x: np.ndarray, y: np.ndarray, atol: float, rtol: float) -> com
 
 
 def _isequal(a: Data, b: Data, atol: float = -1, rtol: float = -1) -> bool:
-    """Equality within tolerance, never assembling either operator.
-
-    Two factorized operators are compared EXACTLY and structurally: over the union of their factor indices (a factor either
-    one omits is the identity there), each pair must be a scalar multiple of the other, and the collected ratios must carry
-    one scale into the other, since scale_a (x)_f A_f = scale_b (x)_f B_f holds iff A_f = c_f B_f for every f with
-    scale_a prod_f c_f = scale_b. So a "no" here is a proof, not a guess. The old test compared ``a.scale * A_f`` with
-    ``b.scale * B_f`` factor by factor, which multiplies the scale in once per factor: 2 (X (x) Y) and 1 ((2X) (x) (2Y))
-    differ by two but passed it (M9b audit B9, and a false "equal" merges two distinct drive terms in ``QobjEvo.compress``).
-
-    A factorized operator against another data type still falls back to a probe test with two fixed vectors (equal operators
-    always pass; a difference above the tolerance on the probes fails), because the exact answer there would need one of the
-    two assembled.
-    """
+    """Equality within tolerance without assembling (``QobjEvo.compress`` merges elements called equal): exact on shared
+    dims (A_f = c_f B_f for every f with scale_a prod_f c_f = scale_b), else a probe test with two fixed vectors."""
     if atol < 0:
         atol = float(qt.settings.core["atol"])
     if rtol < 0:
@@ -557,7 +497,7 @@ def is_factorized(op: qt.Qobj | qt.QobjEvo | Data) -> bool:
         return isinstance(op, FactorizedOperator)
     if isinstance(op, qt.Qobj):
         return isinstance(op.data, FactorizedOperator)
-    # a QobjEvo: every coefficient-bearing element (the drive terms) is factorized; the constant part (H_mot + H_int) is CSR
+    # a QobjEvo: every coefficient-bearing element (the drive terms) must be factorized; the constant part is CSR
     kinds = [
         isinstance(el[0].data, FactorizedOperator)
         for el in op.to_list()
@@ -567,11 +507,8 @@ def is_factorized(op: qt.Qobj | qt.QobjEvo | Data) -> bool:
 
 
 def apply_drive_kernel(op: qt.Qobj | FactorizedOperator, state: qt.Qobj | np.ndarray) -> qt.Qobj | np.ndarray:
-    """Apply a drive operator to a state mode by mode (Section 11.3 item 4): the matrix-free product the right-hand side uses.
-
-    ``op`` is a factorized ``Qobj`` (``HilbertSpace.drive_operator_factorized``) or the data itself; ``state`` a ket, a density
-    matrix (every column is multiplied) or a NumPy array. A ``Qobj`` in returns a ``Qobj`` with the state's dims.
-    """
+    """Apply a factorized drive operator (a ``Qobj`` or its data) to a ket, a density matrix (column by column) or an array;
+    a ``Qobj`` state returns a ``Qobj`` with its dims."""
     data = op.data if isinstance(op, qt.Qobj) else op
     if not isinstance(data, FactorizedOperator):
         raise TypeError(

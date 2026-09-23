@@ -1,9 +1,7 @@
 """Exact angular-momentum algebra: Wigner 3j and 6j symbols, Clebsch-Gordan coefficients, spin matrices.
 
-The symbols are computed with the Racah closed forms in exact rational arithmetic (``fractions.Fraction``),
-so that every value is correct to the last floating-point digit; ``tests/test_wigner.py`` checks them against
-sympy. Conventions are the standard ones (Edmonds; Steck QAO Appendix): the 3j symbol is related to the
-Clebsch-Gordan coefficient by <j1 m1 j2 m2|J M> = (-1)^{j1 - j2 + M} sqrt(2J + 1) (j1 j2 J; m1 m2 -M).
+The symbols use the Racah closed forms in exact rational arithmetic. Conventions are Edmonds' (Steck QAO Appendix):
+<j1 m1 j2 m2|J M> = (-1)^{j1 - j2 + M} sqrt(2J + 1) (j1 j2 J; m1 m2 -M).
 """
 
 from __future__ import annotations

@@ -1,33 +1,7 @@
-"""Cubic and quartic Coulomb mode couplings and the three-mode resonance checker (PLAN.md Section 4.1.4; M1).
+"""Cubic and quartic Coulomb mode couplings and the three-mode resonance check (Marquet, Schmidt-Kaler and James 2003).
 
-Expanding the Coulomb-plus-trap energy about the equilibrium to third and fourth order gives
-V_3 = (1/6) sum_abc V_abc xi_a xi_b xi_c and V_4 = (1/24) sum_abcd V_abcd xi_a xi_b xi_c xi_d over the 3N Cartesian
-displacements, with V_abc.. the exact derivatives of sum_{i<j} k Z_i Z_j/|r_i - r_j| (the harmonic trap contributes
-nothing beyond second order; the electrode potential's own anharmonicity is the separate H_curv of Section 5.7).
-With xi_{(i,a)} = sum_k e_{(i,a),k} (a_k + a_k^dag), e_{(i,a),k} = c_{(i,a)}^{(k)} sqrt(hbar/(2 m_i omega_k)) the mass-weighted
-eigenvectors of ``trap/crystal.py`` (Section 4.1.7), the interaction in mode space is
-
-    H_anh/hbar = sum_{k<=l<=m} cubic_rad_s[(k, l, m)] X_k X_l X_m + sum_{k<=l<=m<=n} quartic_rad_s[(k, l, m, n)] X_k X_l X_m X_n,
-
-X = a + a^dag, the coefficient of each SORTED index tuple carrying its permutation multiplicity, which is the
-convention ``AnharmonicTerms`` stores and the Hamiltonian builder of Section 5.7 consumes.
-
-For an equal-mass linear chain this is Marquet, Schmidt-Kaler and James 2003: with the dimensionless tensor
-C_mnp = (1/6) d^3 F/du_m du_n du_p of the Coulomb sum F = sum_{m<n} 1/|u_m - u_n| at the James equilibrium and
-D_pqr = sum C_mnp b_m^(p) b_n^(q) b_r^(r) its mode-space form, sum_p C_mnp = 0 decouples the centre-of-mass mode
-(D_mn1 = 0 for every N), sum_p u_p C_mnp = (1/2)(delta_mn - A_mn) gives D_mn2 = ((1 - mu_m)/(2 |u|)) delta_mn with
-|u| = sqrt(sum u_p^2) (D_222 = -1.1225 at N = 2), and the axial coefficient of X_p X_q X_r is
-2 eps omega_z D_pqr (mu_p mu_q mu_r)^{-1/4} times the multiplicity, with the dimensionless nonlinearity
-eps = x0/(4 l) = sqrt(hbar/(2 M omega_z))/(4 l): 1.06e-3 for 9Be+ at omega_z = 2 pi x 5.0 MHz, 7.09e-4 for 40Ca+ at 2 MHz,
-3.79e-4 for 171Yb+ at 0.2 MHz, and g = eps omega_z (g/2pi = 1419 Hz and 76 Hz for the last two). The general Cartesian
-route above reproduces this closed form for equal masses and is what mixed crystals use.
-
-The leading off-resonant effect of the cubic term is SECOND order, of order g^2/Delta_res with virtual population
-(g/Delta_res)^2 and Delta_res = |omega_m +- omega_n - omega_p| the distance to the nearest three-mode resonance; the
-first version of the plan multiplied g by the gate time, a first-order figure the 2026-09-04 critique withdrew
-(``check_anharmonic.py``: 0.003 to 0.004 rad over 100 us at g/2pi = 1.419 kHz against 0.89 rad). The resonance checker
-lists the mode triples within a coupling width of Marquet's condition (their Eq. 4.10), a necessary condition to be
-confirmed by substitution; the cubic Hamiltonian itself is an opt-in term (Section 5.7).
+H_anh/hbar = sum_{k<=l<=m} cubic_rad_s[(k, l, m)] X_k X_l X_m + sum_{k<=l<=m<=n} quartic_rad_s[(k, l, m, n)] X_k X_l X_m X_n
+with X_k = a_k + a_k^dag, each SORTED index tuple's coefficient carrying its permutation multiplicity.
 """
 
 from __future__ import annotations
@@ -50,20 +24,13 @@ from qutip_trap.units import HBAR_J_S, TWO_PI
 
 @dataclass(frozen=True)
 class AnharmonicTerms:
-    """Coupling coefficients of the optional H_anh and H_curv terms of Section 5.7, in rad/s.
-
-    Keys are SORTED mode-index triples (cubic) and quadruples (quartic) into ``Crystal.modes``; each coefficient
-    multiplies X_k X_l X_m (X = a + a^dag) once and already carries the permutation multiplicity (module docstring).
-    The leading off-resonant effect of the cubic coupling is SECOND order, g^2 t/Delta, not g t (Section 4.1.4, caught
-    by the 2026-09-04 experimentalist critique; ``check_anharmonic.py``).
-    """
+    """Coupling coefficients of the optional H_anh and H_curv terms in rad/s, keyed by sorted mode-index tuples into
+    ``Crystal.modes`` (multiplicity included; module docstring)."""
 
     cubic_rad_s: dict[tuple[int, int, int], float] = field(default_factory=dict)
     quartic_rad_s: dict[tuple[int, int, int, int], float] = field(default_factory=dict)
     resonance_check: bool = True
-    """Section 5.7: the resonance checker and the integrated-phase estimate are ON BY DEFAULT, independently of whether
-    the cubic Hamiltonian itself is built (``BuilderOptions.include_anharmonic``); the Hamiltonian builder reads this
-    field and reports ``anharmonic_estimate`` in ``BuiltHamiltonian.approximations``. Set False to silence the report."""
+    """The Hamiltonian builder reports ``anharmonic_estimate`` whether or not the cubic term is built; False silences it."""
 
     def __post_init__(self) -> None:
         for key in self.cubic_rad_s:
@@ -167,11 +134,8 @@ def zero_point_matrix(crystal: Crystal) -> np.ndarray:
 def coulomb_anharmonic_terms(
     crystal: Crystal, *, quartic: bool = False, cutoff_rad_s: float = 0.0
 ) -> AnharmonicTerms:
-    """The cubic (and optionally quartic) Coulomb couplings of a crystal in mode space, keyed by sorted mode indices (rad/s).
-
-    Coefficients below ``cutoff_rad_s`` in magnitude are dropped. The centre-of-mass modes of an equal-mass chain decouple
-    exactly (D_mn1 = 0), so their entries vanish to round-off.
-    """
+    """The cubic (and optionally quartic) Coulomb couplings of a crystal in mode space, keyed by sorted mode indices, in
+    rad/s; coefficients below ``cutoff_rad_s`` in magnitude are dropped."""
     e = zero_point_matrix(crystal)
     n_modes = e.shape[1]
     v3 = coulomb_third_derivatives(crystal.positions_m)
@@ -228,7 +192,7 @@ def marquet_d_coefficients(c_tensor: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def marquet_selection_rules(u: np.ndarray, b: np.ndarray, mu: np.ndarray) -> tuple[float, float]:
-    """(max |D_mn1|, max |D_mn2 - ((1 - mu_m)/(2|u|)) delta_mn|): both zero to round-off (Section 9.1, "Anharmonic selection rules")."""
+    """(max |D_mn1|, max |D_mn2 - ((1 - mu_m)/(2|u|)) delta_mn|): Marquet's selection rules, both zero to round-off."""
     c = marquet_c_tensor(u)
     d = marquet_d_coefficients(c, b)
     n = len(u)
@@ -240,20 +204,19 @@ def marquet_selection_rules(u: np.ndarray, b: np.ndarray, mu: np.ndarray) -> tup
 
 
 def nonlinearity_epsilon(mass_kg: float, omega_z_rad_s: float, *, charge: int = 1) -> float:
-    """eps = x0/(4 l) with x0 = sqrt(hbar/(2 M omega_z)) and l the James length scale: 1.06e-3 for 9Be+ at 5 MHz (Section 4.1.4)."""
+    """eps = x0/(4 l) with x0 = sqrt(hbar/(2 M omega_z)) and l the James length scale."""
     x0 = math.sqrt(HBAR_J_S / (2.0 * mass_kg * omega_z_rad_s))
     return x0 / (4.0 * length_scale_m(mass_kg, omega_z_rad_s, charge=charge))
 
 
 def coupling_g_rad_s(mass_kg: float, omega_z_rad_s: float, *, charge: int = 1) -> float:
-    """g = eps omega_z: g/2pi = 1419 Hz for 40Ca+ at 2 MHz and 76 Hz for 171Yb+ at 0.2 MHz (Section 4.1.4)."""
+    """g = eps omega_z (``nonlinearity_epsilon``)."""
     return nonlinearity_epsilon(mass_kg, omega_z_rad_s, charge=charge) * omega_z_rad_s
 
 
 def axial_cubic_closed_form_rad_s(crystal: Crystal) -> dict[tuple[int, int, int], float]:
-    """Marquet's axial coefficients 2 eps omega_z D_pqr (mu_p mu_q mu_r)^{-1/4} x multiplicity for an EQUAL-mass collinear chain,
-    keyed like ``AnharmonicTerms.cubic_rad_s`` (axial modes are the first N entries of ``Crystal.modes``); the cross-check of
-    the Cartesian route."""
+    """Marquet's axial coefficients 2 eps omega_z D_pqr (mu_p mu_q mu_r)^{-1/4} x multiplicity for an equal-mass collinear
+    chain, keyed like ``AnharmonicTerms.cubic_rad_s`` (the axial modes are the first N of ``Crystal.modes``)."""
     masses = crystal.masses_kg
     if not np.allclose(masses, masses[0]):
         raise ValueError("the Marquet closed form is for equal masses")
@@ -288,8 +251,8 @@ class Resonance:
 def three_mode_resonances(
     crystal: Crystal, terms: AnharmonicTerms, *, width_hz: float
 ) -> tuple[Resonance, ...]:
-    """Mode triples with |omega_p +- omega_q - omega_r| < width_hz and a non-zero cubic coupling: Marquet's Eq. 4.10 condition,
-    necessary and to be confirmed by substitution (Section 4.1.4). Near such a triple the accumulated phase grows linearly."""
+    """Mode triples with |omega_p +- omega_q - omega_r| < width_hz and a non-zero cubic coupling (Marquet Eq. 4.10, a
+    necessary condition), sorted by |mismatch|. Near such a triple the accumulated phase grows linearly."""
     w = np.array([m.omega_hz for m in crystal.modes])
     found: list[Resonance] = []
     for key, g in terms.cubic_rad_s.items():
@@ -306,14 +269,14 @@ def three_mode_resonances(
 
 
 def dispersive_phase_bound_rad(coupling_rad_s: float, mismatch_rad_s: float, duration_s: float) -> float:
-    """g^2 t/Delta_res: the second-order UPPER BOUND on the off-resonant phase, valid for Delta_res >> the mode-frequency spread only
-    (Section 9.12: the directly integrated phases are the fixture; this label is a bound, not the scaling)."""
+    """g^2 t/Delta_res: a second-order upper bound on the off-resonant phase, not its scaling (valid only for Delta_res >>
+    the mode-frequency spread)."""
     if mismatch_rad_s == 0.0:
         raise ValueError("on resonance the growth is linear in time, not dispersive")
     return coupling_rad_s**2 * duration_s / abs(mismatch_rad_s)
 
 
-# ---- the default-on integrated-phase estimator (Sections 4.1.4, 5.7; 9.12 row "Cubic anharmonicity gate") ------------------
+# ---- the default-on integrated-phase estimator -----------------------------------------------------------------------------
 
 
 def integrated_cubic_phase_rad(
@@ -325,20 +288,8 @@ def integrated_cubic_phase_rad(
     state: tuple[int, int] = (1, 0),
     dimensions: tuple[int, int] = (8, 6),
 ) -> float:
-    """The DIRECTLY INTEGRATED phase of |n_a, n_b> under H = w_a a^dag a + w_b b^dag b + g (a + a^dag)^2 (b + b^dag).
-
-    The phase is taken relative to |0, 0> and beyond free evolution, from the exact propagator:
-    arg[(<s|U|s>/<s|U_0|s>) / (<0|U|0>/<0|U_0|0>)]. This is the fixture of Section 9.12's "Cubic anharmonicity gate"
-    row, which the 2026-09-04 numerics critique made the reported quantity: at g/2pi = 1.419 kHz over 100 us, mismatches
-    of 1, 0.3, 0.1 and 0.03 MHz (w_b = 2 w_a - 2 pi Delta, the 2:1 three-phonon resonance) give 0.0041, 0.0034, 0.0032
-    and 0.0032 rad on |1, 0> - essentially FLAT, where the second-order label g^2 t/Delta_res would give 0.0013, 0.0042,
-    0.0127 and 0.0422 rad (3x low at 1 MHz, 13x high at 0.03 MHz), and 0.016 rad on the resonant pair |2, 0> <-> |0, 1>
-    at 0.1 MHz. The withdrawn first-order figure g t is 0.89 rad over the same 100 us
-    (``validation/scripts/check_anharmonic.py``, whose two-mode model this reproduces).
-
-    ``dimensions`` are the two modes' Fock truncations; the leaked population is below 1e-6 over the whole fixture, so
-    the diagonal element is a phase and not an amplitude.
-    """
+    """The directly integrated phase of |n_a, n_b> under H = w_a a^dag a + w_b b^dag b + g (a + a^dag)^2 (b + b^dag),
+    relative to |0, 0> and free evolution: arg[(<s|U|s>/<s|U_0|s>) / (<0|U|0>/<0|U_0|0>)]; ``dimensions`` are Fock caps."""
     if duration_s < 0.0:
         raise ValueError("a duration is non-negative")
     d_a, d_b = dimensions
@@ -357,13 +308,8 @@ def integrated_cubic_phase_rad(
 
 @dataclass(frozen=True)
 class AnharmonicEstimate:
-    """What the default-on estimator of Section 5.7 reports: the nearest three-mode resonance and the integrated phase.
-
-    ``phase_rad`` is ``integrated_cubic_phase_rad`` evaluated for the worst triple (the one with the largest second-order
-    bound g^2 t/Delta_res) in the canonical two-mode 2:1 model at that triple's coupling and mismatch; ``bound_rad`` is
-    that bound itself, which Section 9.12 keeps ONLY as an explicit upper bound. ``resonances`` are the triples inside the
-    coupling width, where the growth is linear in time instead and the estimate does not apply.
-    """
+    """The default-on anharmonic report: ``phase_rad`` for the worst off-resonant triple (largest g^2 t/Delta_res, the
+    ``bound_rad``) in the two-mode 2:1 model, and the ``resonances`` inside the coupling width, where the estimate fails."""
 
     phase_rad: float
     coupling_rad_s: float
@@ -391,13 +337,8 @@ class AnharmonicEstimate:
 def anharmonic_estimate(
     crystal: Crystal, terms: AnharmonicTerms, duration_s: float, *, width_hz: float | None = None
 ) -> AnharmonicEstimate | None:
-    """The Section 5.7 default-on report: run the resonance checker and integrate the phase; None with no cubic coupling.
-
-    ``width_hz`` defaults to the coupling width g_max/2pi (Section 4.1.4: "the resonance checker lists the mode triples
-    within a coupling width of Marquet's condition"). The triple the phase is quoted for is the one maximizing the
-    second-order bound g^2/|Delta_res|, i.e. the worst case; an exactly resonant triple has no dispersive phase at all
-    (the growth is linear in time) and is reported through ``resonances`` instead.
-    """
+    """Run the resonance check and integrate the phase of the worst off-resonant triple; None without a cubic coupling or an
+    off-resonant triple. ``width_hz`` defaults to the coupling width g_max/2pi."""
     if not terms.cubic_rad_s:
         return None
     width = terms.largest_cubic_rad_s() / TWO_PI if width_hz is None else float(width_hz)

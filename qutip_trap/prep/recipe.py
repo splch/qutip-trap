@@ -1,15 +1,7 @@
-"""The preparation recipe of a device and its evaluation (PLAN.md Sections 3.4, 4.2.1, 4.2.2, 4.2.6, 4.2.7; milestone M6).
+"""The preparation recipe of a device (which beams cool and pump, which modes are sideband cooled) and its evaluation.
 
-Section 3.4's ``prepare`` stage needs to know how the laboratory cools and pumps: which beams cool at which detunings, which
-modes are sideband cooled with which pulse schedule, and which beams pump the qubit into its initial state. Those are
-procedural device parameters (a cooling laser's detuning is set by an AOM, a sideband schedule is programmed), so they live
-on the ``Device`` as a ``PreparationRecipe`` of ``Beam`` objects and pulse counts, and everything else is derived by the M3
-stages: the Doppler occupations from the rate framework on the multi-level Bloch model of the cooling beams
-(``prep.doppler``), the sideband-cooled occupations from the exact pulsed transfer matrices with the repump recoil kernel
-(``prep.sideband``), and the pumped internal state with its preparation error, photon count and recoil heating from the
-optical-pumping evolution (``prep.pumping``). ``standard_recipe`` builds the recipe a 171Yb+ laboratory runs from the
-device's own detection and Raman beams and records every choice it makes; ``run_preparation`` evaluates a recipe once per
-device (cached by the canonical digests) and ``prepare`` in ``run.job`` hands the result to the Hilbert space.
+The recipe holds only procedural parameters (beams and pulse counts); the occupations, pumped states and recoil heating
+are derived from them.
 """
 
 from __future__ import annotations
@@ -61,16 +53,16 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class SidebandCoolingSpec:
-    """A pulsed Raman sideband-cooling stage (Section 4.2.2, Che 2017 / Rasmusson 2021 schedules) on the Raman pair."""
+    """A pulsed Raman sideband-cooling stage on the Raman pair."""
 
     beams: tuple[int, int]
     """The Raman pair (indices into Device.beams) that drives the red sidebands; its Delta k sets eta per mode."""
     modes: tuple[int, ...]
     """Crystal modes cooled, one after the other (positions in Crystal.modes)."""
     pulses_per_order: dict[int, int]
-    """Sideband order -> number of pulses; higher orders are applied first (Section 4.2.2)."""
+    """Sideband order -> number of pulses; higher orders are applied first."""
     repump_photons: float = 3.0
-    """Mean photons scattered by the repump after every pulse (three for the 171Yb+ pump into |0>, Section 4.2.6)."""
+    """Mean photons scattered by the repump after every pulse (three for the 171Yb+ pump into |0>)."""
     repump_time_s: float = 10e-6
     ion: int | None = None
     """The ion whose eta and Rabi frequency set the pulse times; None = the ion with the largest |eta| on the mode."""
@@ -87,7 +79,7 @@ class SidebandCoolingSpec:
 
 @dataclass(frozen=True)
 class PreparationRecipe:
-    """How the device cools and pumps before every shot (Section 4.2.6 order: Doppler -> sideband -> pump)."""
+    """How the device cools and pumps before every shot, in the order Doppler, sideband, pump."""
 
     doppler_beams: tuple[Beam, ...]
     """The cooling beams at their cooling detunings (repumpers included); every mode must project on one of them."""
@@ -102,7 +94,7 @@ class PreparationRecipe:
     leak: LeakPolicy = "renormalize"
     pump_samples: int = 2001
     notes: tuple[str, ...] = field(default_factory=tuple)
-    """What the recipe builder chose and why (standard_recipe records its assumptions here)."""
+    """What the recipe builder chose and why."""
 
     def __post_init__(self) -> None:
         if not self.doppler_beams:
@@ -128,7 +120,7 @@ def _cycling_levels(device: Device) -> tuple[str, str]:
 
 
 def global_raman_pair(device: Device) -> tuple[int, int] | None:
-    """The far-detuned equal-wavelength beam pair of the largest waist (the global pair a chain's sideband cooling uses), or None."""
+    """The far-detuned equal-wavelength beam pair of the largest waist (a chain's global Raman pair), or None."""
     from qutip_trap.light.roles import gate_beams
 
     idx = gate_beams(device)
@@ -162,13 +154,8 @@ def standard_recipe(
 ) -> PreparationRecipe:
     """The recipe a hyperfine-clock-qubit laboratory runs, built from the device's own beams, every choice recorded.
 
-    Doppler cooling: the detection beams (the resonant light of ``light.roles.detection_beams``) shifted to the red by
-    Gamma/2, then, when ``optimize_doppler_detuning``, the common offset minimizing the participation-weighted mean
-    occupation of the gate modes (Section 4.2.1). Sideband cooling: pulsed Raman cooling on the far-detuned Raman pair of
-    every mode it couples to (|eta| > ``eta_min``), 10 second-order then 30 first-order pulses by default. Pump: the first
-    detection beam retuned to the F = I + 1/2 -> F' = I + 1/2 line of the cycling transition (the 2.1 GHz sideband of the
-    171Yb+ scheme, Section 4.2.6) at ``pump_saturation`` I_sat, which empties the upper hyperfine manifold into the F = 0
-    clock state. Species whose lower qubit level is not an F = 0 clock state need an explicit recipe.
+    Doppler on the detection beams red-detuned by Gamma/2 (optionally optimized), pulsed Raman sideband cooling of every
+    mode with |eta| > ``eta_min``, and a pump on F = I + 1/2 -> F' = I + 1/2 into the F = 0 clock state.
     """
     from qutip_trap.light.raman import derive_raman_drive
     from qutip_trap.light.roles import detection_beams
@@ -186,7 +173,7 @@ def standard_recipe(
         f"Doppler beams: the {len(det)} detection beam(s) shifted by {delta / gamma:+.3f} Gamma "
         "(the cooling and detection light share one path, retuned by an AOM)"
     )
-    # the gate modes: the ones the Raman pair couples to, which the sideband stage cools and the Doppler objective weights
+    # the gate modes (those the Raman pair couples to) are sideband cooled and weight the Doppler objective
     pair: tuple[int, int] | None
     if raman_pair is not None:
         pair = (int(raman_pair[0]), int(raman_pair[1]))
@@ -237,7 +224,6 @@ def standard_recipe(
         notes.append(
             "no Raman pair couples to a mode: no sideband-cooling stage (Doppler occupations remain)"
         )
-    # the pump: F = I + 1/2 -> F' = I + 1/2 of the cycling line, from the detection beam's path
     low_level, low_rest = parse_state_label(species.qubit[0])
     if low_level != lower or "F=0" not in low_rest.replace(" ", ""):
         raise NotImplementedError(
@@ -274,7 +260,7 @@ def standard_recipe(
 
 
 def magic_angle_polarization(k_hat: Sequence[float], b_hat: Sequence[float]) -> tuple[float, float, float]:
-    """A linear polarization transverse to k at Berkeland's arccos(1/sqrt 3) to B (Section 8.1), for any k not parallel to B."""
+    """A linear polarization transverse to k at the magic angle arccos(1/sqrt 3) to B (Berkeland and Boshier 2002)."""
     k = np.asarray(k_hat, dtype=float)
     b = np.asarray(b_hat, dtype=float)
     b_perp = b - np.dot(b, k) * k
@@ -289,7 +275,7 @@ def magic_angle_polarization(k_hat: Sequence[float], b_hat: Sequence[float]) -> 
 
 @dataclass(frozen=True)
 class PreparationRun:
-    """What a recipe produced on a device (Section 4.2.7 hand-off), cached per (device, recipe)."""
+    """What a recipe produced on a device, cached per (device, recipe)."""
 
     sequence: PreparationSequence
     doppler: DopplerResult
@@ -315,7 +301,7 @@ _CACHE: dict[tuple[str, str], PreparationRun] = {}
 
 
 def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = True) -> PreparationRun:
-    """Evaluate the recipe with the M3 stages: Doppler occupations, sideband-cooled occupations, the pumped states."""
+    """Evaluate the recipe: the Doppler occupations, the sideband-cooled occupations and the pumped states."""
     key = (device.hash(), canonical_digest(recipe))
     if cache and key in _CACHE:
         return _CACHE[key]
@@ -327,12 +313,10 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
     levels = recipe.levels or _cycling_levels(device)
     opts = MultiLevelOptions(leak=recipe.leak)
     notes = list(recipe.notes)
-    # 1. Doppler cooling of every mode
     doppler = doppler_cooling(st, recipe.doppler_beams, crystal, levels=levels, options=opts)
     stages: list[PreparationStage] = [doppler_stage(doppler)]
     nbar: dict[int, float] = dict(doppler.nbar)
     duration = recipe.doppler_duration_s
-    # 2. pulsed sideband cooling of the gate modes
     sb_nbar: dict[int, float] = {}
     sb_pulses: dict[int, tuple[SidebandPulse, ...]] = {}
     if recipe.sideband is not None:
@@ -353,9 +337,7 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
             n0 = nbar[m]
             d = int(min(spec.d_max, max(40, math.ceil(30.0 * n0 + 20.0))))
             p0 = thermal_distribution(n0, d)
-            # the repump's emitted photons carry one alpha PER POLARIZATION CHANNEL (Section 4.2.8 ii); the scalar the
-            # one-dimensional Fock kernel needs is their photon-rate-weighted mean in the repump beams' own steady
-            # state, read off the Bloch model this recipe already builds for the pump -- never a hard-coded 1/3
+            # the 1D kernel's alpha: the photon-rate-weighted mean over the pump light's emission channels, never 1/3
             alpha = emission_angular_factor(
                 BlochModel(
                     st,
@@ -385,7 +367,6 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
             )
         if sb_nbar:
             stages.append(pulsed_sideband_stage(sb_nbar, tuple(range(crystal.n_ions))))
-    # 3. the optical pump of every ion, at its own position
     target = tuple(recipe.pump_target) if recipe.pump_target is not None else (species.qubit[0],)
     pumps: dict[int, PumpingResult] = {}
     heating: dict[int, float] = {m: 0.0 for m in range(len(crystal.modes))}
@@ -443,7 +424,7 @@ def recipe_of(device: Device, *, raman_pair: tuple[int, int] | None = None) -> P
 def preparation_occupations(
     device: Device, recipe: PreparationRecipe | None = None, *, raman_pair: tuple[int, int] | None = None
 ) -> dict[int, float]:
-    """The final mean occupation per mode the recipe leaves (what the mode selection and the calibration weights read)."""
+    """The final mean occupation per mode the recipe leaves."""
     return dict(run_preparation(device, recipe or recipe_of(device, raman_pair=raman_pair)).nbar)
 
 

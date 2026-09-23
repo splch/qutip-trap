@@ -1,27 +1,9 @@
-"""Hyperfine plus Zeeman structure of one fine-structure level at any field (PLAN.md Section 4.5.1; M0a).
+"""Hyperfine plus Zeeman structure of one fine-structure level at any field, on the uncoupled basis |m_I, m_J> in Hz:
 
-The Hamiltonian, in Hz, on the uncoupled basis |m_I, m_J> (Steck QAO Eq. 7.134 in its dimensionless form):
+    H/h = A I.J + B [3(I.J)^2 + (3/2) I.J - I(I+1)J(J+1)] / [2I(2I-1)J(2J-1)] + (mu_B/h) (g_J J_z + g_I I_z) B
 
-    H/h = A I.J + B [3(I.J)^2 + (3/2) I.J - I(I+1)J(J+1)] / [2I(2I-1)J(2J-1)] + (mu_B/h) (g_J J_z + g_I I_z) B,
-
-with A, B in Hz, mu_B/h = 1.399624 MHz/G and the nuclear factor g_I = -(mu_I/(I mu_N))(m_e/m_p) in Steck's
-sign convention (Section 13, "Nuclear g-factor sign"), so both g factors enter with one sign. The quadrupole
-term is present only for I >= 1 and J >= 1. H commutes with F_z, so it is diagonalized exactly per m_F block;
-that fixed-M diagonalization is primary and the J = 1/2 Breit-Rabi closed form (:func:`breit_rabi_hz`) is the
-cross-check (Section 4.5.6: the closed form returns the wrong branch beyond |x| = 1).
-
-Labels: eigenstates are labelled by adiabatic continuation from B = 0. At zero field each block's eigenstates
-are |F, m_F> with F read off <F^2>; within one m_F block levels of different F never cross as B grows (the
-no-crossing rule of a one-parameter Hermitian family with no further symmetry), so the energy order inside
-the block at B is the energy order at B = 0, and the label follows through every avoided crossing. A level
-with no hyperfine structure (A = B = 0, or I = 0) is labelled by (m_J, m_I) instead, since F is not a good
-label there. The sign of A is a signed INPUT (Section 4.5.6); the ordering of the F manifolds (43Ca+ F = 3
-above F = 4) is derived from it, never stored.
-
-Sensitivities: dE/dB by the Hellmann-Feynman theorem, <k| dH/dB |k>, exact for the non-degenerate states of a
-block; d^2E/dB^2 by second-order perturbation inside the block, 2 sum_{l != k} |<l| dH/dB |k>|^2 / (E_k - E_l).
-Section 13 ("Curvature naming") keeps two names: ``d2nu_dB2`` (Harty's 2.4 mHz/mG^2) and ``taylor_c2`` =
-(1/2) d^2 nu/dB^2 (Langer's 0.305 Hz/uT^2, the 171Yb+ 310.87 Hz/G^2). Both are returned, never one "curvature".
+(Steck QAO Eq. 7.134, g_I in Steck's sign), diagonalized exactly per m_F block. Eigenstates are labelled |F, m_F> by
+adiabatic continuation from B = 0, or (m_J, m_I) for a level without hyperfine structure.
 """
 
 from __future__ import annotations
@@ -46,7 +28,7 @@ _QN = re.compile(r"(?P<key>F|mF|mJ|mI)=(?P<val>[+-]?\d+(?:/\d+)?(?:\.\d+)?)")
 
 
 def g_I_steck(mu_I_nuclear_magnetons: float, nuclear_spin: float) -> float:
-    """g_I = -(mu_I/(I mu_N)) (m_e/m_p): Steck's convention, electron-like sign (Section 13). Zero for I = 0."""
+    """g_I = -(mu_I/(I mu_N)) (m_e/m_p): Steck's convention, electron-like sign. Zero for I = 0."""
     if nuclear_spin == 0.0:
         if mu_I_nuclear_magnetons != 0.0:
             raise ValueError("a spin-zero nucleus has no magnetic moment")
@@ -69,12 +51,10 @@ def parse_quantum_numbers(text: str) -> dict[str, Fraction]:
 
 @dataclass(frozen=True)
 class ZeemanSpectrum:
-    """The hyperfine-Zeeman spectrum of one level at one field (Appendix E ``ZeemanSpectrum``).
+    """The hyperfine-Zeeman spectrum of one level at one field; derivatives are per gauss.
 
-    ``energies_hz`` are ABSOLUTE (the level's cited energy plus the hyperfine-Zeeman eigenvalue), so that a
-    transition frequency between states of different levels is a plain difference. Columns of ``eigenvectors``
-    are the states in the uncoupled basis ``(basis_mI[i], basis_mJ[i])``. Derivatives are per gauss.
-    """
+    ``energies_hz`` are ABSOLUTE (level energy plus eigenvalue); columns of ``eigenvectors`` are states on the
+    uncoupled basis ``(basis_mI[i], basis_mJ[i])``."""
 
     level: str
     B_gauss: float
@@ -254,17 +234,10 @@ def hyperfine_zeeman(level: Level, nuclear_spin: float, mu_I_nuclear_magnetons: 
 
 
 def lande_g_f(F: Half, J: Half, nuclear_spin: Half, g_J: float, g_I: float = 0.0) -> float:
-    """g_F = g_J [F(F+1) - I(I+1) + J(J+1)]/(2F(F+1)) + g_I [F(F+1) + I(I+1) - J(J+1)]/(2F(F+1)) (PLAN.md 4.5.1).
+    """g_F = g_J [F(F+1) - I(I+1) + J(J+1)]/(2F(F+1)) + g_I [F(F+1) + I(I+1) - J(J+1)]/(2F(F+1)).
 
-    The DIMENSIONLESS hyperfine g-factor, valid in the weak-field (linear-Zeeman) regime only; the field
-    derivatives the package actually uses come from the diagonalization, and this closed form is the
-    Section 4.5.6 "derived" entry that names it. Section 13's own warning applies: g_F is dimensionless and
-    g_F mu_B/h is a frequency per field (1.4012 MHz/G for 171Yb+ F = 1), and coding the latter as the former
-    is a 40% error in the quantity that gates the CPT window.
-
-    ``g_I`` defaults to 0 because the nuclear term is 1e-4 of the electronic one; pass ``g_I_steck(mu_I, I)``
-    for the full expression. For I = J = 1/2 the F = 1 value reduces to g_J/2 + g_I/2.
-    """
+    DIMENSIONLESS (g_F mu_B/h is the frequency per field) and weak-field only. ``g_I`` defaults to 0 (1e-4 of the
+    electronic term); pass ``g_I_steck(mu_I, I)`` for the full expression."""
     f = as_half_integer(F)
     j = as_half_integer(J)
     i = as_half_integer(nuclear_spin)
@@ -281,7 +254,7 @@ def lande_g_f(F: Half, J: Half, nuclear_spin: Half, g_J: float, g_I: float = 0.0
 
 @dataclass(frozen=True)
 class TransitionSensitivity:
-    """nu = E_b - E_a and its field derivatives at one field, both curvature conventions named (Section 13)."""
+    """nu = E_b - E_a and its field derivatives at one field, both curvature conventions named."""
 
     B_gauss: float
     frequency_hz: float
@@ -290,7 +263,7 @@ class TransitionSensitivity:
 
     @property
     def taylor_c2_hz_per_g2(self) -> float:
-        """(1/2) d^2 nu/dB^2: the coefficient of (delta B)^2 (Langer's 0.305 Hz/uT^2, the 171Yb+ 310.87 Hz/G^2)."""
+        """(1/2) d^2 nu/dB^2: the coefficient of (delta B)^2."""
         return 0.5 * self.d2nu_dB2_hz_per_g2
 
 
@@ -310,9 +283,8 @@ def transition_sensitivity(
 
 @dataclass(frozen=True)
 class ClockPoint:
-    """A field-insensitive point of a transition (Section 4.5.1): the field B0 (gauss) where d nu/dB = 0, the transition
-    frequency there (Hz) and the curvature d^2 nu/dB^2 (Hz/G^2), with ``taylor_c2_hz_per_g2`` = half of it as the second
-    Taylor coefficient (Section 13, "Curvature naming": both names, never one "curvature")."""
+    """A field-insensitive point of a transition: the field B0 (gauss) where d nu/dB = 0, |nu| there (Hz) and its
+    curvature d^2|nu|/dB^2 (Hz/G^2); ``taylor_c2_hz_per_g2`` is half the curvature."""
 
     B0_gauss: float
     frequency_hz: float
@@ -333,11 +305,7 @@ def clock_points(
     *,
     n_grid: int = 400,
 ) -> tuple[ClockPoint, ...]:
-    """Every field in [B_lo, B_hi] where d nu/dB = 0 for the pair, found on a grid and refined by brentq.
-
-    The derivative is the analytic Hellmann-Feynman difference, so the root is located to the precision of the
-    eigenvalues, not of a finite difference (Section 9.13: the 9Be+ roots at 119.446 and 119.643 G resolve).
-    """
+    """Every field in [B_lo, B_hi] where d nu/dB = 0 for the pair: a grid scan refined by brentq on the analytic slope."""
     if B_lo_gauss <= 0.0 or B_hi_gauss <= B_lo_gauss:
         raise ValueError("the search interval must satisfy 0 < B_lo < B_hi")
 
@@ -364,13 +332,11 @@ def clock_points(
 def breit_rabi_hz(
     nuclear_spin: Half, A_hz: float, g_J: float, g_I: float, B_gauss: float, F: Half, mF: Half
 ) -> float:
-    """The J = 1/2 closed form (Section 4.5.1), relative to the hyperfine centroid, every term in Hz.
+    """The J = 1/2 Breit-Rabi closed form, relative to the hyperfine centroid, every term in Hz.
 
     E(F = I +- 1/2, m_F) = -Delta E/(2(2I+1)) + g_I mu_B m_F B/h +- (Delta E/2) sqrt(1 + 4 m_F x/(2I+1) + x^2),
     x = (g_J - g_I) mu_B B/(h Delta E), Delta E = A (I + 1/2); the stretched states are exactly linear in B.
-    The sign in front of the root follows F, so the formula is the wrong branch where the radicand's root
-    changes sign (|x| > 1 for the m_F = -(I - 1/2)... states); the numerical diagonalization is primary.
-    """
+    The root's sign follows F, the wrong branch beyond |x| = 1 for some states; the diagonalization is primary."""
     ii = as_half_integer(nuclear_spin)
     f = as_half_integer(F)
     m = as_half_integer(mF)

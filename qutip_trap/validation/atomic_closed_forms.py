@@ -1,13 +1,8 @@
-"""Closed forms from the sources that the atomic layer's explicit sums must reproduce (PLAN.md Sections 4.3.2,
-4.5.4, 4.5.5, 9.10, 9.13, 9.15; the tests of milestone M0a).
-
-Conventions: ``gamma`` is the ANGULAR P-level decay rate (equal for both fine-structure levels in LS coupling),
-``omega_f`` the angular fine-structure splitting, ``delta`` the plan's detuning omega_L - omega(P1/2) from the
-lower ground state (positive blue), and Ozeri's ``g`` the HALF-convention stretched-state coupling
-g = E |<P3/2 stretched|d . sigma+|S1/2 stretched>| / (2 hbar), i.e. half the plan's single-photon Rabi
-frequency of the stretched cycling line. Ozeri's Omega_R is a half-convention two-photon Rabi frequency
-(tau_pi = pi/(2 Omega_R)), twice which is the plan's Omega_{g1 g2}.
-"""
+"""Closed forms of Ozeri et al. 2007, Wineland et al. 2003 and Uys et al. 2010 that the atomic layer's sums must reproduce.
+``gamma`` is the ANGULAR P-level decay rate, ``omega_f`` the angular fine-structure splitting and ``delta`` the detuning
+omega_L - omega(P1/2) from the lower ground state (positive blue). Ozeri's half-convention stretched-state coupling
+g = E |<P3/2|d . sigma+|S1/2>|/(2 hbar) is half the single-photon Rabi frequency, and his Omega_R (tau_pi = pi/(2 Omega_R))
+half this package's two-photon Omega_{g1 g2}."""
 
 from __future__ import annotations
 
@@ -82,11 +77,7 @@ def ozeri_p_total_optimum_delta(omega_f: float) -> tuple[float, float]:
 
 
 def ozeri_epsilon_s_from_power(omega_r_half: float, omega_32: float, w0_m: float, power_w: float) -> float:
-    """Eq. 17 as printed: eps_S = 2 pi |Omega_R| hbar omega_{3/2}^3 w_0^2/(3 c^2 P), with omega_{3/2} = 2 pi c/lambda_{3/2}.
-
-    The plan (Section 9.13) reproduces Ozeri's Table II with this form only with lambda = 2 pi c/omega (the paper's
-    printed c/omega gives 133 mW for 9Be+); the table's own reading of P (per beam) is not reproduced here.
-    """
+    """Ozeri 2007 Eq. 17: eps_S = 2 pi |Omega_R| hbar omega_{3/2}^3 w_0^2/(3 c^2 P), angular frequencies in rad/s."""
     return (
         2.0 * math.pi * abs(omega_r_half) * HBAR_J_S * omega_32**3 * w0_m**2 / (3.0 * C_M_PER_S**2 * power_w)
     )
@@ -139,36 +130,23 @@ def wineland_r_se_clock(gamma: float, g_b: float, g_r: float, delta: float, omeg
 
 
 OZERI_PHOTONS_PER_RADIAN_COEFFICIENT = 0.9579
-"""The saturation coefficient of Gamma_total/Delta_St for a FAR-DETUNED clock-qubit Raman drive (Ozeri 2005; PLAN.md:447
-and the 9.10 "Rayleigh amplitudes" row, both [verified]). TRANSCRIBED, not derived here: the coefficient's derivation
-needs Ozeri's four Rayleigh amplitudes at first power in the detuning, and Wineland's Eqs. 2.17-2.18, which the module
-does carry, give exactly 1 (they share one prefactor and one bracket), so 0.9579 is a 4.2 percent correction to that
-identity and not a factor error - see ``wineland_photons_per_stark_radian``."""
+"""The saturation coefficient of Gamma_total/Delta_St for a far-detuned clock-qubit Raman drive (Ozeri 2005), transcribed
+rather than derived; Wineland's Eqs. 2.17-2.18 give exactly 1 (``wineland_photons_per_stark_radian``)."""
 
 
 def ozeri_photons_per_stark_radian(
     gamma: float, delta_hf: float, coefficient: float = OZERI_PHOTONS_PER_RADIAN_COEFFICIENT
 ) -> float:
-    """Gamma_total/Delta_St -> C gamma/Delta_hf: scattered photons per radian of Stark phase, saturated in the detuning.
-
-    Both arguments in the SAME units (angular or ordinary; the ratio is dimensionless). The plan prints
-    0.9579 gamma/Delta_hf = 0.015396 for 9Be+; with the species table's gamma/2pi = 19.4 MHz (Monroe 1995) that product
-    needs Delta_hf/2pi = 1.20702 GHz, which is Langer's clock-point splitting 1.207495843 GHz to 4e-4 and NOT the
-    zero-field |A|(I + 1/2) = 1.250018 GHz (which gives 0.014867). The ledger records the residual.
-    """
+    """Gamma_total/Delta_St -> C gamma/Delta_hf (Ozeri 2005): scattered photons per radian of Stark phase, saturated in
+    the detuning; ``gamma`` and ``delta_hf`` in the same units."""
     if delta_hf == 0.0:
         raise ZeroDivisionError("Delta_hf is the ground-state hyperfine splitting and is nonzero")
     return coefficient * gamma / delta_hf
 
 
 def wineland_photons_per_stark_radian(gamma: float, omega_0: float) -> float:
-    """R_SE/|delta_{0<->0}| = gamma/omega_0, EXACTLY, for any Delta and any polarization (Wineland Eqs. 2.17-2.18).
-
-    Eq. 2.17 and Eq. 2.18 share the one (g_b^2 + g_r^2)/3 prefactor and the one [1/Delta^2 + 2/(Delta - omega_F)^2]
-    bracket, so their ratio is a pure atomic constant: this is why the clock-qubit shift is polarization independent and
-    therefore UNNULLABLE, unlike the 9Be+ |2,2> <-> |1,1> shift (PLAN.md:685). It is the coefficient-1 reference for
-    Ozeri's 0.9579 above.
-    """
+    """R_SE/|delta_{0<->0}| = gamma/omega_0 exactly, for any Delta and polarization (Wineland 2003 Eqs. 2.17-2.18 share
+    prefactor and bracket), so the clock-qubit shift cannot be nulled by polarization."""
     return gamma / omega_0
 
 

@@ -1,9 +1,6 @@
-"""Beam geometry (PLAN.md Sections 3.3, 4.2.4, 4.5.3; Appendix E; milestone M2 for the physics).
+"""Laser beam geometry: wavelength, direction, polarization, waist, power and pointing.
 
-A ``Beam`` carries wavelength, propagation direction, polarization, waist, power and pointing; the per-ion
-intensity through the Gaussian profile is where addressing crosstalk originates (Section 3.3). Polarization
-is decomposed about B into the spherical basis of Section 13 (row "Polarization components") by the atomic
-layer of M0a, never stored per sublevel here.
+The per-ion intensity through the Gaussian profile is where addressing crosstalk originates.
 """
 
 from __future__ import annotations
@@ -25,11 +22,7 @@ def _unit(v: tuple[float, float, float], what: str) -> None:
 
 @dataclass(frozen=True)
 class PolarizationModulation:
-    """AOM, PEM or EOM polarization modulation for dark-state destabilization (Section 8.1).
-
-    Its presence makes ``steadystate`` illegal and forces the propagate-then-period-average path
-    (Section 13, row "Polarization-modulation mappings").
-    """
+    """AOM, PEM or EOM polarization modulation for dark-state destabilization (it makes the Liouvillian time periodic)."""
 
     kind: Literal["aom", "pem", "eom"]
     frequency_hz: float
@@ -42,22 +35,20 @@ class PolarizationModulation:
 
 @dataclass(frozen=True)
 class Beam:
-    """One laser beam at the ions (Sections 3.3, 4.2.4): vacuum wavelength (m), unit propagation direction, laboratory-frame
-    Jones vector, 1/e^2 intensity waist (m), power (W) and a point on the axis (m); the per-ion intensity through the
-    Gaussian profile is where addressing crosstalk originates. Its polarization about B is derived by the atomic layer."""
+    """One laser beam at the ions: vacuum wavelength, unit propagation direction, Jones vector, waist, power, pointing."""
 
     wavelength_m: float
-    """VACUUM wavelength."""
+    """Vacuum wavelength."""
     k_hat: tuple[float, float, float]
     polarization: tuple[complex, complex, complex]
     """Laboratory-frame Jones vector, unit norm, orthogonal to k_hat."""
     waist_m: float
-    """1/e^2 intensity radius w0; the peak on-axis intensity is 2P/(pi w0^2) (Section 13, comb row)."""
+    """1/e^2 intensity radius w0."""
     power_w: float
     pointing_m: tuple[float, float, float]
     """A point on the beam axis."""
     polarization_amplitudes: tuple[complex, complex, complex] | None = None
-    """(sigma-, pi, sigma+) spherical components about B, unit-normalized (Appendix E, Run 5 amendment)."""
+    """(sigma-, pi, sigma+) components about B, unit-normalized; when set, used instead of decomposing ``polarization``."""
     modulation: PolarizationModulation | None = None
 
     def __post_init__(self) -> None:
@@ -86,11 +77,7 @@ class Beam:
         return self.k_rad_per_m * np.asarray(self.k_hat, dtype=float)
 
     def intensity_at(self, position_m: np.ndarray) -> float:
-        """Gaussian-beam intensity I = (2P/(pi w0^2)) exp(-2 r_perp^2/w0^2) at the beam waist plane (W/m^2).
-
-        The Rayleigh-range variation of the waist along the beam is neglected (ions sit near the focus);
-        M2 may refine this with the configured focal position.
-        """
+        """Gaussian-beam intensity I = (2P/(pi w0^2)) exp(-2 r_perp^2/w0^2) in W/m^2, neglecting the Rayleigh range."""
         r = np.asarray(position_m, dtype=float) - np.asarray(self.pointing_m, dtype=float)
         k = np.asarray(self.k_hat, dtype=float)
         r_perp = r - np.dot(r, k) * k
@@ -100,12 +87,12 @@ class Beam:
 
 @dataclass(frozen=True)
 class PolGradientBeams:
-    """A lin-perp-lin polarization-gradient pair, not two independent Beams (Section 4.2.4)."""
+    """A counter-propagating lin-perp-lin polarization-gradient pair, not two independent Beams."""
 
     beam_a: Beam
     beam_b: Beam
     detuning_hz: float
-    """Must be > 0 (blue) on an inverted j_e <= j_g line; asserted, not warned."""
+    """Must be > 0 (blue) on an inverted j_e <= j_g line."""
     beat_hz: float = 0.0
     phase_rad: float = 0.0
     level_scheme: Literal["jg12_je12", "F1_to_F0"] = "jg12_je12"
@@ -125,15 +112,15 @@ class PolGradientBeams:
             raise ValueError("the lin-perp-lin pair must have orthogonal polarizations")
 
     def xi(self, mode_freq_hz: float, s_single_beam: float) -> float:
-        """Delta*s/(3*omega), angular: the light-shift modulation AMPLITUDE over the mode frequency (Section 13), with ``s`` Joshi's
-        single-beam saturation parameter referenced to the S1/2-P3/2 stretched transition (Section 4.2.4)."""
+        """xi = Delta s / (3 omega): the light-shift modulation amplitude over the mode frequency, with ``s`` the
+        single-beam saturation parameter on the S1/2-P3/2 stretched transition (Joshi et al. 2020)."""
         from qutip_trap.prep.polarization_gradient import xi_depth
 
         return xi_depth(2.0 * math.pi * self.detuning_hz, s_single_beam, 2.0 * math.pi * mode_freq_hz)
 
     def limits(self, mode_freq_hz: float, s_single_beam: float) -> tuple[float, float]:
-        """(fixed-phase <n_0> at this pair's phase, phase-averaged <n>) of the analytic model; raises for level_scheme != "jg12_je12"
-        because the prefactors carry to no other scheme (Section 4.2.4), and at a node of the gradient."""
+        """(fixed-phase <n_0> at this pair's phase, phase-averaged <n>) of the analytic model; raises for any level scheme
+        but "jg12_je12" and at a node of the gradient."""
         if self.level_scheme != "jg12_je12":
             raise ValueError(
                 "the analytic polarization-gradient limits hold for j_g = 1/2 <-> j_e = 1/2 only; no source prints them for "
@@ -145,7 +132,7 @@ class PolGradientBeams:
         return fixed_phase_nbar(xi, self.phase_rad), phase_averaged_nbar(xi)
 
     def moving_gradient_ok(self, cooling_rate_hz: float, mode_freq_hz: float) -> bool:
-        """W < delta < omega: the beat must outrun the cooling and stay below the trap frequency (Section 4.2.4)."""
+        """W < delta < omega: the beat must outrun the cooling and stay below the trap frequency."""
         from qutip_trap.prep.polarization_gradient import moving_gradient_window
 
         return moving_gradient_window(

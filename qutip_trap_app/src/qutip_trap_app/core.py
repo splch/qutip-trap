@@ -1,307 +1,82 @@
-"""The core contract: every import of ``qutip_trap`` the application makes, in one module (PLAN.md Section 14.6).
-
-Section 14.6: "The app calls only public core API that exists for the core's own reasons ... If a zoom view needs data the
-core does not expose, the app records the gap and shows the view as unavailable rather than patching the core." Everything
-the application uses from the core is re-exported from here, so that a reader can audit the contract in one place and
-``tests/test_provenance_coverage.py`` can assert that no other module of the application imports ``qutip_trap`` directly,
-and that this one imports only the documented rung modules of the ladder (docs/api_implementation_plan.md 3.3; 0.4.0):
-the root ``qutip_trap`` (rung 0, the machine), ``qutip_trap.schedule`` (rung 2), ``qutip_trap.dynamics`` (rung 3),
-``qutip_trap.physics`` (rung 4) and the Appendix E compatibility surface ``qutip_trap.api``.
-
-Until 0.3.0 twelve names came from private modules, each a core feature request the application worked around on its own
-side and listed in :data:`CORE_GAPS`, which the run record carries. Phase 3 of the plan closed every one of them: the
-concrete engine and the Hamiltonian builder are on the dynamics rung, the noise-sample keys beside them, the closed forms
-and published models on the physics rung, the closed-form waveform trajectory on the schedule rung, the traces carry the
-per-time Fock marginals (``Traces.mode_marginal``) and the GATE_LOCAL report the register after every step
-(``GateLocalStep.register_after``). ``CORE_GAPS`` is therefore empty and stays as the record's field.
-"""
+"""Every name the application takes from the physics core, imported from the module that defines it (the root package's
+own names from the package), so the contract with the core reads in one place; no other module imports ``qutip_trap``."""
 
 from __future__ import annotations
 
-# ---- rung 0: the machine, the jobs and the option objects ------------------------------------------------------------------
-from qutip_trap import (
-    FidelityLevel,
-    Job,
-    JobCancelled,
-    Machine,
-    Numerics,
-    Physics,
-    Readout,
-    RunSpec,
-    as_machine,
-)
-from qutip_trap import __version__ as core_version
-
-# ---- the Appendix E compatibility surface ------------------------------------------------------------------------------------
-from qutip_trap.api import (
-    Beam,
-    CalEntry,
-    CalibrationTable,
-    Circuit,
-    CollapseOp,
-    CompileReport,
-    Crystal,
-    Detector,
-    Device,
-    DevicePreset,
-    Diagnostics,
-    Drift,
-    Field,
-    GateDrive,
-    GateModes,
-    GateStep,
-    GateTarget,
-    HilbertSpace,
-    MathieuParameters,
-    ModeTruncation,
-    MotionalModel,
-    NoiseModel,
-    NoiseSample,
-    NoiseSpectrum,
-    Operation,
-    PlayedGate,
-    PreparationRecipe,
-    Pulse,
-    RecordModel,
-    Result,
-    RfDrive,
-    RunRecord,
-    ScatteringOptions,
-    Schedule,
-    SeedSpec,
-    Segment,
-    ShapedPulse,
-    SolverOptions,
-    Species,
-    State,
-    ThresholdDiscriminator,
-    Traces,
-    Trap,
-    Waveform,
-    average_gate_infidelity,
-    ca40_optical,
-    calibrate,
-    choi_from_unitary,
-    circuit_unitary,
-    collision_rate_per_ion,
-    compile_with_report,
-    depolarizing_rate,
-    derive_raman_drive,
-    detection_rates_for_ion,
-    entanglement_infidelity,
+from qutip_trap import Circuit, Device, Machine, Numerics, Progress, Result, RunSpec
+from qutip_trap.control.compiler import ideal_probabilities
+from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.schedule import Schedule
+from qutip_trap.control.shaping import (
+    SegmentedEnvelope,
+    envelope_of,
     gate_modes,
-    gate_steps,
-    ideal_probabilities,
-    input_states,
-    kraus_operators,
-    last_record,
-    load_ionq_json,
-    load_openqasm2,
-    optimize_threshold,
-    pauli_twirl,
-    prepare,
-    register_fidelity,
-    run,
-    run_preparation,
-    scattering_channels,
-    schedule,
-    select_space,
-    solve_amplitude_modulation,
-    solve_crystal,
-    species_by_name,
-    standard_recipe,
-    white_spectrum,
-    yb171_chain,
+    integrals_segmented,
+    trajectory_sampled,
 )
-
-# ---- rung 3: the dynamics ------------------------------------------------------------------------------------------------------
-from qutip_trap.dynamics import (
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.hamiltonian import BuiltHamiltonian, build_hamiltonian
+from qutip_trap.hilbert.operators import debye_waller_factor, rabi_table
+from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.io.ionq import load_ionq_json
+from qutip_trap.io.openqasm import load_openqasm2
+from qutip_trap.noise.sampling import (
     KEY_BRANCH_WEIGHT,
-    BuilderOptions,
-    BuiltHamiltonian,
-    DriveRecord,
-    JointExactEngine,
-    build_hamiltonian,
+    NoiseSample,
     key_frozen_n,
     key_mode_offset_hz,
     key_qubit_offset_hz,
 )
-
-# ---- rung 4: the physics, its closed forms and the published models ----------------------------------------------------------
-from qutip_trap.physics import (
-    ATOMIC_MASS_KG,
-    CRAIN_YB171_SNSPD,
-    MYERSON_CA40_PMT,
-    HartyParameters,
-    apply_pulses,
-    axial_modes_dimensionless,
-    ballance_thermal_error,
-    debye_waller_factor,
-    doppler_force_nbar,
-    equilibrium_dimensionless,
-    is_stable,
-    kirchmair_populations,
-    lamb_dicke_parameter,
-    mean_occupation,
-    monodromy,
-    ms_alpha,
-    ms_gamma,
-    rabi_matrix_element,
-    rabi_table,
-    simulate_epg_sets,
-    stenholm_coefficients,
-    thermal_debye_waller_infidelity,
-    thermal_distribution,
-    x0_m,
-)
-
-# ---- rung 2: the schedule and the closed-form trajectory behind a played waveform -----------------------------------------------
-from qutip_trap.schedule import (
-    CHI_MAXIMAL_RAD,
-    SampledEnvelope,
-    SegmentedEnvelope,
-    closure_duration_s,
-    closure_rabi_rad_s,
-    envelope_of,
-    integrals_segmented,
-    trajectory_sampled,
-)
-
-CORE_GAPS: tuple[str, ...] = ()
-"""What the core does not expose (or does not re-export) that the application needs: Section 14.6's record of the gaps.
-Empty since 0.4.0 (docs/api_implementation_plan.md 3.3): every gap of 0.1.0 to 0.3.0 is closed by a documented rung
-module; the field stays on the run record so that an exported record still says which core facilities the app leaned
-on (none)."""
+from qutip_trap.noise.scattering import scattering_channels
+from qutip_trap.noise.summary import choi_from_unitary, entanglement_infidelity
+from qutip_trap.options import Truncation
+from qutip_trap.presets import yb171_chain
+from qutip_trap.run.gate_local import GateStep, gate_steps
+from qutip_trap.run.job import RunRecord, last_record, prepare, register_fidelity
 
 __all__ = [
-    "FidelityLevel",
-    "Job",
-    "JobCancelled",
-    "Machine",
-    "Numerics",
-    "Physics",
-    "Readout",
-    "RunSpec",
-    "as_machine",
-    "Beam",
-    "BuilderOptions",
+    "KEY_BRANCH_WEIGHT",
     "BuiltHamiltonian",
-    "CHI_MAXIMAL_RAD",
-    "ATOMIC_MASS_KG",
-    "CORE_GAPS",
-    "CRAIN_YB171_SNSPD",
-    "CalEntry",
-    "CalibrationTable",
     "Circuit",
-    "CollapseOp",
-    "CompileReport",
-    "Crystal",
-    "Detector",
     "Device",
-    "DevicePreset",
-    "Diagnostics",
-    "Drift",
-    "DriveRecord",
-    "Field",
-    "GateDrive",
-    "GateModes",
     "GateStep",
-    "GateTarget",
-    "HartyParameters",
     "HilbertSpace",
     "JointExactEngine",
-    "KEY_BRANCH_WEIGHT",
-    "MYERSON_CA40_PMT",
-    "MathieuParameters",
-    "ModeTruncation",
+    "Machine",
     "MotionalModel",
-    "NoiseModel",
     "NoiseSample",
-    "NoiseSpectrum",
-    "Operation",
-    "PlayedGate",
-    "PreparationRecipe",
+    "Numerics",
+    "Progress",
     "Pulse",
-    "RecordModel",
     "Result",
-    "RfDrive",
     "RunRecord",
-    "SampledEnvelope",
-    "ScatteringOptions",
+    "RunSpec",
     "Schedule",
     "SeedSpec",
-    "Segment",
     "SegmentedEnvelope",
-    "ShapedPulse",
     "SolverOptions",
-    "Species",
     "State",
-    "ThresholdDiscriminator",
     "Traces",
-    "Trap",
-    "Waveform",
-    "apply_pulses",
-    "average_gate_infidelity",
-    "axial_modes_dimensionless",
-    "ballance_thermal_error",
+    "Truncation",
     "build_hamiltonian",
-    "ca40_optical",
-    "calibrate",
     "choi_from_unitary",
-    "circuit_unitary",
-    "closure_duration_s",
-    "closure_rabi_rad_s",
-    "collision_rate_per_ion",
-    "compile_with_report",
-    "core_version",
     "debye_waller_factor",
-    "depolarizing_rate",
-    "derive_raman_drive",
-    "detection_rates_for_ion",
-    "doppler_force_nbar",
     "entanglement_infidelity",
     "envelope_of",
-    "equilibrium_dimensionless",
     "gate_modes",
     "gate_steps",
     "ideal_probabilities",
-    "input_states",
     "integrals_segmented",
-    "is_stable",
     "key_frozen_n",
     "key_mode_offset_hz",
     "key_qubit_offset_hz",
-    "kirchmair_populations",
-    "kraus_operators",
-    "lamb_dicke_parameter",
     "last_record",
     "load_ionq_json",
     "load_openqasm2",
-    "mean_occupation",
-    "monodromy",
-    "ms_alpha",
-    "ms_gamma",
-    "optimize_threshold",
-    "pauli_twirl",
     "prepare",
-    "rabi_matrix_element",
     "rabi_table",
     "register_fidelity",
-    "run",
-    "run_preparation",
     "scattering_channels",
-    "schedule",
-    "select_space",
-    "simulate_epg_sets",
-    "solve_amplitude_modulation",
-    "solve_crystal",
-    "species_by_name",
-    "standard_recipe",
-    "stenholm_coefficients",
-    "thermal_debye_waller_infidelity",
-    "thermal_distribution",
     "trajectory_sampled",
-    "white_spectrum",
-    "x0_m",
     "yb171_chain",
 ]

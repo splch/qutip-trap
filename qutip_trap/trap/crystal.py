@@ -1,37 +1,11 @@
-"""Ion crystal and normal modes (PLAN.md Sections 4.1.2, 4.1.3, 4.1.7; Appendix E; milestone M1).
+"""Ion crystal and normal modes.
 
-Mode addressing (Section 13, row "Mode index"): every ``mode: int`` anywhere in the package is a position in
-``Crystal.modes``, ordered axial, transverse_1, transverse_2, ascending frequency within a family, with
-unit-norm mass-weighted eigenvectors whose last component is positive. The Lamb-Dicke parameter
-eta_{i,m} = (delta_k . e_hat) c_{i,m} sqrt(hbar/(2 m_i omega_m)) times C0 is computed HERE and nowhere else
-(Section 5.7), with the ion's own mass and the mass-weighted eigenvector component (Section 4.1.7).
+Every ``mode: int`` in the package is a position in ``Crystal.modes``, ordered axial, transverse_1, transverse_2 and
+ascending in frequency within a family, with unit-norm mass-weighted eigenvectors whose last component is positive. The
+Lamb-Dicke parameter (with the micromotion factor C0) is computed here, in ``Crystal.lamb_dicke``, and nowhere else.
 
-Physics, in the order the module applies it:
-
-- Equilibrium (Section 4.1.2): N ions of charge Z_i e in the potential energy
-  V = sum_i [(1/2) sum_a kappa_{i,a} r_{i,a}^2 - Z_i e E . r_i] + sum_{i<j} Z_i Z_j e^2/(4 pi eps0 |r_i - r_j|),
-  with kappa_{i,a} = m_i omega_{i,a}^2 the per-ion spring constants along the trap's principal axes (x', y', z),
-  solved by Newton iteration with the exact gradient and Hessian from the linear-chain start of James 1998
-  (dimensionless u_m - sum_{n<m} 1/(u_m - u_n)^2 + sum_{n>m} 1/(u_m - u_n)^2 = 0, length scale
-  l = (Z^2 e^2/(4 pi eps0 M nu^2))^{1/3}, closed forms u = -+(1/2)^{2/3} for N = 2 and -+(5/4)^{1/3}, 0 for N = 3).
-  Statics are mass independent for equal charges (Section 4.1.7); a stray field displaces the ions. The
-  Hessian at the solution must be positive definite: a linear chain whose transverse Hessian has a
-  non-positive eigenvalue has buckled (zigzag) and the module refuses to build a linear-chain mode structure
-  (alpha_crit = 2/(mu_N - 1), i.e. (omega_r/omega_z)_crit = 1 and sqrt(12/5) = 1.5492 at N = 2, 3; Marquet 2003).
-- Normal modes (Sections 4.1.3, 4.1.7): the generalized eigenproblem K b = omega^2 M b is solved as the
-  symmetric problem M^{-1/2} K M^{-1/2} c = omega^2 c with orthonormal MASS-WEIGHTED eigenvectors c (Home 2013
-  Eqs. 7-9; Kielpinski 2000; Morigi and Walther 2001; Wubbena 2012); for equal masses c is James's b. The
-  physical displacement of ion i in mode k is c_i^{(k)} sqrt(hbar/(2 m_i omega_k)) (a_k + a_k^dag), the standard
-  x = x0 (a + a^dag) convention and never James's Kittel form with the factor i (Section 13). For a collinear
-  chain the three Cartesian families separate exactly and are solved as three N x N problems, which keeps a
-  degenerate radial pair (omega_x = omega_y) from mixing families; axially mu_1 = 1 (centre of mass, b ~ 1/sqrt N)
-  and mu_2 = 3 (stretch, b ~ u) for every N, transversely gamma_p = 1/alpha + 1/2 - mu_p/2 with alpha = (omega_z/omega_r)^2
-  per family (the two radial families share A's eigenvectors and differ in frequency whenever omega_x != omega_y),
-  so the centre-of-mass mode is the HIGHEST transverse mode and the zigzag mode the lowest.
-- Parity (Section 4.1.7): in a reflection-symmetric mass array every mode has a definite inversion parity;
-  the modes with ANTISYMMETRIC displacement patterns (p = +1 in Morigi and Walther's convention, the central ion
-  at rest for odd N) have sum_i c_i/sqrt(m_i) = 0, are exempt from uniform-field noise and uncoolable by a
-  centre ion; the in-phase lowest mode is odd under that parity ("even" read as "in-phase" inverts the rule).
+Equilibrium: damped Newton minimization of the harmonic-plus-Coulomb energy from James 1998's linear chain. Modes: the
+mass-weighted Hessian M^{-1/2} K M^{-1/2} c = omega^2 c (Home 2013 Eqs. 7-9), per Cartesian family for a collinear chain.
 """
 
 from __future__ import annotations
@@ -63,15 +37,14 @@ _NEWTON_MAX = 200
 
 
 class ZigzagError(ValueError):
-    """The linear chain is not a stable configuration in this trap (Section 4.1.2: the module refuses to build a
-    linear-chain mode structure when the zigzag criterion is violated)."""
+    """The linear chain is not a stable configuration in this trap (it buckles into a zigzag)."""
 
 
 # ---- James 1998: the dimensionless linear chain ------------------------------------------------------------------
 
 
 def length_scale_m(mass_kg: float, omega_z_rad_s: float, *, charge: int = 1) -> float:
-    """l = (Z^2 e^2/(4 pi eps0 M nu^2))^{1/3} (James 1998; Wineland 1998's s with s_2 = 2^{1/3} s, s_3 = (5/4)^{1/3} s)."""
+    """l = (Z^2 e^2/(4 pi eps0 M nu^2))^{1/3} (James 1998)."""
     if mass_kg <= 0.0 or omega_z_rad_s <= 0.0:
         raise ValueError("mass and axial frequency must be positive")
     return float((charge * charge * K_COULOMB_J_M / (mass_kg * omega_z_rad_s**2)) ** (1.0 / 3.0))
@@ -86,7 +59,7 @@ def _chain_gradient(u: np.ndarray) -> np.ndarray:
 
 
 def axial_hessian_dimensionless(u: np.ndarray) -> np.ndarray:
-    """A_mn = 1 + 2 sum_{p != m} 1/|u_m - u_p|^3 (m = n), -2/|u_m - u_n|^3 (m != n) (James Eq. 3.3; Marquet Eq. 2.9)."""
+    """A_mn = 1 + 2 sum_{p != m} 1/|u_m - u_p|^3 (m = n), -2/|u_m - u_n|^3 (m != n) (James Eq. 3.3)."""
     u = np.asarray(u, dtype=float)
     d = np.abs(u[:, None] - u[None, :])
     with np.errstate(divide="ignore"):
@@ -97,11 +70,8 @@ def axial_hessian_dimensionless(u: np.ndarray) -> np.ndarray:
 
 
 def equilibrium_dimensionless(n: int, *, start: np.ndarray | None = None) -> np.ndarray:
-    """The James equilibrium positions u_1 < ... < u_N of N equal charges, by Newton iteration from a scaled uniform start.
-
-    The chain energy is strictly convex on the ordered domain, so the minimum is unique; steps are damped to
-    preserve the ordering. Closed forms: N = 2 -> -+(1/2)^{2/3}; N = 3 -> -+(5/4)^{1/3}, 0 (Section 4.1.2).
-    """
+    """The James equilibrium positions u_1 < ... < u_N of N equal charges, by Newton iteration damped to keep the ordering
+    (the energy is strictly convex on the ordered domain, so the minimum is unique)."""
     if n < 1:
         raise ValueError("N >= 1")
     if n == 1:
@@ -128,7 +98,7 @@ def equilibrium_dimensionless(n: int, *, start: np.ndarray | None = None) -> np.
 
 
 def _fix_sign(vectors: np.ndarray) -> np.ndarray:
-    """Sign gauge (Section 13): the last component of every column positive (Marquet et al.'s convention)."""
+    """Sign gauge: the last non-zero component of every column positive."""
     v = np.array(vectors, dtype=float)
     for k in range(v.shape[1]):
         last = v[np.max(np.flatnonzero(np.abs(v[:, k]) > 1e-12)), k]
@@ -138,10 +108,7 @@ def _fix_sign(vectors: np.ndarray) -> np.ndarray:
 
 
 def axial_modes_dimensionless(u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(mu_p ascending, b^{(p)} as columns) of the dimensionless axial Hessian; nu_p = sqrt(mu_p) nu (James Eq. 3.5).
-
-    mu_1 = 1 with b ~ (1, ..., 1)/sqrt N and mu_2 = 3 with b ~ u for every N; mu_3 = 29/5 at N = 3.
-    """
+    """(mu_p ascending, b^{(p)} as columns) of the dimensionless axial Hessian; nu_p = sqrt(mu_p) nu (James Eq. 3.5)."""
     mu, b = np.linalg.eigh(axial_hessian_dimensionless(np.asarray(u, dtype=float)))
     return np.asarray(mu), _fix_sign(b)
 
@@ -162,7 +129,7 @@ def alpha_critical(n: int) -> float:
 
 
 def zigzag_ratio_critical(n: int) -> float:
-    """(omega_r/omega_z)_crit = 1/sqrt(alpha_crit): 1.0000 and sqrt(12/5) = 1.5492 at N = 2, 3 (Section 9.1)."""
+    """(omega_r/omega_z)_crit = 1/sqrt(alpha_crit)."""
     return 1.0 / math.sqrt(alpha_critical(n))
 
 
@@ -193,16 +160,15 @@ def infinite_chain_epsilon(
 
 
 def infinite_chain_zigzag_omega_r_rad_s(mass_kg: float, spacing_m: float, *, charge: int = 1) -> float:
-    """omega_r^2 = (7 zeta(3)/(8 pi eps0)) e^2/(m s_c^3): the infinite-chain force balance (Wineland 1998), the zigzag mode
-    of Landsman's dispersion at kappa d = pi where S(pi) = -(3/4) zeta(3); 7.806 MHz for 9Be+ at s_c = 3 um (Section 9.1)."""
+    """omega_r^2 = (7 zeta(3)/(8 pi eps0)) e^2/(m s_c^3): the zigzag threshold of an infinite chain of spacing s_c, where
+    Landsman's dispersion vanishes at kappa d = pi (Wineland 1998)."""
     return math.sqrt(
         7.0 * float(zeta(3.0)) / 2.0 * charge * charge * K_COULOMB_J_M / (mass_kg * spacing_m**3)
     )
 
 
 def two_ion_mixed_axial_squared(mu: float) -> tuple[float, float]:
-    """omega_-+^2/omega_z1^2 = 1 + 1/mu -+ sqrt(1 - 1/mu + 1/mu^2), mu = m_2/m_1 (Wubbena 2012 Eqs. 12-14; Morigi-Walther Eq. 8);
-    (1, 3) at mu = 1, (0.500847, 2.250636) for 9Be+/24Mg+ with isotope masses; omega_+^2 + omega_-^2 = 2(1 + 1/mu)."""
+    """omega_-+^2/omega_z1^2 = 1 + 1/mu -+ sqrt(1 - 1/mu + 1/mu^2), mu = m_2/m_1 (Wubbena 2012 Eqs. 12-14)."""
     if mu <= 0.0:
         raise ValueError("mass ratio must be positive")
     root_ = math.sqrt(1.0 - 1.0 / mu + 1.0 / mu**2)
@@ -296,13 +262,8 @@ def equilibrium_positions_m(
     field_v_per_m: np.ndarray | None = None,
     start_m: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Minimize the crystal energy by damped Newton iteration from the James linear chain (Section 4.1.2).
-
-    ``spring_j_per_m2`` is the (N, 3) array kappa_{i,a} = m_i omega_{i,a}^2 in the principal frame (x', y', z).
-    The start is the James chain along z at the scale set by ion 0's axial spring, each ion displaced by
-    Z_i e E/kappa_i under a uniform field; the returned configuration is checked to be a minimum (positive
-    definite Hessian) and ``ZigzagError`` is raised otherwise.
-    """
+    """Minimize the crystal energy by damped Newton iteration from the James chain along z; ``spring_j_per_m2`` is the
+    (N, 3) array kappa_{i,a} = m_i omega_{i,a}^2 in the principal frame. Raises ``ZigzagError`` at a non-minimum."""
     spring = np.asarray(spring_j_per_m2, dtype=float)
     charges = np.asarray(charges, dtype=float)
     n = spring.shape[0]
@@ -367,25 +328,22 @@ def is_collinear(positions_m: np.ndarray, *, rtol: float = 1e-9) -> bool:
     return bool(np.max(np.abs(pos[:, :2])) <= rtol * extent)
 
 
-# ---- Appendix E records ---------------------------------------------------------------------------------------------
+# ---- records --------------------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Mode:
-    """One normal mode of the crystal (Section 4.1.3): its family and position within it (ascending frequency), its frequency
-    as an ordinary frequency (Hz), its unit axis, the unit-norm mass-weighted eigenvector c_{i,m} (last component positive)
-    and, for a non-collinear crystal, the (N, 3) displacement pattern the eigenvector is the projection of."""
+    """One normal mode: its family and ascending-frequency position within it, frequency (Hz), unit axis ``e_hat`` and the
+    unit-norm mass-weighted eigenvector c_{i,m} (last component positive)."""
 
     family: Family
     index: int
-    """Position within the family, ascending frequency."""
     omega_hz: float
     e_hat: tuple[float, float, float]
     eigenvector: np.ndarray
-    """Mass-weighted c_{i,m}, unit norm, last component positive (Section 4.1.3)."""
     pattern: np.ndarray | None = None
-    """(N, 3) mass-weighted displacement pattern in the laboratory frame for a non-collinear crystal, whose modes
-    are not along one axis; ``eigenvector`` is then its projection on ``e_hat``. None for a collinear chain."""
+    """For a non-collinear crystal, the (N, 3) mass-weighted displacement pattern in the laboratory frame, of which
+    ``eigenvector`` is the projection on ``e_hat``; None for a collinear chain."""
 
     def __post_init__(self) -> None:
         if self.omega_hz <= 0.0:
@@ -419,7 +377,7 @@ class Mode:
 
 @dataclass(frozen=True)
 class LambDicke:
-    """One Lamb-Dicke parameter with the factors it was built from (the provenance ``Crystal.lamb_dicke`` records)."""
+    """One Lamb-Dicke parameter with the factors it was built from: eta = projection * x0_m * C0."""
 
     ion: int
     mode: int
@@ -427,26 +385,23 @@ class LambDicke:
     projection: float
     """(delta_k . e_hat) c_{i,m}, in 1/m: the wavevector projected on the ion's mass-weighted displacement."""
     x0_m: float
-    """sqrt(hbar/(2 m_i omega_m)) with the ion's OWN mass (Section 13, "Lamb-Dicke base")."""
+    """sqrt(hbar/(2 m_i omega_m)) with the ion's own mass."""
     C0: float
-    """The micromotion factor applied here and nowhere else (Section 4.1.1); 1 without a Mathieu record."""
+    """The micromotion factor; 1 without a Mathieu record."""
     mass_kg: float
     omega_rad_s: float
 
 
 @dataclass(frozen=True)
 class Crystal:
-    """The ion crystal (Sections 4.1.2, 4.1.3, 4.1.7): the species of every ion, the equilibrium positions (m, laboratory
-    frame, z the trap axis), the 3N normal modes in the one canonical order every ``mode: int`` of the package refers to,
-    and the principal axes when they differ from the laboratory axes. Lamb-Dicke parameters are computed by this class
-    and nowhere else (``lamb_dicke``, with the micromotion factor C0 inside)."""
+    """The ion crystal: one species per ion (mixed species allowed), equilibrium positions, normal modes and principal
+    axes."""
 
     species: tuple[Species, ...]
-    """One entry per ion (mixed species allowed)."""
     positions_m: np.ndarray
-    """(N, 3) equilibrium positions in the laboratory frame (z the trap axis)."""
+    """(N, 3) equilibrium positions in the laboratory frame."""
     modes: tuple[Mode, ...]
-    """3N modes in ONE canonical order: axial, transverse_1, transverse_2, ascending frequency within a family."""
+    """The 3N modes, ordered axial, transverse_1, transverse_2, ascending in frequency within a family."""
     axes: np.ndarray | None = None
     """Principal frame (x', y', z) as columns in the laboratory frame; None means the laboratory axes."""
 
@@ -470,9 +425,7 @@ class Crystal:
             idx = [m.index for m in self.modes if m.family == fam]
             if idx != list(range(len(idx))):
                 raise ValueError(f"{fam} mode indices must run 0, 1, ... in frequency order")
-            # PLAN 4.1.3: "3N modes in THREE families", i.e. N per family. The non-collinear branch assigns a family by
-            # the argmax of the per-axis weight, which for a strongly mixed crystal could return 4/1/1 and pass the
-            # 3N count; a family that is not N modes means the assignment, not the eigenproblem, is wrong.
+            # N per family: the non-collinear family assignment (largest per-axis weight) can split a mixed crystal unevenly
             if len(idx) != n:
                 counts = {f: sum(1 for m in self.modes if m.family == f) for f in FAMILY_ORDER}
                 raise ValueError(
@@ -495,7 +448,7 @@ class Crystal:
         return tuple(m for m in self.modes if m.family == name)
 
     def mode_index(self, family: Family, index: int) -> int:
-        """The position in ``modes`` of (family, index): the ONE mode-addressing convention (Section 13)."""
+        """The position in ``modes`` of (family, index)."""
         for k, m in enumerate(self.modes):
             if m.family == family and m.index == index:
                 return k
@@ -515,7 +468,7 @@ class Crystal:
     def lamb_dicke_record(
         self, ion: int, mode: int, delta_k: np.ndarray, *, micromotion: MathieuParameters | None
     ) -> LambDicke:
-        """eta with every factor it was built from (Section 13, "Lamb-Dicke base"; Section 4.1.7 for mixed species)."""
+        """eta with every factor it was built from."""
         if not 0 <= ion < self.n_ions:
             raise IndexError(f"ion {ion} out of range for {self.n_ions} ions")
         if not 0 <= mode < len(self.modes):
@@ -543,10 +496,7 @@ class Crystal:
     def lamb_dicke(
         self, ion: int, mode: int, delta_k: np.ndarray, *, micromotion: MathieuParameters | None
     ) -> float:
-        """eta_{i,m} = (delta_k . e_hat) c_{i,m} sqrt(hbar/(2 m_i omega_m)) times C0 from ``micromotion`` (Section 4.1.1).
-
-        C0 is applied HERE and nowhere else (Section 5.7); ``lamb_dicke_record`` returns the factors for provenance.
-        """
+        """eta_{i,m} = (delta_k . e_hat) c_{i,m} sqrt(hbar/(2 m_i omega_m)) C0, C0 from ``micromotion`` (1 when None)."""
         return self.lamb_dicke_record(ion, mode, delta_k, micromotion=micromotion).eta
 
     def lamb_dicke_matrix(self, delta_k: np.ndarray, *, micromotion: MathieuParameters | None) -> np.ndarray:
@@ -559,11 +509,7 @@ class Crystal:
         )
 
     def uniform_field_weight(self, mode: int) -> float:
-        """(sum_i c_i^{(k)}/sqrt(m_i))^2 in kg^-1: the coupling of a mode to a uniform electric field (Kielpinski Eq. 20).
-
-        N/m for an equal-mass centre-of-mass mode, zero for every even-parity mode of a reflection-symmetric mass
-        array and for every non-COM mode of an equal-mass chain (Sections 4.1.5, 4.1.7).
-        """
+        """(sum_i c_i^{(k)}/sqrt(m_i))^2 in kg^-1: the coupling of a mode to a uniform electric field (Kielpinski Eq. 20)."""
         m = self.modes[mode]
         pattern = m.displacement_pattern()
         e = np.asarray(m.e_hat, dtype=float)
@@ -587,10 +533,9 @@ def build_crystal(
     charges: np.ndarray | None = None,
     centre_m: np.ndarray | None = None,
 ) -> Crystal:
-    """The crystal of ``species`` whose single-ion secular frequencies (N, 3) along the principal axes (x', y', z) are
-    ``omega_rad_s``, in a uniform residual field ``field_v_per_m`` (laboratory frame); ``axes`` are the principal
-    directions as columns (default the laboratory axes) and ``centre_m`` the trap centre (the rf null) in the
-    laboratory frame about which the positions are reported (default the origin)."""
+    """The crystal of ``species`` with single-ion secular frequencies ``omega_rad_s`` (N, 3) along the principal axes
+    ``axes`` (columns; default the laboratory axes) in the residual field ``field_v_per_m``, about the rf null
+    ``centre_m``."""
     n = len(species)
     w = np.asarray(omega_rad_s, dtype=float)
     if w.shape != (n, 3) or np.any(w <= 0.0):
@@ -670,13 +615,8 @@ def build_crystal(
 
 
 def solve_crystal(trap: Trap, species: tuple[Species, ...] | list[Species], *, reference: int = 0) -> Crystal:
-    """Equilibrium positions, mass-weighted Hessian and normal modes of ``species`` in ``trap`` (Sections 4.1.2, 4.1.3, 4.1.7).
-
-    ``reference`` names the ion whose species the trap's explicit secular frequencies describe; the other species'
-    frequencies follow from the Mathieu parameters scaled by m_ref/m_i (Section 4.1.7: the rf part of omega^2
-    scales as 1/m^2 and the static part as 1/m), which needs the trap's rf frequency. The residual field
-    (stray plus shim response) displaces the crystal.
-    """
+    """The crystal of ``species`` in ``trap``. ``reference`` names the ion whose species the trap's explicit secular
+    frequencies describe; other species follow from the Mathieu parameters scaled by m_ref/m_i (needs the rf frequency)."""
     sp = tuple(species)
     if not sp:
         raise ValueError("a crystal needs at least one ion")

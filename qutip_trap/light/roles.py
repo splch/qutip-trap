@@ -1,11 +1,5 @@
-"""Which beams of a device play which role (PLAN.md Sections 3.3, 7.3, 8.1; milestone M6).
-
-A ``Device`` lists every beam the ions see (Section 3.1: device parameters in, everything else derived). The roles follow
-from the physics, never from a label: a beam within ``RESONANT_WINDOW`` (relative wavelength) of a tabulated E1 line of the
-crystal's species is a resonant beam (cooling, detection or repumping light: it scatters photons at the natural linewidth),
-everything else is far-detuned gate light (a Raman pair, or a single beam on the optical qubit transition). The gate-drive
-inference of the scheduler and the detection-beam selection of the readout both read these functions, so a device that
-carries its detection beam next to its Raman pair schedules and reads out without any extra bookkeeping.
+"""Which beams of a device play which role, decided by the physics: a beam within ``RESONANT_WINDOW`` of a tabulated E1
+line is resonant (cooling, detection or repump light), every other beam is far-detuned gate light.
 """
 
 from __future__ import annotations
@@ -18,7 +12,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
 
 RESONANT_WINDOW = 2e-3
-"""Relative wavelength window within which a beam counts as resonant with a tabulated line (the M5 detection rule)."""
+"""Relative wavelength window within which a beam counts as resonant with a tabulated line."""
 
 
 def resonant_beams(device: Device, *, window: float = RESONANT_WINDOW) -> tuple[int, ...]:
@@ -43,8 +37,8 @@ def gate_beams(device: Device, *, window: float = RESONANT_WINDOW) -> tuple[int,
 
 
 def detection_beams(device: Device, ion: int, *, window: float = RESONANT_WINDOW) -> tuple[int, ...]:
-    """The beams near the species' cycling line and near its tabulated repump lines (the light that makes the ion fluoresce);
-    a repump whose upper level the species table does not close (the 171Yb+ 935 nm line, M3a finding) is skipped."""
+    """The beams near the species' cycling line or its tabulated repump lines (the light that makes the ion fluoresce);
+    raises when there is none."""
     species = device.crystal.species[ion]
     lower, upper = parse_transition_label(species.cycling)
     lines = [species.transition(species.cycling).wavelength_vac_m]
@@ -61,8 +55,7 @@ def detection_beams(device: Device, ion: int, *, window: float = RESONANT_WINDOW
 
 
 def infer_detection_beam(device: Device, *, window: float = RESONANT_WINDOW) -> int | None:
-    """The index of the beam nearest (in relative wavelength) to the first species' cycling line, within ``window``; None when
-    no beam is that close. The default of ``BeamRoles.detection``; the readout itself reads :func:`detection_beams`."""
+    """The beam nearest in relative wavelength to the first species' cycling line within ``window``, or None."""
     species = device.crystal.species[0]
     lam = species.transition(species.cycling).wavelength_vac_m
     best: tuple[float, int] | None = None

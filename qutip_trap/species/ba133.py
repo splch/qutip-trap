@@ -1,34 +1,15 @@
-"""133Ba+ species table (PLAN.md Sections 8.1, 8.4, 9.13; Appendix E) - PARTIAL (radioactive, I = 1/2).
+"""133Ba+ species table (radioactive, I = 1/2); incomplete, so ``species()`` raises.
 
-Two corrections from the M0a fix pass of 2026-09-08. (1) ``S12.A_hfs_hz`` was stored POSITIVE. mu_I(133Ba)
-is negative, so A(6s 2S1/2) is NEGATIVE and the ground-state hyperfine structure is INVERTED: F = 0 lies
-above F = 1, and the |F=0, mF=0> qubit state is the UPPER one (Hucul et al. 2017 Table I lists it negative;
-Christensen et al. 2020 Fig. 1 draws F = 0 on top). Because I = J = 1/2 makes the splitting equal to |A|,
-the magnitude was right and only the sign of the level ordering was wrong -- the same failure class the
-``inverted`` flag guards against in ca43.py and be9.py. (2) The 12-figure value had no provenance outside
-this repository; the primary is Knab, Schupp and Werth, Europhys. Lett. 4, 1361 (1987), NOT the
-Knab-Knoll-Scheerer-Werth Z. Phys. D 25, 205 (1993) g_J paper.
-
-The species-gaps pass of the same day closed two of the four remaining gaps and hardened the other two.
-Closed: the measured g_J(6s 2S1/2) = 2.00249192(3) of Marx, Tommaseo and Werth 1998, and
-A(6p 2P1/2) = -1840(11) MHz, which Hucul et al. 2017 Table I prints unbolded (a literature value they
-relay) and which was therefore already inside a source this table cites. The two D-state g_J were read off
-the NIST ASD Lande column (0.79 and 1.12); a direct ASD re-query confirms the transcription was faithful
-but the 1.12 is ASD's OWN error, 6.7% from four independent determinations, so both are replaced by
-measured values and kept beside them as ``*_g_J_asd`` cross-checks tagged ``contested``. STILL MISSING, and
-the reason is the literature and not this repository: A(6p 2P3/2) and A(5d 2D5/2) are printed by NOBODY.
-Christensen et al. 2020 measure only the SPLITTINGS 623(30) and 83(30) MHz and print neither constant nor
-its sign, so ``_CONSULT`` records the negative search rather than inviting a repeat of it. Both derived
-uncertainties in those notes were understated -- (100) and (67) where the splittings are (30), i.e.
--311.5(150) and +27.7(100) MHz -- and are corrected.
+mu_I < 0 makes A(6s 2S1/2) negative: the ground-state multiplet is INVERTED and |F=0, mF=0> is the upper qubit
+state. No source prints A(6p 2P3/2) or A(5d 2D5/2), only their splittings (Christensen et al. 2020).
 """
 
 from __future__ import annotations
 
-from qutip_trap.provenance import Cited
 from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Species
 from qutip_trap.species.table import (
+    Cited,
     IncompleteSpeciesTable,
     MissingConstant,
     required_constants_missing,
@@ -264,7 +245,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 REQUIRED: dict[str, str] = {
     "ba133.mass_atomic_u": "relative atomic mass of the neutral atom",
@@ -287,7 +268,7 @@ REQUIRED: dict[str, str] = {
     "ba133.P12.energy_cm": "6p 2P1/2 level energy",
     "ba133.P32.energy_cm": "6p 2P3/2 level energy",
 }
-"""The constants ``species()`` needs, so that :data:`MISSING` is DERIVED from :data:`TABLE` (audit item E21)."""
+"""The ids ``species()`` needs, each with a description; :data:`MISSING` is derived from it."""
 
 _CONSULT: dict[str, str] = {
     "ba133.P32.A_hfs_hz": "NO SOURCE PRINTS THIS CONSTANT -- only the splitting (re-searched 2026-09-08; do "

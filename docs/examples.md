@@ -39,17 +39,6 @@ is IonQ's v0.4 envelope (bitstrings in wire order, q[0] first) and `result.to_io
 `result.reversed_bits()` reverses every key (its first character is then qubit 0's bit) for comparisons with Cirq, Braket
 and PennyLane, which report that way. `trap.__version__` is the release the record carries.
 
-## The ladder
-
-The five levels of PLAN.md Section 14.2 are five modules, each a rung of the same machine (docs/conventions.md, "Vocabulary"),
-and since 0.4.0 each has its own page listing every public name: [machine.md](machine.md) for `qutip_trap` (rung 0: the
-`Machine`, the option objects, `Circuit`, `Result`, the jobs and the presets), [circuit.md](circuit.md) for `qutip_trap.circuit`
-and the wire formats of `qutip_trap.io`, [schedule.md](schedule.md) for `qutip_trap.schedule`, [dynamics.md](dynamics.md) for
-`qutip_trap.dynamics`, [physics.md](physics.md) for `qutip_trap.physics`, [laboratory.md](laboratory.md) for the experiments,
-the calibration and the benchmarks, and [experimental.md](experimental.md) for `qutip_trap.experimental`. The examples below
-walk the rungs in that order on the example device; every name they use is on those pages, and the same objects are what
-`qutip_trap.api` exports under the Appendix E names.
-
 ## A device
 
 A device is physical parameters: species, trap frequencies, beams (wavelength, direction, polarization, waist, power,

@@ -1,25 +1,5 @@
-"""Electric-dipole matrix elements, decay rates and saturation (PLAN.md Section 4.5.2; Section 13; M0a).
-
-Normalization stack (Section 13, "Dipole-element normalization stack"), Steck's throughout:
-
-- the reduced element <J||d||J'> (Brink-Satchler, no 1/sqrt(2j+1)) is fixed by the PARTIAL decay rate of the
-  fine-structure transition, Gamma_{J'->J} = omega^3 (2J+1) |<J||d||J'>|^2 / (3 pi eps0 hbar c^3 (2J'+1)), the
-  total rate out of ANY sublevel of J' into the level J (no second factor 2);
-- the J-level Wigner-Eckart element <J m|T_q|J' m'> = <J||d||J'> (-1)^{J'-1+m} sqrt(2J+1) (J' 1 J; m' q -m),
-  nonzero for m = m' + q (q = m_lower - m_upper), summing to |<J||d||J'>|^2 over m', q at fixed m and to
-  (2J+1)/(2J'+1) |<J||d||J'>|^2 over m, q at fixed m';
-- the hyperfine element factorizes with one 6j symbol (Steck Rb87 Eqs. 35-37), and the two directed hyperfine
-  factors S_FF' (absorption, sums to 1 over F') and b(F'->F) (emission, sums to 1 over F) are built from it;
-- the dipole operator on the UNCOUPLED basis |m_I, m_J> is the J-level element times the identity on I, so
-  elements between field-dressed eigenstates are the same operator sandwiched between eigenvectors (Section
-  4.5.2: at 146 G the mixing is what creates the clock point). The 6j form is the zero-field cross-check
-  (derivation audit row 4.5-4 verified the two agree in the |(J I) F> coupling order).
-
-I_sat = pi h c Gamma_partial/(3 lambda_vac^3) with the ANGULAR partial rate is the two-level value of a
-transition of unit relative strength; the stretched sigma+ cycling element on a J = 1/2 -> 3/2 line is
-sqrt((2J+1)/(2J'+1)) = sqrt(1/2) of the reduced element, so Omega = Gamma sqrt(I/(2 I_sat)) holds there
-and only there (Section 4.5.2).
-"""
+"""Electric-dipole matrix elements, decay rates and saturation in Steck's normalization: the reduced element
+<J||d||J'> (Brink-Satchler, no 1/sqrt(2J+1)) is fixed by the PARTIAL decay rate of the line, and q = m_lower - m_upper."""
 
 from __future__ import annotations
 
@@ -125,9 +105,8 @@ def emission_branching(Fp: Half, F: Half, J: Half, Jp: Half, nuclear_spin: Half)
 def dipole_operator_uncoupled(nuclear_spin: Half, J_lower: Half, J_upper: Half, q: int) -> np.ndarray:
     """T_q / <J||d||J'> on the uncoupled bases: rows (m_I, m_J) of the lower level, columns (m_I', m_J') of the upper.
 
-    Basis order matches :class:`qutip_trap.species.zeeman.HyperfineZeeman`: m_I outer, m_J inner, both ascending.
-    The operator is the identity on I, so <m_I m_J|T_q|m_I' m_J'> = delta_{m_I m_I'} <J m_J|T_q|J' m_J'>.
-    """
+    The identity on I; basis order as in :class:`qutip_trap.species.zeeman.HyperfineZeeman` (m_I outer, m_J inner,
+    both ascending)."""
     mi = m_values(nuclear_spin)
     mj = m_values(J_lower)
     mjp = m_values(J_upper)
@@ -136,14 +115,14 @@ def dipole_operator_uncoupled(nuclear_spin: Half, J_lower: Half, J_upper: Half, 
 
 
 def coupled_state_vector(nuclear_spin: Half, J: Half, F: Half, mF: Half) -> np.ndarray:
-    """|F mF> on the uncoupled basis in the |(J I) F> coupling order: components <J mJ I mI|F mF> (Section 4.5.6)."""
+    """|F mF> on the uncoupled basis in the |(J I) F> coupling order: components <J mJ I mI|F mF>."""
     mi = m_values(nuclear_spin)
     mj = m_values(J)
     return np.array([clebsch_gordan(J, mj_, nuclear_spin, mi_, F, mF) for mi_ in mi for mj_ in mj])
 
 
 def saturation_intensity_w_m2(partial_rate_rad_s: float, wavelength_vac_m: float) -> float:
-    """I_sat = pi h c Gamma_partial / (3 lambda_vac^3): the cycling two-level value (Section 13)."""
+    """I_sat = pi h c Gamma_partial / (3 lambda_vac^3), Gamma_partial angular: the value for unit relative strength."""
     return math.pi * H_J_S * C_M_PER_S * partial_rate_rad_s / (3.0 * wavelength_vac_m**3)
 
 
@@ -159,7 +138,7 @@ def resonant_cross_section_m2(wavelength_vac_m: float) -> float:
 
 
 def field_amplitude_v_per_m(intensity_w_m2: float) -> float:
-    """E_0 = sqrt(2 I/(eps0 c)) for a travelling wave of intensity I (Section 4.5.2)."""
+    """E_0 = sqrt(2 I/(eps0 c)) for a travelling wave of intensity I."""
     if intensity_w_m2 < 0.0:
         raise ValueError("intensity is non-negative")
     return math.sqrt(2.0 * intensity_w_m2 / (EPSILON_0_F_PER_M * C_M_PER_S))
@@ -175,7 +154,7 @@ def stretched_element_factor(J_lower: Half, J_upper: Half) -> float:
 def rabi_frequency_two_level_rad_s(
     gamma_partial_rad_s: float, intensity_w_m2: float, wavelength_vac_m: float
 ) -> float:
-    """Omega = Gamma sqrt(I/(2 I_sat)) for a closed two-level (stretched cycling) transition, plan convention."""
+    """Omega = Gamma sqrt(I/(2 I_sat)), valid only on a closed two-level (stretched cycling) transition."""
     return gamma_partial_rad_s * math.sqrt(
         intensity_w_m2 / (2.0 * saturation_intensity_w_m2(gamma_partial_rad_s, wavelength_vac_m))
     )

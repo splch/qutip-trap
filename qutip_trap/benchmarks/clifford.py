@@ -1,27 +1,8 @@
-"""The single- and two-qubit Clifford groups for randomized benchmarking (PLAN.md Section 7.9 "Randomized benchmarking
-variants"; Section 13 row "RB error rate"; milestone M10).
-
-Matrices here are the ideal Cliffords the protocol is defined with (the sequence's inverse is computed from them, as a
-laboratory computes it); they are never applied to a simulated state (Section 3.1): every Clifford is emitted as native
-operations through the compiler and played as pulses by ``run``.
-
-- The 24 single-qubit Cliffords are the closure of {H, S} modulo global phase, in a fixed enumeration order; each compiles
-  through ``decompose_single_qubit`` (Section 7.2 item 1) to virtual RZ plus, as it happens, exactly ONE pulse for 20 of
-  them (16 GPi2 and 4 GPi) and NO pulse for the remaining 4 -- the order-4 Z-rotation subgroup {1, S, Z, S^dag}, one sixth
-  of the group, which the hardware plays as a frame update (Section 7.1). The mean is 0.8333 pulses per Clifford (0.6667
-  GPi2 and 0.1667 GPi); the ZXZXZ branch of the decomposer, which would cost two GPi2 pulses, is never reached by a
-  Clifford, whose ZYZ middle angle is always 0, pi/2 or pi (``tests/test_clifford.py``).
-- The 11520 two-qubit Cliffords split into the four double cosets L g L of the local subgroup L = C1 (x) C1 (576 elements)
-  by entangling core g in {1, CNOT, iSWAP, SWAP}, of sizes 576, 5184, 5184, 576 (Barends et al. 2014, Supplementary; the
-  stabilizer |L intersect g L g^-1| is 576, 64, 64 and 576). A uniform element of the group is a core drawn with probability
-  proportional to its class size and two INDEPENDENT uniform local elements l_1 g l_2, uniform on the class because every
-  element of L g L is reached by the same number |L intersect g L g^-1| of pairs (l_1, l_2). The cores compile to 0, 1, 2 and
-  3 Moelmer-Soerensen gates (CNOT by Maslov's template, iSWAP = exp(i pi/4 XX) exp(i pi/4 YY) as two rxx(-pi/2) with the
-  YY term conjugated by S (x) S, SWAP as three CNOTs), 1.5 entangling gates per Clifford on average, the count RB papers
-  quote. An arbitrary two-qubit Clifford (the sequence's inverse) is recognized by searching the 4 x 576 candidates
-  (core, l_2) for which u l_2^-1 g^-1 is a tensor product (``kron_factor``), which gives its class and a decomposition with
-  the class's minimal entangling count.
-"""
+"""The single- and two-qubit Clifford groups for randomized benchmarking, as matrices modulo global phase (the first qubit
+the first tensor factor). The 24 single-qubit Cliffords (the closure of {H, S}) compile to one pulse each (16 GPi2, 4 GPi)
+except the four Z rotations; the 11520 two-qubit Cliffords are the double cosets L g L of L = C1 (x) C1 over the cores
+g in {1, CNOT, iSWAP, SWAP} (Barends et al. 2014, Supplementary), costing 0 to 3 MS gates; a uniform element is l_1 g l_2
+with g drawn by class size and l_1, l_2 independent and uniform."""
 
 from __future__ import annotations
 
@@ -60,11 +41,10 @@ CORES: Final[dict[CoreName, np.ndarray]] = {
     "swap": SWAP_MATRIX,
 }
 CLASS_SIZES: Final[dict[CoreName, int]] = {"identity": 576, "cnot": 5184, "iswap": 5184, "swap": 576}
-"""The size of each class of the two-qubit Clifford group by its KAK core (identity, cnot, iswap, swap: 576 + 5184 + 5184 + 576
-= 11520); the double-coset sampler weights the cores by them."""
+"""The two-qubit Clifford class sizes by KAK core (576 + 5184 + 5184 + 576 = 11520); the sampler weights cores by them."""
 ENTANGLING_COUNT: Final[dict[CoreName, int]] = {"identity": 0, "cnot": 1, "iswap": 2, "swap": 3}
 TWO_QUBIT_GROUP_ORDER: Final[int] = 11520
-"""The order of the two-qubit Clifford group modulo phases, 11520 (Section 7.9)."""
+"""The order of the two-qubit Clifford group modulo phases."""
 SINGLE_QUBIT_GROUP_ORDER: Final[int] = 24
 
 
@@ -77,8 +57,8 @@ def canonical_phase(u: np.ndarray, *, tol: float = 1e-9) -> np.ndarray:
 
 
 def matrix_key(u: np.ndarray, *, decimals: int = 8) -> bytes:
-    """A hashable key of ``u`` modulo global phase: the canonical representative quantized to integers at ``decimals`` (an
-    integer quantization, never rounded floats, whose ``-0.0`` and ``0.0`` have different bytes)."""
+    """A hashable key of ``u`` modulo global phase: the canonical representative quantized to integers at ``decimals``
+    (rounded floats would give ``-0.0`` and ``0.0`` different bytes)."""
     c = canonical_phase(u)
     scale = 10.0**decimals
     return (
@@ -111,8 +91,8 @@ _TWO_QUBIT_GROUP: list[np.ndarray] | None = None
 
 
 def two_qubit_clifford_group() -> list[np.ndarray]:
-    """The 11520 two-qubit Cliffords modulo global phase (closure of {H (x) 1, 1 (x) H, S (x) 1, 1 (x) S, CNOT}); computed
-    once per process (about a second) for the tests and the check script, never needed to sample."""
+    """The 11520 two-qubit Cliffords modulo global phase (closure of {H (x) 1, 1 (x) H, S (x) 1, 1 (x) S, CNOT}), computed
+    once per process (about a second); sampling does not need it."""
     global _TWO_QUBIT_GROUP
     if _TWO_QUBIT_GROUP is None:
         gens = [np.kron(_H, _I2), np.kron(_I2, _H), np.kron(_S, _I2), np.kron(_I2, _S), CNOT_MATRIX]
@@ -143,8 +123,7 @@ def core_operations(core: CoreName, pair: tuple[int, int]) -> list[Operation]:
 
 
 def operations_unitary(ops: Sequence[Operation], qubits: tuple[int, ...]) -> np.ndarray:
-    """The ideal unitary of ``ops`` on ``qubits`` with the first listed qubit the first tensor factor (the convention of the
-    Clifford matrices here and of ``gate_matrix``)."""
+    """The ideal unitary of ``ops`` on ``qubits``, the first listed qubit the first tensor factor."""
     local = {q: k for k, q in enumerate(qubits)}
     n = len(qubits)
     relabelled = [Operation(op.name, tuple(local[q] for q in op.qubits), op.params) for op in ops]
@@ -217,9 +196,8 @@ def random_two_qubit_clifford(rng: np.random.Generator) -> TwoQubitClifford:
 
 
 def decompose_two_qubit_clifford(u: np.ndarray, *, tol: float = 1e-8) -> TwoQubitClifford:
-    """The class and a decomposition (A (x) B) g (C (x) D) of a two-qubit Clifford ``u`` (modulo global phase), by searching
-    the 4 x 576 candidates (g, C (x) D) for which u (C (x) D)^-1 g^-1 is a tensor product; raises ``ValueError`` when ``u`` is not
-    a Clifford."""
+    """The class and a decomposition (A (x) B) g (C (x) D) of a two-qubit Clifford ``u`` modulo global phase, by searching
+    the 4 x 576 candidates (g, C (x) D) for which u (C (x) D)^-1 g^-1 is a tensor product; raises ``ValueError`` otherwise."""
     m = np.asarray(u, dtype=complex)
     if m.shape != (4, 4):
         raise ValueError("a 4 x 4 matrix")
@@ -246,8 +224,7 @@ def decompose_two_qubit_clifford(u: np.ndarray, *, tol: float = 1e-8) -> TwoQubi
 
 
 def stabilizer_size(core: CoreName) -> int:
-    """|L intersect g L g^-1|: the number of local l with g l g^-1 local, by enumeration (576 for 1 and SWAP, 64 for CNOT and
-    iSWAP), whose reciprocal times 576^2 is the class size."""
+    """|L intersect g L g^-1| by enumeration (576 for 1 and SWAP, 64 for CNOT and iSWAP); 576^2 over it is the class size."""
     g = CORES[core]
     g_inv = g.conj().T
     conj = np.einsum("ij,njk,kl->nil", g, _LOCALS, g_inv)
@@ -277,15 +254,14 @@ _PAULI_PAIRS: Final[np.ndarray] = np.array(
 
 
 def pauli_frame_of(u: np.ndarray) -> str:
-    """The symplectic class of a two-qubit Clifford by its action on the Pauli generators: 'identity' (block diagonal), 'cnot'
-    (off-diagonal block of rank 1), 'iswap' (rank 2, not anti-block-diagonal) or 'swap' (anti-block-diagonal); a check on
-    ``decompose_two_qubit_clifford`` that never runs the search."""
+    """The class of a two-qubit Clifford from its action on the Pauli generators, without the search: 'identity' (block
+    diagonal), 'cnot' (off-diagonal block of rank 1), 'iswap' (rank 2) or 'swap' (anti-block-diagonal)."""
     m = np.asarray(u, dtype=complex)
     paulis = {"X": native.PAULI_X, "Z": native.PAULI_Z}
     gens = [np.kron(paulis[p], _I2) for p in "XZ"] + [np.kron(_I2, paulis[p]) for p in "XZ"]
 
     def image(p: np.ndarray) -> tuple[str, str]:
-        # the two-qubit Pauli P with |Tr(P^dag Q)|/4 = 1 for Q = m p m^dag; the 16 overlaps in one product
+        # the two-qubit Pauli P with |Tr(P^dag Q)|/4 = 1 for Q = m p m^dag
         q = m @ p @ m.conj().T
         overlaps = np.abs(np.einsum("nji,ij->n", _PAULI_PAIRS.conj(), q)) / 4.0
         k = int(np.argmax(overlaps))
@@ -299,8 +275,8 @@ def pauli_frame_of(u: np.ndarray) -> str:
     def bits(label: str) -> tuple[int, int]:
         return {"I": (0, 0), "X": (1, 0), "Z": (0, 1), "Y": (1, 1)}[label]
 
-    a_block = np.array([bits(rows[k][0]) for k in range(2)])  # (X1, Z1) -> qubit-1 (x, z) bits
-    b_block = np.array([bits(rows[k][1]) for k in range(2)])  # (X1, Z1) -> qubit-2 (x, z) bits
+    a_block = np.array([bits(rows[k][0]) for k in range(2)])
+    b_block = np.array([bits(rows[k][1]) for k in range(2)])
     rank_b = int(np.linalg.matrix_rank(b_block.astype(float)))
     if rank_b == 0:
         return "identity"

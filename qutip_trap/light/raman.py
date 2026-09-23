@@ -1,16 +1,7 @@
-"""Derived drives: two-photon Rabi frequency, effective Delta k, per-mode eta, Stark shift and scattering from the beams
-(PLAN.md Sections 3.3, 4.3.2, 4.5.4, 4.5.5; milestone M2).
+"""Derived drives: two-photon Rabi frequency, effective Delta k, per-mode eta, Stark shift and scattering from the beams.
 
-Design principle (Section 3.1): device parameters in, everything else derived. A ``DerivedDrive`` is what ``light/``
-computes for one ion under one physical drive; the Rabi frequency, the Stark shift and the scattering rates come from
-the atomic layer of Section 4.5 (``AtomicStructure``) at the ion's position in the beams, the Lamb-Dicke parameters
-from ``Crystal.lamb_dicke`` with the trap's Mathieu record (C0 applied there and nowhere else), and the excess
-micromotion index from ``Trap.micromotion_beta``. Conventions (Section 13): Omega in the (hbar Omega/2) convention,
-Omega_R = sum_e conj(Omega_2) Omega_1/(2 Delta_e) with beam 1 the higher-frequency beam absorbed from the lower qubit
-level, so that the tone at beat note omega_1 - omega_2 = omega_0 + mu drives |down> -> |up> with momentum
-Delta k = k_1 - k_2 (Wineland 2003 Eq. 2.3 read in the plan's normalization); a co-propagating pair has Delta k -> 0
-and no motional coupling. The complex phase of Omega_R depends on the dressed-state sign gauge (M0a) and is recorded
-but not applied: the frame alignment of Section 7.5 absorbs it once per ion.
+Omega_R = sum_e conj(Omega_2) Omega_1/(2 Delta_e) in the (hbar Omega/2) convention, beam 1 the higher-frequency beam, so
+the beat note omega_1 - omega_2 drives |down> -> |up> with momentum Delta k = k_1 - k_2 (Wineland 2003 Eq. 2.3).
 """
 
 from __future__ import annotations
@@ -35,27 +26,27 @@ M2 = "milestone M2 (light/raman.py, PLAN.md Section 4.3.2)"
 
 @dataclass(frozen=True)
 class ScatteringBudget:
-    """Per second, at the ion's position, summed over the drive's beams (Section 4.5.5)."""
+    """Scattering rates per second at the ion's position, summed over the drive's beams."""
 
     rayleigh_per_s: dict[str, float]
     """Elastic rate from each qubit state (keyed by its label)."""
     raman_spin_flip_per_s: dict[str, float]
-    """Rate from each qubit state into the OTHER qubit state."""
+    """Rate from each qubit state into the other qubit state."""
     leakage_per_s: dict[str, float]
     """Rate from each qubit state out of the qubit pair, summed over final states."""
     rayleigh_dephasing_per_s: float
-    """Gamma_el of the pair (Uys et al. 2010): the elastic-amplitude DIFFERENCE squared."""
+    """Gamma_el of the pair from the elastic-amplitude difference squared (Uys et al. 2010)."""
     residual_excited_population: float
 
     def per_pulse_error(self, duration_s: float) -> float:
-        """The d = 2 estimate of Section 4.3.2: the Raman (spin-flip plus leakage) probability, averaged over the qubit states."""
+        """The Raman (spin-flip plus leakage) probability over ``duration_s``, averaged over the qubit states."""
         rates = [self.raman_spin_flip_per_s[k] + self.leakage_per_s[k] for k in self.raman_spin_flip_per_s]
         return float(np.mean(rates)) * duration_s if rates else 0.0
 
 
 @dataclass(frozen=True)
 class DerivedDrive:
-    """What ``light/`` derives for one ion under one physical drive (Section 3.3, "derived from beams by light/")."""
+    """What ``light/`` derives for one ion under one physical drive."""
 
     ion: int
     kind: DriveKind
@@ -67,20 +58,19 @@ class DerivedDrive:
     """eta_{ion, m} per crystal mode, C0 inside when the trap carries an rf record."""
     c0_applied: bool
     stark_shift_hz: float
-    """Differential light shift of the transition: shift of the upper level minus the lower one, Hz (Section 4.3.2)."""
+    """Differential light shift of the transition: shift of the upper level minus the lower one, Hz."""
     scattering: ScatteringBudget | None
     micromotion: MicromotionIndex | None
     provenance: tuple[str, ...]
     light_shift: LightShiftCouplings | None = None
-    """For ``kind == "light_shift"``: the level weights and the off-resonant spin-flip weight of Section 4.4.4; ``rabi_hz`` is
-    then Omega_LS/2pi = (Omega_upup - Omega_dndn)/(2 x 2pi), the coefficient of the spin-dependent force (Zhu 2006 Eq. 2)."""
+    """For ``kind == "light_shift"``: the level and spin-flip weights; ``rabi_hz`` is then Omega_LS/2pi."""
 
     @property
     def carrier_rabi_hz(self) -> float:
         return abs(self.rabi_hz)
 
     def pi_time_s(self, area_rad: float = math.pi) -> float:
-        """Omega t = area in the plan's convention (a carrier pi pulse at Omega t = pi)."""
+        """The duration with Omega t = ``area_rad`` (a carrier pi pulse at Omega t = pi)."""
         if self.carrier_rabi_hz == 0.0:
             raise ZeroDivisionError("the drive has no coupling at this ion")
         return area_rad / (TWO_PI * self.carrier_rabi_hz)
@@ -108,11 +98,7 @@ def mathieu_or_none(device: Device, ion: int) -> MathieuParameters | None:
 
 
 def lamb_dicke_parameters(device: Device, ion: int, delta_k: np.ndarray) -> tuple[dict[int, float], bool]:
-    """eta_{ion, m} for every crystal mode with C0 from the trap's Mathieu record when it exists; (etas, c0_applied).
-
-    C0 is applied inside ``Crystal.lamb_dicke`` and nowhere else (Section 4.1.1); the builder, the pulse-shaping
-    solvers and the light layer all read this one function.
-    """
+    """eta_{ion, m} for every crystal mode with C0 from the trap's Mathieu record when it exists; (etas, c0_applied)."""
     params = mathieu_or_none(device, ion)
     etas = {
         m: float(device.crystal.lamb_dicke(ion, m, delta_k, micromotion=params))
@@ -135,7 +121,7 @@ def _micromotion(device: Device, ion: int, delta_k: np.ndarray) -> MicromotionIn
 
 
 def scattering_budget(device: Device, ion: int, beam_indices: Sequence[int]) -> ScatteringBudget:
-    """Rayleigh, spin-flip and leakage rates of both qubit states under the beams, at the ion's position (Section 4.5.5)."""
+    """Rayleigh, spin-flip and leakage rates of both qubit states under the beams, at the ion's position."""
     st = _structure(device, ion)
     species = device.crystal.species[ion]
     pos = _position(device, ion)
@@ -168,7 +154,7 @@ def scattering_budget(device: Device, ion: int, beam_indices: Sequence[int]) -> 
 
 
 def differential_stark_shift_hz(device: Device, ion: int, beam_indices: Sequence[int]) -> float:
-    """sum_beams [delta(upper) - delta(lower)]/2pi at the ion's position: red light lowers a level (Section 4.5.4)."""
+    """sum_beams [delta(upper) - delta(lower)]/2pi at the ion's position: red light lowers a level."""
     st = _structure(device, ion)
     species = device.crystal.species[ion]
     pos = _position(device, ion)
@@ -180,18 +166,8 @@ def differential_stark_shift_hz(device: Device, ion: int, beam_indices: Sequence
 
 
 def quadrupole_stark_shift_hz(device: Device, ion: int, beam: int) -> float:
-    """delta_St/2pi of a driven E2 component from the OTHER components inside the Zeeman span (Section 4.5.7).
-
-    "The ac Stark shift of a driven component by the nine off-resonant components inside the 30 MHz Zeeman
-    span is computed by second-order perturbation from the same Omega(m, m') table." This assembles that
-    table -- every |S, m> <-> |D, m'> Rabi frequency at the ion's position, from the same
-    ``rabi_frequency_e2_rad_s`` the drive uses -- and hands it, with the dressed Zeeman energies, to
-    :func:`~qutip_trap.species.quadrupole.e2_stark_shift_rad_s`.
-
-    I = 0 only, as the whole of 4.5.7 is: a hyperfine-resolved E2 coupling raises in
-    ``Species.rabi_frequency_hz`` and would raise here too. Tagged UNVALIDATED in the ledger
-    (``conv.e2_ac_stark_shift``): Section 4.5.7 and Section 12 carry no source number for it.
-    """
+    """delta_St/2pi of a driven E2 component from the other components inside the Zeeman span, to second order (I = 0
+    only; no published number validates it)."""
     from qutip_trap.species.model import level_j
     from qutip_trap.species.quadrupole import (
         e2_stark_shift_rad_s,
@@ -254,12 +230,8 @@ def _remember(device: Device, key: tuple[object, ...], value: DerivedDrive) -> D
 def derive_raman_drive(
     device: Device, ion: int, beams: tuple[int, int], *, scattering: bool = True
 ) -> DerivedDrive:
-    """A stimulated-Raman drive of ``ion`` by (beam 1, beam 2): Omega_R, Delta k = k_1 - k_2, etas, Stark shift, scattering.
-
-    Memoized per device instance (``_derived_memo``): the played chain of Section 7.3 re-derives every drive of every engine
-    run, and a GATE_LOCAL tomography makes tens of thousands of those on one device (159 s of a 1137 s four-qubit GHZ run;
-    performance pass 2026-09-09). The result is a frozen record nobody mutates.
-    """
+    """A stimulated-Raman drive of ``ion`` by (beam 1, beam 2): Omega_R, Delta k = k_1 - k_2, etas, Stark shift and
+    scattering, memoized per device instance."""
     key = ("raman", id(device), int(ion), (int(beams[0]), int(beams[1])), bool(scattering))
     hit = _derived_memo(device, key)
     if hit is not None:
@@ -299,9 +271,7 @@ def _derive_raman_drive(
 
 
 def derive_optical_drive(device: Device, ion: int, beam: int, *, scattering: bool = True) -> DerivedDrive:
-    """A single-photon optical drive (E1, or E2 for an I = 0 quadrupole qubit): Omega from Species.rabi_frequency_hz.
-
-    Memoized per device instance like :func:`derive_raman_drive`."""
+    """A single-photon optical drive (E1, or E2 for an I = 0 quadrupole qubit), memoized per device instance."""
     key = ("optical", id(device), int(ion), (int(beam),), bool(scattering))
     hit = _derived_memo(device, key)
     if hit is not None:
@@ -343,7 +313,7 @@ def _derive_optical_drive(device: Device, ion: int, beam: int, *, scattering: bo
         delta_k=delta_k,
         etas=etas,
         c0_applied=c0,
-        # Section 4.5.7: the E2 shift is second order in the OTHER nine components, not zero (audit E9)
+        # the E2 shift is second order in the other components, not zero
         stark_shift_hz=(
             quadrupole_stark_shift_hz(device, ion, beam)
             if kind == "optical_E2"
@@ -360,14 +330,8 @@ def _derive_optical_drive(device: Device, ion: int, beam: int, *, scattering: bo
 
 
 def two_photon_self_couplings_hz(device: Device, ion: int, beams: tuple[int, int]) -> tuple[complex, complex]:
-    """(Omega_{dn dn}, Omega_{up up})/2pi: the two-photon couplings of each qubit level to ITSELF under (beam 1, beam 2), the
-    Raman formula sum_e conj(Omega^{(2)}_{e g}) Omega^{(1)}_{e g}/(2 Delta_e) with g' = g (Wineland 2003; Section 4.4.4).
-
-    The beat note of the two beams modulates each level's light shift as Re[Omega_gg e^{-i(mu t - Delta k . x)}]; the
-    differential part (Omega_upup - Omega_dndn)/2 is the state-dependent force of the light-shift gate and the common
-    part a spin-independent force on the motion. Both vanish to leading order for a clock qubit under linearly polarized
-    light, and the differential part for any qubit whose two levels see the same scalar and vector shifts.
-    """
+    """(Omega_dndn, Omega_upup)/2pi: each qubit level's Raman coupling to itself under (beam 1, beam 2); half their
+    difference is the light-shift gate's state-dependent force."""
     b1, b2 = beams
     st = _structure(device, ion)
     species = device.crystal.species[ion]
@@ -386,16 +350,8 @@ def derive_light_shift_drive(
     scattering: bool = True,
     min_relative_force: float = 1e-2,
 ) -> DerivedDrive:
-    """The light-shift (sigma_z sigma_z) gate drive of Section 4.4.4 by (beam 1, beam 2): the beat note is tuned near a MODE
-    frequency, so the qubit is not flipped; the drive is the differential two-photon self-coupling Omega_LS = (Omega_upup -
-    Omega_dndn)/2 (Zhu-Monroe-Duan 2006 Eq. 2, H = hbar Omega_j cos(Delta k . q_j + mu t) sigma_z^j), with the spin-independent
-    part and the far-off-resonant spin-flip coupling Omega_R carried as weights relative to Omega_LS.
-
-    Raises when the differential coupling is below ``min_relative_force`` (default 1%) of the common part: the spin-independent
-    force then displaces the motion by more than a hundred loop radii before the differential one closes a loop. A clock qubit
-    under linear polarization keeps only the hyperfine difference of the detunings, about 1e-3 of the scalar shift (Baldwin's
-    D3/2 polarization-gradient construction is a different level scheme).
-    """
+    """The light-shift (sigma_z sigma_z) gate drive Omega_LS = (Omega_upup - Omega_dndn)/2 by (beam 1, beam 2) (Zhu 2006
+    Eq. 2); raises when |Omega_LS| is at most ``min_relative_force`` of the spin-independent part or of Omega_R."""
     b1, b2 = beams
     dn, up = two_photon_self_couplings_hz(device, ion, beams)
     omega_ls = 0.5 * (up - dn)
@@ -408,9 +364,7 @@ def derive_light_shift_drive(
         st.raman_coupling_rad_s(st.state(lower), st.state(upper), device.beams[b1], device.beams[b2], pos)
         / TWO_PI
     )
-    # the force must dominate both the spin-independent part and the ordinary Raman coupling the same beams drive:
-    # crossed linear polarizations make no intensity beat at all (both self-couplings vanish), a clock qubit under
-    # parallel polarizations keeps only the hyperfine difference of the detunings
+    # fails for crossed linear polarizations (no intensity beat) and a clock qubit under parallel ones (hyperfine only)
     if abs(omega_ls) <= min_relative_force * max(abs(common), abs(omega_r), 1e-300):
         raise ValueError(
             f"ion {ion}: the two qubit levels see the same two-photon light shift under beams {beams} "
@@ -477,7 +431,7 @@ def light_shift_drive(
 def crosstalk_ratios(
     device: Device, ion: int, beams: Sequence[int], *, kind: DriveKind = "raman"
 ) -> dict[int, complex]:
-    """eps_ij = |Omega_j|/|Omega_i| of the other ions under the same beams (Section 6.6, a Rabi amplitude ratio)."""
+    """eps_ij = |Omega_j|/|Omega_i|: the Rabi amplitude ratio of each other coupled ion under the same beams."""
     if kind == "raman":
         ref = derive_raman_drive(device, ion, (beams[0], beams[1]), scattering=False)
         others = {
@@ -549,18 +503,8 @@ def comb_drive(
     fine_structure_hz: float | None = None,
     theta_per_pulse_rad: float | None = None,
 ) -> Drive:
-    """A mode-locked (frequency-comb) Raman drive: the tone SET of Section 4.3.7 through the one builder.
-
-    ``tones`` comes from ``comb.tones()`` and ``stark_shift_hz`` from ``comb.stark4_hz()``, which is what ``Drive.comb``
-    has always promised and nothing built (M2 audit E8): the near-resonant beat notes stay explicit as QobjEvo
-    coefficients and only the far-detuned ones fold into the static fourth-order shift, the two sets partitioning the
-    comb through the same ``gate_time_s`` window (``CombSpec.explicit_orders``).
-
-    ``levels_hz``/``couplings_hz`` (Hz, relative to any origin, one coupling per sublevel) give the fourth-order shift;
-    without them the drive carries no static shift, which is recorded by the caller's guard report rather than assumed
-    to be zero. The per-tone envelope is |Omega| x rabi_scale x sech(pi j nu_rep tau) - ONE sech factor, never three
-    (Section 4.3.7).
-    """
+    """A mode-locked (frequency-comb) Raman drive: tones from ``comb.tones()`` and, given ``levels_hz`` and
+    ``couplings_hz`` (Hz), the static shift from ``comb.stark4_hz()``; failing or unevaluated validity guards warn."""
     if derived.kind != "raman":
         raise ValueError("a frequency comb generates a Raman drive (Section 4.3.7)")
     if gate_time_s <= 0.0:
@@ -591,7 +535,7 @@ def comb_drive(
                 resonance_hz=comb.resonance_target_hz(omega_q_hz, mode_hz, sideband),
             )[0]
         )
-    # the validity hierarchy of Section 4.3.7 is a runtime guard, and this is the one place every input exists
+    # the comb's validity guards run here, the one place every input exists
     eta = max((abs(v) for v in derived.etas.values()), default=0.0)
     failing = [
         name

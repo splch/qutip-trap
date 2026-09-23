@@ -1,18 +1,14 @@
-"""Helpers shared by the species tables: the cited-constant -> record conversions and the gap list.
+"""Helpers shared by the species tables: conversions of cited constants and the list of missing ones.
 
-Each species module exposes ``NAME``, ``TABLE`` (a mapping of ledger-id suffix -> :class:`Cited`),
-``MISSING`` (the constants the plan does not supply, each with the source to consult) and ``species()``,
-which builds the Appendix E :class:`Species` or raises :class:`IncompleteSpeciesTable` when a required
-constant is missing. Nothing hyperfine-resolved is typed in; the only conversions applied at ingest are
-the ones below, each a documented formula on a cited input.
-"""
+Each species module exposes ``NAME``, ``TABLE`` (id -> :class:`Cited`), ``MISSING`` (the gaps, each with where to
+look) and ``species()``, which builds the :class:`Species` or raises :class:`IncompleteSpeciesTable`."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import Final, Literal
 
-from qutip_trap.provenance import Cited
 from qutip_trap.units import (
     C_M_PER_S,
     ELECTRON_MASS_U,
@@ -20,14 +16,53 @@ from qutip_trap.units import (
     hz_from_wavenumber_cm,
 )
 
+Tag = Literal["verified", "corrected", "extracted", "background", "recomputed here", "derived", "contested"]
+
+TAGS: Final[tuple[str, ...]] = (
+    "verified",
+    "corrected",
+    "extracted",
+    "background",
+    "recomputed here",
+    "derived",
+    "contested",
+)
+"""How a value was checked: verified against its primary source, corrected (an error in the extracted or printed form
+fixed), extracted (quoted from a primary source, not independently checked), background (textbook physics), recomputed
+here, derived (computed from cited inputs), contested (unresolved between sources)."""
+
+
+@dataclass(frozen=True)
+class Cited:
+    """One number typed into a species table: the value as the source prints it, with its citation. ``source`` is a key
+    of :data:`qutip_trap.species.sources.SOURCES`; ``key`` is the table key, ``<species>.<level>.<quantity>``."""
+
+    value: float
+    unit: str
+    source: str
+    key: str
+    tag: Tag = "extracted"
+    uncertainty: float | None = None
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        if self.tag not in TAGS:
+            raise ValueError(f"unknown provenance tag {self.tag!r}; allowed: {TAGS}")
+        if not self.source:
+            raise ValueError(f"Cited({self.key!r}) has no source: every number is cited")
+        if not self.key:
+            raise ValueError("Cited values must name their table key")
+        if self.uncertainty is not None and self.uncertainty < 0:
+            raise ValueError("uncertainty must be non-negative")
+
 
 @dataclass(frozen=True)
 class MissingConstant:
-    """A constant the species table needs and PLAN.md does not supply."""
+    """A constant a species table needs but does not have."""
 
     quantity: str
     consult: str
-    """Where to get it (a source the plan names, or the database to read), so the gap is actionable."""
+    """Where to find it (a source or a database)."""
 
 
 class IncompleteSpeciesTable(LookupError):
@@ -43,28 +78,18 @@ class IncompleteSpeciesTable(LookupError):
 def required_constants_missing(
     table: dict[str, Cited], required: dict[str, str], consult: dict[str, str]
 ) -> tuple[MissingConstant, ...]:
-    """The :class:`MissingConstant` entries a species table still lacks, DERIVED from ``table`` (Section 4.5.6).
-
-    ``required`` maps every ledger id ``species()`` reads to a one-line description of the quantity;
-    ``consult`` optionally overrides the default "where to get it" per id. Deriving the gap list this way
-    (instead of hand-maintaining a tuple beside an unconditional ``raise``) means that filling a gap makes
-    the species build and that dropping a constant is caught at import rather than silently, which is audit
-    item E21 of the M0a review of 2026-09-07.
-    """
+    """The :class:`MissingConstant` entries for the ids in ``required`` (id -> description) that ``table`` lacks;
+    ``consult`` optionally overrides the default "where to get it" per id."""
     out: list[MissingConstant] = []
-    for ledger_id, quantity in required.items():
-        if ledger_id not in table:
-            where = consult.get(ledger_id, f"no cited value for {ledger_id} is in the table yet")
-            out.append(MissingConstant(f"{quantity} ({ledger_id})", where))
+    for key, quantity in required.items():
+        if key not in table:
+            where = consult.get(key, f"no cited value for {key} is in the table yet")
+            out.append(MissingConstant(f"{quantity} ({key})", where))
     return tuple(out)
 
 
 def ion_mass_u(atomic_mass: Cited) -> float:
-    """The ion mass: the cited relative atomic mass of the neutral atom minus one electron mass.
-
-    The binding-energy correction (the first ionization energy, a few eV, i.e. a few 1e-9 u) is below the
-    precision the tables carry and is neglected; Section 9.16 row 13-6 pins 170.93578 u for 171Yb+.
-    """
+    """The ion mass in u: the cited neutral-atom mass minus one electron mass (the binding energy, ~1e-9 u, neglected)."""
     if atomic_mass.unit != "u":
         raise ValueError("atomic mass must be cited in u")
     return atomic_mass.value - ELECTRON_MASS_U
@@ -73,7 +98,7 @@ def ion_mass_u(atomic_mass: Cited) -> float:
 def energy_hz(level_cm: Cited) -> float:
     """A NIST level energy in cm^-1 as an ordinary frequency (E/h)."""
     if level_cm.unit != "cm^-1":
-        raise ValueError(f"{level_cm.ledger_id}: level energies are cited in cm^-1")
+        raise ValueError(f"{level_cm.key}: level energies are cited in cm^-1")
     return float(hz_from_wavenumber_cm(level_cm.value))
 
 
@@ -87,30 +112,26 @@ def wavelength_vac_m(lower_energy_hz: float, upper_energy_hz: float) -> float:
 def gamma_hz_from_lifetime(lifetime: Cited) -> float:
     """Gamma/2pi = 1/(2 pi tau): the TOTAL decay rate of a level as an ordinary frequency."""
     if lifetime.unit != "s":
-        raise ValueError(f"{lifetime.ledger_id}: lifetimes are cited in s")
+        raise ValueError(f"{lifetime.key}: lifetimes are cited in s")
     return 1.0 / (TWO_PI * lifetime.value)
 
 
 def lifetime_s_from_linewidth(linewidth: Cited) -> float:
     """tau = 1/(2 pi gamma) for a linewidth quoted as gamma/2pi in Hz (a TOTAL rate)."""
     if linewidth.unit != "Hz":
-        raise ValueError(f"{linewidth.ledger_id}: linewidths are cited in Hz (gamma/2pi)")
+        raise ValueError(f"{linewidth.key}: linewidths are cited in Hz (gamma/2pi)")
     return 1.0 / (TWO_PI * linewidth.value)
 
 
 def a_hfs_from_two_manifold_splitting(
     splitting: Cited, nuclear_spin: Fraction, J: Fraction, *, inverted: bool
 ) -> float:
-    """The magnetic-dipole hyperfine constant A (Hz, SIGNED) from a printed zero-field splitting.
+    """The SIGNED magnetic-dipole hyperfine constant A (Hz) from a printed zero-field splitting.
 
-    Valid only when the level has exactly two hyperfine manifolds (I = 1/2 or J = 1/2), where the
-    electric-quadrupole term vanishes and E_F = (A/2)[F(F+1) - I(I+1) - J(J+1)] gives
-    Delta E = A (I + 1/2) for J = 1/2 and Delta E = A (J + 1/2) for I = 1/2 (Section 4.5.1, Breit-Rabi
-    Delta E_hfs = A (I + 1/2)). ``inverted`` (the lower-F manifold above the higher-F one) makes A < 0;
-    the sign is an independent input the sources rarely print (Section 4.5.6).
-    """
+    Valid only for two hyperfine manifolds (I = 1/2 or J = 1/2), where Delta E = A (I + 1/2) for J = 1/2 and
+    A (J + 1/2) for I = 1/2. ``inverted`` (lower F above higher F) makes A < 0; the sources rarely print the sign."""
     if splitting.unit != "Hz":
-        raise ValueError(f"{splitting.ledger_id}: hyperfine splittings are cited in Hz")
+        raise ValueError(f"{splitting.key}: hyperfine splittings are cited in Hz")
     half = Fraction(1, 2)
     if J == half:
         factor = nuclear_spin + half

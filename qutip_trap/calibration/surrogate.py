@@ -1,14 +1,5 @@
-"""The surrogate calibration table (PLAN.md Section 7.5, "Bootstrap, fits and failure" and "Age, drift and cost"; milestone M6).
-
-Section 7.5 makes the surrogate the DEFAULT calibration: the derived values of the device as ``seed`` entries (the initial
-guesses the M8 experiments start from), the closed-form alpha_m and chi_m integrals of Section 4.4.3 for the entangling
-waveforms, corrected by the exact spot checks of ``calibration.entangling`` on the resolved-mode space of Section 5.2, and the
-detection threshold and window from ``calibration.readout`` on the simulated readout model. Every entry carries its
-status, experiment, provenance id, fit time and noise sample (Appendix E ``CalEntry``); the scheduler reads only this table
-(Section 7.3), so a run on a surrogate table behaves like a laboratory whose knowledge of itself is its own derived model
-plus a handful of exact checks, which is what the plan asks of the first release. The full simulated-experiment path
-(``surrogate=False``) is milestone M8.
-"""
+"""The surrogate calibration table, the default calibration of every run (``method="closed_form"``): derived values as
+seeds, closed-form entangling waveforms corrected by exact spot checks, the detection threshold and window."""
 
 from __future__ import annotations
 
@@ -52,9 +43,9 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
 
 CROSSTALK_MIN = 1e-6
-"""Rabi ratios below this are not stored (a beam of finite waist gives every ion some light; the threshold keeps the table small)."""
+"""Crosstalk Rabi ratios below this are not stored."""
 MU_ABOVE_TOP_FRACTION = 0.35
-"""The surrogate's AM beat note sits this fraction of the smallest mode gap above the highest coupled mode (Section 7.8)."""
+"""The surrogate's AM beat note sits this fraction of the smallest mode gap above the highest coupled mode."""
 
 
 def _seed(value: float, pid: str, experiment: str, t0_s: float, unc: float = 0.0) -> CalEntry:
@@ -63,13 +54,13 @@ def _seed(value: float, pid: str, experiment: str, t0_s: float, unc: float = 0.0
 
 @dataclass(frozen=True)
 class SurrogateReport:
-    """What the surrogate calibration did per pair and per ion (the audit trail Section 7.5 asks the surrogate to report)."""
+    """The surrogate table and what the calibration did per pair and per ion."""
 
     table: CalibrationTable
     entangling: dict[tuple[int, int], CalibrationRun]
     mode_classes: dict[tuple[int, int], dict[int, str]]
     frozen_chi_rad: dict[tuple[int, int], dict[int, float]]
-    """Per pair, the chi_m of the modes frozen in its spot check (the loss the calibration target absorbed, Section 5.2)."""
+    """Per pair, chi_m of the modes frozen in its spot check."""
     detection: DetectionCalibration | None
     nbar: dict[int, float]
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -86,19 +77,9 @@ def surrogate_waveform(
     eta_min: float = 1e-9,
     mode_frequencies_hz: Mapping[int, float] | None = None,
 ) -> tuple[ShapedPulse, GateModes]:
-    """The closed-form waveform of Section 4.4.3 for ``pair``: the symmetric square pulse when the Raman pair couples the pair to one
-    mode, else Choi's segmented AM (2N + 1 segments) at ``mu_hz``, by default ``MU_ABOVE_TOP_FRACTION`` of the smallest gap
-    between the coupled modes above the highest one (Landsman's and Chen's placement above the spectrum, Section 7.8).
-
-    The beat note is never placed at the midpoint of two modes: there the first-order closure leaves a one-dimensional null
-    space whose power-optimal direction flips within tens of hertz, and the exact residual displacement of the solutions
-    swings from 1e-4 to 3e-3 quanta on the two-ion 171Yb+ fixture (M6 finding; the exact spot check reports whatever the
-    chosen solution leaves).
-
-    ``mode_frequencies_hz`` solves at the frequencies the table BELIEVES instead of the crystal's (Section 7.3): what the
-    full calibration re-solves the pulse at once the sideband spectroscopy has measured them (Section 7.5 item 4, "the
-    closure amplitude the pulse solver predicts at the calibrated mode frequencies").
-    """
+    """The closed-form waveform for ``pair``: a symmetric square pulse when the Raman pair couples to one mode, else Choi's
+    segmented AM at ``mu_hz``, by default ``MU_ABOVE_TOP_FRACTION`` of the smallest mode gap above the highest coupled mode
+    (between two modes the closure is ill-conditioned); ``mode_frequencies_hz`` overrides the crystal's frequencies."""
     modes = gate_modes(
         device, pair, beams, nbar=nbar, eta_min=eta_min, mode_frequencies_hz=mode_frequencies_hz
     )
@@ -124,13 +105,8 @@ def spot_check_space(
     ions: Sequence[int] | None = None,
     tail: float | None = None,
 ) -> tuple[HilbertSpace, dict[int, str]]:
-    """The reduced joint space of a pair's spot check: its resolved modes by the Section 5.2 classes, everything else frozen;
-    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone, the GATE_LOCAL space of the pair (Section 5.4; M9a).
-
-    ``tail`` is the boundary threshold the cap rule sizes at, ``SolverOptions.boundary_population_max`` (the engine's own
-    margin check reads the same number, so the initial cap and the check that grows it must not read two thresholds:
-    ledger ``conv.boundary_threshold_is_branch_scaled_on_both_sides``); None takes the SolverOptions default explicitly
-    rather than ``cap_for``'s own."""
+    """The reduced space of a pair's spot check: the ``resolved`` modes capped by ``cap_for`` at boundary threshold ``tail``
+    (default the engine's ``boundary_population_max``), the rest frozen, over every ion (JOINT_EXACT) or ``ions`` alone."""
     from qutip_trap.dynamics.engine import SolverOptions
 
     boundary = SolverOptions().boundary_population_max if tail is None else float(tail)
@@ -174,12 +150,9 @@ def surrogate_table(
     caps: Mapping[int, int] | None = None,
     tolerance_rad: float = 1e-4,
 ) -> SurrogateReport:
-    """Build the surrogate CalibrationTable of Section 7.5 for ``device``.
-
-    ``pairs`` restricts the entangling waveforms (default: every pair of the crystal); ``nbar`` overrides the prepared
-    occupations the solvers weight with (default: the device's preparation recipe); ``rabi_hz`` supplies carrier Rabi
-    frequencies the device cannot derive (microwave drives); ``spot_check=False`` stores the closed-form waveform as a seed.
-    """
+    """Build the surrogate ``CalibrationTable`` for ``device``: ``pairs`` restricts the entangling waveforms (default every
+    pair), ``nbar`` overrides the prepared occupations, ``rabi_hz`` supplies Rabi frequencies the device cannot derive
+    (microwave drives), ``spot_check=False`` stores the closed-form waveforms as seeds."""
     from qutip_trap.dynamics.engine import SolverOptions
 
     opts = options or SolverOptions()
@@ -230,11 +203,7 @@ def surrogate_table(
             notes.append(
                 f"ion {i}: a {spec.kind} drive has no derivable carrier Rabi frequency; entry left absent"
             )
-    # the entangling drives' own carrier Rabi frequencies and Stark shifts (the global pair), keyed by their table beam, so that
-    # the scheduler compensates the MS gate's light shift and the played chain of M8 has a belief to convert against. Only
-    # the ions that HAVE an entangling drive: a single-qubit device (40Ca+ optical preset, entangling_drives={}) has none and
-    # gets no entangling seed and no waveform, and a partially addressed chain seeds the ions its pairs use (this loop ran
-    # over range(n) and raised KeyError on the first ion without one).
+    # the entangling drives' Rabi and Stark seeds (the scheduler compensates the gate's light shift), for ions that have one
     for i in sorted(ent):
         spec = ent[i]
         key = (i, spec.table_key_beam)
@@ -253,11 +222,7 @@ def surrogate_table(
     }
     heating: dict[int, CalEntry] = {}
     spec_e = device.noise.S_E
-    # the seed is the rate the NOISE MODEL will actually heat the run at (Section 4.1.5, the correlation length and the
-    # spectrum's white level folded in by single_sided_from_spectrum), the same quantity Device.derived() reports. Reading
-    # spec_e's tabulated arrays alone, as this did, misses NoiseSpectrum.white_level entirely, so a device whose S_E is a
-    # pure white level was seeded with zero heating while the engine heated it at tens of quanta per second - and the M8
-    # heating experiment, whose delay span is 10/ndot_seed, then had no scan to run on exactly the devices that heat.
+    # the rate the noise model heats the run at (white level and correlation length included), as Device.derived() reports
     model_rates: dict[int, float] = {}
     if not spec_e.is_zero() and device.noise.correlation_length_m is not None:
         model_rates = device.noise.heating_rates_quanta_per_s(device)
@@ -266,8 +231,7 @@ def surrogate_table(
         if m in model_rates:
             rate = float(model_rates[m])
         else:
-            # no correlation length declared (the noise model refuses to guess one): the per-mode two-sided value at the
-            # mode frequency, which is what Device.derived() falls back to as well
+            # no correlation length declared: the two-sided spectrum at the mode frequency, Device.derived()'s fallback too
             s_two = float(np.interp(w, spec_e.omega_rad_s, spec_e.S, left=0.0, right=0.0))
             ion = int(np.argmax(np.abs(mode.eigenvector)))
             rate = heating_rate_quanta_per_s(
@@ -332,7 +296,7 @@ def surrogate_table(
         }
         inside, dim, nnz = within_budget(space, opts)
         if spot_check and not inside:
-            # the pair's GATE_LOCAL space (Section 5.4; M9a): the two ions and the resolved modes, the rest of the chain absent
+            # the pair's GATE_LOCAL space: the two ions and the resolved modes, the rest of the chain absent
             space, _classes_local = spot_check_space(
                 modes,
                 contributions,

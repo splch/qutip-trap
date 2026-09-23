@@ -1,44 +1,10 @@
-"""The exact rotating frame of the joint-exact integration (PLAN.md Sections 5.2, 5.3, 11.2, 11.3; performance pass of
-2026-09-09 on milestone M9b).
+"""The exact rotating frame of the joint-exact ket integration.
 
-Every ket segment of the engine integrates i psi' = [H_0 + V(t)] psi with H_0 = H_mot + H_int (+ a constant Stark shift) DIAGONAL
-in the joint Fock x computational basis and V(t) the drive terms. In the Schroedinger picture the state itself rotates at the
-Fock energies (n omega_m up to the cap), and the step-density record of Section 5.3 measures 27 to 52 dop853 steps per period
-of the highest mode for that reason alone. Writing psi = Theta(t) phi with Theta = e^{-i H_0 t} gives
-
-    i phi' = Theta^dag V(t) Theta phi = V_I(t) phi,
-
-the interaction picture of Section 5.2 WITHOUT the sideband decomposition: nothing is expanded, truncated or dropped, the phases
-are applied to the STATE (two multiplications by a unit-modulus vector per right-hand side) and every drive operator keeps
-whatever form the builder gave it (the factorized kernel of Section 11.3 item 4 or the assembled CSR matrix). It is therefore not
-a frame of ``BuilderOptions.frame`` (those change H(t)); it is an exact change of integration variable the engine makes and
-undoes, and the results agree with the Schroedinger-picture integration to the solver tolerance, which is what 'identical
-results' means in Section 11.1 (measured 1.4e-7 to 5.8e-7 in norm on the four Section 11.1 rows, the same figure as the
-dop853-vern9 disagreement quoted there). The evaluation count drops 3.2x (dimension 48) to 7.6x (2048) because phi moves at
-the drive's frequencies and the detunings, not at the Fock energies **[recomputed here, bench_rotating]**.
-
-Everything here is picklable through module-level classes (Section 11.3 item 9: the parallel maps pickle every ``QobjEvo``):
-
-- :class:`PhasedSum` is the data-layer operator theta^* (sum_k c_k A_k) theta at ONE time, ``theta`` the unit-modulus phase vector
-  e^{-i E t} of the joint energies, ``A_k`` any QuTiP ``Data`` (a :class:`~qutip_trap.dynamics.kernels.FactorizedOperator`, a CSR
-  matrix) and ``c_k`` the drive coefficients' values. Its application is ``x = theta * phi``, one accumulation of every term into a
-  single output through ``FactorizedOperator`` accumulation or the data layer's ``matmul``, then ``theta^* * out``; a product of two
-  (the c^dag c of a collapse operator on the trajectory path) is the pairwise product of the terms under the shared phases.
-- :class:`RotatingDrive` is the ``QobjEvo`` function element f(t) -> Qobj that evaluates the coefficients at t and returns the
-  :class:`PhasedSum`; the phases come from :class:`FrameEnergies`, the diagonal of H_0 held as its Kronecker-sum factors
-  (e^{-i E t} is the Kronecker product of the per-factor phase vectors, sum_f d_f exponentials instead of D).
-- :func:`rotating_frame` turns the builder's ``BuiltHamiltonian`` and a segment's collapse operators into the rotating-frame
-  ``QobjEvo`` and collapse operators, or returns None where the frame does not apply (a non-diagonal static part such as an
-  anharmonic term, a function element among the terms, an interaction-picture build whose static part is already zero).
-  A constant collapse operator that is an eigenoperator of ad_{H_0} (the heating ladder operators, sigma_z, a^dag a; the same
-  test the closed-form idle of the engine uses) becomes ``[c, e^{i lambda t}]``. A segment with any other collapse operator (a
-  scattering operator with its recoil kick, the intensity-noise channel sqrt(D) H_drive(t)) stays in the Schroedinger picture:
-  rotating such an operator is exact but ``mcsolve`` forms c^dag c from the collapse operators it is given, and a rotated
-  non-eigenoperator makes every one of those products a time-dependent pair of applications per right-hand side where the
-  Schroedinger picture merges them into one constant matrix, which costs more than the frame saves (measured on the
-  leakage-level circuit of tests/test_run_noise.py).
-- :func:`expectation_phase` gives the e^{i lambda t} an expectation value of an eigenoperator picks up on the way back
-  (<psi|a|psi> = e^{-i omega t} <phi|a|phi>; the populations P_1 and n are invariant).
+psi = Theta phi with Theta = e^{-i H_0 t}, H_0 the diagonal static part (H_mot + H_int), gives
+i phi' = Theta^dag V(t) Theta phi. Nothing is expanded or truncated: the phases act on the state, the drive operators keep
+their form, and the solver steps at the drive frequencies instead of the Fock energies. It is a change of integration
+variable the engine makes and undoes, not a ``BuilderOptions.frame``. A collapse operator must be a constant eigenoperator of
+ad_{H_0} (it gains e^{i lambda t}); any other keeps the segment in the Schroedinger picture.
 """
 
 from __future__ import annotations
@@ -62,9 +28,8 @@ PERF_2026_09_09 = "performance pass 2026-09-09 (dynamics/rotating.py, PLAN.md Se
 
 
 def kronecker_energies(energies: np.ndarray, dims: Sequence[int]) -> list[np.ndarray] | None:
-    """Per-factor vectors e_f with E[i_0, i_1, ...] = sum_f e_f[i_f] for a real diagonal ``energies`` over ``dims``, or None when
-    the diagonal is not such a Kronecker sum (nothing the one builder emits fails this: H_mot is a sum over mode factors, H_int and
-    a constant Stark shift over ion factors, an ENR group's number operators act on the group's one factor)."""
+    """Per-factor vectors e_f with E[i_0, i_1, ...] = sum_f e_f[i_f] for a real diagonal ``energies`` over ``dims``, or None
+    when the diagonal is not such a Kronecker sum."""
     dims_t = tuple(int(d) for d in dims)
     e = np.asarray(energies, dtype=float)
     if e.size != _prod(dims_t):
@@ -90,11 +55,8 @@ def kronecker_energies(energies: np.ndarray, dims: Sequence[int]) -> list[np.nda
 
 
 class FrameEnergies:
-    """The diagonal H_0 of a segment as its Kronecker-sum factors, with the phase vector e^{-i E t} memoized at the last t.
-
-    ``factors[f]`` is the energy (rad/s) each level of tensor factor f contributes; ``energies`` is the joint diagonal. The memo
-    serves the drive element and every collapse operator built from it in the same right-hand-side evaluation.
-    """
+    """The diagonal H_0 of a segment as its Kronecker-sum factors (``factors[f]``: rad/s per level of factor f), with the
+    phase vector e^{-i E t} memoized at the last t."""
 
     __slots__ = ("_energies", "_head", "_t_last", "_tail", "_theta_last", "dims", "factors")
 
@@ -105,9 +67,7 @@ class FrameEnergies:
             f.shape != (d,) for f, d in zip(self.factors, self.dims)
         ):
             raise ValueError("one energy vector per tensor factor, of the factor's dimension")
-        # e^{-i E t} = e^{-i E_head t} (x) e^{-i E_tail t} with E_head the Kronecker sum of every factor but the last
-        # (D/d_last numbers) and E_tail the last factor's: two exponentials and one outer product per evaluation, which
-        # costs less in NumPy call overhead than one exponential per factor with a product per factor
+        # e^{-i E t} = e^{-i E_head t} (x) e^{-i E_tail t}: two exponentials and one outer product per evaluation
         head = np.zeros(1)
         for f in self.factors[:-1]:
             head = (head[:, None] + f[None, :]).reshape(-1)
@@ -129,7 +89,7 @@ class FrameEnergies:
         return self._energies
 
     def theta(self, t: float) -> np.ndarray:
-        """e^{-i E t} as the Kronecker product of the per-factor phase vectors (shape (D,), C order)."""
+        """e^{-i E t}, shape (D,), C order."""
         if t == self._t_last and self._theta_last is not None:
             return self._theta_last
         scale = -1j * t
@@ -158,9 +118,8 @@ class FrameEnergies:
 
 
 def eigen_frequency(op: qt.Qobj, energies: np.ndarray) -> float | None:
-    """lambda with e^{i H_0 t} op e^{-i H_0 t} = e^{i lambda t} op for the diagonal H_0 of ``energies``: E_row - E_col equal on every
-    non-zero element (the heating operators a and a^dag, sigma_z, a^dag a, level projectors); None when ``op`` is not an
-    eigenoperator of ad_{H_0} (a drive operator, a recoil kick)."""
+    """lambda with e^{i H_0 t} op e^{-i H_0 t} = e^{i lambda t} op for the diagonal H_0 of ``energies``; None when ``op`` is
+    not an eigenoperator of ad_{H_0}."""
     coo = op.to("CSR").data.as_scipy().tocoo()
     if coo.nnz == 0:
         return 0.0
@@ -172,8 +131,8 @@ def eigen_frequency(op: qt.Qobj, energies: np.ndarray) -> float | None:
 
 
 def expectation_phase(op: qt.Qobj, frame: FrameEnergies) -> float | None:
-    """The lambda with <psi|op|psi> = e^{i lambda t} <phi|op|phi> along a rotating-frame integration (0 for the populations
-    P_1 and n, -omega_m for a_m), or None when ``op`` is not an eigenoperator and the trace has to be taken on the rotated states."""
+    """The lambda with <psi|op|psi> = e^{i lambda t} <phi|op|phi> (0 for populations, -omega_m for a_m), or None when
+    ``op`` is not an eigenoperator of ad_{H_0}."""
     return eigen_frequency(op, frame.energies)
 
 
@@ -181,14 +140,8 @@ def expectation_phase(op: qt.Qobj, frame: FrameEnergies) -> float | None:
 
 
 class PhasedSum(Data):  # type: ignore[misc]
-    """theta^* (sum_k c_k A_k) theta at one time: the rotating-frame value of a sum of drive terms (Section 5.2, exact).
-
-    ``terms`` are (coefficient value, operator data) pairs; ``theta`` the unit-modulus phase vector e^{-i E t} of shape (D,), or
-    None for no phase (the operator is then the plain sum, which is how a Dense matrix converts into this type). The application to
-    a state is matrix-free: the state is phased once, every term accumulates into ONE output (a factorized term through
-    ``FactorizedOperator.apply_into`` with no zero fill of its own, any other data type through the data layer's ``matmul``), and
-    the output is phased back.
-    """
+    """theta^* (sum_k c_k A_k) theta at one time, over (coefficient value, operator data) ``terms`` and the phase vector
+    ``theta`` = e^{-i E t} of shape (D,) (None for the plain sum)."""
 
     def __init__(
         self,
@@ -215,8 +168,7 @@ class PhasedSum(Data):  # type: ignore[misc]
     def _unchecked(
         cls, dims: tuple[int, ...], terms: tuple[tuple[complex, Data], ...], theta: np.ndarray | None, n: int
     ) -> PhasedSum:
-        """The constructor without the shape checks: the per-evaluation path of :class:`RotatingDrive`, whose terms and
-        phase vector were checked once when the element was built."""
+        """The constructor without the shape checks, for :class:`RotatingDrive`, which checked them once."""
         self = cls.__new__(cls)
         self.dims = dims
         self.terms = terms
@@ -224,13 +176,11 @@ class PhasedSum(Data):  # type: ignore[misc]
         Data.__init__(self, (n, n))
         return self
 
-    # -- Data protocol -----------------------------------------------------------------------------------------------------
-
     def copy(self) -> PhasedSum:
         return PhasedSum(self.dims, self.terms, self.theta)
 
     def to_array(self) -> np.ndarray:
-        """The assembled matrix (conversions and tests; never on the propagation path)."""
+        """The assembled matrix (for conversions, never on the propagation path)."""
         n = self.shape[0]
         out = np.zeros((n, n), dtype=complex)
         for c, op in self.terms:
@@ -265,8 +215,6 @@ class PhasedSum(Data):  # type: ignore[misc]
 
     def __repr__(self) -> str:
         return f"PhasedSum(dims={self.dims}, {len(self.terms)} terms, phased={self.theta is not None}, shape={self.shape})"
-
-    # -- the matrix-free product ---------------------------------------------------------------------------------------------
 
     def apply(self, arr: np.ndarray) -> np.ndarray:
         """(theta^* sum_k c_k A_k theta) @ arr for ``arr`` of shape (D,) or (D, ncols), in the same shape (C order)."""
@@ -334,8 +282,8 @@ def _matmul_phased_dense(left: PhasedSum, right: Dense, scale: complex = 1) -> D
 
 
 def _matmul_phased_phased(left: PhasedSum, right: PhasedSum, scale: complex = 1) -> PhasedSum:
-    """(theta^* A theta)(theta^* B theta) = theta^* A B theta on a shared phase: the pairwise products of the terms (the c^dag c of
-    a rotating-frame collapse operator); with different phases the product is assembled (the general fallback)."""
+    """(theta^* A theta)(theta^* B theta) = theta^* A B theta on a shared phase, as the pairwise products of the terms; with
+    different phases the product is assembled."""
     same_phase = (left.theta is None and right.theta is None) or (
         left.theta is not None
         and right.theta is not None
@@ -482,13 +430,8 @@ register_data_type()
 
 
 class RotatingDrive:
-    """The ``QobjEvo`` function element f(t) -> Qobj of the rotating-frame value of a sum of ``[operator, coefficient]`` terms.
-
-    At every t the coefficients are evaluated (the builder's memoized drive coefficients, which is where the right-hand-side
-    counter of Section 5.3 lives) and a :class:`PhasedSum` over the operators' data with the frame's phase vector is returned;
-    ``scale`` multiplies every term (the sqrt(D) of an intensity-noise channel). Picklable: the operators, the coefficients and the
-    frame energies all are (Section 11.3 item 9).
-    """
+    """The ``QobjEvo`` function element t -> the :class:`PhasedSum` of ``[operator, coefficient]`` terms at t, each term
+    times ``scale``."""
 
     def __init__(
         self,
@@ -508,8 +451,7 @@ class RotatingDrive:
             if op.shape != (n, n):
                 raise ValueError(f"operator of shape {op.shape} on a space of dimension {n}")
         d = list(frame.dims)
-        # the Qobj's dimensions parsed ONCE: Qobj(data, dims=[d, d]) re-parses the nested lists at every call (67 us
-        # measured at dimension 572, a third of the run), Qobj(data, dims=Dimensions) costs 0.7 us
+        # parsed once: Qobj(data, dims=[d, d]) would re-parse the nested lists at every call
         self._qdims = Dimensions([d, d])
         self._pairs = tuple(zip(self.coefficients, self.operators))
         self._qobj: qt.Qobj | None = None
@@ -522,10 +464,8 @@ class RotatingDrive:
         else:
             terms = tuple((scale * complex(c(t)), op) for c, op in self._pairs)  # type: ignore[operator]
         data = PhasedSum._unchecked(self.frame.dims, terms, theta, self.frame.dimension)
-        # ONE Qobj per element, refilled through the data setter (0.2 us against 4 us for a new Qobj): every consumer in
-        # QuTiP's element machinery (matmul_data_t, the map and product elements, QobjEvo.__call__) reads the returned
-        # object's data before the next call, and the function element's own memo keys it by t, so the object is never
-        # read after it has been refilled for another time. A caller that keeps the returned Qobj must copy it.
+        # one Qobj per element, refilled through the data setter: QuTiP's element machinery reads its data before the next
+        # call, so a caller that keeps the returned Qobj must copy it
         qobj = self._qobj
         if qobj is None:
             qobj = qt.Qobj(data, dims=self._qdims, copy=False)
@@ -540,8 +480,8 @@ class RotatingDrive:
 
 @dataclass(frozen=True)
 class RotatingSegment:
-    """One segment's integration problem in the rotating frame (Section 5.2, exact): the ``QobjEvo`` of V_I(t), the collapse
-    operators transformed the same way, and the frame that maps states in and out."""
+    """One segment's integration problem in the rotating frame: the ``QobjEvo`` of V_I(t), the collapse operators
+    transformed the same way, and the frame that maps states in and out."""
 
     H: qt.QobjEvo
     c_ops: tuple[qt.Qobj | qt.QobjEvo, ...]
@@ -587,8 +527,7 @@ def frame_energies_of(static: qt.Qobj, dims: Sequence[int]) -> FrameEnergies | N
 
 def rotating_collapse(op: qt.Qobj | qt.QobjEvo, frame: FrameEnergies) -> qt.Qobj | qt.QobjEvo | None:
     """A constant collapse operator in the rotating frame: unchanged when it commutes with H_0, ``[c, e^{i lambda t}]`` for
-    any other eigenoperator of ad_{H_0}; None when it is not an eigenoperator (a recoil kick) or is time dependent (the
-    intensity-noise channel), in which case the segment keeps the Schroedinger picture (module docstring)."""
+    any other eigenoperator of ad_{H_0}; None when it is not an eigenoperator or is time dependent."""
     if not isinstance(op, qt.Qobj):
         return None
     lam = eigen_frequency(op, frame.energies)
@@ -602,11 +541,9 @@ def rotating_collapse(op: qt.Qobj | qt.QobjEvo, frame: FrameEnergies) -> qt.Qobj
 def rotating_frame(
     H: qt.QobjEvo, dims: Sequence[int], c_ops: Sequence[qt.Qobj | qt.QobjEvo] = ()
 ) -> RotatingSegment | None:
-    """The rotating-frame problem of a segment: ``H`` the builder's Schroedinger-picture ``QobjEvo`` (a diagonal constant part
-    plus ``[operator, coefficient]`` drive terms), ``dims`` the space's tensor dimensions, ``c_ops`` the segment's collapse
-    operators. None when the frame does not apply: a constant ``H`` (the closed forms of the engine take those), a non-diagonal
-    or non-separable static part, a zero static part (an interaction-picture build), a function element anywhere, a collapse
-    operator that is not an eigenoperator of ad_{H_0} or is time dependent."""
+    """The rotating-frame problem of a segment whose ``H`` is a diagonal constant part plus ``[operator, coefficient]``
+    terms; None for a constant ``H``, a non-diagonal, non-separable or zero static part, a function element, or a
+    collapse operator :func:`rotating_collapse` refuses."""
     if H.isconstant:
         return None
     parts = _split_terms(H)

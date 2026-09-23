@@ -1,11 +1,5 @@
-"""Published readout operating points, as APPARATUS data (PLAN.md Sections 8.4, 8.8, 9.5; milestone M5).
-
-Every number here is what a laboratory measured about its own optics, detectors and beams: detected rates, efficiencies,
-backgrounds, windows and thresholds. They are validation anchors for the record and discriminator layers and calibration
-inputs with provenance, never species constants (Section 8.8: the first version of the plan carried a fitted species scale
-here, which contradicted Section 3.1). The species constants they combine with (linewidths, splittings, lifetimes) live in
-the species tables and the atomic layer.
-"""
+"""Published readout operating points as apparatus data: what a laboratory measured about its own optics, detectors and
+beams, never species constants."""
 
 from __future__ import annotations
 
@@ -16,14 +10,13 @@ from qutip_trap.readout.fluorescence import FluorescenceRates, rates_from_detect
 
 @dataclass(frozen=True)
 class ApparatusPreset:
-    """One published readout apparatus (Section 8.4 "Species presets")."""
+    """One published readout apparatus."""
 
     name: str
     species: str
     source: str
     detected_bright_per_s: float | None
-    """The measured detected count rate of a bright ion (R_B, eps_sys R_o); None when the source does not quote one, in
-    which case :meth:`rates` refuses rather than inventing a zero-scattering bright state."""
+    """The measured detected count rate of a bright ion (eps_sys R_o); None when the source does not quote one."""
     efficiency: float
     """The quoted system detection efficiency epsilon_sys."""
     background_per_s: float
@@ -39,11 +32,11 @@ class ApparatusPreset:
 
     @property
     def has_detected_rate(self) -> bool:
-        """Whether the source quotes a detected bright rate at all (three of the seven presets do not)."""
+        """Whether the source quotes a detected bright rate."""
         return self.detected_bright_per_s is not None
 
     def rates(self) -> FluorescenceRates:
-        """The Section 8.1 rate object with the efficiency divided out once (the record layer applies it once again)."""
+        """The rate object with the efficiency divided out once; refused when the source quotes no detected rate."""
         if self.detected_bright_per_s is None:
             raise ValueError(
                 f"{self.source} does not quote a detected bright rate ({self.notes.split(';')[-1].strip()}), so this "
@@ -78,8 +71,7 @@ MYERSON_CA40_PMT = ApparatusPreset(
         "sub-bins t_s = 10 us; bright -> dark transfer < 1e-3 s^-1"
     ),
 )
-"""Myerson et al. 2008's 40Ca+ shelving detection through a PMT (Section 8.4): the collection and quantum efficiencies, the
-dark counts and the detection window of the published apparatus, as an ``ApparatusPreset``."""
+"""Myerson et al. 2008's 40Ca+ shelving readout through a PMT."""
 
 HARTY_CA43 = ApparatusPreset(
     name="Harty 2014, 43Ca+ hyperfine qubit shelved to D5/2, PMT",
@@ -133,8 +125,7 @@ CRAIN_YB171_SNSPD = ApparatusPreset(
         "94(5) ms at 200 um, 814(77) ms at 370 um (Gaussian fringe decay exp(-tau^2/alpha^2))"
     ),
 )
-"""Crain et al. 2019's 171Yb+ state detection with a superconducting nanowire detector (Section 8.4): the published
-apparatus as an ``ApparatusPreset``, the detector the example 171Yb+ machine carries."""
+"""Crain et al. 2019's 171Yb+ state detection with an SNSPD, the detector of the example 171Yb+ chain."""
 
 CHRISTENSEN_BA133 = ApparatusPreset(
     name="Christensen 2020, 133Ba+ hyperfine qubit shelved through P3/2",

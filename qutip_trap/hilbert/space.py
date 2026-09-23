@@ -1,18 +1,10 @@
-"""The composite space: per-ion qudit x modes, with the ENR option (PLAN.md Sections 5.1, 5.4; Appendix E; M2).
+"""The composite Hilbert space of a run: one qudit per ion, truncated resolved modes and an optional ENR group.
 
-Each ion is a qudit of dimension d (2 by default, 2 + leakage levels when scattering is modelled); each resolved
-mode a truncated oscillator of d_m = n_max + 1 Fock levels; an optional ENR group of cold undriven modes shares one
-excitation cap N_exc; frozen spectators contribute their Debye-Waller factors analytically (Section 5.2). The tensor
-order is ions, then resolved modes in the order of ``resolved``, then the ENR group as ONE factor; every ``factor``
-index below is a position in that order, every ``mode`` index a position in ``Crystal.modes`` (Section 13, row
-"Mode index"). Operators are built once per space and cached (module-level cache keyed by the frozen space).
-
-Rules from Section 5.1.1 and the 2026-09-04 numerics critique that this module encodes: the drive's displacement is
-the matrix exponential (per mode in a product space, of the SUM generator in an ENR space, never a product of
-per-mode exponentials there); the interior elements are asserted against the analytic Laguerre oracle over the
-declared ``expected_n_range``; every dimension computation reads ``shape`` behind an assertion and never ``dims``,
-because ``tensor(sigmap(), D_enr)`` reports dims whose product disagrees with its shape; ``ptrace`` raises on any
-space with an ENR factor, so marginals are built here by explicit index sums over ``enr_state_dictionaries``.
+Tensor order: ions, then the resolved modes in the order of ``resolved``, then the ENR group (cold undriven modes sharing
+one excitation cap N_exc) as ONE factor; every ``factor`` index is a position in that order and every ``mode`` index a
+position in ``Crystal.modes``. Frozen modes have no factor. An ENR group's displacement is the exponential of the SUM
+generator; its dimension is read from ``shape``, never ``dims``, and its marginals are explicit index sums (``ptrace``
+raises). Operators are cached per space.
 """
 
 from __future__ import annotations
@@ -44,14 +36,11 @@ if TYPE_CHECKING:
 
 M2 = "milestone M2 (hilbert/, PLAN.md Section 5.1)"
 ORACLE_MIN_MARGIN = 4
-"""The smallest margin the Section 5.1.1 table covers (its d = 8 row); below it the oracle is reported, not asserted."""
+"""The smallest margin the truncation table covers (its d = 8 row); below it the oracle is reported, not asserted."""
 
 IDENTITY_CHECK_MAX_DIMENSION = 1 << 16
-"""Above this joint dimension ``check()`` asserts shape == prod(dims) arithmetically over the FACTOR shapes instead of forming
-``qt.tensor(*factor_identities())`` (M9b audit B2). The Kronecker product's shape is the product of its factors' shapes, so the
-two assertions are the same statement; the tensor is what costs O(D) non-zeros, which is what Section 11.5's guard exists to
-prevent - measured 64 MB at D = 4.2e6 and, for the eight-ion eight-mode case Section 5.4 cites, about 86 GB inside ``check()``,
-dying before the guard could reroute the run to GATE_LOCAL."""
+"""Above this joint dimension ``check()`` does not form the joint identity (O(D) memory), so the dimension guards can still
+refuse a space too large to allocate."""
 
 ModeClass = Literal["resolved", "enr", "frozen"]
 
@@ -65,20 +54,15 @@ def enr_dimension(n_modes: int, n_exc: int) -> int:
 
 @dataclass(frozen=True)
 class ModeTruncation:
-    """The truncation of one resolved mode (Section 5.1.1): the mode (a position in ``Crystal.modes``), its Fock dimension
-    d = n_max + 1, the populated range the cap was derived for, the largest Lamb-Dicke parameter the drives put on it and
-    the interior-element tolerance the cap was derived at (None for a fixture cap)."""
+    """The truncation of one resolved mode: the mode (a position in ``Crystal.modes``), its Fock dimension d = n_max + 1,
+    the populated range the cap was derived for and the largest Lamb-Dicke parameter the drives put on it."""
 
     mode: int
     d: int
-    """d = n_max + 1 Fock levels."""
     expected_n_range: tuple[int, int]
     eta_max: float
     element_tol: float | None = None
-    """The interior-element tolerance this cap was DERIVED for (``hilbert.operators.required_margin`` with ``element_tol``;
-    performance pass 2026-09-09): the rule (ii) oracle then asserts the exponential's elements over the declared range against
-    the analytic ones to this number at every margin, instead of to the Section 5.1.1 table's value at margins of four and
-    more. None is the fixture cap of every JOINT_EXACT space."""
+    """The interior-element tolerance the cap was derived for, asserted at every margin; None for a fixture cap."""
 
     def __post_init__(self) -> None:
         if self.d < 2:
@@ -104,11 +88,11 @@ class ModeTruncation:
 
     @property
     def required_margin(self) -> int:
-        """The Section 5.1.1 margin for ``eta_max``."""
+        """The required margin for ``eta_max``."""
         return required_margin(self.eta_max)
 
     def grown(self, add: int) -> ModeTruncation:
-        """The same declaration with ``add`` more Fock levels (Section 5.5 adaptive growth)."""
+        """The same declaration with ``add`` more Fock levels."""
         if add <= 0:
             raise ValueError("grow by a positive number of levels")
         return ModeTruncation(self.mode, self.d + add, self.expected_n_range, self.eta_max, self.element_tol)
@@ -116,7 +100,7 @@ class ModeTruncation:
 
 @dataclass(frozen=True)
 class CachedOperators:
-    """sigma operators per ion, ladder operators per mode and displacement operators by (ion, mode) (M2)."""
+    """sigma operators per ion, ladder operators per mode and displacement operators by (ion, mode)."""
 
     sigma_plus: tuple[qt.Qobj, ...]
     sigma_minus: tuple[qt.Qobj, ...]
@@ -127,30 +111,19 @@ class CachedOperators:
 
 @dataclass(frozen=True)
 class HilbertSpace:
-    """The composite space of a run (Sections 5.1, 5.4): one qudit factor per ion (dimension 2, or 2 + leakage levels), one
-    truncated oscillator per resolved mode in the order of ``resolved``, an optional ENR group as one factor, and the
-    frozen spectators that contribute Debye-Waller factors analytically; ``ions`` names the device ion behind each ion
-    factor and ``dropped`` the frozen modes that are not modelled at all. Operators are built once per space and cached
-    (module docstring: the rules the construction obeys)."""
+    """The composite space of a run (tensor order in the module docstring)."""
 
     ion_dims: tuple[int, ...]
     """2, or 2 + leakage levels, per ion."""
     resolved: tuple[ModeTruncation, ...]
-    """Product-space modes."""
     enr_group: tuple[tuple[int, ...], int] | None
-    """(modes, N_exc), optional."""
+    """(modes, N_exc)."""
     frozen: tuple[int, ...]
-    """Frozen spectators."""
     ions: tuple[int, ...] = ()
-    """The DEVICE ion carried by each ion factor, in factor order (M9a, GATE_LOCAL): a space over a subset of the crystal's
-    ions names them here, so that every ``ion`` argument of this class and of the builder is a device index (a position in
-    ``Crystal``), never a factor position; empty = the identity (0, 1, ..., n_ions - 1), the JOINT_EXACT case."""
+    """The device ion carried by each ion factor, in factor order; empty means (0, 1, ..., n_ions - 1). Every ``ion``
+    argument is a device index, never a factor position."""
     dropped: tuple[int, ...] = ()
-    """The subset of ``frozen`` that Section 5.2 DROPPED rather than froze: |alpha_m|^2 (2 n_m + 1) < 1e-6 and |chi_m| < 1e-4,
-    "nothing absorbs a dropped mode's loss". Like a frozen mode it has no tensor factor and never enters the drive operators,
-    but unlike one it gets no Debye-Waller factor (``dynamics.hamiltonian``) and no Fock branch (``run.job``): it evolves
-    freely and is not modelled at all, so ``SpaceSelection.dropped_contribution`` reports a loss the run really does not
-    incur (Section 11.3 item 2; 9.8 row 3). Empty by default, so every space built before M6's fix froze what it dropped."""
+    """The subset of ``frozen`` that is not modelled at all: no tensor factor, no Debye-Waller factor, no Fock branch."""
 
     def __post_init__(self) -> None:
         self.check()
@@ -158,16 +131,8 @@ class HilbertSpace:
     # ---- bookkeeping ---------------------------------------------------------------------------------------------
 
     def check(self) -> None:
-        """The Section 5.1 invariants: exactly one class per mode, and shape == prod(dims) with the ENR factor's
-        C(M + N_exc, N_exc) shape read from the Qobj and never from ``dims``.
-
-        Every invariant here is arithmetic, and nothing allocates the JOINT space unless it is small enough for the
-        assertion to be free (``IDENTITY_CHECK_MAX_DIMENSION``). Section 11.5's monitor "refuses to build" joint spaces
-        above its guards, and it cannot refuse after ``__post_init__`` has already formed an O(D) identity (M9b audit B2:
-        the guard ran after the allocation, so the eight-ion eight-mode case of Section 5.4 would have died inside
-        ``check()`` at about 86 GB instead of being routed to GATE_LOCAL). A Kronecker product's shape is the product of
-        its factors' shapes, so the assertion this keeps is the same statement as the one it skips.
-        """
+        """The space invariants: one class per mode, valid indices, and shape == prod(dims) with the ENR factor's
+        C(M + N_exc, N_exc) shape read from the Qobj (the joint identity only up to ``IDENTITY_CHECK_MAX_DIMENSION``)."""
         if not self.ion_dims or any(d < 2 for d in self.ion_dims):
             raise ValueError("every ion is a qudit of dimension >= 2")
         if self.ions:
@@ -190,8 +155,7 @@ class HilbertSpace:
             raise ValueError("mode indices are positions in Crystal.modes and non-negative")
         if self.enr_group is not None and (not enr_modes or self.enr_group[1] < 0):
             raise ValueError("an ENR group names at least one mode and a non-negative excitation cap")
-        # the Qobj shape assertions (Section 5.1): the ENR factor is one C(M + N_exc, N_exc) block - the one place where the
-        # product of ``dims`` disagrees with ``shape`` - and the product factors multiply out to the joint dimension
+        # the ENR factor is one C(M + N_exc, N_exc) block: the one place where the product of dims disagrees with shape
         if self.enr_group is not None:
             n_modes, n_exc = len(self.enr_group[0]), self.enr_group[1]
             d_enr = enr_dimension(n_modes, n_exc)
@@ -228,7 +192,7 @@ class HilbertSpace:
 
     @property
     def dimension(self) -> int:
-        """The joint dimension that Section 11's cost model and the Section 5.4 budget guard."""
+        """The joint dimension, the product of ``dims``."""
         return prod(self.dims)
 
     @property
@@ -304,12 +268,8 @@ class HilbertSpace:
         return ops
 
     def with_space_dims(self, op: qt.Qobj) -> qt.Qobj:
-        """``op`` relabelled with this space's ``dims``: the ENR group is ONE tensor factor of dimension C(M + N_exc, N_exc).
-
-        QuTiP's ``enr_*`` constructors report the group's per-mode dims (n_exc + 1 each), whose product disagrees with the
-        shape; a ``QobjEvo`` refuses to combine terms whose dims differ, so every joint operator and state this space hands
-        out carries the one convention the factorized drive kernel already uses (Section 5.1.1). Data is shared, not copied.
-        """
+        """``op`` relabelled with this space's ``dims``, the ENR group as ONE factor of dimension C(M + N_exc, N_exc)
+        (QuTiP's ``enr_*`` dims disagree with the shape, and ``QobjEvo`` refuses mixed dims); data is shared."""
         if self.enr_group is None:
             return op
         d = self.dims
@@ -369,7 +329,7 @@ class HilbertSpace:
         )
 
     def transition(self, ion: int, upper: int, lower: int) -> qt.Qobj:
-        """|upper><lower| on ``ion`` for d > 2 (the transition operators of Section 5.7)."""
+        """|upper><lower| on ``ion`` for d > 2."""
         f = self.ion_factor(ion)
         d = self.ion_dims[f]
         return self.embed(qt.basis(d, upper) * qt.basis(d, lower).dag(), f)
@@ -394,7 +354,7 @@ class HilbertSpace:
         return _cached(self, ("n", mode), lambda: (a.dag() * a).to("CSR"))
 
     def position(self, mode: int) -> qt.Qobj:
-        """(a + a^dagger) on the joint space; x = x0 (a + a^dagger) (Section 13)."""
+        """(a + a^dagger) on the joint space; x = x0 (a + a^dagger)."""
         a = self.annihilation(mode)
         return _cached(self, ("x", mode), lambda: (a + a.dag()).to("CSR"))
 
@@ -407,9 +367,7 @@ class HilbertSpace:
             )
 
         def build() -> qt.Qobj:
-            # rule (ii) of Section 5.1.1: assert the interior elements against the analytic oracle to the table's tolerance;
-            # a margin below the table's smallest row (4 levels) is not tabulated and is left to the boundary monitor, unless
-            # the cap was derived for a declared element tolerance, which is then asserted at any margin
+            # below ORACLE_MIN_MARGIN the table has no tolerance: only a declared element_tol is asserted there
             if tr.element_tol is not None:
                 oracle_check(tr.d, 1j * eta, tr.expected_n_range[1], tr.element_tol)
             elif tr.margin_levels >= ORACLE_MIN_MARGIN:
@@ -421,7 +379,7 @@ class HilbertSpace:
         return _cached(self, ("D", mode, _eta_key(eta)), build)
 
     def oracle_status(self, mode: int, eta: float) -> tuple[bool, float, float]:
-        """(asserted, max interior element difference, tolerance) of the mode's displacement at |eta| (Section 5.1.1 rule ii)."""
+        """(asserted, max interior element difference, tolerance) of the mode's displacement at |eta|."""
         tr = self.truncation(mode)
         exp_ = displacement_operator(tr.d, 1j * eta).full()
         from qutip_trap.hilbert.operators import displacement_matrix_analytic
@@ -443,7 +401,7 @@ class HilbertSpace:
         )
 
     def enr_displacement(self, etas: Mapping[int, float]) -> qt.Qobj:
-        """expm of the ENR SUM generator sum_m i eta_m (a_m + a_m^dagger) in the group's own space (Section 5.1.1)."""
+        """expm of the ENR SUM generator sum_m i eta_m (a_m + a_m^dagger) in the group's own space."""
         if self.enr_group is None:
             raise KeyError("this space has no ENR group")
         dims, n_exc = self._enr_dims()
@@ -462,13 +420,9 @@ class HilbertSpace:
     def drive_operator(
         self, ion: int, etas: Mapping[int, float], *, ion_op: qt.Qobj | None = None
     ) -> qt.Qobj:
-        """sigma_+^ion (x) prod_m D_m(i eta_{ion,m}) over the resolved modes, times the ENR group's sum-generator exponential.
-
-        Frozen modes are absent here: their Debye-Waller factors multiply the coefficient (Section 5.2). Modes that
-        the drive does not couple to (eta = 0) contribute the identity. CSR, with 2^{N-1} prod d_m^2 non-zeros per
-        ion for two-level ions (Section 5.1.1). ``ion_op`` replaces sigma_+ by another operator on the ion's factor
-        (the level projectors of a light-shift drive, Section 4.4.4).
-        """
+        """sigma_+^ion (x) prod_m D_m(i eta_{ion,m}) over the resolved modes, times the ENR group's sum-generator
+        exponential; frozen modes are absent (their Debye-Waller factors multiply the coefficient). ``ion_op`` replaces
+        sigma_+."""
         f_ion = self.ion_factor(ion)
         ops: dict[int, qt.Qobj] = {
             f_ion: qudit_sigma_plus(self.ion_dims[f_ion]) if ion_op is None else ion_op
@@ -491,12 +445,8 @@ class HilbertSpace:
     def drive_operator_factorized(
         self, ion: int, etas: Mapping[int, float], *, ion_op: qt.Qobj | None = None
     ) -> qt.Qobj:
-        """The drive operator of :meth:`drive_operator` as a :class:`~qutip_trap.dynamics.kernels.FactorizedOperator` (Section
-        11.3 item 4; M9b): sigma_+^ion (or ``ion_op``) on the ion's factor and the oracle-checked per-mode exponentials
-        D_m(i eta_m) on the resolved modes it couples to, held as factors and applied mode by mode. Product spaces only: a
-        drive that couples to an ENR group is never factorized (the sum-generator exponential is not a product of per-mode
-        factors, Section 5.1.1) and raises ``NotImplementedError``; the caller falls back to the assembled operator.
-        """
+        """:meth:`drive_operator` as a :class:`~qutip_trap.dynamics.kernels.FactorizedOperator` applied mode by mode; a
+        drive coupling to an ENR group raises ``NotImplementedError`` (the caller falls back to :meth:`drive_operator`)."""
         from qutip_trap.dynamics.kernels import factorized_qobj
 
         f_ion = self.ion_factor(ion)
@@ -580,12 +530,8 @@ class HilbertSpace:
         return qt.enr_thermal_dm(dims, n_exc, [float(thermal.get(m, 0.0)) for m in self.enr_group[0]])
 
     def product_state(self, internal: qt.Qobj | Sequence[int], motional: Mapping[int, qt.Qobj]) -> qt.Qobj:
-        """The joint state: ``internal`` (ket or dm on the ion factors) x per-factor motional states.
-
-        ``motional`` maps a resolved mode to its factor ket or dm and, for an ENR group, the key -1 to the group's
-        factor state; every resolved mode and the group (if present) must be given. A ket results only if every part
-        is a ket, otherwise the density matrix.
-        """
+        """The joint state ``internal`` (ket, dm or levels) x ``motional``, which maps every resolved mode to its factor
+        state and the key -1 to the ENR group's; a ket only if every part is a ket."""
         parts: list[qt.Qobj] = []
         if isinstance(internal, qt.Qobj):
             if internal.shape[0] != prod(self.ion_dims):
@@ -614,12 +560,8 @@ class HilbertSpace:
         states: Mapping[int, qt.Qobj] | None = None,
         provenance: tuple[str, ...] = ("m2.initial_state",),
     ) -> State:
-        """A ``State`` (Appendix E) from per-mode Fock levels, thermal occupations or explicit factor states.
-
-        Resolved modes take ``states`` first, then ``fock``, then ``thermal`` (default |0>); ENR members take
-        ``fock`` or ``thermal`` (a Fock tuple or a product thermal state for the whole group); frozen modes carry
-        only their nbar (``thermal``, default 0).
-        """
+        """A ``State`` from per-mode factor states, Fock levels or thermal occupations: resolved modes take ``states``, then
+        ``fock``, then ``thermal`` (default |0>); the ENR group takes ``fock`` or ``thermal``; frozen modes only an nbar."""
         from qutip_trap.dynamics.engine import MotionalModel, State
 
         fock = dict(fock or {})
@@ -679,19 +621,15 @@ class HilbertSpace:
         return np.asarray(obj.full())
 
     def marginal(self, state: State | qt.Qobj, keep: tuple[int, ...]) -> qt.Qobj:
-        """The reduced density matrix over the tensor factors ``keep`` (in factor order), by explicit index sums.
-
-        Works with an ENR factor present, where ``ptrace`` raises (Section 5.1); the ENR group is kept or traced as
-        one factor here, and ``mode_marginal`` reduces to one of its modes.
-        """
+        """The reduced density matrix over the tensor factors ``keep`` (in factor order), by explicit index sums, so it
+        works with an ENR factor (kept or traced as one factor), where ``ptrace`` raises."""
         dims = self.dims
         keep_sorted = tuple(sorted(set(keep)))
         if any(f < 0 or f >= len(dims) for f in keep_sorted):
             raise IndexError("keep lists factor indices")
         obj = state if isinstance(state, qt.Qobj) else state.joint
         if obj is not None and obj.isket and obj.shape[0] == self.dimension:
-            # a ket: rho_keep = V V^dagger with V the amplitudes reshaped to (kept, traced), O(D_keep^2 D) instead of the
-            # O(D^2) outer product (the engine reduces every stored ket of every segment)
+            # a ket: rho_keep = V V^dagger, V the amplitudes reshaped to (kept, traced): O(D_keep^2 D), not O(D^2)
             arr = np.asarray(obj.full()).reshape(dims)
             traced = [f for f in range(len(dims)) if f not in keep_sorted]
             v = np.transpose(arr, list(keep_sorted) + traced)
@@ -742,7 +680,7 @@ class HilbertSpace:
             and self.mode_class(mode) == "resolved"
             and obj.shape[0] == self.dimension
         ):
-            # a ket's Fock populations are |psi|^2 summed over the other factors, O(D) (the boundary monitor per segment)
+            # a ket's Fock populations are |psi|^2 summed over the other factors, O(D)
             arr = np.abs(np.asarray(obj.full()).reshape(self.dims)) ** 2
             f = self.mode_factor(mode)
             return np.asarray(arr.sum(axis=tuple(i for i in range(arr.ndim) if i != f)), dtype=float)
@@ -750,7 +688,7 @@ class HilbertSpace:
 
     def populated_range(self, state: State | qt.Qobj, mode: int, tail: float = 1e-6) -> int:
         """The highest Fock index of a resolved mode that the state populates: the smallest n with the population above n
-        below ``tail`` (Section 5.5: the range the Section 5.1.1 margin is measured from)."""
+        below ``tail``."""
         p = self.fock_populations(state, mode)
         above = np.cumsum(p[::-1])[::-1]  # above[n] = sum_{k >= n} p_k
         for n in range(p.size):
@@ -761,7 +699,7 @@ class HilbertSpace:
     # ---- margins -----------------------------------------------------------------------------------------------
 
     def margin_deficits(self, etas: Mapping[int, float] | None = None) -> dict[int, int]:
-        """Per resolved mode, required margin minus available margin (positive = the cap is too low; Section 5.1.1)."""
+        """Per resolved mode, required margin minus available margin (positive = the cap is too low)."""
         out: dict[int, int] = {}
         for m in self.resolved:
             eta = m.eta_max if etas is None else max(abs(etas.get(m.mode, 0.0)), 0.0)
@@ -769,15 +707,14 @@ class HilbertSpace:
         return out
 
     def grown(self, mode: int, add: int) -> HilbertSpace:
-        """A copy with ``add`` more Fock levels on ``mode`` (Section 5.5 adaptive growth); for an ENR member the group's
-        excitation cap grows by ``add`` (the top shell is the group's boundary)."""
+        """A copy with ``add`` more Fock levels on ``mode``; for an ENR member the group's excitation cap grows instead."""
         if self.enr_group is not None and mode in self.enr_group[0]:
             return self.grown_enr(add)
         res = tuple(m.grown(add) if m.mode == mode else m for m in self.resolved)
         return HilbertSpace(self.ion_dims, res, self.enr_group, self.frozen, self.ions, self.dropped)
 
     def grown_enr(self, add: int) -> HilbertSpace:
-        """A copy with the ENR group's excitation cap N_exc raised by ``add`` (Section 5.5 on the top ENR shell)."""
+        """A copy with the ENR group's excitation cap N_exc raised by ``add``."""
         if self.enr_group is None:
             raise KeyError("this space has no ENR group")
         if add <= 0:
@@ -797,12 +734,8 @@ class HilbertSpace:
         nbar: Mapping[int, float] | None = None,
         enr: tuple[Sequence[int], int] | None = None,
     ) -> HilbertSpace:
-        """The resolved-mode selection and truncation policy of Sections 5.2, 5.5 and 11.3 (``run.space.select_space``): the
-        modes the schedule's entangling gates displace or entangle beyond the freeze tolerances are resolved with caps from
-        their loop radius and occupation, the rest are frozen or dropped. ``nbar`` defaults to the device's prepared
-        occupations (its preparation recipe). ``enr`` = (modes, N_exc) carries a group of cold, undriven modes dynamically
-        as one excitation-number-restricted factor with the sum-generator displacement (Sections 5.1, 11.3 item 1; M9a);
-        the matrix-free kernel is M9b."""
+        """The space ``run.space.select_space`` picks for ``schedule`` on ``device``; ``nbar`` defaults to the preparation
+        recipe's occupations and ``enr`` = (modes, N_exc) carries cold undriven modes as one ENR factor."""
         from qutip_trap.prep.recipe import preparation_occupations
         from qutip_trap.run.space import select_space
 

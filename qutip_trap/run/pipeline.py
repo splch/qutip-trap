@@ -1,22 +1,8 @@
-"""The pipeline of PLAN.md Section 3.4 on a ``Machine``: the compile-calibrate-schedule prefix that ``run``, ``Machine.schedule``
-and ``Machine.estimate`` share (``compile_calibrate_schedule``; docs/api_implementation_plan.md 1.3), and the whole run
-behind ``Machine.run`` (``execute``; item 2.1, 0.3.0).
+"""The run pipeline behind ``Machine.run`` (``execute``) and its compile-calibrate-schedule prefix.
 
-    Machine (Device + roles + CalibrationTable + Physics, Numerics, Readout, level) + Circuit
-      -> compile: Circuit -> native gates (phase-tracked)                    [control.compiler]
-      -> calibrate (surrogate, cached per Device): CalibrationTable         [calibration.surrogate]
-      -> the calibrated micromotion shims programmed onto the device        [experiments.micromotion]
-      -> schedule: native gates -> Pulses with absolute times, the measure event   [control.schedule]
-      -> space: resolved / frozen / dropped modes with their caps           [run.space]
-      -> prepare: Doppler -> sideband -> pump, the initial mixed state      [prep.recipe, prep.sequence; run.job.prepare]
-      -> evolve: every branch of the initial mixture through the pulses     [dynamics.engine]
-         (JOINT_EXACT), or the gate-local walk of Section 5.4               [run.gate_local]
-      -> readout: the joint outcome, then the photon records or the POVM    [readout.discriminate; run.job.readout_stage]
-      -> Result
-
-The steps, their notes and their order are ``run``'s of 0.1.0, moved here unchanged; ``run.job`` keeps the stages
-(``prepare``, the branches, the readout stage, the intrinsic budget) and the ``RunRecord`` a result leaves behind.
-"""
+compile -> calibrate -> program the calibrated micromotion shims -> schedule -> select the space -> prepare -> evolve
+(JOINT_EXACT's branches, or the gate-local walk) -> read out, with background-gas collisions per shot -> ``Result``.
+``compile_calibrate_schedule`` is the prefix that ``Machine.schedule`` and ``Machine.estimate`` share."""
 
 from __future__ import annotations
 
@@ -78,9 +64,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Prefix:
-    """What the prefix produced: the compile report and its native circuit, the table (built or given), the device the run
-    evolves (the table's calibrated shims programmed onto it), the schedule, the resolved drive maps, the options after the
-    ``internal_levels`` adjustment, and the notes so far, in the order ``run`` reports them."""
+    """What the prefix produced; ``device`` carries the table's calibrated shims and ``options`` the ``internal_levels``
+    adjustment."""
 
     report: CompileReport
     compiled: Circuit
@@ -112,23 +97,14 @@ def compile_calibrate_schedule(
     stark_compensation: bool = True,
     internal_levels: int = 2,
 ) -> Prefix:
-    """Compile, calibrate (the cached surrogate when ``table`` is None), program the calibrated shims and schedule: the
-    prefix of Section 3.4's pipeline, with the keyword arguments of ``run`` it reads (module docstring)."""
+    """Compile, calibrate (the cached surrogate when ``table`` is None), program the calibrated shims and schedule."""
     opts = options or SolverOptions()
-    # the drive maps: the call's keyword arguments first, then the device's roles, then the inference (Device.roles, 0.2.0)
+    # the drive maps: the call's keyword arguments first, then the device's roles, then the inference
     drives, ent_drives = resolve_drives(device, gate_drives, entangling_drives)
     notes: list[str] = []
-    # Section 4.5.5: "Leakage is therefore simulated, not estimated, whenever d > 2". A d > 2 register whose scattering
-    # channels are off carries leakage levels that nothing can populate and reports no estimate for them either, so the
-    # combination is refused rather than defaulted silently: the flag is turned on and the run says so. Keep
-    # internal_levels = 2 for the d = 2 per-pulse estimate path of Section 4.3.2.
+    # only the scattering channels populate d > 2 leakage levels, so internal_levels > 2 turns them on
     if internal_levels > 2 and not opts.scattering_channels:
-        # Section 4.5.5 asks for the LEAKAGE channel (and with it the spin-flip and Rayleigh operators on the register);
-        # the recoil displacements D(i(eta_abs - eta_em)) of Section 4.5.5's photon-recoil term are a separate, expensive
-        # choice (one displacement-dressed operator per emission direction, per pulse, per branch: 30 to 50x the cost of
-        # the register-only operators on the two-ion fixture), so the automatic switch turns the channels on WITHOUT them
-        # unless the caller asked for the vector quadrature; scattering_channels=True with scattering_recoil="minimal" or
-        # "vector" is the explicit request for recoil (M7 fixer's E-10, consolidated 2026-09-08)
+        # without the recoil displacements (30 to 50x the cost) unless the caller asked for the vector quadrature
         recoil = opts.scattering_recoil if opts.scattering_recoil == "vector" else "off"
         opts = replace(opts, scattering_channels=True, scattering_recoil=recoil)
         notes.append(
@@ -140,7 +116,7 @@ def compile_calibrate_schedule(
     # 1. compile
     report = compile_report(circuit, device, entangler=entangler)
     compiled = report.circuit
-    # 2. calibrate (surrogate, cached per device and seed, Section 7.5) when no table is given
+    # 2. calibrate (the surrogate, cached per device and seed) when no table is given
     if table is None:
         from qutip_trap.calibration.cache import cached_surrogate
 
@@ -164,20 +140,14 @@ def compile_calibrate_schedule(
             "calibration table fitted for another device configuration (hash mismatch): played as given, never regenerated "
             "silently (Section 7.5)"
         )
-    # 2b. the calibrated micromotion compensation: the shim settings the table carries are what the machine has PROGRAMMED,
-    # so the run evolves the compensated device and a stale calibration against a drifted stray field leaves the residual
-    # excess micromotion a laboratory would have (Section 7.5: "stores shims and beta in the table, so that compensation is
-    # calibrated, drifts with the stray field between calibrations and is re-nulled like a laboratory re-nulls it").
-    # ``device_with_compensation`` re-solves the crystal, so the ions' displacement, the beams' intensity at the ions and
-    # the Lamb-Dicke parameters move together. No device PARAMETER changed - only a programmed voltage - so the hash the
-    # table is compared against above stays the uncompensated device's.
+    # 2b. the table's shims are what the machine has programmed: the run evolves the compensated device (crystal
+    # re-solved); the hash the table is checked against stays the uncompensated device's (a voltage is not a parameter)
     shim_entries = {
         name: entry
         for name, entry in table.micromotion.items()
         if name.startswith("shim[") and name.endswith("]")
     }
-    # only what the compensation experiment MEASURED is programmed: a seed shim is the device's own setting (already in the
-    # device) and an uncalibrated one is a compensation the calibration could not establish, which leaves the device as it is
+    # only measured shims are programmed: a seed shim is already the device's setting, an uncalibrated one is left alone
     shims = {
         name[len("shim[") : -1]: float(entry.value)
         for name, entry in shim_entries.items()
@@ -226,7 +196,7 @@ def compile_calibrate_schedule(
 
 
 def _diagnostics_level(level: FidelityLevel) -> Literal["JOINT_EXACT", "GATE_LOCAL"]:
-    """The level a run ran at, as the Appendix E literal ``Diagnostics.level`` carries (never the AUTO policy)."""
+    """The level a run ran at, as the literal ``Diagnostics.level`` carries (never the AUTO policy)."""
     if level is FidelityLevel.JOINT_EXACT:
         return "JOINT_EXACT"
     if level is FidelityLevel.GATE_LOCAL:
@@ -256,8 +226,8 @@ def _engine_task(
 
 
 class _Reporter:
-    """The ``progress`` callback of one run (docs/api_implementation_plan.md 1.8) with the run's own clock: ``report(stage,
-    done, total)`` builds the ``Progress`` and hands it on; a callback of None makes every report a no-op."""
+    """The ``progress`` callback of one run, on the run's own clock: a call with (stage, done, total) hands on a
+    ``Progress``; a callback of None makes every call a no-op."""
 
     def __init__(self, callback: Callable[[Progress], None] | None, started: float) -> None:
         self.callback = callback
@@ -282,11 +252,9 @@ def _run_engine_tasks(
     opts: SolverOptions,
     report: _Reporter | None = None,
 ) -> tuple[list[tuple[Traces, EngineReport]], int]:
-    """The JOINT_EXACT engine runs of ``run()``: in-process on one engine when the map is serial, one worker is available or
-    there is a single run (the engine's trajectory map then takes the workers), else spread over the workers with the
-    trajectories of every run in-process (Section 11.3 item 9; M9b). Returns the (traces, report) pairs in order and the
-    worker count the maps used. In-process runs report every pulse (counted across the runs) and every run to ``report``;
-    a parallel map reports its runs once, when it returns."""
+    """The JOINT_EXACT engine runs, in-process when the map is serial, one worker is available or there is one run,
+    else spread over the workers; returns the (traces, report) pairs in order and the workers used. In-process runs
+    report every pulse and run, a parallel map its runs once, when it returns."""
     workers = worker_count(opts)
     n_runs = len(payloads)
     if opts.map == "serial" or workers <= 1 or n_runs < 2:
@@ -349,24 +317,13 @@ def execute(
     keep_final_state: bool = False,
     progress: Callable[[Progress], None] | None = None,
 ) -> Result:
-    """Section 3.4's pipeline for one machine: compile -> calibrate -> schedule -> prepare -> evolve -> readout -> ``Result``.
-
-    ``Machine.run`` is this function (docs/api_implementation_plan.md 2.1); ``qutip_trap.run.job.run`` builds the machine
-    from its keyword arguments and calls it. The stages are the ones the module docstring lists, in ``run``'s order of
-    0.1.0, reading the machine's ``Physics``, ``Numerics`` and ``Readout`` where ``run`` read its keyword arguments: the
-    table (None: the cached closed-form surrogate at ``seed``), the level policy, the space or its selection, the
-    preparation, the branches of the initial mixture, the qubit-frequency shifts against the table's frame, the shot clock
-    and the dynamical samples, the engine runs (JOINT_EXACT) or the gate-local walk, the readout per sample with the
-    collision process per shot, and the ``Diagnostics``. ``seed`` is the root of every keyed stream, ``progress`` is called
-    with a ``Progress`` per pulse, branch, sample and readout, and the ``Result`` carries ``machine.hash()``.
-    """
+    """The pipeline for one machine, ``circuit`` to ``Result`` (which carries ``machine.hash()``); ``seed`` roots every
+    keyed stream and ``progress`` is called with a ``Progress`` per pulse, branch, sample and readout."""
     if shots <= 0:
         raise ValueError("shots must be positive")
     started = time.perf_counter()
     created_at = datetime.now(UTC).isoformat(timespec="seconds")
     notify = _Reporter(progress, started)
-    # the policy of the machine, bound once to the names the stages below read (the keyword arguments of ``run`` before
-    # 0.3.0, so that every stage reads exactly what it read then)
     physics, numerics, reading = machine.physics, machine.numerics, machine.readout
     device = machine.device
     trunc = numerics.truncation
@@ -384,8 +341,7 @@ def execute(
     readout: ReadoutMode = reading.mode
     discriminator: Discriminator | None = reading.discriminator
     povm_samples: int = reading.povm_samples
-    # 1 to 3: compile, calibrate (the cached surrogate when the machine carries no table), program the calibrated shims and
-    # schedule: the prefix ``Machine.schedule`` and ``Machine.estimate`` share (docs/api_implementation_plan.md 1.3)
+    # 1 to 3: compile, calibrate, program the shims and schedule (the prefix Machine.schedule and .estimate share)
     prefix = compile_calibrate_schedule(
         circuit,
         device,
@@ -447,13 +403,9 @@ def execute(
             "register factors with leakage levels: "
             + "; ".join(f"ion {i}: {', '.join(m.labels)}" for i, m in levels.items())
         )
-    # the Section 11.5 verdict the selection already reached on its DECLARATION, before any operator was allocated
-    # (M9b audit B2: HilbertSpace.check() used to build an O(D) identity, so the guard could not refuse what it had built)
+    # the size-guard verdict the selection reached on its declaration, before any operator was allocated
     _ok, dim, nnz = selection.budget
-    # PLAN.md Appendix E: level="auto" "resolves through resolve_level(device, circuit, options)". It used to be dead code
-    # while run() inlined within_budget (M9a audit B6/E18); the run's actual space makes the guards exact instead of the
-    # estimate resolve_level falls back to without one. The decision carries the numbers it compared, which the result
-    # reports as Diagnostics.level_reason (docs/api_implementation_plan.md 1.2).
+    # the run's actual space makes the guards exact; the numbers compared become Diagnostics.level_reason
     decision = decide_level(device, compiled, opts, space=joint_space)
     ok = decision.level is FidelityLevel.JOINT_EXACT
     requested = FidelityLevel(level)
@@ -464,10 +416,7 @@ def execute(
         else f"{run_level.value} forced by the caller; level='auto' would choose {decision.reason}"
     )
     if run_level == "JOINT_EXACT" and not ok:
-        # Section 11.5: the monitor "refuses to build joint spaces above a configurable dimension"; the knobs ARE the
-        # configuration, so an explicit JOINT_EXACT above them is refused rather than built. Before 2026-09-08 it went ahead
-        # with a note: the ENR end-to-end test then built a 37752-dimensional space ([2, 2, 11, 13, 66]) that took 20 GB
-        # and an hour before QobjEvo rejected its term (ledger conv.space_declaration_before_allocation)
+        # an explicit JOINT_EXACT above the guards is refused rather than built: the guards are the configuration
         raise RunError(
             f"level='JOINT_EXACT' asks for a joint space of dimension {dim} with {nnz} drive non-zeros, above the Section 11.5 "
             f"guards (joint_dimension_max = {opts.joint_dimension_max}, nnz_max = {opts.nnz_max}); raise them in SolverOptions "
@@ -484,15 +433,14 @@ def execute(
                 "GATE_LOCAL builds its own gate-local spaces; the supplied space sets the mode classes reported"
             )
     seeds = SeedSpec(int(seed))
-    # the prepared state: on the joint space for JOINT_EXACT, on the register alone for GATE_LOCAL (whose joint space is the
-    # one that did not fit; the motional model starts from the recipe's occupations, Section 5.4)
+    # the prepared state on the joint space (JOINT_EXACT) or the register alone (GATE_LOCAL: the joint one did not fit)
     prep_space = (
         joint_space
         if run_level == "JOINT_EXACT"
         else HilbertSpace(tuple(joint_space.ion_dims), (), None, tuple(range(n_modes)))
     )
     state0 = prepare(device, prep_space, table, quiet_sample(0), seeds, preparation=prep_run, levels=levels)
-    # 5. the branches of the initial mixture (JOINT_EXACT: the Fock-sum path of Section 5.3)
+    # 5. the branches of the initial mixture (JOINT_EXACT: the Fock sum)
     probs_int = internal_probabilities(state0, prep_space)
     branches: list[Branch] = []
     dropped_weight = 0.0
@@ -506,8 +454,7 @@ def execute(
                 continue
             for ion in pulse.drive.ions:
                 etas, _ = lamb_dicke_parameters(device, ion, dk)
-                # only FROZEN spectators are enumerated as Fock branches (their Debye-Waller factor is the physics); a
-                # dropped mode is not modelled at all, so it costs no branch (Section 5.2; M6 fix)
+                # only frozen spectators become Fock branches (for their Debye-Waller factor); a dropped mode costs none
                 coupled_frozen.update(
                     m for m in joint_space.frozen if abs(etas[m]) > 1e-12 and m not in joint_space.dropped
                 )
@@ -517,7 +464,7 @@ def execute(
         mode_nbar.update({m: float(state0.motional.nbar.get(m, 0.0)) for m in sorted(coupled_frozen)})
         branches, dropped_weight = enumerate_branches(probs_int, mode_nbar, opts.branch_weight_min)
         if joint_space.enr_group is not None:
-            # an ENR Fock tuple lives inside the excitation cap; branches above it are dropped and reported (Section 5.1)
+            # an ENR Fock tuple lives inside the excitation cap; branches above it are dropped and reported
             n_exc = joint_space.enr_group[1]
             kept = [b for b in branches if sum(b.fock.get(m, 0) for m in enr_modes) <= n_exc]
             over = sum(b.weight for b in branches) - sum(b.weight for b in kept)
@@ -532,32 +479,28 @@ def execute(
                 f"initial-mixture branches below branch_weight_min = {opts.branch_weight_min:g} dropped: total weight "
                 f"{dropped_weight:.3e} (renormalized)"
             )
-    # 6. the qubit-frequency shifts: the true transition minus the table's frame (Section 7.3; M2 hand-off)
+    # 6. the qubit-frequency shifts: the true transition minus the table's frame
     shifts: dict[int, float] = {}
     for i in range(n_ions):
         sp = device.crystal.species[i]
         f_true, _d1, _d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], device.field.B_gauss)
         entry = table.qubit_freq.get(i)
         if entry is not None and entry.status == "uncalibrated":
-            # ``shifts`` is the ONLY channel by which the table's frequency error reaches the physics, so a zero here would
-            # put the frame exactly on the true transition and make an uncalibrated qubit frequency error-free by
-            # construction - the fallback Section 7.3's last clause forbids ("an entry the calibration could not establish
-            # is uncalibrated and refuses to schedule rather than falling back to them").
+            # the shift is the only path by which a frequency error reaches the physics: a zero would make it error-free
             raise RunError(
                 f"ion {i}: the calibration table's qubit frequency is uncalibrated (fitted by {entry.experiment!r}); the "
                 "frame cannot be programmed and the run refuses rather than taking it at the true transition "
                 "(Section 7.3). Re-calibrate the ion's Ramsey-frequency experiment or pass a table that carries it."
             )
         if entry is None:
-            # a device with no qubit-frequency seed at all (never the surrogate, which always seeds one): there is no
-            # believed frame to be wrong about, so the frame is the transition itself and the run says so
+            # no qubit-frequency entry (the surrogate always seeds one): no believed frame, so the frame is the true one
             shifts[i] = 0.0
             notes.append(
                 f"ion {i}: the table has no qubit frequency; the frame is taken at the true transition"
             )
         else:
             shifts[i] = float(f_true - entry.value)
-    # 7. timing (Section 7.5) and the dynamical samples (Section 3.4; M7)
+    # 7. timing and the dynamical samples: one per contiguous block of shots, taken at its first shot's time
     stage = readout_stage(
         device,
         table,
@@ -624,8 +567,7 @@ def execute(
     if run_level == "JOINT_EXACT":
         engine = setup.engine()
         total_weight = sum(b.weight for b in branches)
-        # every (sample, branch) run is independent: prepare the initial states on the selected space, run them all through
-        # the map of Section 11.3 item 9, then accumulate in order (M9b)
+        # every (sample, branch) run is independent: prepare all on the selected space, map them, accumulate in order
         payloads: list[tuple[int, int, State, NoiseSample]] = []
         for s_idx, smp in enumerate(samples_seq):
             for k, br in enumerate(branches):
@@ -656,9 +598,7 @@ def execute(
             engine, device, sched, joint_space, payloads, seeds, opts, report=notify
         )
         if opts.convergence_check:
-            # Section 5.5's second bullet: repeat the evolution with atol and rtol tightened by ten and report the change in
-            # the FIRST sample's register populations, which are deterministic where the sampled histogram is not (M2's
-            # dynamics.evolve.convergence_check; the plumbing is M9's). Three passes, as the option's docstring says.
+            # compare the first sample's register populations, deterministic where the sampled histogram is not
             def _register_populations(o: SolverOptions) -> dict[str, np.ndarray]:
                 res, _w = _run_engine_tasks(engine, device, sched, joint_space, payloads, seeds, o)
                 rho = np.zeros((d_int, d_int), dtype=complex)
@@ -701,7 +641,7 @@ def execute(
                     kernel_kinds.add(rep.kernel)
                 propagator_hits += rep.propagator_cache_hits
                 if rep.space != grown_space and rep.space.dimension > grown_space.dimension:
-                    # the truncation monitor grew the caps on this branch (Section 5.5): the diagnostics report the largest space
+                    # the truncation monitor grew the caps on this branch: the diagnostics report the largest space
                     grown_space = rep.space
             register_states.append([(1.0, qt.Qobj(rho_int, dims=dims_int))])
             notify("sample", s_idx + 1, len(samples_seq))
@@ -736,9 +676,7 @@ def execute(
                 if n not in notes:
                     notes.append(n)
         notes.extend(n for n in gl_report.notes if n not in notes)
-        # the workers the walk ACTUALLY used, not worker_count(opts): the tomography runs its inputs in-process whenever the
-        # local space has no resolved mode (every carrier step) and the quasi-static samples are iterated serially, so a
-        # GPi2 GATE_LOCAL run used to report N workers while nothing ran in parallel (M9b audit B10)
+        # the workers the walk actually used, not worker_count(opts)
         workers_used = gl_report.workers
         if opts.convergence_check:
 
@@ -758,8 +696,7 @@ def execute(
                 rho = sum(w * np.asarray((st if st.isoper else qt.ket2dm(st)).full()) for w, st in states[0])
                 return {"register_populations": np.real(np.diag(np.asarray(rho)))}
 
-            # no cache clearing: fingerprint_options keys the extraction cache on atol and rtol, so the tightened pass
-            # misses and the base-tolerance pass of convergence_check hits what the primary walk already computed
+            # no cache clearing: the extraction cache is keyed on atol and rtol, so only the tightened pass recomputes
             convergence = convergence_check(_gate_local_populations, opts)
             notes.append(convergence.summary())
         approximations.append(
@@ -781,14 +718,13 @@ def execute(
             "the truncation monitor raised the caps (Section 5.5): "
             + ", ".join(f"mode {m} by {add} level(s)" for m, add in sorted(cap_growth.items()))
         )
-    # 1.9: a boundary population the retries left above the threshold is said out loud as well as reported
     warn_if_boundary_exceeds(boundary, opts.boundary_population_max)
     dm_states = [[(w, st) for w, st in members if st.isoper] for members in register_states]
     rho_register: qt.Qobj | None = None
     if all(len(ms) == len(all_) for ms, all_ in zip(dm_states, register_states)):
         acc = sum((w * st for members in dm_states for w, st in members), 0.0 * register_states[0][0][1])
         rho_register = acc / len(register_states)
-    # 9. readout per sample on its register state(s), the collision process per shot (Section 6.7)
+    # 9. readout per sample on its register state(s), the collision process per shot
     register_space = HilbertSpace(tuple(joint_space.ion_dims), (), None, ())
     run_state = RunState.nominal(n_ions)
     collisions = device.noise.collisions if noise else None
@@ -797,9 +733,7 @@ def execute(
         coll_rates = {
             i: collision_rate_per_ion(collisions, float(device.crystal.masses_kg[i])) for i in range(n_ions)
         }
-    # the measured set is the circuit's targets UNIONED with every trailing measure operation, exactly the set the scheduler
-    # puts in its terminal event (control.schedule); reading Circuit.measure alone made run() histogram all N ions on a
-    # circuit whose only measurement was a trailing `measure` op (M6 fix)
+    # the measured set: the circuit's targets and every measure op, the set the scheduler's terminal event uses
     declared: list[int] = list(compiled.measure)
     for op in compiled.ops:
         if op.name == "measure":
@@ -830,8 +764,7 @@ def execute(
     kick_quanta: list[float] = []
     reorders = 0
     outcome: ReadoutOutcome | None = None
-    # the readout runs once per (sample, branch) batch; the RunRecord carries the outcome of every KEPT shot in the Result's
-    # row order over every ion, so that the application's per-shot views line up with ``Result.bitstrings``
+    # the RunRecord's outcome: every kept shot in the Result's row order, over every ion
     out_bits_kept: list[np.ndarray] = []
     out_levels_kept: list[np.ndarray] = []
     out_times_kept: list[np.ndarray] = []
@@ -885,7 +818,6 @@ def execute(
                             run_state.events + ((shot, f"collision:{ev.outcome}:ion{ev.ion}"),),
                         )
                         if ev.outcome == "heating_kick":
-                            # the kick's energy scale is the neutral's thermal energy times the mass ratio (Section 6.7);
                             # drawn per event and recorded in quanta of the softest mode, the one it heats most
                             kick = 0.0
                             if soft_mode_omega > 0.0:
@@ -995,9 +927,7 @@ def execute(
     if stage.product is not None:
         model_errors = stage.product.per_ion_errors()
     else:
-        # readout="full" replaced the POVM rather than preceding it (Section 5.7), so the (eps_B, eps_D) report is
-        # estimated from the records this run actually generated (Section 8.6, "estimated from calibration runs"); a
-        # level the circuit never populated reports nan, never a silent zero
+        # without a POVM, (eps_B, eps_D) is estimated from this run's own records; an unpopulated level reports nan
         lv = np.asarray(levels_kept, dtype=np.uint8).reshape(-1, len(measured))
         errs: list[tuple[float, float]] = []
         for col, q in enumerate(measured):

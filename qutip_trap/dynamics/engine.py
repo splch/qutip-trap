@@ -1,38 +1,8 @@
-"""The pulse engine protocol and the run-time state records (PLAN.md Sections 3.4, 5.3, 5.4, 6, 7.10, 11; Appendix E).
+"""The pulse engine protocol, the run-time state records and the JOINT_EXACT engine.
 
-``PulseEngine.run_pulses`` is the one entry point that ``run/``, ``calibration/`` and ``experiments/``
-share. Randomness comes from one root ``SeedSequence`` per run, spawned deterministically by (sample,
-trajectory, shot, ion, channel) so that every variate's key is independent of execution order and of
-truncation retries (Section 3.4); reproducibility over 1 and 18 workers is a tolerance test (10^-12), not a
-bitwise one, because ``MultiTrajResult`` accumulates in completion order (Section 3.4).
-
-Milestone M7 gives the JOINT_EXACT engine its dissipative paths. Per integration segment the collapse operators
-are the explicit ``channels``, the device's state-independent set (heating, motional dephasing, white qubit
-dephasing; ``NoiseModel.channels``), the scattering operators of the active pulses (``noise/scattering.py``) and the
-white intensity-noise channel sqrt(D) H_drive(t) (Section 6.4). With collapse operators present the state is a
-density matrix through ``mesolve`` up to ``SolverOptions.mesolve_dimension_max`` (the deterministic reference path
-of Section 3.4) and an ensemble of ``SolverOptions.ntraj`` quantum-jump trajectories above it, each trajectory
-advanced segment by segment with its own keyed seed (sample, trajectory, 0, 0, "mcsolve[segment]") so that a
-trajectory is identical under the same seed whatever the worker count; the jump records are returned in
-``Traces.jumps``. Before segmentation the schedule passes through the control hardware chain of Section 7.10
-(``control/hardware.py``): quantized tone words, low-pass-filtered envelopes with their tails, jittered train starts.
-
-Milestone M9b adds the scaling machinery of Section 11.3 items 4, 5 and 9. The drive operators are held factorized (the
-matrix-free kernel of ``dynamics/kernels.py``) whenever ``BuilderOptions.kernel`` allows it and the segment is integrated as
-kets (``sesolve`` or ``mcsolve``); every ``mesolve`` segment builds the assembled CSR operator, because there the Liouvillian is
-formed from the matrix (Section 5.3). The trajectories of a segment run as ONE ``MCSolver.run`` over the ensemble of their
-kets (mixed initial conditions, one trajectory per ket, the keyed seed list of Section 3.4) through QuTiP's serial or parallel
-map (``SolverOptions.map``, ``SolverOptions.workers``); the per-trajectory results are matched back by seed, so the ensemble is
-identical whatever the worker count and the per-trajectory final states are reported for the Section 9.9 test. On an
-internal-state-only space (every mode frozen: a carrier pulse of a GATE_LOCAL step, an idle with a Stark shift) the segment
-propagator U(t, t_0) is integrated once as a D x D operator and applied to every initial state, cached per engine on the built
-Hamiltonian's fingerprint (``SolverOptions.propagator_cache``), never on a joint space (Section 11.3 item 5).
-
-Two exact shortcuts (M8) replace ODE solves where none is needed, both pinned against the ODE path in
-``tests/test_engine_numerics.py``: a segment whose Hamiltonian is constant (an idle interval, a zero-envelope pulse) is
-propagated by its diagonal phases, or in the frame rotating with H_mot when eigenoperator collapse operators are present
-(``closed_form_constant``); a density-matrix input without collapse operators is evolved as the weighted pure branches of its
-eigen-decomposition through ``sesolve`` (``pure_branches``, the Fock-sum path of Section 5.3), never as a D^2 Liouvillian.
+Randomness comes from one root ``SeedSequence`` per run, spawned by (sample, trajectory, shot, ion, channel), so every
+variate is independent of execution order, worker count and truncation retries. With collapse operators the state is a
+density matrix (``mesolve``) up to ``SolverOptions.mesolve_dimension_max`` and keyed ``mcsolve`` trajectories above it.
 """
 
 from __future__ import annotations
@@ -65,7 +35,7 @@ if TYPE_CHECKING:
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.run.results import Progress
 
-# QuTiP multistep integrators, never used (Section 5.3: the escalation ladder is dop853 then vern9)
+# QuTiP multistep integrators, never used (they damp the oscillatory spectrum of -iH)
 MULTISTEP_INTEGRATORS: frozenset[str] = frozenset({"adams", "bdf", "lsoda", "vode", "zvode"})
 ALLOWED_INTEGRATORS: frozenset[str] = frozenset(
     {"dop853", "vern7", "vern9", "tsit5", "explicit_rk", "krylov", "diag"}
@@ -77,7 +47,7 @@ RecoilOption = Literal["off", "minimal", "vector"]
 
 @dataclass(frozen=True)
 class MotionalModel:
-    """Per-mode state carried between pulses (Section 5.4 b)."""
+    """Per-mode state carried between pulses."""
 
     reduced: dict[int, Qobj]
     """mode -> (n_max + 1)^2 reduced density matrix."""
@@ -93,15 +63,14 @@ class State:
     """Register density matrix or ket on the ion factors of ``space``."""
     motional: MotionalModel
     joint: Qobj | None
-    """The joint ket/density matrix when the run holds one (JOINT_EXACT); None after a trajectory ensemble too large to
-    average into one density matrix (the reduced states above are the averages)."""
+    """The joint ket or density matrix; None after a trajectory ensemble too large to average into one."""
     provenance: tuple[str, ...]
-    """Ids of the preparation stages that produced it (Section 4.2.6 order)."""
+    """Ids of the preparation stages that produced it, in order."""
 
 
 @dataclass(frozen=True)
 class SeedSpec:
-    """One root SeedSequence per run, spawned by key (Section 3.4)."""
+    """One root SeedSequence per run, spawned by key."""
 
     root: int
 
@@ -127,148 +96,74 @@ class SeedSpec:
 
 @dataclass(frozen=True)
 class SolverOptions:
-    """The numerical policy of a run (Sections 5.3, 5.5, 11.5): the integrator tolerances and the escalation ladder, the guards
-    that route a run to GATE_LOCAL, the truncation caps and monitors, the trajectory method and count, the parallel map,
-    and the physics switches a run still reads from here (scattering channels, intensity-noise channels, the hardware
-    chain; docs/api_implementation_plan.md moves them to ``Physics`` in 0.3.0). Each field's docstring states its unit
-    and its rule."""
+    """The numerical policy of a run: tolerances, size guards, truncation, trajectories, parallelism, physics switches."""
 
     atol: float = 1e-10
     rtol: float = 1e-8
     nsteps: int = 10**7
     integrators: tuple[str, ...] = ("dop853", "vern9")
-    """The escalation ladder of Section 5.3; never a multistep method."""
+    """The escalation ladder; never a multistep method."""
     joint_dimension_max: int = 4096
     nnz_max: int = 2 * 10**7
-    """The Section 11.5 guards that route to GATE_LOCAL."""
+    """With ``joint_dimension_max``, the size guards that route a run to GATE_LOCAL."""
     mode_dimension_max: int = 64
-    """The ceiling on ONE resolved mode's Fock dimension d_m that the cap rule of Sections 5.1.1 and 5.5 may ask for (M9a
-    audit D1). 64 is what M9a hard-coded; Section 5.3 states that a Doppler-cooled nbar ~ 20 mode needs d_m >~ 150 for a
-    boundary population below 1e-4 and Section 5.2 that long-chain transverse spectators within tens of kHz of the tones
-    "cannot be frozen and must be resolved", so the hot-mode regime raises this. When the rule wants more, the cap is
-    clamped here AND the clamp is reported in ``SpaceSelection.notes`` (naming the mode, the range the rule asked for and
-    the range that survives): the Section 5.1.1 oracle check and the Section 5.5 margin check are then evaluated over a
-    narrower range than the physics, which was silent before."""
+    """Ceiling on one resolved mode's Fock dimension; a clamp is reported in ``SpaceSelection.notes``."""
     boundary_population_max: float = 1e-6
     freeze_chi_max_rad: float = 0.05
     map: Literal["serial", "parallel", "loky"] = "parallel"
-    """Coefficients are module-level functions or arrays, so they pickle."""
+    """The QuTiP map the parallel work runs through."""
     e_ops_for_target_tol: bool = True
-    """mcsolve needs e_ops to target a tolerance (Section 5.4): the gate on the two-phase trajectory count of Section 3.4."""
+    """Allow the ``trajectory_target_tol`` estimate, which needs the population e_ops."""
     trajectory_target_tol: float | None = None
-    """Section 3.4's phase one: the absolute tolerance ``mcsolve``'s ``target_tol`` targets on the population e_ops, which
-    fixes the trajectory count that phase two then replays from a keyed seed list of that length. ``None`` keeps the fixed
-    ``ntraj``, the default, because QuTiP 5.3.1's ``target_tol`` stops on a zero-variance first batch (measured: 26
-    trajectories at tol 0.1 and 604 at 0.02 on a damped two-level system, but 2 at 0.005, where the first two trajectories
-    both jumped and the estimated error was exactly 0) and because its firing point is scheduling dependent (Section 3.4
-    [corrected]). Set it and the estimate runs under a serial map with ``ntraj`` as its cap and
-    ``TARGET_TOL_MIN_TRAJECTORIES`` as its floor."""
+    """Tolerance on the population e_ops from which ``mcsolve``'s ``target_tol`` estimates the trajectory count (capped by
+    ``ntraj``), then replayed from keyed seeds; None keeps ``ntraj`` (``target_tol`` can stop on a zero-variance batch)."""
     improved_sampling: bool = True
-    """Section 5.3: ``mcsolve``'s no-jump trajectory as a deterministic member of weight p_no-jump, the stochastic ones
-    carrying the residual weight, so the mixture the shots are drawn from is WEIGHTED (never uniform over the stored
-    trajectories, which biases per-shot observables by p_no-jump). Applied when the run has exactly ONE trajectory segment;
-    a multi-segment schedule keeps uniform trajectories and says so (see ``IMPROVED_SAMPLING_MULTI_SEGMENT``)."""
+    """``mcsolve``'s no-jump trajectory as a weighted deterministic member, when exactly one segment is on trajectories."""
     freeze_alpha_max: float = 1e-4
-    """|alpha_m|^2 (2 nbar_m + 1) below which a spectator may be frozen rather than resolved (Section 5.2; M6)."""
+    """|alpha_m|^2 (2 nbar_m + 1) below which a spectator may be frozen rather than resolved."""
     branch_weight_min: float = 1e-6
-    """Weight below which a branch of the initial thermal and preparation mixture is dropped from the exact evolution and
-    reported (the Fock-sum path of Section 5.3, M6; an approximation of the truncation kind like boundary_population_max)."""
+    """Weight below which a branch of the initial thermal and preparation mixture is dropped (and reported)."""
     lindblad_method: LindbladMethod = "auto"
-    """How collapse operators are integrated (M7): ``mesolve`` (the density matrix, exact and deterministic), ``mcsolve``
-    (quantum-jump trajectories, ``ntraj`` per pure initial state), ``auto`` = mesolve up to ``mesolve_dimension_max`` (a
-    Liouvillian of that size integrates in seconds; above it the density matrix costs dimension times a trajectory)."""
+    """``mesolve``, ``mcsolve`` (``ntraj`` per pure initial state) or ``auto`` (mesolve up to ``mesolve_dimension_max``)."""
     mesolve_dimension_max: int = 128
     ntraj: int = 64
-    """Trajectories per pure initial state on the mcsolve path (a fixed keyed seed list, Section 3.4)."""
+    """Trajectories per pure initial state on the mcsolve path (a fixed keyed seed list)."""
     scattering_channels: bool = False
-    """Build the photon-scattering collapse operators of every pulse (Sections 4.5.5, 6.5) instead of reporting the estimate."""
+    """Build the photon-scattering collapse operators of every pulse instead of reporting the estimate."""
     scattering_recoil: RecoilOption = "minimal"
     intensity_noise_channels: bool = True
-    """The white part of the laser-intensity spectrum as the channel sqrt(D) H_drive(t) (Section 6.4)."""
+    """The white part of the laser-intensity spectrum as the channel sqrt(D) H_drive(t)."""
     hardware_chain: bool = True
-    """Pass the schedule through the control hardware chain of Section 7.10 before integrating."""
     margin_check: bool = True
-    """Section 5.5 (M9a): after every pulse the cap's margin above the POPULATED range of each resolved mode is compared with
-    the Section 5.1.1 margin for the pulse's eta; a deficit raises the cap by it and repeats the run, like the boundary trip."""
+    """Raise the cap and rerun when a resolved mode's margin above its populated range is less than its eta needs."""
     convergence_check: bool = False
-    """Section 5.5's second bullet: ``run()`` repeats its evolution with atol and rtol tightened by ten and reports the change
-    in the register populations as ``Diagnostics.convergence`` (``dynamics.evolve.convergence_check``, M2). Off by default
-    because it triples the cost of a run: the comparison runs the base tolerances twice and the tightened ones once. The other
-    two arms Section 9.9 asks for - loosening by ten for the integrator ladder, and every resolved cap + 2 - are
-    ``hilbert.truncation.convergence_report``, which the ``convergence``-marked tests drive (M9a audit E6)."""
+    """``run()`` repeats at ten-times-tighter tolerances and reports ``Diagnostics.convergence`` (triples the cost)."""
     map_accuracy: float = 1e-3
-    """epsilon_map of the GATE_LOCAL tomography (Section 5.4): on the trajectory path every input state is propagated with
-    n_traj = ceil(1/epsilon_map) trajectories so that the multinomial error of each output's populations sits below it."""
+    """epsilon_map of the GATE_LOCAL tomography (ceil(1/epsilon_map) trajectories per input on the trajectory path)."""
     crosstalk_threshold: float = 1e-3
-    """GATE_LOCAL (Section 5.4): a neighbour receiving crosstalk light with |epsilon| at or above this joins the gate-local
-    space; below it the leaked light is dropped and its rotation sin^2(eps theta/2) added to the reported bound."""
+    """GATE_LOCAL: the crosstalk |epsilon| at which a neighbour joins the gate-local space (below, it is dropped)."""
     register_dm_max_qubits: int = 12
-    """GATE_LOCAL carries the register as a density matrix up to this many qubits and as a stochastic pure-state ensemble
-    beyond (Section 5.4), the extracted map applied by Kraus sampling."""
+    """GATE_LOCAL register: a density matrix up to this many qubits, a pure-state ensemble beyond."""
     register_ensemble: int = 64
-    """Members of the pure-state ensemble of a GATE_LOCAL register above ``register_dm_max_qubits`` qubits."""
+    """Members of the pure-state ensemble above ``register_dm_max_qubits``."""
     workers: int | None = None
-    """Processes for the parallel maps of Section 11.3 item 9 (M9b): the trajectories of a segment in the engine, the
-    initial-mixture branches and dynamical samples of ``run()``, the tomography inputs of GATE_LOCAL. None = every CPU QuTiP sees
-    (``qutip.settings.available_cpu_count``), 1 = in-process; ``map="serial"`` runs everything in-process whatever this says.
-    A task that already runs in a worker runs its own trajectories in-process (never a nested pool)."""
+    """Processes for the parallel maps; None = every CPU QuTiP sees, 1 = in-process (as is ``map="serial"``)."""
     propagator_cache: bool = True
-    """Internal-state-only spaces (every mode frozen; Section 11.3 item 5, M9b): the segment propagator is integrated once as a
-    D x D operator through the same ladder and applied to every initial state, cached per engine on the built Hamiltonian's
-    fingerprint; False integrates every state through the ODE ladder (the reference)."""
+    """Integrate an internal-state-only segment's propagator once and reuse it (keyed on the Hamiltonian's fingerprint)."""
     tomography_isometry: bool = True
-    """GATE_LOCAL tomography (Section 5.4; performance pass 2026-09-09): when a step's evolution is unitary (no collapse operator
-    on any segment) the channel is read off the propagated INTERNAL BASIS, prod_i d_i kets per motional branch, as the Stinespring
-    isometry V_b whose slices by motional output index are the Kraus operators (``dynamics.tomography.choi_from_isometry``), and on an
-    internal-state-only space off the segment propagator itself (``JointExactEngine.propagator``: one engine call per branch, no state
-    propagated); the prod_i d_i^2 input states the map is stated on follow by linearity. False propagates every input state and fits the
-    Choi matrix by least squares (the M9a reference); the two agree to the solver tolerance (``tests/test_tomography.py``). A
-    dissipative step takes the reference route whatever this says, because a trajectory is not linear in its initial ket."""
+    """GATE_LOCAL tomography of a unitary step from the propagated internal basis instead of every input state."""
     tomography_dropped_weight_max: float | None = None
-    """GATE_LOCAL tomography (Section 5.4; performance pass 2026-09-09): the total weight of motional branches a step may drop,
-    lightest first, beyond the per-branch floor ``branch_weight_min``. A channel that is a convex mixture over branches changes by
-    at most 2w in diamond norm when weight w is dropped and the rest renormalized, so None derives ``map_accuracy / 4`` (the bound
-    2w stays at or below half the map accuracy) and 0.0 keeps every branch above the floor. The bound is reported per step
-    (``TomographyRecord.branch_error_bound``, ``GateLocalStep.branch_error_bound``) and summed into
-    ``GateLocalReport.discrepancy_bound``; the realized error is far below it (the dropped branches are high Fock states whose
-    only effect is a slightly different Debye-Waller factor: 4e-5 measured against a 4e-4 bound on the four-qubit GHZ step)."""
+    """GATE_LOCAL tomography: the total motional-branch weight w a step may drop beyond ``branch_weight_min`` (a 2w
+    diamond-norm bound); None derives ``map_accuracy / 4``, 0.0 keeps every branch above the floor."""
     tomography_tolerance_keyed: bool = True
-    """GATE_LOCAL tomography: integrate a unitary step with resolved modes at the tolerance the map accuracy warrants, atol =
-    1e-5 map_accuracy and rtol = 1e-3 map_accuracy (1e-8 and 1e-6 at the default), instead of the engine's 1e-10 and 1e-8, when
-    the caller left those at their defaults (a tolerance the caller chose is never overridden, the Section 5.3 precedent). The
-    change the step's channel makes when the dominant branch is re-integrated ten times tighter is measured and reported
-    (``TomographyRecord.tolerance_change``, the Section 5.5 convergence statement, d times the trace norm of the Choi
-    difference, a bound on the diamond norm) and summed into ``GateLocalReport.discrepancy_bound``; measured 1.3e-4 for 1.8
-    times fewer right-hand sides on the example device's entangling step, where the next loosening exceeds the map accuracy.
-    False keeps the engine tolerances everywhere. Internal-state-only steps (propagators at dimension 4 to 16) and dissipative
-    steps are never loosened."""
+    """GATE_LOCAL: loosen a unitary step's default tolerances to the map accuracy (``tomography.keyed_tolerances``)."""
     margin_element_tol: float | None = None
-    """The interior-element tolerance the Section 5.1.1 margin of a resolved mode is derived from
-    (``hilbert.operators.required_margin``): None keeps the fixture (6 levels at |eta| <= 0.1, 10 at 0.5, 20 at 1, the
-    margins at which the exponential's elements reach 10^-12), which every JOINT_EXACT run and every Section 9 validation case
-    uses. The GATE_LOCAL walk derives ``map_accuracy * 1e-5`` for its step spaces when the caller leaves None (1e-8 at the
-    default): the cap keeps the smallest margin at which the exponential's interior elements over the populated range are exact
-    to it and one displacement from the top populated level leaks less than a tenth of ``boundary_population_max`` past the cap,
-    never more than the fixture; the same rule is what the engine's margin check (Section 5.5) reads on those runs, the rule (ii)
-    oracle asserts the declared tolerance at construction, and the step reports the measured element error
-    (``GateLocalStep.element_error``). Two to three levels per resolved mode on the four-qubit GHZ circuit's entangling steps."""
+    """The interior-element tolerance a resolved mode's margin is derived from (``hilbert.operators.required_margin``);
+    None keeps the fixed margins, and the GATE_LOCAL walk then derives ``map_accuracy * 1e-5`` for its step spaces."""
     rotating_frame: bool = True
-    """Integrate every ket segment (``sesolve`` and ``mcsolve``) in the exact rotating frame of its diagonal H_0 = H_mot + H_int
-    (``dynamics.rotating``; Sections 5.2, 5.3): psi = e^{-i H_0 t} phi with the phases applied to the STATE and undone on the
-    way out, so the same drive operators, tolerances and integrator ladder integrate a state that moves at the drive and
-    detuning frequencies instead of the Fock energies. Nothing is expanded or dropped; the results equal the Schroedinger-picture
-    integration to the solver tolerance (1e-7 in norm at atol 1e-10, rtol 1e-8, the Section 11.1 meaning of 'identical'), with
-    3 to 8 times fewer right-hand-side evaluations on the Section 11.1 rows (performance pass 2026-09-09). False integrates in
-    the Schroedinger picture, the M2 to M9b reference and the picture the Section 5.3 step-density band (27 to 52 steps per
-    period of the highest mode) was measured in. A segment the frame does not cover (a non-diagonal static part such as an
-    anharmonic term, a function-element term, a collapse operator that is not an eigenoperator of H_0 such as a recoil kick or
-    the intensity-noise channel) integrates in the Schroedinger picture and says so in ``SegmentReport.frame``."""
+    """Integrate ket segments in the exact rotating frame of their diagonal H_0 where it applies."""
     store_marginals: bool = False
-    """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal`` (0.4.0;
-    docs/api_implementation_plan.md 3.2; ``Numerics.integration.store_marginals``). Off by default: a (T, d_m) array per
-    mode is extra work and memory on the hot path, and ``Traces.mode_occupations`` (its mean) is what a run reads. The
-    populations are taken from the same stored states as ``reduced_internal``, weighted over the branches or trajectories
-    exactly as the expectation values are, so ``sum_n n P(n, t) == mode_occupations[m][t]`` to the solver tolerance."""
+    """Store every carried mode's Fock populations at every stored time as ``Traces.mode_marginal``."""
 
     def __post_init__(self) -> None:
         if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
@@ -310,7 +205,7 @@ class SolverOptions:
 
 @dataclass(frozen=True)
 class Traces:
-    """What ``run_pulses()`` returns (Section 14.3)."""
+    """What ``run_pulses()`` returns."""
 
     times_s: np.ndarray
     expectations: dict[str, np.ndarray]
@@ -318,23 +213,19 @@ class Traces:
     mode_occupations: dict[int, np.ndarray]
     alpha_m: dict[int, np.ndarray]
     jumps: tuple[tuple[float, str], ...]
-    """(time, "traj{k}:{channel}") of every quantum jump of the trajectory path (M7); empty on the density-matrix paths."""
+    """(time, "traj{k}:{channel}") of every quantum jump of the trajectory path; empty on the density-matrix paths."""
     final: State
     boundary_population: dict[int, float]
     mode_marginal: dict[int, np.ndarray] | None = None
-    """Per carried mode, the (T, d_m) Fock populations P(n, t) at every stored time (row t aligns with ``times_s``), the
-    same branch and trajectory weighting as ``expectations``; None unless ``SolverOptions.store_marginals`` (0.4.0;
-    docs/api_implementation_plan.md 3.2). Its mean ``sum_n n P(n, t)`` equals ``mode_occupations[m]`` to the solver
-    tolerance (``tests/test_traces_marginals.py``)."""
+    """Per carried mode, the (T, d_m) Fock populations P(n, t) (rows align with ``times_s``), weighted as
+    ``expectations``; None unless ``SolverOptions.store_marginals``."""
     wall_time_s: dict[str, float] = field(default_factory=dict)
-    """Wall seconds spent integrating, per pulse by its gate id (0.4.0): a segment's time is split equally among the pulses
-    active in it, an idle segment's goes under ``"idle"``, so the values sum to the run's integration time (the exact
-    per-segment numbers are ``SegmentReport.wall_time_s`` on the engine's ``last_report``)."""
+    """Wall seconds per pulse gate id (a segment's split equally among its pulses; idle segments under ``"idle"``)."""
 
 
 @dataclass(frozen=True)
 class ChannelSummary:
-    """Process tomography of one pulse (Section 5.4)."""
+    """Process tomography summary of one pulse."""
 
     choi: np.ndarray
     cp_tp_residual: tuple[float, float]
@@ -343,11 +234,11 @@ class ChannelSummary:
     average_gate_infidelity: float
     pauli_twirled: dict[str, float]
     depolarizing_rate: float
-    """epsilon with Lambda_eps(rho) = (1 - eps) rho + eps/(4^n - 1) sum_{P != I} P rho P (Section 6.8)."""
+    """epsilon with Lambda_eps(rho) = (1 - eps) rho + eps/(4^n - 1) sum_{P != I} P rho P."""
 
 
 class PulseEngine(Protocol):
-    """The one entry point that run/, calibration/ and experiments/ share (Appendix E)."""
+    """The one entry point that run/, calibration/ and experiments/ share."""
 
     def run_pulses(
         self,
@@ -385,12 +276,12 @@ __all__ = [
 ]
 
 
-# ---- the joint-exact engine of milestone M2 (dissipative paths M7) -------------------------------------------------------------
+# ---- the joint-exact engine ------------------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class SegmentReport:
-    """What one integration segment did (Section 5.7 diagnostics, per segment)."""
+    """What one integration segment did."""
 
     t_start_s: float
     t_end_s: float
@@ -403,29 +294,20 @@ class SegmentReport:
     boundary_population: dict[int, float]
     retries: tuple[str, ...]
     method: str = "sesolve"
-    """sesolve, mesolve or mcsolve (M7)."""
+    """sesolve, mesolve or mcsolve."""
     n_collapse_ops: int = 0
     channels: tuple[str, ...] = ()
     """The channel names active on the segment (deduplicated by kind)."""
     kernel: str = "none"
-    """How the segment's drive operators were held (Section 11.3 item 4; M9b): ``factorized``, ``assembled``, ``mixed`` or
-    ``none`` (no drive term)."""
+    """How the segment's drive operators were held: ``factorized``, ``assembled``, ``mixed`` or ``none``."""
     frame: str = "schrodinger"
-    """The picture the segment was integrated in: ``rotating`` (the exact rotating frame of ``dynamics.rotating`` under
-    ``SolverOptions.rotating_frame``) or ``schrodinger`` (the closed forms, the propagator path, every ``mesolve`` segment, and
-    the ket segments the frame does not cover). ``rhs_evaluations`` and ``steps_per_period`` count the evaluations of the picture
-    named here, so the Section 5.3 band applies to ``schrodinger`` rows only."""
+    """``rotating`` or ``schrodinger``: the picture the evaluation counts refer to."""
     wall_time_s: float = 0.0
-    """Wall seconds the segment took to build and integrate (0.4.0; docs/api_implementation_plan.md 3.2)."""
 
 
 @dataclass(frozen=True)
 class EngineReport:
-    """What one ``run_pulses`` did (Section 5.5's report): per integrated segment a ``SegmentReport`` (integrator, tolerance,
-    right-hand-side evaluations, boundary populations, channels, kernel, frame), the space the run ended on after any cap
-    growth, the method (``sesolve``, ``mesolve``, ``mcsolve``), the trajectory count, the cap-raising retries, the margins
-    reached and the populated ranges per mode, the workers and propagator-cache hits, and the notes and approximations the
-    diagnostics of a ``Result`` gather."""
+    """What one ``run_pulses`` did: its segments, the space it ended on after any cap growth, method, retries and notes."""
 
     segments: tuple[SegmentReport, ...]
     frozen_n: dict[int, int]
@@ -440,26 +322,21 @@ class EngineReport:
     """The schedule after the hardware chain (what the ions saw)."""
     notes: tuple[str, ...] = ()
     populated_n_max: dict[int, int] = field(default_factory=dict)
-    """Per resolved mode, the highest Fock index populated above the boundary threshold during any pulse (Section 5.5; M9a)."""
+    """Per resolved mode, the highest Fock index populated above the boundary threshold during any pulse."""
     margin_reached: dict[int, int] = field(default_factory=dict)
-    """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during the pulses (Section 5.1.1)."""
+    """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during the pulses."""
     kernel: str = "none"
-    """``factorized`` when any segment held its drive operators factorized (Section 11.3 item 4; M9b), ``assembled`` when every
-    segment with drive terms assembled them, ``none`` without drive terms."""
+    """``factorized`` or ``assembled`` when every segment with drive terms agrees, else ``mixed``; ``none`` without any."""
     map: str = "serial"
-    """The map the trajectories ran through (Section 11.3 item 9): ``serial``, ``parallel`` or ``loky``."""
+    """The map the trajectories ran through."""
     workers: int = 1
     """Processes the trajectory map used (1 in-process)."""
     propagator_solves: int = 0
-    """Segment propagators integrated on internal-state-only spaces (Section 11.3 item 5)."""
     propagator_cache_hits: int = 0
-    """Segments served from the engine's propagator cache."""
     trajectory_finals: tuple[Qobj, ...] = ()
-    """On the trajectory path, the final ket of every trajectory after the last segment, in the keyed order (the per-trajectory
-    identity of Section 9.9)."""
+    """On the trajectory path, the final ket of every trajectory after the last segment, in the keyed order."""
     trajectory_seeds: tuple[tuple[int, ...], ...] = ()
-    """The spawn keys of the trajectories' seeds on the last trajectory segment, in the same order (every segment keys its own
-    seeds by (sample, trajectory, 0, 0, "mcsolve[segment]"))."""
+    """The spawn keys of the trajectories' seeds on the last trajectory segment, in the same order."""
 
     @property
     def approximations(self) -> tuple[str, ...]:
@@ -489,14 +366,11 @@ def _channel_kind(name: str) -> str:
 
 @dataclass
 class JointExactEngine:
-    """JOINT_EXACT pulse engine (Section 5.4): every pulse through the one builder, the joint state evolved exactly.
+    """JOINT_EXACT pulse engine: every pulse through the one builder, the joint state evolved exactly.
 
-    ``store_per_segment`` stored points per segment (endpoints included); ``channels`` explicit collapse operators;
-    ``device_channels`` assembles the device's own (``NoiseModel.channels`` plus, per segment and under the SolverOptions
-    switches, the scattering and intensity-noise operators of the active pulses); ``levels_by_ion`` the register level maps
-    of ions with d > 2 (leakage); ``hardware_chain`` passes the schedule through Section 7.10's chain (also gated by
-    ``SolverOptions.hardware_chain``); ``max_growth_retries`` cap-raising retries when the boundary monitor trips (Section
-    5.5). ``last_report`` carries the diagnostics of the most recent run.
+    ``store_per_segment`` counts stored points per segment (endpoints included); ``device_channels`` adds the device's
+    collapse operators and, per segment, the active pulses' scattering and intensity-noise ones; ``levels_by_ion`` maps the
+    levels of ions with d > 2. ``last_report`` carries the diagnostics of the most recent run.
     """
 
     builder_options: object | None = None
@@ -511,34 +385,21 @@ class JointExactEngine:
     levels_by_ion: dict[int, InternalLevels] | None = None
     hardware_chain: bool = True
     table: CalibrationTable | None = None
-    """The CalibrationTable the schedule's programmed drives were built from (M8): when given, ``control.played`` converts every
-    requested Rabi frequency, believed Stark shift and believed crosstalk into what the ions see through the device's derived
-    values before the hardware chain; None plays the schedule's values as physical (the M2 to M7 behaviour, exact for a
-    surrogate table whose seeds are the derived values)."""
+    """The CalibrationTable the schedule's drives were built from: when given, ``control.played`` converts the requested
+    Rabi frequencies, believed Stark shifts and crosstalk into what the ions see; None plays the schedule as physical."""
     pure_branches: bool = True
-    """Evolve a density-matrix input without collapse operators (no explicit ``channels``, ``device_channels`` False) as the
-    weighted pure branches of its eigen-decomposition, each through ``sesolve`` (the Fock-sum path of Section 5.3: a thermal
-    motional state is a mixture of Fock states), rather than through ``mesolve`` on the D^2 Liouvillian, which costs D
-    times more per step (Section 5.3; 58 ms against 68 us per right-hand side at D = 400). Branches below
-    ``SolverOptions.branch_weight_min`` are dropped, the weights renormalized and the dropped weight reported in the notes,
-    exactly as ``run()`` does for the initial mixture. False keeps the density-matrix reference path."""
+    """Evolve a density-matrix input without collapse operators as its weighted pure eigen-branches through ``sesolve``,
+    dropping (and reporting) branches below ``SolverOptions.branch_weight_min``."""
     closed_form_constant: bool = True
-    """Propagate a segment whose Hamiltonian is constant (an idle interval, a zero-envelope pulse) by its exact propagator
-    instead of the ODE ladder: e^{-iHt} by the diagonal phases (H_mot + H_int are diagonal in the Fock x computational basis)
-    or by one Hermitian eigendecomposition, and with the device's collapse operators present, the master equation in the
-    frame rotating with H, where every collapse operator that is an eigenoperator of ad_H (the heating ladder operators,
-    sigma_z, a^dag a) keeps its dissipator unchanged and the Liouvillian loses its fast oscillation (``_closed_form_segment``).
-    The result is the same state to the solver tolerance; the segment reports integrator ``exact``. False forces the ODE
-    ladder on every segment (the Section 5.3 step-density measurements)."""
+    """Propagate a segment whose Hamiltonian is constant by its exact propagator instead of the ODE ladder (with
+    eigenoperator collapse operators, the master equation in the frame rotating with H); it reports integrator ``exact``."""
     last_report: EngineReport | None = None
     progress: Callable[[Progress], None] | None = field(default=None, repr=False, compare=False)
-    """Called after every integrated pulse segment of ``run_pulses`` with ``Progress("pulse", done, total, elapsed_s)``
-    (0.2.0; docs/api_implementation_plan.md 1.8); ``run`` sets it and rebases the clock to the run's start. Dropped when the
-    engine is shipped to a worker, so a parallel map reports no pulses."""
+    """Called with ``Progress("pulse", done, total, elapsed_s)`` after every pulse segment; not shipped to workers."""
     _propagators: dict[tuple[object, ...], _Propagator] = field(
         default_factory=dict, repr=False, compare=False
     )
-    """The propagator cache of Section 11.3 item 5 (M9b), keyed by the built Hamiltonian's fingerprint and the stored times."""
+    """The propagator cache, keyed by the built Hamiltonian's fingerprint, the stored times and the tolerances."""
 
     def __getstate__(self) -> dict[str, object]:
         # an engine shipped to a worker (the parallel tomography and run() maps) carries neither its report nor its cache
@@ -563,18 +424,8 @@ class JointExactEngine:
         *,
         ideal: np.ndarray | None = None,
     ) -> ChannelSummary:
-        """State-based process tomography of one pulse, a gate's pulse group or a whole Schedule on ``space`` (Section 5.4; M9a).
-
-        The channel is extracted from the motional state of ``motional_model`` (the tracked reduced density matrices of the
-        resolved modes, their thermal states where none is tracked, the frozen modes' Fock populations as weighted branches):
-        when the evolution is unitary and ``SolverOptions.tomography_isometry`` holds, from the prod_i d_i internal basis kets
-        propagated through ``run_pulses`` per branch (the Stinespring isometry; off the segment propagator itself on an
-        internal-state-only space), otherwise from every one of the prod_i d_i^2 linearly independent pure inputs of
-        ``dynamics.tomography.input_states`` with the Choi matrix reconstructed by least squares. The Choi matrix is projected
-        onto CP and TP by Dykstra's alternating projection and the summary of Section 6.8 is computed against ``ideal`` (the
-        gate's ideal unitary on the space's ions in factor order; NaN infidelities without one). The full record, including the
-        motional outputs the GATE_LOCAL model tracks and the route taken, is :meth:`tomography`.
-        """
+        """Process tomography of a pulse, pulse group or Schedule on ``space``, summarized against ``ideal`` (the unitary on
+        the space's ions in factor order; NaN infidelities without one); :meth:`tomography` returns the full record."""
         rec = self.tomography(device, pulse, space, motional_model, sample, seeds, options)
         return rec.summary(ideal)
 
@@ -588,7 +439,7 @@ class JointExactEngine:
         seeds: SeedSpec,
         options: SolverOptions | None = None,
     ) -> TomographyRecord:
-        """The process tomography behind :meth:`process_tomography`, with everything GATE_LOCAL tracks (Section 5.4 (b))."""
+        """The process tomography behind :meth:`process_tomography`, with everything GATE_LOCAL tracks."""
         from qutip_trap.dynamics.tomography import tomography as _tomography
 
         return _tomography(
@@ -639,17 +490,13 @@ class JointExactEngine:
                 # a margin trip knows its deficit exactly and grows by it; a boundary trip grows by the configured step
                 grow = trip.add if trip.reason == "margin" and trip.add > 0 else self.growth_levels
                 new_space = current_space.grown(trip.mode, grow)
-                # the report names every retry (Section 5.5): a run declared on a small space and silently integrated on a
-                # larger one after a trip used to be visible only as growth_retries and the final space
                 growth_notes.append(
                     f"cap-raising retry {retries} of {self.max_growth_retries}: {trip.reason} trip on mode {trip.mode} "
                     f"(population {trip.worst:.3e}) grows its cap by {grow} level(s); the run is integrated again on joint "
                     f"dimension {new_space.dimension} (was {current_space.dimension})"
                 )
                 if new_space.dimension > options.joint_dimension_max:
-                    # Section 11.5's ceiling holds for a GROWN space too: a cap that keeps growing (a hot mode, or an ENR
-                    # group of Doppler-limited modes whose top shell never empties) must not build past the guard the
-                    # declaration was checked against (2026-09-08: an ENR group at N_exc = 2 grew to 6, dimension 16016)
+                    # the size guard holds for a grown space too (a hot mode's cap can keep growing)
                     raise TruncationLimit(
                         f"raising the cap of mode {trip.mode} after a {trip.reason} trip would take the joint space to "
                         f"dimension {new_space.dimension}, above joint_dimension_max = {options.joint_dimension_max} "
@@ -669,7 +516,7 @@ class JointExactEngine:
         self, built: object, times: np.ndarray, options: SolverOptions, largest_mode: int
     ) -> tuple[_Propagator, bool]:
         """U(t_k, t_0) at every stored time of a segment on an internal-state-only space, from the cache or by one integration of
-        the identity through the Section 5.3 ladder (Section 11.3 item 5; M9b). Returns (propagator, cache hit)."""
+        the identity through the ladder. Returns (propagator, cache hit)."""
         from qutip_trap.dynamics.evolve import evolve
 
         h = built.H  # type: ignore[attr-defined]
@@ -759,9 +606,8 @@ class JointExactEngine:
         options: SolverOptions,
         notes: list[str],
     ) -> tuple[Schedule, tuple[str, ...]]:
-        """The schedule the ions see: the played chain of Section 7.3 (M8: requested -> physical through the device's derived
-        values, when a table is given) and then the hardware chain of Section 7.10 (M7). Returns (schedule, hardware notes); the
-        played chain's notes are appended to ``notes``."""
+        """The schedule the ions see: the played chain (requested -> physical, when a table is given), then the hardware
+        chain. Returns (schedule, hardware notes); the played chain's notes are appended to ``notes``."""
         from qutip_trap.control.hardware import apply_hardware_chain
 
         sched = schedule
@@ -784,12 +630,8 @@ class JointExactEngine:
         nbar: Mapping[int, float],
         notes: list[str],
     ) -> dict[int, int]:
-        """Frozen spectators: this evolution's Fock states (Section 5.2), from the sample where the caller put them there.
-
-        Section 5.2's "samples n_m once per shot" is realized by run(), which enumerates the frozen modes' Fock states as
-        weighted branches (an exact quadrature over the same thermal distribution, better than sampling) and passes each
-        branch's tuple in sample.values. The draw below is the fallback for a direct run_pulses caller, which has no shot
-        index at all - one call is one evolution - so it is keyed PER SAMPLE and reported as such (M9b audit B11)."""
+        """The frozen spectators' Fock states for this evolution, from the sample where the caller put them (``run()``
+        enumerates them as weighted branches); otherwise drawn thermally, keyed per sample, and noted."""
         from qutip_trap.hilbert.operators import thermal_populations
         from qutip_trap.noise.sampling import key_frozen_n
 
@@ -817,10 +659,8 @@ class JointExactEngine:
     def _collapse_setup(
         self, device: Device, space: HilbertSpace, options: SolverOptions
     ) -> tuple[list[CollapseOp], bool]:
-        """The state-independent collapse operators of a run on ``space`` (the explicit ``channels`` plus, under
-        ``device_channels``, the device's own) and whether a segment with active pulses CAN carry collapse operators built from
-        its pulses (scattering, intensity noise): decided before any build so that the drive operators are assembled exactly
-        where a Liouvillian is formed (Section 5.3) and held factorized everywhere else (Section 11.3 item 4; M9b)."""
+        """The state-independent collapse operators of a run on ``space``, and whether a pulse segment can carry pulse-built
+        ones; decided before any build so that drive operators are assembled exactly where a Liouvillian is formed."""
         static_ops: list[CollapseOp] = list(self.channels)
         if self.device_channels:
             static_ops.extend(device.noise.channels(device, space))
@@ -831,18 +671,15 @@ class JointExactEngine:
         return static_ops, pulse_channels_possible
 
     def is_unitary(self, device: Device, space: HilbertSpace, options: SolverOptions) -> bool:
-        """Whether every segment of a run on ``space`` evolves unitarily: no explicit channel, no device channel on the space and
-        no pulse-built channel possible, so the final state is LINEAR in the initial ket. This is the condition under which the
-        GATE_LOCAL tomography may propagate the internal basis alone (``SolverOptions.tomography_isometry``); a trajectory of
-        ``mcsolve`` is not linear in its initial ket and a ``mesolve`` segment evolves a density matrix."""
+        """Whether every segment of a run on ``space`` evolves unitarily (no explicit, device or pulse-built channel), so
+        the final state is linear in the initial ket: the condition for the tomography's isometry route."""
         static_ops, pulse_channels_possible = self._collapse_setup(device, space, options)
         return not static_ops and not pulse_channels_possible
 
     @staticmethod
     def _segment_edges(sched: Schedule) -> list[float]:
-        """Segments at every pulse boundary and idle boundary; the state is given at the schedule's declared start
-        (``Schedule.t0_s``, a GATE_LOCAL step's start) or at min(0, the first cut) as M2 to M8 did, and the last edge is
-        ``pulses_end_s`` (the measurement event that may follow is the readout stage's, not free evolution)."""
+        """Segment cuts at every pulse and idle boundary, from the schedule's declared start (``Schedule.t0_s``) or
+        min(0, the first cut) to ``pulses_end_s`` (a following measurement belongs to the readout stage)."""
         starts = [p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle]
         t0 = float(sched.t0_s) if sched.t0_s is not None else min(starts + [0.0])
         t_end = max(sched.pulses_end_s, t0)
@@ -871,17 +708,10 @@ class JointExactEngine:
         *,
         motional_model: MotionalModel | None = None,
     ) -> tuple[np.ndarray, EngineReport]:
-        """U(t_end, t_0) of ``schedule`` on the internal-state-only ``space`` (every mode frozen, no ENR group) as a D x D
-        matrix, with the report of a run (Section 11.3 item 5; performance pass 2026-09-09).
+        """U(t_end, t_0) of ``schedule`` on an internal-state-only ``space`` as a D x D matrix, with the report of a run.
 
-        The product over the segments of the segment propagators: the exact closed form of a constant segment (the diagonal
-        phases of an idle, one eigendecomposition otherwise; ``closed_form_constant``) or the propagator the cache holds or
-        integrates once through the Section 5.3 ladder (``_segment_propagator``, the same key ``run_pulses`` uses). On such a
-        space the propagator IS the step's channel, so the GATE_LOCAL tomography reads the branch's Kraus operator off it
-        instead of propagating states (``dynamics.tomography``, ``SolverOptions.tomography_isometry``). ``motional_model``
-        supplies the occupations for the frozen modes whose Fock state the sample does not carry (``run_pulses`` reads them
-        from its state). Raises ``ValueError`` on a space with a resolved mode or an ENR group, and when a segment would carry
-        a collapse operator (a propagator of a dissipative segment is not a unitary: use ``run_pulses``).
+        ``motional_model`` supplies occupations for frozen modes the sample carries no Fock state for. Raises
+        ``ValueError`` on a space with a resolved mode or an ENR group, or when a segment would carry a collapse operator.
         """
         from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 
@@ -996,13 +826,9 @@ class JointExactEngine:
         if joint.shape[0] != space.dimension:
             raise ValueError("the state does not live on the given space")
         notes: list[str] = list(growth_notes)
-        # the played chain of Section 7.3 (M8) and the hardware chain of Section 7.10 (M7)
         sched, hw_notes = self._played_schedule(device, schedule, sample, seeds, options, notes)
-        # the frozen spectators' Fock states for this evolution (Section 5.2; M9b audit B11)
         frozen_n = self._frozen_fock_states(space, sample, seeds, state.motional.nbar, notes)
-        # the state-independent collapse operators and whether a pulse segment can carry pulse-built ones (Section 5.3)
         static_ops, pulse_channels_possible = self._collapse_setup(device, space, options)
-        # the Lindblad method the dissipative segments will take
         lindblad_resolved: str = options.lindblad_method
         if lindblad_resolved == "auto":
             lindblad_resolved = "mesolve" if space.dimension <= options.mesolve_dimension_max else "mcsolve"
@@ -1030,7 +856,6 @@ class JointExactEngine:
         times_all: list[np.ndarray] = []
         expect_all: dict[str, list[np.ndarray]] = {k: [] for k in e_keys}
         reduced: list[qt.Qobj] = []
-        # the per-time Fock populations of every carried mode (Traces.mode_marginal; 0.4.0) and the wall time per pulse
         marginals: dict[int, list[np.ndarray]] | None = (
             {m: [] for m in carried} if options.store_marginals else None
         )
@@ -1063,8 +888,7 @@ class JointExactEngine:
         first = True
         largest_mode = max([m.d for m in space.resolved], default=0)
         atol_mc = options.atol if largest_mode <= LARGE_MODE_DIMENSION else max(options.atol, 1e-8)
-        # Section 5.3: improved_sampling decomposes the WHOLE evolution into its no-jump member and the rest, so it is used
-        # only when the trajectory path is entered exactly once (IMPROVED_SAMPLING_MULTI_SEGMENT says why)
+        # improved_sampling splits the whole evolution, so it applies only when one segment takes the trajectory path
         n_mc_segments = 0
         if lindblad_resolved == "mcsolve" and kets is not None:
             for a_e, b_e in zip(edges[:-1], edges[1:]):
@@ -1116,9 +940,7 @@ class JointExactEngine:
             rhs_evals: int | None = None
             retries_seg: tuple[str, ...] = ()
             # ---- integrate ----------------------------------------------------------------------------------------
-            # the exact rotating frame of Section 5.2 for the ket paths (sesolve, mcsolve): the state carries e^{-i H_0 t}
-            # and the drive terms are applied between the phases (dynamics/rotating.py); mesolve segments form the
-            # Liouvillian from the Schroedinger-picture matrices (Section 5.3) and the closed forms need no frame
+            # ket paths integrate in the exact rotating frame; mesolve segments and closed forms do not
             rot: RotatingSegment | None = None
             if (
                 options.rotating_frame
@@ -1132,8 +954,7 @@ class JointExactEngine:
                     for n in rot.notes:
                         if n not in notes:
                             notes.append(n)
-            # per e_op, the e^{i lambda t} an expectation value picks up on the way back from the rotating frame (0 for the
-            # populations, -omega_m for a_m); None means the trace is taken on the rotated-back states
+            # per e_op, the phase lambda back from the rotating frame; None: the trace is taken on the rotated-back states
             e_phases: dict[str, float | None] = (
                 {k: expectation_phase(op, rot.frame) for k, op in zip(e_keys, e_list)}
                 if rot is not None
@@ -1163,7 +984,6 @@ class JointExactEngine:
                     largest_mode,
                 )
             if closed is not None:
-                # the exact propagator of a constant Hamiltonian (Section 5.3: no ODE where none is needed)
                 kets, rho = closed.kets, closed.rho
                 for k in e_keys:
                     expect_all[k].append(closed.expect[k][sel])
@@ -1183,7 +1003,7 @@ class JointExactEngine:
                     and not space.resolved
                     and space.enr_group is None
                 ):
-                    # an internal-state-only space (Section 11.3 item 5): one propagator serves every initial state
+                    # an internal-state-only space: one propagator serves every initial state
                     prop, hit = self._segment_propagator(built, times, options, largest_mode)
                     propagator_hits += int(hit)
                     propagator_solves += int(not hit)
@@ -1339,8 +1159,7 @@ class JointExactEngine:
                         )
                     improved_seg = improved_run and len(kets) == 1
                     n_traj_seg = options.ntraj
-                    # the map and the worker count are fixed once n_traj_seg is final (phase one may lower it); the
-                    # placeholders here only make mc_opts constructible for the phase-one probe
+                    # placeholders for the phase-one probe; the map and workers are fixed once n_traj_seg is final
                     seg_map, seg_workers = "serial", 1
                     mc_opts = {
                         "method": options.integrators[0],
@@ -1358,9 +1177,7 @@ class JointExactEngine:
                         "num_cpus": seg_workers,
                         "improved_sampling": improved_seg,
                     }
-                    # Section 3.4 phase one: the trajectory count from mcsolve's target_tol on the population e_ops, run
-                    # under a SERIAL map so that its scheduling-dependent firing point is reproducible, capped by ntraj and
-                    # floored by TARGET_TOL_MIN_TRAJECTORIES; phase two below replays a keyed seed list of that length
+                    # phase one: the trajectory count from target_tol, under a serial map so that it is reproducible
                     if (
                         len(kets) == 1
                         and options.e_ops_for_target_tol
@@ -1412,9 +1229,7 @@ class JointExactEngine:
                         options=mc_opts,
                     )
                     kets_in = kets if rot is None else [rot.frame.to_frame(k, float(times[0])) for k in kets]
-                    # one trajectory per ket of the ensemble, each with its keyed seed (Section 3.4), through QuTiP's map:
-                    # mixed initial conditions with an explicit per-state trajectory count; the results come back in completion
-                    # order and are matched to their kets by seed (Section 11.3 item 9; M9b)
+                    # one keyed-seed trajectory per ket; results arrive in completion order and are matched back by seed
                     seeds_k = [
                         seeds.child(sample.sample_id, k_traj, 0, 0, f"mcsolve[{seg_index}]")
                         for k_traj in range(n_stoch)
@@ -1440,10 +1255,7 @@ class JointExactEngine:
                     # (trajectory, weight, seed key or None for a deterministic member, index into res.col_* or None)
                     members: list[tuple[Any, float, tuple[int, ...] | None, int | None]] = []
                     if improved_seg:
-                        # the WEIGHTED mixture of Section 5.3: the deterministic no-jump member carries p_no-jump
-                        # (QuTiP 5.3.1 calls the plan's deterministic_weight_info `deterministic_weights`), the stochastic
-                        # trajectories the residual weight `runs_weights`; drawing uniformly from the stored trajectories
-                        # would bias every per-shot observable by p_no-jump
+                        # weighted: the no-jump member carries p_no-jump (a uniform draw would bias per-shot observables)
                         members.extend(
                             (traj, float(w), None, None)
                             for traj, w in zip(res.deterministic_trajectories, res.deterministic_weights)
@@ -1549,20 +1361,15 @@ class JointExactEngine:
                     Progress("pulse", pulse_done, pulse_total, time.perf_counter() - progress_started)
                 )
             if active:
-                # Section 5.5's ONE threshold, "1e-6 of the population the pulse moves": a branch of weight w (run() and the
-                # tomography evolve the initial mixture's Fock branches one by one, each normalized) carries at most w of that
-                # population, so the branch-relative quantities bpop and the populated range are both compared against
-                # boundary_population_max / w. The trip used to read the unscaled threshold while the margin check read the
-                # scaled one, so the two differed by 1/w on a low-weight branch (M9b audit B3); a single state has w = 1 and
-                # neither number moves
+                # a normalized branch of weight w carries at most w of the population the pulse moves, so both checks
+                # compare against boundary_population_max / w
                 branch_w = min(max(sample.get(KEY_BRANCH_WEIGHT, 1.0), 1e-300), 1.0)
                 tail = min(options.boundary_population_max / branch_w, 0.5)
                 for m, v in bpop.items():
                     if v > tail and space.mode_class(m) in ("resolved", "enr"):
                         raise _BoundaryTrip(m, v)
                 if options.margin_check and space.resolved:
-                    # Section 5.5: the cap's margin above the populated range must stay above the Section 5.1.1 margin for
-                    # the segment's eta on every resolved mode the segment drives; a deficit raises the cap by it and repeats
+                    # the cap's margin above the populated range must cover the margin the segment's eta needs
                     eta_seg: dict[int, float] = {}
                     for rec in built.records:
                         for m, e in rec.etas.items():
@@ -1579,7 +1386,6 @@ class JointExactEngine:
                         if margin < need:
                             raise _BoundaryTrip(m, bpop.get(m, 0.0), add=need - margin, reason="margin")
         if method_used == "mcsolve" and kets is not None:
-            # the trajectories' final kets after EVERY segment, in the keyed order (Section 9.9's per-trajectory identity)
             trajectory_finals = list(kets)
         times_arr = np.concatenate(times_all) if times_all else np.array([t0])
         expect = {k: np.concatenate(v) if v else np.array([]) for k, v in expect_all.items()}
@@ -1677,8 +1483,8 @@ EIGH_DIMENSION_MAX = 4096
 """Above this joint dimension a constant but non-diagonal Hamiltonian goes through the ODE ladder rather than a dense eigh."""
 
 TARGET_TOL_MIN_TRAJECTORIES = 8
-"""The floor on Section 3.4's phase-one estimate: QuTiP 5.3.1's ``target_tol`` accepts a zero-variance first batch and can
-stop at 2 trajectories (measured, see ``SolverOptions.trajectory_target_tol``), so the estimate is never taken below this."""
+"""The floor on the phase-one trajectory estimate: QuTiP 5.3.1's ``target_tol`` can stop at 2 trajectories on a
+zero-variance first batch."""
 
 IMPROVED_SAMPLING_MULTI_SEGMENT = (
     "mcsolve improved_sampling not used: the no-jump/jump split is a decomposition of the WHOLE evolution, and this schedule "
@@ -1688,7 +1494,7 @@ IMPROVED_SAMPLING_MULTI_SEGMENT = (
 )
 
 PROPAGATOR_CACHE_MAX = 256
-"""Segment propagators an engine keeps (Section 11.3 item 5); the cache is cleared when full."""
+"""Segment propagators an engine keeps; the cache is cleared when full."""
 
 
 @dataclass(frozen=True)
@@ -1703,15 +1509,14 @@ class _Propagator:
 
 
 MARGIN_LEAKAGE_FRACTION = 0.1
-"""The derived margin (``SolverOptions.margin_element_tol``) keeps one displacement's leakage from the top populated level below
-this fraction of ``boundary_population_max``, so that the boundary monitor's own trip is not the first thing a derived cap meets."""
+"""The derived margin (``SolverOptions.margin_element_tol``) keeps one displacement's leakage from the top populated level
+below this fraction of ``boundary_population_max``, so that the boundary monitor does not trip first."""
 
 
 def required_margin_under(eta: float, options: SolverOptions, n_hi: int) -> int:
-    """The Section 5.1.1 margin a run under ``options`` keeps above the top populated level ``n_hi`` at |eta|: the fixture
-    (``hilbert.operators.required_margin``) unless ``margin_element_tol`` is declared, in which case the margin is derived from
-    the declared element tolerance and a tenth of the boundary threshold. The cap rule of ``run.gate_local.step_space`` and the
-    engine's margin check read this one function, so a first attempt does not trip."""
+    """The margin a run under ``options`` keeps above the top populated level ``n_hi`` at |eta|: the fixed margin of
+    ``hilbert.operators.required_margin`` unless ``margin_element_tol`` is declared, which derives it from that tolerance
+    and a tenth of the boundary threshold. ``run.gate_local.step_space`` and the engine's margin check both read it."""
     if options.margin_element_tol is None:
         return required_margin(eta)
     return required_margin(
@@ -1723,8 +1528,8 @@ def required_margin_under(eta: float, options: SolverOptions, n_hi: int) -> int:
 
 
 def _steps_per_period(rhs_evals: int | None, omega_max_rad_s: float, duration_s: float) -> float | None:
-    """Integrator steps per period of the fastest mode (Section 5.3's step-density band): rhs_evals / 12 dop853 stages over the
-    periods of ``omega_max_rad_s`` in ``duration_s``; None without a count or a frequency."""
+    """Integrator steps per period of the fastest mode: rhs_evals / 12 dop853 stages over the periods of
+    ``omega_max_rad_s`` in ``duration_s``; None without a count or a frequency."""
     if not rhs_evals or omega_max_rad_s <= 0.0:
         return None
     periods = duration_s * omega_max_rad_s / (2.0 * math.pi)
@@ -1777,9 +1582,8 @@ def _expectation_back(
     op: qt.Qobj,
     states: Sequence[qt.Qobj],
 ) -> np.ndarray:
-    """An expectation trace taken in the rotating frame, back in the Schroedinger picture: <psi|O|psi> = e^{i lambda t} <phi|O|phi>
-    for an eigenoperator of ad_{H_0} (``lam``; 0 leaves the populations untouched), the trace over the rotated-back ``states`` for
-    anything else (``lam`` None)."""
+    """A rotating-frame expectation trace in the Schroedinger picture: e^{i lambda t} <phi|O|phi> for an eigenoperator of
+    ad_{H_0}, the trace over the rotated-back ``states`` when ``lam`` is None."""
     if lam is None:
         return np.array([qt.expect(op, st) for st in states], dtype=complex)
     if lam == 0.0:
@@ -1796,8 +1600,7 @@ def _mixture(kets: list[qt.Qobj], weights: list[float]) -> qt.Qobj:
 
 def _pure_branches(rho: qt.Qobj, weight_min: float) -> tuple[list[qt.Qobj], list[float], float]:
     """The eigen-decomposition of a density matrix into pure branches: (kets, weights >= ``weight_min`` renormalized, dropped
-    weight), heaviest first. A product of thermal states is a mixture of Fock states, so this is the Fock sum of Section 5.3
-    (``run()`` enumerates the same branches from the occupations before it builds any state)."""
+    weight), heaviest first."""
     mat = np.asarray(rho.full())
     mat = 0.5 * (mat + mat.conj().T)
     w, v = np.linalg.eigh(mat)
@@ -1821,8 +1624,7 @@ def _diagonal_energies(h: qt.Qobj) -> np.ndarray | None:
 
 
 def _eigen_frequency(op: qt.Qobj, energies: np.ndarray) -> float | None:
-    """lambda with [H, op] = lambda op for the diagonal H of ``energies``: E_row - E_col equal on every non-zero element (the
-    heating operators a and a^dag, sigma_z, a^dag a); None when ``op`` is not an eigenoperator of ad_H."""
+    """lambda with [H, op] = lambda op for the diagonal H of ``energies``, or None."""
     coo = op.to("CSR").data.as_scipy().tocoo()
     if coo.nnz == 0:
         return 0.0
@@ -1841,7 +1643,7 @@ def _carried_modes(space: HilbertSpace) -> list[int]:
 def _marginals_of(
     space: HilbertSpace, states: Sequence[qt.Qobj], modes: Sequence[int]
 ) -> dict[int, np.ndarray]:
-    """Per mode the (T, d_m) Fock populations of the stored ``states`` (``Traces.mode_marginal``; 0.4.0)."""
+    """Per mode the (T, d_m) Fock populations of the stored ``states``."""
     return {m: np.array([space.fock_populations(st, m) for st in states], dtype=float) for m in modes}
 
 
@@ -1868,17 +1670,8 @@ def _closed_form_segment(
     lindblad: str,
     largest_mode_dimension: int,
 ) -> _ClosedForm | None:
-    """Propagate a segment with the constant Hamiltonian ``h`` over ``times`` without an ODE solve of the oscillatory part.
-
-    Without collapse operators the propagator is e^{-i h tau}: the diagonal phases when ``h`` is diagonal (idle intervals:
-    H_mot + H_int + a constant Stark shift), else one Hermitian eigendecomposition (a constant anharmonic or curvature term).
-    With collapse operators the master equation is integrated in the frame rotating with the diagonal ``h``, where H vanishes
-    and every collapse operator that is an eigenoperator of ad_H picks up only a phase, which its dissipator does not see; the
-    stored states are rotated back, so expectations and marginals are in the Schroedinger picture. Returns None when the
-    closed form does not apply (a non-diagonal H with collapse operators, an operator that is not an eigenoperator, the
-    trajectory path); the caller then integrates as before. Nothing here is an approximation: the frame change is unitary
-    and the phases are exact.
-    """
+    """Propagate a segment with the constant Hamiltonian ``h`` exactly: e^{-i h tau}, or with eigenoperator collapse
+    operators (mesolve, diagonal ``h``) the master equation in the frame rotating with ``h``. None when neither applies."""
     energies = _diagonal_energies(h)
     taus = np.asarray(times, dtype=float) - float(times[0])
     dims_int = [list(space.ion_dims), list(space.ion_dims)]
@@ -2016,7 +1809,7 @@ def _populated_max(
     mode: int,
     tail: float,
 ) -> int:
-    """The highest Fock index of ``mode`` the (weighted) state populates above ``tail`` (Section 5.5)."""
+    """The highest Fock index of ``mode`` the (weighted) state populates above ``tail``."""
     if kets is not None:
         parts = [w * space.fock_populations(k, mode) for k, w in zip(kets, weights)]
         p = np.sum(np.stack(parts), axis=0)
@@ -2031,8 +1824,8 @@ def _populated_max(
 
 
 class _BoundaryTrip(Exception):
-    """The truncation monitor tripped (Section 5.5): the boundary population exceeded the threshold (``reason``
-    "boundary") or the cap's margin above the populated range fell below the Section 5.1.1 requirement ("margin")."""
+    """The truncation monitor tripped: the boundary population exceeded the threshold (``reason`` "boundary") or the
+    cap's margin above the populated range fell short ("margin")."""
 
     def __init__(self, mode: int, worst: float, add: int = 0, reason: str = "boundary") -> None:
         super().__init__(
@@ -2045,7 +1838,7 @@ class _BoundaryTrip(Exception):
 
 
 class TruncationLimit(RuntimeError):
-    """The cap-raising retries of Section 5.5 were exhausted."""
+    """Truncation could not be fixed: the cap-raising retries ran out, or growth would exceed ``joint_dimension_max``."""
 
 
 __all__ += [

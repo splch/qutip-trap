@@ -1,16 +1,5 @@
-"""Fits, lineshapes and the observation model shared by the simulated experiments (PLAN.md Sections 7.5, 7.9, 13; M8).
-
-The fit functions are the plan's own conventions (Section 13): the sideband excitation lineshape
-P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)) with a carrier pi pulse at Omega t = pi and half depth
-at delta = Omega, the carrier Rabi curve with the thermal Debye-Waller envelope of Section 4.2.7, a Ramsey fringe, a parity
-oscillation. The half-Rabi form Omega^2/(Omega^2 + delta^2/4) sin^2(t sqrt(Omega^2 + delta^2/4)) that Wineland and Bluemel print
-is kept as the NEGATIVE CONTROL of Section 9.17 ("fitting the half-Rabi form returns Omega/2") and is never the fit function.
-
-The observation model is how a laboratory reads a population: ``shots`` projective measurements per point declared through the
-readout's (eps_B, eps_D), so that every fitted parameter carries the statistical uncertainty a laboratory would quote
-(Section 7.5: "Every fit reports an uncertainty"); ``shots=None`` returns the exact population (the M2 to M7 behaviour). The
-randomness is keyed by (sample, trajectory, shot, ion, channel) through ``SeedSpec`` (Section 3.4).
-"""
+"""Fit functions, lineshapes and the observation model shared by the simulated experiments: ``shots`` declared
+measurements per point through the readout's (eps_B, eps_D), or exact populations for ``shots=None``."""
 
 from __future__ import annotations
 
@@ -33,13 +22,12 @@ if TYPE_CHECKING:
 LineshapeForm = Literal["plan", "half_rabi"]
 
 
-# ---- lineshapes (Section 13) --------------------------------------------------------------------------------------------------------
+# ---- lineshapes --------------------------------------------------------------------------------------------------------
 
 
 def sideband_lineshape(delta_rad_s: np.ndarray | float, omega_rad_s: float, t_s: float) -> np.ndarray:
-    """P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)): the plan's excitation lineshape (Section 13,
-    "Sideband excitation lineshape"; the calibration fit function of Section 7.5). Omega is the resonant Rabi frequency of the
-    driven transition (carrier or sideband) in the (hbar Omega/2) convention: a pi pulse at Omega t = pi, half depth at delta = Omega."""
+    """P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)), the fitted lineshape; Omega (rad/s) is the
+    resonant Rabi frequency in the hbar Omega/2 convention: a pi pulse at Omega t = pi, half depth at delta = Omega."""
     d = np.asarray(delta_rad_s, dtype=float)
     w = math.sqrt(omega_rad_s**2) if omega_rad_s >= 0.0 else -omega_rad_s
     gen = np.sqrt(w * w + d * d)
@@ -49,8 +37,8 @@ def sideband_lineshape(delta_rad_s: np.ndarray | float, omega_rad_s: float, t_s:
 
 
 def half_rabi_lineshape(delta_rad_s: np.ndarray | float, omega_rad_s: float, t_s: float) -> np.ndarray:
-    """Omega^2/(Omega^2 + delta^2/4) sin^2(t sqrt(Omega^2 + delta^2/4)): the half-Rabi form of Wineland 1998 and Bluemel 2021 Eq.
-    S28, whose Omega is HALF the plan's; doubled on ingest, never fitted (Section 7.9; the negative control of Section 9.17)."""
+    """Omega^2/(Omega^2 + delta^2/4) sin^2(t sqrt(Omega^2 + delta^2/4)), the half-Rabi form of Wineland et al. 1998, whose
+    Omega is half of ``sideband_lineshape``'s; a negative control (fitting it returns Omega/2), not the default fit."""
     d = np.asarray(delta_rad_s, dtype=float)
     w = abs(omega_rad_s)
     gen2 = w * w + 0.25 * d * d
@@ -74,7 +62,7 @@ def lineshape_model(
 
 
 def thermal_rabi_model(p: np.ndarray, t: np.ndarray, eta: float, n_max: int = 200) -> np.ndarray:
-    """P_1(t) = A sum_n P_n(nbar) sin^2(Omega_n t/2), Omega_n = 2 pi f e^{-eta^2/2} L_n(eta^2): p = (f_hz, nbar, A) (Section 4.2.7)."""
+    """P_1(t) = A sum_n P_n(nbar) sin^2(Omega_n t/2), Omega_n = 2 pi f e^{-eta^2/2} L_n(eta^2), with p = (f_hz, nbar, A)."""
     f, nbar, amp = float(p[0]), max(float(p[1]), 0.0), float(p[2])
     n = np.arange(n_max)
     if nbar == 0.0:
@@ -90,16 +78,15 @@ def thermal_rabi_model(p: np.ndarray, t: np.ndarray, eta: float, n_max: int = 20
 def thermal_rabi_model_fixed_nbar(
     p: np.ndarray, t: np.ndarray, eta: float, nbar: float, n_max: int = 200
 ) -> np.ndarray:
-    """The carrier curve with nbar FIXED from the sideband-ratio thermometry (Section 7.5, bootstrap): p = (f_hz, A, B)."""
+    """``thermal_rabi_model`` with nbar fixed plus an offset B, with p = (f_hz, A, B)."""
     return np.asarray(thermal_rabi_model(np.array([p[0], nbar, p[1]]), t, eta, n_max) + float(p[2]))
 
 
 def debye_waller_branches(
     etas: Sequence[float], nbars: Sequence[float], weight_min: float = 1e-6
 ) -> tuple[np.ndarray, np.ndarray]:
-    """(weights, factors) of the joint thermal Fock distribution over the coupled modes: factor = prod_p e^{-eta_p^2/2} L_{n_p}(eta_p^2)
-    (Wineland 1998 Eqs. 122-124; Section 4.2.7 iii), the carrier Rabi frequency's Debye-Waller reduction by EVERY mode the drive
-    couples to, spectators included; branches below ``weight_min`` are dropped and the weights renormalized."""
+    """(weights, factors) of the joint thermal Fock distribution over the coupled modes, factor = prod_p e^{-eta_p^2/2}
+    L_{n_p}(eta_p^2) (Wineland et al. 1998 Eqs. 122-124); branches below ``weight_min`` dropped, weights renormalized."""
     weights = np.array([1.0])
     factors = np.array([1.0])
     for eta, nb in zip(etas, nbars):
@@ -122,8 +109,7 @@ def debye_waller_branches(
 def multimode_rabi_model(
     p: np.ndarray, t: np.ndarray, etas: Sequence[float], nbars: Sequence[float], weight_min: float = 1e-6
 ) -> np.ndarray:
-    """P_1(t) = A sum_branches w sin^2(2 pi f F t/2) + B over the joint Fock branches of every coupled mode (the multi-mode
-    Debye-Waller carrier curve of Section 4.2.7), nbar of every mode FIXED from the thermometry: p = (f_hz, A, B)."""
+    """P_1(t) = A sum w sin^2(2 pi f F t/2) + B over ``debye_waller_branches`` (w, F), with p = (f_hz, A, B)."""
     weights, factors = debye_waller_branches(etas, nbars, weight_min)
     omegas = TWO_PI * float(p[0]) * factors
     out = float(p[1]) * np.sum(
@@ -138,7 +124,7 @@ def ramsey_model(p: np.ndarray, t: np.ndarray) -> np.ndarray:
 
 
 def parity_model(p: np.ndarray, phi: np.ndarray) -> np.ndarray:
-    """Pi(phi) = C cos(2 phi + phi_0) + B with p = (C, phi_0, B) (Section 7.9)."""
+    """Pi(phi) = C cos(2 phi + phi_0) + B with p = (C, phi_0, B)."""
     return np.asarray(float(p[0]) * np.cos(2.0 * np.asarray(phi) + float(p[1])) + float(p[2]))
 
 
@@ -147,12 +133,10 @@ def parity_model(p: np.ndarray, phi: np.ndarray) -> np.ndarray:
 
 @dataclass(frozen=True)
 class FitResult:
-    """A weighted least-squares fit (``weighted_fit``): the parameters and their one-sigma errors, the reduced chi-square, whether
-    the optimiser converged, its message and the number of points fitted."""
+    """A ``weighted_fit`` result: parameters, one-sigma errors, reduced chi-square, convergence, message, point count."""
 
     params: np.ndarray
     errors: np.ndarray
-    """One-sigma uncertainties from the covariance (scaled by max(1, chi^2/dof) when sigmas are given)."""
     chi2_per_dof: float
     converged: bool
     message: str
@@ -172,11 +156,8 @@ def weighted_fit(
     bounds: tuple[Sequence[float], Sequence[float]] | None = None,
     max_nfev: int | None = None,
 ) -> FitResult:
-    """Least squares of ``model(p, x)`` to ``y`` with optional per-point sigmas (Section 7.5: every fit reports an uncertainty).
-
-    Without sigmas the covariance is (J^T J)^-1 s^2 with s^2 the residual variance per degree of freedom; with them it is
-    (J^T W J)^-1 times max(1, chi^2/dof), so an under-fitting model widens its own error bars rather than hiding the misfit.
-    """
+    """Least squares of ``model(p, x)`` to ``y``; the covariance is (J^T J)^-1 s^2 (s^2 the residual variance per dof)
+    without sigmas and (J^T W J)^-1 max(1, chi^2/dof) with them, so an under-fitting model widens its own error bars."""
     xs = np.asarray(x, dtype=float)
     ys = np.asarray(y, dtype=float)
     if sigma is not None:
@@ -219,7 +200,7 @@ def weighted_fit(
 
 
 def at_scan_edge(value: float, lo: float, hi: float, fraction: float = 0.02) -> bool:
-    """Section 7.5: a fit that lands at the edge of its scan range marks the entry ``uncalibrated``."""
+    """True when ``value`` lies within ``fraction`` of the span of either end of [lo, hi], or the span is empty."""
     span = hi - lo
     if span <= 0.0:
         return True
@@ -235,11 +216,8 @@ def fit_lineshape(
     guess: tuple[float, float] | None = None,
     form: LineshapeForm = "plan",
 ) -> FitResult:
-    """Fit (delta_0_hz, Omega_hz, A, B) of the excitation lineshape to a fine scan of one line (Section 7.5).
-
-    ``guess`` is (delta_0_hz, Omega_hz); the default takes the peak and 1/(2 t) (a pi pulse's Omega). The plan's form is the
-    fit function; ``form="half_rabi"`` exists so that the Section 9.17 negative control (it returns Omega/2) can be exercised.
-    """
+    """Fit (delta_0_hz, Omega_hz, A, B) of the excitation lineshape to a fine scan of one line; ``guess`` is
+    (delta_0_hz, Omega_hz), by default the peak and 1/(2 t); ``form="half_rabi"`` fits the negative-control form."""
     x = np.asarray(detunings_hz, dtype=float)
     y = np.asarray(p1, dtype=float)
     if x.size < 5:
@@ -303,9 +281,8 @@ class ReadoutErrors:
 
 
 def readout_errors_for(device: Device, table: CalibrationTable | None = None) -> ReadoutErrors:
-    """The readout the experiments see: the device's detection model at the table's threshold and window when calibrated,
-    else at the detector's window with the threshold optimum of the true model (a laboratory's quick histogram threshold);
-    ideal when the device carries no detection beam."""
+    """Per-ion readout errors of the device's detection model at the table's threshold and window when calibrated, else at
+    the detector's window and the true model's optimal threshold; ideal for an ion no detection beam addresses."""
     from qutip_trap.control.table import usable
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel
@@ -356,9 +333,7 @@ class Observation:
     seed: int = 0
     sample_id: int = 0
     stream: str = ""
-    """The experiment's stream label (Section 3.4): the draws are keyed by (sample, point index, ion, outcome), which repeat
-    when a calibration runs the same experiment twice or an experiment repeats a scan (a Ramsey per beam, a Rabi scan per shim
-    point); the label, appended to the outcome key, keeps every such run's shot noise independent (``sub_stream``)."""
+    """Appended to every draw key, so repeated runs of the same scan draw independent shot noise (``sub_stream``)."""
 
     def __post_init__(self) -> None:
         if self.shots is not None and self.shots < 1:

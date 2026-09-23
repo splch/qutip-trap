@@ -1,24 +1,17 @@
-"""43Ca+ species table (PLAN.md Sections 4.3.3, 4.5.1, 4.5.6, 8.1, 9.13; Appendix E).
+"""43Ca+ species table (I = 7/2; mu_I < 0 inverts every hyperfine multiplet).
 
-The level energies are the Ca II NIST values (the 43Ca isotope shift, of order 1 GHz on the 397 nm line, is
-below the 0.01 cm^-1 the table prints and is not resolved here). The excited-level hyperfine constants that
-PLAN.md does not supply were added in the M0a fix pass of 2026-09-08 from the primary literature
-(Noertershaeuser et al. 1998 for the 4p and 3d 2D3/2 constants, Benhelm et al. 2007 + its erratum for
-3d 2D5/2), together with the primaries behind the values the plan carried uncited (Arbes et al. 1994 for
-A(4s), Tommaseo et al. 2003 for g_J(4s), Hanley et al. 2021 for the free-ion mu_I), so ``species()`` now
-builds. The P-level lifetimes are the modern single-ion values (Hettrich et al. 2015, Meir et al. 2020),
-which supersede Jin and Church 1993 by 6-7 sigma; the branchings and the D lifetimes are isotope-independent
-and come from the 40Ca+ measurements.
+Level energies are the Ca II values (the 43Ca isotope shift is below their resolution); the branchings and the
+D lifetimes are the isotope-independent 40Ca+ measurements.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited
 from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
+    Cited,
     IncompleteSpeciesTable,
     MissingConstant,
     energy_hz,
@@ -305,7 +298,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 REQUIRED: dict[str, str] = {
     "ca43.mass_atomic_u": "relative atomic mass of the neutral atom",
@@ -332,9 +325,7 @@ REQUIRED: dict[str, str] = {
     "ca43.P12.energy_cm": "4p 2P1/2 level energy",
     "ca43.P32.energy_cm": "4p 2P3/2 level energy",
 }
-"""The constants ``species()`` needs, so that :data:`MISSING` is DERIVED from :data:`TABLE` (audit item E21):
-filling a gap makes the species build and dropping a constant is caught, instead of both being invisible to a
-hand-maintained tuple."""
+"""The ids ``species()`` needs, each with a description; :data:`MISSING` is derived from it."""
 
 _CONSULT: dict[str, str] = {}
 
@@ -353,11 +344,11 @@ _OPEN: tuple[MissingConstant, ...] = (
         "Lande 0.665894 and 1.334106 used here and tagged [background]",
     ),
 )
-"""Gaps that are DECLARED but do not block the build: the record uses a documented substitute for each."""
+"""Declared gaps that do not block the build (the record uses a substitute for each)."""
 
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 43Ca+, built from :data:`TABLE` alone."""
+    """The ``Species`` record for 43Ca+, built from :data:`TABLE` alone."""
     if MISSING:
         raise IncompleteSpeciesTable(NAME, MISSING)
     t = TABLE
@@ -433,8 +424,7 @@ def species() -> Species:
         mu_I_nuclear_magnetons=t["ca43.mu_I_nuclear_magnetons"].value,
         levels=(s12, d32, d52, p12, p32),
         transitions=transitions,
-        # PLAN.md:701: the |4,0> <-> |3,+1> clock qubit at 146.0942 G, 397 and 866 nm Doppler cooling,
-        # 393/850/854 nm readout and reset, M-resolving 393 nm shelving
+        # the |4,0> <-> |3,+1> clock qubit (field-independent at 146.0942 G)
         qubit=("S1/2 F=4 mF=0", "S1/2 F=3 mF=1"),
         cycling="S1/2-P1/2",
         repumps=("D3/2-P1/2", "D5/2-P3/2"),

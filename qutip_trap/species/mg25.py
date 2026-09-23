@@ -1,22 +1,15 @@
-"""25Mg+ species table (PLAN.md Sections 4.2.2, 4.4.5, 4.5.1, 9.13; Appendix E) - PARTIAL.
+"""25Mg+ species table (I = 5/2); incomplete, so ``species()`` raises.
 
-Still raising after the M0a fix pass of 2026-09-08, and the reason is a real gap rather than an
-untranscribed number: **no measured g_J of the 25Mg+ ground state exists.** Itano and Wineland 1981 and
-Brewer et al. 2019 both servo the field to the electronic transition, so they determine only the RATIO
-g_I/g_J, which is what this table now stores; the 2.00226 the table used to carry was 9Be+'s measured
-value transplanted, and the Section 9.13 212.78 G anchor depends on it at the 0.25 G level. Backing g_J
-out of the ratio plus a tabulated mu_I does not work either: the two shielding conventions give 2.0045 or
-fail the 9Be+ cross-check at 4e-4. The 3p hyperfine constants are likewise theory-only, and the 3p
-lifetimes reach this table second-hand. Note also that mu_I here is the UNCORRECTED (shielded) moment
-while 9Be+'s is the corrected one -- a per-table convention Section 13 requires be declared.
+No absolute ground-state g_J has been measured (only the ratio g_I/g_J), and the 3p hyperfine constants are theory
+only. mu_I here is the UNCORRECTED (shielded) moment, unlike 9Be+'s corrected one.
 """
 
 from __future__ import annotations
 
-from qutip_trap.provenance import Cited
 from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Species
 from qutip_trap.species.table import (
+    Cited,
     IncompleteSpeciesTable,
     MissingConstant,
     required_constants_missing,
@@ -166,7 +159,7 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
 )
 
-TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
+TABLE: dict[str, Cited] = {c.key: c for c in _ENTRIES}
 
 REQUIRED: dict[str, str] = {
     "mg25.mass_atomic_u": "relative atomic mass of the neutral atom",
@@ -181,13 +174,9 @@ REQUIRED: dict[str, str] = {
     "mg25.P12.lifetime_s": "3p 2P1/2 lifetime",
     "mg25.P32.lifetime_s": "3p 2P3/2 lifetime",
 }
-"""The constants ``species()`` needs, so that :data:`MISSING` is DERIVED from :data:`TABLE` (audit item E21).
-
-Four entries are deliberately unsatisfiable today, which is why 25Mg+ still raises: ``S12.g_J`` has no
-absolute measurement anywhere in the literature (only the ratio ``S12.g_I_over_g_J``), and the three 3p
-hyperfine constants are theory only (stored under ``*_theory_hz`` so that a required key is not silently
-satisfied by a calculation).
-"""
+"""The ids ``species()`` needs, each with a description; :data:`MISSING` is derived from it. Four are unsatisfiable
+today: ``S12.g_J`` and the three 3p hyperfine constants (theory values are stored as ``*_theory_hz``, so a calculation
+never satisfies a required id)."""
 
 _CONSULT: dict[str, str] = {
     "mg25.S12.g_J": "NO SOURCE EXISTS, MEASURED OR COMPUTED -- this gap is CLOSED BY SEARCH (re-verified "

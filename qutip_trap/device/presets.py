@@ -1,26 +1,5 @@
-"""Example devices (PLAN.md Section 3.2 ``device/presets.py``; milestone M10).
-
-A preset is a complete ``Device`` plus the ``GateDrive`` maps the scheduler needs when a device carries several Raman pairs
-(Section 7.3), so that the documentation examples and the benchmarks of ``qutip_trap.benchmarks`` run on a device without
-importing the test tree; since 0.2.0 the device itself carries those maps as ``Device.roles`` (docs/api_implementation_plan.md
-1.1). The numbers are ILLUSTRATIVE (a realizable laboratory configuration, not a published apparatus):
-
-``yb171_chain(n_ions)`` is the 171Yb+ chain the validation suite runs on since milestone M6 (``tests/m6_fixtures.py``; a test
-asserts the two build the same device, hash for hash): B = 5 G along x, secular frequencies (3.0, 2.9, 2.0) MHz, a GLOBAL
-355 nm counter-propagating Raman pair along +-x (0.3 W in a 60 um waist, a carrier Rabi frequency near 100 kHz) for the
-entangling gates, one INDIVIDUALLY ADDRESSED 355 nm pair per ion for the single-qubit gates (a 2.5 um waist pointed at the
-ion, whose Gaussian tail on the neighbours 3.5 um away is the few-percent Rabi crosstalk of Wright et al. 2019, Section 6.6),
-the resonant 369.5 nm cooling/detection/pumping light along the oblique path (1, 1, 1)/sqrt 3 so that every mode projects on
-it (an unaddressed mode is uncoolable, Section 4.2) with its linear polarization at Berkeland's magic angle to B (Section
-8.1), Crain et al. 2019's SNSPD detection chain (eps_sys = 4.356 %, 4.2 cps background), a QUIET noise model (no heating, no
-drift: pass ``noise=`` for a noisy machine) and near-ideal control electronics (32-bit phase and 24-bit amplitude words, no
-modulator rise time, 1 us dead time; pass ``hardware=`` for the Section 7.10 chain), and the standard preparation recipe of
-Section 4.2.6 (Doppler cooling at the detuning that minimizes the gate modes' occupation, pulsed Raman sideband cooling of
-the coupled modes, the optical pump on F = 1 -> F' = 1) derived from these beams.
-
-Everything downstream (Lamb-Dicke parameters, Rabi frequencies, Stark shifts, scattering rates, mode structure, pulse
-parameters) is derived from these inputs by the package (Section 3.1); nothing here is a physics claim.
-"""
+"""Example devices: a 171Yb+ chain (``yb171_chain``) and a 40Ca+ optical-qubit chain (``ca40_optical``). The numbers are
+illustrative: a realizable laboratory configuration, not a published apparatus; everything downstream is derived."""
 
 from __future__ import annotations
 
@@ -54,24 +33,19 @@ GLOBAL_WAIST_M = 60e-6
 GLOBAL_POWER_W = 0.3
 ADDRESS_WAIST_M = 2.5e-6
 ADDRESS_POWER_W = 0.3 * (ADDRESS_WAIST_M / GLOBAL_WAIST_M) ** 2
-"""The same on-axis intensity as the global pair, so every carrier Rabi frequency sits near 100 kHz."""
+"""The same on-axis intensity as the global pair."""
 TRAP_HZ = (3.0e6, 2.9e6, 1.0e6)
 FIELD_GAUSS = 5.0
 
 
 @dataclasses.dataclass(frozen=True)
 class DevicePreset:
-    """An example device with the drive maps its scheduler needs (Section 7.3) and the index of its detection beam. Since
-    0.2.0 the ``device`` carries the same three maps as ``Device.roles`` (docs/api_implementation_plan.md 1.1), so ``run``,
-    ``calibrate`` and the benchmarks need no drive keyword; the fields here restate them for the record and the app.
-    ``run_kwargs()``, deprecated in 0.2.0, was removed in 0.4.0 (docs/deprecations.md)."""
+    """An example device with its drive maps and detection beam index, which restate ``device.roles``."""
 
     name: str
     device: Device
     gate_drives: dict[int, GateDrive]
-    """Which beams play the single-qubit gates of each ion (``device.roles.gate``)."""
     entangling_drives: dict[int, GateDrive]
-    """Which beams play the entangling gates (the global pair; ``device.roles.entangling``)."""
     detection_beam: int
     notes: tuple[str, ...] = ()
 
@@ -80,8 +54,7 @@ class DevicePreset:
         return self.device.crystal.n_ions
 
     def machine(self) -> Machine:
-        """The preset as the executor of 0.2.0: a ``Machine`` on its device (which carries the roles), the closed-form
-        calibration cached per device, the default option objects and the AUTO level (docs/api_implementation_plan.md 1.1)."""
+        """A ``Machine`` on this preset's device."""
         from qutip_trap.machine import Machine
 
         return Machine(self.device, name=self.name)
@@ -89,15 +62,13 @@ class DevicePreset:
 
 @deprecated(deadline="v0.5", fix="Call NoiseModel() instead; every default of the model means off.")
 def quiet_noise_model() -> NoiseModel:
-    """A noise model with no heating, no field or drift content and no collisions (every Drift of zero rms): since 0.3.0
-    this is ``NoiseModel()`` itself (docs/api_implementation_plan.md 2.5), field for field and digest for digest."""
+    """A noise model with every channel off: ``NoiseModel()``."""
     return NoiseModel()
 
 
 def ideal_hardware(*, phase_continuous: bool = False, dead_time_s: float = 1e-6) -> HardwareChain:
-    """Near-ideal control electronics (Section 7.10: a device without these parameters gets ideal electronics and says so):
-    32-bit phase and 24-bit amplitude words, no modulator rise time, infinite amplifier bandwidth. ``phase_continuous=False``
-    programs every gate's tones from the gate's own start, so the bichromatic beat note begins at its calibrated phase."""
+    """Near-ideal control electronics. ``phase_continuous=False`` starts every gate's tones at the gate's own start, so the
+    bichromatic beat note begins at its calibrated phase."""
     return HardwareChain(
         dds_phase_bits=32,
         dds_amplitude_bits=24,
@@ -109,7 +80,7 @@ def ideal_hardware(*, phase_continuous: bool = False, dead_time_s: float = 1e-6)
 
 
 def crain_snspd_detector(window_s: float = 22e-6) -> Detector:
-    """Crain et al. 2019's detection chain: eps_sys = 4.356 %, 4.2 cps background, a 0.6 NA objective."""
+    """Crain et al. 2019's SNSPD detection chain."""
     return Detector(
         kind="snspd",
         efficiency=CRAIN_YB171_SNSPD.efficiency,
@@ -138,8 +109,8 @@ def secular_trap(omega_hz: tuple[float, float, float] = TRAP_HZ) -> Trap:
 def oblique_detection_beam(
     s_o: float = 2.45, b_gauss: float = FIELD_GAUSS, waist_m: float = DETECTION_WAIST_M
 ) -> Beam:
-    """The 369.5 nm resonant beam along (1, 1, 1)/sqrt 3 at I/I_sat = s_o on axis (Crain's operating point), linear polarization
-    at the magic angle to B = x, wide enough that every ion of a short chain sees the same intensity to a percent."""
+    """The resonant 369.5 nm beam along (1, 1, 1)/sqrt 3, so every mode projects on it, at I/I_sat = ``s_o`` on axis
+    (default: Crain's operating point), linearly polarized at the magic angle to B = x."""
     yb = species("171Yb+")
     st = structure_at(yb, b_gauss, (1.0, 0.0, 0.0))
     line = yb.transition("S1/2-P1/2")
@@ -179,8 +150,9 @@ def yb171_chain(
     recipe: PreparationRecipe | None = None,
     phase_continuous: bool = False,
 ) -> DevicePreset:
-    """The example 171Yb+ chain (module docstring): ``n_ions`` ions, a global Raman pair, one addressing pair per ion, the oblique
-    detection beam, Crain's detector, a quiet noise model and near-ideal electronics unless overridden."""
+    """The example 171Yb+ chain: B = 5 G along x, a global 355 nm Raman pair along +-x for the entangling gates, one
+    individually addressed pair per ion for the single-qubit gates, the oblique detection beam, Crain's detector, the
+    standard preparation recipe, and a quiet noise model and near-ideal electronics unless overridden."""
     if n_ions < 1:
         raise ValueError("a chain has at least one ion")
     trap = secular_trap(omega_hz)
@@ -223,31 +195,19 @@ def yb171_chain(
     )
 
 
-# ---- 40Ca+ optical qubit (Section 3.2's preset list; the M6 escape from the F = 0 recipe restriction) ----------------------
+# ---- 40Ca+ optical qubit --------------------------------------------------------------------------------------------------
 
 CA40_TRAP_HZ = (3.0e6, 2.9e6, 2.0e6)
-"""The 40Ca+ preset's secular frequencies. The axial mode is 2.0 MHz rather than the 171Yb+ preset's 1.0 MHz because this
-device has no sideband-cooling stage (see ``ca40_optical_recipe``): at 1.0 MHz the Doppler-limited occupation nbar = 25.96 with
-eta = 0.1028 gives eta^2 (2 nbar + 1) = 0.559, which the Section 4.2.8 (vii) Lamb-Dicke validity guard of the level-A rate model
-refuses (the threshold is 0.25). eta^2 (2 nbar + 1) scales roughly as 1/omega^2, and at 2.0 MHz it is 0.141 exactly
-(eta = 0.07267, nbar = 12.89).
-
-Both occupations fell 14 % on 2026-09-08 (28.09 at 1.0 MHz and 15.05 at 2.0 MHz, giving 0.604 and 0.164) when the 397 nm
-total rate became Hettrich et al. 2015's measured lifetime rather than PLAN.md 9.13's quoted 21.57 MHz read as a total; the
-margin against the 0.25 threshold therefore grew, and the 2.0 MHz choice stands either way (ledger
-conv.ca40_linewidth_reading)."""
+"""The 40Ca+ preset's secular frequencies. The axial mode is 2.0 MHz, not the 171Yb+ preset's 1.0 MHz, because this device
+has no sideband cooling: at 1.0 MHz the Doppler-limited eta^2 (2 nbar + 1) exceeds the 0.25 Lamb-Dicke validity threshold
+of the level-A rate model (it scales roughly as 1/omega^2)."""
 CA40_729_WAIST_M = 200e-6
 CA40_729_POWER_W = 5e-3
 CA40_729_K = (1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0), 0.0)
-"""The 729 nm beam runs in the xy plane at 45 degrees to B = x, so its Delta k projects on the axial and both radial families."""
+"""The 729 nm beam's direction, in the xy plane at 45 degrees to B = x."""
 CA40_729_POLARIZATION = (-1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0), 0.0)
-"""At 135 degrees, so the Delta m = 0 geometric factor of the E2 tensor is non-zero.
-
-g^(0) = c^(0)_ij eps_i n_j with c^(0) = (2/3) diag(-1/2, -1/2, 1) in the atomic frame needs eps_z(atomic) n_z(atomic) != 0,
-so the obvious k = y_lab with pol = x_lab derives EXACTLY zero E2 Rabi frequency (M4 finding, ``tests/m4_fixtures.py``
-``CA40_729_E2_BEAM``, which this geometry matches: 34735.4 Hz at 5 mW in a 200 um waist with B = 5 G along x); k = (1,1,0)
-with pol = z and k = y with pol = (x + z)/sqrt 2 also derive zero. A preset whose beams cannot deliver the Rabi frequency
-its table claims makes the played chain of Section 7.3 play a fiction, so the geometry is part of the preset."""
+"""At 135 degrees, so the Delta m = 0 geometric factor of the E2 tensor, which needs both the polarization and the
+wavevector to have a component along B, is non-zero (k = y with pol = x would derive exactly zero)."""
 CA40_397_WAIST_M = 30e-6
 CA40_866_WAIST_M = 30e-6
 CA40_854_WAIST_M = 30e-6
@@ -255,25 +215,14 @@ CA40_854_WAIST_M = 30e-6
 
 CA40_DETECTION_S_397 = 2.0
 CA40_DETECTION_S_866 = 10.0
-"""The detection cycle's saturation parameters. The derived bright scatter rate peaks near these values at R_o = 3.49e6/s and
-FALLS at higher intensity (1.31e6/s at (10, 30), 1.96e5/s at (50, 100)): the magic-angle LINEAR polarization of the 397/866
-cycle traps population in coherent dark states, the effect a laboratory destabilizes with a second 866 nm polarization or a
-larger field. R_o is therefore 8 times below Myerson et al. 2008's 2.9e7/s, and the preset compensates with a 2 ms detection
-window (13.3 detected photons at eps_sys = 0.19 %) instead of their 420 us (2.9).
-
-All three rates moved on 2026-09-08 with the 40Ca+ P1/2 rate (ledger conv.ca40_linewidth_reading; 3.57e6, 1.99e6 and
-3.06e5/s before, 13.6 photons). The peak barely moved, 2 %, but the saturated points fell 34 % and 36 % even though the
-total rate ROSE 6.9 %, and the driver is the total rate and not Ramm's branching: the total rate alone takes the (10, 30)
-point from 1.99e6 to 1.22e6/s (-38 %), while the branching alone raises it to 2.12e6/s (+6.7 %), and the two together give
-1.31e6/s. Rescaling B with Gamma (5 G ->
-4.678 G under the old rate) recovers 80 % of the drop, which identifies the cause as the fixed 5 G field, whose Zeeman
-splitting shrinks in units of the linewidth as Gamma grows and so destabilizes the coherent dark states less."""
+"""The detection cycle's 397 and 866 nm saturation parameters. The derived bright scatter rate peaks near these values and
+falls at higher intensity, because the magic-angle linear polarization of the 397/866 cycle traps population in coherent
+dark states; it sits well below Myerson et al. 2008's, which the preset compensates with a 2 ms detection window."""
 CA40_DETECTION_WINDOW_S = 2e-3
 
 
 def myerson_ca40_pmt_detector(window_s: float = CA40_DETECTION_WINDOW_S) -> Detector:
-    """Myerson et al. 2008's 40Ca+ shelving readout chain: eps_sys = 0.19 % and 442 detected background counts per second
-    (``readout.presets.MYERSON_CA40_PMT``), at the window ``CA40_DETECTION_WINDOW_S`` explains."""
+    """Myerson et al. 2008's 40Ca+ PMT shelving-readout chain."""
     return Detector(
         kind="pmt",
         efficiency=MYERSON_CA40_PMT.efficiency,
@@ -295,37 +244,10 @@ def ca40_optical_recipe(
     s_pump_397: float = 0.05,
     s_pump_866: float = 10.0,
 ) -> PreparationRecipe:
-    """The 40Ca+ optical qubit's preparation (Section 4.2.6 order Doppler -> sideband -> pump), written by hand because
-    ``standard_recipe`` covers hyperfine qubits whose lower level is an F = 0 state (``conv.preparation_single_species_f0``).
-
-    Doppler cooling is the 397 nm S1/2-P1/2 line at -Gamma/2 along the oblique path (every mode projects on it, Section 4.2)
-    with the 866 nm D3/2-P1/2 repump on resonance, which closes the cooling cycle. The "optical pump" that prepares the
-    lower qubit level S1/2 mJ = -1/2 is 397 nm sigma- light along B with the same 866 nm repump: sigma- drives
-    S1/2 mJ = +1/2 -> P1/2 mJ = -1/2 and leaves mJ = -1/2 dark, so the population accumulates there (the I = 0 analogue of
-    the F = 1 -> F' = 1 pump of the 171Yb+ recipe).
-
-    The pump runs a WEAK 397 nm beam against a STRONG 866 nm repump (``s_pump_397`` = 0.05 against ``s_pump_866`` = 10),
-    because what is left in the metastable D3/2 level when the beams switch off IS the preparation error: D3/2 lives about a
-    second, so its residual population never decays into the qubit. The pumped-state error is 1.43e-1 at the Doppler stage's
-    own (0.5, 3.0) in 20 us, 1.06e-5 at the default (0.05, 10) in 100 us and 8.2e-10 at (0.02, 20) in 200 us - the
-    laboratory equivalent is switching the 397 nm light off before the 866 nm light, which this recipe's two-beam pump stage
-    cannot express. (The three durations differ and the previous version of this note did not say so; at a common 100 us the
-    three are 3.7e-3, 1.06e-5 and 2.0e-5, so (0.02, 20) is not uniformly better - a weaker 397 nm beam also pumps more
-    slowly.) All three fell on 2026-09-08 with the 40Ca+ P1/2 rate, by 1.3x, 5.8x and 10.6x (1.8e-1, 6.1e-5 and 8.7e-9
-    before). The default point splits about evenly between the two changes: 6.11e-5 -> 2.51e-5 from Ramm et al. 2013's
-    branching 0.06435 replacing Section 8.1's 0.06 alone, and -> 2.81e-5 from the 6.9 % higher total rate alone. They act
-    differently, though. The branching acts through the 866/397 intensity ratio: I_sat(866) follows the 866 nm PARTIAL rate,
-    which rose 14.6 % where the 397 nm one fell 0.5 %, so at fixed s_pump the repump gets relatively stronger and leaves
-    less in D3/2. The total rate acts mostly through the FIXED 100 us pump duration, which buys 6.9 % more pumping measured
-    in 1/Gamma: at a duration scaled by the same 1.0687 (93.57 us) the total-rate-only error is 5.17e-5 instead of 2.81e-5,
-    i.e. the fixed duration accounts for 72 % of its effect and the fixed B = 5 G for the rest (ledger
-    conv.ca40_linewidth_reading, conv.ca40_branching).
-
-    There is NO sideband-cooling stage: Section 4.2.2's stage is pulsed RAMAN cooling on a two-beam pair
-    (``SidebandCoolingSpec.beams`` is a Raman pair whose Delta k sets eta per mode), and this device cools its motion on the
-    729 nm quadrupole line instead, which the first release does not schedule. The Doppler occupations therefore stand, and
-    ``run`` reports them; the 854 nm D5/2-P3/2 beam the device carries is the shelf reset, which belongs to the readout
-    stage rather than to this recipe."""
+    """The 40Ca+ optical qubit's preparation (``standard_recipe`` covers only F = 0 hyperfine qubits): 397 nm Doppler
+    cooling with the 866 nm repump, then 397 nm sigma- pumping into S1/2 mJ = -1/2, weak against a strong repump because
+    the population left in the long-lived D3/2 level is the preparation error. No sideband cooling (this device would cool
+    on the unscheduled 729 nm line), so the Doppler occupations stand."""
     ca = species("40Ca+")
     if {sp.name for sp in device.crystal.species} != {"40Ca+"}:
         raise ValueError("ca40_optical_recipe is the 40Ca+ optical-qubit recipe")
@@ -427,29 +349,10 @@ def ca40_optical(
     phase_continuous: bool = False,
     reset_beam: bool = False,
 ) -> DevicePreset:
-    """A 40Ca+ optical-qubit chain (S1/2 mJ = -1/2 <-> D5/2 mJ = -1/2 at 729 nm), the second species of Section 3.2's preset
-    list and the M6 answer to "every non-F = 0 qubit needs a hand-written recipe and none exists".
-
-    B = 5 G along x, secular frequencies (3.0, 2.9, 2.0) MHz, one global 729 nm quadrupole beam in the xy plane at 45 degrees
-    (5 mW in a 200 um waist; the geometry that derives a non-zero Delta m = 0 E2 Rabi frequency, see
-    ``CA40_729_POLARIZATION``) for the single-qubit gates, the resonant 397 nm S1/2-P1/2 light along the oblique path
-    (1, 1, 1)/sqrt 3 for Doppler cooling and shelving detection, the 866 nm D3/2-P1/2 repump that closes the cooling cycle,
-    Myerson et al. 2008's PMT chain, a quiet noise model and near-ideal electronics unless overridden, and
-    ``ca40_optical_recipe``.
-
-    ``reset_beam=True`` adds the 854 nm D5/2-P3/2 beam that empties the shelf between shots. It is OFF by default because a
-    Device's beams are always on: the readout's Bloch model takes every resonant beam near the cycling cycle as detection
-    light (``light.roles.detection_beams`` returns the 397, 866 AND 854 nm beams), so an 854 nm beam that is never gated
-    depumps the shelved dark state DURING detection and destroys the contrast - measured through the product POVM (eps_B, eps_D) = (2.9e-2, 0.97) on 2026-09-08, the shelf being pumped bright
-    with it against (3.4e-4, 1.8e-3) without. Per-stage beam gating is not in the first release, so the reset beam is an
-    opt-in the caller adds when modelling the reset itself. (eps_B rose from 2.5e-4 on 2026-09-08 with the 40Ca+ P1/2 rate,
-    which lowered the derived bright rate R_o at this saturation and so the bright-record separation; eps_D, set by the
-    1.168 s shelf lifetime against the 2 ms window, did not move. Ledger conv.ca40_linewidth_reading.)
-
-    There is NO entangling drive: the light-shift force of Section 4.4.4 needs a far-detuned pair near 398.5 nm
-    (``tests/test_light_shift_gate.py``), which this preset does not carry, so ``entangling_drives`` is empty and a circuit
-    with a two-qubit gate is refused by the scheduler. Single-qubit circuits and the whole preparation and readout chain
-    run."""
+    """An example 40Ca+ optical-qubit chain (S1/2 mJ = -1/2 <-> D5/2 mJ = -1/2 at 729 nm): one global 729 nm beam for the
+    single-qubit gates, 397/866 nm light for cooling and shelving detection, Myerson's PMT chain, ``ca40_optical_recipe``,
+    and no entangling drive (the scheduler refuses two-qubit gates). ``reset_beam=True`` adds the 854 nm shelf-reset beam,
+    off by default because a device's beams are always on and an ungated 854 nm beam depumps the shelf during detection."""
     if n_ions < 1:
         raise ValueError("a chain has at least one ion")
     trap = secular_trap(omega_hz)

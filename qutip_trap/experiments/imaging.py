@@ -1,15 +1,5 @@
-"""The crystal image: the calibration experiment that detects dark, lost and reordered ions (PLAN.md Sections 6.7, 8.3; Appendix
-E ``RunState.events``; M8).
-
-The chain is illuminated by the detection beams and imaged for ``exposure_s``: with a camera (a detector carrying ``pixel_m``
-and an objective NA or a Gaussian PSF width) the exposure is the pixel image of Section 8.3 (``CameraGeometry``: PSF weights
-integrated over the pixels, background and read noise), each ion's region of interest summed and its centroid taken; with
-a PMT or SNSPD the "image" is the vector of per-ion counts. An ion in ``run_state.dark`` scatters no light, one in
-``run_state.lost`` is absent, and an ion of a species none of the detection beams addresses is dark by wavelength, which is
-how a mixed-species chain shows a reorder: the bright pattern under one species' light differs from the nominal one. Two
-identical ions that swapped are invisible to the image (the plan says so: the mode structure detects them, not the camera),
-and the result says so in its notes.
-"""
+"""The crystal image, which detects dark, lost and reordered ions: a camera's pixel image, or per-ion counts on a PMT or
+SNSPD. A species no detection beam addresses reads dark, which is how a mixed-species reorder shows."""
 
 from __future__ import annotations
 
@@ -49,12 +39,11 @@ def _ion_rates(device: Device, ion: int) -> tuple[float, float] | None:
 
 
 def crystal_image(machine: Machine | Device, **kw: Any) -> ExperimentResult:
-    """Image the chain and compare it with the nominal crystal (Section 6.7).
+    """Image the chain once (no scan) against the nominal crystal; returns a ``CrystalImage``.
 
-    ``run_state`` the persistent machine state to image (default nominal), ``exposure_s`` (default ten detection windows),
-    ``species`` the name of the species whose light is on (default: every detection beam), ``shots`` draws Poisson counts
-    (exact means otherwise), ``psf_sigma_m`` a Gaussian PSF for a camera without an NA. Fitted: n_ions, n_bright, n_dark, n_lost,
-    bright[i] (1 or 0), counts[i], and position_m[i] (camera only); data: the image (camera) or the per-ion counts.
+    ``run_state`` the machine state to image (default nominal), ``exposure_s`` (default ten detection windows), ``species``
+    the species whose light is on (default every detection beam), ``psf_sigma_m`` a Gaussian PSF for a camera without an
+    NA. Fitted n_ions, n_bright, n_dark, n_lost, bright[i], counts[i] and position_m[i] (camera only).
     """
     device, kw = laboratory_kwargs(machine, kw, caller=crystal_image)
     from qutip_trap.run.results import RunState

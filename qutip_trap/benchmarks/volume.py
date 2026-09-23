@@ -1,29 +1,7 @@
-"""A quantum-volume style run on the simulated device (PLAN.md Section 10 M10; Section 7.9 "Application-level"; Section 4.6
-"Schedule, wall clock and the circuit-level error model" for the four-qubit quantum-volume circuit Pino et al. 2021 ran).
-
-The protocol of Cross, Bishop, Sheldon, Nation and Gambetta (PRA 100, 032328, 2019): a square circuit of width n and depth d
-= n, every layer a uniformly random permutation of the qubits followed by a Haar-random SU(4) on each of the floor(n/2)
-pairs it defines; the heavy outputs of a circuit are the bitstrings whose IDEAL probability exceeds the median of the ideal
-distribution; the circuit's heavy-output probability h_U is the measured fraction of shots landing on them, and the width
-passes when the mean over circuits of h_U exceeds 2/3 with two-sigma confidence AND at least the protocol's 100 circuits were
-run ("we set n_c >= 100 circuits"); log2 of the quantum volume is then n. The confidence is Appendix C Eq. (32) of the paper,
-
-    [n_h - z sqrt(n_h (n_s - n_h/n_c))] / (n_c n_s) > 2/3   with z = 2,
-
-n_h the total heavy count, n_c the circuits and n_s the shots per circuit, which with h = n_h/(n_c n_s) reduces exactly to
-mean - 2 sigma > 2/3 with the per-CIRCUIT binomial sigma = sqrt(h(1 - h)/n_c) (``cross_confidence_sigma``). The standard error
-of the mean over circuits is much smaller (the between-circuit spread of h_U sits far below h(1 - h)) and is reported as a
-separate diagnostic, ``QVResult.standard_error_of_the_mean``, never as the criterion. A run with fewer than 100 circuits says
-so, reports the same statistics and clears no quantum volume (``threshold_cleared`` without ``passed``). Every SU(4) is compiled by the
-KAK decomposition of ``control.two_qubit`` (three Moelmer-Soerensen gates in the Weyl chamber) with the local unitaries
-between layers merged per qubit, and every circuit is one ``run`` of ``shots``. The simulator adds the exact register
-fidelity of every circuit.
-
-The budget alongside: the Section 9.6 scales per circuit and, under a depolarizing composition, the predicted heavy-output
-probability h_pred = h_ideal (1 - eps) + eps/2 with eps the circuit's composed error (the heavy set holds half the strings, so
-a fully depolarized output lands on it with probability 1/2), from the Section 6.8 channels of the full-angle native gate
-kinds (every partially entangling MS charged at the full gate's channel, stated as such) and the readout errors.
-"""
+"""A quantum-volume style run on the simulated device (Cross et al., PRA 100, 032328, 2019): square circuits whose layers
+permute the qubits at random and put a Haar-random SU(4), compiled by KAK, on each pair. The heavy outputs are the
+bitstrings above the ideal median; a width passes when the mean heavy-output probability h clears 2/3 by two
+sigma = sqrt(h(1 - h)/n_c) (Eq. 32) AND at least 100 circuits ran. The standard error of the mean is only a diagnostic."""
 
 from __future__ import annotations
 
@@ -58,8 +36,8 @@ CONFIDENCE_Z = 2.0
 
 
 def heavy_output_pass(mean_heavy: float, n_circuits: int) -> tuple[float, bool, bool, bool]:
-    """(sigma, threshold_cleared, protocol_circuit_count_met, passed) of Cross et al. 2019's criterion: Eq. (32)'s sigma,
-    whether mean - 2 sigma clears 2/3, whether the run has the protocol's 100 circuits, and the pass, which needs BOTH."""
+    """(sigma, threshold_cleared, protocol_circuit_count_met, passed) of Cross et al. 2019's criterion; the pass needs both
+    mean - 2 sigma > 2/3 and 100 circuits."""
     sigma = cross_confidence_sigma(mean_heavy, n_circuits)
     cleared = float(mean_heavy) - CONFIDENCE_Z * sigma > HEAVY_OUTPUT_THRESHOLD
     circuits_met = n_circuits >= PROTOCOL_CIRCUITS
@@ -67,13 +45,8 @@ def heavy_output_pass(mean_heavy: float, n_circuits: int) -> tuple[float, bool, 
 
 
 def cross_confidence_sigma(mean_heavy: float, n_circuits: int) -> float:
-    """sigma = sqrt(h(1 - h)/n_c), the per-circuit binomial confidence of Cross et al. 2019 Appendix C Eq. (32).
-
-    Eq. (32) reads [n_h - z sqrt(n_h (n_s - n_h/n_c))]/(n_c n_s) > 2/3 with n_h the total heavy count over n_c circuits of
-    n_s shots; substituting n_h = h n_c n_s turns it into h - z sqrt(h(1 - h)/n_c) > 2/3 identically, so this is the sigma
-    the criterion is built on (and what the Qiskit Experiments reference implementation computes). It is NOT the standard
-    error of the mean over circuits, which is smaller by the ratio of the between-circuit spread of h_U to h(1 - h).
-    """
+    """sigma = sqrt(h(1 - h)/n_c), the per-circuit binomial confidence of Cross et al. 2019 Appendix C Eq. (32):
+    [n_h - z sqrt(n_h (n_s - n_h/n_c))]/(n_c n_s) > 2/3 with n_h = h n_c n_s is exactly h - z sigma > 2/3."""
     if n_circuits < 1:
         raise ValueError("the confidence needs at least one circuit")
     h = float(mean_heavy)
@@ -160,34 +133,26 @@ def heavy_output_probability(result: Result, heavy: frozenset[str]) -> tuple[flo
 
 @dataclass(frozen=True)
 class QVResult:
-    """A quantum-volume run (Cross et al. 2019) on the simulated device: the heavy-output probability of every circuit with
-    its ideal value, the mean with the paper's Eq. (32) confidence ``sigma`` (the criterion) beside the standard error of
-    the mean (a diagnostic), the two halves of the pass (``threshold_cleared`` and the 100-circuit count), the exact
-    register fidelity per circuit, the circuits, their ``Result`` records and the budget alongside."""
+    """A quantum-volume run: per circuit the heavy-output probability with its ideal value and the exact register
+    fidelity, the mean with its criterion and diagnostics, the circuits, their ``Result`` records and the budget."""
 
     qubits: tuple[int, ...]
     depth: int
     n_circuits: int
     shots: int
     heavy_output_probability: np.ndarray
-    """Per circuit."""
     heavy_sigma: np.ndarray
     ideal_heavy_probability: np.ndarray
     mean: float
     sigma: float
-    """The confidence of Cross et al. 2019 Appendix C Eq. (32), sqrt(h(1 - h)/n_c) with h = ``mean`` (the per-circuit
-    binomial form the criterion is built on), from :func:`cross_confidence_sigma`."""
+    """The criterion's Eq. (32) confidence sqrt(h(1 - h)/n_c) with h = ``mean``."""
     standard_error_of_the_mean: float
-    """A diagnostic beside it, never the criterion: the sample standard error of the mean of h_U over the circuits (the
-    between-circuit variance alone when more than one circuit is run, which already contains the shot noise; the shot
-    noise alone at one circuit). Much smaller than ``sigma`` because the between-circuit spread of h_U sits far below
-    h(1 - h)."""
+    """The sample standard error of the mean over the circuits: a diagnostic, never the criterion."""
     threshold: float
     threshold_cleared: bool
-    """mean - 2 sigma > 2/3 with Eq. (32)'s sigma: the confidence half of the criterion, on its own."""
+    """mean - 2 sigma > 2/3, the confidence half of the criterion."""
     passed: bool
-    """The protocol's pass: ``threshold_cleared and protocol_circuit_count_met`` (Cross et al. 2019 require the two-sigma
-    bound AND at least 100 circuits)."""
+    """``threshold_cleared and protocol_circuit_count_met``."""
     protocol_circuit_count_met: bool
     register_fidelity: np.ndarray
     """Exact <psi_ideal| rho |psi_ideal> per circuit (simulator only)."""
@@ -200,8 +165,7 @@ class QVResult:
 
     @property
     def log2_quantum_volume(self) -> int | None:
-        """The width when the run passes the whole protocol -- the confidence bound AND the 100 circuits (the quantum
-        volume is then 2^width) -- None otherwise."""
+        """The width when the run passes (the quantum volume is then 2^width), else None."""
         return len(self.qubits) if self.passed else None
 
 
@@ -216,9 +180,8 @@ def quantum_volume(
     budget: bool = True,
     **run_kwargs: Any,
 ) -> QVResult:
-    """The quantum-volume style run of the module docstring on ``qubits`` (two or more), depth = width by default, every
-    circuit a ``Machine.run``; ``machine`` carries the table, the level and the option objects (a bare ``Device`` is wrapped
-    in a default machine), and the 0.1.0 ``run_kwargs`` are still accepted with a deprecation warning each."""
+    """The quantum-volume style run on ``qubits`` (two or more), depth = width by default, every circuit a ``Machine.run``.
+    A bare ``Device`` (wrapped in a default machine) and legacy ``run_kwargs`` are accepted with a deprecation warning."""
     m = machine_with_run_kwargs(
         machine,
         run_kwargs,
@@ -260,7 +223,7 @@ def quantum_volume(
         results.append(res)
     mean = float(h.mean())
     sigma, threshold_cleared, circuits_met, passed = heavy_output_pass(mean, n_circuits)
-    # the between-circuit sample variance already contains each circuit's shot noise, so the two are never added
+    # the between-circuit variance already contains the shot noise, so the two are never added
     sem = math.sqrt(float(h.var(ddof=1)) / n_circuits if n_circuits > 1 else float((sg**2).mean()))
     notes: list[str] = []
     if not circuits_met:

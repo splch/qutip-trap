@@ -1,10 +1,10 @@
-"""Shared helper for species tables that PLAN.md does not yet complete: a ``Cited`` factory per species."""
+"""``cited_factory(prefix)``: a ``Cited`` constructor for one species table that prepends ``prefix`` to each id."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from qutip_trap.provenance import Cited, Tag
+from qutip_trap.species.table import Cited, Tag
 
 
 def cited_factory(prefix: str) -> Callable[..., Cited]:
@@ -22,7 +22,7 @@ def cited_factory(prefix: str) -> Callable[..., Cited]:
             value=value,
             unit=unit,
             source=source,
-            ledger_id=prefix + suffix,
+            key=prefix + suffix,
             tag=tag,
             uncertainty=uncertainty,
             note=note,

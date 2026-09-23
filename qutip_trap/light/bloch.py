@@ -1,27 +1,7 @@
-"""The multi-level optical-Bloch scattering-rate object (PLAN.md Sections 4.2.8, 8.1, 13 "Scattering-rate object"; M3a).
+"""The multi-level optical-Bloch scattering-rate object, solved on the build of :mod:`qutip_trap.dynamics.multilevel`.
 
-One steady state of the multi-level master equation supplies every scattering rate the simulator uses: the cooling
-rate W(Delta) = Gamma rho_ee in s^-1 (Section 4.2.2), the readout rates R_o, R_d and R_b (Section 8.1), the light
-shifts and the coherent-population-trapping dark-state physics; its time evolution from a given initial state is the
-first-principles optical pumping of Section 4.2.6. The Hamiltonian and collapse operators come from the multi-level
-mode of the ONE builder (:mod:`qutip_trap.dynamics.multilevel`); this module owns the solves and the rate bookkeeping:
-
-- ``steadystate``: QuTiP's direct solve on a consistent frame; when the frame graph is inconsistent (two tones on one
-  transition, a polarization modulation) the Liouvillian is time periodic, ``steadystate`` is invalid, and the fixed
-  point of the one-period propagator (the Floquet steady state) is period-averaged instead (Sections 4.2.8, 8.1).
-- every photon rate is asserted against the equal-population ceiling n_e/(n_e + n_g) of the resonant closed manifold
-  (Section 13; Gamma/4 for the 171Yb+ F = 1 -> F' = 0 detection cycle), never assumed.
-- the slow-manifold analysis: the smallest nonzero Liouvillian eigenvalue and the steady-state weights give the
-  bright -> dark and dark -> bright pumping rates and the CONDITIONAL bright state whose photon rate is R_o, which is
-  how "the leakage rates follow from the populations' slow dynamics" (Section 8.1).
-- the level-A/B coefficient supplier A_+- = W(Delta -+ nu) + (eta~^2/eta^2) W(Delta) of Section 4.2.2 with the plan's
-  conventions (bare coefficients in s^-1, eta^2 in the rate equation, anti-correlated pairing), and the semi-analytic
-  path A_+- = 2 Re[S(-+ nu) + D] from the dipole-force spectrum on the internal Liouvillian (Section 4.2.8 iii).
-  QuTiP's ``spectrum(omega)`` is int exp(-i omega tau) <dF(tau) dF(0)> dtau, which for a weak two-level drive equals
-  W(Delta - omega), so the heating coefficient is the spectrum at +nu and the cooling one at -nu (pinned by a test).
-
-Symbol collisions (Section 13): W here is the photon scattering rate at rest (s^-1), never the polarization-gradient
-cooling rate; alpha is the recoil angular factor.
+One steady state supplies W(Delta) = Gamma rho_ee (s^-1, at rest), the readout rates, the dark states and the cooling
+coefficients; every photon rate is checked against the equal-population ceiling n_e/(n_e + n_g).
 """
 
 from __future__ import annotations
@@ -54,14 +34,11 @@ M3A = "milestone M3a (light/bloch.py, PLAN.md Section 4.2.8)"
 
 
 class CeilingViolation(AssertionError):
-    """A Bloch-solve photon rate exceeded the equal-population ceiling of its closed manifold (Section 13)."""
+    """A Bloch-solve photon rate exceeded the equal-population ceiling of its closed manifold."""
 
 
 class CoolingError(ValueError):
-    """A_- <= A_+: the configuration heats; no steady-state occupation exists (Section 4.2.8)."""
-
-
-# ---- beams ----------------------------------------------------------------------------------------------------------------
+    """A_- <= A_+: the configuration heats; no steady-state occupation exists."""
 
 
 def transition_omega_rad_s(structure: AtomicStructure, lower: str, upper: str) -> float:
@@ -83,7 +60,7 @@ def beam_for_transition(
     polarization_amplitudes: tuple[complex, complex, complex] | None = None,
     modulation: PolarizationModulation | None = None,
 ) -> Beam:
-    """A beam ``detuning`` (rad/s, plan sign: red negative) from the dressed transition lower -> upper at the field."""
+    """A beam ``detuning_rad_s`` (red negative) from the dressed transition lower -> upper at the field."""
     omega = transition_omega_rad_s(structure, lower, upper) + detuning_rad_s
     return Beam(
         TWO_PI * C_M_PER_S / omega,
@@ -98,7 +75,7 @@ def beam_for_transition(
 
 
 def shifted_beam(beam: Beam, offset_rad_s: float) -> Beam:
-    """The same beam with its frequency moved by ``offset`` (rad/s)."""
+    """The same beam with its angular frequency moved by ``offset_rad_s``."""
     omega = TWO_PI * C_M_PER_S / beam.wavelength_m + offset_rad_s
     return replace(beam, wavelength_m=TWO_PI * C_M_PER_S / omega)
 
@@ -106,29 +83,25 @@ def shifted_beam(beam: Beam, offset_rad_s: float) -> Beam:
 def intensity_over_isat(
     structure: AtomicStructure, beam: Beam, lower: str, upper: str, position_m: Sequence[float] | None = None
 ) -> float:
-    """s_o = I/I_sat with the transition's two-level I_sat (partial angular rate): the reference of Section 8.1, so that
-    the full-line Rabi frequency obeys 2 Omega^2/Gamma^2 = s_o; NOT the saturation parameter of any hyperfine component."""
+    """s_o = I/I_sat with the transition's two-level I_sat, so the full-line Rabi frequency obeys 2 Omega^2/Gamma^2 = s_o;
+    not the saturation parameter of any hyperfine component."""
     pos = np.asarray(beam.pointing_m if position_m is None else position_m, dtype=float)
     return beam.intensity_at(pos) / structure.e1[(lower, upper)].i_sat_w_m2
 
 
-# ---- reports --------------------------------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class CeilingReport:
-    """The resonant closed manifold and its equal-population ceiling (Section 13, Berkeland Eqs. 13-14, 21)."""
+    """The resonant closed manifold and its equal-population ceiling (Berkeland and Boshier 2002 Eqs. 13-14)."""
 
     ground_labels: tuple[str, ...]
     excited_labels: tuple[str, ...]
     ceiling: float
-    """n_e/(n_e + n_g); NaN when no coupling is near resonance, so there is no closed resonant manifold to bound."""
+    """n_e/(n_e + n_g); NaN when no coupling is near resonance (no manifold to bound)."""
     excited_population: float
-    """Population of the resonant excited states in the state reported."""
 
     @property
     def has_manifold(self) -> bool:
-        """False for far-detuned light: no resonant manifold exists and the ceiling check is not applicable."""
+        """False for far-detuned light: no resonant manifold exists and the ceiling check does not apply."""
         return bool(self.ground_labels) and bool(self.excited_labels)
 
     @property
@@ -142,7 +115,7 @@ class CeilingReport:
 
 @dataclass(frozen=True)
 class SteadyStateReport:
-    """The scattering-rate object: one steady state and every rate read from it (Sections 4.2.8, 8.1)."""
+    """The scattering-rate object: one steady state and every rate read from it."""
 
     rho: qt.Qobj
     populations: dict[str, float]
@@ -150,18 +123,17 @@ class SteadyStateReport:
     photon_rates_per_s: dict[str, float]
     """Photons per second on each decay line "lower<-upper" (the sink entry is the leak rate)."""
     total_photon_rate_per_s: float
-    """W(Delta) = sum_lines Gamma rho_ee: every scattered photon (Section 4.2.2)."""
+    """W(Delta) = sum_lines Gamma rho_ee over every non-sink line."""
     excited_population: float
     ceiling: CeilingReport
     method: Literal["steadystate", "floquet", "time-average"]
     period_s: float | None
     nbar: float | None
-    """Mean phonon number of the mode, when the build has one."""
 
 
 @dataclass(frozen=True)
 class PumpingTrace:
-    """Time evolution of the internal populations under the beams (Section 4.2.6 optical pumping)."""
+    """Time evolution of the internal populations under the beams (optical pumping)."""
 
     times_s: np.ndarray
     populations: dict[str, np.ndarray]
@@ -171,9 +143,9 @@ class PumpingTrace:
     """Cumulative integral of the photon rate."""
     final: qt.Qobj
     photon_rates_per_line: dict[str, np.ndarray] = field(default_factory=dict)
-    """Photon rate per decay line "lower<-upper" against time (M3: the recoil bookkeeping of optical pumping)."""
+    """Photon rate per decay line "lower<-upper" against time."""
     photon_rates_per_operator: np.ndarray | None = None
-    """(n_times, n_c_ops) rate Tr(C_k^dagger C_k rho) per collapse operator, so each emitted polarization's photons can be counted."""
+    """(n_times, n_c_ops) rate Tr(C_k^dagger C_k rho) of each collapse operator."""
 
     def photons_per_line(self) -> dict[str, float]:
         """Trapezoid integral of each line's photon rate over the trace."""
@@ -201,7 +173,7 @@ class PumpingTrace:
 
 @dataclass(frozen=True)
 class ManifoldRates:
-    """Two-manifold coarse graining of the slow Liouvillian dynamics (Section 8.1 leakage rates)."""
+    """Two-manifold coarse graining of the slow Liouvillian dynamics (the readout leakage rates)."""
 
     rate_a_to_b_per_s: float
     rate_b_to_a_per_s: float
@@ -213,17 +185,12 @@ class ManifoldRates:
     separation: float
     """|Re lambda_next| / |Re lambda_slow|: how well the two-manifold picture is separated from the faster dynamics."""
     intra_manifold_rates_per_s: tuple[float, ...] = ()
-    """Rates of the modes SLOWER than the chosen one that live inside a single manifold, slowest first.
-
-    Empty for a closed two-manifold cycle. A 171Yb+ detection model that carries the D3/2 branch and its 935 nm
-    repump has such a mode - the D manifold's own relaxation - and it is slower than the bright/dark pumping, so the
-    second-slowest Liouvillian mode is NOT the bright <-> dark one (the M5 finding). They are reported rather than
-    hidden: their presence means the coarse graining is a two-manifold picture inside a richer slow spectrum."""
+    """Rates of slower modes that stay inside one manifold, slowest first (empty for a closed two-manifold cycle)."""
 
 
 @dataclass(frozen=True)
 class DetectionRates:
-    """R_o, R_d and R_b of Section 8.1 from one Liouvillian: bright-state photon rate, bright -> dark and dark -> bright."""
+    """R_o, R_d and R_b from one Liouvillian: bright-state photon rate, bright -> dark and dark -> bright pumping."""
 
     R_bright_per_s: float
     R_dark_pumping_per_s: float
@@ -235,7 +202,7 @@ class DetectionRates:
 
 @dataclass(frozen=True)
 class RateCoefficients:
-    """A_+- of Section 4.2.2: bare coefficients in s^-1, the drive's eta^2 kept outside (Section 13)."""
+    """A_+- as bare coefficients in s^-1, the drive's eta^2 kept outside."""
 
     A_plus_per_s: float
     A_minus_per_s: float
@@ -244,7 +211,7 @@ class RateCoefficients:
 
     @property
     def cooling_rate_bare_per_s(self) -> float:
-        """A_- - A_+: multiply by eta^2 for the phonon relaxation rate W (Section 4.2.3)."""
+        """A_- - A_+: multiply by eta^2 for the phonon relaxation rate."""
         return self.A_minus_per_s - self.A_plus_per_s
 
     @property
@@ -260,9 +227,6 @@ class RateCoefficients:
         return eta**2 * self.cooling_rate_bare_per_s
 
 
-# ---- the model ------------------------------------------------------------------------------------------------------------
-
-
 _PERIODIC_OPTIONS: dict[str, object] = {
     "method": "vern9",
     "nsteps": 10**7,
@@ -270,7 +234,7 @@ _PERIODIC_OPTIONS: dict[str, object] = {
     "rtol": 1e-8,
     "progress_bar": "",
 }
-"""Integrator settings for the periodic Liouvillian (Section 5.3: the dop853/vern9 ladder, never a multistep method)."""
+"""Integrator settings for the periodic Liouvillian (a Runge-Kutta method, never a multistep one)."""
 
 
 def _hermitize(rho: np.ndarray) -> np.ndarray:
@@ -310,8 +274,6 @@ class BlochModel:
             options=self.options,
         )
 
-    # ---- derived models ------------------------------------------------------------------------------------
-
     def with_beams(self, beams: Sequence[Beam]) -> BlochModel:
         return BlochModel(
             self.structure,
@@ -324,12 +286,10 @@ class BlochModel:
         )
 
     def shifted(self, beam: int, offset_rad_s: float) -> BlochModel:
-        """The same model with beam ``beam`` moved by ``offset`` in frequency."""
+        """The same model with beam ``beam`` moved by ``offset_rad_s`` in angular frequency."""
         beams = list(self.beams)
         beams[beam] = shifted_beam(beams[beam], offset_rad_s)
         return self.with_beams(beams)
-
-    # ---- rates from a state ----------------------------------------------------------------------------------
 
     def operator_rates(self, rho: qt.Qobj) -> np.ndarray:
         """Tr(C_k^dagger C_k rho) for every collapse operator k, in s^-1."""
@@ -349,13 +309,8 @@ class BlochModel:
     def resonant_manifold(
         self, *, window_gammas: float = 10.0, static_only: bool = False
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """(ground labels, excited labels) of the closed manifold the beams drive near resonance.
-
-        A coupling is resonant when its detuning is within ``window_gammas`` linewidths; the ground manifold is then
-        widened to every sublevel of the same level within that window of a resonant ground state (the Zeeman
-        neighbours a differently polarized beam would drive), which is what the equal-population ceiling and the
-        dark-state count of Berkeland's Table I refer to.
-        """
+        """(ground labels, excited labels) of the manifold driven within ``window_gammas`` linewidths of resonance, the
+        ground side widened to its Zeeman neighbours within that window."""
         b = self.build
         ground: list[str] = []
         excited: list[str] = []
@@ -385,11 +340,10 @@ class BlochModel:
         return tuple(sorted(ground, key=order.__getitem__)), tuple(sorted(excited, key=order.__getitem__))
 
     def ceiling_report(self, rho: qt.Qobj, *, window_gammas: float = 10.0) -> CeilingReport:
-        """The resonant manifold (couplings within ``window_gammas`` linewidths of resonance) and its ceiling check."""
+        """The resonant manifold and its ceiling; raises CeilingViolation when the excited population exceeds it."""
         ground, excited = self.resonant_manifold(window_gammas=window_gammas)
         if not ground or not excited:
-            # no coupling within window_gammas linewidths of resonance: there is no closed resonant manifold and
-            # therefore no equal-population bound. NaN says so; 1.0 would read as a satisfied check (Section 13).
+            # no resonant manifold, so no bound: NaN, since 1.0 would read as a satisfied check
             return CeilingReport((), (), math.nan, 0.0)
         pops = self.build.populations(rho)
         p_e = float(sum(pops[lab] for lab in excited))
@@ -425,10 +379,9 @@ class BlochModel:
             nbar=nbar,
         )
 
-    # ---- steady state --------------------------------------------------------------------------------------
-
     def steadystate(self, *, n_average: int = 64, settle_gammas: float = 1000.0) -> SteadyStateReport:
-        """The scattering-rate object (Section 13): direct solve on a static frame, Floquet fixed point otherwise."""
+        """Direct solve on a static frame; otherwise the period-averaged Floquet fixed point, or a long-time average when
+        the beats are incommensurate."""
         b = self.build
         if b.static:
             assert isinstance(b.H, qt.Qobj)
@@ -442,7 +395,7 @@ class BlochModel:
         L = b.liouvillian()
         period = b.frame.period_s
         if period is None:
-            # incommensurate beats: propagate for settle_gammas lifetimes and average the second half (Section 8.1)
+            # incommensurate beats: no period, so propagate settle_gammas lifetimes and average the second half
             gamma_min = min(b.level_rates_rad_s.values())
             t_end = settle_gammas / gamma_min
             times = np.linspace(0.0, t_end, 2 * n_average + 1)
@@ -469,19 +422,12 @@ class BlochModel:
         times = np.linspace(0.0, period, n_average + 1)
         res = qt.mesolve(L, rho0, times, options={**_PERIODIC_OPTIONS, "store_states": True})
         states = [np.asarray(s.full()) for s in res.states]
-        # trapezoid average over one period (the endpoints coincide up to integration error)
         avg = _hermitize((sum(states[1:-1]) + 0.5 * (states[0] + states[-1])) / n_average)
         return self._report(qt.Qobj(avg, dims=b.H.dims), "floquet", period)
 
-    # ---- time evolution ------------------------------------------------------------------------------------
-
     def evolve(self, initial: str | qt.Qobj, times_s: Sequence[float] | np.ndarray) -> PumpingTrace:
-        """Populations against time from ``initial`` (a state label or an internal ket/density matrix).
-
-        Static internal-only builds are propagated exactly with the matrix exponential of the Liouvillian (the frame
-        keeps GHz hyperfine detunings on the diagonal, which an adaptive integrator would have to resolve); builds
-        with a mode or a periodic Liouvillian go through ``mesolve``.
-        """
+        """Populations against time from ``initial`` (a state label, or a ket/density matrix on the build's space); static
+        internal-only builds use the exact Liouvillian exponential (GHz detunings stay on its diagonal), others mesolve."""
         b = self.build
         times = np.asarray(times_s, dtype=float)
         if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
@@ -539,8 +485,6 @@ class BlochModel:
         photons = np.concatenate([[0.0], np.cumsum(0.5 * (rate[1:] + rate[:-1]) * np.diff(times))])
         return PumpingTrace(times, pops, levels, rate, photons, states[-1], per_line, per_op)
 
-    # ---- slow-manifold analysis ----------------------------------------------------------------------------
-
     def manifold_rates(
         self,
         a_labels: Sequence[str],
@@ -550,22 +494,11 @@ class BlochModel:
         closure_tol: float = 1e-3,
         weight_floor: float = 1e-9,
     ) -> ManifoldRates:
-        """Coarse-grain the Liouvillian into two manifolds by its slowest CONNECTING mode (Section 8.1 leakage rates).
+        """Coarse-grain the Liouvillian into two manifolds by its slowest mode that moves population between them.
 
-        The conditional states are fixed by requiring each to carry no population in the OTHER manifold's labels;
-        the rates follow from the slow eigenvalue k = R_ab + R_ba and the stationary weights.
-
-        The mode is chosen by projecting each eigenvector onto the two manifolds' populations and taking the slowest
-        one that moves population between them (both projections above ``connection_tol`` of the eigenvector's own
-        trace norm). The second-slowest Liouvillian mode is not always that one: a 171Yb+ detection model that
-        carries the D3/2 branch and its 935 nm repump has a slow relaxation INSIDE the D manifold, and picking
-        ``order[1]`` blindly then failed with "the slow mode does not connect the two manifolds" (the M5 finding).
-        The skipped intra-manifold rates are reported on the result.
-
-        The two manifolds must also be a partition of the slow dynamics: population sitting outside them and outside
-        the decaying levels (a D manifold whose repump cycle the species table cannot close, say) makes the
-        two-manifold rates meaningless - they come out negative - so it is refused, with the missing weight named,
-        rather than reported (``closure_tol``).
+        A mode connects the manifolds when both projections exceed ``connection_tol`` of its diagonal weight. Raises
+        ValueError when more than ``closure_tol`` of the stationary population lies outside the manifolds and the
+        decaying levels, or when one manifold is absorbing (``weight_floor``).
         """
         b = self.build
         if not b.static or b.space is not None:
@@ -680,22 +613,14 @@ class BlochModel:
             separation=mr.separation,
         )
 
-    # ---- dark states ----------------------------------------------------------------------------------------
-
     def dark_states(
         self, *, window_gammas: float = 10.0, tol: float = 1e-9, zero_field: bool = True
     ) -> DarkStateReport:
-        """Dark superpositions of the resonant ground states: the null space of the summed coupling matrix (Section 8.1).
+        """Dark superpositions of the resonant ground states: the null space of the summed coupling matrix.
 
-        Built from the couplings themselves, so the straight pairing of Section 13 and the helicity relabelling of
-        Berkeland's E_q are never needed; ``delta_over_omega`` is the resonant ground manifold's Zeeman span over the
-        total coupling strength sqrt(sum |Omega_qp|^2) [background], ``theta_be_deg`` the angle between the first
-        beam's polarization and B for a linear polarization (nan otherwise), ``raman_zero_margin_hz`` the smallest
-        two-photon detuning between beams sharing an upper level from different lower levels (the S-P-D dark
-        resonances; None without such a pair). With ``zero_field`` (default) the coupling matrix is that of the pure
-        |F m_F> states (Berkeland's Table I counts); at a finite field the hyperfine admixture (Zeeman/HFS, 1e-4 for 171Yb+
-        at 1 G) makes a Table-I dark state bright at that level, which the finite-field matrix shows as a small singular
-        value rather than a null one.
+        ``delta_over_omega`` is the ground manifold's Zeeman span over sqrt(sum |Omega_qp|^2), ``raman_zero_margin_hz``
+        the smallest two-photon detuning between beams sharing an upper level from different lower levels;
+        ``zero_field`` uses the pure |F m_F> states.
         """
         b = self.build
         ground_t, excited_t = self.resonant_manifold(window_gammas=window_gammas, static_only=True)
@@ -750,15 +675,9 @@ class BlochModel:
             raman_zero_margin_hz=margin,
         )
 
-    # ---- W(Delta) and the cooling coefficients ---------------------------------------------------------------
-
     def drive_saturation(self) -> float:
-        """max_pairs |Omega_qp| / Gamma_upper over the couplings: the W(Delta -+ nu) closed forms need this << 1.
-
-        Section 4.2.8 (vii) asserts Omega << Gamma for every closed form; with a saturated carrier W(Delta + nu) at
-        Delta = -nu is the saturated resonant rate and A_- comes out low by (1 + s), which the level-C solve and the
-        spectrum path do not suffer from (M3a finding).
-        """
+        """max |Omega_qp| / Gamma_upper over the couplings; the W(Delta -+ nu) closed forms need this << 1 (a saturated
+        carrier makes A_- low by 1 + s)."""
         worst = 0.0
         for c in self.build.couplings:
             gamma = self.build.level_rates_rad_s.get(self.build.level_of(c.upper), 0.0)
@@ -783,7 +702,7 @@ class BlochModel:
         return np.array([w(float(o)) for o in offsets_rad_s])
 
     def force_operator(self, mode: ModeSpec) -> qt.Qobj:
-        """F = sum_b eta_b (i/2)(O_b - O_b^dagger): the first-order motional coupling, eta inside (Section 4.2.8 iii)."""
+        """F = sum_b eta_b (i/2)(O_b - O_b^dagger): the first-order motional coupling, eta inside."""
         b = self.build
         if b.space is not None or not b.static:
             raise NotImplementedError("the force operator is built on the static internal-only model")
@@ -799,9 +718,6 @@ class BlochModel:
                     o[b.index(c.upper), b.index(c.lower)] += c.omega_rad_s
             f += eta * 0.5j * (o - o.conj().T)
         return qt.Qobj(f, dims=b.H.dims)
-
-
-# ---- level-A/B coefficient supplier ------------------------------------------------------------------------------------------
 
 
 WEAK_DRIVE_MAX = 0.1
@@ -824,13 +740,8 @@ def rate_coefficients_from_model(
 def rate_coefficients(
     w_of_offset: Callable[[float], float], nu_rad_s: float, carrier_weight: float
 ) -> RateCoefficients:
-    """A_+- = W(Delta -+ nu) + (eta~^2/eta^2) W(Delta): bare coefficients in s^-1 (Sections 4.2.2, 13).
-
-    ``w_of_offset(x)`` returns W at the beam detuning Delta + x. The heating coefficient pairs with the detuning
-    Delta - nu (the intermediate |e, n+1> state, anti-correlated), the cooling one with Delta + nu; the carrier term
-    W(Delta) carries the emitted photon's recoil weight eta~^2/eta^2 = alpha k_em^2 / (Delta k . e_m)^2, alpha for one
-    resonant beam along the mode axis (Stenholm's case) and 1.376 for quenched 40Ca+.
-    """
+    """A_+- = W(Delta -+ nu) + (eta~^2/eta^2) W(Delta), bare, in s^-1 (Stenholm 1986); ``w_of_offset(x)`` is W at the
+    beam detuning Delta + x."""
     if nu_rad_s <= 0.0:
         raise ValueError("the mode frequency is positive")
     if carrier_weight < 0.0:
@@ -842,26 +753,27 @@ def rate_coefficients(
 
 
 def carrier_weight(alpha: float, k_em_rad_per_m: float, delta_k_dot_axis_rad_per_m: float) -> float:
-    """eta~^2/eta^2 = alpha k_em^2 / (Delta k . e_m)^2 (Section 4.2.2; the participation b cancels)."""
+    """eta~^2/eta^2 = alpha k_em^2 / (Delta k . e_m)^2; the mode participation cancels."""
     if delta_k_dot_axis_rad_per_m == 0.0:
         raise ValueError("the drive has no projection on the mode axis: the mode is not addressed")
     return alpha * (k_em_rad_per_m / delta_k_dot_axis_rad_per_m) ** 2
 
 
 def two_level_scattering_rate_per_s(gamma_rad_s: float, omega_rad_s: float, delta_rad_s: float) -> float:
-    """W(Delta) = Gamma rho_ee = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2), s = 2 Omega^2/Gamma^2 (RMP 2003 Eq. 96)."""
+    """W(Delta) = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2), s = 2 Omega^2/Gamma^2 (Leibfried et al. 2003 Eq. 96)."""
     s = 2.0 * omega_rad_s**2 / gamma_rad_s**2
     return gamma_rad_s * (s / 2.0) / (1.0 + s + (2.0 * delta_rad_s / gamma_rad_s) ** 2)
 
 
 @dataclass(frozen=True)
 class SpectrumCoefficients:
-    """A_+- = 2 Re[S(-+ nu) + D] with eta^2 INSIDE (the RMP form), from the dipole-force spectrum (Section 4.2.8 iii)."""
+    """A_+- = 2 Re[S(-+ nu) + D] from the dipole-force spectrum, eta^2 inside (Leibfried et al. 2003); A_+ reads QuTiP's
+    ``spectrum`` (the exp(-i omega tau) transform) at +nu and A_- at -nu."""
 
     A_plus_eta2_per_s: float
     A_minus_eta2_per_s: float
     two_D_per_s: float
-    """2D = sum_channels alpha eta_em^2 Gamma rho_ee: the emission recoil diffusion (half-rate D doubled)."""
+    """2D = sum_channels alpha eta_em^2 Gamma rho_ee: the emission recoil diffusion."""
     spectrum_plus_nu_per_s: float
     spectrum_minus_nu_per_s: float
 
@@ -877,11 +789,7 @@ class SpectrumCoefficients:
 
 
 def rate_coefficients_from_spectrum(model: BlochModel, mode: ModeSpec) -> SpectrumCoefficients:
-    """The semi-analytic path of Section 4.2.8: steadystate, the force-fluctuation spectrum at -+nu and the recoil D.
-
-    Requires a static internal-only model (recoil off): D is formed from the steady-state populations, one Lamb-Dicke
-    parameter per decay line from that line's own wavenumber and one alpha per polarization channel and mode axis.
-    """
+    """A_+- from the force-fluctuation spectrum at -+nu plus the emission recoil diffusion (static internal-only model)."""
     b = model.build
     if b.space is not None or not b.static:
         raise NotImplementedError("the spectrum path runs on the static internal-only model")
@@ -900,15 +808,8 @@ VECTOR_FORM_Q = 9
 
 
 def operator_angular_factor(channel: EmissionChannel, index: int, cos_chi: float) -> float:
-    """alpha of one collapse operator of ``channel``: alpha_q(chi) for a q-resolved operator, the channel's own tabulated
-    ``alpha`` for a vector-form one (Section 4.2.8 ii, "one angular factor per channel and mode axis").
-
-    ``index`` is the operator's offset within ``channel.operator_slice``. A vector-form channel writes the sentinel
-    ``VECTOR_FORM_Q`` because its operators mix q, so no per-operator alpha exists; the channel's ``alpha`` dict then
-    supplies it when the channel has a single polarization index, and a genuinely q-mixing one is REFUSED rather than
-    silently given the isotropic 1/3 (its alpha is the derived second moment of
-    :func:`qutip_trap.light.recoil.derived_angular_factors`, not 1/3).
-    """
+    """alpha of the collapse operator at offset ``index`` in ``channel.operator_slice``: alpha_q(chi), or for a
+    vector-form channel its tabulated single-q ``alpha`` (a q-mixing one is refused, never given 1/3)."""
     q = channel.operator_qs[index]
     if q != VECTOR_FORM_Q:
         return angular_factor(q, cos_chi)
@@ -925,9 +826,8 @@ def operator_angular_factor(channel: EmissionChannel, index: int, cos_chi: float
 def emission_diffusion_two_d(
     model: BlochModel, axis: Sequence[float], x0_m: float, rho: qt.Qobj | None = None
 ) -> float:
-    """2D = sum_channels alpha_q(chi) (k_em x0)^2 Gamma_q rho_ee: the emission recoil heating rate into a mode of axis ``axis``
-    and zero-point length ``x0`` (participation folded into x0 for a multi-ion mode), one Lamb-Dicke parameter per decay line
-    from its own wavenumber and one alpha per polarization channel (Section 4.2.8 ii); ``rho`` defaults to the steady state."""
+    """2D = sum_channels alpha_q(chi) (k_em x0)^2 Gamma_q rho_ee: the emission recoil heating rate into a mode along
+    ``axis`` (participation folded into ``x0_m`` for a multi-ion mode; ``rho`` defaults to the steady state)."""
     b = model.build
     if rho is None:
         if b.space is not None or not b.static:
@@ -954,15 +854,8 @@ def emission_angular_factor(
     *,
     lines: Sequence[tuple[str, str]] | None = None,
 ) -> float:
-    """The photon-rate-weighted mean alpha over the emitted polarization channels of a model's steady state.
-
-    alpha_eff = sum_k p_k alpha_{q(k)}(chi) / sum_k p_k over every collapse operator k of the selected decay lines,
-    p_k = Tr(C_k^dagger C_k rho) its photon rate. This is the one scalar angular factor a Fock-space recoil kernel of
-    Section 4.2.8 can carry when the emitted photons are distributed over several polarization channels: a
-    polarization-pure repumper on a mode along B returns 2/5 or 1/5, an unpolarized cycle returns 1/3, and nothing is
-    hard-coded. ``lines`` restricts the average to those (lower, upper) decay lines (default: every non-sink line).
-    Raises CoolingError when the selected lines scatter no photons at all.
-    """
+    """The photon-rate-weighted mean alpha over the collapse operators of the (lower, upper) ``lines`` (default: every
+    non-sink line) in a model's steady state; raises CoolingError when they scatter no photons."""
     b = model.build
     if rho is None:
         if b.space is not None or not b.static:

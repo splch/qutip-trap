@@ -1,4 +1,4 @@
-"""``Device.specs()``: the derived quantities as a readable report (docs/api_implementation_plan.md 2.5)."""
+"""``Device.specs()``: the derived quantities as a readable report."""
 
 from __future__ import annotations
 
