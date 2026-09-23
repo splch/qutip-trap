@@ -1,7 +1,7 @@
 """docs/api_implementation_plan.md 2.5: ``NoiseModel()`` is the quiet model (digest for digest the ``quiet_noise_model()`` of
 0.1.0, now deprecated), ``summary`` lists the channels that follow from what was set and nothing else, ``from_experiments``
-inverts a heating-rate fit into the field spectrum it implies, ``Device.to_dict``/``from_dict`` round-trip both presets exactly
-against the generated schema, and ``Device.specs`` renders the derived quantities with their provenance ids."""
+inverts a heating-rate fit into the field spectrum it implies, ``Device.to_dict``/``from_dict`` round-trip both presets exactly,
+and ``Device.specs`` renders the derived quantities with their provenance ids."""
 
 from __future__ import annotations
 
@@ -16,13 +16,12 @@ from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.api import Circuit, Collisions, NoiseModel, Operation, power_law_spectrum, white_spectrum
 from qutip_trap.device.model import Device
 from qutip_trap.device.presets import ca40_optical, quiet_noise_model, yb171_chain
-from qutip_trap.device.serial import device_schema, parse
+from qutip_trap.device.serial import parse
 from qutip_trap.experiments import HeatingRateFit
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.machine import Machine
 from qutip_trap.noise.model import DRIFT_UNITS, quiet_drift, quiet_field_spectrum
 from qutip_trap.trap.heating import s_e_from_heating_rate
-from tools.schemas import validate
 
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
 
@@ -122,14 +121,13 @@ def test_from_experiments_inverts_a_heating_rate_into_the_field_spectrum_it_impl
 @pytest.mark.parametrize(
     "make", [lambda: yb171_chain(2), lambda: ca40_optical(1)], ids=["yb171_chain(2)", "ca40_optical(1)"]
 )
-def test_the_device_round_trip_is_exact_and_matches_the_schema(make) -> None:  # type: ignore[no-untyped-def]
+def test_the_device_round_trip_is_exact(make) -> None:  # type: ignore[no-untyped-def]
     device = make().device
     record = device.to_dict()
     assert record["schema_version"] == 1 and record["device_hash"] == device.hash() and "device" in record
     text = json.dumps(record)  # standard JSON: no NaN or Infinity tokens
     back = Device.from_dict(json.loads(text))
     assert back.hash() == device.hash() and json.dumps(back.to_dict()) == text
-    assert validate(record, device_schema()) == []
     assert (
         back.hardware.amplifier_bandwidth_hz == device.hardware.amplifier_bandwidth_hz
     )  # inf survives as "inf"

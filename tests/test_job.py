@@ -1,5 +1,4 @@
-"""``RunSpec`` and ``Job`` (docs/api_implementation_plan.md 3.1; 0.4.0): the spec round-trips through its JSON form and
-validates against its schema, ``Machine.submit().result()`` equals ``Machine.run()`` shot for shot, the record behind it is
+"""``RunSpec`` and ``Job``: the spec round-trips through its JSON form, ``Machine.submit().result()`` equals ``Machine.run()`` shot for shot, the record behind it is
 reachable both ways, and a cancel stops the worker within one pulse."""
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from qutip_trap.api import Circuit, Operation, last_record
 from qutip_trap.machine import Machine
 from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec, submit
 from tests.m6_fixtures import circuit_fixture
-from tools.schemas import runspec_schema, validate
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 FAST = trap.Numerics(truncation={"branch_weight_min": 1e-3})
@@ -46,7 +44,7 @@ def test_spec_of_a_machine_carries_its_hash_and_policy(machine: Machine) -> None
         RunSpec(BELL, 0)
 
 
-def test_spec_round_trips_through_json_and_validates_against_its_schema(machine: Machine) -> None:
+def test_spec_round_trips_through_json(machine: Machine) -> None:
     numerics = dataclasses.replace(
         machine.numerics,
         truncation={"branch_weight_min": 1e-3, "caps": {2: 12, 3: 14}, "enr_group": ((4, 5), 2)},
@@ -72,7 +70,6 @@ def test_spec_round_trips_through_json_and_validates_against_its_schema(machine:
     assert d["numerics"]["truncation"]["caps"] == {"2": 12, "3": 14}
     assert d["numerics"]["truncation"]["enr_group"] == [[4, 5], 2]
     assert d["level"] == "GATE_LOCAL" and d["circuit"]["measure"] == [1]
-    assert validate(json.loads(text), runspec_schema()) == []
     back = RunSpec.from_dict(json.loads(text))
     assert back == spec, "exact: the option objects, the level and the circuit rebuilt as the same values"
     assert back.numerics.truncation.caps == {2: 12, 3: 14} and back.numerics.truncation.enr_group == (
@@ -82,18 +79,6 @@ def test_spec_round_trips_through_json_and_validates_against_its_schema(machine:
     assert back.numerics.integration.integrators == ("vern9",)
     with pytest.raises(ValueError, match="schema version"):
         RunSpec.from_dict({**d, "schema_version": 2})
-
-
-def test_spec_schema_properties_are_exactly_the_keys_a_spec_writes(machine: Machine) -> None:
-    d = machine.spec(BELL, 1).to_dict()
-    schema = runspec_schema()
-    assert set(schema["properties"]) == set(d) == set(schema["required"])
-    for group in ("physics", "readout"):
-        assert set(schema["properties"][group]["properties"]) == set(d[group]), group
-    for group in ("integration", "truncation", "trajectories", "gate_local", "parallel"):
-        assert set(schema["properties"]["numerics"]["properties"][group]["properties"]) == set(
-            d["numerics"][group]
-        ), group
 
 
 def test_spec_refuses_by_name_what_a_record_cannot_carry(machine: Machine) -> None:

@@ -267,7 +267,6 @@ def test_convergence_report_runs_all_three_arms_of_section_9_9() -> None:
     assert grown_caps(space, 2).dimension == 128
 
 
-@pytest.mark.convergence
 def test_convergence_regime_of_the_bell_circuit(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Section 9.9 on the Section 9.6 Bell circuit: tightening and loosening the tolerances by ten and raising every resolved
     cap by two move the reported probabilities by less than the stated test tolerance. The cap arm regrids the prepared state
@@ -312,7 +311,6 @@ def test_convergence_regime_of_the_bell_circuit(monkeypatch) -> None:  # type: i
     assert rep.grown_modes == (2, 3)
 
 
-@pytest.mark.convergence
 @pytest.mark.slow
 def test_convergence_regime_of_the_frozen_spectator_fixture() -> None:
     """Section 9.9 on the frozen-spectator fixture of ``tests/m9_fixtures.py`` (the tilted Raman pair, y-COM 120 kHz below the
@@ -611,7 +609,6 @@ def test_resolve_level_is_what_run_uses_and_its_estimate_path_works() -> None:
     assert resolve_level(dev, native, SolverOptions(joint_dimension_max=64), space=big) == "GATE_LOCAL"
 
 
-@pytest.mark.convergence
 @pytest.mark.slow
 def test_run_reports_the_section_5_5_tolerance_convergence_when_asked() -> None:
     """Section 5.5's second bullet through ``run()``: ``SolverOptions.convergence_check`` repeats the evolution with atol and
@@ -642,7 +639,6 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked() -> None:
 # ---- 9.9: mcsolve with and without improved_sampling against the mesolve histogram -----------------------------------------
 
 
-@pytest.mark.convergence
 @pytest.mark.slow
 def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_histogram() -> None:
     """The last clause of Section 9.9: "shots drawn from ``mcsolve`` with and without ``improved_sampling`` converge to the

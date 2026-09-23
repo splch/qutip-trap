@@ -233,9 +233,8 @@ class Device:
         return render_specs(self)
 
     def to_dict(self) -> dict[str, Any]:
-        """The device as plain JSON-able values (``qutip_trap.device.serial``; schema version 1 in
-        ``docs/schemas/device.schema.json``): ``{"schema_version", "qutip_trap_version", "device_hash", "device"}``, the
-        record walked by its field annotations (tuples as lists, dict keys as strings, non-finite floats as strings, arrays
+        """The device as plain JSON-able values (``qutip_trap.device.serial``, schema version 1):
+        ``{"schema_version", "qutip_trap_version", "device_hash", "device"}``, the record walked by its field annotations (tuples as lists, dict keys as strings, non-finite floats as strings, arrays
         as dtype, shape and data). ``from_dict`` reads it back exactly: the read device has the hash written."""
         from qutip_trap.device.serial import device_to_dict
 

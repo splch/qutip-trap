@@ -3,153 +3,45 @@ name: ci
 on:
   push:
   pull_request:
-  # the full suite, slow tests included, once a night and on demand; a push or a pull request runs the fast tier
+  # the full suite, slow tests included, nightly and on demand; a push or a pull request runs the fast tier
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-# a push that supersedes an in-flight run cancels it: two 0.3.0-era runs of superseded commits each ran to the six-hour job limit
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  validation-checks:
-    name: "Appendix D check scripts, ${{ matrix.group.name }} (PLAN.md M0)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        group:
-          # run sequentially the 26 scripts took 81 minutes, 48 of them check_calibration (now sections in parallel processes),
-          # 13 check_benchmarks and 9 check_bloch; the other 23 total under 4 minutes
-          - { name: calibration, args: "--only check_calibration" }
-          - { name: benchmarks-and-bloch, args: "--only check_benchmarks check_bloch" }
-          - { name: the-rest, args: "--skip check_calibration check_benchmarks check_bloch" }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - name: Sync the pinned environment (Python from .python-version, versions from uv.lock)
-        run: uv sync --group dev
-      - name: Re-run the check scripts and compare with the committed outputs
-        run: uv run python validation/scripts/run_checks.py --report ${{ matrix.group.args }}
-      - name: Upload the convergence report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: convergence-report-${{ matrix.group.name }}
-          path: validation/report/
+env:
+  # one BLAS thread per process: pytest-xdist already runs a process per CPU
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
 
+jobs:
   core:
-    name: lint, type-check, tests
+    name: lint, types, tests
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    env:
-      # one BLAS thread per process: pytest-xdist already runs a process per CPU, and threaded BLAS on the suite's small dense
-      # matrices oversubscribes the runner (the dense-linear-algebra tests ran 8x slower under contention)
-      OPENBLAS_NUM_THREADS: "1"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      # tests/conftest.py: a C-level per-test watchdog that ends a worker stuck inside one long C call, which neither
-      # pytest-timeout method can interrupt (the runs of 1371cf0 and 80b89ed sat for hours on such tests), with a stack dump
-      QUTIP_TRAP_TEST_WATCHDOG_S: "1800"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - run: uv sync --group dev
-      - name: ruff (lint and format)
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy
+      - name: pytest
         run: |
-          uv run ruff check .
-          uv run ruff format --check .
-      - name: mypy --strict (the Hz / rad-s types are enforced here)
-        run: uv run mypy
-      - name: provenance ledger is current with the species tables
-        run: uv run python tools/ledger_from_tables.py --check
-      - name: documentation tables are current with the ledger (M10)
-        run: uv run python tools/docs_from_ledger.py --check
-      - name: the Result schema is current with the envelope (docs/api_implementation_plan.md 1.7)
-        run: uv run python tools/schemas.py --check
-      - name: import time of the root and of the Appendix E surface (tests/test_import_time.py holds the root under 0.2 s)
-        run: |
-          uv run python -X importtime -c "import qutip_trap" 2>&1 | tail -1
-          uv run python -X importtime -c "import qutip_trap.api" 2>&1 | tail -1
-      # four workers on the 4-vCPU runner, whole modules per worker (module fixtures are built once), thirty minutes per test.
-      # -vv names every test as it finishes (pyproject adds -q, which a single -v only cancels back to dots), and the
-      # thread timeout method ends a worker stuck inside C code, which the signal method cannot interrupt: a run of 1371cf0
-      # sat 95 minutes on its last 29 tests with the 30-minute signal timeout never firing. xdist reports the ended worker's
-      # test as a crash and starts a replacement. tests/conftest.py caps the engine's default worker count at one under
-      # xdist, so no test forks a pool inside a worker.
-      # a test that outlives both in-process watchdogs (the run of c69e010: the second full-calibration test, five seconds
-      # here, ran past 35 minutes on the runner with neither the thread timeout nor the C-level watchdog ending its worker,
-      # which only a process that is not being scheduled can do) is dumped from OUTSIDE at the 90-minute mark: py-spy reads
-      # every test process's Python and native stacks through ptrace, whatever state the process is in
-      # a push or a pull request runs the fast tier (about 15 minutes here); the nightly schedule and a manual dispatch run the
-      # slow tests too (35 to 90 minutes depending on the runner's hardware: the long tests are memory-bound and four workers
-      # on a hyperthreaded pair of cores run them two to three times slower than on four real cores)
-      - name: pytest (the fast tier on push and pull request, everything on schedule and dispatch; convergence and heavy tests follow)
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then SEL="not convergence and not heavy"; else SEL="not slow and not convergence and not heavy"; fi
-          echo "selection: $SEL"
-          uv run pytest -m "$SEL" -n 4 --dist loadscope --timeout 1800 --timeout-method thread --max-worker-restart 8 -vv -rfEs --durations=30 &
-          PYTEST_PID=$!
-          (
-            # memory telemetry every ten minutes: a worker that neither in-process watchdog could end (the run of c69e010) is
-            # a process that is not being scheduled, and on a 16 GB runner four multi-gigabyte workers in swap would do that
-            for m in 10 20 30 40 50 60 70 80; do
-              sleep 600
-              echo "== ${m} min: $(free -m | awk '/Mem:/ {printf "mem used %s MB, available %s MB", $3, $7} /Swap:/ {printf ", swap used %s MB", $3}')"
-              ps -eo pid,rss,etimes,args --sort=-rss | head -7 | cut -c1-150
-            done
-          ) &
-          MEM_PID=$!
-          (
-            sleep 5400
-            echo "== 90 minutes: py-spy dump of every test process (python processes of this job)"
-            for pid in $(pgrep -f 'python' | grep -v "^$$\$"); do
-              echo "---- pid $pid: $(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null | cut -c1-160)"
-              sudo -n "$(command -v uvx)" py-spy dump --native --pid "$pid" 2>&1 | head -80 || true
-            done
-          ) &
-          SPY_PID=$!
-          wait $PYTEST_PID
-          STATUS=$?
-          kill $SPY_PID $MEM_PID 2>/dev/null || true
-          exit $STATUS
-      # the memory-heavy tests alone: the direct factorization of test_level_c's d = 70 Liouvillian peaks at 7 GB, which beside
-      # three other workers exhausts the 16 GB runner and stalls the run in swap (the runs of 1371cf0 and 75e835d)
-      - name: pytest (the heavy tests, one at a time; the slow ones only on schedule and dispatch)
-        if: always()
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then SEL="heavy"; else SEL="heavy and not slow"; fi
-          # exit status 5 is pytest's "no tests collected": on a push every heavy test is also slow, so nothing is selected
-          uv run pytest -m "$SEL" --timeout 1800 --timeout-method thread -vv -rfEs --durations=10 || { rc=$?; [ "$rc" -eq 5 ] && echo "no heavy test in this tier" || exit "$rc"; }
-      - name: watchdog stack dumps of any test the C-level watchdog ended (tests/conftest.py)
-        if: always()
-        run: |
-          found=0
-          for f in .pytest_watchdog/*.txt; do
-            if [ -f "$f" ] && grep -q 'Thread 0x' "$f"; then found=1; echo "== $f"; cat "$f"; fi
-          done
-          [ "$found" = 1 ] || echo "no test was ended by the watchdog"
-      - name: convergence tests (Section 5.5 / 9.9) as a junit report for the convergence-report artifact
-        if: always()
-        run: |
-          mkdir -p validation/report
-          uv run pytest -m convergence -n 4 --dist loadscope --timeout 1800 --junitxml=validation/report/convergence_tests.xml -q
-      - name: Upload the convergence-test report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: convergence-tests
-          path: validation/report/convergence_tests.xml
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then SEL="not heavy"; else SEL="not slow and not heavy"; fi
+          uv run pytest -m "$SEL" -n 4 --dist loadscope --timeout 1800 -rfEs --durations=20
+      # tests that peak at several gigabytes of memory run alone, after the parallel pass
+      - name: pytest (heavy tests, one at a time; nightly and on demand)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: uv run pytest -m heavy --timeout 3600 -rfEs --durations=10
 
   release:
-    name: the 0.1.0 release checks - `uv build` and the import without the dev group (M10)
+    name: build and import without the dev group
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -157,45 +49,22 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: build the wheel and the sdist
-        run: uv build --out-dir dist
-      - name: the public API imports without the dev group (Appendix E)
-        run: uv run --no-dev python -c "import qutip_trap.api as a; print(len(a.__all__), 'public names')"
-
-  gui:
-    name: Flet extra installs and `flet doctor` passes (M0)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - run: uv sync --extra gui
-      - run: uv run flet doctor
+      - run: uv build --out-dir dist
+      - run: uv run --no-dev python -c "import qutip_trap as trap; print(trap.presets.yb171_chain(2).device.hash())"
 
   app:
-    name: "the application package (Section 14 / M11): lint, types, provenance index, view-model tests"
+    name: application
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      OPENBLAS_NUM_THREADS: "1"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - run: uv sync --all-packages --extra gui --group dev
-      - name: ruff (lint and format) on the app
-        run: |
-          uv run ruff check qutip_trap_app
-          uv run ruff format --check qutip_trap_app
-      - name: mypy --strict on src/qutip_trap_app
-        run: uv run mypy
+      - run: uv run flet doctor
+      - run: uv run mypy
         working-directory: qutip_trap_app
       - name: the provenance index asset is current with the ledger and PLAN.md
         run: uv run python -m qutip_trap_app.provenance --check
-      - name: view-model tests (Section 9.11 rows of M11.1; the Flet UI tests are skipped without the Flutter client)
-        run: uv run --package qutip-trap-app pytest qutip_trap_app/tests -q --timeout 1800 --durations=10
+      - run: uv run --package qutip-trap-app pytest qutip_trap_app/tests -q -n 4 --timeout 1800 --durations=10

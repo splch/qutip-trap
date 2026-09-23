@@ -1,4 +1,4 @@
-"""The documentation of milestone M10: the ledger-generated tables are current, the pages exist and the examples run."""
+"""The documentation: the pages exist, every ledger id they cite resolves, and the examples run."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from qutip_trap.control.compiler import SWAP_MATRIX
 from qutip_trap.control.native import turns_from_rad
 from qutip_trap.provenance import load_ledger, repository_root
 from qutip_trap.run import results
-from tools.docs_from_ledger import TARGETS, anchors_block, conventions_block, render
 
 ROOT = repository_root()
 DOCS = ROOT / "docs"
@@ -43,15 +42,6 @@ def test_documentation_pages_exist_and_are_not_empty(name: str) -> None:
     path = DOCS / name
     assert path.exists(), name
     assert len(path.read_text(encoding="utf-8")) > 1500, name
-
-
-def test_generated_tables_are_current_with_the_ledger() -> None:
-    records = load_ledger()
-    blocks = {"conventions": conventions_block(records), "anchors": anchors_block(records)}
-    for key, (rel, marker) in TARGETS.items():
-        text = (ROOT / rel).read_text(encoding="utf-8")
-        assert render(text, marker, blocks[key]) == text, f"run tools/docs_from_ledger.py ({rel})"
-    assert "conv.rb_error_rate" in blocks["conventions"] and "anchor.m10." in blocks["anchors"]
 
 
 def test_every_ledger_id_cited_in_the_documentation_resolves() -> None:

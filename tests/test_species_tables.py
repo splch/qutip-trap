@@ -219,12 +219,9 @@ _NUMBER_TOKEN = re.compile(r"(?<![\d.])(?:310\.85|310\.76|310\.97|50\.77|2\.0025
 def _repo_python_and_output_files() -> list[Path]:
     root = Path(__file__).resolve().parents[1]
     files: list[Path] = []
-    for sub in ("qutip_trap", "tests", "tools", "validation/scripts"):
+    for sub in ("qutip_trap", "tests"):
         files += sorted((root / sub).rglob("*.py"))
-    files += sorted((root / "validation/scripts/outputs").glob("*.out"))
-    # validation/report/ is gitignored (the CI artifact), plan_sources/ and PLAN.md are the SOURCE of the
-    # retired readings and are never edited by this repository
-    return [p for p in files if "validation/report" not in p.as_posix()]
+    return files
 
 
 def test_retired_constants_are_absent_from_the_whole_tree() -> None:

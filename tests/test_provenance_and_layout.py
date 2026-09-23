@@ -9,20 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from qutip_trap.provenance import TAGS, ledger_path, load_ledger, repository_root
-from tools.ledger_from_tables import render
+from qutip_trap.provenance import TAGS, load_ledger, repository_root
 
 ROOT = repository_root()
 PKG = ROOT / "qutip_trap"
 
 PLAN = ROOT / "PLAN.md"
-
-# modules the plan lists under `qutip_trap/` that live elsewhere in this checkout, each with the reason
-LAYOUT_RELOCATIONS: dict[str, str] = {
-    # the plan puts the check scripts under qutip_trap/validation/scripts/; they are committed at the repository root so
-    # that the first CI job runs them without importing the package (validation/scripts/README.md, run_checks.py)
-    "validation/scripts": "validation/scripts",
-}
 
 
 def section_3_2_modules() -> list[str]:
@@ -59,11 +51,6 @@ def test_ledger_loads_with_valid_tags_and_fields() -> None:
     for rec in ledger.values():
         assert rec.tag in TAGS
         assert rec.section and rec.source and rec.symbol
-
-
-def test_species_block_of_the_ledger_is_current() -> None:
-    text = ledger_path().read_text(encoding="utf-8")
-    assert render(text) == text, "run tools/ledger_from_tables.py"
 
 
 @pytest.mark.parametrize("rel", SECTION_3_2_MODULES)

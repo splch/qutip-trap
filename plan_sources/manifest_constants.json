@@ -1,9 +1,0 @@
-{"topic": "constants",
- "dir": "/private/tmp/claude-501/-Users-churchill-Repositories-qutip-trap/b2f1cadd-ba53-4734-9dbe-b340274f9083/scratchpad/run5/newtext/constants",
- "blocks": [
-   {"file": "p08_readout.md", "before": "**Leakage rates.** Off-resonant pumping between the bright and dark manifolds"},
-   {"file": "p04e_atomic.md", "before": "**Closed-form anchor and worked numbers.**"},
-   {"file": "p04e_atomic.md", "before": "#### 4.5.6 What the species database stores and what it derives"},
-   {"file": "p04b_cooling.md", "before": "#### 4.2.5 Sympathetic cooling"}
- ],
- "sec15_before": null}

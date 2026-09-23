@@ -1,4 +1,0 @@
-Installed 6 packages in 77ms
-/Users/churchill/.cache/uv/archive-v0/v6zNgoi5fEtIAa9p/lib/python3.13/site-packages/qutip/__init__.py:24: UserWarning: matplotlib not found: Graphics will not work.
-  warnings.warn("matplotlib not found: Graphics will not work.")
-3.13.14 5.3.1 2.5.2 1.18.1

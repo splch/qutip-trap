@@ -45,7 +45,7 @@ bell = QuantumCircuit(2); bell.h(0); bell.cx(0, 1); bell.measure_all()
 counts = backend.run(transpile(bell, backend), shots=2000).result().get_counts()
 ```
 
-Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a `Result` exports to IonQ's v1 and v0.4 formats. [docs/qiskit-qutip-trap.ipynb](docs/qiskit-qutip-trap.ipynb) walks through the Qiskit path.
+Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a `Result` exports to IonQ's v1 and v0.4 formats.
 
 ## What is in the box
 
@@ -71,6 +71,4 @@ uv run pytest -n 4 --dist loadscope -m "not slow"
 uv run ruff check . && uv run mypy
 ```
 
-CI runs the fast tier (`-m "not slow"`) on every push and pull request, and the whole suite, slow tests included, on a nightly schedule and on manual dispatch (the Actions tab, "Run workflow"). The check scripts run on every push.
-
-CI also re-runs the check scripts under `validation/scripts/` and compares their outputs with the committed ones, so every number quoted in the documentation is recomputed on every push.
+CI runs the fast tier (`-m "not slow"`) on every push and pull request, and the whole suite, slow tests included, nightly and on manual dispatch.
