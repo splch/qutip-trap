@@ -17,10 +17,12 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import HilbertSpace, Pulse, Schedule, SeedSpec, SolverOptions
 from qutip_trap.control.native import gpi2
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.schedule import Schedule
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
+from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import NoiseSample, key_beam_phase_rad, key_position_offset_m, quiet_sample
 from tests.m2_fixtures import single_ion_raman_device, two_ion_raman_device

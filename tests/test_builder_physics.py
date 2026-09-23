@@ -9,9 +9,10 @@ import pytest
 import qutip as qt
 from scipy.special import jv
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, Pulse, RfDrive, Schedule, SeedSpec, SolverOptions
+from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.schedule import Schedule
 from qutip_trap.dynamics.channels import device_heating_rates, heating_channels, qubit_dephasing_channels
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.evolve import evolve
 from qutip_trap.dynamics.frames import interaction_picture
 from qutip_trap.dynamics.hamiltonian import (
@@ -21,6 +22,7 @@ from qutip_trap.dynamics.hamiltonian import (
     carrier_debye_waller_frozen,
 )
 from qutip_trap.hilbert.operators import debye_waller_factor, rabi_matrix_element, thermal_populations
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import (
@@ -30,6 +32,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_offset_hz,
     quiet_sample,
 )
+from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 from qutip_trap.validation.spin_motion_closed_forms import (
     cetina_population,
@@ -458,7 +461,7 @@ def test_beam_curvature_cetina_forms() -> None:
     m = 170.93578 * ATOMIC_MASS_KG
     assert 1e9 * math.sqrt(HBAR_J_S / (2 * m * TWO_PI * 100e3)) == pytest.approx(17.19, abs=0.01)
     assert 1e9 * math.sqrt(HBAR_J_S / (2 * m * TWO_PI * 140e3)) == pytest.approx(14.53, abs=0.01)
-    from qutip_trap.api import Device, Field
+    from qutip_trap.device.model import Device, Field
     from qutip_trap.species import species
     from qutip_trap.trap.crystal import solve_crystal
     from tests.fixtures import make_detector, make_hardware, make_noise

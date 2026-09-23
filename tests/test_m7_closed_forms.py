@@ -17,16 +17,10 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import (
-    NoiseSpectrum,
-    decoupling_sequence,
-    filter_function,
-    ou_spectrum,
-    power_law_spectrum,
-)
 from qutip_trap.light.scattering import d_level_branching, epsilon_s_and_d
-from qutip_trap.noise.decoupling import chi_integral
+from qutip_trap.noise.decoupling import chi_integral, decoupling_sequence, filter_function
 from qutip_trap.noise.sampling import key_beam_phase_trajectory_rad
+from qutip_trap.noise.spectra import NoiseSpectrum, ou_spectrum, power_law_spectrum
 from qutip_trap.validation.atomic_closed_forms import ozeri_p_total
 from qutip_trap.validation.noise_closed_forms import (
     baldwin_phase_noise_infidelity,

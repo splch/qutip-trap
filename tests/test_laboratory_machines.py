@@ -15,14 +15,18 @@ import numpy as np
 import pytest
 
 from qutip_trap._compat import QutipTrapDeprecationWarning
-from qutip_trap.api import Circuit, Operation, SolverOptions
-from qutip_trap.benchmarks import gate_channel, randomized_benchmarking
-from qutip_trap.benchmarks.budget import kind_of
-from qutip_trap.calibration import CalibrationReport, calibrate, calibrate_with_report
-from qutip_trap.control.compiler import compile_report, compile_with_report
+from qutip_trap.benchmarks.budget import gate_channel, kind_of
+from qutip_trap.benchmarks.rb import randomized_benchmarking
+from qutip_trap.calibration import calibrate, calibrate_with_report
+from qutip_trap.calibration.experiments import CalibrationReport
+from qutip_trap.control.compiler import Circuit, Operation, compile_report, compile_with_report
 from qutip_trap.control.table import CalibrationTable
 from qutip_trap.device.presets import ideal_hardware
-from qutip_trap.experiments import (
+from qutip_trap.dynamics.engine import SolverOptions
+from qutip_trap.experiments.imaging import crystal_image
+from qutip_trap.experiments.motion import thermometry
+from qutip_trap.experiments.readout import detection_histogram
+from qutip_trap.experiments.result import (
     RESULT_TYPES,
     CrystalImage,
     DetectionHistogram,
@@ -32,13 +36,8 @@ from qutip_trap.experiments import (
     ScanParameters,
     SidebandSpectrum,
     ThermometryResult,
-    crystal_image,
-    detection_histogram,
-    rabi_scan,
-    ramsey,
-    sideband_spectroscopy,
-    thermometry,
 )
+from qutip_trap.experiments.single_ion import rabi_scan, ramsey, sideband_spectroscopy
 from qutip_trap.machine import DRIVE_KEYWORDS, Machine, as_machine, laboratory_kwargs
 from qutip_trap.options import Numerics, Truncation
 from tests.m6_fixtures import CircuitFixture, circuit_fixture
@@ -122,7 +121,7 @@ def test_an_experiment_on_the_machine_equals_the_device_with_the_drive_keyword(
 
 
 def test_the_result_table_names_every_experiment_of_the_calibration_order() -> None:
-    from qutip_trap.calibration import ALIASES, ORDER
+    from qutip_trap.calibration.experiments import ALIASES, ORDER
 
     assert set(RESULT_TYPES) >= set(ORDER) | {"ramsey", "thermometry", "mode_spectroscopy", "ms_phase_scan"}
     assert {a for a in ALIASES if a in RESULT_TYPES} == {"thermometry", "mode_spectroscopy", "ms_phase_scan"}

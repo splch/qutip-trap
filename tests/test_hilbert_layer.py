@@ -10,7 +10,7 @@ import pytest
 import qutip as qt
 from scipy.special import eval_genlaguerre
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, SolverOptions
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hilbert.operators import (
     TABLE_ELEMENT_ERROR,
     TABLE_ETA,
@@ -32,6 +32,7 @@ from qutip_trap.hilbert.operators import (
     thermal_debye_waller_mean,
     thermal_populations,
 )
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.hilbert.truncation import (
     boundary_population,
     grow_for_margins,

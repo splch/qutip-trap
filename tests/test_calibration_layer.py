@@ -12,23 +12,25 @@ import warnings
 import numpy as np
 import pytest
 
-from qutip_trap.api import CalEntry, Circuit, Drift, Operation, calibrate, schedule
-from qutip_trap.calibration import DEFAULT_CACHE, CalibrationCache, calibrate_with_report
+from qutip_trap.calibration import calibrate, calibrate_with_report
+from qutip_trap.calibration.cache import DEFAULT_CACHE, CalibrationCache
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.compiler import compile_report
+from qutip_trap.control.compiler import Circuit, Operation, compile_report
 from qutip_trap.control.played import physical_schedule
-from qutip_trap.control.schedule import crosstalk_beliefs
-from qutip_trap.experiments import crystal_image
+from qutip_trap.control.schedule import crosstalk_beliefs, schedule
+from qutip_trap.control.table import CalEntry
 from qutip_trap.experiments.fitting import (
     fit_lineshape,
     half_rabi_lineshape,
     lineshape_model,
     sideband_lineshape,
 )
+from qutip_trap.experiments.imaging import crystal_image
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
 from qutip_trap.machine import Machine, as_machine
 from qutip_trap.noise.model import servo_residual
+from qutip_trap.noise.spectra import Drift
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
 from tests.m6_fixtures import circuit_fixture
@@ -343,7 +345,6 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
     accumulated; a compensated GPi2 then has the same fidelity at t = 0 and at t = 1 ms."""
     import qutip as qt
 
-    from qutip_trap.api import SeedSpec, SolverOptions
     from qutip_trap.calibration.entangling import frame_rotated, gate_space
     from qutip_trap.control.native import gpi2
     from qutip_trap.control.schedule import (
@@ -357,7 +358,7 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
         stark_phase_rad,
     )
     from qutip_trap.control.shaping import gate_modes
-    from qutip_trap.dynamics.engine import JointExactEngine
+    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
     from qutip_trap.dynamics.frames import PhaseFrame
     from qutip_trap.noise.sampling import quiet_sample
 

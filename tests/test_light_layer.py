@@ -7,7 +7,8 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Beam, Field
+from qutip_trap.device.model import Field
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.microwave import (
     ac_zeeman_shift_hz,
     coupling_rad_s,

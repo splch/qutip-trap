@@ -11,9 +11,15 @@ import re
 import numpy as np
 import pytest
 
-from qutip_trap.benchmarks import ErrorModel, error_model, gate_channel, randomized_benchmarking
-from qutip_trap.benchmarks.budget import kind_of
-from qutip_trap.benchmarks.error_model import QDK_TIME_PATTERN, SINGLE_QUBIT_KINDS, qdk_time
+from qutip_trap.benchmarks.budget import gate_channel, kind_of
+from qutip_trap.benchmarks.error_model import (
+    QDK_TIME_PATTERN,
+    SINGLE_QUBIT_KINDS,
+    ErrorModel,
+    error_model,
+    qdk_time,
+)
+from qutip_trap.benchmarks.rb import randomized_benchmarking
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Truncation
 from tests.m6_fixtures import CircuitFixture, circuit_fixture

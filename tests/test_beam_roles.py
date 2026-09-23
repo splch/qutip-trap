@@ -12,17 +12,8 @@ import numpy as np
 import pytest
 
 from qutip_trap._compat import QutipTrapDeprecationWarning
-from qutip_trap.api import (
-    Circuit,
-    FidelityLevel,
-    Operation,
-    SolverOptions,
-    ca40_optical,
-    resolve_level,
-    run,
-    yb171_chain,
-)
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import (
     GateDrive,
     ScheduleError,
@@ -31,10 +22,13 @@ from qutip_trap.control.schedule import (
     resolve_drives,
 )
 from qutip_trap.device.model import BeamRoles, ResolvedRoles
+from qutip_trap.device.presets import ca40_optical, yb171_chain
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
 from qutip_trap.options import Numerics, Truncation
-from qutip_trap.run.levels import decide_level
+from qutip_trap.run.job import run
+from qutip_trap.run.levels import FidelityLevel, decide_level, resolve_level
 from tests.fixtures import make_device
 from tests.m6_fixtures import circuit_fixture
 

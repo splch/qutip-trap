@@ -1,10 +1,6 @@
-"""The example devices as machines (docs/api_implementation_plan.md 1.6; 0.2.0): ``yb171_chain(n)`` and ``ca40_optical(n)``
-return a ``Machine`` on the device ``qutip_trap.device.presets`` builds, with its beam roles, the closed-form calibration
-cached per device, the default option objects and the AUTO level; every knob of the device presets (``s_o``,
-``address_waist_m``, ``omega_hz``, ``noise``, ``hardware``, ``detector``, ``recipe``, ``phase_continuous``, ``reset_beam``)
-passes through. ``DevicePreset.machine()`` is the bridge for code that holds a preset. The numbers are ILLUSTRATIVE (a
-realizable laboratory configuration, not a published apparatus), as the device presets' docstrings say.
-"""
+"""The example devices as machines: ``yb171_chain(n)`` and ``ca40_optical(n)`` return a ``Machine`` on the device that
+``qutip_trap.device.presets`` builds, with every knob of that preset passed through. The numbers are illustrative: a
+realizable laboratory configuration, not a published apparatus."""
 
 from __future__ import annotations
 

@@ -11,8 +11,9 @@ import numpy as np
 import pytest
 
 import qutip_trap as trap
-from qutip_trap.api import Circuit, Operation, last_record
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.machine import Machine
+from qutip_trap.run.job import last_record
 from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec, submit
 from tests.m6_fixtures import circuit_fixture
 

@@ -9,11 +9,14 @@ from __future__ import annotations
 import dataclasses
 import math
 
-from qutip_trap.api import Beam, CalEntry, CalibrationTable, Device, Field, Trap, Waveform
 from qutip_trap.control.schedule import GateDrive
 from qutip_trap.control.shaping import GateModes, gate_modes
+from qutip_trap.control.table import CalEntry, CalibrationTable, Waveform
+from qutip_trap.device.model import Device, Field
+from qutip_trap.light.beams import Beam
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
 from tests.fixtures import make_calibration_table, make_detector, make_hardware, make_noise
 
 X_MODES_TWO_IONS = (2, 3)

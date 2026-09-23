@@ -7,9 +7,8 @@ import math
 
 import pytest
 
-from qutip_trap.api import MetastableChannels
 from qutip_trap.species import species
-from qutip_trap.species.metastable import bbr_mixing_rates_hz, bose_occupation
+from qutip_trap.species.metastable import MetastableChannels, bbr_mixing_rates_hz, bose_occupation
 from qutip_trap.units import C_M_PER_S
 
 A12_S = 2.45e-6  # Ali and Kim 1988 via Kreuter 2005 Eq. 1

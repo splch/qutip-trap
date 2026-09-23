@@ -7,14 +7,15 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Collisions, collision_rate_per_ion
 from qutip_trap.noise.collisions import (
     GAS_MASS_U,
     POLARIZABILITY_VOLUME_M3,
+    collision_rate_per_ion,
     langevin_rate_coefficient_m3_s,
     number_density_per_m3,
     sample_collisions,
 )
+from qutip_trap.noise.spectra import Collisions
 from qutip_trap.units import ATOMIC_MASS_KG
 
 TORR_PA = 133.32236842105263

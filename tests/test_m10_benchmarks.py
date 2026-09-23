@@ -371,7 +371,7 @@ def test_pair_true_is_refused_on_any_qubit_count_but_two() -> None:
     stayed in the kwargs splatted into ``run``, which has no such parameter: ``pair=False`` on three ions -- the natural
     use of a variant whose point is chain crosstalk -- raised TypeError. The pop is now unconditional and an explicit
     ``pair=True`` on the wrong qubit count is refused up front."""
-    from qutip_trap.api import yb171_chain
+    from qutip_trap.device.presets import yb171_chain
 
     machine = yb171_chain(2).machine()
     for qubits in ((0,), (0, 1)):
@@ -385,8 +385,9 @@ def test_pair_true_is_refused_on_any_qubit_count_but_two() -> None:
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    from qutip_trap.api import SolverOptions, yb171_chain
     from qutip_trap.calibration.surrogate import surrogate_table
+    from qutip_trap.device.presets import yb171_chain
+    from qutip_trap.dynamics.engine import SolverOptions
 
     preset = yb171_chain(2)
     windows = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
@@ -443,7 +444,8 @@ def test_simultaneous_rb_reports_marginals_in_the_budget_s_own_unit(two_ion) -> 
 def test_simultaneous_rb_runs_on_three_ions(two_ion) -> None:  # type: ignore[no-untyped-def]
     """The path the `pair` short-circuit made unreachable: simultaneous single-qubit RB on a three-ion chain, whose
     middle ion sees crosstalk from both sides."""
-    from qutip_trap.api import SolverOptions, yb171_chain
+    from qutip_trap.device.presets import yb171_chain
+    from qutip_trap.dynamics.engine import SolverOptions
 
     del two_ion
     preset = yb171_chain(3, address_waist_m=2.0e-6)

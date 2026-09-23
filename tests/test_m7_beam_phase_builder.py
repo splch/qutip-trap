@@ -8,8 +8,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qutip_trap.api import HilbertSpace, Pulse
+from qutip_trap.control.pulses import Pulse
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
+from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (

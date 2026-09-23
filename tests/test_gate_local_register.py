@@ -8,10 +8,12 @@ import numpy as np
 import pytest
 
 import qutip_trap as trap
-from qutip_trap.api import Circuit, Operation, SolverOptions, last_record
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.tomography import apply_kraus_dm, kraus_operators
 from qutip_trap.machine import Machine
 from qutip_trap.run.gate_local import REGISTER_STORE_DIM_MAX, AppliedChannel
+from qutip_trap.run.job import last_record
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))

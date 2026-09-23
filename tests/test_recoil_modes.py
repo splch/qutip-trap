@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, RfDrive, Trap
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.recoil import (
     angular_factor,
     direction_quadrature,
@@ -29,6 +29,8 @@ from qutip_trap.light.recoil import (
 )
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
+from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 
 K_369 = TWO_PI / 369.5e-9

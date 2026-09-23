@@ -15,7 +15,8 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Circuit, Result
+from qutip_trap.control.compiler import Circuit
+from qutip_trap.run.results import Result
 from tests.fixtures import make_result
 
 BITS = np.array([[0, 0], [1, 1], [0, 1], [1, 1], [0, 0]], dtype=np.uint8)

@@ -10,27 +10,18 @@ import math
 
 import numpy as np
 
-from qutip_trap.api import (
-    Beam,
-    CalEntry,
-    CalibrationTable,
-    Crystal,
-    Detector,
-    Device,
-    Diagnostics,
-    Drift,
-    Field,
-    HardwareChain,
-    HilbertSpace,
-    Mode,
-    ModeTruncation,
-    NoiseModel,
-    NoiseSpectrum,
-    Result,
-    RunState,
-    Trap,
-)
+from qutip_trap.control.hardware import HardwareChain
+from qutip_trap.control.table import CalEntry, CalibrationTable
+from qutip_trap.device.model import Device, Field
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.light.beams import Beam
+from qutip_trap.noise.model import NoiseModel
+from qutip_trap.noise.spectra import Drift, NoiseSpectrum
+from qutip_trap.readout.detection import Detector
+from qutip_trap.run.results import Diagnostics, Result, RunState
 from qutip_trap.species import species
+from qutip_trap.trap.crystal import Crystal, Mode
+from qutip_trap.trap.model import Trap
 
 SQ = 1.0 / math.sqrt(2.0)
 

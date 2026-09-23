@@ -13,7 +13,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from qutip_trap.api import SeedSpec
+from qutip_trap.dynamics.engine import SeedSpec
 from qutip_trap.hashing import canonical_digest, canonical_float
 from tests.fixtures import make_device
 
@@ -98,7 +98,7 @@ def test_seed_children_are_keyed_and_order_independent() -> None:
 
 
 def test_seed_channel_key_is_deterministic_across_processes() -> None:
-    code = "from qutip_trap.api import SeedSpec; print(SeedSpec.channel_key('photon_count'))"
+    code = "from qutip_trap.dynamics.engine import SeedSpec; print(SeedSpec.channel_key('photon_count'))"
     proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True)
     assert int(proc.stdout.strip()) == SeedSpec.channel_key("photon_count")
 

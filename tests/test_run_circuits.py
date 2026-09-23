@@ -9,21 +9,14 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    Circuit,
-    Operation,
-    SolverOptions,
-    calibrate,
-    ideal_probabilities,
-    last_record,
-    register_fidelity,
-    run,
-)
+from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.compiler import Circuit, Operation, ideal_probabilities
 from qutip_trap.control.schedule import ScheduleError
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
-from qutip_trap.run.job import enumerate_branches
+from qutip_trap.run.job import enumerate_branches, last_record, register_fidelity, run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))

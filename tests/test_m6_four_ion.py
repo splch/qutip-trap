@@ -15,10 +15,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qutip_trap.api import Circuit, Operation, SolverOptions, register_fidelity, run
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.options import Numerics
+from qutip_trap.run.job import register_fidelity, run
 from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))

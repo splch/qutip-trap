@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import dataclasses
 
-from qutip_trap.api import Beam, CalEntry, Device, Field, RfDrive, Trap
+from qutip_trap.control.table import CalEntry
+from qutip_trap.device.model import Device, Field
+from qutip_trap.light.beams import Beam
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
+from qutip_trap.trap.pseudopotential import RfDrive
 from tests.fixtures import make_calibration_table, make_detector, make_hardware, make_noise
 
 

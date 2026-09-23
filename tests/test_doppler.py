@@ -9,8 +9,8 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Beam, Trap
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import CoolingError
 from qutip_trap.light.recoil import angular_factor
 from qutip_trap.prep.closed_forms import (
@@ -25,6 +25,7 @@ from qutip_trap.species import species
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, ELECTRON_MASS_U, TWO_PI
 from tests.bloch_fixtures import (
     TWO_LEVEL_EXCITED_PLUS,

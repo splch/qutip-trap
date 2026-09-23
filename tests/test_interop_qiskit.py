@@ -10,7 +10,8 @@ pytest.importorskip("qiskit")
 from qiskit import QuantumCircuit, transpile  # noqa: E402
 
 from qutip_trap._compat import QutipTrapDeprecationWarning  # noqa: E402
-from qutip_trap.api import SolverOptions, yb171_chain  # noqa: E402
+from qutip_trap.device.presets import yb171_chain
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.interop.qiskit import QutipTrapBackend, QutipTrapProvider  # noqa: E402
 from qutip_trap.machine import Machine  # noqa: E402
 from qutip_trap.options import Numerics, Readout  # noqa: E402

@@ -16,10 +16,7 @@ import math
 
 import pytest
 
-from qutip_trap.api import (
-    Beam,  # noqa: E402  (kept next to the fixtures it builds)
-    Trap,
-)
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import WEAK_DRIVE_MAX, BlochModel, rate_coefficients_from_model
 from qutip_trap.prep.closed_forms import (
     effective_two_level,
@@ -48,6 +45,7 @@ from qutip_trap.prep.validity import (
 )
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, TWO_PI
 from tests.bloch_fixtures import (
     MASS_KG,

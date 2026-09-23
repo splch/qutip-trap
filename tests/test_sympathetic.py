@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import Beam, Trap
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import BlochModel
 from qutip_trap.prep.doppler import doppler_cooling
 from qutip_trap.prep.rates import (
@@ -32,6 +32,7 @@ from qutip_trap.prep.rates import (
 )
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.trap.crystal import build_crystal
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG as U_KG
 from qutip_trap.units import C_M_PER_S, TWO_PI
 from tests.bloch_fixtures import (

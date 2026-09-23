@@ -13,7 +13,7 @@ import math
 
 import pytest
 
-from qutip_trap.api import Circuit, Operation
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import ScheduleError, schedule
 from qutip_trap.control.shaping import gate_modes, symmetric_pulse
 from tests.m4_fixtures import derived_seeds, table_with_waveform

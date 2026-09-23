@@ -8,14 +8,6 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    Mains,
-    NoiseSpectrum,
-    gaussian_spectrum,
-    ou_spectrum,
-    power_law_spectrum,
-    white_spectrum,
-)
 from qutip_trap.noise.processes import (
     MAX_GRID_POINTS,
     Trajectory,
@@ -27,7 +19,15 @@ from qutip_trap.noise.processes import (
     time_grid,
 )
 from qutip_trap.noise.sampling import NoiseSample, key_qubit_trajectory_hz, quiet_sample
-from qutip_trap.noise.spectra import spectrum_from_single_sided_hz
+from qutip_trap.noise.spectra import (
+    Mains,
+    NoiseSpectrum,
+    gaussian_spectrum,
+    ou_spectrum,
+    power_law_spectrum,
+    spectrum_from_single_sided_hz,
+    white_spectrum,
+)
 from qutip_trap.trap.heating import single_sided_from_two_sided
 
 

@@ -18,11 +18,10 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, SeedSpec, SolverOptions, white_spectrum
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control.hardware import apply_hardware_chain
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.kernels import (
     FactorizedOperator,
@@ -33,8 +32,10 @@ from qutip_trap.dynamics.kernels import (
     prefer_factorized,
 )
 from qutip_trap.hilbert.operators import displacement_operator, qudit_projector, qudit_sigma_plus
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import KEY_INTENSITY_TRAJECTORY, NoiseSample, quiet_sample
+from qutip_trap.noise.spectra import white_spectrum
 from tests.fixtures import make_hardware
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,

@@ -9,21 +9,16 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    SolverOptions,
-    ghz_fidelity,
-    quantum_volume,
-    randomized_benchmarking,
-    yb171_chain,
-)
 from qutip_trap.benchmarks.budget import BenchmarkBudget, one_gate_circuit, reduced_choi
-from qutip_trap.benchmarks.ghz import fit_parity, ghz_circuit, parity_circuit
-from qutip_trap.benchmarks.rb import fit_decay, rb_model
-from qutip_trap.benchmarks.volume import random_square_circuit
+from qutip_trap.benchmarks.ghz import fit_parity, ghz_circuit, ghz_fidelity, parity_circuit
+from qutip_trap.benchmarks.rb import fit_decay, randomized_benchmarking, rb_model
+from qutip_trap.benchmarks.volume import quantum_volume, random_square_circuit
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control import native
 from qutip_trap.control.compiler import compile_report, ideal_probabilities
 from qutip_trap.control.two_qubit import haar_random_unitary
+from qutip_trap.device.presets import yb171_chain
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.machine import Machine
 from qutip_trap.noise.summary import (
     apply_choi,

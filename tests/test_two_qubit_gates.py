@@ -13,18 +13,6 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import (
-    Beam,
-    Crystal,
-    Device,
-    Field,
-    HilbertSpace,
-    Mode,
-    ModeTruncation,
-    SeedSpec,
-    SolverOptions,
-    Trap,
-)
 from qutip_trap.calibration.entangling import exact_gate_check, gate_space, ms_schedule
 from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.shaping import (
@@ -38,10 +26,15 @@ from qutip_trap.control.shaping import (
     symmetric_pulse,
 )
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.device.model import Device, Field
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.light.beams import Beam
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.species import species
+from qutip_trap.trap.crystal import Crystal, Mode
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 from qutip_trap.validation.two_qubit_closed_forms import (
     ballance_dephasing_coefficient,

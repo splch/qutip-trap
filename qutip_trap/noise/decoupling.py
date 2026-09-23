@@ -22,7 +22,7 @@ from qutip_trap.control.composite import CompositePulse
 if TYPE_CHECKING:
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.device.model import Device
-    from qutip_trap.experiments import ExperimentResult
+    from qutip_trap.experiments.result import ExperimentResult
     from qutip_trap.noise.spectra import NoiseSpectrum
 
 M7 = "milestone M7 (noise/decoupling.py, PLAN.md Section 6.9)"
@@ -758,7 +758,7 @@ def filter_function(
     positive, else 2 pi/``experiment_duration_s``, else three decades below the sequence; ``monte_carlo_samples``
     cross-checks 1 - F_av with sampled b(t) trajectories through the Hamiltonian builder.
     """
-    from qutip_trap.experiments import ExperimentResult
+    from qutip_trap.experiments.result import ExperimentResult
     from qutip_trap.noise.model import GAUSS_PER_TESLA
 
     if isinstance(control, DecouplingSequence):

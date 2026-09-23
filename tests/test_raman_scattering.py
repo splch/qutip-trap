@@ -341,7 +341,7 @@ def _weak_beam(st: AtomicStructure, beam, a, omega_over_delta: float = 0.02):  #
     The toy fixture's reduced dipole element scales as sqrt(Gamma/omega^3) and is enormous at MHz transition frequencies, so the
     power is set from the coupling rather than guessed.
     """
-    from qutip_trap.api import Beam
+    from qutip_trap.light.beams import Beam
 
     couplings = st.couplings_from(a, beam)
     omega_max = max(abs(om) for _e, om, _d in couplings)
@@ -440,7 +440,7 @@ def test_rayleigh_dephasing_against_mesolve() -> None:
 
 def test_species_api_end_to_end_on_the_fixture() -> None:
     """The Appendix E methods route through the same engine and speak Hz."""
-    from qutip_trap.api import Field
+    from qutip_trap.device.model import Field
 
     sp = be9_like()
     field = Field(B_gauss=1.0, direction=(0.0, 0.0, 1.0), noise=None)

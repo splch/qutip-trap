@@ -16,8 +16,9 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, Pulse, Schedule, SeedSpec, SolverOptions
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.schedule import Schedule
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.evolve import (
     LARGE_MODE_ATOL,
     LARGE_MODE_DIMENSION,
@@ -25,6 +26,7 @@ from qutip_trap.dynamics.evolve import (
     evolve,
     tightened,
 )
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.hilbert.truncation import halving_test
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample

@@ -10,14 +10,14 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, SolverOptions
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.shaping import GateModes
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.hilbert.operators import displacement_matrix_analytic, required_margin
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.hilbert.truncation import regrid_state
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.run.space import (

@@ -10,17 +10,9 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import (
-    Drift,
-    HilbertSpace,
-    Mains,
-    ModeTruncation,
-    Schedule,
-    SeedSpec,
-    SolverOptions,
-    white_spectrum,
-)
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.control.schedule import Schedule
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.model import GAUSS_PER_TESLA, NoiseModel
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
@@ -33,7 +25,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_trajectory_hz,
     quiet_sample,
 )
-from qutip_trap.noise.spectra import ou_spectrum
+from qutip_trap.noise.spectra import Drift, Mains, ou_spectrum, white_spectrum
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate
 from qutip_trap.units import ATOMIC_MASS_KG
 from tests.fixtures import make_noise

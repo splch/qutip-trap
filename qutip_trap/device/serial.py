@@ -102,25 +102,24 @@ _REGISTRY: dict[str, type] = {}
 
 
 def _registry() -> dict[str, type]:
-    """Every dataclass the device tree names, by class name: ``qutip_trap.api``'s and the others in their modules."""
+    """Every dataclass of the package by class name (the device tree's annotations name classes bare)."""
     if _REGISTRY:
         return _REGISTRY
-    import sys
+    import importlib
+    import pkgutil
 
-    from qutip_trap import api
+    import qutip_trap
 
-    for name in api.__all__:
-        obj = getattr(api, name)
-        if isinstance(obj, type) and dataclasses.is_dataclass(obj):
-            _REGISTRY.setdefault(name, obj)
-    modules = {obj.__module__ for obj in list(_REGISTRY.values())}
-    for modname in sorted(modules):
-        mod = sys.modules.get(modname)
-        if mod is None:
-            continue
-        for name, obj in vars(mod).items():
-            if isinstance(obj, type) and dataclasses.is_dataclass(obj) and obj.__module__ == modname:
-                _REGISTRY.setdefault(name, obj)
+    for info in pkgutil.walk_packages(qutip_trap.__path__, "qutip_trap."):
+        if info.name.startswith("qutip_trap.interop"):
+            continue  # needs the optional qiskit extra, and holds no device record
+        module = importlib.import_module(info.name)
+        for name, obj in vars(module).items():
+            if isinstance(obj, type) and dataclasses.is_dataclass(obj) and obj.__module__ == module.__name__:
+                if _REGISTRY.setdefault(name, obj) is not obj:
+                    raise RuntimeError(
+                        f"two dataclasses are named {name}; the device record names classes bare"
+                    )
     return _REGISTRY
 
 

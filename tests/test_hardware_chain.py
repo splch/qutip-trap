@@ -9,18 +9,11 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    HilbertSpace,
-    ModeTruncation,
-    Pulse,
-    Schedule,
-    SeedSpec,
-    SolverOptions,
-    apply_hardware_chain,
-)
-from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains
-from qutip_trap.control.schedule import response_phase_rad
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains, apply_hardware_chain
+from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.schedule import Schedule, response_phase_rad
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample

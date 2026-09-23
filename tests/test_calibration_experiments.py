@@ -11,23 +11,21 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import RfDrive, white_spectrum
-from qutip_trap.experiments import (
-    crosstalk_scan,
-    field_scan,
-    heating_rate,
+from qutip_trap.experiments.light import crosstalk_scan, field_scan, stark_scan
+from qutip_trap.experiments.micromotion import (
+    correlation_signal,
     micromotion_scan,
-    mode_spectroscopy,
-    rabi_scan,
-    sideband_spectroscopy,
-    stark_scan,
-    thermometry,
+    periodic_scattering,
+    signed_beta,
 )
-from qutip_trap.experiments.micromotion import correlation_signal, periodic_scattering, signed_beta
+from qutip_trap.experiments.motion import heating_rate, mode_spectroscopy, thermometry
+from qutip_trap.experiments.single_ion import rabi_scan, sideband_spectroscopy
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, differential_stark_shift_hz
 from qutip_trap.machine import as_machine
+from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
+from qutip_trap.trap.pseudopotential import RfDrive
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
 

@@ -7,13 +7,14 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import CompositePulse, composite_pulse
 from qutip_trap.control.composite import (
     MOUNT_PD6_PHASES,
     SUZUKI_PHASE_TOLERANCE,
+    CompositePulse,
     _t2j,
     ap1_phases,
     certificate,
+    composite_pulse,
     corpse_angles,
     fidelity_avg,
     fidelity_c,

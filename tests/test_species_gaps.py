@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import pytest
 
-from qutip_trap.species import MODULES, IncompleteSpeciesTable, species
+from qutip_trap.species import MODULES, species
 from qutip_trap.species.model import Level
 from qutip_trap.species.sources import SOURCES
-from qutip_trap.species.table import TAGS
+from qutip_trap.species.table import TAGS, IncompleteSpeciesTable
 from qutip_trap.species.zeeman import HyperfineZeeman, clock_points
 
 BA133 = MODULES["133Ba+"].TABLE

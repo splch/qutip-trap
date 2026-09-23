@@ -17,8 +17,8 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import composite_pulse
 from qutip_trap.control.composite import (
+    composite_pulse,
     operator_distance_up_to_phase,
     rotation,
     suzuki_block_power,
