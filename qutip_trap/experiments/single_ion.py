@@ -37,7 +37,7 @@ from qutip_trap.experiments.result import (
     realized_drive,
     requested_drive,
 )
-from qutip_trap.machine import as_machine, laboratory_kwargs
+from qutip_trap.machine import Machine, laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Drive
@@ -126,7 +126,7 @@ def _setup(device: Device, ion: int, kw: dict[str, Any]) -> _Setup:
     )
 
     nbar: dict[int, float] = {int(k): float(v) for k, v in dict(kw.get("nbar", {})).items()}
-    gate_drive: GateDrive = kw.get("gate_drive") or default_gate_drives(device)[ion]
+    gate_drive: GateDrive = default_gate_drives(device)[ion]
     detuning = float(kw.get("detuning_hz", 0.0))
     phase = float(kw.get("phase_rad", 0.0))
     n_modes = len(device.crystal.modes)
@@ -338,13 +338,11 @@ def _run(
 # ---- the experiments -----------------------------------------------------------------------------------------------------------
 
 
-def rabi_scan(
-    machine: Machine | Device, ion: int, durations_s: Sequence[float], **kw: Any
-) -> ExperimentResult:
+def rabi_scan(machine: Machine, ion: int, durations_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """Scan the pulse duration of Rabi flopping (carrier, or sideband with ``detuning_hz``) on ``ion``; returns a
     ``RabiScan`` fitted with the thermal Debye-Waller envelope (f_rabi_hz, nbar, contrast). ``nbar_fixed`` (from the
     thermometry) fits (f_rabi, contrast, offset) instead: a free-nbar fit over too short a scan is degenerate."""
-    device, kw = laboratory_kwargs(machine, kw, caller=rabi_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.control.pulses import Pulse
 
     setup = _setup(device, ion, kw)
@@ -434,11 +432,11 @@ def rabi_scan(
     )
 
 
-def ramsey(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
+def ramsey(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """Scan the delay of pi/2 - delay - pi/2(``analysis_phase_rad``) on ``ion``; returns a ``RamseyFringe`` fitted with
     P = A cos(2 pi delta t + phi_0) + B. ``pi_half_s`` defaults to 1/(4 f) at ``rabi_hz_belief`` (else the physical Rabi
     frequency); ``delay_pulses`` is a callable (start, end) -> pulses filling the delay."""
-    device, kw = laboratory_kwargs(machine, kw, caller=ramsey)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.control.pulses import Pulse
 
     setup = _setup(device, ion, kw)
@@ -504,16 +502,14 @@ def ramsey(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw:
     )
 
 
-def ramsey_frequency(
-    machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any
-) -> ExperimentResult:
+def ramsey_frequency(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """Two Ramsey delay scans at drive detunings +-``probe_hz`` (default 1 kHz); returns a ``RamseyFringe`` with
     qubit_freq_hz = ``frame_hz`` plus the signed fringe offset (valid while |offset| < probe)."""
-    device, kw = laboratory_kwargs(machine, kw, caller=ramsey_frequency)
+    device, kw = laboratory_kwargs(machine, kw)
     probe = abs(float(kw.get("probe_hz", 1e3)))
     frame_hz = float(kw.get("frame_hz", 0.0))
-    plus = ramsey(as_machine(device), ion, delays_s, **{**kw, "detuning_hz": +probe})
-    minus = ramsey(as_machine(device), ion, delays_s, **{**kw, "detuning_hz": -probe})
+    plus = ramsey(Machine(device), ion, delays_s, **{**kw, "detuning_hz": +probe})
+    minus = ramsey(Machine(device), ion, delays_s, **{**kw, "detuning_hz": -probe})
     fp = abs(plus.fitted["delta_hz"][0]) if plus.fitted else math.nan
     fm = abs(minus.fitted["delta_hz"][0]) if minus.fitted else math.nan
     # a fringe at |probe - x| for the + scan and |probe + x| for the - scan pins the true offset x of the transition from the frame
@@ -554,12 +550,12 @@ def ramsey_frequency(
 
 
 def sideband_spectroscopy(
-    machine: Machine | Device, ion: int, detunings_hz: Sequence[float], **kw: Any
+    machine: Machine, ion: int, detunings_hz: Sequence[float], **kw: Any
 ) -> ExperimentResult:
     """Scan the drive detuning of a pulse of ``duration_s`` (default the carrier pi time); returns a ``SidebandSpectrum``
     with the peaks nearest the carrier and the driven mode's sidebands; ``fit=True`` also fits the blue-sideband and
     carrier lineshapes where five points lie near them (blue_sideband_fit_hz, omega_bsb_hz, carrier_fit_hz)."""
-    device, kw = laboratory_kwargs(machine, kw, caller=sideband_spectroscopy)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.control.pulses import Pulse
 
     base = _setup(device, ion, {**kw, "detuning_hz": 0.0})

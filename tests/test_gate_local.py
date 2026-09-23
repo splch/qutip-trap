@@ -21,7 +21,8 @@ from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
 from qutip_trap.run.gate_local import clear_gate_local_cache, gate_steps
-from qutip_trap.run.job import last_record, register_fidelity, run
+from qutip_trap.run.job import last_record, register_fidelity
+from tests.fixtures import run
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
 

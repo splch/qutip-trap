@@ -19,7 +19,7 @@ from scipy.special import jv
 from qutip_trap.experiments.fitting import at_scan_edge, weighted_fit
 from qutip_trap.experiments.result import ExperimentResult, MicromotionScan, ScanParameters
 from qutip_trap.experiments.single_ion import _observation
-from qutip_trap.machine import as_machine, laboratory_kwargs
+from qutip_trap.machine import Machine, laboratory_kwargs
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
@@ -210,7 +210,7 @@ def _invert_j1_over_j0(ratio: float) -> float:
 
 
 def micromotion_scan(
-    machine: Machine | Device,
+    machine: Machine,
     ion: int,
     beam: int,
     shim_ranges_v: Mapping[str, tuple[float, float]],
@@ -224,7 +224,7 @@ def micromotion_scan(
     the shot noise), ``gate_drive`` and ``sideband_duration_s`` for ``sideband_ratio`` (``beam`` then names the drive's
     table-key beam). Data rows (pass, shim index, setting, signal, sigma). Without an rf record: exact zeros, no scan.
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=micromotion_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     if method not in METHODS:
         raise ValueError(f"method is one of {METHODS}")
     obs = _observation(device, kw)
@@ -349,14 +349,13 @@ def micromotion_scan(
     from qutip_trap.experiments.single_ion import _run, _setup, rabi_scan
     from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive
 
-    gate_drive = kw.get("gate_drive") or default_gate_drives(device)[ion]
+    gate_drive = default_gate_drives(device)[ion]
     if gate_drive.kind not in ("raman", "optical_E1", "optical_E2"):
         raise ValueError("the sideband-ratio method drives the ion with laser light")
     f_rf = float(device.trap.rf.frequency_hz)
     bopts = BuilderOptions(micromotion="modulated")
     base_kw = {
         **kw,
-        "gate_drive": gate_drive,
         "rf_locked": True,
         "rf_phase_rad": 0.0,
         "builder_options": bopts,
@@ -373,9 +372,7 @@ def micromotion_scan(
     beta0 = signed_beta(device, ion, k_vec)
     t_sb = float(kw.get("sideband_duration_s") or 1.0 / (4.0 * float(jv(1, 0.2)) * omega))
 
-    scan_kw = {
-        k: v for k, v in base_kw.items() if k != "gate_drive"
-    }  # rabi_scan reads the drive from the roles
+    scan_kw = base_kw
 
     def with_role(trial: Device) -> Device:
         gate = dict(trial.roles.gate) if trial.roles.gate is not None else default_gate_drives(trial)
@@ -383,13 +380,13 @@ def micromotion_scan(
 
     def carrier_rate(trial: Device) -> tuple[float, float]:
         ts = [float(x) for x in np.linspace(0.0, 2.0 / omega, 9)]
-        res = rabi_scan(as_machine(with_role(trial)), ion, ts, **{**scan_kw, "detuning_hz": 0.0})
+        res = rabi_scan(Machine(with_role(trial)), ion, ts, **{**scan_kw, "detuning_hz": 0.0})
         return res.fitted["f_rabi_hz"]
 
     def sideband_excitation(trial: Device, index: int) -> tuple[float, float | None]:
         from qutip_trap.control.pulses import Pulse
 
-        setup = _setup(trial, ion, {**base_kw, "detuning_hz": f_rf})
+        setup = _setup(with_role(trial), ion, {**base_kw, "detuning_hz": f_rf})
         pulse = Pulse(setup.drive, 0.0, t_sb, "micromotion_sideband", ())
         avg = _run(trial, ion, [pulse], setup, base_kw)
         return obs.p1(avg.final_p1(ion), ion, "micromotion_sideband", index)

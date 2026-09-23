@@ -25,10 +25,11 @@ from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.dynamics.tomography import cp_residual
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics
-from qutip_trap.run.job import last_record, run
+from qutip_trap.run.job import last_record
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -333,16 +334,13 @@ def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
     out = {}
     for mp, workers in (("serial", 1), ("parallel", min(N_WORKERS, 6))):
         opts = SolverOptions(map=mp, workers=workers, **kw)  # type: ignore[arg-type]
-        out[mp] = run(
-            circuit,
+        out[mp] = Machine(
             fx.device,
-            shots,
             table=sur.table,
-            keep_final_state=True,
-            level="JOINT_EXACT",
             physics=Physics.from_solver_options(opts),
             numerics=Numerics.from_solver_options(opts),
-        )
+            level="JOINT_EXACT",
+        ).run(circuit, shots, keep_final_state=True)
     return out["serial"], out["parallel"]
 
 

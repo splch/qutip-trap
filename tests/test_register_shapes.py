@@ -14,8 +14,9 @@ import pytest
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SolverOptions
+from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics
-from qutip_trap.run.job import ideal_register_state, last_record, register_fidelity, run
+from qutip_trap.run.job import ideal_register_state, last_record, register_fidelity
 from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
@@ -31,15 +32,12 @@ def two_ion():  # type: ignore[no-untyped-def]
 
 def _run(two_ion, circuit: Circuit, shots: int = 40):  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    return run(
-        circuit,
+    return Machine(
         fx.device,
-        shots,
         table=sur.table,
-        keep_final_state=True,
         physics=Physics.from_solver_options(FAST),
         numerics=Numerics.from_solver_options(FAST),
-    )
+    ).run(circuit, shots, keep_final_state=True)
 
 
 def test_register_fidelity_of_a_circuit_on_fewer_qubits_than_ions(two_ion) -> None:  # type: ignore[no-untyped-def]

@@ -11,7 +11,6 @@ import sys
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import (
@@ -26,8 +25,8 @@ from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
+from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Truncation
-from qutip_trap.run.job import run
 from qutip_trap.run.levels import FidelityLevel, decide_level, resolve_level
 from tests.fixtures import make_device
 from tests.m6_fixtures import circuit_fixture
@@ -113,7 +112,6 @@ def test_each_preset_carries_its_old_drive_maps_as_roles(build) -> None:  # type
     # the declared detection beam is the one the wavelengths pick, and the readout's set contains it
     assert infer_detection_beam(dev) == preset.detection_beam
     assert preset.detection_beam in detection_beams(dev, 0)
-    assert not hasattr(preset, "run_kwargs"), "deprecated in 0.2.0, removed in 0.4.0 (docs/deprecations.md)"
 
 
 @pytest.mark.skipif(
@@ -189,23 +187,8 @@ def two_ion():  # type: ignore[no-untyped-def]
 
 
 def test_run_without_drive_keywords_reproduces_the_bell_histogram_bit_for_bit(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """docs/examples.md's run (roles from the device) against the 0.1.0 call form (the preset's maps as keyword arguments)."""
     preset, table = two_ion
-    new = run(BELL, preset.device, 400, table=table, numerics=FAST, seed=3)
-    with pytest.warns(
-        QutipTrapDeprecationWarning
-    ):  # options, gate_drives and entangling_drives: three rewrites (2.1)
-        old = run(
-            BELL,
-            preset.device,
-            400,
-            table=table,
-            options=SolverOptions(branch_weight_min=1e-3),
-            seed=3,
-            gate_drives=preset.gate_drives,
-            entangling_drives=preset.entangling_drives,
-        )
-    assert np.array_equal(new.bitstrings, old.bitstrings) and new.counts == old.counts
+    new = Machine(preset.device, table=table, numerics=FAST).run(BELL, 400, seed=3)
     assert new.probabilities["00"] + new.probabilities["11"] > 0.98
     # 1.2: the diagnostics say which level ran and why, with the dimension and the non-zeros against the guards
     assert new.diagnostics.level == "JOINT_EXACT" == FidelityLevel.JOINT_EXACT
@@ -216,13 +199,8 @@ def test_run_without_drive_keywords_reproduces_the_bell_histogram_bit_for_bit(tw
 
 def test_a_forced_level_reports_the_choice_auto_would_have_made(two_ion) -> None:  # type: ignore[no-untyped-def]
     preset, table = two_ion
-    forced = run(
-        Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)),
-        preset.device,
-        20,
-        table=table,
-        level=FidelityLevel.GATE_LOCAL,
-        numerics=FAST,
+    forced = Machine(preset.device, table=table, numerics=FAST, level=FidelityLevel.GATE_LOCAL).run(
+        Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)), 20
     )
     assert forced.diagnostics.level == "GATE_LOCAL"
     assert forced.diagnostics.level_reason.startswith(

@@ -40,12 +40,10 @@ from qiskit.result.models import ExperimentResult, ExperimentResultData
 from qiskit.transpiler import Target
 
 from qutip_trap import __version__
-from qutip_trap._compat import message, warn
 from qutip_trap.control.table import CalibrationTable
-from qutip_trap.device.presets import DevicePreset, ca40_optical, yb171_chain
+from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.io.openqasm import load_openqasm2
 from qutip_trap.machine import Machine
-from qutip_trap.run.job import machine_with_run_kwargs
 from qutip_trap.run.results import Result
 
 PRESETS: dict[str, Any] = {"yb171_chain": yb171_chain, "ca40_optical": ca40_optical}
@@ -89,21 +87,12 @@ class QutipTrapJob(JobV1):
 
 class QutipTrapBackend(BackendV2):
     """A ``Machine`` as a Qiskit backend. ``table`` pins a calibration on the machine and ``run_options`` are defaults for
-    every ``run``; a ``DevicePreset`` is still accepted, with a deprecation warning."""
+    every ``run``: ``shots``, ``seed``, and any of the machine's ``table``, ``level``, ``physics``, ``numerics`` and
+    ``readout``."""
 
     def __init__(
-        self, machine: Machine | DevicePreset, *, table: CalibrationTable | None = None, **run_options: Any
+        self, machine: Machine, *, table: CalibrationTable | None = None, **run_options: Any
     ) -> None:
-        if isinstance(machine, DevicePreset):
-            warn(
-                message(
-                    "a DevicePreset as the first argument of QutipTrapBackend",
-                    "v0.5",
-                    "Pass preset.machine() (a Machine) instead.",
-                ),
-                stacklevel=2,
-            )
-            machine = machine.machine()
         if table is not None:
             machine = replace(machine, table=table)
         label = machine.name or machine.device.hash()[:12]
@@ -133,25 +122,14 @@ class QutipTrapBackend(BackendV2):
         kwargs = {**self.run_options, **options}
         shots = int(kwargs.pop("shots", self.options.shots))
         seed = int(kwargs.pop("seed", self.options.seed))
-        level = kwargs.pop("level", None)
-        table = kwargs.pop("table", None)
-        physics = kwargs.pop("physics", None)
-        numerics = kwargs.pop("numerics", None)
-        readout = kwargs.pop("readout", None)
-        if isinstance(readout, str):  # the legacy string form shares the option object's name
-            kwargs["readout"] = readout
-            readout = None
-        machine = machine_with_run_kwargs(
-            self.machine,
-            kwargs,
-            caller="qutip_trap.interop.qiskit.QutipTrapBackend.run",
-            stacklevel=2,
-            table=table,
-            level=level,
-            physics=physics,
-            numerics=numerics,
-            readout=readout,
-        )
+        changes = {
+            k: v
+            for k in ("table", "level", "physics", "numerics", "readout")
+            if (v := kwargs.pop(k, None)) is not None
+        }
+        if kwargs:
+            raise TypeError(f"QutipTrapBackend.run got unexpected options {sorted(kwargs)}")
+        machine = replace(self.machine, **changes)
         results = [machine.run(load_openqasm2(dumps(c)), shots, seed=seed) for c in circuits]
         job_id = str(uuid.uuid4())
         experiments = [_experiment(c, r) for c, r in zip(circuits, results)]

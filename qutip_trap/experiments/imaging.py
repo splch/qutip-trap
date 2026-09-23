@@ -38,14 +38,14 @@ def _ion_rates(device: Device, ion: int) -> tuple[float, float] | None:
     return float(model.detected_bright_per_s), float(model.background_per_s)
 
 
-def crystal_image(machine: Machine | Device, **kw: Any) -> ExperimentResult:
+def crystal_image(machine: Machine, **kw: Any) -> ExperimentResult:
     """Image the chain once (no scan) against the nominal crystal; returns a ``CrystalImage``.
 
     ``run_state`` the machine state to image (default nominal), ``exposure_s`` (default ten detection windows), ``species``
     the species whose light is on (default every detection beam), ``psf_sigma_m`` a Gaussian PSF for a camera without an
     NA. Fitted n_ions, n_bright, n_dark, n_lost, bright[i], counts[i] and position_m[i] (camera only).
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=crystal_image)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.run.results import RunState
 
     n = device.crystal.n_ions

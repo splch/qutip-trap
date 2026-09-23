@@ -29,7 +29,6 @@ def test_yb171_chain_is_the_m6_fixture_device() -> None:
             gate=preset.gate_drives, entangling=preset.entangling_drives, detection=preset.detection_beam
         )
         assert default_gate_drives(preset.device) == preset.gate_drives
-        assert not hasattr(preset, "run_kwargs"), "deprecated in 0.2.0, removed in 0.4.0"
         assert preset.device.preparation is not None and preset.device.noise.is_quiet(preset.device)
 
 

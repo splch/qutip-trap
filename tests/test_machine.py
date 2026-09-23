@@ -11,15 +11,13 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.schedule import schedule
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine
 from qutip_trap.machine import Estimate, Machine
 from qutip_trap.options import Numerics, Physics, Readout, Truncation
-from qutip_trap.run.job import run
 from qutip_trap.run.levels import FidelityLevel
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
@@ -57,18 +55,10 @@ def test_calibrated_pins_a_table_for_the_device(machine) -> None:  # type: ignor
         m.calibrated("guess")  # type: ignore[arg-type]
 
 
-def test_machine_run_equals_run_field_for_field(machine, bell) -> None:  # type: ignore[no-untyped-def]
+def test_machine_run_reproduces_the_fixture_run_field_for_field(machine, bell) -> None:  # type: ignore[no-untyped-def]
     preset, m = machine
-    reference = run(BELL, preset.device, 400, table=m.table, numerics=FAST, seed=0)
-    # the 0.1.0 call shape is rewritten onto the same machine, with the warning naming the keyword and its new home (2.1)
-    with pytest.warns(
-        QutipTrapDeprecationWarning, match=r"'options' argument of qutip_trap.run.job.run .* v0.5"
-    ):
-        legacy = run(
-            BELL, preset.device, 400, table=m.table, options=SolverOptions(branch_weight_min=1e-3), seed=0
-        )
-    assert np.array_equal(legacy.bitstrings, reference.bitstrings) and legacy.counts == reference.counts
-    assert legacy.machine_hash == reference.machine_hash == bell.machine_hash
+    reference = Machine(preset.device, table=m.table, numerics=FAST).run(BELL, 400, seed=0)
+    assert reference.machine_hash == bell.machine_hash
     assert np.array_equal(bell.bitstrings, reference.bitstrings) and np.array_equal(
         bell.heralds, reference.heralds
     )
@@ -87,7 +77,6 @@ def test_machine_run_equals_run_field_for_field(machine, bell) -> None:  # type:
         if f.name == "wall_clock_span_s":
             continue
         assert getattr(bell.diagnostics, f.name) == getattr(reference.diagnostics, f.name), f.name
-        assert getattr(legacy.diagnostics, f.name) == getattr(reference.diagnostics, f.name), f.name
 
 
 def test_schedule_equals_the_scheduler_on_the_same_table(machine) -> None:  # type: ignore[no-untyped-def]

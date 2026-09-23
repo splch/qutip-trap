@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import warnings
 
 import numpy as np
 import pytest
 
-from qutip_trap.calibration import calibrate, calibrate_with_report
+from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.cache import DEFAULT_CACHE, CalibrationCache
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
 from qutip_trap.calibration.surrogate import surrogate_table
@@ -28,7 +27,7 @@ from qutip_trap.experiments.fitting import (
 )
 from qutip_trap.experiments.imaging import crystal_image
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
-from qutip_trap.machine import Machine, as_machine
+from qutip_trap.machine import Machine
 from qutip_trap.noise.model import servo_residual
 from qutip_trap.noise.spectra import Drift
 from qutip_trap.run.results import RunState
@@ -224,13 +223,6 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
     assert cache.invalidate(fx.device) == 1 and cache.tables_for(fx.device) == ()
     report = calibrate(Machine(changed), cache=cache, **kw)  # type: ignore[arg-type]
     assert report.table is t3, "the report is cached beside its table"
-    # the 0.1.0 name warns twice since 0.4.0 (the deprecated name, the bare device) and computes the same table under
-    # its own cache key (the bare-device arguments)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        legacy = calibrate_with_report(changed, cache=cache, **kw)  # type: ignore[arg-type]
-    assert any("calibrate_with_report is deprecated" in str(w.message) for w in caught)
-    assert legacy.table == t3
     assert isinstance(DEFAULT_CACHE, CalibrationCache)
 
 
@@ -285,15 +277,15 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
 
 def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, _sur = two_ion
-    img = crystal_image(as_machine(fx.device), shots=1)
+    img = crystal_image(Machine(fx.device), shots=1)
     assert img.converged and img.fitted["n_bright"][0] == 2.0 and img.fitted["n_dark"][0] == 0.0
     assert img.fitted["counts[0]"][0] > 50.0
     dark = crystal_image(
-        as_machine(fx.device), run_state=RunState((0, 1), frozenset({1}), frozenset(), ()), shots=1
+        Machine(fx.device), run_state=RunState((0, 1), frozenset({1}), frozenset(), ()), shots=1
     )
     assert not dark.converged and dark.fitted["n_dark"][0] == 1.0 and dark.fitted["bright[1]"][0] == 0.0
     assert any("read dark" in n for n in dark.notes)
-    lost = crystal_image(as_machine(fx.device), run_state=RunState((0, 1), frozenset(), frozenset({0}), ()))
+    lost = crystal_image(Machine(fx.device), run_state=RunState((0, 1), frozenset(), frozenset({0}), ()))
     assert lost.fitted["n_lost"][0] == 1.0 and lost.fitted["bright[0]"][0] == 0.0
 
 

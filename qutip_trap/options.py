@@ -11,7 +11,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
-from qutip_trap._compat import deprecated
 from qutip_trap.control.schedule import CrosstalkSuppression
 from qutip_trap.dynamics.engine import LindbladMethod, RecoilOption, SolverOptions
 
@@ -345,35 +344,6 @@ class Readout(_FromMapping):
         return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
 
-@deprecated(
-    deadline="v0.5",
-    fix="Pass physics=, numerics= and readout= to run, or build a Machine with them and call Machine.run.",
-)
-def to_run_kwargs(physics: Physics, numerics: Numerics, readout: Readout) -> dict[str, Any]:
-    """The legacy ``run`` keyword arguments for these option objects."""
-    tr = numerics.truncation
-    return {
-        "options": numerics.to_solver_options(physics),
-        "space": tr.space,
-        "caps": tr.caps,
-        "enr_group": tr.enr_group,
-        "samples": numerics.parallel.samples,
-        "parallel": numerics.parallel.addressing,
-        "noise": physics.noise,
-        "internal_levels": physics.internal_levels,
-        "stark_compensation": physics.stark_compensation,
-        "crosstalk_suppression": physics.crosstalk_suppression,
-        "entangler": physics.entangler,
-        "channels": physics.extra_channels,
-        "builder_options": physics.builder,
-        "t0_s": physics.t0_s,
-        "shot_period_s": physics.shot_period_s,
-        "readout": readout.mode,
-        "discriminator": readout.discriminator,
-        "povm_samples": readout.povm_samples,
-    }
-
-
 __all__ = [
     "GateLocal",
     "Integration",
@@ -386,5 +356,4 @@ __all__ = [
     "Scattering",
     "Trajectories",
     "Truncation",
-    "to_run_kwargs",
 ]

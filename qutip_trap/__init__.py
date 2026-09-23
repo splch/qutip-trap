@@ -15,7 +15,7 @@ __version__ = "0.4.0"
 from qutip_trap import presets  # noqa: E402
 from qutip_trap.control.compiler import Circuit, Operation  # noqa: E402
 from qutip_trap.device.model import BeamRoles, Device  # noqa: E402
-from qutip_trap.machine import Estimate, Machine, as_machine  # noqa: E402
+from qutip_trap.machine import Estimate, Machine  # noqa: E402
 from qutip_trap.options import Numerics, Physics, Readout  # noqa: E402
 from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level  # noqa: E402
 from qutip_trap.run.results import Diagnostics, Progress, Result  # noqa: E402
@@ -42,7 +42,6 @@ __all__ = [
     "Result",
     "RunSpec",
     "__version__",
-    "as_machine",
     "decide_level",
     "presets",
 ]

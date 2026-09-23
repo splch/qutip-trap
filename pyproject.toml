@@ -43,8 +43,6 @@ packages = ["qutip_trap"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-# a deprecated path used inside the package, or a test that forgets pytest.warns, fails (docs/api_implementation_plan.md 0.1)
-filterwarnings = ["error::qutip_trap._compat.QutipTrapDeprecationWarning"]
 markers = [
     "slow: level-C solves that take more than a few seconds (run in CI, deselect locally with -m 'not slow')",
     "heavy: must run alone in CI, after the parallel pass: peak resident memory of several gigabytes (the direct sparse factorization of a large Liouvillian, which beside three other workers exhausts a 16 GB runner and stalls the run in swap), or a wall-time measurement that four competing workers would falsify",

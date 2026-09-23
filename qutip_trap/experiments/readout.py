@@ -10,18 +10,17 @@ from qutip_trap.experiments.result import DetectionHistogram, ExperimentResult, 
 from qutip_trap.machine import laboratory_kwargs
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 
-def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
+def detection_histogram(machine: Machine, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
     """Histogram ``n_records`` bright and dark photon counts of ``ion`` over candidate windows; returns a
     ``DetectionHistogram`` with the threshold and window minimizing the average error, and the fitted rates.
 
     ``detection_beams`` overrides the device's, ``scheme`` the ``ReadoutScheme``, ``levels`` the fine-structure levels,
     ``windows_s`` the candidate bin times (default 0.25 to 2.5 detector windows); ``data`` rows are the two histograms.
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=detection_histogram)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.calibration.readout import calibrate_detection
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel

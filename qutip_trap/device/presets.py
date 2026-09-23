@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap._compat import deprecated
 from qutip_trap.control.hardware import HardwareChain
 from qutip_trap.control.schedule import GateDrive
 from qutip_trap.device.model import BeamRoles, Device, Field
@@ -58,12 +57,6 @@ class DevicePreset:
         from qutip_trap.machine import Machine
 
         return Machine(self.device, name=self.name)
-
-
-@deprecated(deadline="v0.5", fix="Call NoiseModel() instead; every default of the model means off.")
-def quiet_noise_model() -> NoiseModel:
-    """A noise model with every channel off: ``NoiseModel()``."""
-    return NoiseModel()
 
 
 def ideal_hardware(*, phase_continuous: bool = False, dead_time_s: float = 1e-6) -> HardwareChain:
@@ -458,7 +451,6 @@ __all__ = [
     "myerson_ca40_pmt_detector",
     "ideal_hardware",
     "oblique_detection_beam",
-    "quiet_noise_model",
     "raman_pair_along_x",
     "secular_trap",
     "yb171_chain",

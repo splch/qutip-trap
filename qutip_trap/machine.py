@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.options import Numerics, Physics, Readout
@@ -16,6 +16,7 @@ from qutip_trap.run.space import ModeClass3
 
 if TYPE_CHECKING:
     from qutip_trap.benchmarks.error_model import ErrorModel
+    from qutip_trap.calibration import CalibrationMethod
     from qutip_trap.control.compiler import Circuit, CompileReport
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.control.table import CalibrationTable
@@ -24,9 +25,6 @@ if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.run.results import Progress, Result
     from qutip_trap.run.spec import Job, RunSpec
-
-CalibrationMethod = Literal["closed_form", "experiments"]
-"""``Machine.calibrated`` and ``calibration.calibrate``: the closed-form surrogate or the simulated experiments."""
 
 COST_FIXED_S = 0.02
 """The fitted per-segment constant a (s) of the cost model cost = a + b x elements x evaluations."""
@@ -306,55 +304,17 @@ class Machine:
         return "\n".join(lines)
 
 
-def as_machine(machine: Machine | Device) -> Machine:
-    """``machine`` itself, or a ``Device`` wrapped in a default ``Machine``; never warns."""
-    from qutip_trap.device.model import Device as _Device
-
-    return Machine(machine) if isinstance(machine, _Device) else machine
+DRIVE_KEYWORDS = ("gate_drive", "gate_drives", "entangling_drives")
+"""Keywords the laboratory refuses: a drive is declared once, in ``Device.roles``."""
 
 
-BARE_DEVICE_DEADLINE = "v0.6"
-"""The first release that may refuse a bare ``Device`` where the laboratory takes a machine."""
-
-
-def warn_bare_device(what: str, *, stacklevel: int = 2) -> None:
-    """Warn that a bare ``Device`` stands where the laboratory takes a machine."""
-    from qutip_trap._compat import message, warn
-
-    warn(
-        message(
-            f"a bare Device as the first argument of {what}",
-            BARE_DEVICE_DEADLINE,
-            "Wrap it: Machine(device) or as_machine(device); the machine supplies the table and the option objects.",
-        ),
-        stacklevel=stacklevel + 1,
-    )
-
-
-DRIVE_KEYWORDS: dict[str, str] = {
-    "gate_drive": "Declare the drive on the device: dataclasses.replace(device, roles=BeamRoles(gate={ion: drive})).",
-    "gate_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(gate=...)).",
-    "entangling_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(entangling=...)).",
-}
-"""The laboratory's deprecated drive keywords, with their fix sentences."""
-
-
-def laboratory_kwargs(
-    machine: Machine | Device, kw: Mapping[str, Any], *, caller: object, stacklevel: int = 2
-) -> tuple[Device, dict[str, Any]]:
-    """The device and keyword arguments an experiment reads for a call on ``machine``: a ``Machine`` fills ``table``,
-    ``options`` and ``builder_options`` the call left out; a bare ``Device`` and each ``DRIVE_KEYWORDS`` key warn."""
-    from qutip_trap._compat import message, warn
-    from qutip_trap.device.model import Device as _Device
-
+def laboratory_kwargs(machine: Machine, kw: Mapping[str, Any]) -> tuple[Device, dict[str, Any]]:
+    """The device and keyword arguments an experiment reads for a call on ``machine``: the machine fills ``table``,
+    ``options`` and ``builder_options`` the call left out."""
     out = dict(kw)
-    what = getattr(caller, "__module__", "") + "." + getattr(caller, "__qualname__", str(caller))
-    for key, fix in DRIVE_KEYWORDS.items():
+    for key in DRIVE_KEYWORDS:
         if key in out:
-            warn(message(f"the {key!r} argument of {what}", "v0.5", fix), stacklevel=stacklevel + 1)
-    if isinstance(machine, _Device):
-        warn_bare_device(what, stacklevel=stacklevel + 1)
-        return machine, out
+            raise TypeError(f"{key!r} is not an experiment argument: declare the drive in Device.roles")
     if machine.table is not None:
         out.setdefault("table", machine.table)
     out.setdefault("options", machine.numerics.to_solver_options(machine.physics))
@@ -373,16 +333,12 @@ def _class_of(space: HilbertSpace, mode: int) -> ModeClass3:
 
 
 __all__ = [
-    "BARE_DEVICE_DEADLINE",
     "COST_FIXED_S",
     "COST_PER_NONZERO_S",
     "DRIVE_KEYWORDS",
     "EVALUATIONS_PER_PULSE_SECOND",
     "TOMOGRAPHY_INPUTS_PER_STEP",
-    "CalibrationMethod",
     "Estimate",
     "Machine",
-    "as_machine",
     "laboratory_kwargs",
-    "warn_bare_device",
 ]

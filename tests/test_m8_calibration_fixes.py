@@ -41,12 +41,13 @@ from qutip_trap.control.table import CalEntry
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.light import stark_scan
 from qutip_trap.experiments.result import ExperimentResult
-from qutip_trap.machine import as_machine
+from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
-from qutip_trap.run.job import RunError, last_record, run
+from qutip_trap.run.job import RunError, last_record
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import TWO_PI
+from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
@@ -103,7 +104,7 @@ def test_stark_scan_resolves_the_fringe_branch_with_two_probe_signs(
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(shift_hz))
     probe = 1e3
-    res = stark_scan(as_machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=probe, shots=None)
+    res = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=probe, shots=None)
     beams = fx.gate_drives[0].beams
     assert res.converged is ok, res.notes
     if ok:
@@ -126,8 +127,8 @@ def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
     kw = dict(probe_hz=1e3, shots=None)
-    coarse = stark_scan(as_machine(fx.device), 0, np.linspace(0.0, 2e-3, 5), **kw)  # type: ignore[arg-type]
-    fine = stark_scan(as_machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), **kw)  # type: ignore[arg-type]
+    coarse = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 5), **kw)  # type: ignore[arg-type]
+    fine = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), **kw)  # type: ignore[arg-type]
     assert not coarse.converged and any("Nyquist" in n for n in coarse.notes), coarse.notes
     assert fine.converged, fine.notes
     # the VALUE is the same either way: the guard is about what the grid can resolve, not about the estimator
@@ -141,11 +142,11 @@ def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion,
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
     res = stark_scan(
-        as_machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=1e3, shots=None, mode="beat_note"
+        Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=1e3, shots=None, mode="beat_note"
     )
     assert "stark_shift_hz" in res.fitted and "coupling_shift_hz" in res.fitted
     with pytest.raises(ValueError, match="per_beam"):
-        stark_scan(as_machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), mode="nonsense")
+        stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), mode="nonsense")
 
 
 # ---- B2: a refused experiment's own entries ----------------------------------------------------------------------------------
@@ -239,7 +240,7 @@ def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:  # type: 
         },
     )
     with pytest.raises(RunError, match="7.3"):
-        run(GPI, fx.device, 10, table=bad)
+        Machine(fx.device, table=bad).run(GPI, 10)
 
 
 # ---- B4: the micromotion loop -----------------------------------------------------------------------------------------------
@@ -322,9 +323,7 @@ def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_
     beam = 0
     from qutip_trap.experiments.micromotion import micromotion_scan
 
-    scan = micromotion_scan(
-        as_machine(at_t0), 0, beam, {"Ex": (-40.0, 0.0)}, method="sideband_ratio", points=5
-    )
+    scan = micromotion_scan(Machine(at_t0), 0, beam, {"Ex": (-40.0, 0.0)}, method="sideband_ratio", points=5)
     assert scan.converged, scan.notes
     shim = float(scan.fitted["shim[Ex]"][0])
     assert shim == pytest.approx(-20.0, abs=1.0), "the scan nulls the field it was calibrated against"
@@ -359,7 +358,7 @@ def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_d
     modes = gate_modes(fx.device, (0, 1), (beams[0], beams[1]), nbar={})
     with pytest.raises(ValueError, match="mode_frequencies_hz"):
         ms_scan(
-            as_machine(fx.device),
+            Machine(fx.device),
             (0, 1),
             [1.0],
             [0.0],
@@ -406,9 +405,9 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     df = 1e3
-    ref = ms_phase_scan(as_machine(fx.device), (0, 1), phases, **kw)  # type: ignore[arg-type]
-    one = ms_phase_scan(as_machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: df}, **kw)  # type: ignore[arg-type]
-    two = ms_phase_scan(as_machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: 2.0 * df}, **kw)  # type: ignore[arg-type]
+    ref = ms_phase_scan(Machine(fx.device), (0, 1), phases, **kw)  # type: ignore[arg-type]
+    one = ms_phase_scan(Machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: df}, **kw)  # type: ignore[arg-type]
+    two = ms_phase_scan(Machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: 2.0 * df}, **kw)  # type: ignore[arg-type]
     assert ref.converged and one.converged and two.converged, (ref.notes, one.notes, two.notes)
 
     def delta(res, q: int) -> float:  # type: ignore[no-untyped-def]
@@ -482,7 +481,7 @@ def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:
     assert sur.table.ms == {}, "no entangling drive, no waveform"
     assert sur.table.rabi, "the single-qubit drives are still seeded"
     circuit = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
-    res = run(circuit, preset.device, 20, table=sur.table)
+    res = Machine(preset.device, table=sur.table).run(circuit, 20)
     assert res.shots == 20 and sum(res.probabilities.values()) == pytest.approx(1.0)
     # and a partially addressed chain seeds only the ions its entangling drive names
     fx, _sur2 = two_ion
@@ -573,14 +572,11 @@ def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) ->
     def loss(table) -> float:  # type: ignore[no-untyped-def]
         import qutip as qt
 
-        res = run(
-            GPI,
+        res = Machine(
             fx.device,
-            5,
             table=table,
-            keep_final_state=True,
             numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
-        )
+        ).run(GPI, 5, keep_final_state=True)
         rho = last_record(res).register_state
         assert rho is not None
         proj = qt.tensor(qt.basis(2, 1).proj(), qt.qeye(2))

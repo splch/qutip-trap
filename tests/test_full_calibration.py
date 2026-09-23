@@ -20,7 +20,8 @@ from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics
-from qutip_trap.run.job import register_fidelity, run
+from qutip_trap.run.job import register_fidelity
+from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
@@ -233,12 +234,10 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
     )
     assert usable(t1.detection["threshold"]) and t1.detection["threshold"].experiment == "detection_histogram"
     # a table is a snapshot with an age: run() at a later time takes it as a legitimate, possibly stale, input (Section 7.5)
-    res = run(
-        BELL,
+    res = Machine(
         fx.device,
-        50,
         table=report.table,
         physics=Physics.from_solver_options(SolverOptions(branch_weight_min=1e-2), t0_s=3600.0),
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
-    )
+    ).run(BELL, 50)
     assert res.diagnostics.calibration.fitted_at_s == 0.0 and res.shots == 50

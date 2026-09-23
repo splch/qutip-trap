@@ -1,15 +1,12 @@
 """The option objects of docs/api_implementation_plan.md 1.4 (``qutip_trap/options.py``): every ``SolverOptions`` field has
-exactly one home, the defaults reproduce today's, validation errors are ``SolverOptions``'s, mappings are accepted, and
-``to_run_kwargs`` names exactly the keyword arguments of ``run`` that the objects replace."""
+exactly one home, the defaults reproduce today's, validation errors are ``SolverOptions``'s, and mappings are accepted."""
 
 from __future__ import annotations
 
 import dataclasses
-import inspect
 
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.options import (
     GateLocal,
@@ -20,9 +17,7 @@ from qutip_trap.options import (
     Readout,
     Trajectories,
     Truncation,
-    to_run_kwargs,
 )
-from qutip_trap.run.job import LEGACY_RUN_KEYWORDS, run
 
 HOMES: dict[str, tuple[type, str]] = {
     "atol": (Integration, "atol"),
@@ -183,25 +178,3 @@ def test_mappings_are_accepted_and_unknown_keys_refused() -> None:
         "discriminator": None,
         "povm_samples": 20_000,
     }
-
-
-def test_to_run_kwargs_names_exactly_the_keyword_arguments_the_objects_replace() -> None:
-    """Since 0.3.0 (docs/api_implementation_plan.md 2.1) ``run`` takes the objects and rewrites the 0.1.0 keywords with a
-    warning: the deprecated translator produces exactly the keywords ``LEGACY_RUN_KEYWORDS`` rewrites, less the three that
-    never had a home on the objects, and what stays on the call is what the signature declares."""
-    params = inspect.signature(run).parameters
-    keyword_only = {name for name, p in params.items() if p.kind is inspect.Parameter.KEYWORD_ONLY}
-    assert keyword_only == (ON_THE_CALL - {"circuit", "device", "shots"}) | {"physics", "numerics", "readout"}
-    assert params["deprecated"].kind is inspect.Parameter.VAR_KEYWORD
-    with pytest.warns(QutipTrapDeprecationWarning, match="to_run_kwargs is deprecated"):
-        produced = to_run_kwargs(Physics(), Numerics(), Readout())
-    assert set(produced) | DEPRECATED_IN_0_3_0 == set(LEGACY_RUN_KEYWORDS)
-    assert not (set(produced) & ON_THE_CALL)
-    # every rewrite sentence names a home the reader can act on
-    for name, fix in LEGACY_RUN_KEYWORDS.items():
-        assert (
-            fix[0].isupper() and fix.endswith(".") and ("=" in fix or "roles" in fix or "calibrated" in fix)
-        ), name
-    # the defaults of the objects are the defaults run had in 0.1.0, keyword by keyword (the rewrite of a default is a no-op)
-    assert produced["options"] == SolverOptions() and produced["channels"] == ()
-    assert produced["readout"] == "fast" and produced["povm_samples"] == 20_000 and produced["noise"] is True

@@ -10,7 +10,6 @@ from dataclasses import dataclass, replace
 import numpy as np
 import qutip as qt
 
-from qutip_trap._compat import QutipTrapWarning
 from qutip_trap.dynamics.engine import SolverOptions, State
 from qutip_trap.dynamics.evolve import ConvergenceReport
 from qutip_trap.hilbert.space import HilbertSpace
@@ -22,7 +21,7 @@ class TruncationError(RuntimeError):
     """The boundary monitor tripped and the configured growth limit was reached."""
 
 
-class TruncationWarning(QutipTrapWarning):
+class TruncationWarning(UserWarning):
     """A truncation the run could not make exact: a cap clamped by ``SolverOptions.mode_dimension_max``, or a boundary
     population above ``boundary_population_max`` after the cap-raising retries."""
 

@@ -35,10 +35,11 @@ from qutip_trap.hilbert.truncation import TruncationWarning, convergence_report,
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.options import Numerics
-from qutip_trap.run.job import RunError, run
+from qutip_trap.run.job import RunError
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import cap_for, cap_requirement, select_space
 from qutip_trap.units import TWO_PI
+from tests.fixtures import run
 from tests.m4_fixtures import chain_device, derived_seeds, raman_gate_drives
 from tests.m6_fixtures import circuit_fixture
 from tests.m9_fixtures import Y_MODES_TWO_IONS, tilted_pair_device

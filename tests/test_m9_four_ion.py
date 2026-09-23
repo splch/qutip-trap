@@ -41,9 +41,10 @@ from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.schedule import schedule as make_schedule
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.options import Numerics
-from qutip_trap.run.job import last_record, register_fidelity, run
+from qutip_trap.run.job import last_record, register_fidelity
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import best_contributions, select_space
+from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))

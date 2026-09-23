@@ -32,11 +32,10 @@ from qutip_trap.control.compiler import Circuit, Operation, decompose_single_qub
 from qutip_trap.dynamics.engine import SeedSpec
 from qutip_trap.experiments.fitting import weighted_fit
 from qutip_trap.noise.summary import depolarizing_entanglement_infidelity, rb_error_per_clifford
-from qutip_trap.run.job import last_record, machine_with_run_kwargs
+from qutip_trap.run.job import last_record
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 
@@ -314,7 +313,7 @@ def mean_survival_sigma(values: np.ndarray, sigma: np.ndarray, n_sequences: int,
 
 
 def randomized_benchmarking(
-    machine: Machine | Device,
+    machine: Machine,
     qubits: Sequence[int],
     lengths: Sequence[int],
     *,
@@ -325,21 +324,14 @@ def randomized_benchmarking(
     fix_offset: bool | None = None,
     variant: str = "clifford",
     pair: bool | None = None,
-    **run_kwargs: Any,
 ) -> RBResult:
     """Randomized benchmarking of one qubit, several at once (simultaneous RB) or a pair, through ``Machine.run``.
 
     ``lengths`` count Cliffords m, or computational gates L for ``variant="knill"`` (the closing gate not counted); each
     (length, sequence) is one run of ``shots`` with its own keyed seed. Two qubits run the two-qubit Clifford group unless
     ``pair=False``; ``pair=True`` needs two qubits and the Clifford variant. ``fix_offset`` pins B at 1/2^n (by default
-    for Knill). A bare ``Device`` and legacy ``run_kwargs`` are accepted with a deprecation warning."""
-    mach = machine_with_run_kwargs(
-        machine,
-        run_kwargs,
-        caller="qutip_trap.benchmarks.rb.randomized_benchmarking",
-        stacklevel=2,
-        call_keywords=True,
-    )
+    for Knill)."""
+    mach = machine
     device = mach.device
     qs = tuple(int(q) for q in qubits)
     if not qs or len(set(qs)) != len(qs):

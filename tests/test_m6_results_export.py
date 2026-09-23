@@ -64,10 +64,6 @@ def test_x_on_qubit_zero_reads_1_in_the_v1_formats_and_001_in_this_package() -> 
     assert result.to_ionq_v1_histogram() == {IONQ_V1_KEY: 4}
     assert result.to_ionq_v1_shots() == [IONQ_V1_KEY] * 4
     assert IONQ_V2_KEY == "001"[::-1]  # the v2 string is this package's key reversed
-    # the 0.1.0 names (to_ionq_json, to_ionq_histogram, to_ionq_shots, to_ionq_v2) were deprecated in 0.2.0 and removed in
-    # 0.4.0 (docs/deprecations.md, "Removed"); a caller of one gets the plain AttributeError, not a silent alias
-    for gone in ("to_ionq_json", "to_ionq_histogram", "to_ionq_shots", "to_ionq_v2"):
-        assert not hasattr(result, gone), gone
 
 
 def test_x_on_qubit_zero_reads_100_in_the_v2_envelope() -> None:

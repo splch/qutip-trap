@@ -43,14 +43,14 @@ def _excitation(
     return _run(device, ion, [pulse], setup, kw).final_p1(ion)
 
 
-def thermometry(machine: Machine | Device, ion: int, mode: int, **kw: Any) -> ExperimentResult:
+def thermometry(machine: Machine, ion: int, mode: int, **kw: Any) -> ExperimentResult:
     """Red and blue sideband pulses of equal duration on ``mode``; returns a ``ThermometryResult`` with nbar = R/(1 - R),
     R = P_rsb/P_bsb, exact in eta and in the duration (Turchette et al. 2000 Eqs. 8-11).
 
     ``mode_hz`` and ``carrier_hz`` are the believed mode frequency and carrier offset (default the crystal's and 0);
     ``check_durations_s`` adds durations over which a thermal state's ratio must not change.
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=thermometry)
+    device, kw = laboratory_kwargs(machine, kw)
     kw2 = {**kw, "mode": mode, "detuning_hz": 0.0, "branch_weight_min": kw.get("branch_weight_min", 1e-6)}
     base = _setup(device, ion, kw2)
     obs = _observation(device, kw)
@@ -128,14 +128,14 @@ def _solve_eta(ratio: float) -> float:
     return float(brentq(lambda e: e * math.exp(-0.5 * e * e) - ratio, 1e-12, 1.0))
 
 
-def mode_spectroscopy(machine: Machine | Device, ion: int, mode: int, **kw: Any) -> ExperimentResult:
+def mode_spectroscopy(machine: Machine, ion: int, mode: int, **kw: Any) -> ExperimentResult:
     """Coarse and fine detuning scans of ``mode``'s blue sideband and of the carrier; returns a ``SidebandSpectrum``.
 
     mode_hz is the blue centre minus the carrier centre, eta comes from the sideband Rabi frequency and nbar from the
     red/blue ratio; ``seed_hz`` is the believed mode frequency. Data rows (detuning_hz, P1, kind), kind 0 coarse blue,
     1 fine blue, 2 carrier, 3 red, 4 thermometry.
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=mode_spectroscopy)
+    device, kw = laboratory_kwargs(machine, kw)
     kw2 = {**kw, "mode": mode, "detuning_hz": 0.0}
     base = _setup(device, ion, kw2)
     obs = _observation(device, kw)
@@ -343,16 +343,14 @@ def _density_matrix_options(options: Any) -> Any:
     )
 
 
-def heating_rate(
-    machine: Machine | Device, mode: int, delays_s: Sequence[float], **kw: Any
-) -> ExperimentResult:
+def heating_rate(machine: Machine, mode: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """Scan the delay (the device's heating channels active) before a sideband-ratio thermometry of ``mode``; returns a
     ``HeatingRateFit`` with ndot_per_s from a weighted linear fit of nbar against delay.
 
     ``ion`` the probe ion (default the largest participation), ``nbar0`` the prepared occupation (default the recipe's),
     ``ndot_seed`` sizes the truncation (default the noise model's rate). Data rows (delay_s, nbar, sigma, P_rsb, P_bsb).
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=heating_rate)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.hilbert.operators import required_margin
     from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation

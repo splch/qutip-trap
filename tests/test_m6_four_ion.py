@@ -19,8 +19,9 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics
-from qutip_trap.run.job import register_fidelity, run
+from qutip_trap.run.job import register_fidelity
 from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
@@ -73,14 +74,11 @@ def test_a_four_ion_circuit_runs_through_the_pipeline_at_the_row_2b_dimension(fo
     )
     assert space.dimension == 2304
     circuit = Circuit(4, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1, 2, 3))
-    result = run(
-        circuit,
+    result = Machine(
         fixture.device,
-        200,
         table=surrogate.table,
-        keep_final_state=True,
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3), space=space),
-    )
+    ).run(circuit, 200, keep_final_state=True)
     diagnostics = result.diagnostics
     assert diagnostics.level == "JOINT_EXACT"
     assert diagnostics.space.dimension == 2304 and diagnostics.space.dims == [2, 2, 2, 2, D_M, D_M]
@@ -102,13 +100,11 @@ def test_the_pipeline_s_own_four_ion_space_exceeds_the_guard_and_routes_to_gate_
     joint space above the Section 11.5 guard, so ``run`` takes the GATE_LOCAL level and says so (Section 5.4)."""
     fixture, surrogate = four_ion
     circuit = Circuit(4, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1, 2, 3))
-    result = run(
-        circuit,
+    result = Machine(
         fixture.device,
-        50,
         table=surrogate.table,
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
-    )
+    ).run(circuit, 50)
     diagnostics = result.diagnostics
     assert diagnostics.level == "GATE_LOCAL" and diagnostics.gate_local is not None
     assert any("GATE_LOCAL" in note for note in diagnostics.approximations)

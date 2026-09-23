@@ -20,7 +20,7 @@ from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, solve_amplitude_modulati
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.experiments.entangling import ms_scan, parity_scan
-from qutip_trap.machine import as_machine
+from qutip_trap.machine import Machine
 from qutip_trap.validation.two_qubit_closed_forms import (
     ballance_thermal_error,
     thermal_debye_waller_infidelity,
@@ -267,14 +267,14 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     )
     table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI, stark_hz=STARK)
     scan = ms_scan(
-        as_machine(dev), (0, 1), (0.9, 0.97, 1.03, 1.1), (0.0,), table=table, space=space, modes=modes
+        Machine(dev), (0, 1), (0.9, 0.97, 1.03, 1.1), (0.0,), table=table, space=space, modes=modes
     )
     assert scan.data.shape == (4, 5) and scan.model == "ms_population_scan"
     assert scan.fitted["closure_scale"][0] == pytest.approx(1.0, abs=0.01)
     p11 = scan.data[:, 4]
     assert np.all(np.diff(p11) > 0), "P_11 = sin^2 chi rises with the amplitude below pi/4"
     par = parity_scan(
-        as_machine(dev),
+        Machine(dev),
         (0, 1),
         np.linspace(0.0, math.pi, 6, endpoint=False),
         table=table,
@@ -286,4 +286,4 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     assert par.fitted["bell_fidelity_bound"][0] > 0.99
     assert par.fitted["phi0_rad"][1] < 0.05
     with pytest.raises(ValueError, match="waveform"):
-        ms_scan(as_machine(dev), (0, 1), (1.0,), (0.0,), table=dataclasses.replace(table, ms={}))
+        ms_scan(Machine(dev), (0, 1), (1.0,), (0.0,), table=dataclasses.replace(table, ms={}))

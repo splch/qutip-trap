@@ -16,7 +16,8 @@ from qutip_trap.control.schedule import ScheduleError
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
-from qutip_trap.run.job import enumerate_branches, last_record, register_fidelity, run
+from qutip_trap.run.job import enumerate_branches, last_record, register_fidelity
+from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
@@ -34,15 +35,12 @@ def two_ion():  # type: ignore[no-untyped-def]
 @pytest.fixture(scope="module")
 def bell(two_ion):  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    res = run(
-        BELL,
+    res = Machine(
         fx.device,
-        2000,
         table=sur.table,
-        keep_final_state=True,
         physics=Physics.from_solver_options(FAST),
         numerics=Numerics.from_solver_options(FAST),
-    )
+    ).run(BELL, 2000, keep_final_state=True)
     return fx, sur, res
 
 
@@ -196,14 +194,11 @@ def test_single_qubit_gate_identity_on_the_pipeline(two_ion) -> None:  # type: i
     carrier's off-resonant sideband scale plus the addressing crosstalk on the neighbour."""
     fx, sur = two_ion
     circ = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
-    res = run(
-        circ,
+    res = Machine(
         fx.device,
-        100,
         table=sur.table,
-        keep_final_state=True,
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
-    )
+    ).run(circ, 100, keep_final_state=True)
     fid = register_fidelity(res)
     eps = sur.table.crosstalk[(0, 1)].value
     crosstalk_flip = math.sin(eps * math.pi / 4.0) ** 2
@@ -256,9 +251,9 @@ def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_p
     ).table
     assert table.waveform_for((0, 1)) is not None and table.detection["threshold"].status == "calibrated"
     # no table: run builds the closed-form surrogate for the circuit's pairs (the default scan settings)
-    res = run(
-        BELL, fx.device, 200, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
-    )
+    res = Machine(
+        fx.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
+    ).run(BELL, 200)
     assert res.diagnostics.calibration.surrogate and res.probabilities.get("00", 0.0) > 0.3
     assert any("surrogate" in a or "waveform" in a for a in res.diagnostics.approximations)
 
@@ -375,14 +370,11 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
     ghz = Circuit(
         3, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()), Operation("cnot", (1, 2), ())), (0, 1, 2)
     )
-    res = run(
-        ghz,
+    res = Machine(
         fx.device,
-        1000,
         table=sur.table,
-        keep_final_state=True,
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
-    )
+    ).run(ghz, 1000, keep_final_state=True)
     d = res.diagnostics
     # two resolved modes: the cap rule of Section 5.5 at the 1e-6 tail (M9a) gives 11 levels on the COM (populated to n = 2) and
     # 13 on the zigzag (populated to n = 4, the larger excursion), each with the Section 5.1.1 margin; the M6 rule's 10 to 12
@@ -436,14 +428,11 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
     bv = Circuit(3, ops, (0, 1, 2))
     ideal = ideal_probabilities(Circuit(3, ops, (0, 2)))
     assert ideal == pytest.approx({"01": 1.0})
-    res = run(
-        bv,
+    res = Machine(
         fx.device,
-        1000,
         table=sur.table,
-        keep_final_state=True,
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
-    )
+    ).run(bv, 1000, keep_final_state=True)
     declared = _declared_probabilities(res, (0, 2))
     assert declared["01"] > 0.99
     one_to_zero = declared.get("00", 0.0)

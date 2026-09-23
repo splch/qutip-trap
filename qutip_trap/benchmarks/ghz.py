@@ -21,11 +21,10 @@ from qutip_trap.benchmarks.budget import (
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SeedSpec
 from qutip_trap.experiments.fitting import weighted_fit
-from qutip_trap.run.job import machine_with_run_kwargs, register_fidelity
+from qutip_trap.run.job import register_fidelity
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 
@@ -129,21 +128,17 @@ class GHZResult:
 
 
 def ghz_fidelity(
-    machine: Machine | Device,
+    machine: Machine,
     qubits: Sequence[int],
     *,
     shots: int = 400,
     analysis_phases_rad: Sequence[float] | None = None,
     seed: int = 0,
     budget: bool = True,
-    **run_kwargs: Any,
 ) -> GHZResult:
     """The GHZ benchmark on ``qubits`` (two or more), every point a ``Machine.run`` of ``shots``; the analysis phases
-    default to eight over one parity period 2 pi/N. A bare ``Device`` (wrapped in a default machine) and legacy
-    ``run_kwargs`` are accepted with a deprecation warning."""
-    m = machine_with_run_kwargs(
-        machine, run_kwargs, caller="qutip_trap.benchmarks.ghz.ghz_fidelity", stacklevel=2, call_keywords=True
-    )
+    default to eight over one parity period 2 pi/N."""
+    m = machine
     device = m.device
     qs = tuple(int(q) for q in qubits)
     if len(qs) < 2 or len(set(qs)) != len(qs):

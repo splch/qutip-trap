@@ -21,7 +21,7 @@ from qutip_trap.experiments.micromotion import (
 from qutip_trap.experiments.motion import heating_rate, mode_spectroscopy, thermometry
 from qutip_trap.experiments.single_ion import rabi_scan, sideband_spectroscopy
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, differential_stark_shift_hz
-from qutip_trap.machine import as_machine
+from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
@@ -51,7 +51,7 @@ def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequenc
     f, eta = dd.carrier_rabi_hz, dd.etas[1]
     t_pi = 0.5 / f
     mus = np.linspace(-2.2 * f, 2.2 * f, 23)
-    res = sideband_spectroscopy(as_machine(dev), 0, mus, duration_s=t_pi, include_stark=False, fit=True)
+    res = sideband_spectroscopy(Machine(dev), 0, mus, duration_s=t_pi, include_stark=False, fit=True)
     expected = f * math.exp(-0.5 * eta**2)
     omega_fit, s_omega = res.fitted["omega_carrier_hz"]
     assert omega_fit == pytest.approx(expected, rel=2e-3)
@@ -65,11 +65,11 @@ def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(si
     """Section 4.2.7 (i): P_rsb/P_bsb = nbar/(nbar + 1) for every pulse duration on a thermal state (Turchette); the shot-noise
     uncertainty covers the truth; a Fock state gives a duration-dependent ratio and is flagged."""
     dev, _dd = single
-    exact = thermometry(as_machine(dev), 0, 1, nbar={1: 0.3}, include_stark=False, check_durations_s=(31e-6,))
+    exact = thermometry(Machine(dev), 0, 1, nbar={1: 0.3}, include_stark=False, check_durations_s=(31e-6,))
     assert exact.converged and exact.fitted["nbar"][0] == pytest.approx(0.3, abs=2e-3)
     assert exact.fitted["ratio_spread"][0] < 2e-3
     noisy = thermometry(
-        as_machine(dev), 0, 1, nbar={1: 0.3}, include_stark=False, shots=3000, readout=False, seed=2
+        Machine(dev), 0, 1, nbar={1: 0.3}, include_stark=False, shots=3000, readout=False, seed=2
     )
     assert abs(noisy.fitted["nbar"][0] - 0.3) < 4.0 * noisy.fitted["nbar"][1]
     assert 0.005 < noisy.fitted["nbar"][1] < 0.05
@@ -83,7 +83,7 @@ def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_u
     fx, dd = two_ion
     nbar = {2: 0.0185, 3: 0.0154}
     res = mode_spectroscopy(
-        as_machine(fx.device),
+        Machine(fx.device),
         0,
         3,
         nbar=nbar,
@@ -127,7 +127,7 @@ def test_sideband_calibrated_eta_carries_c0_and_a_carrier_derived_one_does_not()
         "C0 is inside the derived eta with an rf record"
     )
     res = mode_spectroscopy(
-        as_machine(dev), 0, 1, include_stark=False, span=0.005, coarse_points=5, fine_points=11
+        Machine(dev), 0, 1, include_stark=False, span=0.005, coarse_points=5, fine_points=11
     )
     eta_sb, s_eta = res.fitted["eta"]
     assert abs(eta_sb - abs(dd.etas[1])) < 3.0 * max(s_eta, 2e-4), (eta_sb, dd.etas[1], s_eta)
@@ -156,13 +156,13 @@ def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # ty
     assert truth > 20.0
     # nbar grows by three quanta (the plan's 10/ndot heats to ten and needs d = 170)
     delays = np.linspace(0.0, 3.0 / truth, 6)
-    exact = heating_rate(as_machine(noisy), 1, delays, nbar0=0.1, include_stark=False)
+    exact = heating_rate(Machine(noisy), 1, delays, nbar0=0.1, include_stark=False)
     assert exact.converged and exact.fitted["ndot_per_s"][0] == pytest.approx(truth, rel=0.03)
     assert exact.fitted["nbar0"][0] == pytest.approx(0.1, abs=0.01)
     nb = exact.data[:, 1]
     assert np.all(np.diff(nb) > 0.0), "nbar grows monotonically at the heating rate"
     noisy_res = heating_rate(
-        as_machine(noisy), 1, delays, nbar0=0.1, include_stark=False, shots=1500, readout=False, seed=3
+        Machine(noisy), 1, delays, nbar0=0.1, include_stark=False, shots=1500, readout=False, seed=3
     )
     ndot, s = noisy_res.fitted["ndot_per_s"]
     assert abs(ndot - truth) < 4.0 * s and 0.0 < s < 0.3 * truth
@@ -173,7 +173,7 @@ def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:  # t
     field within the uncertainty sigma_nu/|d nu/dB| (3.1 kHz/G for the 171Yb+ clock transition at 5 G)."""
     dev, _dd = single
     res = field_scan(
-        as_machine(dev),
+        Machine(dev),
         0,
         np.linspace(0.0, 2e-3, 9),
         include_stark=False,
@@ -185,7 +185,7 @@ def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:  # t
     b, s_b = res.fitted["B_gauss"]
     assert res.converged and abs(b - 5.0) < 4.0 * s_b and s_b < 0.01
     assert res.fitted["dnu_dB_hz_per_g"][0] == pytest.approx(2.0 * 310.87 * 5.0, rel=0.02)
-    exact = field_scan(as_machine(dev), 0, np.linspace(0.0, 2e-3, 9), include_stark=False, b_seed_gauss=5.03)
+    exact = field_scan(Machine(dev), 0, np.linspace(0.0, 2e-3, 9), include_stark=False, b_seed_gauss=5.03)
     assert exact.fitted["B_gauss"][0] == pytest.approx(5.0, abs=2e-5)
 
 
@@ -194,7 +194,7 @@ def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> No
     drive's shift is the sum, equal to the derived one within the fit uncertainty."""
     fx, dd = two_ion
     res = stark_scan(
-        as_machine(fx.device),
+        Machine(fx.device),
         0,
         np.linspace(0.0, 2e-3, 9),
         nbar={2: 0.0185, 3: 0.0154},
@@ -222,7 +222,7 @@ def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> 
     eps = abs(crosstalk_ratios(fx.device, 0, fx.gate_drives[0].beams)[1])
     ts = np.linspace(0.0, 0.5 / (eps * dd.carrier_rabi_hz), 16)
     res = crosstalk_scan(
-        as_machine(fx.device),
+        Machine(fx.device),
         0,
         ts,
         nbar={2: 0.0185, 3: 0.0154},
@@ -247,7 +247,7 @@ def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_ev
     fx, dd = two_ion
     f = dd.carrier_rabi_hz
     res = rabi_scan(
-        as_machine(fx.device),
+        Machine(fx.device),
         0,
         np.linspace(0.0, 10.0 * 0.5 / f, 41),
         nbar={2: 0.0185, 3: 0.0154},
@@ -284,7 +284,7 @@ def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_th
     beta_in = dev.trap.micromotion_beta(dev.crystal.species[0], np.asarray(dk)).in_phase
     assert abs(beta_in) == pytest.approx(0.245, abs=0.01)
     assert beta_in == pytest.approx(signed_beta(dev, 0, np.asarray(dk)), rel=1e-12)
-    res = micromotion_scan(as_machine(dev), 0, 0, {"Ex": (-60.0, 0.0)}, method="sideband_ratio", points=5)
+    res = micromotion_scan(Machine(dev), 0, 0, {"Ex": (-60.0, 0.0)}, method="sideband_ratio", points=5)
     assert res.converged, res.notes
     null, s_null = res.fitted["shim[Ex]"]
     assert null == pytest.approx(-30.0, abs=0.5) and s_null < 2.0
@@ -363,7 +363,7 @@ def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field()
         0.0, abs=1e-15
     )
     res = micromotion_scan(
-        as_machine(dev), 0, beam, {"Ex": (-40.0, 0.0)}, method="rf_photon_correlation", points=5, rf_points=24
+        Machine(dev), 0, beam, {"Ex": (-40.0, 0.0)}, method="rf_photon_correlation", points=5, rf_points=24
     )
     assert res.converged, res.notes
     null, s_null = res.fitted["shim[Ex]"]

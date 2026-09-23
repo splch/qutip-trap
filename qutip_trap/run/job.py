@@ -8,22 +8,21 @@ from __future__ import annotations
 
 import itertools
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import qutip as qt
 
 from qutip_trap.control.compiler import CompileReport
 from qutip_trap.control.schedule import GateDrive, Schedule
-from qutip_trap.dynamics.engine import SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.engine import SeedSpec, State, Traces
 from qutip_trap.hilbert.operators import thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.noise.sampling import NoiseSample
 from qutip_trap.noise.scattering import scattering_estimates
-from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
 from qutip_trap.prep.sequence import prepare_state
 from qutip_trap.readout.detection import RecordModel
@@ -37,8 +36,7 @@ from qutip_trap.readout.discriminate import (
 )
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, detection_rates_for_ion
 from qutip_trap.run.gate_local import GateLocalReport
-from qutip_trap.run.levels import FidelityLevel
-from qutip_trap.run.results import Progress, Result, aggregate
+from qutip_trap.run.results import Result, aggregate
 from qutip_trap.run.space import SpaceSelection
 from qutip_trap.units import TWO_PI
 from qutip_trap.validation.two_qubit_closed_forms import ballance_thermal_error
@@ -49,7 +47,6 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable, Waveform
     from qutip_trap.device.model import Device
     from qutip_trap.light.beams import Beam
-    from qutip_trap.machine import Machine
 
 ReadoutMode = Literal["fast", "full"]
 
@@ -568,233 +565,6 @@ def last_record(result: Result) -> RunRecord:
     return _LAST_RECORD[id(result)]
 
 
-def with_fields(result: Result, **changes: Any) -> Result:
-    """``dataclasses.replace`` on a Result that keeps its RunRecord reachable through ``last_record``."""
-    out = replace(result, **changes)
-    record = _LAST_RECORD.get(id(result))
-    if record is not None:
-        _LAST_RECORD[id(out)] = record
-    return out
-
-
-LEGACY_RUN_KEYWORDS: Final[dict[str, str]] = {
-    "t0_s": "Pass physics=Physics(t0_s=...), or set it on the Machine.",
-    "shot_period_s": "Pass physics=Physics(shot_period_s=...), or set it on the Machine.",
-    "noise": "Pass physics=Physics(noise=...), or set it on the Machine.",
-    "internal_levels": "Pass physics=Physics(internal_levels=...), or set it on the Machine.",
-    "crosstalk_suppression": "Pass physics=Physics(crosstalk_suppression=...), or set it on the Machine.",
-    "stark_compensation": "Pass physics=Physics(stark_compensation=...), or set it on the Machine.",
-    "entangler": "Pass physics=Physics(entangler=...), or set it on the Machine.",
-    "channels": "Pass physics=Physics(extra_channels=...), or set it on the Machine.",
-    "builder_options": "Pass physics=Physics(builder=...), or set it on the Machine.",
-    "options": (
-        "Pass numerics=Numerics.from_solver_options(options) and physics=Physics.from_solver_options(options, ...), or "
-        "build the Machine with them."
-    ),
-    "space": "Pass numerics=Numerics(truncation=Truncation(space=...)), or set it on the Machine.",
-    "caps": "Pass numerics=Numerics(truncation=Truncation(caps=...)), or set it on the Machine.",
-    "enr_group": "Pass numerics=Numerics(truncation=Truncation(enr_group=...)), or set it on the Machine.",
-    "samples": "Pass numerics=Numerics(parallel=Parallel(samples=...)), or set it on the Machine.",
-    "parallel": "Pass numerics=Numerics(parallel=Parallel(addressing=...)), or set it on the Machine.",
-    "readout": "Pass readout=Readout(mode=...), or set it on the Machine.",
-    "discriminator": "Pass readout=Readout(discriminator=...), or set it on the Machine.",
-    "povm_samples": "Pass readout=Readout(povm_samples=...), or set it on the Machine.",
-    "gate_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(gate=...)).",
-    "entangling_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(entangling=...)).",
-    "calibrate_kwargs": "Pin the table on the Machine: Machine(device).calibrated(seed=..., **calibrate_kwargs).run(...).",
-}
-"""The deprecated keyword arguments of ``run``, each with the sentence naming its new home."""
-
-LEGACY_DEADLINE: Final[str] = "v0.5"
-
-LEGACY_CALL_KEYWORDS: Final[dict[str, str]] = {
-    "table": "Pin the table on the Machine: machine.calibrated(...) or dataclasses.replace(machine, table=...).",
-    "level": "Set the level on the Machine: dataclasses.replace(machine, level=FidelityLevel.GATE_LOCAL).",
-    "keep_final_state": "Remove it: the benchmark decides which of its runs keep the final state.",
-}
-"""The deprecated ``run`` keywords a benchmark's ``**run_kwargs`` forwarded, with their fix sentences."""
-
-_PHYSICS_FIELDS: Final[dict[str, str]] = {
-    "t0_s": "t0_s",
-    "shot_period_s": "shot_period_s",
-    "noise": "noise",
-    "internal_levels": "internal_levels",
-    "crosstalk_suppression": "crosstalk_suppression",
-    "stark_compensation": "stark_compensation",
-    "entangler": "entangler",
-    "channels": "extra_channels",
-    "builder_options": "builder",
-}
-_TRUNCATION_FIELDS: Final[dict[str, str]] = {"space": "space", "caps": "caps", "enr_group": "enr_group"}
-_PARALLEL_FIELDS: Final[dict[str, str]] = {"samples": "samples", "parallel": "addressing"}
-_READOUT_FIELDS: Final[dict[str, str]] = {
-    "readout": "mode",
-    "discriminator": "discriminator",
-    "povm_samples": "povm_samples",
-}
-
-
-def machine_with_run_kwargs(
-    base: Machine | Device,
-    kwargs: Mapping[str, Any],
-    *,
-    caller: str = "qutip_trap.run.job.run",
-    circuit: Circuit | None = None,
-    seed: int = 0,
-    table: CalibrationTable | None = None,
-    level: str | FidelityLevel | None = None,
-    physics: Physics | Mapping[str, Any] | None = None,
-    numerics: Numerics | Mapping[str, Any] | None = None,
-    readout: Readout | Mapping[str, Any] | None = None,
-    stacklevel: int = 1,
-    call_keywords: bool = False,
-) -> Machine:
-    """The ``Machine`` a call with deprecated ``run`` keywords asked for, each rewritten onto it with a warning."""
-    from qutip_trap._compat import message, warn
-    from qutip_trap.device.model import Device as _Device
-    from qutip_trap.machine import Machine as _Machine
-    from qutip_trap.machine import warn_bare_device
-
-    kwargs = dict(kwargs)
-    machine = _Machine(base) if isinstance(base, _Device) else base
-    if call_keywords and isinstance(base, _Device):
-        warn_bare_device(caller, stacklevel=stacklevel + 1)
-    if call_keywords:
-        for key, fix in LEGACY_CALL_KEYWORDS.items():
-            if key in kwargs:
-                warn(
-                    message(f"the {key!r} argument of {caller}", LEGACY_DEADLINE, fix),
-                    stacklevel=stacklevel + 1,
-                )
-                value = kwargs.pop(key)
-                if key == "table" and value is not None:
-                    machine = replace(machine, table=value)
-                elif key == "level" and value is not None:
-                    machine = replace(machine, level=FidelityLevel(value))
-    unknown = sorted(k for k in kwargs if k not in LEGACY_RUN_KEYWORDS)
-    if unknown:
-        raise TypeError(f"{caller}() got unexpected keyword argument(s) {unknown}")
-    given_physics = physics is not None
-    given_numerics = numerics is not None
-    if table is not None:
-        machine = replace(machine, table=table)
-    if level is not None:
-        machine = replace(machine, level=FidelityLevel(level))
-    if physics is not None:
-        machine = replace(
-            machine, physics=Physics.from_mapping(physics) if isinstance(physics, Mapping) else physics
-        )
-    if numerics is not None:
-        machine = replace(
-            machine, numerics=Numerics.from_mapping(numerics) if isinstance(numerics, Mapping) else numerics
-        )
-    if readout is not None:
-        machine = replace(
-            machine, readout=Readout.from_mapping(readout) if isinstance(readout, Mapping) else readout
-        )
-    for key in kwargs:  # one warning per keyword, attributed to the line the caller names
-        warn(
-            message(f"the {key!r} argument of {caller}", LEGACY_DEADLINE, LEGACY_RUN_KEYWORDS[key]),
-            stacklevel=stacklevel + 1,
-        )
-
-    phys = machine.physics
-    num = machine.numerics
-    read = machine.readout
-    device = machine.device
-    if "options" in kwargs:
-        if given_numerics or given_physics:
-            raise TypeError(
-                f"{caller}() got the deprecated keyword 'options' beside "
-                f"{'numerics' if given_numerics else 'physics'}=; pass one form (the new home: "
-                f"{LEGACY_RUN_KEYWORDS['options']})"
-            )
-        opts = kwargs["options"] or SolverOptions()
-        num = Numerics.from_solver_options(opts)
-        phys = replace(
-            phys,
-            scattering="channels" if opts.scattering_channels else "estimate",
-            scattering_recoil=opts.scattering_recoil,
-            intensity_noise_channels=opts.intensity_noise_channels,
-            hardware_chain=opts.hardware_chain,
-        )
-    for key, field_name in _PHYSICS_FIELDS.items():
-        if key in kwargs:
-            phys = replace(phys, **{field_name: kwargs[key]})
-    truncation = num.truncation
-    for key, field_name in _TRUNCATION_FIELDS.items():
-        if key in kwargs:
-            truncation = replace(truncation, **{field_name: kwargs[key]})
-    parallel = num.parallel
-    for key, field_name in _PARALLEL_FIELDS.items():
-        if key in kwargs:
-            parallel = replace(parallel, **{field_name: kwargs[key]})
-    num = replace(num, truncation=truncation, parallel=parallel)
-    for key, field_name in _READOUT_FIELDS.items():
-        if key in kwargs:
-            read = replace(read, **{field_name: kwargs[key]})
-    if "gate_drives" in kwargs or "entangling_drives" in kwargs:
-        roles = device.roles
-        if "gate_drives" in kwargs and kwargs["gate_drives"] is not None:
-            roles = replace(roles, gate=dict(kwargs["gate_drives"]))
-        if "entangling_drives" in kwargs and kwargs["entangling_drives"] is not None:
-            roles = replace(roles, entangling=dict(kwargs["entangling_drives"]))
-        device = replace(device, roles=roles)
-    machine = replace(machine, device=device, physics=phys, numerics=num, readout=read)
-    if kwargs.get("calibrate_kwargs") is not None and machine.table is None:
-        if circuit is None:
-            raise TypeError(
-                f"{caller}(): calibrate_kwargs needs the circuit whose pairs the table is built for"
-            )
-        from qutip_trap.run.pipeline import compile_calibrate_schedule
-
-        prefix = compile_calibrate_schedule(
-            circuit,
-            machine.device,
-            seed=seed,
-            calibrate_kwargs=dict(kwargs["calibrate_kwargs"]),
-            **machine._prefix_kwargs(),
-        )
-        machine = replace(machine, table=prefix.table)
-    return machine
-
-
-def run(
-    circuit: Circuit,
-    device: Device,
-    shots: int,
-    *,
-    table: CalibrationTable | None = None,
-    level: Literal["JOINT_EXACT", "GATE_LOCAL", "auto"] | FidelityLevel = "auto",
-    seed: int = 0,
-    keep_final_state: bool = False,
-    progress: Callable[[Progress], None] | None = None,
-    physics: Physics | Mapping[str, Any] | None = None,
-    numerics: Numerics | Mapping[str, Any] | None = None,
-    readout: Readout | Mapping[str, Any] | ReadoutMode | None = None,
-    **deprecated: Any,
-) -> Result:
-    """Run ``circuit`` on ``device``: ``Machine(device, table=table, physics=physics, numerics=numerics,
-    readout=readout, level=level).run(circuit, shots, seed=seed, ...)``. The option objects may be mappings of their
-    fields (None: the defaults); the deprecated keywords of ``LEGACY_RUN_KEYWORDS`` still work, each with a warning."""
-    if isinstance(readout, str):  # the deprecated string form, readout="fast" | "full"
-        deprecated = {**deprecated, "readout": readout}
-        readout = None
-    machine = machine_with_run_kwargs(
-        device,
-        deprecated,
-        circuit=circuit,
-        seed=seed,
-        table=table,
-        level=level,
-        physics=physics,
-        numerics=numerics,
-        readout=readout,
-        stacklevel=2,
-    )
-    return machine.run(circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=progress)
-
-
 def to_register_order(vec: np.ndarray, n_qubits: int) -> np.ndarray:
     """Reorder a ket from the compiler's bit order (qubit 0 the least-significant index bit) to the register state's
     tensor order (ion 0 the first factor of ``qutip.tensor``, the most-significant index bit)."""
@@ -874,6 +644,5 @@ __all__ = [
     "prepare",
     "readout_stage",
     "register_fidelity",
-    "run",
     "to_register_order",
 ]

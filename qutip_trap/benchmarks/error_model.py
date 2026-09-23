@@ -143,10 +143,9 @@ def error_model(machine: Machine | Any, *, qubits: Sequence[int] | None = None) 
 
     from qutip_trap.benchmarks.budget import gate_channel, kind_of, one_gate_circuit
     from qutip_trap.calibration import calibrate
-    from qutip_trap.machine import as_machine
     from qutip_trap.prep.recipe import recipe_of, run_preparation
 
-    m = as_machine(machine)
+    m = machine
     device = m.device
     n = device.crystal.n_ions
     qs = tuple(range(n)) if qubits is None else tuple(int(q) for q in qubits)

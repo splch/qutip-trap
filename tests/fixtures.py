@@ -7,6 +7,7 @@ frequencies follow the realizable Section 11.1 fixture (x-COM 3.000, x-rocking 2
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 
@@ -223,4 +224,22 @@ def make_result(bitstrings: np.ndarray) -> Result:
         spam={},
         final_state=None,
         diagnostics=make_diagnostics(),
+    )
+
+
+def run(
+    circuit: Any,
+    device: Device,
+    shots: int,
+    *,
+    seed: int = 0,
+    keep_final_state: bool = False,
+    progress: Any = None,
+    **machine: Any,
+) -> Result:
+    """``Machine(device, **machine).run(circuit, shots, ...)``: the one-call form the tests use."""
+    from qutip_trap.machine import Machine
+
+    return Machine(device, **machine).run(
+        circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=progress
     )
