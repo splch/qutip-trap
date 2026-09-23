@@ -398,14 +398,3 @@ def device_from_dict(data: Mapping[str, Any]) -> Device:
         raise ValueError(f"Device.from_dict reads schema version {SCHEMA_VERSION}, got {version!r}")
     device: Device = decode(data["device"], Node("cls", name="Device"), "device")
     return device
-
-
-__all__ = [
-    "SCHEMA_VERSION",
-    "Node",
-    "decode",
-    "device_from_dict",
-    "device_to_dict",
-    "encode",
-    "parse",
-]

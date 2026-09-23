@@ -289,18 +289,3 @@ def haar_random_unitary(rng: np.random.Generator, dim: int) -> np.ndarray:
     q, r = np.linalg.qr(z)
     d = np.diag(r)
     return np.asarray(q * (d / np.abs(d)))
-
-
-__all__ = [
-    "KAK",
-    "MAGIC",
-    "canonical_operations",
-    "canonical_unitary",
-    "decompose_two_qubit_unitary",
-    "global_phase",
-    "haar_random_unitary",
-    "is_local",
-    "kak_decomposition",
-    "kron_factor",
-    "verify_operations",
-]

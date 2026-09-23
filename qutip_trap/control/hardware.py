@@ -463,13 +463,3 @@ def apply_hardware_chain(
         t0_s=schedule.t0_s,
     )
     return new, tuple(notes)
-
-
-__all__ = [
-    "MAX_SAMPLES",
-    "MIN_SAMPLES",
-    "SAMPLES_PER_TIME_CONSTANT",
-    "TAIL_TIME_CONSTANTS",
-    "HardwareChain",
-    "apply_hardware_chain",
-]

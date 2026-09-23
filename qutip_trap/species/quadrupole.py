@@ -215,23 +215,3 @@ def stretched_closed_form_rad_s(
 def e2_over_e1_amplitude_ratio(wavelength_vac_m: float) -> float:
     """k a_0 / 2, the E2/E1 amplitude suppression (about alpha/16 at optical wavelengths, not alpha/2)."""
     return 2.0 * math.pi / wavelength_vac_m * A_0_M / 2.0
-
-
-__all__ = [
-    "B_TENSORS",
-    "C_ALPHA_M_PER_S",
-    "C_TENSORS",
-    "decay_weights",
-    "e2_over_e1_amplitude_ratio",
-    "e2_stark_shift_rad_s",
-    "geometric_factor",
-    "geometric_factor_closed_form",
-    "geometric_factors",
-    "lambda_3j",
-    "quadrupole_collapse_operators",
-    "rabi_frequency_e2_rad_s",
-    "racah_c2",
-    "reduced_element_a0_squared",
-    "reduced_element_from_lifetime_m2",
-    "stretched_closed_form_rad_s",
-]

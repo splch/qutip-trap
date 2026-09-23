@@ -78,6 +78,3 @@ def internal_levels(
     else:
         labels = list(qubit_labels) + [lab for _e, lab in others][: d - 3] + [SINK]
     return InternalLevels(tuple(labels))
-
-
-__all__ = ["SINK", "InternalLevels", "internal_levels"]

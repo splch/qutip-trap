@@ -172,11 +172,3 @@ class MetastableChannels:
     def effective_shelf_lifetime_s(self, species: Species, shelf: str) -> float:
         """1/(sum of :meth:`shelf_loss_rates_hz`): the shelf's lifetime in s with the channels on."""
         return 1.0 / sum(self.shelf_loss_rates_hz(species, shelf).values())
-
-
-__all__ = [
-    "COLLISION_PROCESSES",
-    "MetastableChannels",
-    "bbr_mixing_rates_hz",
-    "bose_occupation",
-]

@@ -205,6 +205,3 @@ def error_model(machine: Machine | Any, *, qubits: Sequence[int] | None = None) 
         provenance=provenance,
         notes=tuple(notes),
     )
-
-
-__all__ = ["QDK_TIME_PATTERN", "SINGLE_QUBIT_KINDS", "ErrorModel", "error_model", "qdk_time"]

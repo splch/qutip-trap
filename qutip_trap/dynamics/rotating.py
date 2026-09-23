@@ -567,19 +567,3 @@ def rotating_frame(
     if n_phase:
         notes.append(f"{n_phase} collapse operator(s) carry the e^(i lambda t) phase of the rotating frame")
     return RotatingSegment(qt.QobjEvo(drive), tuple(rotated), frame, tuple(notes))
-
-
-__all__ = [
-    "PERF_2026_09_09",
-    "FrameEnergies",
-    "PhasedSum",
-    "RotatingDrive",
-    "RotatingSegment",
-    "eigen_frequency",
-    "expectation_phase",
-    "frame_energies_of",
-    "kronecker_energies",
-    "register_data_type",
-    "rotating_collapse",
-    "rotating_frame",
-]

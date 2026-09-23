@@ -353,15 +353,3 @@ def scattering_estimates(device: Device, pulse: Pulse) -> dict[str, float]:
         out[f"ion{ion}.P_rayleigh"] = ray
         out[f"ion{ion}.rayleigh_dephasing"] = 0.5 * budget.rayleigh_dephasing_per_s * s_int
     return out
-
-
-__all__ = [
-    "RecoilNode",
-    "RecoilOption",
-    "ScatteringOptions",
-    "intensity_scale",
-    "nominal_rabi_hz",
-    "recoil_nodes",
-    "scattering_channels",
-    "scattering_estimates",
-]

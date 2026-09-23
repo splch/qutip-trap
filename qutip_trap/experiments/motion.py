@@ -441,6 +441,3 @@ def heating_rate(machine: Machine, mode: int, delays_s: Sequence[float], **kw: A
         chi2=fit.chi2_per_dof,
         subject={"mode": int(mode)},
     )
-
-
-__all__ = ["heating_rate", "mode_spectroscopy", "thermometry"]

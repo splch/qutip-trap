@@ -383,6 +383,3 @@ class AtomicStructure:
             a_d = rd.get((down.full_label, q), 0.0 + 0.0j)
             total += abs(a_u - a_d) ** 2
         return total
-
-
-__all__ = ["AtomicStructure", "DressedState", "structure_at"]

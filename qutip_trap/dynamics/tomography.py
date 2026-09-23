@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import qutip as qt
 
-from qutip_trap.control.pulses import fingerprint_pulse
 from qutip_trap.dynamics.engine import (
     ChannelSummary,
     EngineReport,
@@ -1139,38 +1138,3 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "tomography_tolerance_keyed": options.tomography_tolerance_keyed,
         "margin_element_tol": options.margin_element_tol,
     }
-
-
-__all__ = [
-    "M9A",
-    "MotionalBranch",
-    "TomographyRecord",
-    "TomographyRoute",
-    "apply_kraus_dm",
-    "apply_kraus_ket",
-    "choi_from_isometry",
-    "choi_least_squares",
-    "computational_labels",
-    "coupled_frozen_modes",
-    "cp_residual",
-    "expansion_coefficients",
-    "fingerprint_model",
-    "fingerprint_options",
-    "fingerprint_pulse",
-    "fingerprint_sample",
-    "ideal_unitary_on",
-    "input_states",
-    "internal_basis",
-    "keyed_tolerances",
-    "kraus_operators",
-    "kraus_superoperator",
-    "local_ideal",
-    "motional_branches",
-    "project_cptp",
-    "project_psd",
-    "project_tp",
-    "regrid_reduced",
-    "single_qudit_inputs",
-    "tomography",
-    "tp_residual",
-]

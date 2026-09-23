@@ -211,6 +211,3 @@ def physical_schedule(
         ),
         tuple(notes),
     )
-
-
-__all__ = ["UNLISTED_CROSSTALK_REPORT", "physical_drive", "physical_schedule"]

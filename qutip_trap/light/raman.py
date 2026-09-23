@@ -570,21 +570,3 @@ def comb_drive(
         crosstalk=dict(crosstalk or {}),
         comb=comb,
     )
-
-
-__all__ = [
-    "DerivedDrive",
-    "ScatteringBudget",
-    "comb_drive",
-    "crosstalk_ratios",
-    "derive_light_shift_drive",
-    "derive_optical_drive",
-    "derive_raman_drive",
-    "differential_stark_shift_hz",
-    "lamb_dicke_parameters",
-    "light_shift_drive",
-    "mathieu_or_none",
-    "scattering_budget",
-    "square_drive",
-    "two_photon_self_couplings_hz",
-]

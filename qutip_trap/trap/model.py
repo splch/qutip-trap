@@ -287,6 +287,3 @@ def _with_mass(params: MathieuParameters, mass_kg: float) -> MathieuParameters:
         omega_rf_hz=params.omega_rf_hz,
         mass_kg=mass_kg,
     )
-
-
-__all__ = ["Trap", "rotation_about_z"]

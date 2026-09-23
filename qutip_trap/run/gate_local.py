@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import qutip as qt
 
+from qutip_trap.control.pulses import fingerprint_pulse
 from qutip_trap.control.schedule import GateTarget, PlayedGate, Schedule
 from qutip_trap.dynamics.engine import (
     MARGIN_LEAKAGE_FRACTION,
@@ -32,7 +33,6 @@ from qutip_trap.dynamics.tomography import (
     apply_kraus_ket,
     fingerprint_model,
     fingerprint_options,
-    fingerprint_pulse,
     fingerprint_sample,
     local_ideal,
 )
@@ -1028,20 +1028,3 @@ def evolve_gate_local(
         tolerance_change_total=tolerance_total,
     )
     return out_states, report, models
-
-
-__all__ = [
-    "M9A",
-    "REGISTER_STORE_DIM_MAX",
-    "AppliedChannel",
-    "EngineSetup",
-    "GateLocalReport",
-    "GateLocalStep",
-    "GateStep",
-    "Register",
-    "StepSpace",
-    "clear_gate_local_cache",
-    "evolve_gate_local",
-    "gate_steps",
-    "step_space",
-]

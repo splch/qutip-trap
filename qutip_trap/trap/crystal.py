@@ -624,35 +624,3 @@ def solve_crystal(trap: Trap, species: tuple[Species, ...] | list[Species], *, r
         raise IndexError("reference ion out of range")
     omega, axes, field = trap.single_ion_frequencies_rad_s(sp, reference=reference)
     return build_crystal(sp, omega, axes=axes, field_v_per_m=field, centre_m=trap.rf_null_m())
-
-
-__all__ = [
-    "FAMILY_AXIS",
-    "FAMILY_ORDER",
-    "K_COULOMB_J_M",
-    "Crystal",
-    "LambDicke",
-    "Mode",
-    "ZigzagError",
-    "alpha_critical",
-    "axial_hessian_dimensionless",
-    "axial_modes_dimensionless",
-    "build_crystal",
-    "coulomb_gradient_j_per_m",
-    "coulomb_hessian_j_per_m2",
-    "equilibrium_dimensionless",
-    "equilibrium_positions_m",
-    "infinite_chain_epsilon",
-    "infinite_chain_transverse_omega_rad_s",
-    "infinite_chain_zigzag_omega_r_rad_s",
-    "is_collinear",
-    "james_coupling",
-    "kielpinski_three_ion_axial",
-    "length_scale_m",
-    "normal_modes",
-    "potential_energy_j",
-    "solve_crystal",
-    "transverse_eigenvalues",
-    "two_ion_mixed_axial_squared",
-    "zigzag_ratio_critical",
-]

@@ -73,6 +73,3 @@ def design_waveform(
 def split_feasible(device: Device, waveform: VoltageWaveform) -> tuple[bool, str]:
     """False with a reason when |gamma| >= gamma_tilde = 1.06 (kappa^3 beta_CP^2)^(1/5)."""
     raise NotImplementedError(f"split_feasible is {M12}")
-
-
-__all__ = ["Transport", "TransportBudget", "design_waveform", "split_feasible", "transport_budget"]

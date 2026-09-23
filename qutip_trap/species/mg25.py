@@ -225,6 +225,3 @@ MISSING: tuple[MissingConstant, ...] = required_constants_missing(TABLE, REQUIRE
 def species() -> Species:
     """Raises :class:`IncompleteSpeciesTable`: no measured g_J and no measured 3p hyperfine constants."""
     raise IncompleteSpeciesTable(NAME, MISSING)
-
-
-__all__ = ["MISSING", "NAME", "TABLE", "species"]

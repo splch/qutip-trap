@@ -435,16 +435,3 @@ class CalibrationTable:
             detection={},
             heating={},
         )
-
-
-__all__ = [
-    "ENTRY_KINDS",
-    "EntryKind",
-    "CalEntry",
-    "CalibrationTable",
-    "Leg",
-    "Segment",
-    "Waveform",
-    "WaveformKind",
-    "usable",
-]

@@ -481,6 +481,3 @@ def load_openqasm2(text: str) -> Circuit:
     """Import OpenQASM 2 text (the subset in the module docstring) into the IR: angles in radians, the terminal measurements
     as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers``."""
     return _Parser(text).program()
-
-
-__all__ = ["BUILTIN_ARITY", "OpenQASMError", "builtin_operations", "evaluate", "load_openqasm2", "tokenize"]

@@ -283,27 +283,3 @@ def pauli_frame_of(u: np.ndarray) -> str:
     if rank_b == 1:
         return "cnot"
     return "swap" if not a_block.any() else "iswap"
-
-
-__all__ = [
-    "CLASS_SIZES",
-    "CORES",
-    "ENTANGLING_COUNT",
-    "ISWAP_MATRIX",
-    "SINGLE_QUBIT_CLIFFORDS",
-    "SINGLE_QUBIT_GROUP_ORDER",
-    "TWO_QUBIT_GROUP_ORDER",
-    "TwoQubitClifford",
-    "canonical_phase",
-    "core_operations",
-    "decompose_two_qubit_clifford",
-    "group_closure",
-    "matrix_key",
-    "operations_unitary",
-    "pauli_frame_of",
-    "random_single_qubit_clifford",
-    "random_two_qubit_clifford",
-    "single_qubit_sequence_unitary",
-    "stabilizer_size",
-    "two_qubit_clifford_group",
-]

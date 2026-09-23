@@ -425,33 +425,3 @@ def ca40_optical(
             f"854 nm shelf-reset beam {'PRESENT (it depumps the shelf during detection: no per-stage beam gating)' if reset_beam else 'omitted (reset_beam=True adds it)'}",
         ),
     )
-
-
-__all__ = [
-    "ADDRESS_POWER_W",
-    "ADDRESS_WAIST_M",
-    "DETECTION_WAIST_M",
-    "FIELD_GAUSS",
-    "GLOBAL_POWER_W",
-    "GLOBAL_WAIST_M",
-    "OBLIQUE",
-    "TRAP_HZ",
-    "CA40_729_K",
-    "CA40_729_POLARIZATION",
-    "CA40_729_POWER_W",
-    "CA40_729_WAIST_M",
-    "CA40_DETECTION_S_397",
-    "CA40_DETECTION_S_866",
-    "CA40_DETECTION_WINDOW_S",
-    "CA40_TRAP_HZ",
-    "DevicePreset",
-    "ca40_optical",
-    "ca40_optical_recipe",
-    "crain_snspd_detector",
-    "myerson_ca40_pmt_detector",
-    "ideal_hardware",
-    "oblique_detection_beam",
-    "raman_pair_along_x",
-    "secular_trap",
-    "yb171_chain",
-]

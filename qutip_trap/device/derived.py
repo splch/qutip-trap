@@ -185,6 +185,3 @@ def derived_quantities(device: Device) -> DerivedQuantities:
             "anchor.m3a.yb171_leakage_prefactors",
         )
     return DerivedQuantities(values=values, provenance=prov, notes=tuple(notes))
-
-
-__all__ = ["derived_quantities"]

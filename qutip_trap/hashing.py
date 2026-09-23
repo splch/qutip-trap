@@ -117,6 +117,3 @@ def canonical_digest(obj: object) -> str:
     h = hashlib.sha256()
     _feed(h, obj)
     return h.hexdigest()
-
-
-__all__ = ["FLOAT_SIGNIFICANT_DIGITS", "canonical_digest", "canonical_float"]

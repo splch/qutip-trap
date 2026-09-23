@@ -29,6 +29,3 @@ def cited_factory(prefix: str) -> Callable[..., Cited]:
         )
 
     return _c
-
-
-__all__ = ["cited_factory"]

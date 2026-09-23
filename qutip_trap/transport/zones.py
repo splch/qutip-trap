@@ -31,6 +31,3 @@ class Zone:
             raise ValueError(
                 f"zone {self.name!r}: the 2 omega_rf^2 sum rule holds only in straight channels/sites"
             )
-
-
-__all__ = ["Zone"]

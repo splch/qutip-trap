@@ -138,6 +138,3 @@ class PolGradientBeams:
         return moving_gradient_window(
             2.0 * math.pi * cooling_rate_hz, 2.0 * math.pi * self.beat_hz, 2.0 * math.pi * mode_freq_hz
         )
-
-
-__all__ = ["Beam", "PolGradientBeams", "PolarizationModulation"]

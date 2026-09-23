@@ -868,18 +868,3 @@ def _micromotion_beam(device: Device, spec: GateDrive, method: str) -> int:
     from qutip_trap.light.roles import detection_beams
 
     return int(detection_beams(device, 0)[0])
-
-
-__all__ = [
-    "ALIASES",
-    "ORDER",
-    "PRODUCES",
-    "UPSTREAM",
-    "CalibrationError",
-    "CalibrationReport",
-    "CalibrationScans",
-    "frame_shifts",
-    "full_calibration",
-    "refused_table",
-    "upstream_status",
-]
