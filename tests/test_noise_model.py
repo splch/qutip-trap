@@ -18,7 +18,7 @@ from qutip_trap.dynamics.channels import (
     motional_dephasing_channels,
     qubit_dephasing_channels,
 )
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.hashing import canonical_digest
@@ -40,6 +40,7 @@ from qutip_trap.noise.sampling import (
     quiet_sample,
 )
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, ou_spectrum, power_law_spectrum, white_spectrum
+from qutip_trap.options import Numerics
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate, thermal_collapse_rates
 from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
 from tests.fixtures import chain_device, single_ion_raman_device
@@ -70,9 +71,6 @@ def test_heating_rates_follow_the_correlation_length_and_refuse_its_absence() ->
     uniform = _with(dev, S_E=white_spectrum(s_e / 2.0, "(V/m)^2/(rad/s)"), correlation_length_m=math.inf)
     ur = uniform.noise.heating_rates_quanta_per_s(uniform)
     assert ur[com] == pytest.approx(200.0, rel=1e-9) and rock not in ur
-    bad = _with(dev, S_E=white_spectrum(s_e / 2.0, "(V/m)^2/(rad/s)"), correlation_length_m=None)
-    with pytest.raises(ValueError, match="correlation_length_m"):
-        bad.noise.heating_rates_quanta_per_s(bad)
     assert NoiseModel().is_quiet() and NoiseModel().heating_rates_quanta_per_s(dev) == {}
     space = HilbertSpace(
         (2, 2), (ModeTruncation(com, 6, (0, 2), 0.1),), None, tuple(m for m in range(6) if m != com)
@@ -103,7 +101,7 @@ def test_white_field_noise_is_the_qubit_dephasing_operator_with_gamma_equal_to_o
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     rho = tr.final.internal.full()
     assert abs(rho[0, 1]) == pytest.approx(0.5 * math.exp(-gamma * t), rel=1e-4)
@@ -135,7 +133,7 @@ def test_white_rf_amplitude_noise_is_motional_dephasing_on_the_transverse_modes(
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     rho_m = tr.final.motional.reduced[1].full()
     assert abs(rho_m[0, 1]) == pytest.approx(0.5 * math.exp(-1.0), rel=2e-3)

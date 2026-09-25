@@ -34,7 +34,7 @@ from qutip_trap.control.shaping import gate_modes
 from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.experiments.fitting import (
     Observation,
     fit_lineshape,
@@ -57,6 +57,7 @@ from qutip_trap.machine import Machine
 from qutip_trap.noise.model import NoiseModel, servo_residual
 from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, correlated_normals, quiet_sample
 from qutip_trap.noise.spectra import Drift
+from qutip_trap.options import Numerics
 from qutip_trap.provenance import load_ledger
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
@@ -401,7 +402,7 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
         frame = frame_after([pulse], PhaseFrame()).as_dict(2)
         sched = Schedule((pulse,), ((0.0, start),) if start > 0 else (), (), frame)
         traces = engine.run_pulses(
-            fx.device, sched, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), SolverOptions()
+            fx.device, sched, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics()
         )
         losses.append(
             1.0 - float(np.real(qt.expect(traces.final.internal, frame_rotated(ideal, frame) * ket0)))

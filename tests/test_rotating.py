@@ -12,7 +12,7 @@ import qutip as qt
 
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.kernels import FactorizedOperator, factorized_qobj
 from qutip_trap.dynamics.operators import displacement_operator, qudit_sigma_plus, qudit_sigma_z
@@ -29,6 +29,7 @@ from qutip_trap.dynamics.rotating import (
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
+from qutip_trap.options import Numerics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -237,9 +238,7 @@ def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, mo
             # the Schroedinger-picture reference: the frame builder declines and the engine falls back
             if not flag:
                 m.setattr("qutip_trap.dynamics.engine.rotating_frame", lambda *args, **kwargs: None)
-            traces[flag] = eng.run_pulses(
-                dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions()
-            )
+            traces[flag] = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), Numerics())
         rep = eng.last_report
         assert rep is not None
         reports[flag] = rep
@@ -294,7 +293,7 @@ def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_
                 space,
                 quiet_sample(),
                 SeedSpec(0),
-                SolverOptions(
+                Numerics(
                     lindblad_method="mcsolve",
                     ntraj=3,
                     map="serial",

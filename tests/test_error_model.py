@@ -19,15 +19,15 @@ from qutip_trap.benchmarks.error_model import (
 from qutip_trap.benchmarks.rb import randomized_benchmarking
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.machine import Machine
-from qutip_trap.options import Numerics, Truncation
+from qutip_trap.options import Numerics
 from tests.fixtures import WINDOWS
 
 
 @pytest.fixture(scope="module")
 def machine() -> Machine:
-    return Machine(
-        yb171_chain(2).device, numerics=Numerics(truncation=Truncation(branch_weight_min=1e-3))
-    ).calibrated(pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS)
+    return Machine(yb171_chain(2).device, numerics=Numerics(branch_weight_min=1e-3)).calibrated(
+        pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS
+    )
 
 
 @pytest.fixture(scope="module")

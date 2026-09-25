@@ -13,7 +13,6 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
 from qutip_trap.control.schedule import schedule, stark_phase_rad
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.noise.spectra import Collisions, Drift, white_spectrum
 from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import effective_sample_size, last_record, register_fidelity
@@ -77,7 +76,7 @@ def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample
     dev = _noisy(fx.device, field_drift=Drift(4e-7, 10.0, None), rabi_drift=Drift(2e-2, 1.0, None))
     kw = dict(
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2), samples=2),
+        numerics=Numerics(branch_weight_min=1e-2, samples=2),
         keep_final_state=True,
     )
     res = run(BELL, dev, 300, **kw)  # type: ignore[arg-type]
@@ -106,7 +105,7 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
     assert dev.noise.heating_rates_quanta_per_s(dev)[3] > 1.0
     kw = dict(
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2, ntraj=3)),
+        numerics=Numerics(branch_weight_min=1e-2, ntraj=3),
         keep_final_state=True,
     )
     res = run(BELL, dev, 200, **kw)  # type: ignore[arg-type]
@@ -129,7 +128,7 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
     # (measured F = 0.9976)
     kw = dict(
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2, ntraj=8)),
+        numerics=Numerics(branch_weight_min=1e-2, ntraj=8),
         keep_final_state=True,
         physics=Physics(internal_levels=3),
     )
@@ -137,7 +136,7 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
     d = res.diagnostics
     assert d.space.ion_dims == (3, 3) and res.final_state is not None and res.final_state.dims[0] == [3, 3]
     assert any("leakage levels" in a and "SINK" in a for a in d.approximations)
-    assert any("scattering_channels turned ON with scattering_recoil='off'" in a for a in d.approximations)
+    assert any("scattering='channels' turned on with scattering_recoil='off'" in a for a in d.approximations)
     assert register_fidelity(res) > 0.99
     rec = last_record(res)
     assert all(s.n_levels == 3 and s.classes[2] == "dark" for s in rec.readout.schemes)
@@ -158,7 +157,7 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
     dev = _noisy(fx.device, collisions=col)
     kw = dict(
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        numerics=Numerics(branch_weight_min=1e-2),
     )
     res = run(BELL, dev, 120, **kw)  # type: ignore[arg-type]
     d = res.diagnostics

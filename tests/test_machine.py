@@ -20,7 +20,7 @@ from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine
 from qutip_trap.dynamics.truncation import TruncationWarning, warn_if_boundary_exceeds
 from qutip_trap.machine import Estimate, Machine
-from qutip_trap.options import Numerics, Parallel, Physics, Readout, Truncation
+from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import ThresholdDiscriminator
 from qutip_trap.run.job import last_record
 from qutip_trap.run.levels import FidelityLevel
@@ -29,7 +29,7 @@ from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec,
 from tests.fixtures import BELL, FAST, WINDOWS, run
 
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
-SERIAL = Numerics(truncation=Truncation(branch_weight_min=1e-3), parallel=Parallel(map="serial"))
+SERIAL = Numerics(branch_weight_min=1e-3, map="serial")
 
 
 @pytest.fixture(scope="module")
@@ -237,9 +237,14 @@ def test_spec_round_trips_through_json(machine) -> None:  # type: ignore[no-unty
     _preset, m = machine
     numerics = dataclasses.replace(
         m.numerics,
-        truncation={"branch_weight_min": 1e-3, "caps": {2: 12, 3: 14}, "enr_group": ((4, 5), 2)},
-        integration={"atol": 1e-9, "integrators": ("vern9",), "store_marginals": True},
-        parallel={"map": "serial", "samples": 3},
+        branch_weight_min=1e-3,
+        caps={2: 12, 3: 14},
+        enr_group=((4, 5), 2),
+        atol=1e-9,
+        integrators=("vern9",),
+        store_marginals=True,
+        map="serial",
+        samples=3,
     )
     physics = trap.Physics(noise=False, internal_levels=3, entangler="zz", shot_period_s=2e-3)
     spec = RunSpec(
@@ -257,25 +262,25 @@ def test_spec_round_trips_through_json(machine) -> None:  # type: ignore[no-unty
     d = spec.to_dict()
     text = json.dumps(d)  # plain JSON: tuples became lists, integer keys strings
     assert d["schema_version"] == SPEC_SCHEMA_VERSION and d["qutip_trap_version"] == trap.__version__
-    assert d["numerics"]["truncation"]["caps"] == {"2": 12, "3": 14}
-    assert d["numerics"]["truncation"]["enr_group"] == [[4, 5], 2]
+    assert d["numerics"]["caps"] == {"2": 12, "3": 14}
+    assert d["numerics"]["enr_group"] == [[4, 5], 2]
     assert d["level"] == "GATE_LOCAL" and d["circuit"]["measure"] == [1]
     back = RunSpec.from_dict(json.loads(text))
     assert back == spec, "exact: the option objects, the level and the circuit rebuilt as the same values"
-    assert back.numerics.truncation.caps == {2: 12, 3: 14} and back.numerics.truncation.enr_group == (
+    assert back.numerics.caps == {2: 12, 3: 14} and back.numerics.enr_group == (
         (4, 5),
         2,
     )
-    assert back.numerics.integration.integrators == ("vern9",)
+    assert back.numerics.integrators == ("vern9",)
     with pytest.raises(ValueError, match="schema version"):
-        RunSpec.from_dict({**d, "schema_version": 2})
+        RunSpec.from_dict({**d, "schema_version": SPEC_SCHEMA_VERSION + 1})
 
 
 def test_spec_refuses_by_name_what_a_record_cannot_carry(machine) -> None:  # type: ignore[no-untyped-def]
     _preset, m = machine
     space = m.estimate(BELL).space
-    with pytest.raises(ValueError, match="truncation.space"):
-        dataclasses.replace(m.spec(BELL, 1), numerics=trap.Numerics(truncation={"space": space})).to_dict()
+    with pytest.raises(ValueError, match="Numerics.space"):
+        dataclasses.replace(m.spec(BELL, 1), numerics=trap.Numerics(space=space)).to_dict()
     with pytest.raises(ValueError, match="discriminator"):
         dataclasses.replace(
             m.spec(BELL, 1),

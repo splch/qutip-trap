@@ -14,7 +14,7 @@ from qutip_trap.control import native
 from qutip_trap.control.schedule import GateTarget, Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.channels import qubit_dephasing_channels
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import (
     MotionalBranch,
@@ -47,6 +47,7 @@ from qutip_trap.noise.summary import (
     entanglement_infidelity,
     pauli_twirl,
 )
+from qutip_trap.options import Numerics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -292,7 +293,7 @@ def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_ent
         eng = JointExactEngine()
         if not flag:  # the "states" reference: the step is treated as dissipative
             monkeypatch.setattr(eng, "is_unitary", lambda *args, **kwargs: False)
-        opts = SolverOptions(
+        opts = Numerics(
             branch_weight_min=0.02,
             map="serial",
             tomography_dropped_weight_max=0.0,
@@ -343,10 +344,10 @@ def test_a_dissipative_step_keeps_the_state_route() -> None:
     sched = Schedule((pulse,), (), (), {0: 0.0, 1: 0.0})
     space = HilbertSpace((2, 2), (), None, (0, 1, 2, 3, 4, 5))
     model = MotionalModel(reduced={}, nbar={m: 0.0 for m in range(6)}, frozen=tuple(range(6)))
-    opts = SolverOptions(lindblad_method="mesolve")
-    assert JointExactEngine().is_unitary(dev, space, opts)
+    opts = Numerics(lindblad_method="mesolve")
+    assert JointExactEngine().is_unitary(dev, space)
     dephasing = JointExactEngine(channels=qubit_dephasing_channels(space, {0: 1.0e3}))
-    assert not dephasing.is_unitary(dev, space, opts)
+    assert not dephasing.is_unitary(dev, space)
     with pytest.raises(ValueError, match="collapse operators"):
         dephasing.propagator(dev, sched, space, quiet_sample(), SeedSpec(0), opts)
     rec = dephasing.tomography(dev, pulse, space, model, quiet_sample(), SeedSpec(0), opts)
@@ -359,9 +360,9 @@ def test_a_dissipative_step_keeps_the_state_route() -> None:
         ),
     )
     heating = JointExactEngine(device_channels=True)
-    assert heating.is_unitary(noisy, space, opts), "heating acts on modes, and every mode is frozen here"
+    assert heating.is_unitary(noisy, space), "heating acts on modes, and every mode is frozen here"
     resolved = HilbertSpace((2, 2), (ModeTruncation(2, 6, (0, 1), 0.13),), None, (0, 1, 3, 4, 5))
-    assert not heating.is_unitary(noisy, resolved, opts)
+    assert not heating.is_unitary(noisy, resolved)
     with pytest.raises(ValueError, match="internal-state-only"):
         heating.propagator(noisy, sched, resolved, quiet_sample(), SeedSpec(0), opts)
 
@@ -398,13 +399,13 @@ def test_the_tail_rule_drops_the_lightest_branches_inside_its_budget_and_reports
 
 
 def test_keyed_tolerances_follow_the_map_accuracy_and_never_override_a_chosen_tolerance() -> None:
-    assert keyed_tolerances(SolverOptions()) == pytest.approx((1e-8, 1e-6))
-    assert keyed_tolerances(SolverOptions(map_accuracy=1e-4)) == pytest.approx((1e-9, 1e-7))
-    assert keyed_tolerances(SolverOptions(tomography_tolerance_keyed=False)) is None
+    assert keyed_tolerances(Numerics()) == pytest.approx((1e-8, 1e-6))
+    assert keyed_tolerances(Numerics(map_accuracy=1e-4)) == pytest.approx((1e-9, 1e-7))
+    assert keyed_tolerances(Numerics(tomography_tolerance_keyed=False)) is None
     # a caller's atol is kept, the default rtol still keyed; both chosen: nothing moves
-    assert keyed_tolerances(SolverOptions(atol=1e-12)) == (1e-12, 1e-6)
-    assert keyed_tolerances(SolverOptions(atol=1e-12, rtol=1e-9)) is None
-    assert keyed_tolerances(SolverOptions(atol=1e-8, rtol=1e-6)) is None
+    assert keyed_tolerances(Numerics(atol=1e-12)) == (1e-12, 1e-6)
+    assert keyed_tolerances(Numerics(atol=1e-12, rtol=1e-9)) is None
+    assert keyed_tolerances(Numerics(atol=1e-8, rtol=1e-6)) is None
 
 
 def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_inside_the_map_accuracy(
@@ -423,7 +424,7 @@ def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_insid
         SeedSpec(0),
         # the default floor: the tail rule is what limits the branches here (a floor of 0.02 would drop more than the budget
         # on its own and the rule would then add nothing)
-        SolverOptions(map="serial"),
+        Numerics(map="serial"),
     )
     ref = JointExactEngine().tomography(
         dev,
@@ -432,7 +433,7 @@ def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_insid
         model,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(map="serial", tomography_tolerance_keyed=False),
+        Numerics(map="serial", tomography_tolerance_keyed=False),
     )
     assert keyed.route == ref.route == "isometry"
     assert keyed.tolerances == (1e-8, 1e-6) and ref.tolerances == (1e-10, 1e-8)
@@ -454,7 +455,7 @@ def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_insid
         model,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(map="serial", tomography_dropped_weight_max=0.0),
+        Numerics(map="serial", tomography_dropped_weight_max=0.0),
     )
     assert zero.branches > keyed.branches and zero.dropped_branch_weight < keyed.dropped_branch_weight
     assert (

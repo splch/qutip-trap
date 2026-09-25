@@ -17,7 +17,7 @@ from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, schedule
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import apply_kraus_dm, kraus_operators
 from qutip_trap.light.raman import derive_raman_drive, square_drive
@@ -41,7 +41,7 @@ from qutip_trap.run.space import best_contributions, select_space
 from tests.fixtures import BELL, WINDOWS, run, single_ion_raman_device, two_ion_surrogate
 
 GPI2 = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
-FAST = SolverOptions(branch_weight_min=1e-3)
+FAST = Numerics(branch_weight_min=1e-3)
 
 
 @pytest.fixture(scope="module")
@@ -51,7 +51,7 @@ def two_ion():  # type: ignore[no-untyped-def]
     kw = dict(
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(FAST),
+        numerics=FAST,
     )
     return fx, sur, kw
 
@@ -92,9 +92,7 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     # preparation error is 2.5e-6, below the default cutoff) and switch the tomography's tail rule off
     exact = {
         **kw,
-        "numerics": Numerics.from_solver_options(
-            SolverOptions(branch_weight_min=1e-9, tomography_dropped_weight_max=0.0)
-        ),
+        "numerics": Numerics(branch_weight_min=1e-9, tomography_dropped_weight_max=0.0),
     }
     a = run(GPI2, fx.device, 100, level="JOINT_EXACT", **exact)  # type: ignore[arg-type]
     b = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)  # type: ignore[arg-type]
@@ -218,10 +216,8 @@ def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_
     """With ``register_dm_max_qubits = 1`` the register is a 24-member Kraus-sampled ensemble whose GPi2 histogram matches the
     density matrix's within 0.12."""
     fx, sur, kw = two_ion
-    opts = SolverOptions(branch_weight_min=1e-3, register_dm_max_qubits=1, register_ensemble=24)
-    b = run(
-        GPI2, fx.device, 240, level="GATE_LOCAL", **{**kw, "numerics": Numerics.from_solver_options(opts)}
-    )  # type: ignore[arg-type]
+    opts = Numerics(branch_weight_min=1e-3, register_dm_max_qubits=1, register_ensemble=24)
+    b = run(GPI2, fx.device, 240, level="GATE_LOCAL", **{**kw, "numerics": opts})  # type: ignore[arg-type]
     a = run(GPI2, fx.device, 240, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
     gl = b.diagnostics.gate_local
     assert gl is not None and gl.register == "ensemble" and gl.ensemble_size == 24
@@ -249,11 +245,11 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
     model = MotionalModel(reduced={}, nbar={0: 0.0, 1: 0.1, 2: 0.0}, frozen=(0, 2))
     eng = JointExactEngine(device_channels=True)
     rec_me = eng.tomography(
-        noisy, pulse, space, model, quiet_sample(), SeedSpec(0), SolverOptions(lindblad_method="mesolve")
+        noisy, pulse, space, model, quiet_sample(), SeedSpec(0), Numerics(lindblad_method="mesolve")
     )
     assert rec_me.method == "mesolve" and rec_me.n_traj == 1 and rec_me.tp_residual < 1e-10
     assert len(rec_me.labels) == 4 and rec_me.branches >= 1
-    opts = SolverOptions(lindblad_method="mcsolve", map_accuracy=0.25, branch_weight_min=0.05)
+    opts = Numerics(lindblad_method="mcsolve", map_accuracy=0.25, branch_weight_min=0.05)
     rec_mc = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), opts)
     # ceil(1/eps_map) = 4 stochastic trajectories per input; improved sampling (the default) adds the deterministic no-jump
     # member, so the mixture has five
@@ -312,7 +308,7 @@ def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:
     sched = Schedule((), ((t0, t0 + tau),), (), {}, t0_s=t0)
     sample = NoiseSample(0, {key_qubit_offset_hz(1): 400.0}, {})
     model = MotionalModel(reduced={}, nbar={m: 0.0 for m in range(n_modes)}, frozen=tuple(range(n_modes)))
-    rec = JointExactEngine().tomography(dev, sched, space, model, sample, SeedSpec(0), SolverOptions())
+    rec = JointExactEngine().tomography(dev, sched, space, model, sample, SeedSpec(0), Numerics())
     ks = rec.kraus()
     assert len(ks) == 1 and rec.tp_residual < 1e-10
     assert rec.route == "propagator" and rec.engine_runs == 1 and rec.integrators == ("exact",)
@@ -372,7 +368,7 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     kw = dict(
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        numerics=Numerics(branch_weight_min=1e-2),
     )
     a = run(ghz, fx.device, 500, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
     b = run(ghz, fx.device, 500, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
@@ -405,8 +401,8 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     sched = schedule(compile_to_native(GHZ4), fx.device, sur.table, t0_s=0.0)
     nbar0 = {m: 0.0 for m in range(len(fx.device.crystal.modes))}
     best = best_contributions(fx.device, sched.gates, nbar0)
-    opts = SolverOptions(freeze_chi_max_rad=0.3)
-    selection = select_space(fx.device, sched, opts, nbar=nbar0, caps={7: 12})
+    opts = Numerics(freeze_chi_max_rad=0.3)
+    selection = select_space(fx.device, sched, dataclasses.replace(opts, caps={7: 12}), nbar=nbar0)
     resolved = selection.resolved_modes
     assert resolved == (7,), (resolved, {m: round(c.chi_rad, 4) for m, c in sorted(best.items())})
     assert selection.space.dims == [2, 2, 2, 2, 12] and selection.space.dimension == 192
@@ -416,7 +412,7 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     kw = dict(
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(opts, caps={7: 12}),
+        numerics=dataclasses.replace(opts, caps={7: 12}),
         seed=3,
     )
     a = run(GHZ4, fx.device, 200, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
@@ -500,7 +496,7 @@ def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_
     # the key itself
     dev = fx.device
     setup = EngineSetup(table=sur.table)
-    opts = SolverOptions()
+    opts = Numerics()
     quiet = quiet_sample()
     step_a = GateStep("idle", 1.0e-6, 2.0e-6, (), (), (), ())
     step_b = GateStep("idle", 7.3e-5, 7.4e-5, (), (), (), ())
@@ -508,7 +504,7 @@ def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_
     k = lambda step, smp, o=opts, q=0: _idle_key(dev, q, 2, step, smp, SeedSpec(0), o, setup)  # noqa: E731
     assert k(step_a, quiet) == k(step_b, quiet), "the same dead time anywhere in the walk is the same channel"
     assert k(step_a, quiet) != k(step_c, quiet) and k(step_a, quiet) != k(step_a, quiet, q=1)
-    assert k(step_a, quiet) != k(step_a, quiet, o=SolverOptions(atol=1e-9))
+    assert k(step_a, quiet) != k(step_a, quiet, o=Numerics(atol=1e-9))
     grid = np.array([np.linspace(0.0, 2e-4, 5), [10.0, -5.0, 3.0, 0.0, 1.0]])
     noisy = NoiseSample(0, {}, {key_qubit_trajectory_hz(0): grid})
     assert k(step_a, noisy) != k(step_b, noisy), (

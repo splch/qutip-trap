@@ -17,10 +17,10 @@ from qutip_trap.control.schedule import (
 )
 from qutip_trap.device.model import BeamRoles, ResolvedRoles
 from qutip_trap.device.presets import ca40_optical, yb171_chain
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
+from qutip_trap.options import Numerics
 from qutip_trap.run.levels import FidelityLevel, decide_level, within_budget
 from tests.fixtures import BELL, FAST, make_device, run, two_ion_surrogate
 
@@ -105,18 +105,18 @@ def test_the_level_decision_names_both_numbers_and_both_guards() -> None:
     space = HilbertSpace(
         (2, 2), tuple(ModeTruncation(m, 12, (0, 4), 0.1) for m in (2, 3)), None, (0, 1, 4, 5)
     )
-    budget = within_budget(space, SolverOptions())
-    d = decide_level(budget, SolverOptions(), FidelityLevel.AUTO)
+    budget = within_budget(space, Numerics())
+    d = decide_level(budget, Numerics(), FidelityLevel.AUTO)
     assert d.level is FidelityLevel.JOINT_EXACT and d.inside and not d.forced
     assert d.dimension == 4 * 12**2 and d.nnz == 2 * 4 * (12**2) ** 2
     assert d.reason == (
         "JOINT_EXACT: declared joint dimension 576 <= joint_dimension_max = 4096, drive-operator non-zeros 165888 <= "
         "nnz_max = 20000000 (Section 11.5)"
     )
-    tight_options = SolverOptions(joint_dimension_max=64)
+    tight_options = Numerics(joint_dimension_max=64)
     tight = decide_level(within_budget(space, tight_options), tight_options, FidelityLevel.AUTO)
     assert tight.level is FidelityLevel.GATE_LOCAL and "576 > joint_dimension_max = 64" in tight.reason
-    forced = decide_level(budget, SolverOptions(), FidelityLevel.GATE_LOCAL)
+    forced = decide_level(budget, Numerics(), FidelityLevel.GATE_LOCAL)
     assert forced.level is FidelityLevel.GATE_LOCAL and forced.inside and forced.forced
     assert forced.reason == f"GATE_LOCAL forced by the caller; level='auto' would choose {d.reason}"
 

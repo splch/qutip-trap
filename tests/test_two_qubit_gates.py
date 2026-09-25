@@ -34,12 +34,13 @@ from qutip_trap.control.shaping import (
 from qutip_trap.control.table import Waveform
 from qutip_trap.device.model import Device, Field
 from qutip_trap.device.presets import secular_trap
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.dynamics.operators import rabi_matrix_element
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.published import (
     kirchmair_populations,
     ms_alpha,
@@ -131,7 +132,7 @@ def _run(
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     return tr, eng
 
@@ -495,7 +496,7 @@ def _exact_play(builder: BuilderOptions):  # type: ignore[no-untyped-def]
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     target = qt.Qobj((native_ms(0.0, 0.0, math.pi / 2) @ KET00).reshape(-1, 1), dims=[[2, 2], [1, 1]])
     infidelity = 1.0 - float(np.real(qt.expect(traces.final.internal, target)))
@@ -535,7 +536,7 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     assert infidelity < off_resonant
     assert infidelity > 0.25 * off_resonant
     selection = select_space(
-        device, sched, SolverOptions(), nbar=dict.fromkeys(range(6), 0.0), caps={X_COM_TWO_IONS: 12}
+        device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
     )
     budget = intrinsic_budget(device, sched, selection)
     # (Omega_tone/nu_min)^2 with nu_min the x-rocking mode at 2.8284 MHz

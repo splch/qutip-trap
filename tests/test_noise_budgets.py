@@ -12,7 +12,6 @@ from scipy.linalg import expm
 from qutip_trap.calibration.entangling import exact_gate_check
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.channels import heating_channels, motional_dephasing_channels
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.summary import (
     average_gate_infidelity,
@@ -23,6 +22,7 @@ from qutip_trap.noise.summary import (
     pauli_string,
     pauli_twirl,
 )
+from qutip_trap.options import Numerics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -32,7 +32,7 @@ from tests.fixtures import (
 )
 from tests.oracles import ballance_dephasing_error, ballance_heating_error
 
-FAST = SolverOptions(mesolve_dimension_max=4096)
+FAST = Numerics(mesolve_dimension_max=4096)
 
 
 def _gate(loops: int, epsilon_hz: float):  # type: ignore[no-untyped-def]

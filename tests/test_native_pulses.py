@@ -22,10 +22,11 @@ from qutip_trap.control.schedule import (
     single_qubit_pulse,
 )
 from qutip_trap.control.table import CalEntry, CalibrationTable
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from tests.fixtures import make_calibration_table, microwave_device, single_ion_raman_device
 
 KET0 = np.array([1.0, 0.0])
@@ -46,9 +47,7 @@ def _run_microwave(ops: list[Operation]) -> tuple[np.ndarray, object]:
     sch = schedule(circ, dev, table)
     space = HilbertSpace((2,), (), None, (0, 1, 2))
     eng = JointExactEngine()
-    tr = eng.run_pulses(
-        dev, sch, space.initial_state([0]), space, quiet_sample(), SeedSpec(0), SolverOptions()
-    )
+    tr = eng.run_pulses(dev, sch, space.initial_state([0]), space, quiet_sample(), SeedSpec(0), Numerics())
     assert tr.final.joint is not None
     return tr.final.joint.full().ravel(), sch
 
@@ -164,7 +163,7 @@ def test_raman_gpi2_reproduces_the_matrix_within_the_debye_waller_budget() -> No
     space = HilbertSpace((2,), (ModeTruncation(1, 10, (0, 2), 0.2),), None, (0, 2))
     eng = JointExactEngine()
     tr = eng.run_pulses(
-        dev, sch, space.initial_state([0], fock={1: 0}), space, quiet_sample(), SeedSpec(0), SolverOptions()
+        dev, sch, space.initial_state([0], fock={1: 0}), space, quiet_sample(), SeedSpec(0), Numerics()
     )
     rho = tr.final.internal.full()
     target = gpi2(0.0) @ KET0

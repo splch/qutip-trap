@@ -1,166 +1,47 @@
-"""The option objects: every ``SolverOptions`` field has exactly one home, the defaults reproduce ``SolverOptions()``,
-validation errors are ``SolverOptions``'s, and mappings of the fields are accepted."""
+"""The option objects refuse bad fields, and ``Machine.engine`` plays under the physics switches."""
 
 from __future__ import annotations
 
-import dataclasses
-
 import pytest
 
-from qutip_trap.dynamics.engine import SolverOptions
-from qutip_trap.options import (
-    GateLocal,
-    Integration,
-    Numerics,
-    Parallel,
-    Physics,
-    Readout,
-    Trajectories,
-    Truncation,
-)
-from tests.fixtures import make_space
-
-HOMES: dict[str, tuple[type, str]] = {
-    "atol": (Integration, "atol"),
-    "rtol": (Integration, "rtol"),
-    "nsteps": (Integration, "nsteps"),
-    "integrators": (Integration, "integrators"),
-    "propagator_cache": (Integration, "propagator_cache"),
-    "store_marginals": (Integration, "store_marginals"),
-    "joint_dimension_max": (Truncation, "joint_dimension_max"),
-    "nnz_max": (Truncation, "nnz_max"),
-    "mode_dimension_max": (Truncation, "mode_dimension_max"),
-    "boundary_population_max": (Truncation, "boundary_population_max"),
-    "freeze_chi_max_rad": (Truncation, "freeze_chi_max_rad"),
-    "freeze_alpha_max": (Truncation, "freeze_alpha_max"),
-    "branch_weight_min": (Truncation, "branch_weight_min"),
-    "margin_check": (Truncation, "margin_check"),
-    "margin_element_tol": (Truncation, "margin_element_tol"),
-    "lindblad_method": (Trajectories, "lindblad_method"),
-    "mesolve_dimension_max": (Trajectories, "mesolve_dimension_max"),
-    "ntraj": (Trajectories, "ntraj"),
-    "improved_sampling": (Trajectories, "improved_sampling"),
-    "trajectory_target_tol": (Trajectories, "trajectory_target_tol"),
-    "map_accuracy": (GateLocal, "map_accuracy"),
-    "crosstalk_threshold": (GateLocal, "crosstalk_threshold"),
-    "register_dm_max_qubits": (GateLocal, "register_dm_max_qubits"),
-    "register_ensemble": (GateLocal, "register_ensemble"),
-    "tomography_dropped_weight_max": (GateLocal, "tomography_dropped_weight_max"),
-    "tomography_tolerance_keyed": (GateLocal, "tomography_tolerance_keyed"),
-    "map": (Parallel, "map"),
-    "workers": (Parallel, "workers"),
-    "convergence_check": (Numerics, "convergence_check"),
-    "scattering_channels": (Physics, "scattering"),
-    "scattering_recoil": (Physics, "scattering_recoil"),
-    "intensity_noise_channels": (Physics, "intensity_noise_channels"),
-    "hardware_chain": (Physics, "hardware_chain"),
-}
-"""Every ``SolverOptions`` field and its one home; a field added to ``SolverOptions`` without a row here fails the table test."""
-
-
-def test_every_solver_options_field_has_exactly_one_home() -> None:
-    names = {f.name for f in dataclasses.fields(SolverOptions)}
-    assert set(HOMES) == names, (sorted(set(HOMES) - names), sorted(names - set(HOMES)))
-    for name, (cls, attr) in HOMES.items():
-        assert attr in {f.name for f in dataclasses.fields(cls)}, (
-            f"{name} -> {cls.__name__}.{attr} does not exist"
-        )
-    homes = [f"{cls.__name__}.{attr}" for cls, attr in HOMES.values()]
-    assert len(set(homes)) == len(homes), "two SolverOptions fields share a home"
-
-
-def test_defaults_reproduce_the_solver_options_defaults() -> None:
-    assert Numerics().to_solver_options(Physics()) == SolverOptions()
-    assert Numerics.from_solver_options(SolverOptions()) == Numerics()
-    assert Physics.from_solver_options(SolverOptions()) == Physics()
-
-
-def test_non_default_solver_options_round_trip_through_the_objects() -> None:
-    opts = SolverOptions(
-        atol=1e-11,
-        integrators=("vern9",),
-        joint_dimension_max=999,
-        mode_dimension_max=96,
-        branch_weight_min=1e-3,
-        lindblad_method="mcsolve",
-        ntraj=7,
-        map="serial",
-        workers=3,
-        map_accuracy=1e-4,
-        convergence_check=True,
-        scattering_channels=True,
-        scattering_recoil="vector",
-        intensity_noise_channels=False,
-        hardware_chain=False,
-        margin_element_tol=1e-7,
-    )
-    numerics = Numerics.from_solver_options(opts)
-    physics = Physics.from_solver_options(opts, noise=False)
-    assert numerics.to_solver_options(physics) == opts
-    assert numerics.integration.atol == 1e-11 and numerics.parallel.workers == 3
-    assert (
-        physics.scattering == "channels" and physics.scattering_recoil == "vector" and physics.noise is False
-    )
+from qutip_trap.machine import Machine
+from qutip_trap.options import Numerics, Physics, Readout
+from tests.fixtures import make_device, make_space
 
 
 @pytest.mark.parametrize(
-    ("bad", "solver_bad"),
+    ("make", "match"),
     [
-        (lambda: Integration(atol=-1.0), lambda: SolverOptions(atol=-1.0)),
-        (lambda: Integration(integrators=("adams",)), lambda: SolverOptions(integrators=("adams",))),
-        (lambda: Truncation(joint_dimension_max=1), lambda: SolverOptions(joint_dimension_max=1)),
-        (lambda: Truncation(boundary_population_max=2.0), lambda: SolverOptions(boundary_population_max=2.0)),
-        (lambda: Trajectories(ntraj=0), lambda: SolverOptions(ntraj=0)),
-        (lambda: GateLocal(map_accuracy=1.5), lambda: SolverOptions(map_accuracy=1.5)),
-        (lambda: Parallel(workers=0), lambda: SolverOptions(workers=0)),
+        (lambda: Numerics(atol=-1.0), "tolerances"),
+        (lambda: Numerics(integrators=("adams",)), "multistep"),
+        (lambda: Numerics(joint_dimension_max=1), "size guards"),
+        (lambda: Numerics(boundary_population_max=2.0), "boundary_population_max"),
+        (lambda: Numerics(ntraj=0), "ntraj"),
+        (lambda: Numerics(map_accuracy=1.5), "map_accuracy"),
+        (lambda: Numerics(workers=0), "workers"),
+        (lambda: Numerics(samples=0), "samples is a positive count"),
+        (lambda: Numerics(enr_group=((0, 1), 2), space=make_space()), "not both"),
+        (lambda: Physics(internal_levels=1), "internal_levels is at least 2"),
+        (lambda: Physics(entangler="xx"), "entangler"),
+        (lambda: Physics(scattering_recoil="sideways"), "scattering_recoil"),
+        (lambda: Physics(shot_period_s=0.0), "shot_period_s"),
+        (lambda: Readout(mode="records"), "readout mode"),
+        (lambda: Readout(povm_samples=0), "povm_samples"),
     ],
 )
-def test_validation_errors_are_solver_options_errors(bad, solver_bad) -> None:  # type: ignore[no-untyped-def]
-    with pytest.raises(ValueError) as grouped:
-        bad()
-    with pytest.raises(ValueError) as flat:
-        solver_bad()
-    assert str(grouped.value) == str(flat.value)
+def test_the_objects_refuse_bad_fields(make, match) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match=match):
+        make()
 
 
-def test_the_objects_own_rules() -> None:
-    with pytest.raises(ValueError, match="internal_levels is at least 2"):
-        Physics(internal_levels=1)
-    with pytest.raises(ValueError, match="entangler"):
-        Physics(entangler="xx")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="scattering_recoil"):
-        Physics(scattering_recoil="sideways")  # type: ignore[arg-type]  (SolverOptions has no runtime check of it)
-    with pytest.raises(ValueError, match="shot_period_s"):
-        Physics(shot_period_s=0.0)
-    with pytest.raises(ValueError, match="readout mode"):
-        Readout(mode="records")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="povm_samples"):
-        Readout(povm_samples=0)
-    with pytest.raises(ValueError, match="samples is a positive count"):
-        Parallel(samples=0)
-    with pytest.raises(ValueError, match="not both"):
-        Truncation(enr_group=((0, 1), 2), space=make_space())
-
-
-def test_mappings_are_accepted_and_unknown_keys_refused() -> None:
-    n = Numerics.from_mapping(
-        {"integration": {"atol": 1e-11}, "parallel": {"map": "serial"}, "convergence_check": True}
+def test_the_machine_engine_plays_under_the_physics_switches() -> None:
+    physics = Physics(
+        noise=False,
+        scattering="channels",
+        scattering_recoil="vector",
+        intensity_noise_channels=False,
+        hardware_chain=False,
     )
-    assert n == Numerics(
-        integration=Integration(atol=1e-11), parallel=Parallel(map="serial"), convergence_check=True
-    )
-    assert Numerics(integration={"atol": 1e-11}) == Numerics(integration=Integration(atol=1e-11))  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="has no field \\['atoll'\\]"):
-        Integration.from_mapping({"atoll": 1e-11})
-    with pytest.raises(TypeError, match="Numerics.integration takes"):
-        Numerics(integration=3)  # type: ignore[arg-type]
-    assert Numerics.from_mapping(Numerics(convergence_check=True).asdict()) == Numerics(
-        convergence_check=True
-    )
-    assert Physics.from_mapping({"noise": False, "entangler": "zz"}) == Physics(noise=False, entangler="zz")
-    assert Readout.from_mapping({"mode": "full"}) == Readout(mode="full")
-    assert Physics().asdict()["builder"] is None and Readout().asdict() == {
-        "mode": "fast",
-        "discriminator": None,
-        "povm_samples": 20_000,
-    }
+    eng = Machine(make_device(), physics=physics).engine
+    assert not eng.device_channels and eng.scattering_channels and eng.scattering_recoil == "vector"
+    assert not eng.intensity_noise_channels and not eng.hardware_chain

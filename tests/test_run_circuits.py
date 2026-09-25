@@ -17,7 +17,6 @@ from qutip_trap.control.compiler import Circuit, Operation, ideal_probabilities
 from qutip_trap.control.schedule import ScheduleError, beat_phase_offset_rad, schedule
 from qutip_trap.control.table import Waveform
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
@@ -26,7 +25,7 @@ from qutip_trap.run.job import enumerate_branches, ideal_register_state, last_re
 from tests.fixtures import BELL, WINDOWS, run, table_with_waveform, two_ion_modes, two_ion_surrogate
 
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
-FAST = SolverOptions(branch_weight_min=1e-4)
+FAST = Numerics(branch_weight_min=1e-4)
 
 
 @pytest.fixture(scope="module")
@@ -45,8 +44,7 @@ def bell(two_ion):  # type: ignore[no-untyped-def]
         2000,
         table=sur.table,
         keep_final_state=True,
-        physics=Physics.from_solver_options(FAST),
-        numerics=Numerics.from_solver_options(FAST),
+        numerics=FAST,
     )
     return fx, sur, res
 
@@ -172,7 +170,7 @@ def test_seeds_reproduce_shot_by_shot_and_readout_full_path_generates_records(tw
     fx, sur = two_ion
     kw = dict(
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        numerics=Numerics(branch_weight_min=1e-2),
     )
     a = run(BELL, fx.device, 300, **kw)  # type: ignore[arg-type]
     b = run(BELL, fx.device, 300, **kw)  # type: ignore[arg-type]
@@ -201,7 +199,7 @@ def test_single_qubit_gate_identity_on_the_pipeline(two_ion) -> None:  # type: i
         100,
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
+        numerics=Numerics(branch_weight_min=1e-3),
     )
     fid = register_fidelity(res)
     eps = sur.table.crosstalk[(0, 1)].value
@@ -234,7 +232,7 @@ def test_a_joint_dimension_above_the_guard_routes_to_gate_local(two_ion) -> None
         fx.device,
         10,
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(joint_dimension_max=64)),
+        numerics=Numerics(joint_dimension_max=64),
     )
     assert small_guard.diagnostics.level == "GATE_LOCAL" and small_guard.diagnostics.gate_local is not None
     assert any("GATE_LOCAL" in a for a in small_guard.diagnostics.approximations)
@@ -299,15 +297,14 @@ def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase()
 
 def _fast_run(two_ion, circuit: Circuit, shots: int = 40):  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    opts = SolverOptions(branch_weight_min=1e-3)
+    opts = Numerics(branch_weight_min=1e-3)
     return run(
         circuit,
         fx.device,
         shots,
         table=sur.table,
         keep_final_state=True,
-        physics=Physics.from_solver_options(opts),
-        numerics=Numerics.from_solver_options(opts),
+        numerics=opts,
     )
 
 
@@ -371,7 +368,7 @@ def one_ion():  # type: ignore[no-untyped-def]
     )
     kw = {
         "table": sur.table,
-        "numerics": Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        "numerics": Numerics(branch_weight_min=1e-2),
         "physics": Physics(noise=False),
     }
     return fx, kw
@@ -453,9 +450,7 @@ def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_p
         Machine(fx.device), pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS
     ).table
     assert table.waveform_for((0, 1)) is not None and table.detection["threshold"].status == "calibrated"
-    res = run(
-        BELL, fx.device, 200, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
-    )
+    res = run(BELL, fx.device, 200, numerics=Numerics(branch_weight_min=1e-2))
     assert res.diagnostics.calibration.surrogate and res.probabilities.get("00", 0.0) > 0.3
     assert any("surrogate" in a or "waveform" in a for a in res.diagnostics.approximations)
 
@@ -520,7 +515,7 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         1000,
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
+        numerics=Numerics(branch_weight_min=3e-3),
     )
     d = res.diagnostics
     # two resolved modes, each capped by the Section 5.5 rule at the 1e-6 tail plus the Section 5.1.1 margin
@@ -573,7 +568,7 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
         1000,
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
+        numerics=Numerics(branch_weight_min=3e-3),
     )
     declared = _declared_probabilities(res, (0, 2))
     assert declared["01"] > 0.99
@@ -617,7 +612,7 @@ def test_a_four_ion_circuit_runs_through_the_pipeline_at_the_row_2b_dimension(fo
         200,
         table=sur.table,
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3), space=space),
+        numerics=Numerics(branch_weight_min=3e-3, space=space),
     )
     d = result.diagnostics
     assert d.level == "JOINT_EXACT"
@@ -643,7 +638,7 @@ def test_the_pipeline_s_own_four_ion_space_exceeds_the_guard_and_routes_to_gate_
         fx.device,
         50,
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        numerics=Numerics(branch_weight_min=1e-2),
     )
     d = result.diagnostics
     assert d.level == "GATE_LOCAL" and d.gate_local is not None

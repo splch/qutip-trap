@@ -15,7 +15,7 @@ import qutip_trap as trap
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import Schedule
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, _pure_branches
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, _pure_branches
 from qutip_trap.dynamics.evolve import (
     LARGE_MODE_ATOL,
     LARGE_MODE_DIMENSION,
@@ -32,13 +32,13 @@ from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
+from qutip_trap.options import Numerics
 from qutip_trap.run.job import last_record
 from qutip_trap.units import TWO_PI
 from tests.fixtures import BELL, KX, single_ion_raman_device, two_ion_raman_device
 from tests.oracles import sideband_rabi_rad_s
 
 WX = TWO_PI * 3.0e6
-NO_CHAIN = SolverOptions(hardware_chain=False)
 """The references integrate the schedule as written, so the engine does not play it through the hardware chain."""
 
 
@@ -50,9 +50,9 @@ def raman():  # type: ignore[no-untyped-def]
     return dev, dd, space
 
 
-def _run(dev, sched, state, space, opts=NO_CHAIN, **engine_kw):  # type: ignore[no-untyped-def]
-    eng = JointExactEngine(store_per_segment=4, **engine_kw)
-    return eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), opts), eng
+def _run(dev, sched, state, space, opts=None, **engine_kw):  # type: ignore[no-untyped-def]
+    eng = JointExactEngine(store_per_segment=4, hardware_chain=False, **engine_kw)
+    return eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), opts or Numerics()), eng
 
 
 def _heated(dev):  # type: ignore[no-untyped-def]
@@ -117,7 +117,7 @@ def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -
     idle = 20e-6
     pulse = Pulse(square_drive(dd, include_stark=False), 0.0, t_half, "p1", ())
     state = space.initial_state([0], thermal={KX: 0.3})
-    opts = dataclasses.replace(NO_CHAIN, lindblad_method="mesolve", mesolve_dimension_max=10**6)
+    opts = Numerics(lindblad_method="mesolve", mesolve_dimension_max=10**6)
     kw = {"device_channels": True}
     after_pulse, eng_p = _run(noisy, Schedule((pulse,), (), (), {0: 0.0}), state, space, opts, **kw)
     idled, eng = _run(
@@ -167,13 +167,13 @@ def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(rama
         regrid_state(state.joint, space, sp) if sp != space else state.joint,
         fast.times_s,
         e_ops={"P1[0]": sp.projector(0, 1)},
-        options=NO_CHAIN,
+        options=Numerics(),
     )
     assert np.max(np.abs(np.real(fast.expectations["P1[0]"]) - np.real(ref.expect["P1[0]"]))) < 1e-6
     assert (fast.final.internal - sp.internal_marginal(ref.final)).norm() < 1e-6
     assert abs(fast.final.motional.nbar[KX] - float(np.real(qt.expect(sp.number(KX), ref.final)))) < 1e-5
     # the threshold drops branches and says so
-    _, eng = _run(dev, sched, state, space, dataclasses.replace(NO_CHAIN, branch_weight_min=0.05))
+    _, eng = _run(dev, sched, state, space, Numerics(branch_weight_min=0.05))
     assert eng.last_report.trajectories == len(kets3)
     assert any("pure branches" in n and "dropped" in n for n in eng.last_report.notes)
     # a density matrix WITH collapse operators keeps the master equation
@@ -182,7 +182,7 @@ def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(rama
         sched,
         state,
         space,
-        SolverOptions(lindblad_method="mesolve", mesolve_dimension_max=10**6),
+        Numerics(lindblad_method="mesolve", mesolve_dimension_max=10**6),
         device_channels=True,
     )
     assert eng_c.last_report.method == "mesolve" and eng_c.last_report.trajectories == 1
@@ -236,7 +236,7 @@ def test_simultaneous_pulses_of_unequal_length_are_integrated_segment_by_segment
     sched = Schedule(pulses, (), (), {0: 0.0, 1: 0.0})
     eng = JointExactEngine(store_per_segment=2)
     tr = eng.run_pulses(
-        dev, sched, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), SolverOptions()
+        dev, sched, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics()
     )
     assert len(eng.last_report.segments) == 2
     for q in (0, 1):
@@ -251,9 +251,9 @@ def test_simultaneous_pulses_of_unequal_length_are_integrated_segment_by_segment
 
 
 def _runner(dev, drive, t_end, space, n0=0):  # type: ignore[no-untyped-def]
-    """A closure that integrates one pulse under the SolverOptions it is handed and returns its population traces."""
+    """A closure that integrates one pulse under the Numerics it is handed and returns its population traces."""
 
-    def run(options: SolverOptions) -> dict[str, np.ndarray]:
+    def run(options: Numerics) -> dict[str, np.ndarray]:
         eng = JointExactEngine(store_per_segment=9)
         tr = eng.run_pulses(
             dev,
@@ -292,16 +292,16 @@ def test_convergence_check_rejects_a_mismatched_observable_set_and_a_bad_factor(
     om = TWO_PI * dd.carrier_rabi_hz
     run = _runner(dev, square_drive(dd, include_stark=False), math.pi / om, space)
     with pytest.raises(ValueError, match="tightening factor"):
-        convergence_check(run, SolverOptions(), factor=1.0)
+        convergence_check(run, Numerics(), factor=1.0)
 
-    def wobbly(options: SolverOptions) -> dict[str, np.ndarray]:
+    def wobbly(options: Numerics) -> dict[str, np.ndarray]:
         out = run(options)
         if options.atol < 1e-10:
             out["extra"] = np.zeros(1)
         return out
 
     with pytest.raises(ValueError, match="different observables"):
-        convergence_check(wobbly, SolverOptions())
+        convergence_check(wobbly, Numerics())
 
 
 def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
@@ -312,16 +312,14 @@ def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
     h = WX * qt.num(d)
     psi0 = qt.basis(d, 1)
     times = np.linspace(0.0, 1e-6, 5)
-    default = evolve(h, psi0, times, options=SolverOptions(), largest_mode_dimension=d)
+    default = evolve(h, psi0, times, options=Numerics(), largest_mode_dimension=d)
     assert default.atol == LARGE_MODE_ATOL
-    at_threshold = evolve(
-        h, psi0, times, options=SolverOptions(), largest_mode_dimension=LARGE_MODE_DIMENSION
-    )
+    at_threshold = evolve(h, psi0, times, options=Numerics(), largest_mode_dimension=LARGE_MODE_DIMENSION)
     assert at_threshold.atol == 1e-10
-    tight = tightened(SolverOptions())
+    tight = tightened(Numerics())
     got = evolve(h, psi0, times, options=tight, largest_mode_dimension=d)
     assert got.atol == tight.atol == pytest.approx(1e-11, rel=1e-12)
-    loose = evolve(h, psi0, times, options=SolverOptions(atol=1e-6), largest_mode_dimension=d)
+    loose = evolve(h, psi0, times, options=Numerics(atol=1e-6), largest_mode_dimension=d)
     assert loose.atol == 1e-6
 
 
@@ -348,9 +346,7 @@ def test_the_ladder_at_the_large_caps() -> None:
             ]
         )
         psi0 = qt.tensor(qt.basis(2, 1), qt.basis(d, 0))
-        ev = evolve(
-            h, psi0, [0.0, 10e-6], options=SolverOptions(), largest_mode_dimension=d, omega_max_rad_s=WX
-        )
+        ev = evolve(h, psi0, [0.0, 10e-6], options=Numerics(), largest_mode_dimension=d, omega_max_rad_s=WX)
         assert ev.integrator == "dop853" and ev.retries == (), (d, ev.retries)
         assert ev.atol == LARGE_MODE_ATOL, d
         assert ev.final.norm() == pytest.approx(1.0, abs=1e-7), d
@@ -359,7 +355,7 @@ def test_the_ladder_at_the_large_caps() -> None:
         WX * qt.num(d),
         qt.basis(d, 1),
         np.linspace(0.0, 1e-6, 3),
-        options=SolverOptions(),
+        options=Numerics(),
         largest_mode_dimension=d,
     )
     assert at_threshold.atol == 1e-10
@@ -373,7 +369,7 @@ def stored() -> tuple[Machine, trap.Result]:
     fx = yb171_chain(2)
     machine = Machine(
         fx.device,
-        numerics=trap.Numerics(truncation={"branch_weight_min": 1e-3}, integration={"store_marginals": True}),
+        numerics=trap.Numerics(branch_weight_min=1e-3, store_marginals=True),
     ).calibrated(pairs=[(0, 1)], detection_records=500)
     return machine, machine.run(BELL, 100, seed=0)
 
@@ -401,14 +397,9 @@ def test_the_marginal_is_a_distribution_whose_mean_is_the_occupation_at_every_st
 
 def test_the_marginal_is_off_by_default_and_changes_no_number(stored: tuple[Machine, trap.Result]) -> None:
     machine, result = stored
-    plain = Machine(
-        machine.device, table=machine.table, numerics=trap.Numerics(truncation={"branch_weight_min": 1e-3})
-    )
-    assert (
-        not plain.numerics.integration.store_marginals
-        and not plain.numerics.to_solver_options().store_marginals
-    )
-    assert machine.numerics.to_solver_options().store_marginals
+    plain = Machine(machine.device, table=machine.table, numerics=trap.Numerics(branch_weight_min=1e-3))
+    assert not plain.numerics.store_marginals and not plain.numerics.store_marginals
+    assert machine.numerics.store_marginals
     quiet = plain.run(BELL, 100, seed=0)
     for tr in last_record(quiet).traces:
         assert tr.mode_marginal is None
@@ -427,7 +418,7 @@ def test_wall_time_is_keyed_by_the_pulses_and_the_segments_carry_it(
         assert all(v >= 0.0 for v in tr.wall_time_s.values()) and sum(tr.wall_time_s.values()) > 0.0
     # the same pulses through the engine directly, from one pure branch: the per-segment numbers sum to the per-pulse ones
     space = result.diagnostics.space
-    opts = machine.numerics.to_solver_options(machine.physics)
+    opts = machine.numerics
     state = space.initial_state([0] * machine.device.crystal.n_ions, fock={t.mode: 0 for t in space.resolved})
     engine = machine.engine
     traces = engine.run_pulses(machine.device, rec.schedule, state, space, quiet_sample(0), SeedSpec(0), opts)

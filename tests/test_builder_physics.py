@@ -16,7 +16,7 @@ from qutip_trap.control.schedule import Schedule
 from qutip_trap.device.model import Field
 from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.channels import heating_channels, qubit_dephasing_channels
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.evolve import evolve
 from qutip_trap.dynamics.hamiltonian import (
     BuilderOptions,
@@ -37,6 +37,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_offset_hz,
     quiet_sample,
 )
+from qutip_trap.options import Numerics
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.pseudopotential import RfDrive
@@ -93,7 +94,7 @@ def _run(
         space,
         sample or quiet_sample(),
         SeedSpec(0),
-        sopts or SolverOptions(),
+        sopts or Numerics(),
     )
     return tr, eng
 
@@ -283,9 +284,9 @@ def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman
     state = space0.initial_state([0], thermal={KX: 2.0})
     eng = JointExactEngine()
     sch = Schedule((Pulse(square_drive(dd, include_stark=False), 0.0, t, "p", ()),), (), (), {0: 0.0})
-    eng.run_pulses(dev, sch, state, space0, quiet_sample(), SeedSpec(7), SolverOptions())
+    eng.run_pulses(dev, sch, state, space0, quiet_sample(), SeedSpec(7), Numerics())
     n_a = eng.last_report.frozen_n[KX]
-    eng.run_pulses(dev, sch, state, space0, quiet_sample(), SeedSpec(7), SolverOptions())
+    eng.run_pulses(dev, sch, state, space0, quiet_sample(), SeedSpec(7), Numerics())
     assert eng.last_report.frozen_n[KX] == n_a
 
 
@@ -323,13 +324,13 @@ def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type:
         space,
         NoiseSample(0, {key_qubit_offset_hz(0): 50.0}, {}),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     psi = tr.final.joint.full().ravel()
     assert np.angle(psi[1] / psi[0]) == pytest.approx(-TWO_PI * (stark + 100.0 + 50.0) * t, abs=1e-6)
     # an idle interval: the same phase from the qubit shifts alone
     sch = Schedule((), ((0.0, t),), (), {0: 0.0})
-    tr2 = eng.run_pulses(dev, sch, state, space, quiet_sample(), SeedSpec(0), SolverOptions())
+    tr2 = eng.run_pulses(dev, sch, state, space, quiet_sample(), SeedSpec(0), Numerics())
     psi2 = tr2.final.joint.full().ravel()
     assert np.angle(psi2[1] / psi2[0]) == pytest.approx(-TWO_PI * 100.0 * t, abs=1e-6)
 
@@ -353,7 +354,7 @@ def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: igno
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     assert tr.final.motional.nbar[KX] == pytest.approx(gamma_h * t, rel=1e-3)
     rho = tr.final.internal.full()
@@ -371,7 +372,7 @@ def test_boundary_monitor_grows_the_cap(raman) -> None:  # type: ignore[no-untyp
     tr, eng = _run(dev, square_drive(dd, detuning_hz=3.0e6, include_stark=False), t, tiny, n0=2)
     rep = eng.last_report
     assert rep is not None and rep.growth_retries >= 1 and rep.space.truncation(KX).d > 4
-    assert max(tr.boundary_population.values()) <= SolverOptions().boundary_population_max
+    assert max(tr.boundary_population.values()) <= Numerics().boundary_population_max
     # every retry is named in the report: the trip, the growth and the dimension the run was integrated on again
     growth = [n for n in rep.notes if n.startswith("cap-raising retry")]
     assert len(growth) == rep.growth_retries and f"mode {KX}" in growth[0] and "boundary trip" in growth[0]
@@ -399,7 +400,7 @@ def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     assert tr.expectations["P1[0]"][-1] == pytest.approx(math.sin(0.5 * om * dw0 * t) ** 2, abs=1e-6)
     dd1 = derive_raman_drive(dev, 1, (0, 1), scattering=False)
@@ -417,7 +418,7 @@ def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     assert off.expectations["P1[1]"][-1] == pytest.approx(0.0, abs=1e-12), (
         "the neighbour is not driven at all"
@@ -451,7 +452,7 @@ def test_beam_curvature_cetina_forms() -> None:
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     p = thermal_populations(nbar, 60)
     p = p / p.sum()  # the prepared state is the normalized truncated thermal state
@@ -473,16 +474,16 @@ def test_beam_curvature_cetina_forms() -> None:
 
 def test_evolve_ladder_records_the_integrator_and_never_uses_multistep() -> None:
     h = qt.QobjEvo([qt.sigmaz(), [qt.sigmax(), lambda t, **kw: math.cos(t)]])
-    ev = evolve(h, qt.basis(2, 0), [0.0, 1.0], options=SolverOptions())
+    ev = evolve(h, qt.basis(2, 0), [0.0, 1.0], options=Numerics())
     assert ev.integrator == "dop853" and ev.retries == () and ev.final.norm() == pytest.approx(1.0, abs=1e-8)
-    ev2 = evolve(h, qt.basis(2, 0), [0.0, 1.0], options=SolverOptions(integrators=("vern9",)))
+    ev2 = evolve(h, qt.basis(2, 0), [0.0, 1.0], options=Numerics(integrators=("vern9",)))
     assert ev2.integrator == "vern9"
-    assert SolverOptions().integrators == ("dop853", "vern9")
+    assert Numerics().integrators == ("dop853", "vern9")
     for multistep in ("adams", "bdf"):
         with pytest.raises(ValueError, match="multistep"):
-            SolverOptions(integrators=(multistep,))
+            Numerics(integrators=(multistep,))
     with pytest.raises(ValueError, match="unknown"):
-        SolverOptions(integrators=("rk45",))
+        Numerics(integrators=("rk45",))
 
 
 # ---- the optical phase factor on sigma_+ (Section 13) ------------------------------------------------------------------------
@@ -505,7 +506,7 @@ def _carrier_state(dev, dd, sample) -> np.ndarray:  # type: ignore[no-untyped-de
         space,
         sample,
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     vec = np.asarray(tr.final.joint.full()).reshape(-1)
     return np.asarray(vec / np.linalg.norm(vec))

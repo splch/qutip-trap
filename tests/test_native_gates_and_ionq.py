@@ -19,10 +19,8 @@ from qutip_trap.io.ionq import (
     IonQJob,
     dump_ionq_json,
     dump_job,
-    dumps,
     load_ionq_json,
     load_job,
-    loads,
 )
 from qutip_trap.run.results import Result, aggregate, bits_from_decimal, bitstring_key, decimal_key
 from tests.fixtures import make_result
@@ -376,7 +374,7 @@ def test_dump_job_writes_the_v0_4_body_and_load_job_reads_v0_3_and_v0_4() -> Non
     )
     assert load_job({"target": "qpu.aria-1", "input": body["input"]}).backend == "qpu.aria-1"
     assert load_job(json.dumps(body)).circuit == circuit
-    assert loads(dumps(circuit)) == circuit and loads(body) == circuit
+    assert load_ionq_json(dump_ionq_json(circuit)) == circuit and load_ionq_json(body) == circuit
     with pytest.raises(ValueError, match=r"no key \['target'\]"):
         dump_job(circuit, backend="simulator", noise={"target": 1})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="'model'"):

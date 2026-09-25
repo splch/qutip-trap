@@ -19,7 +19,6 @@ from qutip_trap.device.presets import (
     yb171_chain,
 )
 from qutip_trap.device.serial import parse
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.light.roles import gate_beams
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics
@@ -107,7 +106,7 @@ def test_run_completes_one_gpi2_on_the_optical_qubit() -> None:
     modes' Debye-Waller loss at the Doppler occupations and readout errors below 5e-3."""
     preset = ca40_optical(1)
     result = (
-        Machine(preset.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-4)))
+        Machine(preset.device, numerics=Numerics(branch_weight_min=1e-4))
         .calibrated(
             pairs=list(GPI2.entangling_pairs()), detection_records=600, detection_windows_s=CA40_WINDOWS
         )
@@ -134,9 +133,7 @@ def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() 
     bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
     with pytest.raises(ScheduleError, match="no entangling waveform"):
         (
-            Machine(
-                preset.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
-            )
+            Machine(preset.device, numerics=Numerics(branch_weight_min=1e-2))
             .calibrated(
                 pairs=list(bell.entangling_pairs()), detection_records=200, detection_windows_s=CA40_WINDOWS
             )

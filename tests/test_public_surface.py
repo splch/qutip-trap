@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 
 import qutip_trap
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import ModeTruncation
+from qutip_trap.options import Numerics
 from tests.fixtures import (
     BELL,
     make_calibration_table,
@@ -97,7 +97,7 @@ def _instances() -> list[object]:
         make_diagnostics(),
         make_result(np.array([[0, 1], [1, 1], [0, 0]], dtype=np.uint8)),
         BELL,
-        SolverOptions(),
+        Numerics(),
         ModeTruncation(0, 4, (0, 1), 0.1),
     ]
 

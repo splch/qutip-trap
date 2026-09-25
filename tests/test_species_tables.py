@@ -23,7 +23,7 @@ from qutip_trap.units import C_M_PER_S, E_C, TWO_PI
 HYPERFINE_RESOLVED = re.compile(r"(mF|F=\d|zeeman_energy|dipole_element|rabi|raman_coupling|clebsch)", re.I)
 LOCATOR = re.compile(r"\((?:19|20)\d\d\)|arXiv:\d{4}\.\d{4,5}|doi:10\.")
 """A citable locator: a parenthesised year, an arXiv id, or a DOI."""
-SELF_REFERENTIAL_SOURCES = ("PLAN_4_5_1", "PLAN_8_1", "PLAN_9_13", "PLAN_background")
+SELF_REFERENTIAL_SOURCES = ("PLAN_4_5_1", "PLAN_8_1", "PLAN_4_5_6", "PLAN_background")
 """Source keys that point at PLAN.md rather than at a primary reference."""
 BA133 = MODULES["133Ba+"].TABLE
 BA137 = MODULES["137Ba+"].TABLE

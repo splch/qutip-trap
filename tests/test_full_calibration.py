@@ -26,7 +26,6 @@ from qutip_trap.control.schedule import ScheduleError, schedule
 from qutip_trap.control.shaping import gate_modes
 from qutip_trap.control.table import CalEntry, usable
 from qutip_trap.device.presets import ca40_optical, yb171_chain
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.entangling import _entangling_setup, ms_phase_scan, ms_scan
 from qutip_trap.experiments.light import stark_scan
 from qutip_trap.experiments.micromotion import device_with_compensation, micromotion_scan, signed_beta
@@ -184,7 +183,7 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
     fx, report = calibrated
     kw = dict(
         keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
+        numerics=Numerics(branch_weight_min=1e-3),
     )
     res = run(BELL, fx.device, 1000, table=report.table, **kw)  # type: ignore[arg-type]
     ref = run(BELL, fx.device, 1000, table=report.surrogate.table, **kw)  # type: ignore[arg-type]
@@ -241,8 +240,8 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
         fx.device,
         50,
         table=report.table,
-        physics=Physics.from_solver_options(SolverOptions(branch_weight_min=1e-2), t0_s=3600.0),
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        physics=Physics(t0_s=3600.0),
+        numerics=Numerics(branch_weight_min=1e-2),
     )
     assert res.diagnostics.calibration.fitted_at_s == 0.0 and res.shots == 50
 
@@ -448,7 +447,7 @@ def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two
         )
 
     kw = dict(
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        numerics=Numerics(branch_weight_min=1e-2),
     )
     good = run(GPI, dev, 5, table=table_with("calibrated", -20.0), **kw)  # type: ignore[arg-type]
     assert any("micromotion compensation applied" in n for n in last_record(good).notes)
@@ -678,7 +677,7 @@ def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) ->
             5,
             table=table,
             keep_final_state=True,
-            numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-3)),
+            numerics=Numerics(branch_weight_min=1e-3),
         )
         rho = last_record(res).register_state
         assert rho is not None

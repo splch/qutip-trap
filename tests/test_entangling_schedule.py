@@ -20,9 +20,10 @@ from qutip_trap.control.schedule import GateDrive, PhaseFrame, ScheduleError, ms
 from qutip_trap.control.shaping import gate_modes, solve_amplitude_modulation, symmetric_pulse
 from qutip_trap.control.table import Waveform
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -66,7 +67,7 @@ def _run_circuit(dev, table, space, ops, internal=(0, 0), **kw):  # type: ignore
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     return tr.final.internal, sch
 
@@ -243,9 +244,7 @@ def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:  # type: 
         sch.pulses_end_s + dev.detector.window_s
     ), "the IonQ circuit measures every qubit: the terminal event follows the pulses"
     eng = JointExactEngine(table=table)
-    tr = eng.run_pulses(
-        dev, sch, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), SolverOptions()
-    )
+    tr = eng.run_pulses(dev, sch, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics())
     assert _fidelity(
         tr.final.internal, native_ms(0.0, math.pi / 2, math.pi / 2), KET00, sch.phase_frame
     ) > 1.0 - 3 * (1.0 - run.checks[-1].fidelity)

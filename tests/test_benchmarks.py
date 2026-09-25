@@ -54,7 +54,7 @@ from qutip_trap.noise.summary import (
     qiskit_depolarizing_lambda,
     rb_error_per_clifford,
 )
-from qutip_trap.options import Numerics, Truncation
+from qutip_trap.options import Numerics
 from qutip_trap.run.job import last_record
 from tests.fixtures import FAST, make_result, two_ion_surrogate
 
@@ -454,7 +454,7 @@ def test_simultaneous_rb_runs_on_three_ions() -> None:
     whose mean is r."""
     preset = yb171_chain(3, address_waist_m=2.0e-6)
     rb = randomized_benchmarking(
-        Machine(preset.device, numerics=Numerics(truncation=Truncation(branch_weight_min=3e-3))),
+        Machine(preset.device, numerics=Numerics(branch_weight_min=3e-3)),
         (0, 1, 2),
         (1, 8),
         n_sequences=1,

@@ -15,7 +15,7 @@ import qutip as qt
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control.hardware import apply_hardware_chain
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.kernels import (
     FactorizedOperator,
@@ -28,6 +28,7 @@ from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import KEY_INTENSITY_TRAJECTORY, NoiseSample, quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
+from qutip_trap.options import Numerics
 from tests.fixtures import (
     REALISTIC_HARDWARE,
     X_COM_TWO_IONS,
@@ -257,7 +258,7 @@ def test_engine_factorized_and_assembled_kernels_give_the_same_entangling_pulse(
     finals = {}
     for kernel in ("assembled", "factorized", "auto"):
         eng = JointExactEngine(builder_options=BuilderOptions(kernel=kernel))
-        tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions())
+        tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), Numerics())
         finals[kernel] = tr.final.joint
         rep = eng.last_report
         assert rep is not None
@@ -294,7 +295,7 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(lindblad_method="mesolve", margin_check=False, boundary_population_max=1e-2),
+        Numerics(lindblad_method="mesolve", margin_check=False, boundary_population_max=1e-2),
     )
     rep_me = eng_me.last_report
     assert rep_me is not None and rep_me.growth_retries == 0, rep_me.notes
@@ -310,7 +311,7 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
             quiet_sample(),
             SeedSpec(0),
             # improved_sampling off: three plain trajectories per kernel
-            SolverOptions(
+            Numerics(
                 lindblad_method="mcsolve",
                 ntraj=3,
                 map="serial",

@@ -40,7 +40,7 @@ from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.model import NoiseModel
-from qutip_trap.options import Numerics, Truncation
+from qutip_trap.options import Numerics
 from qutip_trap.readout.detection import Detector, RecordModel
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, rates_from_detected
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
@@ -59,7 +59,7 @@ from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, TWO_PI, hz_from_wavenumb
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 """The detection windows (s) the surrogate's readout calibration chooses from."""
-FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
+FAST = Numerics(branch_weight_min=1e-3)
 """Fock branches below 1e-3 weight dropped."""
 
 

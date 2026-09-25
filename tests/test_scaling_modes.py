@@ -25,7 +25,7 @@ from qutip_trap.control.shaping import GateModes, gate_modes, symmetric_pulse, w
 from qutip_trap.control.table import Waveform
 from qutip_trap.device.model import Device
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, TruncationLimit
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, TruncationLimit
 from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check, evolve
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.dynamics.operators import displacement_matrix_analytic, required_margin
@@ -129,8 +129,8 @@ class ConvergenceRegime:
 
 
 def convergence_report(
-    run: Callable[[SolverOptions, HilbertSpace], Mapping[str, np.ndarray]],
-    options: SolverOptions,
+    run: Callable[[Numerics, HilbertSpace], Mapping[str, np.ndarray]],
+    options: Numerics,
     space: HilbertSpace,
     *,
     factor: float = 10.0,
@@ -166,7 +166,7 @@ def convergence_report(
     )
 
 
-OPTS = SolverOptions()
+OPTS = Numerics()
 
 # ---- the contribution criterion (Sections 5.2, 9.8, 11.3) ----------------------------------------------------------------
 
@@ -507,7 +507,7 @@ def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_t
     space = HilbertSpace((2, 2), (ModeTruncation(3, 5, (0, 0), 0.1),), None, (0, 1, 2, 4, 5))
     state = space.initial_state([0, 0], fock={3: 0})
     engine = JointExactEngine()
-    tr = engine.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions())
+    tr = engine.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), Numerics())
     rep = engine.last_report
     assert rep is not None and rep.growth_retries >= 1
     assert rep.space.truncation(3).d >= 1 + need, rep.space.dims
@@ -517,7 +517,7 @@ def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_t
     assert tr.final.joint is not None and tr.final.joint.shape[0] == rep.space.dimension
     engine_off = JointExactEngine()
     tr_off = engine_off.run_pulses(
-        dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions(margin_check=False)
+        dev, sched, state, space, quiet_sample(), SeedSpec(0), Numerics(margin_check=False)
     )
     rep_off = engine_off.last_report
     assert rep_off is not None and rep_off.space == space and rep_off.growth_retries == 0
@@ -541,7 +541,7 @@ def test_schedule_start_time_is_where_the_state_is_given(two_ion) -> None:  # ty
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     b = JointExactEngine().run_pulses(
         dev,
@@ -550,7 +550,7 @@ def test_schedule_start_time_is_where_the_state_is_given(two_ion) -> None:  # ty
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(),
+        Numerics(),
     )
     assert a.times_s[0] == pytest.approx(t0) and b.times_s[0] == 0.0
     rho_a = space.mode_marginal(a.final.joint, 3)
@@ -605,7 +605,7 @@ def test_local_space_over_a_subset_of_the_ions_reproduces_the_full_marginal() ->
     state_local = local.initial_state([1, 0])
     full = HilbertSpace((2, 2, 2), (), None, tuple(range(n_modes)))
     state_full = full.initial_state([1, 0, 0])
-    opts = SolverOptions()
+    opts = Numerics()
     tr_l = JointExactEngine().run_pulses(dev, sched, state_local, local, quiet_sample(), SeedSpec(0), opts)
     tr_f = JointExactEngine().run_pulses(dev, sched, state_full, full, quiet_sample(), SeedSpec(0), opts)
     rho_local = tr_l.final.internal
@@ -645,7 +645,7 @@ def test_frozen_spectator_run_reproduces_the_joint_run_within_the_reported_bound
     joint_space = HilbertSpace(
         (2, 2), x_caps + (ModeTruncation(y_com, 5, (0, 1), 0.02),), None, (0, 1, y_rock)
     )
-    opts = SolverOptions(margin_check=False)
+    opts = Numerics(margin_check=False)
     runs = {}
     for name, space in (("frozen", frozen_space), ("joint", joint_space)):
         runs[name] = calibrate_entangling_angle(
@@ -712,7 +712,7 @@ def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_de
     fp = build_hamiltonian(dev, (pulse,), space, sample=quiet_sample()).fingerprint
     fp2 = build_hamiltonian(changed, (pulse,), space, sample=quiet_sample()).fingerprint
     assert fp and fp != fp2
-    opts = SolverOptions()
+    opts = Numerics()
     engine = JointExactEngine()
     p1: dict[str, float] = {}
     for name, device in (("base", dev), ("changed", changed)):
@@ -753,8 +753,8 @@ def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(mo
             (),
         )
         assert declaration.dimension == (2**n_ions) * d**n_modes
-        ok, dim, nnz = within_budget(declaration, SolverOptions())
-        assert not ok and dim == declaration.dimension and nnz > SolverOptions().nnz_max
+        ok, dim, nnz = within_budget(declaration, Numerics())
+        assert not ok and dim == declaration.dimension and nnz > Numerics().nnz_max
     # a space inside the guards still gets the joint-identity assertion, so the monkeypatch must fire for it
     with pytest.raises(AssertionError, match="allocated the joint identity"):
         HilbertSpace((2, 2), (ModeTruncation(0, 4, (0, 1), 0.1),), None, ())
@@ -771,10 +771,10 @@ def bell_schedule():  # type: ignore[no-untyped-def]
 def test_the_selection_reports_the_guard_verdict_of_its_declaration(bell_schedule) -> None:  # type: ignore[no-untyped-def]
     """``select_space`` evaluates the Section 11.5 guards on the declaration and reports them."""
     fx, _sur, sched = bell_schedule
-    inside = select_space(fx.device, sched, SolverOptions(), nbar={})
-    assert inside.budget == within_budget(inside.space, SolverOptions())
+    inside = select_space(fx.device, sched, Numerics(), nbar={})
+    assert inside.budget == within_budget(inside.space, Numerics())
     assert inside.budget.inside and not any("outside the Section 11.5 guards" in n for n in inside.notes)
-    tight = SolverOptions(nnz_max=1000)
+    tight = Numerics(nnz_max=1000)
     outside = select_space(fx.device, sched, tight, nbar={})
     assert not outside.budget.inside and outside.budget.nnz > 1000
     assert any("outside the Section 11.5 guards" in n for n in outside.notes)
@@ -787,7 +787,7 @@ def test_the_non_zero_guard_routes_a_run_to_gate_local(bell_schedule) -> None:  
     fx, sur, _sched = bell_schedule
     joint = run(BELL, fx.device, 20, level="auto", table=sur.table)  # type: ignore[arg-type]
     assert joint.diagnostics.level == "JOINT_EXACT"
-    _ok, dim, nnz = within_budget(joint.diagnostics.space, SolverOptions())
+    _ok, dim, nnz = within_budget(joint.diagnostics.space, Numerics())
     assert nnz > dim, "the non-zero estimate N 2^N prod d_m^2 exceeds the dimension for this fixture"
     guarded = run(
         BELL,
@@ -795,7 +795,7 @@ def test_the_non_zero_guard_routes_a_run_to_gate_local(bell_schedule) -> None:  
         20,
         level="auto",
         table=sur.table,
-        numerics=Numerics.from_solver_options(SolverOptions(nnz_max=nnz // 2, joint_dimension_max=10**9)),
+        numerics=Numerics(nnz_max=nnz // 2, joint_dimension_max=10**9),
     )
     assert guarded.diagnostics.level == "GATE_LOCAL" and guarded.diagnostics.gate_local is not None
     assert any(f"{nnz} drive non-zeros" in a for a in guarded.diagnostics.approximations)
@@ -813,9 +813,9 @@ def test_cap_requirement_and_the_mode_dimension_ceiling() -> None:
     assert clamped.d == 64 and clamped.expected_n_range == (0, 63)
     roomy = cap_for(0.0, 20.0, 0.1, d_min=6, d_max=256, tail=1e-4)
     assert roomy.d == d_want and roomy.expected_n_range == (0, n_hi)
-    assert SolverOptions().mode_dimension_max == 64
+    assert Numerics().mode_dimension_max == 64
     with pytest.raises(ValueError, match="mode_dimension_max"):
-        SolverOptions(mode_dimension_max=1)
+        Numerics(mode_dimension_max=1)
 
 
 def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_schedule) -> None:  # type: ignore[no-untyped-def]
@@ -824,7 +824,7 @@ def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_sc
     fx, _sur, sched = bell_schedule
     nbar = {m: 20.0 for m in range(len(fx.device.crystal.modes))}
     with pytest.warns(TruncationWarning) as caught:
-        tight = select_space(fx.device, sched, SolverOptions(mode_dimension_max=8), nbar=nbar)
+        tight = select_space(fx.device, sched, Numerics(mode_dimension_max=8), nbar=nbar)
     assert tight.resolved_modes, "the fixture must resolve at least one mode for the clamp to bite"
     messages = [str(w.message) for w in caught if issubclass(w.category, TruncationWarning)]
     assert len(messages) == len(tight.resolved_modes), messages
@@ -838,7 +838,7 @@ def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_sc
     assert "the cap rule asks for d = " in clamp[0]
     with warnings.catch_warnings():
         warnings.simplefilter("error", TruncationWarning)
-        roomy = select_space(fx.device, sched, SolverOptions(mode_dimension_max=512), nbar=nbar)
+        roomy = select_space(fx.device, sched, Numerics(mode_dimension_max=512), nbar=nbar)
     assert all(roomy.space.truncation(m).d > 8 for m in roomy.resolved_modes)
     assert not any("clamps it" in n for n in roomy.notes)
 
@@ -854,11 +854,11 @@ def test_convergence_report_runs_all_three_arms_of_section_9_9() -> None:
     )
     seen: list[tuple[float, tuple[int, ...]]] = []
 
-    def probe(opts: SolverOptions, sp: HilbertSpace) -> dict[str, np.ndarray]:
+    def probe(opts: Numerics, sp: HilbertSpace) -> dict[str, np.ndarray]:
         seen.append((opts.atol, tuple(t.d for t in sp.resolved)))
         return {"p": np.array([0.5 + opts.atol, 0.5 - opts.atol])}
 
-    rep = convergence_report(probe, SolverOptions(), space, tol=1e-6)
+    rep = convergence_report(probe, Numerics(), space, tol=1e-6)
     atols = [a for a, _d in seen]
     dims = [d for _a, d in seen]
     # tightened arm: (1e-10, 1e-11); loosened arm: (1e-9, 1e-10); cap arm: 1e-10 on the base and on the grown space
@@ -907,14 +907,14 @@ def test_convergence_regime_of_the_bell_circuit() -> None:
     state0 = base.initial_state([0, 0])
     assert state0.joint is not None
 
-    def probe(opts: SolverOptions, sp: HilbertSpace) -> dict[str, np.ndarray]:
+    def probe(opts: Numerics, sp: HilbertSpace) -> dict[str, np.ndarray]:
         st = state0
         if sp is not base:
             st = dataclasses.replace(state0, joint=regrid_state(state0.joint, base, sp))
         tr = JointExactEngine().run_pulses(dev, sched, st, sp, quiet_sample(), SeedSpec(0), opts)
         return {"register_populations": np.real(np.diag(np.asarray(tr.final.internal.full())))}
 
-    rep = convergence_report(probe, SolverOptions(), base, tol=1e-4)
+    rep = convergence_report(probe, Numerics(), base, tol=1e-4)
     assert rep.converged, rep.summary()
     assert rep.grown_modes == (2, 3)
 
@@ -946,13 +946,13 @@ def test_convergence_regime_of_the_frozen_spectator_fixture() -> None:
     )
     assert space.resolved and space.frozen
 
-    def probe(opts: SolverOptions, sp: HilbertSpace) -> dict[str, np.ndarray]:
+    def probe(opts: Numerics, sp: HilbertSpace) -> dict[str, np.ndarray]:
         tr = JointExactEngine().run_pulses(
             dev, sched, sp.initial_state([0, 0]), sp, quiet_sample(), SeedSpec(0), opts
         )
         return {"register_populations": np.real(np.diag(np.asarray(tr.final.internal.full())))}
 
-    rep = convergence_report(probe, SolverOptions(margin_check=False), space, tol=1e-4)
+    rep = convergence_report(probe, Numerics(margin_check=False), space, tol=1e-4)
     assert rep.converged, rep.summary()
     assert rep.grown_modes == (2, 3)
 
@@ -971,7 +971,7 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked(bell_sched
         20,
         level="JOINT_EXACT",
         **kw,
-        numerics=Numerics.from_solver_options(SolverOptions(convergence_check=True)),
+        numerics=Numerics(convergence_check=True),
     )
     rep = checked.diagnostics.convergence
     assert rep is not None
@@ -1007,7 +1007,7 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
         and enr.mode_class(y_com) == "enr"
         and enr.enr_group == ((y_rock, y_com), 2)
     )
-    opts = SolverOptions(margin_check=False)  # the x caps are the frozen-spectator test's
+    opts = Numerics(margin_check=False)  # the x caps are the frozen-spectator test's
     finals = {}
     for name, sp in (("product", product), ("enr", enr)):
         eng = JointExactEngine()
@@ -1031,7 +1031,7 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
             200,
             level="JOINT_EXACT",
             **kw,
-            numerics=Numerics.from_solver_options(enr_group=((y_rock, y_com), 10)),
+            numerics=Numerics(enr_group=((y_rock, y_com), 10)),
         )  # type: ignore[arg-type]
     with pytest.raises((TruncationLimit, RunError), match="16016"):
         run(
@@ -1040,7 +1040,7 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
             200,
             level="JOINT_EXACT",
             **kw,
-            numerics=Numerics.from_solver_options(enr_group=((y_rock, y_com), 2)),
+            numerics=Numerics(enr_group=((y_rock, y_com), 2)),
         )  # type: ignore[arg-type]
 
 
@@ -1113,7 +1113,7 @@ def test_a_programming_error_is_not_recorded_as_an_integrator_failure() -> None:
         evolve(H, psi0, times, e_ops={"x": qt.qeye(3)})
     # 'diag' takes no atol/rtol/nsteps and raises KeyError before it integrates anything
     with pytest.raises(KeyError, match="not supported"):
-        evolve(H, psi0, times, options=SolverOptions(integrators=("diag", "dop853")))
+        evolve(H, psi0, times, options=Numerics(integrators=("diag", "dop853")))
 
 
 def _two_tone(t: float, Om: float, mu: float, tag: tuple[int, int] = (0, 0)) -> float:
@@ -1150,7 +1150,7 @@ def test_the_ladder_escalates_when_a_rung_fails_and_records_the_retry() -> None:
     H = _ms_hamiltonian(nmodes, d_m)
     psi0 = qt.tensor(qt.basis(2, 0), qt.basis(2, 0), *[qt.basis(d_m, 0)] * nmodes)
     times = np.linspace(0.0, 20e-6, 3)
-    opts = SolverOptions(nsteps=2000, integrators=("tsit5", "dop853"))
+    opts = Numerics(nsteps=2000, integrators=("tsit5", "dop853"))
     ev = evolve(H, psi0, times, options=opts, omega_max_rad_s=TWO_PI * 3.0e6)
     assert ev.integrator == "dop853", ev.retries
     assert len(ev.retries) == 1, ev.retries
@@ -1162,7 +1162,7 @@ def test_the_ladder_escalates_when_a_rung_fails_and_records_the_retry() -> None:
         H,
         psi0,
         times,
-        options=SolverOptions(nsteps=10**7, integrators=("tsit5", "dop853")),
+        options=Numerics(nsteps=10**7, integrators=("tsit5", "dop853")),
         omega_max_rad_s=TWO_PI * 3.0e6,
     )
     assert roomy.integrator == "tsit5" and roomy.retries == ()
@@ -1207,7 +1207,7 @@ def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_hist
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(lindblad_method="mesolve", **base),  # type: ignore[arg-type]
+        Numerics(lindblad_method="mesolve", **base),  # type: ignore[arg-type]
     )
     p_ref = np.real(np.diag(np.asarray(ref.final.internal.full())))
     for improved in (True, False):
@@ -1219,7 +1219,7 @@ def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_hist
             space,
             quiet_sample(),
             SeedSpec(11),
-            SolverOptions(
+            Numerics(
                 lindblad_method="mcsolve",
                 ntraj=ntraj,
                 improved_sampling=improved,

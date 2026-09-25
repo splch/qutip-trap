@@ -28,11 +28,12 @@ from qutip_trap.control.shaping import (
     waveform_integrals,
 )
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.experiments.entangling import ms_scan, parity_scan
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.published import ballance_thermal_error, thermal_debye_waller_infidelity
 from qutip_trap.units import TWO_PI
 from tests.fixtures import (
@@ -153,7 +154,7 @@ def _fock_check(dev, wf, drives, space, state, opts):  # type: ignore[no-untyped
     """The exact gate from an explicit joint state (a Fock input): populations, chi and leakage as exact_gate_check reads them."""
     sched = ms_schedule(wf, (0, 1), drives, table_with_waveform((0, 1), wf, rabi_hz=RABI, stark_hz=STARK))
     tr = JointExactEngine(builder_options=opts).run_pulses(
-        dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions()
+        dev, sched, state, space, quiet_sample(), SeedSpec(0), Numerics()
     )
     rho = tr.final.internal.full()
     pops = {f"P{a}{b}": float(np.real(rho[2 * a + b, 2 * a + b])) for a in range(2) for b in range(2)}

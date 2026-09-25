@@ -16,11 +16,12 @@ from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, response_phase_rad
 from qutip_trap.control.shaping import gate_modes
 from qutip_trap.device.presets import ideal_hardware, yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.options import Numerics
 from tests.fixtures import REALISTIC_HARDWARE, single_ion_raman_device
 
 
@@ -92,7 +93,7 @@ def test_response_filters_the_envelope_preserving_the_area_and_adds_the_tail() -
     p1 = {}
     for flag in (False, True):
         eng = JointExactEngine(hardware_chain=flag)
-        tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions())
+        tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), Numerics())
         p1[flag] = float(tr.expectations["P1[0]"][-1])
         rep = eng.last_report
         assert rep is not None and bool(rep.hardware_notes) == flag
@@ -191,7 +192,7 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
             fx.entangling_drives,
             sur.table,
             space=space,
-            options=SolverOptions(hardware_chain=chain),
+            hardware_chain=chain,
         )
         return out
 

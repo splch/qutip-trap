@@ -12,7 +12,7 @@ import qutip as qt
 
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule
-from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, scattering_budget, square_drive
 from qutip_trap.light.recoil import angular_factor
@@ -24,6 +24,7 @@ from qutip_trap.noise.scattering import (
     scattering_channels,
     scattering_estimates,
 )
+from qutip_trap.options import Numerics
 from qutip_trap.readout.fluorescence import ReadoutScheme
 from qutip_trap.species import species
 from tests.fixtures import single_ion_raman_device
@@ -169,7 +170,9 @@ def test_engine_builds_the_channels_per_segment_and_a_shaped_pulse_gets_a_time_d
     mid = ops[0].op(10e-6)  # type: ignore[operator]
     start = ops[0].op(0.0)  # type: ignore[operator]
     assert mid.norm() > 100 * max(start.norm(), 1e-30)
-    eng = JointExactEngine(device_channels=True, hardware_chain=False)
+    eng = JointExactEngine(
+        device_channels=True, hardware_chain=False, scattering_channels=True, scattering_recoil="off"
+    )
     st = space.initial_state([0])
     tr = eng.run_pulses(
         dev,
@@ -178,7 +181,7 @@ def test_engine_builds_the_channels_per_segment_and_a_shaped_pulse_gets_a_time_d
         space,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(scattering_channels=True, scattering_recoil="off", mesolve_dimension_max=4096),
+        Numerics(mesolve_dimension_max=4096),
     )
     rep = eng.last_report
     assert (

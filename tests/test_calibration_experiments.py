@@ -13,7 +13,6 @@ import pytest
 from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.experiments import CalibrationReport
 from qutip_trap.device.presets import ideal_hardware, yb171_chain
-from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.fitting import thermal_rabi_model
 from qutip_trap.experiments.imaging import crystal_image
 from qutip_trap.experiments.light import crosstalk_scan, field_scan, stark_scan
@@ -41,6 +40,7 @@ from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, differe
 from qutip_trap.light.roles import detection_beams
 from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
+from qutip_trap.options import Numerics
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
@@ -179,8 +179,8 @@ def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_ev
 def test_the_machine_supplies_the_laboratory_defaults_and_an_unknown_keyword_raises(machine: Machine) -> None:
     lab = _Lab.of(machine, {"shots": 5})
     assert lab.device is machine.device and lab.obs.shots == 5 and lab.table is machine.table
-    assert lab.options == machine.numerics.to_solver_options(machine.physics) and lab.builder is None
-    given = _Lab.of(machine, {"table": None, "options": SolverOptions(atol=1e-12)})
+    assert lab.options == machine.numerics and lab.builder is None
+    given = _Lab.of(machine, {"table": None, "options": Numerics(atol=1e-12)})
     assert (
         given.table is None and given.options is not None and given.options.atol == 1e-12
     )  # the call's keywords win

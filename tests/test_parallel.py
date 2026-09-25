@@ -17,14 +17,14 @@ from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
 from qutip_trap.device.presets import yb171_chain
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import cp_residual
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
-from qutip_trap.options import Numerics, Physics
+from qutip_trap.options import Numerics
 from qutip_trap.run.job import last_record
 from tests.fixtures import (
     BELL,
@@ -58,11 +58,11 @@ def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_thr
     assert map_tasks(_square, items, map_kind="parallel", workers=1) == [x * x for x in items]
     assert map_tasks(_square, [3], map_kind="parallel", workers=4) == [9]
     assert map_tasks(_square, [], map_kind="parallel", workers=4) == []
-    assert worker_count(SolverOptions(map="serial", workers=5)) == 1
-    assert worker_count(SolverOptions(map="parallel", workers=5)) == min(5, memory_worker_cap())
-    assert worker_count(SolverOptions(map="parallel")) == min(int(available_cpu_count()), memory_worker_cap())
+    assert worker_count(Numerics(map="serial", workers=5)) == 1
+    assert worker_count(Numerics(map="parallel", workers=5)) == min(5, memory_worker_cap())
+    assert worker_count(Numerics(map="parallel")) == min(int(available_cpu_count()), memory_worker_cap())
     with pytest.raises(ValueError):
-        SolverOptions(workers=0)
+        Numerics(workers=0)
 
 
 def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,8 +71,8 @@ def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch:
     monkeypatch.setattr(par, "physical_memory_bytes", lambda: 48 * 1024**3)
     monkeypatch.setattr(par, "peak_rss_bytes", lambda: 3 * 1024**3)
     assert par.memory_worker_cap() == 8
-    assert worker_count(SolverOptions(map="parallel", workers=18)) == 8
-    assert worker_count(SolverOptions(map="parallel", workers=3)) == 3
+    assert worker_count(Numerics(map="parallel", workers=18)) == 8
+    assert worker_count(Numerics(map="parallel", workers=3)) == 3
     monkeypatch.setattr(par, "peak_rss_bytes", lambda: 6 * 1024**3)
     assert par.memory_worker_cap() == 4
     monkeypatch.setattr(
@@ -80,7 +80,7 @@ def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch:
     )  # below MIN_PARENT_BYTES: reckoned as 512 MB
     assert par.memory_worker_cap() == 48
     monkeypatch.setattr(par, "peak_rss_bytes", lambda: 40 * 1024**3)
-    assert par.memory_worker_cap() == 1 and worker_count(SolverOptions(map="parallel")) == 1
+    assert par.memory_worker_cap() == 1 and worker_count(Numerics(map="parallel")) == 1
 
 
 def test_the_environment_caps_the_default_worker_count_but_not_an_explicit_request(
@@ -90,15 +90,15 @@ def test_the_environment_caps_the_default_worker_count_but_not_an_explicit_reque
     serial map stays at one."""
     monkeypatch.setattr(par, "memory_worker_cap", lambda: 64)
     monkeypatch.delenv(par.WORKERS_ENV, raising=False)
-    assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
+    assert worker_count(Numerics(map="parallel")) == int(available_cpu_count())
     monkeypatch.setenv(par.WORKERS_ENV, "1")
-    assert worker_count(SolverOptions(map="parallel")) == 1
-    assert worker_count(SolverOptions(map="parallel", workers=5)) == 5
-    assert worker_count(SolverOptions(map="serial", workers=5)) == 1
+    assert worker_count(Numerics(map="parallel")) == 1
+    assert worker_count(Numerics(map="parallel", workers=5)) == 5
+    assert worker_count(Numerics(map="serial", workers=5)) == 1
     monkeypatch.setenv(par.WORKERS_ENV, "3")
-    assert worker_count(SolverOptions(map="parallel")) == min(3, int(available_cpu_count()))
+    assert worker_count(Numerics(map="parallel")) == min(3, int(available_cpu_count()))
     monkeypatch.setenv(par.WORKERS_ENV, " ")
-    assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
+    assert worker_count(Numerics(map="parallel")) == int(available_cpu_count())
 
 
 @pytest.fixture(scope="module")
@@ -134,9 +134,7 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
         # plain trajectories: improved sampling conditions every member on jumping, which needs larger caps than these
-        opts = SolverOptions(
-            lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False
-        )  # type: ignore[arg-type]
+        opts = Numerics(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False)  # type: ignore[arg-type]
         tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(11), opts)
         rep = eng.last_report
         assert (
@@ -168,7 +166,7 @@ def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> 
     recs = {}
     for mp in ("serial", "parallel"):
         eng = JointExactEngine()
-        opts = SolverOptions(map=mp, workers=min(N_WORKERS, 8))  # type: ignore[arg-type]
+        opts = Numerics(map=mp, workers=min(N_WORKERS, 8))  # type: ignore[arg-type]
         recs[mp] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
     assert recs["serial"].route == recs["parallel"].route == "isometry"
     # four basis columns plus the four of the keyed tolerance's ten-times-tighter probe on the (only) branch
@@ -206,7 +204,7 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
     states = [space.initial_state([0, 0]), space.initial_state([1, 0]), space.initial_state([0, 1])]
     finals = []
     for k, st in enumerate(states):
-        tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions())
+        tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), Numerics())
         rep = eng.last_report
         assert rep is not None
         finals.append(tr.final.joint)
@@ -221,7 +219,7 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
     ref_engine = JointExactEngine()
     for st, final in zip(states, finals):
         tr = ref_engine.run_pulses(
-            dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions(propagator_cache=False)
+            dev, sched, st, space, quiet_sample(), SeedSpec(0), Numerics(propagator_cache=False)
         )
         rep = ref_engine.last_report
         assert rep is not None and rep.propagator_solves == 0 and rep.propagator_cache_hits == 0
@@ -242,7 +240,7 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
     )
     eng = JointExactEngine()
     rec = eng.tomography(
-        dev, sched.pulses[0], space, model, quiet_sample(), SeedSpec(0), SolverOptions(branch_weight_min=0.02)
+        dev, sched.pulses[0], space, model, quiet_sample(), SeedSpec(0), Numerics(branch_weight_min=0.02)
     )
     assert rec.route == "propagator" and rec.branches >= 2 and rec.engine_runs == rec.branches
     assert sum(r.propagator_solves for r in rec.reports) == rec.branches
@@ -259,7 +257,7 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
         model,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(branch_weight_min=0.02),
+        Numerics(branch_weight_min=0.02),
     )
     assert ref.route == "states" and ref.branches == rec.branches and ref.engine_runs == 16 * ref.branches
     assert sum(r.propagator_solves for r in ref.reports) == ref.branches
@@ -267,13 +265,11 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
     assert np.max(np.abs(rec.choi - ref.choi)) < 1e-12
     assert max(np.max(np.abs(a - b)) for a, b in zip(rec.outputs, ref.outputs)) < 1e-12
     # the propagator itself: U applied to an input reproduces the engine's final ket from the same cached propagator
-    u, rep = eng.propagator(
-        dev, sched, space, quiet_sample(), SeedSpec(0), SolverOptions(), motional_model=model
-    )
+    u, rep = eng.propagator(dev, sched, space, quiet_sample(), SeedSpec(0), Numerics(), motional_model=model)
     assert u.shape == (4, 4) and np.max(np.abs(u.conj().T @ u - np.eye(4))) < 1e-9
     assert rep.propagator_solves + rep.propagator_cache_hits == 1 and rep.method == "sesolve"
     st = space.initial_state([1, 0])
-    tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), SolverOptions())
+    tr = eng.run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), Numerics())
     assert tr.final.joint is not None
     assert (
         np.max(
@@ -290,7 +286,7 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
             HilbertSpace((2, 2), (ModeTruncation(2, 6, (0, 1), 0.1),), None, (0, 1, 3, 4, 5)),
             quiet_sample(),
             SeedSpec(0),
-            SolverOptions(),
+            Numerics(),
         )
 
 
@@ -309,7 +305,7 @@ def two_ion():  # type: ignore[no-untyped-def]
 def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
     out = {}
     for mp, workers in (("serial", 1), ("parallel", min(N_WORKERS, 6))):
-        opts = SolverOptions(map=mp, workers=workers, **kw)  # type: ignore[arg-type]
+        opts = Numerics(map=mp, workers=workers, **kw)  # type: ignore[arg-type]
         out[mp] = run(
             circuit,
             fx.device,
@@ -317,8 +313,7 @@ def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
             table=sur.table,
             keep_final_state=True,
             level="JOINT_EXACT",
-            physics=Physics.from_solver_options(opts),
-            numerics=Numerics.from_solver_options(opts),
+            numerics=opts,
         )
     return out["serial"], out["parallel"]
 
@@ -331,7 +326,7 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
     assert np.array_equal(a.bitstrings, b.bitstrings)
     assert a.final_state is not None and b.final_state is not None
     assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-12
-    expected = min(worker_count(SolverOptions(map="parallel", workers=N_WORKERS)), 6)
+    expected = min(worker_count(Numerics(map="parallel", workers=N_WORKERS)), 6)
     if expected < 2:
         pytest.skip("the memory cap left no room for a parallel run on this machine")
     assert a.diagnostics.workers == 1 and b.diagnostics.workers == expected
@@ -349,7 +344,7 @@ def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_
     """The Bell circuit (factorized kernel) run serially and in parallel agrees shot by shot and in the register state to
     1e-12."""
     fx, sur = two_ion
-    if worker_count(SolverOptions(map="parallel", workers=min(N_WORKERS, 6))) < 2:
+    if worker_count(Numerics(map="parallel", workers=min(N_WORKERS, 6))) < 2:
         pytest.skip("the memory cap left no room for a parallel run on this machine")
     a, b = _run_both(BELL, fx, sur, 300, branch_weight_min=1e-3)
     assert np.array_equal(a.bitstrings, b.bitstrings)
@@ -377,14 +372,12 @@ def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heati
     others = tuple(m for m in range(len(dev.crystal.modes)) if m != x_mode)
     space = HilbertSpace((2,), (ModeTruncation(x_mode, 14, (0, 6), 0.12),), None, others)
     state = space.initial_state([0])
-    if worker_count(SolverOptions(map="parallel", workers=N_WORKERS)) < 2:
+    if worker_count(Numerics(map="parallel", workers=N_WORKERS)) < 2:
         pytest.skip("the memory cap left no room for a parallel run on this machine")
     out = {}
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
-        opts = SolverOptions(
-            lindblad_method="mcsolve", ntraj=4, map=mp, workers=workers, improved_sampling=True
-        )  # type: ignore[arg-type]
+        opts = Numerics(lindblad_method="mcsolve", ntraj=4, map=mp, workers=workers, improved_sampling=True)  # type: ignore[arg-type]
         tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(5), opts)
         rep = eng.last_report
         # the members of the weighted mixture: four stochastic ones conditioned on jumping plus the no-jump member
