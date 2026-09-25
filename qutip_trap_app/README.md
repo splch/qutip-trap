@@ -53,15 +53,15 @@ macOS the full Xcode) and are skipped unless `QUTIP_TRAP_APP_UI_TESTS=1`:
 ## Using the record from Python
 
 ```python
-from qutip_trap_app.core import Circuit, Operation, SolverOptions
+from qutip_trap_app.core import Circuit, Operation
 from qutip_trap_app.record import execute, job_for_preset
 from qutip_trap_app.resim import zoom
 from qutip_trap_app.viewmodel.circuit import register_after, timeline
 from qutip_trap_app.viewmodel.machine import histogram
 
 bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-job, preset = job_for_preset("yb171_chain", 2, bell, 200, seed=7, options=SolverOptions(branch_weight_min=1e-3))
-record, live = execute(job, preset)                   # calibrate, run, record (about 20 s)
+job, preset = job_for_preset("yb171_chain", 2, bell, 200, seed=7)
+record, live = execute(job, preset)                   # calibrate, run, record
 h = histogram(record)                                 # bars with counts and error bars, the target beside them
 ms = next(g for g in timeline(record) if g.name.value == "ms")
 after = register_after(record, ms.index)              # the Bloch vectors vanish, the purity stays near one
