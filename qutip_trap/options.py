@@ -58,7 +58,7 @@ class _FromMapping:
 
 @dataclass(frozen=True)
 class Integration(_FromMapping):
-    """The ODE integration of every segment (Section 5.3): tolerances, the escalation ladder and the frame."""
+    """The ODE integration of every segment (Section 5.3): tolerances and the escalation ladder."""
 
     atol: float = 1e-10
     """Absolute tolerance of the integrator (dimensionless amplitude)."""
@@ -68,8 +68,6 @@ class Integration(_FromMapping):
     """The integrator's step budget per segment."""
     integrators: tuple[str, ...] = ("dop853", "vern9")
     """The escalation ladder of Section 5.3; never a multistep method."""
-    rotating_frame: bool = True
-    """Integrate ket segments in the exact rotating frame of the diagonal H_0 (Section 5.2)."""
     propagator_cache: bool = True
     """Cache the propagator of internal-state-only segments (Section 11.3 item 5)."""
     store_marginals: bool = False
@@ -136,8 +134,6 @@ class Trajectories(_FromMapping):
     """The no-jump trajectory as a deterministic member of weight p_no-jump (Section 5.3)."""
     trajectory_target_tol: float | None = None
     """``mcsolve``'s ``target_tol`` on the population e_ops; None keeps the fixed ``ntraj``."""
-    e_ops_for_target_tol: bool = True
-    """Register the population e_ops ``target_tol`` needs (Section 5.4)."""
 
     def __post_init__(self) -> None:
         SolverOptions(**self.asdict())
@@ -155,8 +151,6 @@ class GateLocal(_FromMapping):
     """Carry the register as a density matrix up to this many qubits, as a pure-state ensemble above."""
     register_ensemble: int = 64
     """Members of the pure-state ensemble above ``register_dm_max_qubits``."""
-    tomography_isometry: bool = True
-    """Read a unitary step's channel off the Stinespring isometry rather than the least-squares fit."""
     tomography_dropped_weight_max: float | None = None
     """The total motional-branch weight a step may drop (None = map_accuracy / 4; 0 keeps every branch)."""
     tomography_tolerance_keyed: bool = True
@@ -191,7 +185,7 @@ class Numerics(_FromMapping):
     ``to_solver_options(physics)`` is the ``SolverOptions`` a run integrates with."""
 
     integration: Integration = Integration()
-    """Tolerances, the escalation ladder, the frame and the propagator cache."""
+    """Tolerances, the escalation ladder and the propagator cache."""
     truncation: Truncation = Truncation()
     """The caps, the guards, the mode classes, the branch cutoff and any declared space."""
     trajectories: Trajectories = Trajectories()

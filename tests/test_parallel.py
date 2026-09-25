@@ -240,10 +240,12 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
     assert abs(p1 - 0.5) < 0.02
 
 
-def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
+    carrier_fixture, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     """A carrier step on an internal-state-only space, times the frozen modes' Fock branches: the propagator route integrates one
     propagator per branch (the Debye-Waller factors differ between branches, so H differs) and takes it as the branch's Kraus
-    operator, no state propagated; the "states" route (``tomography_isometry=False``) propagates the sixteen inputs through the
+    operator, no state propagated; the "states" route propagates the sixteen inputs through the
     same cached propagators and reconstructs the same channel to round-off."""
     dev, sched, space = carrier_fixture
     model = MotionalModel(
@@ -260,6 +262,7 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(carri
     assert rec.tp_residual < 1e-10 and rec.cp_residual < 1e-10 and cp_residual(rec.choi_raw) < 1e-13
     assert rec.n_traj == 1 and rec.method == "sesolve" and rec.workers == 1 and rec.motional_out == {}
     ref_engine = JointExactEngine()
+    monkeypatch.setattr(ref_engine, "is_unitary", lambda *args, **kwargs: False)  # the "states" reference
     ref = ref_engine.tomography(
         dev,
         sched.pulses[0],
@@ -267,7 +270,7 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(carri
         model,
         quiet_sample(),
         SeedSpec(0),
-        SolverOptions(branch_weight_min=0.02, tomography_isometry=False),
+        SolverOptions(branch_weight_min=0.02),
     )
     assert ref.route == "states" and ref.branches == rec.branches and ref.engine_runs == 16 * ref.branches
     assert sum(r.propagator_solves for r in ref.reports) == ref.branches

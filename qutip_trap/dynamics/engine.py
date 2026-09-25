@@ -121,8 +121,6 @@ class SolverOptions:
     boundary_population_max: float = 1e-6
     freeze_chi_max_rad: float = 0.05
     map: Literal["serial", "parallel", "loky"] = "parallel"
-    e_ops_for_target_tol: bool = True
-    """Enables the two-phase trajectory count of ``trajectory_target_tol``."""
     trajectory_target_tol: float | None = None
     """The absolute tolerance ``mcsolve``'s ``target_tol`` targets on the population e_ops in phase one (Section 3.4), which
     fixes the trajectory count phase two replays from a keyed seed list (under a serial map, capped by ``ntraj``, floored by
@@ -169,9 +167,6 @@ class SolverOptions:
     propagator_cache: bool = True
     """On an internal-state-only space integrate a segment's propagator once and apply it to every initial state; False
     integrates every state."""
-    tomography_isometry: bool = True
-    """Read a unitary GATE_LOCAL step's channel off the propagated internal basis (or the segment propagator) instead of
-    propagating every input state and fitting the Choi matrix; a dissipative step always takes the latter."""
     tomography_dropped_weight_max: float | None = None
     """Total weight of the lightest motional branches a GATE_LOCAL step may drop beyond ``branch_weight_min``, reported as the
     diamond-norm bound 2w; None = ``map_accuracy / 4``, 0.0 keeps every branch above the floor."""
@@ -181,9 +176,6 @@ class SolverOptions:
     margin_element_tol: float | None = None
     """The interior-element tolerance the Section 5.1.1 margin of a resolved mode is derived from (``required_margin_under``);
     None keeps the fixture margins, and the GATE_LOCAL walk then derives ``map_accuracy * 1e-5`` for its step spaces."""
-    rotating_frame: bool = True
-    """Integrate every ket segment in the exact rotating frame of its diagonal H_0 (``dynamics.rotating``); a segment the
-    frame does not cover integrates in the Schroedinger picture (``SegmentReport.frame``)."""
     store_marginals: bool = False
     """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal``."""
 
@@ -881,11 +873,7 @@ class JointExactEngine:
             # the exact rotating frame for the ket paths; mesolve forms its Liouvillian in the Schroedinger picture and a
             # constant segment takes the closed form
             rot: RotatingSegment | None = None
-            if (
-                options.rotating_frame
-                and not mesolve_seg
-                and (bool(space.resolved) or space.enr_group is not None)
-            ):
+            if not mesolve_seg and (bool(space.resolved) or space.enr_group is not None):
                 rot = rotating_frame(built.H, space.dims, c_ops)
                 if rot is not None:
                     for n in rot.notes:
@@ -1022,12 +1010,7 @@ class JointExactEngine:
                 }
                 # phase one of Section 3.4: the trajectory count from target_tol on the population e_ops under a serial map,
                 # capped by ntraj and floored; phase two replays a keyed seed list of that length
-                if (
-                    len(kets) == 1
-                    and options.e_ops_for_target_tol
-                    and options.trajectory_target_tol is not None
-                    and e_ops
-                ):
+                if len(kets) == 1 and options.trajectory_target_tol is not None and e_ops:
                     if target_tol_estimate is None:
                         probe = qt.MCSolver(
                             built.H if rot is None else rot.H,

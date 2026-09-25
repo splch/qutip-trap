@@ -282,7 +282,7 @@ def one_mode_entangling():  # type: ignore[no-untyped-def]
     return dev, sched, space, model
 
 
-def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_entangling) -> None:  # type: ignore[no-untyped-def]
+def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_entangling, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """The channel read off the four propagated basis kets per branch (Stinespring) against the sixteen-input least-squares
     reconstruction on the same space: the Choi matrices, the outputs, the reduced motional states and the residual displacements
     agree to the solver tolerance with four times fewer engine runs; the isometry's raw Choi matrix is completely positive by
@@ -291,10 +291,11 @@ def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_ent
     recs = {}
     for flag in (True, False):
         eng = JointExactEngine()
+        if not flag:  # the "states" reference: the step is treated as dissipative
+            monkeypatch.setattr(eng, "is_unitary", lambda *args, **kwargs: False)
         opts = SolverOptions(
             branch_weight_min=0.02,
             map="serial",
-            tomography_isometry=flag,
             tomography_dropped_weight_max=0.0,
             tomography_tolerance_keyed=False,
         )

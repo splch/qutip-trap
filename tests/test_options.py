@@ -25,7 +25,6 @@ HOMES: dict[str, tuple[type, str]] = {
     "rtol": (Integration, "rtol"),
     "nsteps": (Integration, "nsteps"),
     "integrators": (Integration, "integrators"),
-    "rotating_frame": (Integration, "rotating_frame"),
     "propagator_cache": (Integration, "propagator_cache"),
     "store_marginals": (Integration, "store_marginals"),
     "joint_dimension_max": (Truncation, "joint_dimension_max"),
@@ -42,12 +41,10 @@ HOMES: dict[str, tuple[type, str]] = {
     "ntraj": (Trajectories, "ntraj"),
     "improved_sampling": (Trajectories, "improved_sampling"),
     "trajectory_target_tol": (Trajectories, "trajectory_target_tol"),
-    "e_ops_for_target_tol": (Trajectories, "e_ops_for_target_tol"),
     "map_accuracy": (GateLocal, "map_accuracy"),
     "crosstalk_threshold": (GateLocal, "crosstalk_threshold"),
     "register_dm_max_qubits": (GateLocal, "register_dm_max_qubits"),
     "register_ensemble": (GateLocal, "register_ensemble"),
-    "tomography_isometry": (GateLocal, "tomography_isometry"),
     "tomography_dropped_weight_max": (GateLocal, "tomography_dropped_weight_max"),
     "tomography_tolerance_keyed": (GateLocal, "tomography_tolerance_keyed"),
     "map": (Parallel, "map"),
@@ -95,7 +92,6 @@ def test_non_default_solver_options_round_trip_through_the_objects() -> None:
         scattering_recoil="vector",
         intensity_noise_channels=False,
         hardware_chain=False,
-        rotating_frame=False,
         margin_element_tol=1e-7,
     )
     numerics = Numerics.from_solver_options(opts)

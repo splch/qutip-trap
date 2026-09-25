@@ -111,20 +111,7 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     assert tr.boundary_population[KX] < 1e-12
     rep = eng.last_report
     assert rep is not None and rep.segments[0].integrator == "dop853"
-    # the default rotating frame and the Schroedinger picture integrate the same physics
-    tr_s, eng_s = _run(
-        dev,
-        square_drive(dd, include_stark=False),
-        t_pi,
-        space,
-        n_store=21,
-        sopts=SolverOptions(rotating_frame=False),
-    )
-    rep_s = eng_s.last_report
-    assert (
-        rep_s is not None and rep_s.segments[0].frame == "schrodinger" and rep.segments[0].frame == "rotating"
-    )
-    assert float(np.max(np.abs(tr.expectations["P1[0]"] - tr_s.expectations["P1[0]"]))) < 1e-7
+    assert rep.segments[0].frame == "rotating"
     # the sample's Rabi scale multiplies the drive
     tr2, _ = _run(
         dev,

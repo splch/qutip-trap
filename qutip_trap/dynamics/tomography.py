@@ -887,8 +887,7 @@ def tomography(
 ) -> TomographyRecord:
     """State-based process tomography of ``pulse`` on ``space`` from the motional state of ``motional_model`` (Section 5.4).
 
-    The route is "propagator" or "isometry" when the evolution is unitary and ``options.tomography_isometry`` holds, else
-    "states" (the module docstring); the outputs are averaged over the motional branches, the Choi matrix projected onto CP
+    The route is "propagator" or "isometry" when the evolution is unitary, else "states" (the module docstring); the outputs are averaged over the motional branches, the Choi matrix projected onto CP
     and TP. When the truncation monitor grows the space, every run is repeated on the grown one so that all outputs share it.
     On the trajectory path each input runs ceil(1/epsilon_map) trajectories.
     """
@@ -914,7 +913,7 @@ def tomography(
         )
         thermal_frozen = {m: float(motional_model.nbar.get(m, 0.0)) for m in current.frozen}
         route: TomographyRoute = "states"
-        if opts.tomography_isometry and engine.is_unitary(device, current, opts):
+        if engine.is_unitary(device, current, opts):
             route = "propagator" if (not current.resolved and current.enr_group is None) else "isometry"
         # keyed tolerances only on a unitary step with resolved modes, where the tighter probe below reports their effect
         keyed = keyed_tolerances(options) if route == "isometry" else None
@@ -1114,7 +1113,6 @@ def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
         "intensity_noise_channels": options.intensity_noise_channels,
         "hardware_chain": options.hardware_chain,
         "margin_check": options.margin_check,
-        "tomography_isometry": options.tomography_isometry,
         "tomography_dropped_weight_max": options.tomography_dropped_weight_max,
         "tomography_tolerance_keyed": options.tomography_tolerance_keyed,
         "margin_element_tol": options.margin_element_tol,

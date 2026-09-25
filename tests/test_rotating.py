@@ -224,7 +224,7 @@ def test_rotating_frame_of_the_real_hamiltonian_is_theta_dag_v_theta(ms_fixture)
 # ---- the engine ----------------------------------------------------------------------------------------------------------------
 
 
-def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     dev, sched, space = ms_fixture
     # mode 3 starts displaced (alpha = 0.5) so that <a_3> is not zero by the symmetry of the spin-dependent force and the
     # e^{-i omega_3 t} the engine restores on the way back from the frame is actually tested
@@ -235,9 +235,14 @@ def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture) ->
         # 10 stored points: 20/9 us apart, 6.67 periods of the 3 MHz mode, so the stored coherences sit at non-trivial phases
         # (9 points would sample it at whole and half periods, where e^{-i omega t} is +-1)
         eng = JointExactEngine(store_per_segment=10)
-        traces[flag] = eng.run_pulses(
-            dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions(rotating_frame=flag)
-        )
+        with monkeypatch.context() as m:
+            if (
+                not flag
+            ):  # the Schroedinger-picture reference: the frame builder declines and the engine falls back
+                m.setattr("qutip_trap.dynamics.engine.rotating_frame", lambda *args, **kwargs: None)
+            traces[flag] = eng.run_pulses(
+                dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions()
+            )
         rep = eng.last_report
         assert rep is not None
         reports[flag] = rep
@@ -264,7 +269,7 @@ def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture) ->
     assert traces[True].boundary_population.keys() == traces[False].boundary_population.keys()
 
 
-def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_fixture, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Heating channels present, ``mcsolve`` forced: the collapse operators carry their e^{i lambda t} in the frame, and the
     trajectories (same seeds) make the same jumps at the same times and end in the same ensemble, to the solver tolerance."""
     dev, sched, _space = ms_fixture
@@ -281,22 +286,26 @@ def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_
     finals = {}
     for flag in (False, True):
         eng = JointExactEngine(device_channels=True)
-        tr = eng.run_pulses(
-            noisy,
-            sched,
-            state,
-            space,
-            quiet_sample(),
-            SeedSpec(0),
-            SolverOptions(
-                lindblad_method="mcsolve",
-                ntraj=3,
-                map="serial",
-                margin_check=False,
-                improved_sampling=False,
-                rotating_frame=flag,
-            ),
-        )
+        with monkeypatch.context() as m:
+            if (
+                not flag
+            ):  # the Schroedinger-picture reference: the frame builder declines and the engine falls back
+                m.setattr("qutip_trap.dynamics.engine.rotating_frame", lambda *args, **kwargs: None)
+            tr = eng.run_pulses(
+                noisy,
+                sched,
+                state,
+                space,
+                quiet_sample(),
+                SeedSpec(0),
+                SolverOptions(
+                    lindblad_method="mcsolve",
+                    ntraj=3,
+                    map="serial",
+                    margin_check=False,
+                    improved_sampling=False,
+                ),
+            )
         rep = eng.last_report
         assert rep is not None and rep.method == "mcsolve" and rep.trajectories == 3
         assert all(s.frame == ("rotating" if flag else "schrodinger") for s in rep.segments if s.pulses)
