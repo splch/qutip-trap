@@ -29,19 +29,6 @@ class UnstableMathieuError(ValueError):
     """The (a, q) point lies outside the stability region (|tr M| >= 2)."""
 
 
-def beta_lowest_order(a: float, q: float) -> float:
-    """beta ~ sqrt(a + q^2/2), the lowest-order exponent (a check on the monodromy result)."""
-    radicand = a + q * q / 2.0
-    if radicand <= 0.0:
-        raise ValueError(f"a + q^2/2 = {radicand} <= 0: outside the lowest-order stable region")
-    return math.sqrt(radicand)
-
-
-def c0_series(q: float) -> float:
-    """C0 = 1 + 3q^2/16, the O(q^2) micromotion factor on eta."""
-    return 1.0 + 3.0 * q * q / 16.0
-
-
 @dataclass(frozen=True)
 class Monodromy:
     """The monodromy matrix M of x'' + (a - 2q cos 2xi) x = 0 over one period pi."""

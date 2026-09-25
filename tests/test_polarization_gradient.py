@@ -1,6 +1,5 @@
-"""Polarization-gradient cooling: Joshi's analytic j = 1/2 <-> 1/2 model (the cooling limits, the recoil angular factor,
-the operating point, the saturation bridge), the ``PolGradientBeams`` methods, the static-gradient raise, the recoil
-kernel normalization, and the Lindblad layer checked against the analytic limit."""
+"""Polarization-gradient cooling: Joshi's analytic j = 1/2 <-> 1/2 model (the cooling limits and the operating point), the
+``PolGradientBeams`` methods, the recoil kernel normalization, and the Lindblad layer checked against the analytic limit."""
 
 from __future__ import annotations
 
@@ -9,33 +8,30 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.dynamics.multilevel import ModeSpec, decay_sum_rule_residual
+from qutip_trap.dynamics.multilevel import ModeSpec
 from qutip_trap.light.beams import PolGradientBeams
 from qutip_trap.light.bloch import CoolingError
 from qutip_trap.light.recoil import minimal_quadrature
-from qutip_trap.prep.level_c import level_c_relaxation_rate, level_c_steady_state
 from qutip_trap.prep.polarization_gradient import (
     UncooledPhaseError,
-    cooling_rate_per_s,
-    detailed_balance_populations,
     fixed_phase_nbar,
-    heating_rate_per_s,
-    lin_perp_lin_pair,
     moving_gradient_window,
     phase_averaged_nbar,
-    polarization_gradient_model,
-    potentials_rad_s,
-    pumping_rates_per_s,
-    recoil_heating_terms,
-    saturation_bridge,
-    static_gradient_mean_nbar,
-    static_gradient_nbar,
     xi_depth,
-    xi_from_d1_sigma_rabi,
 )
 from qutip_trap.species import species
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, TWO_PI
+from tests.fixtures import lin_perp_lin_pair
+from tests.oracles import (
+    cooling_rate_per_s,
+    decay_sum_rule_residual,
+    heating_rate_per_s,
+    level_c_relaxation_rate,
+    level_c_steady_state,
+    polarization_gradient_model,
+    xi_from_d1_sigma_rabi,
+)
 
 
 def test_fixed_phase_and_phase_averaged_limits() -> None:
@@ -62,37 +58,9 @@ def test_fixed_phase_and_phase_averaged_limits() -> None:
     assert cooling_rate_per_s(1.0, 1.0, 1.0, 1.0, 0.0) > cooling_rate_per_s(1.0, 1.0, 1.0, 1.0, 0.3)
 
 
-def test_isotropic_alpha_is_the_only_consistent_recoil_factor() -> None:
-    """With alpha = 1/3 H_carr + H_sb is (2/9) eta^2 Gamma s (2 + sin^2 2phi) to 1e-14, and alpha = 2/5 exceeds
-    it by 5 %."""
-    for phi in (0.0, 0.3, 1.1):
-        hc, hs = recoil_heating_terms(0.1, 2.0, 0.05, phi)
-        assert hc + hs == pytest.approx(
-            2.0 / 9.0 * 0.01 * 2.0 * 0.05 * (2.0 + math.sin(2.0 * phi) ** 2), rel=1e-14
-        )
-    hc, hs = recoil_heating_terms(1.0, 1.0, 1.0, 0.0, alpha=0.4)
-    assert (hc + hs) / (4.0 / 9.0) == pytest.approx(1.05, abs=1e-12)
-
-
-def test_potentials_pumping_rates_and_detailed_balance_carry_the_same_sign_of_the_sine() -> None:
-    """U_+- = (1/3) Delta s (1 -+ sin) and Gamma_{+- -> -+} = (1/9) Gamma s (1 -+ sin) pump fastest out of the state at
-    its potential maximum, and p_+- = (1/2)(1 +- sin) satisfies detailed balance to 1e-12."""
-    k, phi = 2.0, 0.2
-    for z in (0.0, 0.11, 0.37):
-        u_plus, u_minus = potentials_rad_s(z, k, phi, 5.0, 0.3)
-        g_pm, g_mp = pumping_rates_per_s(z, k, phi, 7.0, 0.3)
-        p_plus, p_minus = detailed_balance_populations(z, k, phi)
-        s = math.sin(2.0 * k * z + 2.0 * phi)
-        assert u_plus - u_minus == pytest.approx(-2.0 / 3.0 * 5.0 * 0.3 * s)
-        assert g_pm / g_mp == pytest.approx((1.0 - s) / (1.0 + s))
-        assert p_plus * g_pm == pytest.approx(p_minus * g_mp, rel=1e-12)  # detailed balance
-        assert (u_plus > u_minus) == (g_pm > g_mp) or s == 0.0
-
-
 def test_operating_point_round_trips_window_and_bridge() -> None:
-    """xi = Delta s/(3 omega) = 1.35 at Delta = 2 pi x 210 MHz, omega = 2 pi x 1088 kHz and s = 0.02098 (2e-5), the
-    moving-gradient window W < delta < omega holds at delta = 2 pi x 60 kHz, and Ejtemaee's s0 = 11 to 15 maps to
-    s = 0.016 to 0.023."""
+    """xi = Delta s/(3 omega) = 1.35 at Delta = 2 pi x 210 MHz, omega = 2 pi x 1088 kHz and s = 0.02098 (2e-5), and the
+    moving-gradient window W < delta < omega holds at delta = 2 pi x 60 kHz."""
     delta, omega = TWO_PI * 210e6, TWO_PI * 1088e3
     s = 3.0 * omega * 1.35 / delta
     assert s == pytest.approx(0.02098, abs=2e-5)
@@ -104,51 +72,8 @@ def test_operating_point_round_trips_window_and_bridge() -> None:
     assert not moving_gradient_window(w_avg, TWO_PI * 5e3, omega) and not moving_gradient_window(
         w_avg, TWO_PI * 2e6, omega
     )
-    for s0 in (11.0, 15.0):
-        assert 0.016 < saturation_bridge(s0, TWO_PI * 19.6e6, TWO_PI * 310e6) < 0.023
     with pytest.raises(CoolingError):
         xi_depth(-delta, s, omega)
-
-
-def test_static_gradient_raises_at_a_node_and_averages_per_ion_otherwise() -> None:
-    """A static gradient refuses an ion at phi = pi/4 and averages the per-ion occupations (1e-12), which differ from
-    the moving-gradient phase average."""
-    with pytest.raises(UncooledPhaseError):
-        static_gradient_nbar(0.5, [0.0, math.pi / 4.0])
-    values = static_gradient_nbar(0.5, [0.0, 0.3])
-    assert values[0] == pytest.approx(0.5) and values[1] > values[0]
-    phases = [0.0, 0.12, 0.3, -0.21]
-    per_ion = static_gradient_nbar(0.5, phases)
-    assert static_gradient_mean_nbar(0.5, phases) == pytest.approx(sum(per_ion) / len(per_ion), rel=1e-12)
-    assert static_gradient_mean_nbar(0.5, [0.0]) == pytest.approx(0.5, rel=1e-12)
-    # the static per-ion average is NOT the moving-gradient phase average: 0.8693 is the latter's minimum
-    assert static_gradient_mean_nbar(0.5, phases) != pytest.approx(phase_averaged_nbar(0.5), rel=1e-3)
-    with pytest.raises(UncooledPhaseError):
-        static_gradient_mean_nbar(0.5, [0.0, math.pi / 4.0])
-    with pytest.raises(ValueError):
-        static_gradient_mean_nbar(0.5, [])
-
-
-def test_the_sisyphus_cooling_rate_follows_the_measured_saturation_squared_law() -> None:
-    """The model's cooling rate scales as s0^2 (exponent 2 to 1e-9, inside Ejtemaee and Haljan's 1.98(6) and 1.91(3)),
-    and as s0 with xi held fixed."""
-    gamma, delta, omega = TWO_PI * 19.6e6, TWO_PI * 310e6, TWO_PI * 0.79e6
-    eta = 0.09023
-    s0 = np.geomspace(2.0, 15.0, 24)  # a factor of 7.5, the source's range
-    rates = []
-    for value in s0:
-        s = saturation_bridge(float(value), gamma, delta)
-        rates.append(cooling_rate_per_s(eta, gamma, s, xi_depth(delta, s, omega), 0.0))
-    slope, _intercept = np.polyfit(np.log(s0), np.log(np.asarray(rates)), 1)
-    assert slope == pytest.approx(2.0, abs=1e-9)
-    assert 1.98 - 3.0 * 0.06 < slope < 1.98 + 3.0 * 0.06  # the measured 1.98(6)
-    assert 1.91 - 3.0 * 0.03 < slope < 1.91 + 3.0 * 0.03  # and the measured 1.91(3)
-    # negative control: holding xi fixed (a depth independent of the intensity) makes the law linear
-    fixed_xi = [
-        cooling_rate_per_s(eta, gamma, saturation_bridge(float(v), gamma, delta), 1.35, 0.0) for v in s0
-    ]
-    linear, _ = np.polyfit(np.log(s0), np.log(np.asarray(fixed_xi)), 1)
-    assert linear == pytest.approx(1.0, abs=1e-9)
 
 
 def test_pol_gradient_beams_methods_delegate_to_the_analytic_model() -> None:

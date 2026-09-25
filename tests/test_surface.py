@@ -13,13 +13,13 @@ from qutip_trap.trap.pseudopotential import mathieu_matrices
 from qutip_trap.trap.surface import (
     Electrodes,
     GaplessPlaneTrap,
-    five_wire_null_height_m,
     rectangle_gradient,
     rectangle_hessian,
     rectangle_potential,
     strip_potential,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
+from tests.oracles import five_wire_null_height_m
 
 HOUSE = dict(a=100e-6, b=120e-6, v=300.0, omega=TWO_PI * 50e6, m=1.46e-25)
 

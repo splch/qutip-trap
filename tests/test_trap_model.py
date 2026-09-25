@@ -22,9 +22,10 @@ from qutip_trap.trap.mathieu import UnstableMathieuError, beta_exact, c0_wronski
 from qutip_trap.trap.micromotion import MicromotionIndex, modulation_index, second_order_doppler_fraction
 from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
-from qutip_trap.trap.surface import Electrodes, five_wire_null_height_m
+from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
 from tests.fixtures import KX, chain_device, single_ion_raman_device
+from tests.oracles import five_wire_null_height_m
 
 K_369 = TWO_PI / 369.5e-9
 

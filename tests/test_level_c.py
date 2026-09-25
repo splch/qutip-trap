@@ -8,12 +8,11 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions, decay_sum_rule_residual
+from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import BlochModel, rate_coefficients_from_spectrum
 from qutip_trap.light.recoil import angular_factor
 from qutip_trap.prep.closed_forms import stenholm_coefficients
-from qutip_trap.prep.level_c import level_c_relaxation_rate, level_c_steady_state
 from qutip_trap.units import C_M_PER_S, TWO_PI
 from tests.fixtures import (
     MASS_KG,
@@ -26,6 +25,7 @@ from tests.fixtures import (
     structure,
     two_level_atom,
 )
+from tests.oracles import decay_sum_rule_residual, level_c_relaxation_rate, level_c_steady_state
 
 Z = (0.0, 0.0, 1.0)
 OBLIQUE = (1.0 / math.sqrt(2.0), 0.0, 1.0 / math.sqrt(2.0))

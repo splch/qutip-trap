@@ -12,12 +12,7 @@ import qutip as qt
 from scipy.linalg import expm
 from scipy.optimize import brentq
 
-from qutip_trap.dynamics.multilevel import (
-    SINK,
-    MultiLevelOptions,
-    assign_frames,
-    decay_sum_rule_residual,
-)
+from qutip_trap.dynamics.multilevel import SINK, MultiLevelOptions, assign_frames
 from qutip_trap.light.beams import Beam, PolarizationModulation
 from qutip_trap.light.bloch import BlochModel, CeilingViolation, beam_for_transition, shifted_beam
 from qutip_trap.species import species
@@ -41,7 +36,7 @@ from tests.fixtures import (
     structure,
     two_level_atom,
 )
-from tests.oracles import yb171_detection_rate
+from tests.oracles import decay_sum_rule_residual, yb171_detection_rate
 
 YB_LINE = YB.transition("S1/2-P1/2")
 MAGIC = tuple(linear_polarization((1.0, 0.0, 0.0), math.acos(1.0 / math.sqrt(3.0)), (0.0, 0.0, 1.0)))

@@ -862,33 +862,3 @@ def build_multilevel(
         n_beams=len(beams),
         dephasing_slice=(dephasing_start, len(c_ops)),
     )
-
-
-def decay_sum_rule_residual(build: MultiLevelBuild) -> float:
-    """max over decaying sublevels of |(sum_k C_k^dagger C_k)_{ee} - Gamma_e| / Gamma_e (Section 4.2.8: the kicks are unitary).
-
-    Zero to round-off under ``sink`` and ``renormalize``; under ``include`` it reports the dropped (untabulated) share.
-    """
-    decay = [
-        c for k, c in enumerate(build.c_ops) if not build.dephasing_slice[0] <= k < build.dephasing_slice[1]
-    ]
-    if not decay:
-        return 0.0
-    total = decay[0].dag() * decay[0]
-    for c in decay[1:]:
-        total = total + c.dag() * c
-    if build.space is not None:
-        tot = np.asarray(total.full()).reshape(build.space.dims + build.space.dims)
-        internal = np.trace(tot, axis1=1, axis2=3) / build.space.dims[1]
-    else:
-        internal = np.asarray(total.full())
-    worst = 0.0
-    for lab in build.labels:
-        if lab == SINK:
-            continue
-        gamma = build.level_rates_rad_s.get(build.level_of(lab))
-        if gamma is None:
-            continue
-        got = float(np.real(internal[build.index(lab), build.index(lab)]))
-        worst = max(worst, abs(got - gamma) / gamma)
-    return worst

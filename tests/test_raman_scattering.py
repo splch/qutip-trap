@@ -14,7 +14,7 @@ from scipy.optimize import brentq
 from qutip_trap.device.model import Field
 from qutip_trap.light.beams import Beam
 from qutip_trap.species import species
-from qutip_trap.species.dipole import field_amplitude_v_per_m, stretched_element_factor
+from qutip_trap.species.dipole import field_amplitude_v_per_m
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.units import C_M_PER_S, HBAR_J_S, TWO_PI, lande_g_j
@@ -24,6 +24,7 @@ from tests.oracles import (
     ozeri_gamma_total,
     ozeri_p_total,
     ozeri_raman_rabi_half,
+    stretched_element_factor,
     wineland_clock_light_shift,
     wineland_p_se_clock,
 )

@@ -35,7 +35,7 @@ from qutip_trap.device.presets import (
 )
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
-from qutip_trap.light.beams import Beam
+from qutip_trap.light.beams import Beam, PolGradientBeams
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive
 from qutip_trap.machine import Machine
@@ -611,3 +611,18 @@ def two_state_rates(
     return rates_from_detected(
         detected_bright_per_s, efficiency, dark_pumping_per_s=r_d, bright_pumping_per_s=r_b
     )
+
+
+def lin_perp_lin_pair(
+    wavelength_m: float,
+    power_w: float,
+    waist_m: float,
+    detuning_hz: float,
+    *,
+    phase_rad: float = 0.0,
+    beat_hz: float = 0.0,
+) -> PolGradientBeams:
+    """A counter-propagating pair along z polarized along x and y; ``beat_hz`` offsets beam b for a moving gradient."""
+    a = Beam(wavelength_m, (0.0, 0.0, 1.0), (1.0 + 0j, 0j, 0j), waist_m, power_w, (0.0, 0.0, 0.0))
+    b = Beam(wavelength_m, (0.0, 0.0, -1.0), (0j, 1.0 + 0j, 0j), waist_m, power_w, (0.0, 0.0, 0.0))
+    return PolGradientBeams(a, b, detuning_hz, beat_hz, phase_rad, "jg12_je12")

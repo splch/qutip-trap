@@ -12,8 +12,6 @@ from qutip_trap.trap.mathieu import (
     MathieuParameters,
     UnstableMathieuError,
     beta_exact,
-    beta_lowest_order,
-    c0_series,
     c0_wronskian,
     floquet_coefficients,
     is_stable,
@@ -22,6 +20,7 @@ from qutip_trap.trap.mathieu import (
     monodromy,
     vector_betas,
 )
+from tests.oracles import beta_lowest_order, c0_series
 
 
 def test_monodromy_matches_lowest_order_to_fourth_order_in_q() -> None:

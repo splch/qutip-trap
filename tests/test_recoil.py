@@ -12,12 +12,7 @@ import pytest
 import qutip as qt
 
 from qutip_trap.device.presets import secular_trap
-from qutip_trap.dynamics.multilevel import (
-    ModeSpec,
-    MultiLevelOptions,
-    build_multilevel,
-    decay_sum_rule_residual,
-)
+from qutip_trap.dynamics.multilevel import ModeSpec, MultiLevelOptions, build_multilevel
 from qutip_trap.dynamics.operators import displacement_operator
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.recoil import (
@@ -49,6 +44,7 @@ from tests.fixtures import (
     structure,
     two_level_atom,
 )
+from tests.oracles import decay_sum_rule_residual
 
 Z = (0.0, 0.0, 1.0)
 X = (1.0, 0.0, 0.0)

@@ -443,10 +443,3 @@ class GaplessPlaneTrap:
         return self.pseudopotential_j(
             self.escape_point(), v_rf_peak_v, mass_kg, omega_rf_rad_s, charge=charge
         )
-
-
-def five_wire_null_height_m(a_m: float, b_m: float) -> float:
-    """h = sqrt(a(a + 2b))/2 for FULL widths a (centre) and b (rails) (House 2008)."""
-    if a_m <= 0.0 or b_m <= 0.0:
-        raise ValueError("widths must be positive")
-    return math.sqrt(a_m * (a_m + 2.0 * b_m)) / 2.0

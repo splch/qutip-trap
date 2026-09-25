@@ -1,15 +1,24 @@
-"""Closed forms from the literature that the tests compare the package against."""
+"""Closed forms from the literature, and the level-C reference models, that the tests compare the package against."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import qutip as qt
+from scipy.sparse.linalg import eigs
 from scipy.special import eval_genlaguerre, jn_zeros, jv
 
+from qutip_trap.dynamics.multilevel import SINK, ModeSpec, MultiLevelBuild, MultiLevelOptions
 from qutip_trap.dynamics.operators import displacement_element_analytic, thermal_populations
+from qutip_trap.dynamics.steady import steady_state_direct
+from qutip_trap.light.beams import PolGradientBeams
+from qutip_trap.light.bloch import BlochModel, CoolingError
+from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.species.wigner import Half, as_half_integer
+from qutip_trap.units import TWO_PI
 
 
 def ms_closure_ratio(loops: int = 1) -> float:
@@ -274,3 +283,187 @@ def frozen_thermal_population(
             for n in range(n_max + 1)
         )
     )
+
+
+def beta_lowest_order(a: float, q: float) -> float:
+    """beta ~ sqrt(a + q^2/2), the lowest-order exponent (a check on the monodromy result)."""
+    radicand = a + q * q / 2.0
+    if radicand <= 0.0:
+        raise ValueError(f"a + q^2/2 = {radicand} <= 0: outside the lowest-order stable region")
+    return math.sqrt(radicand)
+
+
+def c0_series(q: float) -> float:
+    """C0 = 1 + 3q^2/16, the O(q^2) micromotion factor on eta."""
+    return 1.0 + 3.0 * q * q / 16.0
+
+
+def five_wire_null_height_m(a_m: float, b_m: float) -> float:
+    """h = sqrt(a(a + 2b))/2 for FULL widths a (centre) and b (rails) (House 2008)."""
+    if a_m <= 0.0 or b_m <= 0.0:
+        raise ValueError("widths must be positive")
+    return math.sqrt(a_m * (a_m + 2.0 * b_m)) / 2.0
+
+
+def stretched_element_factor(J_lower: Half, J_upper: Half) -> float:
+    """|<stretched upper|d_{+1}|stretched lower>| / |<J||d||J'>| = sqrt((2J+1)/(2J'+1)) (1/sqrt 2 on a 1/2 -> 3/2 line)."""
+    return math.sqrt(
+        (2.0 * float(as_half_integer(J_lower)) + 1.0) / (2.0 * float(as_half_integer(J_upper)) + 1.0)
+    )
+
+
+def decay_sum_rule_residual(build: MultiLevelBuild) -> float:
+    """max over decaying sublevels of |(sum_k C_k^dagger C_k)_{ee} - Gamma_e| / Gamma_e (Section 4.2.8: the kicks are unitary).
+
+    Zero to round-off under ``sink`` and ``renormalize``; under ``include`` it reports the dropped (untabulated) share.
+    """
+    decay = [
+        c for k, c in enumerate(build.c_ops) if not build.dephasing_slice[0] <= k < build.dephasing_slice[1]
+    ]
+    if not decay:
+        return 0.0
+    total = decay[0].dag() * decay[0]
+    for c in decay[1:]:
+        total = total + c.dag() * c
+    if build.space is not None:
+        tot = np.asarray(total.full()).reshape(build.space.dims + build.space.dims)
+        internal = np.trace(tot, axis1=1, axis2=3) / build.space.dims[1]
+    else:
+        internal = np.asarray(total.full())
+    worst = 0.0
+    for lab in build.labels:
+        if lab == SINK:
+            continue
+        gamma = build.level_rates_rad_s.get(build.level_of(lab))
+        if gamma is None:
+            continue
+        got = float(np.real(internal[build.index(lab), build.index(lab)]))
+        worst = max(worst, abs(got - gamma) / gamma)
+    return worst
+
+
+def cooling_rate_per_s(eta: float, gamma_rad_s: float, s: float, xi: float, phi_rad: float) -> float:
+    """W(phi) = (16/9) eta^2 Gamma s xi cos^2 2phi (Joshi Eqs. 7-10), proportional to s^2 through xi."""
+    return 16.0 / 9.0 * eta**2 * gamma_rad_s * s * xi * math.cos(2.0 * phi_rad) ** 2
+
+
+def heating_rate_per_s(eta: float, gamma_rad_s: float, s: float, xi: float, phi_rad: float) -> float:
+    """H(phi) = (2/9) eta^2 Gamma s (8 xi^2 cos^4 2phi + 2 + sin^2 2phi)."""
+    c = math.cos(2.0 * phi_rad)
+    return 2.0 / 9.0 * eta**2 * gamma_rad_s * s * (8.0 * xi**2 * c**4 + 2.0 + math.sin(2.0 * phi_rad) ** 2)
+
+
+def xi_from_d1_sigma_rabi(
+    omega_d1_sigma_rad_s: float, delta_rad_s: float, gamma_rad_s: float, omega_mode_rad_s: float
+) -> float:
+    """xi from the D1 sigma Rabi frequency one beam's full amplitude drives: the ac Stark amplitude
+    Omega_1^2 Delta/(4 (Delta^2 + Gamma^2/4)) equals (1/3) Delta s with Omega_1 = sqrt(2/3) Omega_stretched."""
+    if delta_rad_s <= 0.0:
+        raise CoolingError("polarization-gradient cooling needs blue detuning")
+    shift = omega_d1_sigma_rad_s**2 * delta_rad_s / (4.0 * (delta_rad_s**2 + gamma_rad_s**2 / 4.0))
+    return shift / omega_mode_rad_s
+
+
+@dataclass(frozen=True)
+class PolarizationGradientLevelC:
+    """The Lindblad model as a Bloch build, with the parameters the analytic model takes."""
+
+    model: BlochModel
+    omega_d1_sigma_rad_s: float
+    """The D1 sigma Rabi frequency one beam's full amplitude drives (sqrt 2 times the builder's coupling of one linear
+    beam)."""
+    delta_rad_s: float
+    gamma_rad_s: float
+    eta: float
+    """k x0 of one beam on the mode."""
+    xi: float
+    phi_rad: float
+
+
+def polarization_gradient_model(
+    structure: AtomicStructure,
+    pair: PolGradientBeams,
+    mode: ModeSpec,
+    *,
+    lower: str,
+    upper: str,
+    levels: Sequence[str] = ("S1/2", "P1/2"),
+    leak: str = "renormalize",
+) -> PolarizationGradientLevelC:
+    """The lin-perp-lin pair along B as a level-C model: beam phases (2 phi, 0) put the gradient phase phi at the origin;
+    the S1/2 and P1/2 manifolds only (the D branch renormalized) and the three-class recoil kernel per decay channel."""
+    k_hat = np.asarray(pair.beam_a.k_hat, dtype=float)
+    if not np.allclose(np.abs(np.dot(k_hat, structure.b_hat)), 1.0, atol=1e-9):
+        raise ValueError(
+            "the analytic and Lindblad models both need the beam pair along the quantization axis"
+        )
+    if not np.allclose(np.abs(np.dot(k_hat, np.asarray(mode.axis))), 1.0, atol=1e-9):
+        raise ValueError("the mode must lie along the beam pair (a 1D model)")
+    options = MultiLevelOptions(leak=leak, recoil="minimal", beam_phases_rad=(2.0 * pair.phase_rad, 0.0))  # type: ignore[arg-type]
+    model = BlochModel(structure, [pair.beam_a, pair.beam_b], levels=levels, mode=mode, options=options)
+    b = model.build
+    coupling = next(
+        (c for c in b.couplings if c.beam == 0 and c.lower == lower and c.upper == upper),
+        None,
+    )
+    if coupling is None:
+        raise ValueError(f"beam a does not couple {lower} -> {upper}; check the polarizations against B")
+    gamma = b.level_rates_rad_s[b.level_of(upper)]
+    omega_1 = math.sqrt(2.0) * abs(coupling.omega_rad_s)
+    delta = TWO_PI * pair.detuning_hz
+    return PolarizationGradientLevelC(
+        model=model,
+        omega_d1_sigma_rad_s=omega_1,
+        delta_rad_s=delta,
+        gamma_rad_s=gamma,
+        eta=abs(mode.eta(pair.beam_a.k_vector())),
+        xi=xi_from_d1_sigma_rabi(omega_1, delta, gamma, mode.omega_rad_s),
+        phi_rad=pair.phase_rad,
+    )
+
+
+@dataclass(frozen=True)
+class LevelCSteadyState:
+    nbar: float
+    rho: qt.Qobj
+    populations: dict[str, float]
+    fock_populations: np.ndarray
+    boundary_population: float
+    """Population of the top two Fock levels: the truncation check."""
+
+
+def _static_mode_build(build: MultiLevelBuild, what: str) -> None:
+    if build.space is None:
+        raise ValueError("the level-C solve needs a build with a mode")
+    if not build.static:
+        raise NotImplementedError(f"the {what} is built for a consistent frame")
+
+
+def level_c_steady_state(build: MultiLevelBuild) -> LevelCSteadyState:
+    """The joint steady state (direct sparse solve) and its mean phonon number."""
+    _static_mode_build(build, "level-C steady state")
+    assert build.space is not None and isinstance(build.H, qt.Qobj)
+    rho = steady_state_direct(build.H, build.c_ops)
+    pn = build.space.fock_populations(rho, 0)
+    return LevelCSteadyState(
+        nbar=float(np.dot(np.arange(pn.size), pn)),
+        rho=rho,
+        populations=build.populations(rho),
+        fock_populations=pn,
+        boundary_population=float(pn[-2:].sum()),
+    )
+
+
+def level_c_relaxation_rate(build: MultiLevelBuild, *, k: int = 6) -> float:
+    """W = -Re of the slowest nonzero Liouvillian eigenvalue (s^-1), by shift-invert ARPACK about zero; valid when the
+    motional relaxation is the slowest mode (W << every internal rate)."""
+    _static_mode_build(build, "relaxation rate")
+    L = build.liouvillian().to("CSR").data.as_scipy().tocsc()
+    # the shift sits just below zero: a shift AT the stationary eigenvalue makes the factorization singular
+    sigma = -1e-7 * max(build.level_rates_rad_s.values())
+    vals = eigs(L, k=k, sigma=sigma, return_eigenvectors=False)
+    rates = np.sort(-np.real(vals))
+    keep = [r for r in rates if r > 10.0 * abs(sigma)]
+    if not keep:
+        raise RuntimeError("no nonzero Liouvillian eigenvalue found near zero; increase k")
+    return float(keep[0])

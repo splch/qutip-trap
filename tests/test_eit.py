@@ -19,7 +19,6 @@ from qutip_trap.prep.eit import (
     eit_steady_state_nbar,
     light_shift_rad_s,
 )
-from qutip_trap.prep.level_c import level_c_steady_state
 from qutip_trap.prep.validity import ValidityError
 from qutip_trap.trap.crystal import axial_modes_dimensionless, equilibrium_dimensionless
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
@@ -33,6 +32,7 @@ from tests.fixtures import (
     lambda_atom,
     structure,
 )
+from tests.oracles import level_c_steady_state
 
 NU, GAMMA, OM1, OM2, DELTA = 2.0068, 20.0, 17.0, 17.0, 70.0  # MHz, the plan's fixture
 OM_R = math.sqrt(OM1**2 + OM2**2)

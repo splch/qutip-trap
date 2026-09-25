@@ -20,13 +20,13 @@ from qutip_trap.species import species
 from qutip_trap.species.dipole import (
     dipole_operator_uncoupled,
     reduced_element_from_partial_rate,
-    stretched_element_factor,
     wigner_eckart_j,
 )
 from qutip_trap.species.model import Transition
 from qutip_trap.species.wigner import m_values
 from qutip_trap.units import C_M_PER_S, E_C, EPSILON_0_F_PER_M, HBAR_J_S, TWO_PI
 from tests.fixtures import HALF
+from tests.oracles import stretched_element_factor
 
 Fr = Fraction | int
 E_A0 = E_C * physical_constants["Bohr radius"][0]

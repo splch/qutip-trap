@@ -73,10 +73,3 @@ def field_amplitude_v_per_m(intensity_w_m2: float) -> float:
     if intensity_w_m2 < 0.0:
         raise ValueError("intensity is non-negative")
     return math.sqrt(2.0 * intensity_w_m2 / (EPSILON_0_F_PER_M * C_M_PER_S))
-
-
-def stretched_element_factor(J_lower: Half, J_upper: Half) -> float:
-    """|<stretched upper|d_{+1}|stretched lower>| / |<J||d||J'>| = sqrt((2J+1)/(2J'+1)) (1/sqrt 2 on a 1/2 -> 3/2 line)."""
-    return math.sqrt(
-        (2.0 * float(as_half_integer(J_lower)) + 1.0) / (2.0 * float(as_half_integer(J_upper)) + 1.0)
-    )

@@ -585,7 +585,7 @@ records:
     symbol: "<n>(t) = nbar + (n_0 - nbar) exp(-W t)"
     tag: recomputed here
     section: "4.2.3; 9.3"
-    source: "Cirac 1992 Eqs. 29-32; qutip_trap.prep.level_c"
+    source: "Cirac 1992 Eqs. 29-32"
     equation: "mesolve on {sqrt(eta^2 A_+) a^dag, sqrt(eta^2 A_-) a} with A_+ = 3e4, A_- = 4e5 s^-1, eta = 0.1, n_0 = 5, 40 Fock levels reproduces the closed form to 3.73e-13 in <n> over 3 ms; the birth-death generator has zero column sums and the geometric stationary distribution (A_+/A_-)^n; A_- <= A_+ raises CoolingError rather than returning a negative occupation"
   - id: conv.large_mode_atol_floor
     symbol: "atol = 1e-8 above d_m ~ 100, only when atol is the default"

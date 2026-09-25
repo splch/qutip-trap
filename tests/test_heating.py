@@ -19,7 +19,6 @@ from qutip_trap.trap.heating import (
     heating_rates_per_mode,
     s_e_from_heating_rate,
     single_sided_from_spectrum,
-    single_sided_from_two_sided,
     thermal_collapse_rates,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, HBAR_J_S, TWO_PI
@@ -33,9 +32,6 @@ def test_heating_round_trip_and_sidedness() -> None:
     w = TWO_PI * 3.6e6
     assert heating_rate_quanta_per_s(2.2250e-13, m, w) == pytest.approx(40.0, rel=1e-3)
     assert s_e_from_heating_rate(40.0, m, w) == pytest.approx(2.2250e-13, rel=1e-3)
-    assert heating_rate_quanta_per_s(single_sided_from_two_sided(1.1125e-13), m, w) == pytest.approx(
-        40.0, rel=1e-3
-    )  # type: ignore[arg-type]
     s_e = single_sided_from_spectrum(
         NoiseSpectrum(np.array([0.0, 1e8]), np.array([1e-13, 1e-13]), "(V/m)^2/(rad/s)")
     )

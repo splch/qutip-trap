@@ -39,15 +39,6 @@ def s_e_from_heating_rate(n_dot_quanta_per_s: float, mass_kg: float, omega_rad_s
     return 4.0 * mass_kg * HBAR_J_S * omega_rad_s * n_dot_quanta_per_s / (E_C * E_C)
 
 
-def single_sided_from_two_sided(s_two_sided: float | np.ndarray) -> float | np.ndarray:
-    """S^(1) = 2 S^(2)."""
-    return (
-        2.0 * np.asarray(s_two_sided, dtype=float)
-        if isinstance(s_two_sided, np.ndarray)
-        else 2.0 * s_two_sided
-    )
-
-
 def single_sided_from_spectrum(spectrum: NoiseSpectrum) -> SpectralDensity:
     """S_E(omega) = 2 S^(2)(|omega|) through the spectrum's own ``value``: the tabulated band folded onto |omega| and zero
     above it, plus the white level everywhere (so a caller must not add the white level again)."""
