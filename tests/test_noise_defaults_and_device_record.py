@@ -122,11 +122,6 @@ def test_the_record_refuses_what_it_cannot_carry() -> None:
     bad["device"]["detector"]["colour"] = "blue"
     with pytest.raises(ValueError, match="unknown fields \\['colour'\\]"):
         Device.from_dict(bad)
-    with_callables = dataclasses.replace(
-        device, trap=dataclasses.replace(device.trap, basis_potentials={"rf": lambda r: 0.0})
-    )
-    with pytest.raises(ValueError, match="callables"):
-        with_callables.to_dict()
     with pytest.raises(ValueError, match="no JSON form for the annotation"):
         parse("set[int]")
     assert (

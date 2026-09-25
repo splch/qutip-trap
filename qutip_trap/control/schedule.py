@@ -57,7 +57,6 @@ from qutip_trap.control.pulses import Drive, DriveKind, LightShiftCouplings, Pul
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.light.roles import gate_beams
-from qutip_trap.transport.budget import Transport
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
@@ -145,7 +144,7 @@ class GateTarget:
 class Schedule:
     """A circuit as pulses on the time axis (Sections 3.3, 7.1 to 7.3): the pulses, the idle intervals (s) during which heating
     and dephasing act, the events (the terminal measurement), the per-qubit virtual-Z frame at the end (radians), the
-    transports of M12, the entangling gates as played and the ideal target of every played gate piece; ``t0_s`` is the
+    entangling gates as played and the ideal target of every played gate piece; ``t0_s`` is the
     time the incoming state is given at."""
 
     pulses: tuple[Pulse, ...]
@@ -154,8 +153,6 @@ class Schedule:
     events: tuple[ScheduledEvent, ...]
     phase_frame: dict[int, float]
     """Per-qubit virtual-Z frame at the end; the rule is phi -> phi - theta (Section 7.6)."""
-    transports: tuple[Transport, ...] = ()
-    """M12: interleaved with ``pulses`` by absolute time."""
     gates: tuple[PlayedGate, ...] = ()
     """The entangling gates as played (M6), in time order."""
     targets: tuple[GateTarget, ...] = ()

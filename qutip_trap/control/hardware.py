@@ -494,7 +494,6 @@ def apply_hardware_chain(
         schedule.idle,
         schedule.events,
         schedule.phase_frame,
-        transports=schedule.transports,
         gates=schedule.gates,
         targets=schedule.targets,
         t0_s=schedule.t0_s,

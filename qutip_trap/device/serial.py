@@ -1,15 +1,11 @@
-"""``Device.to_dict`` and ``Device.from_dict``: the JSON form of the device record and its JSON schema
-(docs/api_implementation_plan.md 2.5; docs/api_proposal.md Section 4.6, after Pulser's ``Device`` serialisation).
+"""``Device.to_dict`` and ``Device.from_dict``: the JSON form of the device record, and its JSON schema.
 
-The device tree is dataclasses over simple leaves, so one walker driven by the field annotations (strings, under
-``from __future__ import annotations``) writes and reads every record: a dataclass is an object of its fields, a tuple a
-list, a ``dict`` an object whose keys are written as strings (an ``int`` key as its digits, a tuple key joined by commas),
-a ``Literal`` its value, a float a JSON number (the non-finite values as the strings ``"inf"``, ``"-inf"``, ``"nan"``, which
-JSON has no number for), a complex ``{"re", "im"}``, a numpy array ``{"dtype", "shape", "data"}`` with its values flattened
-in C order; ``None`` is ``null``. A field that holds callables (``Trap.basis_potentials``, the M12 basis potentials) has no
-JSON form and is refused when set. The same grammar generates ``docs/schemas/device.schema.json`` (``tools/schemas.py``),
-so a published simulator configuration is citable and diffable outside Python; ``Device.hash()`` is the identity the
-envelope carries, and a record read back has the hash it was written with.
+The device tree is dataclasses over simple leaves, so one walker driven by the field annotations writes and reads every
+record: a dataclass is an object of its fields, a tuple a list, a ``dict`` an object whose keys are written as strings (an
+``int`` key as its digits, a tuple key joined by commas), a ``Literal`` its value, a float a JSON number (the non-finite
+values as the strings ``"inf"``, ``"-inf"``, ``"nan"``), a complex ``{"re", "im"}``, a numpy array ``{"dtype", "shape",
+"data"}`` with its values flattened in C order; ``None`` is ``null``. A field that holds callables has no JSON form and is
+refused when set. A record read back has the ``Device.hash()`` it was written with.
 """
 
 from __future__ import annotations
@@ -180,9 +176,7 @@ def encode(value: Any, node: Node, where: str) -> Any:
     if node.kind == "callable":
         if value is None:
             return None
-        raise ValueError(
-            f"Device.to_dict: {where} holds callables (the M12 basis potentials), which have no JSON form"
-        )
+        raise ValueError(f"Device.to_dict: {where} holds callables, which have no JSON form")
     if node.kind == "any":
         return value
     if node.kind == "scalar":

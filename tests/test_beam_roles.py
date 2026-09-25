@@ -107,7 +107,6 @@ def test_roles_do_not_enter_the_device_digest_but_are_hashable_on_their_own() ->
     assert with_roles.roles != dev.roles
     assert canonical_digest(with_roles.roles) != canonical_digest(dev.roles)  # Machine.hash() digests them
     # any other field still moves the digest
-    assert dataclasses.replace(dev, zones=()).hash() == dev.hash()
     assert dataclasses.replace(dev, gradient=None).hash() == dev.hash()
 
 

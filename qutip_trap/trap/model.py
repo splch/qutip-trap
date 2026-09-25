@@ -26,7 +26,6 @@ and needs the rod geometry factors (Section 4.1.1).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -50,8 +49,6 @@ from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.species.model import Species
-
-M12 = "milestone M12 (PLAN.md Section 4.6; not scheduled for the first release)"
 
 
 def rotation_about_z(angle_rad: float) -> np.ndarray:
@@ -80,10 +77,6 @@ class Trap:
     """The TRUE stray field, hidden from the scheduler (Section 7.3)."""
     shim_voltages_v: dict[str, float]
     """Compensation applied; residual = stray + shim response."""
-    dc_schedule: dict[str, np.ndarray] | None = None
-    """M12: V_n(t) per electrode, sampled."""
-    basis_potentials: dict[str, Callable[..., float]] | None = None
-    """M12: phi_tilde_n(r) per electrode, plus "rf" for phi_tilde_rf (Section 4.1.6)."""
     anharmonic_terms: AnharmonicTerms | None = None
     """Opt-in anharmonic couplings for H_anh/H_curv (Section 5.7); what ``anharmonic()`` returns."""
 
@@ -309,14 +302,6 @@ class Trap:
     def anharmonic(self) -> AnharmonicTerms | None:
         """The opt-in anharmonic record (Section 5.7); None means the term is off."""
         return self.anharmonic_terms
-
-    def pseudopotential_v(self, r_m: np.ndarray, species: Species) -> float:
-        """M12: phi_ps in VOLTS (Section 13, "Junction pseudopotential")."""
-        raise NotImplementedError(f"Trap.pseudopotential_v is {M12}")
-
-    def split_coefficients(self, t_s: float) -> tuple[float, float, float]:
-        """M12: (alpha, beta, gamma) of the volt potential beta x^4 + alpha x^2 + gamma x (Section 13)."""
-        raise NotImplementedError(f"Trap.split_coefficients is {M12}")
 
 
 def _with_mass(params: MathieuParameters, mass_kg: float) -> MathieuParameters:
