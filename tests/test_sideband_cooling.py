@@ -1,6 +1,6 @@
-"""Resolved-sideband and pulsed sideband cooling and the thermometry of PLAN.md Sections 4.2.2, 4.2.7, 4.2.8 (M3): Section 9.3 rows
-"Raman sideband cooling", "Thermometry", "Sympathetic"; Section 9.12 "Laguerre nodes in pulsed cooling", "Sideband-ratio thermometry,
-exact"; Section 9.15 "Repump recoil per cycle and probability guards"; Section 13 "Sideband-cooling trapping condition"."""
+"""Pulsed Raman sideband cooling: the Laguerre nodes of the exact sideband Rabi frequencies, the transfer matrices and
+their trapping condition, the Che, Rasmusson, Home and Monroe schedules, the NIST 90-degree Raman geometry, the repump
+kernel, and the exactly thermal sideband ratio."""
 
 from __future__ import annotations
 
@@ -8,54 +8,63 @@ import math
 
 import numpy as np
 import pytest
+from scipy.optimize import brentq
+from scipy.special import eval_genlaguerre
 
 from qutip_trap.hilbert.operators import rabi_matrix_element
 from qutip_trap.light.recoil import minimal_quadrature
-from qutip_trap.prep.closed_forms import effective_two_level
 from qutip_trap.prep.sideband import (
     SidebandPulse,
-    accumulation_centre,
     apply_pulses,
-    blue_sideband_flopping,
-    double_thermal_fit,
-    invert_flopping,
-    laguerre_first_zero,
     mean_occupation,
-    monroe_half_rabi,
-    nbar_from_ratio,
     optimize_durations,
     optimize_per_order,
-    optimize_shared_duration,
     pi_time_s,
-    populations_from_tail_sums,
-    quenched_floor,
-    raman_two_photon_rabi_rad_s,
     repump_kernel,
     sideband_rabi_rad_s,
-    sideband_ratio,
-    stenholm_floor_half_width,
-    stranded_index,
-    stranded_population,
     thermal_distribution,
-    thermal_ratio,
-    time_averaged_rsb_signal,
     transfer_matrix,
-    trapping_pulse_areas,
-    truncated_tail,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 
 OM0 = TWO_PI * 150e3
 
 
+def _laguerre_first_zero(order: int, eta: float) -> float:
+    """The smallest continuous degree n' > 0 at which L^{(k)}_{n'}(eta^2) vanishes (scipy's real-degree Laguerre)."""
+    x = eta * eta
+
+    def f(n: float) -> float:
+        return float(eval_genlaguerre(n, order, x))
+
+    a, fa = 0.0, f(0.0)
+    while a < 1e4:
+        b = a + 0.5
+        fb = f(b)
+        if fa * fb <= 0.0:
+            return float(brentq(f, a, b, xtol=1e-10))
+        a, fa = b, fb
+    raise RuntimeError("no Laguerre zero found below n = 1e4")
+
+
+def _stranded_index(order: int, eta: float) -> int:
+    """The Fock state whose k-th red-sideband Rabi frequency sits at the first zero: round(zero + k), n' = n - k."""
+    return int(round(_laguerre_first_zero(order, eta) + order))
+
+
+def _stranded_population(p: np.ndarray, order: int, eta: float) -> float:
+    """Population at and above the Rabi node of the given order, which that order's pulses cannot remove."""
+    return float(np.sum(p[_stranded_index(order, eta) :]))
+
+
 def test_laguerre_first_zeros_and_the_stranded_fock_indices() -> None:
-    """39.7908 (k = 1) and 71.7720 (k = 2) at eta = 0.3, 112.2895 and 202.0112 at eta = 0.18 as continuous degrees; with n' = n - k the stranded
-    states are n = 41, 74 and 113 (Che's printed 40 and 72 are degree labels; Section 9.12 row 108)."""
-    assert laguerre_first_zero(1, 0.3) == pytest.approx(39.7908, abs=1e-3)
-    assert laguerre_first_zero(2, 0.3) == pytest.approx(71.7720, abs=1e-3)
-    assert laguerre_first_zero(1, 0.18) == pytest.approx(112.2895, abs=1e-3)
-    assert laguerre_first_zero(2, 0.18) == pytest.approx(202.0112, abs=1e-3)
-    assert (stranded_index(1, 0.3), stranded_index(2, 0.3), stranded_index(1, 0.18)) == (41, 74, 113)
+    """39.7908 (k = 1) and 71.7720 (k = 2) at eta = 0.3, 112.2895 and 202.0112 at eta = 0.18 as continuous degrees; with
+    n' = n - k the stranded states are n = 41, 74 and 113 (Che's printed 40 and 72 are degree labels)."""
+    assert _laguerre_first_zero(1, 0.3) == pytest.approx(39.7908, abs=1e-3)
+    assert _laguerre_first_zero(2, 0.3) == pytest.approx(71.7720, abs=1e-3)
+    assert _laguerre_first_zero(1, 0.18) == pytest.approx(112.2895, abs=1e-3)
+    assert _laguerre_first_zero(2, 0.18) == pytest.approx(202.0112, abs=1e-3)
+    assert (_stranded_index(1, 0.3), _stranded_index(2, 0.3), _stranded_index(1, 0.18)) == (41, 74, 113)
     # the exact element vanishes at the node: Omega_{41,40} is the smallest first-sideband Rabi frequency near there
     om = [sideband_rabi_rad_s(OM0, 0.3, n, 1) for n in range(30, 55)]
     assert 30 + int(np.argmin(om)) in (40, 41)
@@ -68,18 +77,17 @@ def test_transfer_matrix_is_column_stochastic_and_composes_conserving_probabilit
     w2 = transfer_matrix(151, 0.3, OM0, 2, 9e-6)
     assert np.allclose(w2[:2, :2], np.eye(2)) and np.max(np.abs(w2.sum(axis=0) - 1.0)) < 1e-14
     p0 = thermal_distribution(15.36, 151)
-    assert 1.0 - p0.sum() == pytest.approx(truncated_tail(15.36, 151), rel=1e-9)
-    assert truncated_tail(15.36, 151) == pytest.approx(7e-5, rel=0.1)  # n_max = 150: the plan's 7e-5
+    assert 1.0 - p0.sum() == pytest.approx((15.36 / 16.36) ** 151, rel=1e-9)
+    assert 1.0 - p0.sum() == pytest.approx(7e-5, rel=0.1)  # n_max = 150: the truncated tail
     p25 = apply_pulses(p0, [SidebandPulse(1, 9e-6)] * 25, 0.3, OM0)
     assert p25.sum() == pytest.approx(p0.sum(), abs=4e-16 * 25)
 
 
 def test_trapping_condition_is_2m_pi_in_the_plans_rabi_convention() -> None:
-    """A fixed pulse leaves |n> untouched when Omega_{n-1,n} t = 2 pi (sin^2(Omega t/2) = 0); the sources' half-Rabi m pi would predict trapping at
-    Omega_{n-1,n} t = pi, where the plan's convention empties the state completely (Section 13)."""
+    """A fixed pulse leaves |n> untouched when Omega_{n-1,n} t = 2 pi (sin^2(Omega t/2) = 0); the sources' half-Rabi
+    m pi would predict trapping at Omega_{n-1,n} t = pi, where the plan's convention empties the state completely."""
     n = 7
     t_trap = 2.0 * math.pi / sideband_rabi_rad_s(OM0, 0.2, n, 1)
-    assert trapping_pulse_areas(n, 0.2, OM0, t_trap) == pytest.approx(1.0)
     p = np.zeros(20)
     p[n] = 1.0
     out = apply_pulses(p, [SidebandPulse(1, t_trap)], 0.2, OM0)
@@ -89,20 +97,19 @@ def test_trapping_condition_is_2m_pi_in_the_plans_rabi_convention() -> None:
 
 
 def test_che_2017_single_order_cooling_accumulates_population_just_above_the_rabi_node() -> None:
-    """25Mg+, eta = 0.3, nbar = 17, 151 levels, 9 us pulses at Omega_0/2pi = 150 kHz: first-order cycles pile population up at n = 43, 42, 41 after 40,
-    150, 500 pulses (Che's 43, 41, 40 with his degree labelling) and second-order cycles at 77, 74, 74 (his 75, 73, 72), the centre creeping
-    down onto the node 41 / 74 (Section 4.2.8, "an off-by-k inconsistency internal to the paper")."""
+    """25Mg+, eta = 0.3, nbar = 17, 151 levels, 9 us pulses at Omega_0/2pi = 150 kHz: first-order cycles pile population
+    up at n = 43, 42, 41 after 40, 150, 500 pulses (Che's 43, 41, 40 with his degree labelling) and second-order cycles at
+    77, 74, 74 (his 75, 73, 72), the centre creeping down onto the node 41 / 74."""
     p0 = thermal_distribution(17.0, 151)
+    lo = int(math.floor(_laguerre_first_zero(1, 0.3)))  # the node's lower shoulder
     peaks = []
     centres = []
     for count in (40, 150, 500):
         p = apply_pulses(p0, [SidebandPulse(1, 9e-6)] * count, 0.3, OM0)
         peaks.append(30 + int(np.argmax(p[30:])))
-        c = accumulation_centre(p, 1, 0.3)
-        assert c is not None
-        centres.append(c)
+        centres.append(float(np.dot(np.arange(lo, p.size), p[lo:])) / float(np.sum(p[lo:])))
     assert peaks == [43, 42, 41]
-    assert centres[0] > centres[1] > centres[2] > stranded_index(1, 0.3) - 0.5
+    assert centres[0] > centres[1] > centres[2] > _stranded_index(1, 0.3) - 0.5
     peaks2 = []
     for count in (40, 150, 500):
         p = apply_pulses(p0, [SidebandPulse(2, 9e-6)] * count, 0.3, OM0)
@@ -117,18 +124,18 @@ def test_che_2017_single_order_cooling_accumulates_population_just_above_the_rab
     )
     p = apply_pulses(p0, schedule, 0.3, OM0)
     assert mean_occupation(p) < 1.0 and p[0] > 0.95
-    assert stranded_population(p, 1, 0.3) < 0.02
+    assert _stranded_population(p, 1, 0.3) < 0.02
 
 
 def test_rasmusson_2021_fixed_pulse_prediction_and_multiorder_schedules() -> None:
-    """171Yb+, eta = 0.18, from nbar = 14.6: 25 first-order pulses of one shared duration reach nbar = 3.1 (Rasmusson's nbar_sim = 3.57(58)) and
-    the three measured thermometry values (0.58, 8.0, 4.1) are estimator biases, not targets. From nbar = 15.36, 50 multiorder pulses with one
-    duration per order (higher orders first) reach 0.77 and independently optimized durations 0.12 (Rasmusson's optimized 0.06 is not
-    reached with this optimizer; M3 finding). Single-order cooling leaves the thermal tail above the node near n = 113 (8e-4 of the
-    population, about 0.1 quanta; the plan's 'about 0.3 quanta' is not reproduced)."""
+    """171Yb+, eta = 0.18, from nbar = 14.6: 25 first-order pulses of one shared duration reach nbar = 3.1 (Rasmusson's
+    nbar_sim = 3.57(58)). From nbar = 15.36, 50 multiorder pulses with one duration per order (higher orders first) reach
+    0.77. Single-order cooling leaves the thermal tail above the node near n = 113 (8e-4 of the population, about 0.1
+    quanta)."""
     om0 = TWO_PI * 100e3
     p0 = thermal_distribution(14.6, 200)
-    t, nbar = optimize_shared_duration(p0, [1] * 25, 0.18, om0, (1e-7, 200e-6))
+    shared, nbar = optimize_per_order(p0, {1: 25}, 0.18, om0, (1e-7, 200e-6))
+    t = shared[0].duration_s
     assert 2.99 < nbar < 3.57 + 0.58
     p_pi = apply_pulses(p0, [SidebandPulse(1, pi_time_s(om0, 0.18, 15, 1))] * 25, 0.18, om0)
     assert mean_occupation(p_pi) == pytest.approx(3.15, abs=0.1)
@@ -136,13 +143,15 @@ def test_rasmusson_2021_fixed_pulse_prediction_and_multiorder_schedules() -> Non
     pulses, nb_order = optimize_per_order(p0b, {3: 17, 2: 17, 1: 16}, 0.18, om0, (1e-7, 200e-6))
     assert [pl.order for pl in pulses[:17]] == [3] * 17 and nb_order < 1.0
     p_single = apply_pulses(p0b, [SidebandPulse(1, t)] * 50, 0.18, om0)
-    tail = stranded_population(p_single, 1, 0.18)
+    tail = _stranded_population(p_single, 1, 0.18)
     assert tail == pytest.approx((15.36 / 16.36) ** 113, rel=0.05)
     assert float(np.dot(np.arange(113, 220), p_single[113:])) < 0.15
 
 
 @pytest.mark.slow
 def test_rasmusson_independent_durations_reach_a_tenth_of_a_quantum() -> None:
+    """Independently optimized durations reach 0.12 from the per-order schedule's 0.77 (Rasmusson's optimized 0.06 is not
+    reached with this optimizer)."""
     om0 = TWO_PI * 100e3
     p0 = thermal_distribution(15.36, 220)
     pulses, _ = optimize_per_order(p0, {3: 17, 2: 17, 1: 16}, 0.18, om0, (1e-7, 200e-6))
@@ -152,7 +161,7 @@ def test_rasmusson_independent_durations_reach_a_tenth_of_a_quantum() -> None:
     assert nbar < 0.15 and durations.shape == (50,)
 
 
-# Home 2009's own 24Mg+ Raman geometry on the 9Be+-24Mg+-24Mg+-9Be+ crystal (Section 9.3 row "Sympathetic").
+# Home 2009's own 24Mg+ Raman geometry on the 9Be+-24Mg+-24Mg+-9Be+ crystal.
 # Barrett, DeMarco, Schaetz, Leibfried, Britton, Chiaverini, Itano, Jelenkovic, Jost, Langer, Rosenband, Wineland,
 # Phys. Rev. A 68, 042302 (2003) Sec. II.A: "The Raman beams propagate at right angles to each other with R2 parallel
 # to the quantization axis and the difference vector Delta k = k_1 - k_2 parallel to the trap axis", so |Delta k| =
@@ -199,10 +208,9 @@ def test_home_2009_sympathetic_schedule_reaches_six_hundredths_of_a_quantum_on_e
     reproduced Be-Mg-Mg-Be crystal times |Delta k| = sqrt(2) k at 280 nm. Home prints only the total cooling time
     (5.1 ms for all four modes) and no per-mode cycle count, so the schedule here is one uniform 60 second-order plus
     120 first-order cycles inside the plan's own pulse-time window (0.05 to 4 pi times of the first sideband out of
-    |1>, as ``prep.recipe`` uses): every mode reaches 0.005 to 0.013, comfortably inside the row's 0.06. That window
-    matters - the greedy per-order optimizer chooses each block's duration with the earlier blocks fixed, so a window
-    fixed in absolute seconds rather than in pi times lands in a different local minimum and the result stops being
-    monotone in the pulse count (the M3 finding on this optimizer).
+    |1>, as ``prep.recipe`` uses): every mode reaches 0.005 to 0.013, inside 0.06. The window matters: the greedy
+    per-order optimizer chooses each block's duration with the earlier blocks fixed, so a window fixed in absolute seconds
+    lands in a different local minimum and the result stops being monotone in the pulse count.
     """
     om0 = TWO_PI * 150e3
     p0 = thermal_distribution(15.0, 200)
@@ -214,7 +222,7 @@ def test_home_2009_sympathetic_schedule_reaches_six_hundredths_of_a_quantum_on_e
         pulses, nbar = optimize_per_order(p0, counts, eta, om0, (0.05 * t_pi, 4.0 * t_pi))
         assert nbar == pytest.approx(want, rel=3e-3)
         assert nbar < 0.06
-        # higher orders first, and every pulse of one order shares its duration (Section 4.2.8)
+        # higher orders first, and every pulse of one order shares its duration
         orders = [pl.order for pl in pulses]
         assert orders == sorted(orders, reverse=True)
         assert len(orders) == sum(counts.values())
@@ -223,16 +231,15 @@ def test_home_2009_sympathetic_schedule_reaches_six_hundredths_of_a_quantum_on_e
 
 
 def test_monroe_1995_fifteen_raman_cycles_are_colder_than_the_measured_triple() -> None:
-    """Section 9.3 row "Raman sideband cooling": Monroe et al., PRL 75, 4011 (1995) infer "3D Raman cooling to
+    """Monroe et al., PRL 75, 4011 (1995) infer "3D Raman cooling to
     <n_nu> ~= (0.033, 0.022, 0.029)" from the Doppler values (0.47, 0.30, 0.18) at eta = (0.21, 0.12, 0.09) (their
     eta_nu = 2 k_nu r_nu, counterpropagating Raman beams).
 
     Fifteen cycles - five first-order cycles per axis - through the exact pulsed engine reach (0.0067, 0.0020,
     0.0004) with no repump recoil and (0.0226, 0.0069, 0.0030) with three repump photons per cycle, i.e. the ideal
     schedule is 1.5 to 60 times COLDER than the measurement and the measured triple is not monotone in eta while the
-    model necessarily is. So the row's triple is NOT a target of the schedule model: the experiment's floor comes
-    from heating during the cooling and the repump's imperfection, neither of which the level-B engine carries
-    (M3 finding, recorded like the other Monroe anchors). The numbers here are the regression.
+    model necessarily is: the experiment's floor comes from heating during the cooling and the repump's imperfection,
+    neither of which the schedule model carries. The numbers are the regression.
     """
     etas = (0.21, 0.12, 0.09)
     doppler = (0.47, 0.30, 0.18)
@@ -269,71 +276,29 @@ def test_repump_kernel_moves_the_mean_by_the_poisson_photon_count_times_alpha_et
     assert mean_occupation(out) > 0.0 and out.sum() == pytest.approx(1.0, abs=1e-9)
 
 
-def test_raman_two_photon_rabi_frequency_and_the_monroe_half_convention() -> None:
-    """Omega = Omega_1 Omega_2/(2 Delta) in plan units; Monroe's g_1 g_2/Delta with g = Omega/2 is the same number (Section 13)."""
-    om1, om2, delta = TWO_PI * 10e6, TWO_PI * 12e6, TWO_PI * 50e9
-    plan = raman_two_photon_rabi_rad_s(om1, om2, delta)
-    assert plan == pytest.approx(om1 * om2 / (2.0 * delta))
-    assert monroe_half_rabi(om1) * monroe_half_rabi(om2) / delta == pytest.approx(plan / 2.0)
-    with pytest.raises(ValueError):
-        raman_two_photon_rabi_rad_s(om1, om2, 0.0)
+# ---- thermometry ---------------------------------------------------------------------------------------------------
 
 
-def test_quenched_floor_uses_marzolis_half_width_and_the_fast_photons_recoil_weight() -> None:
-    """(gamma'/nu)^2 [(eta~/eta)^2 + 1/4] with (eta~/eta)^2 = 1.376 for 40Ca+ cooled at 729 nm and quenched at 854 nm (393 nm recoil photon), bracket 1.62."""
-    eff = effective_two_level(1.0, 0.1, 0.2, -1.0, "Xi", allow_invalid=True)  # Marzoli's Fig. 3 fixture
-    nu = 100.0 * eff.gamma_coherence_rad_s
-    floor = quenched_floor(eff, nu, 1.376)
-    assert floor == pytest.approx(stenholm_floor_half_width(eff.gamma_coherence_rad_s, nu, 1.376))
-    assert floor / stenholm_floor_half_width(eff.gamma_coherence_rad_s, nu, 0.4) == pytest.approx(
-        1.626 / 0.65, rel=1e-3
+def _sideband_ratio(p: np.ndarray, eta: float, order: int, duration_s: float) -> float:
+    """P_rsb/P_bsb after a pulse of ``duration`` on the k-th red and blue sidebands, exact in eta."""
+    rsb = sum(
+        p[n] * math.sin(0.5 * sideband_rabi_rad_s(OM0, eta, n, order) * duration_s) ** 2
+        for n in range(p.size)
     )
-
-
-# ---- thermometry (Section 4.2.7) -------------------------------------------------------------------------------------------------
+    bsb = sum(
+        p[n] * math.sin(0.5 * (OM0 * rabi_matrix_element(n + order, n, eta)) * duration_s) ** 2
+        for n in range(p.size)
+    )
+    return float(rsb / bsb)
 
 
 @pytest.mark.parametrize("order", [1, 2])
 def test_sideband_ratio_is_exactly_thermal_for_every_pulse_time_and_eta(order: int) -> None:
-    """P_rsb/P_bsb = [nbar/(nbar + 1)]^k to 1e-14 at eta = 1.5, nbar = 8 for three durations (Turchette 2000; Section 9.12
-    pins 6e-15 and the code delivers 1.6e-15); a non-thermal (double-thermal) state shows a duration-dependent ratio."""
+    """P_rsb/P_bsb = [nbar/(nbar + 1)]^k to 1e-14 at eta = 1.5, nbar = 8 for three durations (Turchette 2000: the same
+    Omega_{m+k,m} appears on both sides); a non-thermal (double-thermal) state shows a duration-dependent ratio."""
     p = thermal_distribution(8.0, 400)
     for t in (1e-6, 3e-6, 7.7e-6):
-        r = sideband_ratio(p, 1.5, OM0, order, t)
-        assert r == pytest.approx(thermal_ratio(8.0, order), abs=1e-14)
-        assert nbar_from_ratio(r, order) == pytest.approx(8.0, rel=1e-10)
+        assert _sideband_ratio(p, 1.5, order, t) == pytest.approx((8.0 / 9.0) ** order, abs=1e-14)
     mixed = 0.6 * thermal_distribution(0.2, 400) + 0.4 * thermal_distribution(12.0, 400)
-    ratios = [sideband_ratio(mixed, 0.3, OM0, order, t) for t in (1e-6, 3e-6, 7.7e-6)]
+    ratios = [_sideband_ratio(mixed, 0.3, order, t) for t in (1e-6, 3e-6, 7.7e-6)]
     assert max(ratios) - min(ratios) > 1e-3
-
-
-def test_time_averaged_rsb_signal_is_half_the_tail_sum_and_inverts_to_the_populations() -> None:
-    p = thermal_distribution(0.5, 30)
-    assert time_averaged_rsb_signal(p, 1) == pytest.approx(0.5 * (1.0 - p[0]))
-    signals = [time_averaged_rsb_signal(p, m) for m in range(1, 10)]
-    recovered = populations_from_tail_sums(signals)
-    assert np.allclose(recovered[:8], p[1:9], atol=1e-14)
-
-
-def test_blue_sideband_flopping_inverts_by_nonnegative_least_squares() -> None:
-    p = thermal_distribution(0.7, 16)
-    om0 = TWO_PI * 100e3
-    times = np.linspace(0.0, 300e-6, 600)
-    signal = blue_sideband_flopping(p, 0.1, om0, times)
-    assert signal[0] == pytest.approx(0.5 * (1.0 + p.sum()))
-    assert np.allclose(invert_flopping(times, signal, 0.1, om0, 16)[:6], (p / p.sum())[:6], atol=2e-3)
-    # the flopping frequency is Omega_{n+1,n} in the plan's convention (Wineland's 2 Omega)
-    expected = 0.5 * (
-        1.0 + sum(p[n] * math.cos(om0 * rabi_matrix_element(n + 1, n, 0.1) * 50e-6) for n in range(16))
-    )
-    assert blue_sideband_flopping(p, 0.1, om0, np.array([50e-6]))[0] == pytest.approx(expected)
-
-
-def test_double_thermal_fit_recovers_a_two_temperature_mixture() -> None:
-    mix = 0.7 * thermal_distribution(0.1, 60) + 0.3 * thermal_distribution(6.0, 60)
-    a, nl, nh = double_thermal_fit(mix)
-    assert (a, nl, nh) == (
-        pytest.approx(0.7, abs=1e-6),
-        pytest.approx(0.1, abs=1e-6),
-        pytest.approx(6.0, abs=1e-5),
-    )

@@ -1,12 +1,7 @@
-"""The multi-level optical-Bloch builder and its steady state (PLAN.md Sections 4.2.8, 8.1, 13; M3a).
-
-Targets: the two-level Lorentzian (RMP Eq. 96) recovered exactly; the 171Yb+ detection rate (Gamma/18) s_o /
-[1 + (2/9) s_o + (2 Delta/Gamma)^2] recovered from the four-level Bloch steady state at the magic-angle polarization
-with the Zeeman destabilization in its stated regime, the leakage prefactors (R_d, R_b) from the angular algebra
-settling the Noek-Crain factor 2 in Noek's favour and R_b/R_d = 3/49, the Gamma/4 ceiling, the dark-state counts of
-Berkeland's Table I with the sigma+ unit test of Section 13, optical pumping from first principles, the frame graph
-with its Floquet fallback, and the 40Ca+ S-P-D dark resonance.
-"""
+"""The multi-level optical-Bloch model: the two-level Lorentzian (RMP Eq. 96), the 171Yb+ detection rate
+(Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] and its leakage rates, the Gamma/4 ceiling, Berkeland's dark-state
+counts, optical pumping, the frame graph with its Floquet fallback, the 40Ca+ S-P-D dark resonance and the laser
+linewidth on the optical coherences."""
 
 from __future__ import annotations
 
@@ -16,6 +11,7 @@ import sys
 import numpy as np
 import pytest
 import qutip as qt
+from scipy.optimize import brentq
 
 from qutip_trap.dynamics.multilevel import (
     SINK,
@@ -24,25 +20,18 @@ from qutip_trap.dynamics.multilevel import (
     decay_sum_rule_residual,
 )
 from qutip_trap.light.beams import Beam, PolarizationModulation
-from qutip_trap.light.bloch import (
-    BlochModel,
-    CeilingViolation,
-    CoolingError,
-    RateCoefficients,
-    beam_for_transition,
-    intensity_over_isat,
-    rate_coefficients,
-    shifted_beam,
-)
+from qutip_trap.light.bloch import BlochModel, CeilingViolation, beam_for_transition, shifted_beam
 from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.units import C_M_PER_S, TWO_PI
 from tests.bloch_fixtures import (
     TWO_LEVEL_EXCITED,
+    TWO_LEVEL_EXCITED_PLUS,
     TWO_LEVEL_GROUND,
     gamma_rad_s,
     pi_beam,
+    sigma_plus_beam,
     structure,
     two_level_atom,
     two_level_lorentzian,
@@ -51,7 +40,7 @@ from tests.bloch_fixtures import (
 YB = species("171Yb+")
 YB_LINE = YB.transition("S1/2-P1/2")
 GAMMA_S = YB_LINE.partial_rate_rad_s
-"""The partial S1/2-P1/2 rate, 2 pi x 19.62 MHz, the Gamma of Section 8.1."""
+"""The partial S1/2-P1/2 rate, 2 pi x 19.62 MHz, the Gamma of the detection-rate closed forms."""
 D_HFP = TWO_PI * 2.105e9
 D_HFS = TWO_PI * 12_642_812_118.5
 BRIGHT = tuple(f"S1/2 F=1 mF={m}" for m in (-1, 0, 1))
@@ -88,7 +77,7 @@ def closed_form_rate(s0: float, delta_rad_s: float = 0.0) -> float:
 
 
 def test_two_level_steady_state_is_the_rmp_lorentzian_to_1e_9() -> None:
-    """Gamma rho_ee = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2) with s = 2 Omega^2/Gamma^2 (RMP 2003 Eq. 96; Section 9.3)."""
+    """Gamma rho_ee = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2) with s = 2 Omega^2/Gamma^2 (RMP 2003 Eq. 96)."""
     st = structure(two_level_atom())
     g = gamma_rad_s()
     for om, dl in ((0.05 * g, -0.5 * g), (0.5 * g, 0.0), (2.0 * g, 0.3 * g)):
@@ -100,11 +89,12 @@ def test_two_level_steady_state_is_the_rmp_lorentzian_to_1e_9() -> None:
 
 
 def test_intensity_to_rabi_chain_matches_the_plan_convention() -> None:
-    """2 Omega^2/Gamma^2 = I/I_sat for the full-line Rabi frequency (Section 4.5.2); the pi component drives |g> <-> |e, 0>."""
+    """2 Omega^2/Gamma^2 = I/I_sat for the full-line Rabi frequency with the transition's two-level I_sat; the pi component
+    drives |g> <-> |e, 0>."""
     st = structure(two_level_atom())
     g = gamma_rad_s()
     beam = pi_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED, 0.3 * g, 0.0)
-    s0 = intensity_over_isat(st, beam, "S0/2", "P2/2")
+    s0 = beam.intensity_at(np.asarray(beam.pointing_m)) / st.e1[("S0/2", "P2/2")].i_sat_w_m2
     # for J = 0 -> 1 each of the three components carries |<J||d||J'>|^2/3 with |<J||d||J'>|^2 = 9 pi eps0 hbar c^3 Gamma/omega^3,
     # so |g> <-> |e, 0> is a unit-strength closed two-level transition and 2 Omega_pi^2/Gamma^2 = I/I_sat exactly
     assert 2.0 * (0.3 * g) ** 2 / g**2 == pytest.approx(s0, rel=1e-9)
@@ -153,23 +143,21 @@ def test_frame_puts_every_detuning_on_the_diagonal() -> None:
     )
 
 
-# ---- 171Yb+ detection rates (Section 8.1) ---------------------------------------------------------------------------------
+# ---- 171Yb+ detection rates -----------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("s0, b_gauss, tol", [(0.01, 0.3, 0.01), (0.1, 1.0, 0.01), (1.0, 2.6, 0.01)])
 def test_yb171_detection_rate_recovers_gamma_over_18_and_two_ninths(
     s0: float, b_gauss: float, tol: float
 ) -> None:
-    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o] from the conditional bright state at pumping rate << Zeeman << Gamma (Section 8.1).
-
-    The exact four-level rate sits BELOW the closed form: the field that destabilizes the dark state also detunes the
-    sigma transitions, so the maximum over B reaches 0.995 to 0.9986 of it (M3a finding; the plan's 'nine digits' is
-    not reproduced). Section 9.13 anchor: 1/3 : 2/3 branching is what makes the prefactor Gamma/18.
-    """
+    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o] from the conditional bright state at pumping rate << Zeeman << Gamma; the 1/3 :
+    2/3 branching makes the prefactor Gamma/18. The exact four-level rate sits BELOW the closed form, because the field that
+    destabilizes the dark state also detunes the sigma transitions: 0.995 to 0.9986 of it at the best field."""
     dr = detection_model(s0, b_gauss).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     ratio = dr.R_bright_per_s / closed_form_rate(s0)
     assert 1.0 - tol < ratio <= 1.0 + 1e-6
-    assert dr.ceiling.ceiling == 0.25 and dr.ceiling.n_ground == 3 and dr.ceiling.n_excited == 1
+    assert dr.ceiling.ceiling == 0.25
+    assert (len(dr.ceiling.ground_labels), len(dr.ceiling.excited_labels)) == (3, 1)
     assert dr.R_bright_per_s <= GAMMA_S / 4.0
     assert dr.separation > 100.0
 
@@ -186,7 +174,7 @@ def test_yb171_detuning_dependence_is_the_lorentzian_bracket() -> None:
 
 def test_yb171_leakage_prefactors_settle_the_noek_crain_factor_in_noeks_favour() -> None:
     """R_d = (2/3)(1/3)(Gamma/2) s (Gamma/2 Delta_HFP)^2 and R_b = (2/3)(Gamma/2) s (Gamma/(2(Delta_HFP + Delta_HFS)))^2 with
-    Noek's s = s_o/3 (Sections 8.1, 8.8), i.e. R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2; R_b/R_d = 3/49."""
+    Noek's s = s_o/3, i.e. R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2; R_b/R_d = 3/49."""
     s0 = 0.1
     dr = detection_model(s0, 1.0).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     rd_noek = (2.0 / 3.0) * (1.0 / 3.0) * (GAMMA_S / 2.0) * (s0 / 3.0) * (GAMMA_S / (2.0 * D_HFP)) ** 2
@@ -199,8 +187,8 @@ def test_yb171_leakage_prefactors_settle_the_noek_crain_factor_in_noeks_favour()
 
 
 def test_yb171_crain_operating_point_numbers() -> None:
-    """Section 8.8: at s_o = 2.45 Noek's form predicts 243 Hz, Crain's 364 Hz for R_d and 14.9 Hz for R_b; the exact
-    four-level solve at the field that maximizes the fluorescence sits near Crain's measured 341(13) and 16.4(5) Hz."""
+    """At s_o = 2.45 Noek's form predicts 243 Hz, Crain's 364 Hz for R_d and 14.9 Hz for R_b; the exact four-level solve
+    at the field that maximizes the fluorescence sits near Crain's measured 341(13) and 16.4(5) Hz."""
     s0 = 2.45
     rd_noek = (2.0 / 27.0) * (GAMMA_S / 2.0) * s0 * (GAMMA_S / (2.0 * D_HFP)) ** 2
     rd_crain = (1.0 / 9.0) * (GAMMA_S / 2.0) * s0 * (GAMMA_S / (2.0 * D_HFP)) ** 2
@@ -213,14 +201,14 @@ def test_yb171_crain_operating_point_numbers() -> None:
     assert dr.R_dark_pumping_per_s == pytest.approx(rd_noek, rel=0.03)
     assert dr.R_bright_pumping_per_s == pytest.approx(rb, rel=0.01)
     # at a sub-optimal field (1 G) the bright manifold is redistributed by the dark-state coherence and R_d rises to about 347 Hz,
-    # near Crain's measured 341(13) Hz; the measured triple is therefore not a test of the prefactor alone (Section 8.8)
+    # near Crain's measured 341(13) Hz; the measured triple is therefore not a test of the prefactor alone
     dr1 = detection_model(s0, 1.0).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     assert 320.0 < dr1.R_dark_pumping_per_s < 380.0
     assert dr1.R_bright_per_s / closed_form_rate(s0) < 0.3
 
 
 def test_full_steady_state_is_mostly_dark_and_the_conditional_state_is_bright() -> None:
-    """The long-time steady state of a detected ion sits in F = 0 with weight R_d/(R_d + R_b) ~ 0.95 (Section 8.1)."""
+    """The long-time steady state of a detected ion sits in F = 0 with weight R_d/(R_d + R_b) ~ 0.95."""
     m = detection_model(0.1, 1.0)
     ss = m.steadystate()
     p_dark = ss.populations["S1/2 F=0 mF=0"]
@@ -238,8 +226,7 @@ def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochMode
     """171Yb+ S1/2 + P1/2 + D3/2 + 3D[3/2]1/2 with BOTH the 369.5 nm detection beam and the 935 nm repump present.
 
     The repump is tuned to the level centroid rather than to a sublevel pair, so its residual against the frame that
-    the D3/2 <- P1/2 decay already fixes is zero and the build stays static (Section 4.2.8: levels connected only by
-    decay take their frame from the transition frequency).
+    the D3/2 <- P1/2 decay already fixes is zero and the build stays static.
     """
     st = AtomicStructure(YB, b_gauss, (0.0, 0.0, 1.0))
     line935 = YB.transition("D3/2-3D[3/2]1/2")
@@ -271,14 +258,9 @@ def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochMode
 
 def test_the_slow_manifold_mode_is_chosen_by_its_manifold_weights_not_by_its_index() -> None:
     """With the 935 nm repump beam and the D manifold in the model, the SECOND-slowest Liouvillian mode is a D-manifold
-    relaxation, not the bright <-> dark pumping: picking ``order[1]`` blindly failed with "the slow mode does not
-    connect the two manifolds" (the M5 finding). The mode is now chosen by projecting each eigenvector on the two
-    manifolds, and the skipped intra-manifold rates are reported.
-
-    The configuration then runs into the real physics of the plan's recorded gap (``anchor.m3a.yb171_repump_level_gap``):
-    3D[3/2]1/2 -> S1/2 at 297 nm is declared as untabulated branching, not as a Transition, so nothing returns from
-    the D branch to S1/2, the D manifold is ABSORBING and the two-manifold coarse graining of Section 8.1 does not
-    apply. Both refusals name their cause instead of returning a negative rate.
+    relaxation, not the bright <-> dark pumping, so the connecting mode is found by its projections on the two
+    manifolds. 3D[3/2]1/2 -> S1/2 at 297 nm is untabulated branching, not a Transition, so nothing returns from the D
+    branch to S1/2 and the D manifold is ABSORBING; both refusals name their cause instead of returning a negative rate.
     """
     m = _repump_935_model(2.45, 10.0)
     assert m.build.static and m.build.frame.beats_rad_s == ()
@@ -323,7 +305,7 @@ def test_ceiling_is_asserted_not_assumed() -> None:
         m.ceiling_report(rho_bad)
 
 
-# ---- dark states (Berkeland Table I; Section 13 unit test) -------------------------------------------------------------------
+# ---- dark states (Berkeland Table I) ------------------------------------------------------------------------------------------
 
 
 def test_dark_state_counts_follow_berkelands_table_i() -> None:
@@ -336,7 +318,7 @@ def test_dark_state_counts_follow_berkelands_table_i() -> None:
 
 
 def test_sigma_plus_light_leaves_span_of_m0_and_m_plus1_dark() -> None:
-    """Section 13, 'Zeeman-degenerate dark-state condition': the straight pairing, never the printed reversed one."""
+    """The Zeeman-degenerate dark-state condition in the straight pairing, never the printed reversed one."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     sp = (-1.0 / math.sqrt(2.0) + 0j, -1j / math.sqrt(2.0), 0j)
     beam = beam_for_transition(
@@ -381,11 +363,11 @@ def test_f1_to_f1_linear_light_has_one_dark_state_and_f0_to_f1_none() -> None:
     assert (ds2.n_ground, ds2.n_excited, ds2.dark_dimension) == (1, 3, 0)
 
 
-# ---- optical pumping (Section 4.2.6) -----------------------------------------------------------------------------------
+# ---- optical pumping -------------------------------------------------------------------------------------------------
 
 
 def test_optical_pumping_into_f0_takes_three_photons_and_leaves_a_small_residual() -> None:
-    """1/3 branching into |0> per excitation (Section 4.2.6): three scattered photons on average; the residual F = 1
+    """1/3 branching into |0> per excitation: three scattered photons on average; the residual F = 1
     population is the off-resonant F = 0 -> F' = 1 excitation at 12.6 GHz, of order 1e-6 at s_o = 0.5."""
     st = AtomicStructure(YB, 5.0, (0.0, 0.0, 1.0))
     power = 0.5 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
@@ -418,8 +400,8 @@ def test_optical_pumping_into_f0_takes_three_photons_and_leaves_a_small_residual
 
 
 def test_pumping_matches_the_weak_drive_rate_equations() -> None:
-    """With Omega << Gamma and the Zeeman splitting >> pumping rate the level-C evolution reduces to rate equations built from
-    the Lorentzian excitation rates and the branching ratios (level A of Section 4.2)."""
+    """With Omega << Gamma and the Zeeman splitting >> pumping rate the evolution reduces to rate equations built from the
+    Lorentzian excitation rates and the branching ratios."""
     st = AtomicStructure(YB, 5.0, (0.0, 0.0, 1.0))
     power = 0.02 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     pump = beam_for_transition(
@@ -461,7 +443,7 @@ def test_pumping_matches_the_weak_drive_rate_equations() -> None:
         assert p[ground.index("S1/2 F=0 mF=0")] == pytest.approx(target, abs=0.01)
 
 
-# ---- frame graph and the Floquet fallback (Section 4.2.8) -----------------------------------------------------------
+# ---- frame graph and the Floquet fallback ----------------------------------------------------------------------------
 
 
 def test_frame_assignment_flags_two_tones_on_one_transition_as_a_beat() -> None:
@@ -648,10 +630,9 @@ def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_
     """Without the 935 nm repump the 0.501% branch collects the ion in D3/2 within a few hundred scattered photons; the
     eight D3/2 sublevels make the steady state non-unique, so the statement is one about the time evolution.
 
-    The level set grew from ("S1/2", "D3/2", "P1/2") to include P3/2 and D5/2 when the M0a fix of 2026-09-07
-    (audit item E4) added the 171Yb+ P3/2 record: MultiLevelOptions.address_window is 0.5 of the transition
-    frequency, so the 369.5 nm beam counts the 329 nm S1/2-P3/2 line as addressed (11% away), and leak =
-    "include" then pulls in P3/2's D5/2 decay target. P3/2 is 26 THz off resonance, so it changes no rate here."""
+    MultiLevelOptions.address_window is 0.5 of the transition frequency, so the 369.5 nm beam counts the 329 nm S1/2-P3/2
+    line as addressed and leak = "include" pulls in P3/2's D5/2 decay target; P3/2 is 26 THz off resonance and changes no
+    rate here."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     power = 0.1 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     beam = beam_for_transition(
@@ -677,7 +658,7 @@ def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_
     assert gamma_d / YB_LINE.gamma_rad_s == pytest.approx(0.00501, rel=1e-3)
 
 
-# ---- 40Ca+ Lambda system (Section 8.1 dark resonances, Section 4.2.1 level scheme) ------------------------------------
+# ---- 40Ca+ Lambda system -------------------------------------------------------------------------------------------
 
 
 def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
@@ -719,7 +700,8 @@ def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
     far = model(-0.5 * g - 1.5 * g).steadystate()
     assert on.total_photon_rate_per_s < 1e-6 * off.total_photon_rate_per_s
     assert off.total_photon_rate_per_s > far.total_photon_rate_per_s > 1e4
-    assert on.ceiling.ceiling == 0.25 and on.ceiling.n_ground == 6 and on.ceiling.n_excited == 2
+    assert on.ceiling.ceiling == 0.25
+    assert (len(on.ceiling.ground_labels), len(on.ceiling.excited_labels)) == (6, 2)
     ds = model(-0.5 * g).dark_states()
     assert ds.raman_zero_margin_hz is not None and ds.raman_zero_margin_hz < 1.0
     assert ds.dark_dimension == 4
@@ -762,28 +744,119 @@ def test_ca40_pi_only_repump_leaves_the_m_three_halves_states_as_traps() -> None
     assert ss.populations["D3/2 mJ=-3/2"] + ss.populations["D3/2 mJ=3/2"] > 0.999
 
 
-# ---- rate coefficients (Section 4.2.2) --------------------------------------------------------------------------------
+# ---- laser linewidth on the optical coherences ----------------------------------------------------------------------
+# One phase-diffusion operator per beam, C_b = sqrt(delta omega_L/4)(P_upper - P_lower) (Berkeland and Boshier, Phys. Rev. A
+# 65, 033413 (2002) Eq. 12): the driven coherence is damped at delta omega_L/2 and no population moves, so the excitation
+# profile convolves to the full width Gamma + delta omega_L at constant area.
+
+SP = two_level_atom()
+ST = structure(SP)
+G = gamma_rad_s()
 
 
-def test_rate_coefficient_pairing_and_the_heating_guard() -> None:
-    """A_+ pairs with Delta - nu, A_- with Delta + nu (anti-correlated); the carrier term carries the recoil weight; a
-    blue detuning heats and raises rather than returning a negative occupation (Section 4.2.8)."""
-    g = gamma_rad_s()
-    delta = -0.5 * g
-    nu = 0.2 * g
+def _beam(detuning_rad_s: float, omega_rad_s: float = 0.01 * G) -> Beam:
+    return sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, omega_rad_s, detuning_rad_s)
 
-    def w(offset: float) -> float:
-        return two_level_lorentzian(0.05 * g, delta + offset)
 
-    rc = rate_coefficients(w, nu, 0.4)
-    assert rc.A_plus_per_s == pytest.approx(w(-nu) + 0.4 * w(0.0))
-    assert rc.A_minus_per_s == pytest.approx(w(+nu) + 0.4 * w(0.0))
-    assert rc.nbar == pytest.approx(rc.A_plus_per_s / (rc.A_minus_per_s - rc.A_plus_per_s))
-    assert rc.cooling_rate_per_s(0.1) == pytest.approx(0.01 * (rc.A_minus_per_s - rc.A_plus_per_s))
-    blue = (
-        RateCoefficients(w(-nu), w(nu), 0.0)
-        if False
-        else rate_coefficients(lambda o: two_level_lorentzian(0.05 * g, +0.5 * g + o), nu, 0.0)
+def _profile_fwhm_over_gamma(width_rad_s: float) -> tuple[float, float]:
+    """(peak W, full width at half maximum in units of Gamma) of the weak-drive excitation profile, the half width by
+    root-finding on the symmetric single-peaked profile."""
+    options = MultiLevelOptions(laser_linewidth_rad_s=(width_rad_s,))
+
+    def rate(detuning: float) -> float:
+        return BlochModel(ST, [_beam(detuning)], options=options).scattering_rate_per_s()
+
+    peak = rate(0.0)
+    half = brentq(lambda d: rate(d) - 0.5 * peak, 0.0, 20.0 * G, xtol=1e-4 * G)
+    return peak, 2.0 * half / G
+
+
+def test_the_excitation_profile_broadens_to_gamma_plus_the_laser_linewidth() -> None:
+    """W(Delta) is a Lorentzian of full width Gamma + delta omega_L at constant area: the peak falls as
+    Gamma/(Gamma + delta omega_L)."""
+    peak0, fwhm0 = _profile_fwhm_over_gamma(0.0)
+    assert fwhm0 == pytest.approx(1.0, abs=0.02)
+    for factor in (0.5, 1.0, 2.0):
+        peak, fwhm = _profile_fwhm_over_gamma(factor * G)
+        assert fwhm == pytest.approx(1.0 + factor, abs=0.02)
+        assert peak / peak0 == pytest.approx(1.0 / (1.0 + factor), rel=2e-3)
+    width = 0.7 * G
+    options = MultiLevelOptions(laser_linewidth_rad_s=(width,))
+    on_resonance = BlochModel(ST, [_beam(0.0)], options=options).scattering_rate_per_s()
+    for offset in (0.3, 0.9, 2.0):
+        delta = offset * (G + width)
+        got = BlochModel(ST, [_beam(delta)], options=options).scattering_rate_per_s()
+        assert got / on_resonance == pytest.approx(1.0 / (1.0 + (2.0 * offset) ** 2), rel=3e-3)
+
+
+def test_a_zero_linewidth_changes_no_rate_and_adds_no_operator() -> None:
+    beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.3 * G, -0.5 * G)
+    plain = BlochModel(ST, [beam])
+    zero = BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(0.0,)))
+    assert zero.scattering_rate_per_s() == pytest.approx(plain.scattering_rate_per_s(), rel=1e-12)
+    assert zero.build.dephasing_slice == (len(zero.build.c_ops), len(zero.build.c_ops))
+    assert len(zero.build.c_ops) == len(plain.build.c_ops)
+    assert not any("linewidth" in a for a in zero.build.approximations)
+    finite = BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(0.3 * G,)))
+    start, stop = finite.build.dephasing_slice
+    assert stop - start == 1 and stop == len(finite.build.c_ops)
+    assert any("laser linewidth" in a for a in finite.build.approximations)
+    assert finite.scattering_rate_per_s() < plain.scattering_rate_per_s()
+
+
+def test_the_phase_diffusion_operator_touches_no_population_and_leaves_the_decay_sum_rule_alone() -> None:
+    """C_b is diagonal, carries no photon and no recoil, and the decay sum rule sum_k C_k^dagger C_k = Gamma P_e
+    excludes it."""
+    beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.3 * G, 0.0)
+    plain = BlochModel(ST, [beam])
+    finite = BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(0.4 * G,)))
+    assert decay_sum_rule_residual(finite.build) < 1e-12
+    assert decay_sum_rule_residual(finite.build) == pytest.approx(
+        decay_sum_rule_residual(plain.build), abs=1e-12
     )
-    with pytest.raises(CoolingError):
-        _ = blue.nbar
+    start, stop = finite.build.dephasing_slice
+    matrix = np.asarray(finite.build.c_ops[start].full())
+    assert np.allclose(matrix, np.diag(np.diag(matrix)))
+    values = np.real(np.diag(matrix))
+    assert np.max(values) == pytest.approx(np.sqrt(0.4 * G / 4.0), rel=1e-9)
+    assert np.min(values) == pytest.approx(-np.sqrt(0.4 * G / 4.0), rel=1e-9)
+    for channel in finite.build.channels:
+        assert not channel.operator_slice[0] <= start < channel.operator_slice[1]
+    assert sum(finite.photon_rates(finite.steadystate().rho).values()) == pytest.approx(
+        finite.steadystate().total_photon_rate_per_s, rel=1e-12
+    )
+
+
+def test_the_optical_coherence_decays_at_gamma_over_two_plus_half_the_linewidth() -> None:
+    """With the drive off, rho_eg decays at gamma/2 + delta omega_L/2 while the excited population decays at gamma."""
+    width = 0.6 * G
+    beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.0, 0.0)
+    build = BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(width,))).build
+    lower = build.index(TWO_LEVEL_GROUND)
+    upper = build.index(TWO_LEVEL_EXCITED_PLUS)
+    n = build.n_internal
+    rho0 = np.zeros((n, n), dtype=complex)
+    rho0[upper, upper] = 0.5
+    rho0[lower, lower] = 0.5
+    rho0[upper, lower] = 0.5
+    rho0[lower, upper] = 0.5
+    times = np.linspace(0.0, 3.0 / G, 61)
+    res = qt.mesolve(
+        build.H,
+        qt.Qobj(rho0, dims=build.H.dims),
+        times,
+        c_ops=list(build.c_ops),
+        options={"store_states": True, "progress_bar": "", "atol": 1e-13, "rtol": 1e-11},
+    )
+    coherence = np.array([abs(np.asarray(s.full())[upper, lower]) for s in res.states])
+    population = np.array([np.real(np.asarray(s.full())[upper, upper]) for s in res.states])
+    assert np.max(np.abs(coherence - 0.5 * np.exp(-(0.5 * G + 0.5 * width) * times))) < 1e-9
+    assert np.max(np.abs(population - 0.5 * np.exp(-G * times))) < 1e-9
+
+
+def test_one_linewidth_per_beam_is_required_and_non_negative() -> None:
+    beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.1 * G, 0.0)
+    with pytest.raises(ValueError, match="one entry per beam"):
+        BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(1e3, 1e3)))
+    with pytest.raises(ValueError, match="non-negative"):
+        MultiLevelOptions(laser_linewidth_rad_s=(-1.0,))

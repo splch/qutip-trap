@@ -1,15 +1,10 @@
-"""Sympathetic cooling of a mixed crystal at level A (PLAN.md Sections 4.2.5, 4.2.8; milestone M3).
+"""Sympathetic cooling of a mixed crystal at level A: the coolant is the illuminated set and the shared modes take their
+nbar from its stage; a mode the illuminated ions barely participate in is refused.
 
-Section 9.3 row "Sympathetic" (Home 2009: nbar ~ 15 -> 0.06, mixed-crystal modes 251 kHz apart), Section 9.12 row
-1360 "Species selectivity of sympathetic cooling" (the qubit's reduced state unchanged to numerical precision under
-the coolant's collapse operators), Section 4.2.5 (the coolant is the illuminated set and the shared modes take their
-nbar from its stage), and the level-A refusal of a mode the illuminated ions barely participate in.
-
-The Home 2009 crystal is 9Be+ - 24Mg+ - 24Mg+ - 9Be+ with the cooling light on the 24Mg+ ions only; PLAN.md
-Section 4.1.7 carries Home 2013's single-ion frequencies for the same apparatus (2 pi x 2.69 MHz axial for 9Be+,
-1.65 MHz for 24Mg+ from the mass-independent dc curvature) and the isotope masses 9.0121822 u and 23.985042 u, so
-the four-ion axial spectrum is computable from the plan and is checked here against two independent published
-quantities: Home's own 251 kHz spacing of the two highest axial modes and Jost's printed mode table.
+The Home 2009 crystal is 9Be+ - 24Mg+ - 24Mg+ - 9Be+ with the cooling light on the 24Mg+ ions only; Home 2013's
+single-ion frequencies for the same apparatus (2 pi x 2.69 MHz axial for 9Be+, 1.65 MHz for 24Mg+ from the
+mass-independent dc curvature) and the isotope masses 9.0121822 u and 23.985042 u give the four-ion axial spectrum,
+checked against Home's 251 kHz spacing of the two highest axial modes and Jost's printed mode table.
 """
 
 from __future__ import annotations
@@ -19,16 +14,13 @@ from collections.abc import Sequence
 
 import numpy as np
 import pytest
-import qutip as qt
 
 from qutip_trap.light.beams import Beam
-from qutip_trap.light.bloch import BlochModel
-from qutip_trap.prep.doppler import doppler_cooling
-from qutip_trap.prep.rates import (
+from qutip_trap.prep.doppler import (
     PARTICIPATION_THRESHOLD,
     UncooledModeError,
+    doppler_cooling,
     models_per_ion,
-    stage_rates,
 )
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.trap.crystal import build_crystal
@@ -44,7 +36,7 @@ from tests.bloch_fixtures import (
     two_level_atom,
 )
 
-# PLAN.md Section 4.1.7 (Home 2013 Table I, the NIST 9Be+/24Mg+ apparatus of Home et al. 2009)
+# Home 2013 Table I, the NIST 9Be+/24Mg+ apparatus of Home et al. 2009
 BE_MASS_U = 9.0121822
 MG24_MASS_U = 23.985042
 BE_SINGLE_ION_HZ = (12.26e6, 11.19e6, 2.69e6)
@@ -81,12 +73,12 @@ def _sigma_plus_along(st, k_hat, omega, delta, waist_m=2e-3):  # type: ignore[no
     return Beam(TWO_PI * C_M_PER_S / omega_l, k_hat, pol, waist_m, power, (0.0, 0.0, 0.0))  # type: ignore[arg-type]
 
 
-# ---- Section 9.3 row "Sympathetic": the mixed crystal's mode structure --------------------------------------------------------
+# ---- the mixed crystal's mode structure --------------------------------------------------------------------------
 
 
 def test_home_2009_be_mg_mg_be_axial_spectrum_and_the_251_khz_mode_spacing() -> None:
-    """The 9Be+-24Mg+-24Mg+-9Be+ axial spectrum from PLAN.md's own Home 2013 single-ion frequencies, checked against
-    two published quantities of the same apparatus.
+    """The 9Be+-24Mg+-24Mg+-9Be+ axial spectrum from Home 2013's single-ion frequencies, checked against two published
+    quantities of the same apparatus.
 
     Home, Hanneke, Jost, Amini, Leibfried, Wineland, Science 325, 1227 (2009), supporting online material, "Two-qubit
     logic gate": "The two modes we excite are the highest frequency axial modes, which are separated in frequency by
@@ -94,12 +86,12 @@ def test_home_2009_be_mg_mg_be_axial_spectrum_and_the_251_khz_mode_spacing() -> 
     Jost, Home, Amini, Hanneke, Ozeri, Langer, Bollinger, Leibfried, Wineland, Nature 459, 683 (2009), Methods:
     "the in-phase mode (frequency ~ 2.0 MHz, mode vector: [0.32, 0.63, 0.63, 0.32]), the out-of-phase mode (4.1 MHz,
     [-0.47, -0.53, 0.53, 0.47]), a third mode (5.5 MHz, [0.63, -0.32, -0.32, 0.63]) and a fourth mode (5.7 MHz,
-    [0.53, -0.47, 0.47, -0.53])", the amplitudes being the mass-weighted components c_{i,m} of Section 4.1.3.
+    [0.53, -0.47, 0.47, -0.53])", the amplitudes being the mass-weighted components c_{i,m}.
     """
     be = two_level_atom(mass_kg=BE_MASS_U * U_KG)
     mg = two_level_atom(mass_kg=MG24_MASS_U * U_KG)
     freqs = np.array([BE_SINGLE_ION_HZ, MG24_SINGLE_ION_HZ, MG24_SINGLE_ION_HZ, BE_SINGLE_ION_HZ])
-    # the dc axial curvature is mass independent, so the plan's 1.65 MHz for 24Mg+ IS 2.69 MHz sqrt(m_Be/m_Mg)
+    # the dc axial curvature is mass independent, so 1.65 MHz for 24Mg+ is 2.69 MHz sqrt(m_Be/m_Mg)
     assert BE_SINGLE_ION_HZ[2] * math.sqrt(BE_MASS_U / MG24_MASS_U) == pytest.approx(
         MG24_SINGLE_ION_HZ[2], rel=2e-3
     )
@@ -121,7 +113,7 @@ def test_home_2009_be_mg_mg_be_axial_spectrum_and_the_251_khz_mode_spacing() -> 
     spacing_hz = axial[3].omega_hz - axial[2].omega_hz
     assert spacing_hz == pytest.approx(251e3, abs=2e3)
     assert spacing_hz == pytest.approx(3.0 * 83.6e3, abs=2e3)
-    # Jost's mode vectors are the mass-weighted components; the overall sign is a gauge (Section 13)
+    # Jost's mode vectors are the mass-weighted components; the overall sign is a gauge
     for mode, printed in zip(
         axial,
         (
@@ -142,12 +134,12 @@ def test_home_2009_be_mg_mg_be_axial_spectrum_and_the_251_khz_mode_spacing() -> 
     )
 
 
-# ---- Section 4.2.5: one stage call, a coolant and a transparent qubit species -------------------------------------------------
+# ---- one stage call, a coolant and a transparent qubit species ----------------------------------------------------
 
 
 def _mixed_frequencies(masses_u: Sequence[float], reference_hz: tuple[float, float, float]) -> np.ndarray:
     """Per-ion single-ion secular frequencies from ion 0's: the rf (radial) part of omega scales as 1/m and the
-    static (axial) part as 1/sqrt(m) at a mass-independent dc curvature (Section 4.1.7; Home 2013 Eq. 6)."""
+    static (axial) part as 1/sqrt(m) at a mass-independent dc curvature (Home 2013 Eq. 6)."""
     ref = float(masses_u[0])
     return np.array(
         [
@@ -177,15 +169,15 @@ def _mixed_pair(coolant_mass_u: float, qubit_mass_u: float, freqs_hz: tuple[floa
 
 
 def test_a_stage_illuminating_only_the_coolant_cools_the_shared_modes_through_its_participation() -> None:
-    """Section 4.2.5: cooling only ion 0 of a mixed pair cools every mode it participates in; the participation
-    changes the RATE and not the steady state (it cancels between eta~ and eta, Section 4.2.2), so each mode's nbar
-    equals the single-ion value while its W_m is scaled by sum_i c_{i,m}^2 over the illuminated ions."""
+    """Cooling only ion 0 of a mixed pair cools every mode it participates in; the participation changes the RATE and not
+    the steady state (it cancels between eta~ and eta), so each mode's nbar equals the single-ion value while its W_m is
+    scaled by sum_i c_{i,m}^2 over the illuminated ions."""
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     weights = _coolant_weights(crystal)
     bright = [k for k, w in weights.items() if w >= PARTICIPATION_THRESHOLD]
     res = doppler_cooling(st, [beam], crystal, illuminated=[0], modes=bright)
     assert res.illuminated == (0,)
-    # the mixed axial pair carries the coolant with weights 0.0772 and 0.9228 (the M3 mixed-species regression)
+    # the mixed axial pair carries the coolant with weights 0.0772 and 0.9228
     axial = sorted((k for k in bright if crystal.modes[k].family == "axial"), key=lambda k: weights[k])
     assert [weights[k] for k in axial] == [
         pytest.approx(0.07721, abs=1e-5),
@@ -201,15 +193,15 @@ def test_a_stage_illuminating_only_the_coolant_cools_the_shared_modes_through_it
         one = doppler_cooling(st, [beam], solo, modes=[solo.mode_index("axial", 0)])
         assert m.nbar == pytest.approx(one.modes[0].nbar, rel=3e-3)
         assert m.rate_per_s == pytest.approx(m.participation_weight * one.modes[0].rate_per_s, rel=3e-3)
-    # each axis family's participations complete to one (the recoil-energy sum rule of Section 4.2.8)
+    # each axis family's participations complete to one
     for family in ("axial", "transverse_1", "transverse_2"):
         members = [k for k, mode in enumerate(crystal.modes) if mode.family == family]
         assert sum(weights[k] for k in members) == pytest.approx(1.0, rel=1e-9)
 
 
 def test_models_per_ion_takes_a_per_ion_structure_and_refuses_an_illuminated_ion_without_one() -> None:
-    """Section 4.2.5: one stage call holds a coolant and a qubit species. ``models_per_ion`` accepts a mapping, and an
-    illuminated ion with no structure is refused rather than given a guessed one."""
+    """One stage call holds a coolant and a qubit species: ``models_per_ion`` accepts a mapping, and an illuminated ion
+    with no structure is refused rather than given a guessed one."""
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     shared = models_per_ion(st, [beam], crystal, (0,))
     mapped = models_per_ion({0: st}, [beam], crystal, (0,))
@@ -219,15 +211,15 @@ def test_models_per_ion_takes_a_per_ion_structure_and_refuses_an_illuminated_ion
         models_per_ion({0: st}, [beam], crystal, (0, 1))
     # and the whole stage goes through the mapping
     bright = [k for k, w in _coolant_weights(crystal).items() if w >= PARTICIPATION_THRESHOLD]
-    stage, models = stage_rates({0: st}, [beam], crystal, illuminated=[0], modes=bright)
-    assert set(models) == {0} and stage.illuminated == (0,)
+    stage = doppler_cooling({0: st}, [beam], crystal, illuminated=[0], modes=bright)
+    assert stage.illuminated == (0,)
     assert [m.mode for m in stage.modes] == bright
 
 
 def test_a_mode_the_coolant_barely_participates_in_is_refused_instead_of_reported_as_a_steady_state() -> None:
-    """Section 4.2, Section 4.2.5: a spectator species' radial mode carries a mathematically consistent nbar (the
-    participation cancels) at a relaxation rate of order 1e-2 s^-1, i.e. tens of seconds. Level A refuses it - it is
-    "not cooled at all" - and only an explicit lower ``participation_threshold`` reports it (the M3 finding)."""
+    """A spectator species' radial mode carries a mathematically consistent nbar (the participation cancels) at a
+    relaxation rate of order 1e-2 s^-1, i.e. tens of seconds: level A refuses it, and only an explicit lower
+    ``participation_threshold`` reports it."""
     # a light coolant and a heavy qubit under strong radial confinement: the radial modes decouple by species
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     coolant_weight = _coolant_weights(crystal)
@@ -250,7 +242,7 @@ def test_a_mode_the_coolant_barely_participates_in_is_refused_instead_of_reporte
 
 
 def test_a_stated_minimum_rate_refuses_a_mode_that_cannot_reach_its_steady_state_in_the_stage() -> None:
-    """``min_rate_per_s`` is the direct bound on W_m for a caller that knows its stage duration (Section 4.2)."""
+    """``min_rate_per_s`` is the direct bound on W_m for a caller that knows its stage duration."""
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     weights = _coolant_weights(crystal)
     bright = [k for k, w in weights.items() if w >= PARTICIPATION_THRESHOLD]
@@ -261,54 +253,3 @@ def test_a_stated_minimum_rate_refuses_a_mode_that_cannot_reach_its_steady_state
     assert doppler_cooling(
         st, [beam], crystal, illuminated=[0], modes=bright, min_rate_per_s=0.5 * slowest
     ).modes
-
-
-# ---- Section 9.12 row 1360: species selectivity ------------------------------------------------------------------------------
-
-
-def test_the_coolants_collapse_operators_leave_the_qubit_ions_reduced_state_unchanged() -> None:
-    """Section 9.12 row 1360: on a two-ion JOINT space, the coolant's Hamiltonian and collapse operators act as
-    X (x) 1 on the qubit factor, so the qubit's reduced density matrix - populations AND coherences - is invariant
-    under the whole cooling Liouvillian to numerical precision. This is what "the cooling light only interacts with
-    the coolant, leaving the qubits intact" means operationally (Home et al., Science 325, 1227 (2009), p. 1229)."""
-    g = gamma_rad_s()
-    coolant = two_level_atom(mass_kg=40.0 * U_KG)
-    st = structure(coolant, b_hat=(0.0, 0.0, 1.0))
-    beam = _sigma_plus_along(st, (0.0, 0.0, 1.0), 0.3 * g, -0.5 * g)
-    model = BlochModel(st, [beam])
-    b = model.build
-    assert isinstance(b.H, qt.Qobj)
-    n_c = b.n_internal
-    identity = qt.qeye(2)
-    h_joint = qt.tensor(b.H, identity)
-    c_joint = [qt.tensor(c, identity) for c in b.c_ops]
-    assert c_joint, "the coolant must scatter for this test to say anything"
-    # a qubit in a general state with coherence and unequal populations, correlated with the coolant
-    qubit = qt.Qobj(np.array([[0.7, 0.3 - 0.2j], [0.3 + 0.2j, 0.3]]))
-    rho0 = qt.tensor(qt.ket2dm(b.internal_state(b.labels[0])), qubit)
-    times = np.linspace(0.0, 40.0 / g, 21)
-    res = qt.mesolve(
-        h_joint,
-        rho0,
-        times,
-        c_ops=c_joint,
-        options={"store_states": True, "progress_bar": "", "atol": 1e-13, "rtol": 1e-11},
-    )
-    for state in res.states:
-        reduced = state.ptrace(1)
-        assert np.max(np.abs(np.asarray(reduced.full()) - np.asarray(qubit.full()))) < 1e-12
-    # the coolant itself HAS moved (otherwise the invariance would be vacuous)
-    final_coolant = res.states[-1].ptrace(0)
-    assert np.max(np.abs(np.asarray(final_coolant.full()) - np.asarray(rho0.ptrace(0).full()))) > 1e-3
-    # and the same statement as an operator identity, independent of any solve: Tr_0 of every generator term vanishes
-    for op in [h_joint, *c_joint]:
-        dim = op.dims[0][0]
-        assert dim == n_c
-        block = np.asarray(op.full()).reshape(n_c, 2, n_c, 2)
-        off = block - np.einsum("ik,jl->ijkl", np.eye(n_c), np.eye(2)) * 0.0
-        # X (x) 1: every 2x2 block is a multiple of the identity
-        for i in range(n_c):
-            for k in range(n_c):
-                sub = off[i, :, k, :]
-                assert abs(sub[0, 1]) < 1e-14 and abs(sub[1, 0]) < 1e-14
-                assert abs(sub[0, 0] - sub[1, 1]) < 1e-14

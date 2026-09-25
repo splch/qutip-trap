@@ -1,5 +1,5 @@
-"""The preparation sequence, its stage-order guard and the hand-off ``State`` (PLAN.md Sections 4.2.6, 4.2.7, 5.7; Section 9.17 row
-"Preparation stage order"; milestone M3)."""
+"""The preparation sequence and its hand-off ``State``: the last stage that addressed a mode sets its occupation, the
+pumped qubit is the register factor, and undefined modes or unpumped ions are refused."""
 
 from __future__ import annotations
 
@@ -12,28 +12,36 @@ import qutip as qt
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
-from qutip_trap.prep.pumping import optical_pumping
+from qutip_trap.prep.doppler import doppler_cooling
+from qutip_trap.prep.pumping import PumpingResult, optical_pumping
 from qutip_trap.prep.sequence import (
-    SUB_DOPPLER_KINDS,
     PreparationSequence,
     PreparationStage,
-    StageOrderError,
     doppler_stage,
-    fock_distribution_state,
     prepare_state,
     pulsed_sideband_stage,
     pump_stage,
-    sideband_stage,
 )
 from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
+from qutip_trap.units import TWO_PI
+from tests.bloch_fixtures import (
+    TWO_LEVEL_EXCITED_PLUS,
+    TWO_LEVEL_GROUND,
+    gamma_rad_s,
+    sigma_plus_beam,
+    structure,
+    two_level_atom,
+)
 
 YB = species("171Yb+")
 QUBIT = ("S1/2 F=0 mF=0", "S1/2 F=1 mF=0")
 
 
-def _pump():  # type: ignore[no-untyped-def]
+def _pump() -> PumpingResult:
     st = AtomicStructure(YB, 5.0, (0.0, 0.0, 1.0))
     line = YB.transition("S1/2-P1/2")
     waist = 20e-6
@@ -46,140 +54,28 @@ def _pump():  # type: ignore[no-untyped-def]
     return optical_pumping(model, [QUBIT[0]], duration_s=20e-6, samples=2001)
 
 
-def _cooling(kind: str, nbar: dict[int, float]) -> PreparationStage:
-    if kind == "doppler":
-        return PreparationStage("doppler", "prep.doppler", nbar=nbar, ions=(0,))
-    if kind == "sideband":
-        return sideband_stage(nbar, (0,))
-    return pulsed_sideband_stage(nbar, (0,))
-
-
-def test_stage_order_is_enforced() -> None:
-    pump = pump_stage(_pump(), (0,))
-    doppler = _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0})
-    sideband = _cooling("sideband", {2: 0.05})
-    PreparationSequence((doppler, sideband, pump))
-    PreparationSequence((doppler, pump, doppler, pump))
-    PreparationSequence((doppler,))  # cooling only, no pump yet
-    with pytest.raises(StageOrderError):
-        PreparationSequence((pump, doppler, pump))
-    with pytest.raises(StageOrderError):
-        PreparationSequence((sideband, pump))
-    with pytest.raises(StageOrderError):
-        PreparationSequence((doppler, pump, sideband))
-    with pytest.raises(StageOrderError):
-        PreparationSequence(())
-    with pytest.raises(ValueError):
-        PreparationStage("pump", "x")
-    with pytest.raises(ValueError):
-        PreparationStage("doppler", "x")
-
-
-def test_a_sub_doppler_stage_without_doppler_precooling_before_it_is_refused() -> None:
-    """The module docstring's third rule (Section 4.2.6): "a sub-Doppler stage with no Doppler precooling before it".
-    It was previously only implied by "the sequence starts with Doppler", so ``SUB_DOPPLER_KINDS`` was exported and
-    never used; it is now the rule's own check, which is what catches a sub-Doppler stage after a pump-only prefix."""
-    pump = pump_stage(_pump(), (0,))
-    doppler = _cooling("doppler", {0: 10.0})
-    sideband = _cooling("sideband", {0: 0.05})
-    assert set(SUB_DOPPLER_KINDS) == {"sideband", "eit", "polarization_gradient", "pulsed_sideband"}
-    PreparationSequence((doppler, sideband, pump))
-    # each of the three Section 4.2.6 rules now reports itself, so none is only implied by another
-    with pytest.raises(StageOrderError, match="no Doppler cooling before it"):
-        PreparationSequence((sideband, doppler, pump))
-    with pytest.raises(StageOrderError, match="no Doppler cooling before it"):
-        PreparationSequence((pulsed_sideband_stage({0: 0.05}, (0,)), doppler, pump))
-    with pytest.raises(StageOrderError, match="starts with a pump"):
-        PreparationSequence((pump, doppler, pump))
-    with pytest.raises(StageOrderError, match="no pump follows"):
-        PreparationSequence((doppler, pump, sideband))
-
-
-def test_a_level_b_fock_distribution_reaches_the_hand_off_state_instead_of_its_mean() -> None:
-    """Section 4.2: "The output of every stage is a per-mode thermal density matrix (or the Fock distribution from
-    level B)"; Section 4.2.7: "or the level-C reduced motional state". A stage that carries an explicit motional
-    state hands it to ``HilbertSpace.initial_state(states=...)`` unchanged, so a NON-thermal post-cooling
-    distribution survives the hand-off (it was silently collapsed to nbar before; the M3 finding)."""
-    populations = np.zeros(12)
-    populations[0] = 0.8
-    populations[3] = 0.2  # emphatically not thermal: a hole at n = 1, 2
-    rho = fock_distribution_state(populations)
-    nbar = float(np.dot(np.arange(12), populations))
-    seq = PreparationSequence(
-        (
-            _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
-            sideband_stage({2: nbar}, (0,), motional={2: rho}),
-            pump_stage(_pump(), (0,)),
-        )
-    )
-    assert seq.final_motional() == {2: rho}
-    space = HilbertSpace(
-        ion_dims=(2,), resolved=(ModeTruncation(2, 12, (0, 4), 0.1),), enr_group=None, frozen=(0, 1)
-    )
-    state = prepare_state(space, seq, qubit_labels=QUBIT)
-    assert state.motional.nbar[2] == pytest.approx(nbar, rel=1e-9)
-    got = np.real(np.diag(np.asarray(state.motional.reduced[2].full())))
-    assert np.allclose(got, populations, atol=1e-12)
-    # the thermal path would have filled n = 1 and 2; the explicit state leaves them empty
-    thermal = prepare_state(
-        space,
-        PreparationSequence(
-            (
-                _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
-                sideband_stage({2: nbar}, (0,)),
-                pump_stage(_pump(), (0,)),
-            )
-        ),
-        qubit_labels=QUBIT,
-    )
-    assert np.real(np.diag(np.asarray(thermal.motional.reduced[2].full())))[1] > 0.1
-    # a later thermal stage on the same mode drops the explicit state again
-    later = PreparationSequence(
-        (
-            _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
-            sideband_stage({2: nbar}, (0,), motional={2: rho}),
-            pulsed_sideband_stage({2: 0.02}, (0,)),
-            pump_stage(_pump(), (0,)),
-        )
-    )
-    assert later.final_motional() == {}
-    # bookkeeping guards
-    with pytest.raises(ValueError, match="also carries their nbar"):
-        PreparationStage("pump", "x", pump=_pump(), nbar=None, motional={2: rho})
-    with pytest.raises(ValueError, match="no nbar"):
-        PreparationStage("sideband", "x", nbar={0: 1.0}, motional={2: rho})
-    with pytest.raises(ValueError, match="dimension"):
-        prepare_state(
-            HilbertSpace(
-                ion_dims=(2,), resolved=(ModeTruncation(2, 20, (0, 4), 0.1),), enr_group=None, frozen=(0, 1)
-            ),
-            seq,
-            qubit_labels=QUBIT,
-        )
-    for bad in (np.array([1.0]), np.array([-0.1, 1.0]), np.zeros(4)):
-        with pytest.raises(ValueError):
-            fock_distribution_state(bad)
+def _doppler(nbar: dict[int, float]) -> PreparationStage:
+    return PreparationStage("doppler", "prep.doppler", nbar=nbar, ions=(0,))
 
 
 def test_final_nbar_takes_the_last_stage_that_addressed_each_mode() -> None:
     seq = PreparationSequence(
         (
-            _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
-            _cooling("sideband", {2: 0.05}),
-            _cooling("pulsed", {1: 0.2}),
+            _doppler({0: 10.0, 1: 8.0, 2: 3.0}),
+            pulsed_sideband_stage({2: 0.05}, (0,)),
+            pulsed_sideband_stage({1: 0.2}, (0,)),
         )
     )
     assert seq.final_nbar() == {0: 10.0, 1: 0.2, 2: 0.05}
-    assert seq.kinds == ("doppler", "sideband", "pulsed_sideband") and not seq.ends_with_pump
     assert seq.final_pump(0) is None
 
 
-def test_prepare_state_builds_the_appendix_e_state_with_thermal_modes_and_the_pumped_qubit() -> None:
+def test_prepare_state_builds_the_state_with_thermal_modes_and_the_pumped_qubit() -> None:
     pump = _pump()
     seq = PreparationSequence(
         (
-            _cooling("doppler", {0: 10.0, 1: 8.0, 2: 3.0}),
-            _cooling("sideband", {2: 0.05}),
+            _doppler({0: 10.0, 1: 8.0, 2: 3.0}),
+            pulsed_sideband_stage({2: 0.05}, (0,)),
             pump_stage(pump, (0,)),
         )
     )
@@ -187,7 +83,7 @@ def test_prepare_state_builds_the_appendix_e_state_with_thermal_modes_and_the_pu
         ion_dims=(2,), resolved=(ModeTruncation(2, 12, (0, 3), 0.1),), enr_group=None, frozen=(0, 1)
     )
     state = prepare_state(space, seq, qubit_labels=QUBIT)
-    assert state.provenance == ("prep.doppler", "prep.sideband", "prep.pumping")
+    assert state.provenance == ("prep.doppler", "prep.sideband.pulsed", "prep.pumping")
     assert state.motional.nbar[0] == 10.0 and state.motional.nbar[1] == 8.0
     assert state.motional.nbar[2] == pytest.approx(0.05, rel=1e-6)
     assert state.motional.frozen == (0, 1)
@@ -199,47 +95,32 @@ def test_prepare_state_builds_the_appendix_e_state_with_thermal_modes_and_the_pu
     # the register factor is the pumped qubit: population of |0> in the joint state
     p0 = qt.expect(qt.tensor(qt.basis(2, 0).proj(), qt.qeye(12)), state.joint)
     assert float(np.real(p0)) == pytest.approx(1.0 - pump.preparation_error, abs=1e-9)
+    # the pumps' recoil heating adds to the last cooling stage
+    heated = prepare_state(space, seq, qubit_labels=QUBIT, extra_nbar={2: 0.01})
+    assert heated.motional.nbar[2] == pytest.approx(0.06, rel=1e-6)
 
 
 def test_prepare_state_refuses_undefined_modes_and_unpumped_ions() -> None:
     pump = _pump()
-    seq = PreparationSequence((_cooling("doppler", {0: 10.0}), pump_stage(pump, (0,))))
+    seq = PreparationSequence((_doppler({0: 10.0}), pump_stage(pump, (0,))))
     space = HilbertSpace(
         ion_dims=(2,), resolved=(ModeTruncation(1, 8, (0, 3), 0.1),), enr_group=None, frozen=(0,)
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no cooling stage addressed"):
         prepare_state(space, seq, qubit_labels=QUBIT)
     space2 = HilbertSpace(
         ion_dims=(2, 2), resolved=(ModeTruncation(0, 8, (0, 3), 0.1),), enr_group=None, frozen=()
     )
-    seq2 = PreparationSequence((_cooling("doppler", {0: 1.0}), pump_stage(pump, (0,))))
-    with pytest.raises(ValueError):
+    seq2 = PreparationSequence((_doppler({0: 1.0}), pump_stage(pump, (0,))))
+    with pytest.raises(ValueError, match="never pumped"):
         prepare_state(space2, seq2, qubit_labels=QUBIT)
-    # a coolant ion (never pumped) with an explicitly prepared qubit neighbour: sympathetic bookkeeping
-    state = prepare_state(space2, seq2, qubit_labels=QUBIT, internal={1: qt.basis(2, 1)})
-    assert state.internal.shape == (4, 4)
-    assert float(np.real(state.internal.full()[1, 1])) == pytest.approx(
-        1.0 - pump.preparation_error, abs=1e-9
-    )
 
 
 def test_doppler_stage_wraps_the_rate_result() -> None:
-    from qutip_trap.prep.doppler import doppler_cooling
-    from qutip_trap.trap.crystal import solve_crystal
-    from qutip_trap.trap.model import Trap
-    from tests.bloch_fixtures import (
-        TWO_LEVEL_EXCITED_PLUS,
-        TWO_LEVEL_GROUND,
-        gamma_rad_s,
-        sigma_plus_beam,
-        structure,
-        two_level_atom,
-    )
-
     sp = two_level_atom()
     g = gamma_rad_s()
     trap = Trap(
-        omega_hz=(2.5e6, 2.6e6, 0.05 * g / 6.283185307179586),
+        omega_hz=(2.5e6, 2.6e6, 0.05 * g / TWO_PI),
         axis_angle_rad=0.0,
         rf=None,
         dc=None,
@@ -252,9 +133,6 @@ def test_doppler_stage_wraps_the_rate_result() -> None:
     beam = sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * g, -0.5 * g)
     res = doppler_cooling(st, [beam], crystal, modes=[0])
     stage = doppler_stage(res)
-    assert (
-        stage.kind == "doppler"
-        and stage.nbar is not None
-        and stage.nbar[0] == pytest.approx(res.mode(0).nbar)
-    )
-    assert stage.ions == (0,) and stage.rates is res
+    assert stage.kind == "doppler" and stage.nbar is not None
+    assert stage.nbar[0] == pytest.approx(res.mode(0).nbar)
+    assert stage.ions == (0,)
