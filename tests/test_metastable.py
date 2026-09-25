@@ -21,8 +21,8 @@ def ca40():  # type: ignore[no-untyped-def]
 
 
 def test_blackbody_mixing_rate() -> None:
-    """n_bar = 2.95884 (h nu/kT = 0.29115) multiplies A12: W12 = 7.2491e-6 s^-1 at 300.0 K and 7.2297e-6 at 299.3 K (what the
-    printed 7.23e-6 back-solves to), upward 1.0874e-5 with g_u/g_l = 6/4; dividing by n_bar would be low by 8.75x."""
+    """W12 = n_bar A12 with n_bar = 2.95884 (5e-6): 7.2491e-6 s^-1 at 300 K and 7.2297e-6 at 299.3 K downward and
+    1.0874e-5 upward with g_u/g_l = 6/4 (1e-4)."""
     assert bose_occupation(NU_QUOTED_HZ, 300.0) == pytest.approx(2.95884, abs=5e-6)
     down, up = bbr_mixing_rates_hz(A12_S, NU_QUOTED_HZ, 300.0, 6.0, 4.0)
     assert down == pytest.approx(7.2491e-6, rel=1e-4)
@@ -33,15 +33,15 @@ def test_blackbody_mixing_rate() -> None:
 
 
 def test_bbr_rate_from_the_species_table(ca40) -> None:  # type: ignore[no-untyped-def]
-    """The 40Ca+ table carries the D3/2-D5/2 M1 line (A12 tau = 2.9e-6 of the D5/2 decay) at the level-energy frequency
-    1.8194 THz; W12 at 300 K is 8.47e-6 of the natural rate, so the default (channel off) returns zero rates."""
+    """The 40Ca+ D3/2-D5/2 M1 line at 1.8194 THz gives W12 = 7.249e-6 s^-1 at 300 K, 8.47e-6 of the natural rate (1e-3),
+    zero with the channel off, and the D5/2 branchings still sum to one (1e-15)."""
     ch = MetastableChannels(bbr_temperature_k=300.0)
     tr = ca40.transition("D3/2-D5/2")
     assert tr.multipole == "M1"
     assert tr.partial_rate_rad_s == pytest.approx(A12_S, rel=1e-12)
     assert C_M_PER_S / tr.wavelength_vac_m == pytest.approx(1.8194e12, rel=1e-4)
     down, up = ch.bbr_rate_hz("D3/2-D5/2", ca40)
-    assert down == pytest.approx(7.249e-6, rel=5e-4), "the plan's row uses the rounded 1.82 THz"
+    assert down == pytest.approx(7.249e-6, rel=5e-4), "the quoted rate uses the rounded 1.82 THz"
     assert up == pytest.approx(1.5 * down, rel=1e-12)
     assert down * ca40.level("D5/2").lifetime_s == pytest.approx(8.47e-6, rel=1e-3)
     assert MetastableChannels().bbr_rate_hz("D3/2-D5/2", ca40) == (0.0, 0.0)
@@ -54,8 +54,8 @@ def test_bbr_rate_from_the_species_table(ca40) -> None:  # type: ignore[no-untyp
 
 
 def test_collision_rate_construction(ca40) -> None:  # type: ignore[no-untyped-def]
-    """n = p/(k_B T) = 2.4143e5 cm^-3 per partner at 300 K and 1e-11 mbar; R^q = 5.00e-5 s^-1, R^j = 3.86e-4 s^-1, total
-    4.36e-4 s^-1 (1.45x the source's rounded '< 3e-4'); j-mixing coefficients 7.73x the quenching ones."""
+    """At 2e-11 mbar of H2 and N2 (2.4143e5 cm^-3 each at 300 K) the shelf collision rates are R^q = 5.00e-5 and
+    R^j = 3.86e-4 s^-1 (2e-3), 1.45 times the source's '< 3e-4', and they scale with the density."""
     ch = MetastableChannels(
         pressure_mbar=2e-11, gas_fractions={"H2": 0.5, "N2": 0.5}, gas_temperature_k=300.0
     )
@@ -100,7 +100,7 @@ def test_uncited_partner_or_species_raises_rather_than_defaulting(ca40) -> None:
 
 
 def test_reshelving_offset() -> None:
-    """R/(Gamma + R) = 3.4918e-3 at tau = 1168 ms and R = 3e-3 s^-1, zero by default."""
+    """R/(Gamma + R) = 3.4918e-3 (1e-4) at tau = 1168 ms and R = 3e-3 s^-1, zero by default."""
     assert MetastableChannels(reshelving_rate_hz=3e-3).reshelving_offset(1.168) == pytest.approx(
         3.4918e-3, rel=1e-4
     )
@@ -108,8 +108,8 @@ def test_reshelving_offset() -> None:
 
 
 def test_shelf_loss_rates_and_effective_lifetime(ca40) -> None:  # type: ignore[no-untyped-def]
-    """With every channel on, the D5/2 shelf empties at 1/tau + R_q + R_j + W12 (the M1 line's downward rate); the
-    effective lifetime is shorter than tau by the 5e-4 the channels add."""
+    """With every channel on the D5/2 shelf empties at 1/tau + R_q + R_j + W12 and D3/2 sees the upward W12, the
+    effective lifetime following to 1e-9."""
     ch = MetastableChannels(
         bbr_temperature_k=300.0, pressure_mbar=2e-11, gas_fractions={"H2": 0.5, "N2": 0.5}
     )

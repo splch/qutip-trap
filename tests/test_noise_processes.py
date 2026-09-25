@@ -31,8 +31,8 @@ from qutip_trap.noise.spectra import (
 
 
 def test_spectrum_records_are_two_sided_with_the_variance_kernel_and_a_white_level() -> None:
-    """(1/pi) int_0^inf S d omega is the variance; the OU and Gaussian constructors integrate to their variances; a white
-    level is a separate field, never a heuristic on the shape."""
+    """The OU and Gaussian constructors integrate to their variances under (1/pi) int_0^inf S d omega (5e-3, 1e-9), a white
+    level is a separate field with no variance, and a negative density is refused."""
     ou = ou_spectrum(0.02, 0.05, "u^2/(rad/s)")
     assert ou.variance() == pytest.approx(0.02, rel=5e-3)
     assert ou.value(0.0) == pytest.approx(2.0 * 0.02 * 0.05)
@@ -49,8 +49,8 @@ def test_spectrum_records_are_two_sided_with_the_variance_kernel_and_a_white_lev
 
 @pytest.mark.slow
 def test_synthesized_process_reproduces_variance_and_autocorrelation() -> None:
-    """The spectral method: <x^2> = (1/pi) int S d omega and <x(t) x(t + tau_c)> = sigma^2/e for the OU spectrum (ensemble
-    over seeds; the grid resolves the band's top)."""
+    """Over 200 seeds synthesized OU trajectories reproduce the variance (3 %) and <x(t) x(t + tau_c)> = sigma^2/e (5 %),
+    and a zero spectrum synthesizes zero."""
     sp = ou_spectrum(0.02, 0.05, "u", omega_max_rad_s=60.0 / 0.05)
     t = time_grid(20.0, sp.omega_max_rad_s)
     lag = int(round(0.05 / (t[1] - t[0])))
@@ -86,7 +86,8 @@ def test_trajectory_interpolates_linearly_on_its_fixed_grid_and_round_trips_thro
 
 
 def test_time_grid_honours_delta_t_at_most_tau_c_over_ten_or_refuses_with_the_remedy() -> None:
-    """Section 5.5's Delta t <= tau_c/10 for the band's fastest component, tau_c = 1/omega_max."""
+    """The grid keeps Delta t <= tau_c/10 with tau_c = 1/omega_max (Section 5.5) and refuses a band above the point ceiling
+    and an under-resolved synthesis."""
     for w_max in (1e2, 1e4, 2.0 * math.pi * 3e3, 2.0 * math.pi * 1e5):
         dt = float(np.max(np.diff(time_grid(1e-2, w_max))))
         assert dt <= 1.0 / w_max / 10.0 * (1.0 + 1e-12), (w_max, dt)
@@ -121,9 +122,8 @@ def _periodogram_two_sided(values: np.ndarray, dt: float, n_seg: int) -> tuple[n
 
 @pytest.mark.slow
 def test_the_realized_periodogram_reproduces_the_configured_ou_spectrum() -> None:
-    """Section 5.5's test: the periodogram of long realizations of a Lorentzian band matches ``spectrum.tabulated`` over the
-    band the trajectory resolves (mean ratio 1 within 15 % from 0.4/tau_c to 6/tau_c over 16 seeds) and rolls off with the
-    Lorentzian, as a linearly interpolated sample path must."""
+    """The periodogram of 16 long OU realizations matches ``spectrum.tabulated`` from 0.4/tau_c to 6/tau_c (mean and median
+    ratio within 15 %, 80 % of the bins within 50 %) and falls over 20-fold a decade above the corner."""
     tau_c = 1e-3
     sp = ou_spectrum(4e-4, tau_c, "u^2/(rad/s)", omega_max_rad_s=20.0 / tau_c)
     t = time_grid(200.0 * tau_c, sp.omega_max_rad_s)
@@ -152,8 +152,8 @@ def test_the_realized_periodogram_reproduces_the_configured_ou_spectrum() -> Non
 
 
 def test_the_mains_harmonics_appear_as_lines_in_the_periodogram() -> None:
-    """The mains trajectory's periodogram is a comb at h f_line with line powers A_h^2/2; a free-running trigger phase moves
-    the lines' phase, not their power."""
+    """The mains periodogram is a comb at h f_line with line powers A_h^2/2 (5 %) and nothing between, and a trigger phase
+    leaves the powers unchanged."""
     line = 50.0
     amps = {1: 3e-9, 2: 1e-9, 3: 5e-10}
     mains = Mains(line, amps, dict.fromkeys(amps, 0.0), "line_triggered")

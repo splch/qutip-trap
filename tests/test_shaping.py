@@ -38,7 +38,7 @@ from qutip_trap.control.shaping import (
 from qutip_trap.control.table import Waveform
 from qutip_trap.light.beams import Beam
 from qutip_trap.units import TWO_PI
-from tests.fixtures import X_COM_TWO_IONS, chain_device, two_ion_device, two_ion_modes
+from tests.fixtures import X_COM_TWO_IONS, chain_device, two_ion_modes
 from tests.oracles import choi_segment_count, ms_two_body_angle
 
 ONE_MODE = GateModes(
@@ -47,7 +47,8 @@ ONE_MODE = GateModes(
 
 
 def test_square_pulse_closure_ratio_in_every_spin_normalization() -> None:
-    """eta Omega/eps = 1/(2 sqrt K), tau = 2 pi K/eps, chi = pi/4 on sigma sigma; rwa kernel exact."""
+    """For one to three loops the square pulse closes at eta Omega/eps = 1/(2 sqrt K), tau = 2 pi K/eps and chi = pi/4 to 1e-12
+    on the rwa kernel; the Choi kernel moves the ratio by under 0.5 % and the outside detuning flips the sign."""
     for loops in (1, 2, 3):
         sp = symmetric_pulse(ONE_MODE, gate_mode=0, loops=loops, epsilon_hz=10e3, kernel="rwa")
         assert sp.diagnostics["closure_ratio"] == pytest.approx(1.0 / (2.0 * math.sqrt(loops)), rel=1e-12)
@@ -131,7 +132,8 @@ def test_segmented_integrals_match_direct_quadrature(kernel: str, phi_m: float) 
 
 
 def test_sampled_integrals_match_analytic_on_a_smooth_envelope() -> None:
-    """The Simpson path (FM/Fourier) against the analytic single-exponential integrals of a sin^2 envelope, rwa kernel."""
+    """The sampled (Simpson) integrals of a sin^2 envelope match the closed-form alpha to 1e-8 and the nested-quadrature chi to
+    1e-7 on the rwa kernel."""
     omega = TWO_PI * 2.0e6
     mu = TWO_PI * 1.95e6
     eps = omega - mu
@@ -179,9 +181,9 @@ def test_sampled_integrals_match_analytic_on_a_smooth_envelope() -> None:
 
 
 def test_am_solver_closes_every_mode_and_targets_pi_over_four() -> None:
-    """2N + 1 = 5 equal segments close both x modes of the two-ion crystal with |chi| = pi/4;
-    fewer segments cannot; the amplitude ratio of the second ion enters the symmetrized kernel bilinearly."""
-    dev = two_ion_device()
+    """Five equal segments close both x modes (|alpha| < 1e-10) at |chi| = pi/4 to 1e-10 and three cannot, with a second-ion
+    amplitude ratio too; the waveform round-trips through envelope_of and obeys the s^2 law."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     assert modes.modes == (2, 3) and segment_count(modes.n_modes) == 5
     sp = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
@@ -213,8 +215,9 @@ def test_am_solver_closes_every_mode_and_targets_pi_over_four() -> None:
 
 
 def test_symmetric_constructor_equals_the_general_form_at_equal_envelopes() -> None:
-    """Waveform.symmetric equals the one-segment AM solver at the closure duration."""
-    dev = two_ion_device()
+    """Waveform.symmetric equals the one-segment AM solver at the closure duration (amplitudes and chi to 1e-9), with the legs
+    at +-(omega_g - eps) and the sine motion phase splitting the leg phases by pi."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev).subset([X_COM_TWO_IONS])
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3, kernel="rwa")
     am = solve_amplitude_modulation(modes, mu_hz=3.0e6 - 20e3, duration_s=50e-6, n_segments=1, kernel="rwa")
@@ -238,8 +241,8 @@ def test_symmetric_constructor_equals_the_general_form_at_equal_envelopes() -> N
 
 
 def test_five_ion_closure_with_one_and_two_transverse_families() -> None:
-    """Choi 2014: five 171Yb+ ions, Delta k along x closes the five x modes with 2N + 1 = 11 segments; a Delta k with y and x
-    components sees both families (10 modes) and needs 4N + 1 = 21, 11 raising ClosureError."""
+    """Choi 2014: on five 171Yb+ ions 11 segments close the five x modes (|alpha| < 1e-9), and a Delta k with x and y
+    components needs 21 for the ten modes, 11 raising ClosureError."""
     dev = chain_device(5, omega_hz=(3.045e6, 2.95e6, 0.55e6))
     modes = gate_modes(dev, (1, 3), (0, 1))
     assert modes.n_modes == 5 and set(modes.modes) == {5, 6, 7, 8, 9}
@@ -267,9 +270,9 @@ def test_five_ion_closure_with_one_and_two_transverse_families() -> None:
 
 
 def test_fourier_stabilized_solver_nulls_the_frequency_derivatives() -> None:
-    """Blumel 2021 in the pi/4 convention: closure plus the first K derivatives in the mode frequency vanish, and the
-    stabilized pulse is far less sensitive to a common mode-frequency error than the unstabilized one."""
-    dev = two_ion_device()
+    """Blumel 2021: the stabilized Fourier pulse closes at chi = pi/4 and nulls every loop's first frequency derivative a
+    thousandfold below the plain one, keeping a 1 kHz common shift's residual below 5 % of the plain pulse's."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     plain = solve_fourier_amplitude_modulation(
         modes, mu_hz=2.914e6, duration_s=100e-6, n_basis=16, stabilization_order=0
@@ -299,9 +302,9 @@ def test_fourier_stabilized_solver_nulls_the_frequency_derivatives() -> None:
 
 
 def test_fm_solver_closes_and_the_robust_variant_averages_the_trajectory() -> None:
-    """Leung 2018: a time-symmetric cosine-interpolated FM schedule closes both modes at constant Omega; the robust cost
-    nulls the time-averaged trajectory, so a common 500 Hz detuning drift costs the robust pulse far less."""
-    dev = two_ion_device()
+    """Leung 2018: both FM variants close both modes (residual < 1e-8) at chi = pi/4, and the robust one nulls the
+    time-averaged trajectory so that a common 500 Hz drift costs it below 20 % of the plain pulse's residual."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     plain = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=9, mu0_hz=2.914e6, robust=False)
     robust = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=9, mu0_hz=2.914e6, robust=True)
@@ -327,9 +330,8 @@ def test_fm_solver_closes_and_the_robust_variant_averages_the_trajectory() -> No
 
 
 def test_fm_solver_closes_the_ion_at_a_mode_node() -> None:
-    """The FM family holds Omega constant and equal on both ions, so alpha_{i,m} ~ eta_{i,m} and closing one ion closes the
-    other, EXCEPT on a mode where that ion sits at a node (eta = 0, the centre ion of an odd chain in an antisymmetric
-    mode): the residual is driven from whichever gate ion couples more strongly, a row skipped only when neither couples."""
+    """With one gate ion at a node of a mode (eta = 0) the FM solver still closes every loop to 1e-9 from the other ion, and it
+    skips a mode neither ion couples to."""
     modes = GateModes(
         ions=(0, 1),
         modes=(0, 1),
@@ -360,7 +362,8 @@ def test_fm_solver_closes_the_ion_at_a_mode_node() -> None:
     [(3, (0, 1), 3, 7), (3, (0, 2), 3, 7), (3, (1, 2), 3, 7), (4, (1, 2), 4, 9), (4, (0, 3), 4, 9)],
 )
 def test_three_and_four_ion_closure(n_ions: int, pair: tuple[int, int], n_modes: int, segments: int) -> None:
-    """The transverse-x family of a 3- and a 4-ion 171Yb+ chain closes with Choi's 2N + 1 segments at |chi| = pi/4."""
+    """The transverse-x family of a 3- and a 4-ion 171Yb+ chain closes with Choi's 2N + 1 segments (|alpha| < 1e-14) at
+    |chi| = pi/4, and two segments fewer raise ClosureError."""
     dev = chain_device(n_ions)
     modes = gate_modes(dev, pair, (0, 1))
     assert modes.n_modes == n_modes and segment_count(modes.n_modes) == segments
@@ -377,9 +380,8 @@ def test_three_and_four_ion_closure(n_ions: int, pair: tuple[int, int], n_modes:
 
 
 def test_multi_pair_waveform_stores_the_solved_pairs_angles() -> None:
-    """A pulse solved for pair (0, 2) of a THREE-ion GateModes stores pair (0, 2)'s per-mode angles, not the first pair's:
-    the same envelope carries chi(0,1) = chi(1,2) = 0.449272 while chi(0,2) = pi/4. A multi-pair GateModes with no pair
-    named is refused."""
+    """A pulse solved for pair (0, 2) of a three-ion GateModes stores that pair's chi = pi/4 while chi(0, 1) = 0.449272, and a
+    multi-pair GateModes with no pair or an invalid one named is refused."""
     dev = chain_device(3)
     modes = gate_modes(dev, (0, 1, 2), (0, 1))
     assert abs(modes.eta[1][1]) < 1e-15, (
@@ -397,11 +399,9 @@ def test_multi_pair_waveform_stores_the_solved_pairs_angles() -> None:
 
 
 def test_phase_modulation_closes_every_mode_at_fixed_amplitude() -> None:
-    """The PM solver (Milne 2020, Green-Biercuk 2015, Lu 2019): 2N + 1 = 5 constant-phase segments at FIXED amplitude and
-    beat note close both x modes of the two-ion crystal with |chi| = pi/4, and the per-segment motion phases survive the
-    round trip through the Waveform (the legs' half-difference). Milne's N + 1 = 3 segments need the time-symmetric
-    phase profile this least-squares solver does not impose."""
-    dev = two_ion_device()
+    """The PM solver's five constant-phase segments at fixed amplitude close both x modes (|alpha| < 1e-14) at |chi| = pi/4 and
+    round-trip through the Waveform, while Milne 2020's three segments without the time symmetry leave the loops open."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     sp = solve_phase_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
     assert int(sp.diagnostics["segments"]) == 5 and sp.method == "pm_segmented"
@@ -428,11 +428,8 @@ def test_phase_modulation_closes_every_mode_at_fixed_amplitude() -> None:
 
 
 def test_fm_solver_closes_the_five_ion_leung_design() -> None:
-    """Leung 2018's five-ion design: a 90 us robust FM pulse on the five-ion chain at omega_x/2pi = 3.045 MHz closes all five
-    transverse-x modes. 13 vertices (Leung's 13 oscillations) is NOT enough - 7 free time-symmetric vertices cannot
-    satisfy 10 closure plus 10 robustness conditions, and the loops stay open at |alpha| = 0.13 - while 19 vertices close
-    them to 3e-13. The required Rabi frequency is 292 kHz (robust) and 1097 kHz (plain); Leung's printed
-    Omega = 2 pi x 600 kHz belongs to his apparatus's eta, not this crystal's (0.05 to 0.08 on the x family)."""
+    """Leung 2018's five-ion 90 us robust FM design closes all five x modes with 19 vertices (to 1e-10) at Omega = 292.3 kHz
+    (5 %) but not with 13, and the plain design needs more than three times the Rabi frequency."""
     dev = chain_device(5, omega_hz=(3.045e6, 2.95e6, 0.55e6))
     modes = gate_modes(dev, (1, 3), (0, 1))
     assert modes.n_modes == 5
@@ -458,7 +455,8 @@ def test_fm_solver_closes_the_five_ion_leung_design() -> None:
 
 
 def test_two_pulse_sign_reversal_closes_a_shaped_loop_at_two_tau() -> None:
-    """Roos 2008: a smooth envelope leaves the loop open at tau; repeating it with the coupling reversed closes it at 2 tau."""
+    """Roos 2008: a smooth envelope leaves the loop open at tau, and repeating it with the coupling reversed closes it at 2 tau
+    to 1e-6 of the single pulse's displacement."""
     omega = TWO_PI * 1.0e6
     eps = TWO_PI * 10e3
     tau = TWO_PI / eps

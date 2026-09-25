@@ -1,7 +1,5 @@
-"""``Machine.error_model`` emits the vendors' phenomenology from the simulated device: IonQ's ``r_1q`` is recomputed from the
-gate channels' average infidelity by the stated formula, the RB budget composes the same cached per-kind infidelities, the
-durations, SPAM and rates come from the schedule, table, recipe and noise model, and the QDK strings match the estimator's
-form."""
+"""``Machine.error_model``: IonQ's ``r_1q`` and ``r_2q`` from the gate channels' average infidelities, the RB budget on the
+same cached numbers, the durations, SPAM and rates from the schedule, table and noise model, and the exporters' fields."""
 
 from __future__ import annotations
 

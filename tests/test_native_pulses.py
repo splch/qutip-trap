@@ -154,8 +154,8 @@ def test_schedule_refuses_overlapping_pulses_on_one_ion() -> None:
 
 
 def test_raman_gpi2_reproduces_the_matrix_within_the_debye_waller_budget() -> None:
-    """With motion resolved the identity holds within the intrinsic budget (off-resonant carrier (Omega/nu)^2, the
-    Debye-Waller factor); the table's Rabi frequency is the DW-reduced carrier the calibration would have measured."""
+    """With the x mode resolved and the table at the Debye-Waller-reduced carrier, a Raman GPi2 reproduces the native matrix
+    within five times the off-resonant carrier plus Debye-Waller budget and below 1e-3."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     eta = dd.etas[1]

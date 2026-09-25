@@ -79,7 +79,8 @@ def mg25_ground(g_j: float = G_J_S12) -> HyperfineZeeman:
 
 
 def test_g_I_convention() -> None:
-    """43Ca+ g_I = +2.0467e-4 from mu_I = -1.31535 mu_N (Section 13)."""
+    """g_I = +2.0467e-4 for 43Ca+'s mu_I = -1.31535 mu_N (1e-4) and -5.377e-4 for mu_I = 0.49367 at I = 1/2
+    (Section 13)."""
     assert g_I_steck(-1.31535, 3.5) == pytest.approx(2.0467e-4, rel=1e-4)
     assert g_I_steck(0.49367, 0.5) == pytest.approx(-5.377e-4, rel=1e-3)
     assert g_I_steck(0.0, 0.0) == 0.0
@@ -87,7 +88,7 @@ def test_g_I_convention() -> None:
 
 @pytest.mark.parametrize("B", [0.0, 10.0, 146.0942, 500.0])
 def test_breit_rabi_against_numerical_diagonalization_43ca(B: float) -> None:
-    """All 16 levels agree to 1e-6 Hz at 0, 10, 146.0942 and 500 G."""
+    """The 16 43Ca+ S1/2 levels match the Breit-Rabi form to 1e-6 Hz at 0, 10, 146.0942 and 500 G."""
     hz = ca43_ground()
     closed = sorted(
         breit_rabi_hz(3.5, CA43["ca43.S12.A_hfs_hz"].value, CA43["ca43.S12.g_J"].value, hz.g_I, B, F, mF)
@@ -109,7 +110,8 @@ def test_43ca_labels_and_inverted_ordering() -> None:
 
 
 def test_43ca_clock_point_of_harty_2014() -> None:
-    """146.0942 G, 3,199,941,076.93 Hz, d2nu/dB2 = 2.415 mHz/mG^2 (Harty prints 2.4) and its half the Taylor coefficient."""
+    """Harty 2014's 43Ca+ clock point: 146.0942 G (5e-5), 3,199,941,076.93 Hz (0.05), d2nu/dB2 = 2415.46 Hz/G^2 (2) with
+    half of it the Taylor coefficient, and zero slope."""
     hz = ca43_ground()
     (cp,) = clock_points(hz, "F=4 mF=0", hz, "F=3 mF=1", 50.0, 300.0)
     assert cp.B0_gauss == pytest.approx(146.0942, abs=5e-5)
@@ -119,9 +121,9 @@ def test_43ca_clock_point_of_harty_2014() -> None:
     assert abs(transition_sensitivity(hz, "F=4 mF=0", hz, "F=3 mF=1", cp.B0_gauss).dnu_dB_hz_per_g) < 1e-6
 
 
-def test_43ca_negative_controls_of_section_9_13() -> None:
-    """Harty's g_I^(N) with Langer's plus sign moves the point to 146.3015 G and 3,199,857,314.5 Hz; A > 0 removes it;
-    g_J = 2.000 moves it by 160 mG and 47 Hz."""
+def test_43ca_clock_point_negative_controls() -> None:
+    """Langer's plus sign on g_I moves the 43Ca+ point to 146.3015 G and 3,199,857,314.5 Hz (5e-4 G, 2 Hz), A > 0
+    removes it, and g_J = 2.000 moves it by 160 mG and 47 Hz."""
     A = CA43["ca43.S12.A_hfs_hz"].value
     gJ = CA43["ca43.S12.g_J"].value
     wrong_sign = HyperfineZeeman(_s12(A, gJ), 3.5, +1.31535)
@@ -144,8 +146,8 @@ def _be9_clock(g_j: float | None = None) -> tuple[float, float]:
 
 
 def test_9be_clock_point_and_further_anchors() -> None:
-    """119.44615496 G and 1,207,495,853.379 Hz at the measured g_J, within the plan's 20 Hz of Langer's printed
-    1,207,495,843 Hz; the Taylor coefficient 0.3049 Hz/uT^2; the resolved stationary pairs at 119.643 and 223.073 G."""
+    """The 9Be+ clock point is 119.44615496 G and 1,207,495,853.379 Hz (5e-8 G, 1e-3 Hz), within 20 Hz of Langer's
+    printed value, with Taylor coefficient 0.3049 Hz/uT^2 and the stationary pairs at 119.643 and 223.073 G."""
     hz = be9_ground()
     (cp,) = clock_points(hz, "F=2 mF=0", hz, "F=1 mF=1", 80.0, 160.0)
     assert cp.B0_gauss == pytest.approx(119.44615496, abs=5e-8)
@@ -164,8 +166,8 @@ def test_9be_clock_point_and_further_anchors() -> None:
 
 
 def test_9be_clock_point_sensitivity_to_g_j_and_the_negative_controls() -> None:
-    """Dickopf's calculated g_J moves the point by 1.56e-5 G and 0.0093 Hz, the plan's g_J = 2.000 control by 0.135 G and
-    81 Hz; A > 0 has no point in 8 to 16 mT; at the rounded 0.01194 T the slope is -2.82 Hz/uT, 6.50 Hz above the minimum."""
+    """Dickopf's calculated g_J moves the 9Be+ point by 1.558e-5 G and 0.00933 Hz (2e-3), g_J = 2.000 by 0.135 G and
+    80.86 Hz, A > 0 removes it, and at 119.4 G the slope is -2.82 Hz/uT, 6.50 Hz above the minimum."""
     b_m, f_m = _be9_clock()
     b_t, f_t = _be9_clock(BE9["be9.S12.g_J_theory"].value)
     assert b_t - b_m == pytest.approx(1.558e-5, rel=2e-3)
@@ -191,7 +193,8 @@ def test_9be_inverted_multiplet_from_negative_moment() -> None:
 
 
 def test_25mg_clock_point_of_srinivas() -> None:
-    """212.78 G and 1.686462 GHz at the declared g_J; g_J = 2.000 moves the point to 213.025 G."""
+    """Srinivas 2021's 25Mg+ clock point is 212.78 G and 1.686462 GHz at the assumed g_J (0.01 G, 1 kHz), and
+    g_J = 2.000 moves it to 213.025 G."""
     hz = mg25_ground()
     (cp,) = clock_points(hz, "F=3 mF=1", hz, "F=2 mF=1", 100.0, 400.0)
     assert cp.B0_gauss == pytest.approx(212.78, abs=0.01)
@@ -205,7 +208,8 @@ def test_25mg_clock_point_of_srinivas() -> None:
 
 
 def test_171yb_quadratic_zeeman_coefficient() -> None:
-    """310.869 Hz/G^2 with the adopted g_J, the (g_J - g_I)^2 mu_B^2/(2 h^2 A) closed form."""
+    """The 171Yb+ clock line is purely quadratic at 310.869 Hz/G^2 (1e-3), the (g_J - g_I)^2 mu_B^2/(2 h^2 A) closed
+    form."""
     yb = species("171Yb+")
     nu0, d1_zero, _ = yb.transition_frequency_hz("S1/2 F=0 mF=0", "S1/2 F=1 mF=0", 0.0)
     assert nu0 == pytest.approx(12_642_812_118.5, abs=1e-6)
@@ -223,7 +227,8 @@ def test_171yb_quadratic_zeeman_coefficient() -> None:
 
 
 def test_171yb_g_f_slope_and_the_adjacent_splitting() -> None:
-    """g_F(F = 1) mu_B/h = 1.4012 MHz/G is the diagonalized |1,1> - |1,0> slope, and 8.267 MHz the splitting at 5.9 G."""
+    """g_F(F = 1) mu_B/h = 1.4012 MHz/G is the diagonalized |1,1> - |1,0> slope (1e-5), and 8.267 MHz the splitting at
+    5.9 G (2e-3)."""
     yb = species("171Yb+")
     g_i = g_I_steck(yb.mu_I_nuclear_magnetons, 0.5)
     slope_hz_per_g = (
@@ -238,7 +243,7 @@ def test_171yb_g_f_slope_and_the_adjacent_splitting() -> None:
 
 
 def test_g_f_matches_the_diagonalized_slope_for_a_high_spin_level() -> None:
-    """43Ca+ S1/2, I = 7/2: the weak-field |4,1> - |4,0> slope is g_F(F = 4) mu_B/h."""
+    """The weak-field 43Ca+ S1/2 |4,1> - |4,0> slope is g_F(F = 4) mu_B/h to 1e-5."""
     ca = species("43Ca+")
     g_i = g_I_steck(ca.mu_I_nuclear_magnetons, 3.5)
     g_f = lande_g_f(4, Fraction(1, 2), Fraction(7, 2), ca.level("S1/2").g_J, g_i)
@@ -248,7 +253,7 @@ def test_g_f_matches_the_diagonalized_slope_for_a_high_spin_level() -> None:
 
 
 def test_87rb_second_order_zeeman_from_the_same_machinery() -> None:
-    """575.146 Hz/G^2 with g_J = 2.002331070, g_I = -0.0009951414, Delta_hfs = 6.834682610904290 GHz (Steck)."""
+    """The 87Rb clock shift is 575.146 Hz/G^2 (2e-3) with Steck's g_J, g_I and Delta_hfs."""
     g_j, g_i, dhfs = 2.002331070, -0.0009951414, 6.834682610904290e9
     hz = HyperfineZeeman(_s12(dhfs / 2.0, g_j), 1.5, -g_i * 1.5 / M_E_OVER_M_P)
     s1 = transition_sensitivity(hz, "F=1 mF=0", hz, "F=2 mF=0", 1.0)
@@ -257,8 +262,8 @@ def test_87rb_second_order_zeeman_from_the_same_machinery() -> None:
 
 
 def test_spin_zero_level_is_linear_with_lande_factors() -> None:
-    """40Ca+ optical qubit: Delta m = 0 (-1/2 -> -1/2) is 0.4 mu_B/h and the stretched line 2.0 mu_B/h with g_S = 2,
-    g_D = 6/5; the table's Steck g_S shifts these by 0.1%; ten components span 31.4 MHz at 4 G."""
+    """The 40Ca+ S1/2-D5/2 lines are linear: 0.4 mu_B/h for Delta m = 0 and 2.0 mu_B/h stretched (3e-3 with the table's
+    g_S, exact with g_S = 2 and g_D = 6/5), and the ten components span 31.4 MHz at 4 G."""
     ca = species("40Ca+")
     _, d1, d2 = ca.transition_frequency_hz("S1/2 mJ=-1/2", "D5/2 mJ=-1/2", 4.0)
     assert d2 == 0.0
@@ -326,7 +331,7 @@ def _overlap_tracked_violations(hz: HyperfineZeeman, fields: list[float]) -> int
 def test_the_ascending_eigenvalue_order_is_the_adiabatic_continuation(
     name: str, level: str, b_max: float
 ) -> None:
-    """Inside one m_F block levels never cross (no-crossing rule), so the ascending order at B is the order at B = 0."""
+    """Within each m_F block the maximum-overlap continuation from B = 0 never reorders the ascending eigenvalues."""
     sp = species(name)
     hz = hyperfine_zeeman(sp.level(level), sp.nuclear_spin, sp.mu_I_nuclear_magnetons)
     # steps small against the level spacing over mu_B/h, or the overlap match itself fails at a narrow crossing
@@ -334,8 +339,8 @@ def test_the_ascending_eigenvalue_order_is_the_adiabatic_continuation(
 
 
 def test_the_labelling_holds_on_a_pathological_level_and_a_degenerate_one_is_refused() -> None:
-    """A J = 3/2, I = 3/2 level with a quadrupole term 50x the dipole one shows no violation; two F manifolds degenerate at
-    B = 0, the one case the argument cannot cover, are refused at construction."""
+    """A J = 3/2, I = 3/2 level with a quadrupole term 50x the dipole one keeps its labels, and two F manifolds
+    degenerate at B = 0 are refused."""
     hz = HyperfineZeeman(Level("P3/2", 1.0e15, 1e-8, 1.0e6, -50.0e6, 1.334, ("test",)), 1.5, -1.0)
     assert _overlap_tracked_violations(hz, list(np.linspace(0.0, 2000.0, 801))) == 0
     with pytest.raises(ValueError, match="degenerate F manifolds"):

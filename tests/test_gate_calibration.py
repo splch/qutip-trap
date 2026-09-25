@@ -37,21 +37,22 @@ from qutip_trap.published import ballance_thermal_error, thermal_debye_waller_in
 from qutip_trap.units import TWO_PI
 from tests.fixtures import (
     X_COM_TWO_IONS,
+    chain_device,
     derived_seeds,
     raman_gate_drives,
     table_with_waveform,
-    two_ion_device,
     two_ion_modes,
 )
 
-RABI, STARK = derived_seeds(two_ion_device(), raman_gate_drives(2))
+RABI, STARK = derived_seeds(chain_device(2), raman_gate_drives(2))
 """The derived carrier Rabi frequencies and Stark shifts a perfectly calibrated table carries (the played chain is then the
 identity)."""
 
 
 def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
-    """The closed-form waveform is 1 to 3% strong in chi (Debye-Waller, carrier); one or two exact checks correct it."""
-    dev = two_ion_device()
+    """The closed-form AM waveform is 0.5 to 3 % strong in chi, and at most three exact spot checks bring it to pi/4 within
+    1e-4 (fidelity > 0.9995, leakage < 2e-4), which the corrected waveform replays to 2e-4."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
@@ -81,12 +82,10 @@ def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
 
 
 def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -> None:
-    """The thermal robustness curve on the gate mode with the exact sidebands. Ballance's eps_nbar = (pi^2/4) eta^4 nbar (2 nbar + 1)
-    is the ENTANGLING-ANGLE error of an n = 0-calibrated gate, chi(n) = chi_0 [1 - eta^2 (2n + 1)]: read from the populations
-    (P_11/(P_00 + P_11) = sin^2 chi_eff) it is recovered within 10%, and the re-optimized nbar^2 + nbar reference is excluded. The
-    exact gate loses more: the n-dependent sideband coupling leaves residual spin-motion entanglement (leakage into |du>, |ud>) of
-    the same order, a term linear in nbar, so the Bell-state infidelity lies between 1.1 and 1.6 times Ballance's form at nbar <= 2."""
-    dev = two_ion_device()
+    """An n = 0-calibrated gate's chi(n) follows chi_0 [1 - eta^2 (2n + 1)] to 10 % and its thermally averaged angle loss
+    Ballance's (pi^2/4) eta^4 nbar (2 nbar + 1) to 20 %, while the Bell infidelity, with a leakage linear in n, lies 1.02 to
+    1.7 times above it."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev).subset([X_COM_TWO_IONS])
     drives = raman_gate_drives(2)
     wf0 = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3, kernel="rwa")
@@ -165,11 +164,9 @@ def _fock_check(dev, wf, drives, space, state, opts):  # type: ignore[no-untyped
 @pytest.mark.slow
 @pytest.mark.parametrize("family", ["fm", "fourier", "pm"])
 def test_the_fm_fourier_and_pm_solutions_are_verified_by_exact_integration(family: str) -> None:
-    """Every solver's solution verified by exact integration of the full Hamiltonian: exact chi/surrogate = 0.9847 (FM),
-    0.9831 (Fourier AM) and 0.9528 (PM), leakage 4.7e-4, 4.7e-7 and 1.8e-2 on the two-ion fixture. The PM family's larger
-    leakage is Roos's spin-axis tilt psi = (2 Omega/mu) sin phi_m: the motion phase IS its modulation parameter, so it cannot
-    use the tilt-free phi_m = 0 convention."""
-    dev = two_ion_device()
+    """Exact integration of each solver's pulse gives chi/surrogate = 0.9847 (FM), 0.9831 (Fourier AM) and 0.9528 (PM) to 1 %,
+    with leakage below 1e-3, 1e-5 and 3e-2 (the PM pulse carries Roos's spin-axis tilt)."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     if family == "fm":
@@ -199,10 +196,8 @@ def test_the_fm_fourier_and_pm_solutions_are_verified_by_exact_integration(famil
 
 
 def test_kirchmair_forty_calcium_consistency_anchors() -> None:
-    """Kirchmair et al. 2009's 40Ca+ apparatus (nu/2pi = 1.232 MHz, eta = 0.044): t_g = 50 us is eps/2pi = 20 kHz at K = 1
-    and needs Omega/2pi = 227.3 kHz, t_g = 25 us is eps/2pi = 40 kHz and needs 454.5 kHz - Omega/nu = 0.37, deep into
-    Roos's carrier saturation. The intrinsic residual-displacement and Debye-Waller terms at nbar = 0 are below 1e-5,
-    three orders under the paper's measured 1 - F = 7e-3 and 2.9e-2, which its technical terms dominate."""
+    """Kirchmair 2009's 40Ca+ gates (nu = 1.232 MHz, eta = 0.044): t_g = 50 and 25 us close at eps = 20 and 40 kHz with
+    Omega = 227.3 and 454.5 kHz (Omega/nu = 0.369), and the intrinsic terms at nbar = 0 are below 1e-5."""
     eta, nu = 0.044, TWO_PI * 1.232e6
     for t_g, eps_hz, omega_khz in ((50e-6, 20e3, 227.3), (25e-6, 40e3, 454.5)):
         eps = TWO_PI * eps_hz
@@ -215,9 +210,9 @@ def test_kirchmair_forty_calcium_consistency_anchors() -> None:
 
 
 def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> None:
-    """The population crossing P_00 = P_11 sits at the calibrated amplitude; the parity oscillates at 2 phi
-    with a contrast near one, and F = (P_00 + P_11 + C)/2 bounds the Bell fidelity."""
-    dev = two_ion_device()
+    """The ms scan's closure scale is 1 to 0.01 with P_11 rising in the amplitude, and the parity scan's contrast and Bell
+    fidelity bound (P_00 + P_11 + C)/2 exceed 0.99."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     # the experiments read the roles

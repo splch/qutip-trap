@@ -1,9 +1,9 @@
-"""State-based process tomography, the Choi reconstruction, the CP/TP projection and the Kraus application (PLAN.md
-Sections 5.4, 6.8) on synthetic channels and against the ideal unitaries the scheduler records (``GateTarget``), and the
-isometry routes against the state route on the real engine."""
+"""Process tomography (PLAN.md Section 5.4): the Choi reconstruction, the CP/TP projection and the Kraus application on
+synthetic channels and the scheduler's ideal unitaries, and the isometry route against the state route on the real engine."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -11,8 +11,9 @@ import pytest
 
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control import native
-from qutip_trap.control.schedule import GateTarget
+from qutip_trap.control.schedule import GateTarget, Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
+from qutip_trap.dynamics.channels import qubit_dephasing_channels
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import (
@@ -37,6 +38,7 @@ from qutip_trap.dynamics.tomography import (
     tp_residual,
 )
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.noise.summary import (
     apply_choi,
     choi_from_kraus,
@@ -60,7 +62,8 @@ def _dms(dims: tuple[int, ...]) -> list[np.ndarray]:
 
 
 def test_input_states_span_the_operator_space() -> None:
-    """d^2 pure inputs per qudit, linearly independent over the complex numbers (the least squares needs full rank)."""
+    """A register's d^2 inputs are unit kets of full rank, labelled "0", "1", "+", "+i" per qubit; a one-level qudit is
+    refused."""
     for dims in ((2,), (2, 2), (3,), (2, 3)):
         states = input_states(dims)
         d = int(np.prod(dims))
@@ -75,8 +78,8 @@ def test_input_states_span_the_operator_space() -> None:
 
 
 def test_unitary_channel_is_reconstructed_exactly_and_returns_one_kraus_operator() -> None:
-    """Sixteen inputs through MS(0.3, -0.7, pi/2): the Choi matrix of ``noise.summary.choi_from_unitary`` to round-off, both
-    residuals at round-off after the projection, one Kraus operator equal to the unitary up to a phase."""
+    """Sixteen inputs through MS(0.3, -0.7, pi/2) reconstruct its Choi matrix to 1e-13 with both residuals below 1e-13 and one
+    Kraus operator, the unitary up to a phase (1e-12)."""
     u = native.ms(0.3, -0.7, math.pi / 2.0)
     rhos = _dms((2, 2))
     outs = [u @ r @ u.conj().T for r in rhos]
@@ -95,8 +98,8 @@ def test_unitary_channel_is_reconstructed_exactly_and_returns_one_kraus_operator
 
 
 def test_dykstra_projection_restores_trace_preservation_and_positivity_under_noise() -> None:
-    """The projection onto CP and TP leaves ||Tr_out(Choi) - 1|| < 1e-10 and reports both residuals; a PSD
-    projection alone would not (the noisy reconstruction violates TP at the noise level)."""
+    """A noisy depolarizing reconstruction (TP broken by more than 1e-4) projects onto CP and TP within 1e-10, 5e-3 from the
+    channel, whose entanglement infidelity and Pauli twirl come out 0.05 to 2e-3."""
     cd = depolarizing_choi(0.05, 2)
     rhos = _dms((2, 2))
     rng = np.random.default_rng(1)
@@ -122,8 +125,8 @@ def test_dykstra_projection_restores_trace_preservation_and_positivity_under_noi
 
 
 def test_kraus_application_on_a_register_matches_the_embedded_unitary() -> None:
-    """The map on factors (0, 2) of a three-qubit register, on a density matrix and by Kraus sampling on a ket (a unitary has
-    one Kraus operator, so the sample is deterministic), against the embedded unitary."""
+    """On factors (0, 2) of a three-qubit register the Kraus map of a density matrix and the Kraus sample of a ket equal the
+    embedded unitary to 1e-12 in the listed factor order, and a depolarizing map stays trace one and positive."""
     u = native.ms(0.3, -0.7, math.pi / 2.0)
     ks = kraus_operators(choi_from_unitary(u))
     psi = np.zeros(8, dtype=complex)
@@ -171,8 +174,8 @@ def test_expansion_coefficients_and_regridding() -> None:
 
 
 def test_gate_target_unitary_follows_the_virtual_z_rule() -> None:
-    """The ideal physical unitary of a played gate: the native gate at its frame-applied phase, then RZ(-theta) for the Stark
-    frame the scheduler absorbed (Section 7.6: a virtual RZ(theta) leaves the state as RZ(-theta) times the ideal one)."""
+    """A played gate's ideal unitary is the native gate followed by RZ(-theta) for each absorbed Stark frame theta (Section
+    7.6), to 1e-14."""
     t = GateTarget("gpi2[0]", (1,), ("gpi2", (0.4,)), {1: 0.0}, ("gpi2[0]",), 0.0, 1e-6)
     assert np.max(np.abs(t.unitary() - native.gpi2(0.4))) < 1e-14
     t2 = GateTarget("gpi2[0]", (1,), ("gpi2", (0.4,)), {1: 0.25}, ("gpi2[0]",), 0.0, 1e-6)
@@ -215,9 +218,8 @@ def _apply_kraus_reference(
 
 
 def test_choi_from_isometry_is_the_kraus_construction_and_trace_preserving() -> None:
-    """A (d_int d_mot) x d_int isometry sliced by motional output index gives d_mot Kraus operators; ``choi_from_isometry`` forms
-    their trace-1 Choi matrix in ``choi_from_kraus``'s convention without materializing them, and a full-rank isometry is exactly
-    trace preserving (Stinespring). The internal basis is the identity's columns in the computational order."""
+    """``choi_from_isometry`` equals ``choi_from_kraus`` of the isometry's motional slices to 1e-14, trace one and TP to 1e-12
+    (a unitary's Choi state for one slice), and the internal basis is the identity's columns."""
     d_int, d_mot = 4, 3
     v = _random_isometry(d_int * d_mot, d_int, seed=3)
     kraus = [v.reshape(d_int, d_mot, d_int)[:, a, :] for a in range(d_mot)]
@@ -236,9 +238,8 @@ def test_choi_from_isometry_is_the_kraus_construction_and_trace_preserving() -> 
 
 
 def test_superoperator_kraus_application_matches_the_per_operator_sum_with_a_permuted_factor_order() -> None:
-    """``apply_kraus_dm`` as one superoperator product against a per-operator einsum on a six-qubit register, the local
-    factors in a non-trivial order (4, 1), for a random CPTP set of four Kraus operators and for a unitary; ``kraus_superoperator``
-    of a unitary is U (x) conj(U) and its action on a vectorized state is the sandwich."""
+    """``apply_kraus_dm`` equals a per-operator einsum to 1e-14 on a six-qubit register for four Kraus operators on factor pairs
+    in either order, and ``kraus_superoperator([U])`` is U (x) conj(U)."""
     rng = np.random.default_rng(5)
     dims = (2,) * 6
     total = 2**6
@@ -283,10 +284,8 @@ def one_mode_entangling():  # type: ignore[no-untyped-def]
 
 
 def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_entangling, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The channel read off the four propagated basis kets per branch (Stinespring) against the sixteen-input least-squares
-    reconstruction on the same space: the Choi matrices, the outputs, the reduced motional states and the residual displacements
-    agree to the solver tolerance with four times fewer engine runs; the isometry's raw Choi matrix is completely positive by
-    construction and trace preserving to the norm the columns lost, and the projection has almost nothing left to do."""
+    """The isometry route (four basis kets per branch) matches the sixteen-input state route on one space to 1e-7 in the Choi
+    matrices, outputs, motional states and displacements with a quarter of the runs, its raw Choi CP to 1e-12 and TP to 1e-6."""
     dev, sched, space, model = one_mode_entangling
     recs = {}
     for flag in (True, False):
@@ -332,17 +331,9 @@ def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_ent
     assert np.max(np.abs(mot_iso[2] - mot_ref[2])) < 1e-7 and abs(alpha_iso[2] - alpha_ref[2]) < 1e-7
 
 
-def test_a_dissipative_step_keeps_the_state_route_whatever_the_switch_says() -> None:
-    """A trajectory is not linear in its initial ket: with a dephasing collapse operator on the space ``is_unitary`` is False,
-    the tomography propagates every one of the sixteen inputs even though the switch is on, and ``propagator`` refuses the
-    segment. Heating acts on modes, so the device's channels leave an internal-state-only space unitary and a space with a
-    resolved mode not."""
-    import dataclasses
-
-    from qutip_trap.control.schedule import Schedule, single_qubit_pulse
-    from qutip_trap.dynamics.channels import qubit_dephasing_channels
-    from qutip_trap.noise.spectra import white_spectrum
-
+def test_a_dissipative_step_keeps_the_state_route() -> None:
+    """With a dephasing channel a step is not unitary: ``propagator`` refuses it and the tomography takes the state route
+    (sixteen mesolve runs, several Kraus operators); heating leaves an internal-only space unitary and a resolved one not."""
     dev = chain_device(2)
     drives = raman_gate_drives(2)
     rabi, _stark = derived_seeds(dev, drives)
@@ -379,9 +370,8 @@ def test_a_dissipative_step_keeps_the_state_route_whatever_the_switch_says() -> 
 
 
 def test_the_tail_rule_drops_the_lightest_branches_inside_its_budget_and_reports_twice_the_weight() -> None:
-    """``motional_branches`` with ``dropped_weight_max``: the lightest branches go one at a time while the total dropped weight
-    stays inside the budget, the survivors are renormalized, the dropped weight is what the record turns into the bound 2w, a
-    budget of zero changes nothing, and one branch always survives."""
+    """The tail rule drops the lightest branches while the dropped weight stays inside the budget, renormalizes the survivors to
+    1e-12, notes the 2w bound, changes nothing at a zero budget and always keeps one branch."""
     space = HilbertSpace((2, 2), (ModeTruncation(2, 8, (0, 3), 0.13),), None, (0, 1, 3))
     model = MotionalModel(
         reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.3, 3: 0.4}, frozen=(0, 1, 3)
@@ -420,9 +410,8 @@ def test_keyed_tolerances_follow_the_map_accuracy_and_never_override_a_chosen_to
 def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_inside_the_map_accuracy(
     one_mode_entangling,
 ) -> None:  # type: ignore[no-untyped-def]
-    """The default extraction of a unitary step with a resolved mode integrates at the map-accuracy-keyed tolerance, reports the
-    pair and the ten-times-tighter change of the dominant branch (a bound on the diamond-norm change) and agrees with the
-    engine-tolerance extraction to well inside the map accuracy; the tail rule reports 2w and every term is in the record."""
+    """The default extraction runs at the keyed tolerances (1e-8, 1e-6), reports the dominant branch's change under ten-fold
+    tightening (below 2.5e-4), agrees with the engine-tolerance extraction to 1e-4 and reports the tail rule's 2w."""
     dev, sched, space, model = one_mode_entangling
     eng = JointExactEngine()
     keyed = eng.tomography(

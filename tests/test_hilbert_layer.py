@@ -35,7 +35,8 @@ from qutip_trap.dynamics.truncation import boundary_population, regrid_state
 @pytest.mark.parametrize("d", [8, 10, 20, 40])
 @pytest.mark.parametrize("eta", TABLE_ETA)
 def test_expm_matches_analytic_elements_in_the_interior_block(d: int, eta: float) -> None:
-    """The measured table: max element difference over n, n' < d/2 (round-off rows compared at the 1e-12 floor)."""
+    """The exponential matches the analytic elements over n, n' < d/2 within three times the Section 5.1.1 table (floored at
+    1e-12) and is unitary to 1e-13, while the analytic top column loses over 5% of its norm."""
     exp_ = displacement_operator(d, 1j * eta).full()
     ana = displacement_matrix_analytic(d, 1j * eta)
     blk = d // 2
@@ -53,13 +54,13 @@ def _top_column_loss(d: int, eta: float) -> float:
 
 
 def test_analytic_norm_loss_anchor_row_10_eta_0_1() -> None:
-    """The analytic top-column norm loss is 9.3% at (d_m = 10, eta = 0.1)."""
+    """The analytic top-column norm loss is 9.3% (to 0.2%) at d_m = 10, eta = 0.1."""
     assert _top_column_loss(10, 0.1) == pytest.approx(0.093, abs=0.002)
 
 
 def test_both_branches_of_the_analytic_form_for_complex_alpha() -> None:
-    """alpha^{n'-n} below the diagonal, (-alpha^*)^{n-n'} above it (the second revision had the labels swapped), against
-    QuTiP's displace far from the boundary; at alpha = i eta both read (i eta)^{|n'-n|}."""
+    """The analytic form (alpha^{n'-n} below the diagonal, (-alpha^*)^{n-n'} above) matches QuTiP's displace far from the
+    boundary to 1e-13, and at alpha = i eta both branches read (i eta)^{|n'-n|} to 1e-12."""
     for alpha in (0.3 + 0.2j, -0.7j, 1.1, 0.05 - 0.4j):
         ana = displacement_matrix_analytic(60, alpha)
         ref = qt.displace(60, alpha).full()
@@ -79,10 +80,8 @@ def test_both_branches_of_the_analytic_form_for_complex_alpha() -> None:
 
 
 def test_exact_rabi_matrix_elements_wineland_eq_18() -> None:
-    """Omega_{n',n} = Omega e^{-eta^2/2} (n_<!/n_>!)^{1/2} |eta|^{|n'-n|} |L^{|n'-n|}_{n_<}(eta^2)| from D(i eta), rtol 1e-10.
-
-    The modulus: the signed Laguerre form goes negative for odd |n' - n| at negative eta and beyond the polynomial's first
-    zero (n = 6 to 8 at eta = 0.5)."""
+    """Omega_{n',n}/Omega = |<n'|D(i eta)|n>| (Wineland 1998 Eq. 18) to 1e-10 for n, n' < 9 and eta from -0.9 to 1.5, never
+    negative where the signed Laguerre form is (n = n' = 6 at eta = 0.5)."""
     for eta in (-0.9, -0.1, 0.05, 0.1, 0.3, 0.5, 0.9, 1.0, 1.5):
         exp_ = displacement_operator(400, 1j * eta).full()
         for n in range(9):
@@ -127,7 +126,7 @@ def test_sideband_phase_and_operators_decompose_the_displacement() -> None:
     assert np.angle(displacement_element_analytic(1, 0, 0.3j)) == pytest.approx(math.pi / 2, abs=1e-12)
 
 
-# ---- Debye-Waller statistics (Sections 4.2.7, 9.2, 9.10, 9.12) ------------------------------------------------------------
+# ---- Debye-Waller statistics (Sections 4.2.7, 9.2) ----------------------------------------------------------------------
 
 
 def _thermal_mean_debye_waller(eta: float, nbar: float, start: int = 0) -> float:
@@ -137,9 +136,8 @@ def _thermal_mean_debye_waller(eta: float, nbar: float, start: int = 0) -> float
 
 
 def test_thermal_debye_waller_identity() -> None:
-    """sum_n P_n e^{-eta^2/2} L_n(eta^2) = 0.9851119396031 at eta^2 = 0.01, nbar = 1 and 0.8203698531378 at
-    eta^2 = 0.09, nbar = 1.7 to 13 digits (the n = 1 start gives 0.4662967); the sum is exp[-eta^2(nbar + 1/2)] exactly,
-    the thermal characteristic function being Gaussian."""
+    """sum_n P_n e^{-eta^2/2} L_n(eta^2) = 0.9851119396031 (eta^2 = 0.01, nbar = 1) and 0.8203698531378 (eta^2 = 0.09,
+    nbar = 1.7) to 1e-12, equal to exp[-eta^2 (nbar + 1/2)], and 0.4662967 when the sum starts at n = 1."""
     assert _thermal_mean_debye_waller(0.1, 1.0) == pytest.approx(0.9851119396031, abs=1e-12)
     assert _thermal_mean_debye_waller(0.3, 1.7) == pytest.approx(0.8203698531378, abs=1e-12)
     assert _thermal_mean_debye_waller(0.1, 1.0) == pytest.approx(math.exp(-0.01 * 1.5), abs=1e-13)
@@ -184,7 +182,8 @@ def test_space_refuses_eta_above_its_declaration_and_checks_the_oracle() -> None
 
 
 def test_drive_operator_structure_and_nonzeros() -> None:
-    """sigma_+ (x) prod D_m with 2^{N-1} prod d_m^2 non-zeros per ion for two-level ions (Section 5.1.1; tidyup may drop < 1e-14)."""
+    """The drive operator is sigma_+ (x) prod D_m to 1e-12 with 2^{N-1} prod d_m^2 non-zeros (2% may tidy away), and its oracle
+    is asserted or, below the table's margin, reported."""
     space = HilbertSpace(
         (2, 2), (ModeTruncation(0, 6, (0, 1), 0.1), ModeTruncation(1, 5, (0, 0), 0.1)), None, (2, 3, 4, 5)
     )
@@ -231,7 +230,8 @@ def test_states_marginals_and_boundary_population() -> None:
 
 
 def test_enr_space_marginals_and_displacement() -> None:
-    """ENR: shape rule, the marginal built by index sums (ptrace raises there), the sum-generator exponential (Section 5.1.1)."""
+    """On an ENR space the dims, the index-sum marginals and the boundary population follow the shape rule, and the ENR
+    displacement is unitary to 1e-12."""
     space = HilbertSpace((2,), (ModeTruncation(0, 6, (0, 2), 0.1),), ((1, 2), 6), (3,))
     assert space.dims == [2, 6, 28] and space.dimension == 2 * 6 * 28
     st = space.initial_state([0], fock={0: 1, 1: 2, 2: 1})
@@ -244,7 +244,7 @@ def test_enr_space_marginals_and_displacement() -> None:
     d_enr = space.enr_displacement({1: 0.1, 2: 0.05})
     unit = (d_enr.dag() * d_enr - space.enr_identity()).norm()
     assert unit < 1e-12
-    # against the analytic elements deep inside the cap (n1 + n2 <= N_exc/2): Section 5.1.1's 2e-10 at eta = 0.1, N_exc = 6
+    # against the first mode's analytic elements deep inside the cap (n1 + n2 <= N_exc/2)
     _n, s2i, _i2s = qt.enr_state_dictionaries([7, 7], 6)
     dense = d_enr.full()
     ana = displacement_matrix_analytic(7, 0.1j)
@@ -295,10 +295,8 @@ def test_rabi_table_is_the_analytic_modulus() -> None:
 
 
 def test_derived_margin_holds_the_element_tolerance_and_the_leakage_and_never_exceeds_the_fixture() -> None:
-    """``required_margin`` with a declared element tolerance and a leakage tail: the smallest margin at which the exponential's
-    interior elements over n <= n_hi agree with the analytic ones to the tolerance and one displacement from n_hi leaks less than
-    the tail past the cap, measured directly; smaller than the fixture at small eta, growing with n_hi (the element error at a
-    fixed margin does), and never above the fixture."""
+    """The derived margin is the smallest that meets the element tolerance (1e-8) and the leakage tail (1e-7), grows with n_hi
+    and never exceeds the fixture (6 at eta = 0.1, 10 at 0.5); the leakage is 6.2e-9 at eta = 0.1, n_hi = 2, margin 3."""
     for eta, n_hi, expected in ((0.1, 2, 3), (0.1, 5, 3), (0.05, 2, 2), (0.3, 5, 6)):
         m = required_margin(eta, tail=1e-7, n_hi=n_hi, element_tol=1e-8)
         assert m == expected, (eta, n_hi, m)
@@ -327,8 +325,8 @@ def test_derived_margin_holds_the_element_tolerance_and_the_leakage_and_never_ex
 
 
 def test_a_declared_element_tolerance_is_asserted_at_construction_and_reported() -> None:
-    """A ``ModeTruncation`` that carries ``element_tol`` asserts the rule (ii) oracle to that number at any margin (the table
-    asserts margins of four and more only), ``oracle_status`` reports it, and growth keeps the declaration."""
+    """A declared ``element_tol`` is asserted at any margin and reported by ``oracle_status`` (the same cap without it is only
+    reported), survives growth, and is refused when the cap cannot meet it."""
     m = required_margin(0.1, tail=1e-7, n_hi=2, element_tol=1e-8)
     derived = HilbertSpace((2,), (ModeTruncation(0, 3 + m, (0, 2), 0.15, element_tol=1e-8),), None, (1, 2))
     op = derived.displacement_factor(0, 0.1)

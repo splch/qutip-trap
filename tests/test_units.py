@@ -10,7 +10,7 @@ from qutip_trap.units import lande_g_j
 
 
 def test_codata_2022_values_are_pinned() -> None:
-    """A change of CODATA edition in scipy must fail loudly (Section 5.6)."""
+    """mu_B, mu_B/h, m_e and g_S (positive, Steck's sign) are the CODATA 2022 values to 1e-12 (Section 5.6)."""
     assert units.MU_B_J_PER_T == pytest.approx(9.2740100657e-24, rel=1e-12)
     assert units.MU_B_OVER_H_HZ_PER_T == pytest.approx(13996244917.1, rel=1e-12)
     assert units.ELECTRON_MASS_U == pytest.approx(0.0005485799090441, rel=1e-12)
@@ -19,7 +19,7 @@ def test_codata_2022_values_are_pinned() -> None:
 
 
 def test_lande_factors_with_the_measured_g_s() -> None:
-    """S1/2, P1/2, P3/2, D3/2, D5/2: 2, 2/3, 4/3, 4/5, 6/5 moved by the electron's g_S - 2 (Section 4.5.7)."""
+    """g_J of S1/2, P1/2, P3/2, D3/2, D5/2 is 2, 2/3, 4/3, 4/5, 6/5 moved by the electron's g_S - 2, to 1e-10."""
     half = 0.5
     assert lande_g_j(0, half, half) == pytest.approx(units.G_S, rel=1e-15)
     assert lande_g_j(1, half, half) == pytest.approx(0.6658935652, abs=1e-10)

@@ -39,8 +39,9 @@ from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, TWO_PI
 
 
 def test_fixed_phase_and_phase_averaged_limits() -> None:
-    """<n_0> = xi + 1/(4 xi) - 1/2 with minimum exactly 1/2 at xi = 1/2; phase-averaged (3/4) xi + 5/(8 xi) - 1/2 with
-    minimum sqrt(15/8) - 1/2 = 0.8693063938 at xi = sqrt(5/6) = 0.9128709292."""
+    """Joshi's fixed-phase <n_0> = xi + 1/(4 xi) - 1/2 (1e-12) has its minimum 1/2 at xi = 1/2, and the phase average
+    its minimum sqrt(15/8) - 1/2 = 0.8693063938 (1e-10) at xi = sqrt(5/6), which the H/W quadrature reproduces
+    (1e-6)."""
     assert fixed_phase_nbar(0.5) == pytest.approx(0.5, abs=1e-14)
     for xi in (0.2, 0.7, 1.3):
         assert fixed_phase_nbar(xi) == pytest.approx(xi + 1.0 / (4.0 * xi) - 0.5, rel=1e-12)
@@ -62,8 +63,8 @@ def test_fixed_phase_and_phase_averaged_limits() -> None:
 
 
 def test_isotropic_alpha_is_the_only_consistent_recoil_factor() -> None:
-    """H_carr + H_sb with alpha = 1/3 equals the non-xi^2 part (2/9) eta^2 Gamma s (2 + sin^2 2phi) exactly; alpha = 2/5
-    fails by 5 %."""
+    """With alpha = 1/3 H_carr + H_sb is (2/9) eta^2 Gamma s (2 + sin^2 2phi) to 1e-14, and alpha = 2/5 exceeds
+    it by 5 %."""
     for phi in (0.0, 0.3, 1.1):
         hc, hs = recoil_heating_terms(0.1, 2.0, 0.05, phi)
         assert hc + hs == pytest.approx(
@@ -74,8 +75,8 @@ def test_isotropic_alpha_is_the_only_consistent_recoil_factor() -> None:
 
 
 def test_potentials_pumping_rates_and_detailed_balance_carry_the_same_sign_of_the_sine() -> None:
-    """U_+- = (1/3) Delta s (1 -+ sin), Gamma_{+- -> -+} = (1/9) Gamma s (1 -+ sin): fastest pumping out of a state at its
-    own maximum; the z-substituted rates reproduce p_+- = (1/2)(1 +- sin) by detailed balance."""
+    """U_+- = (1/3) Delta s (1 -+ sin) and Gamma_{+- -> -+} = (1/9) Gamma s (1 -+ sin) pump fastest out of the state at
+    its potential maximum, and p_+- = (1/2)(1 +- sin) satisfies detailed balance to 1e-12."""
     k, phi = 2.0, 0.2
     for z in (0.0, 0.11, 0.37):
         u_plus, u_minus = potentials_rad_s(z, k, phi, 5.0, 0.3)
@@ -89,16 +90,16 @@ def test_potentials_pumping_rates_and_detailed_balance_carry_the_same_sign_of_th
 
 
 def test_operating_point_round_trips_window_and_bridge() -> None:
-    """xi = Delta s/(3 omega) = 1.35 at Delta = 2 pi x 210 MHz, omega = 2 pi x 1088 kHz and s = 0.02098; the
-    moving-gradient window W < delta = 2 pi x 60 kHz < omega holds at that point; Ejtemaee's s0 = 11-15 at 310 MHz maps
-    to s_Joshi = 0.016-0.023 < 0.07."""
+    """xi = Delta s/(3 omega) = 1.35 at Delta = 2 pi x 210 MHz, omega = 2 pi x 1088 kHz and s = 0.02098 (2e-5), the
+    moving-gradient window W < delta < omega holds at delta = 2 pi x 60 kHz, and Ejtemaee's s0 = 11 to 15 maps to
+    s = 0.016 to 0.023."""
     delta, omega = TWO_PI * 210e6, TWO_PI * 1088e3
     s = 3.0 * omega * 1.35 / delta
     assert s == pytest.approx(0.02098, abs=2e-5)
     assert xi_depth(delta, s, omega) == pytest.approx(1.35, rel=1e-12)
     eta = (TWO_PI / 397e-9) * math.sqrt(1.0546e-34 / (2.0 * 39.9626 * ATOMIC_MASS_KG * omega))
     w_avg = 0.5 * cooling_rate_per_s(eta, TWO_PI * 21.57e6, s, 1.35, 0.0)
-    assert 5e4 < w_avg < 1.5e5  # the plan quotes ~6.6e4 s^-1 from the source; this eta gives 9.9e4
+    assert 5e4 < w_avg < 1.5e5  # the source quotes about 6.6e4 s^-1; this eta gives 9.9e4
     assert moving_gradient_window(w_avg, TWO_PI * 60e3, omega)
     assert not moving_gradient_window(w_avg, TWO_PI * 5e3, omega) and not moving_gradient_window(
         w_avg, TWO_PI * 2e6, omega
@@ -110,8 +111,8 @@ def test_operating_point_round_trips_window_and_bridge() -> None:
 
 
 def test_static_gradient_raises_at_a_node_and_averages_per_ion_otherwise() -> None:
-    """An ion at phi = pi/4 raises; the static-gradient mean is the average of the per-ion OCCUPATIONS (each ion reaches
-    its own steady state), not the phase-averaged rate ratio of a moving gradient."""
+    """A static gradient refuses an ion at phi = pi/4 and averages the per-ion occupations (1e-12), which differ from
+    the moving-gradient phase average."""
     with pytest.raises(UncooledPhaseError):
         static_gradient_nbar(0.5, [0.0, math.pi / 4.0])
     values = static_gradient_nbar(0.5, [0.0, 0.3])
@@ -129,9 +130,8 @@ def test_static_gradient_raises_at_a_node_and_averages_per_ion_otherwise() -> No
 
 
 def test_the_sisyphus_cooling_rate_follows_the_measured_saturation_squared_law() -> None:
-    """The measured cooling rate scales as s0^2 with fitted exponents 1.98(6) and 1.91(3) (Ejtemaee and Haljan); the
-    analytic model's exponent is exactly 2 (W proportional to s xi, xi to s, s to s0 through ``saturation_bridge``), and
-    holding xi fixed gives 1, the negative control."""
+    """The model's cooling rate scales as s0^2 (exponent 2 to 1e-9, inside Ejtemaee and Haljan's 1.98(6) and 1.91(3)),
+    and as s0 with xi held fixed."""
     gamma, delta, omega = TWO_PI * 19.6e6, TWO_PI * 310e6, TWO_PI * 0.79e6
     eta = 0.09023
     s0 = np.geomspace(2.0, 15.0, 24)  # a factor of 7.5, the source's range
@@ -171,8 +171,8 @@ def test_pol_gradient_beams_methods_delegate_to_the_analytic_model() -> None:
 
 
 def test_minimal_kernel_weights_have_unit_norm_and_the_printed_coherent_sum_fails() -> None:
-    """sum_q p_mq^2 = 1 and sum_q p_mq^2 (k_q/k)^2 = 2/5 (sigma), 1/5 (pi); the coherent q-sum (sum_q p_mq)^2 = 2.7856
-    (sigma) and 2.3314 (pi)."""
+    """The minimal kernel's weights have sum_q p^2 = 1 and second moment 2/5 (sigma) or 1/5 (pi), while the coherent sum
+    (sum_q p)^2 is 2.7856 and 2.3314 (1e-6)."""
     for alpha, coherent in ((0.4, 2.7856406), (0.2, 2.3313708)):
         quad = minimal_quadrature(alpha)
         p = np.sqrt(quad.weights)
@@ -207,10 +207,9 @@ def _ca_model(f_mode_hz: float, delta_hz: float, xi_target: float, phase: float 
 
 @pytest.mark.slow
 def test_lindblad_layer_has_nine_recoil_resolved_operators_and_approaches_the_analytic_limit() -> None:
-    """The builder gives 3 polarization channels x 3 recoil classes = 9 operators for the j = 1/2 -> 1/2 line (Joshi's
-    twelve count the two pi decays separately), the sum rule holds to 1e-12, and at xi = 1, Delta = 500 MHz,
-    omega = 2 pi x 4 MHz (eta = 0.089, s ~ 0.02) the level-C steady state 0.756 matches the analytic 0.75 to 2 %, the
-    relaxation rate to 20 %, and the gradient node (phi = pi/4) leaves the ion hot."""
+    """The j = 1/2 -> 1/2 builder has 9 recoil-resolved operators (sum rule 1e-12), and at xi = 1, Delta = 500 MHz and a
+    4 MHz mode level C reaches Joshi's 0.75 to 2 % and his relaxation rate to 20 %, the gradient node staying 5x
+    hotter."""
     lc = _ca_model(4.0e6, 500e6, 1.0)
     b = lc.model.build
     assert len(b.c_ops) == 9 and decay_sum_rule_residual(b) < 1e-12

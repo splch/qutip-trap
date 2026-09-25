@@ -1,7 +1,5 @@
-"""The multi-level optical-Bloch model: the two-level Lorentzian (RMP Eq. 96), the 171Yb+ detection rate
-(Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] and its leakage rates, the Gamma/4 ceiling, Berkeland's dark-state
-counts, optical pumping, the frame graph with its Floquet fallback, the 40Ca+ S-P-D dark resonance and the laser
-linewidth on the optical coherences."""
+"""The multi-level optical-Bloch model: the two-level Lorentzian, the 171Yb+ detection and leakage rates, the ceiling,
+dark states, optical pumping, the Floquet fallback, the 40Ca+ S-P-D dark resonance and the laser linewidth."""
 
 from __future__ import annotations
 
@@ -11,6 +9,7 @@ import sys
 import numpy as np
 import pytest
 import qutip as qt
+from scipy.linalg import expm
 from scipy.optimize import brentq
 
 from qutip_trap.dynamics.multilevel import (
@@ -69,7 +68,8 @@ def two_level_lorentzian(omega_rad_s: float, delta_rad_s: float) -> float:
 
 
 def test_two_level_steady_state_is_the_rmp_lorentzian_to_1e_9() -> None:
-    """Gamma rho_ee = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2) with s = 2 Omega^2/Gamma^2 (RMP 2003 Eq. 96)."""
+    """The two-level steady-state photon rate is the Lorentzian Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2) to 1e-9 at three
+    drives, under the 1/2 ceiling (RMP 2003 Eq. 96)."""
     st = structure(two_level_atom())
     g = gamma_rad_s()
     for om, dl in ((0.05 * g, -0.5 * g), (0.5 * g, 0.0), (2.0 * g, 0.3 * g)):
@@ -81,8 +81,7 @@ def test_two_level_steady_state_is_the_rmp_lorentzian_to_1e_9() -> None:
 
 
 def test_intensity_to_rabi_chain_matches_the_plan_convention() -> None:
-    """2 Omega^2/Gamma^2 = I/I_sat for the full-line Rabi frequency with the transition's two-level I_sat; the pi component
-    drives |g> <-> |e, 0>."""
+    """2 Omega^2/Gamma^2 = I/I_sat to 1e-9 for the pi component |g> <-> |e, 0> with the transition's two-level I_sat."""
     st = structure(two_level_atom())
     g = gamma_rad_s()
     beam = pi_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED, 0.3 * g, 0.0)
@@ -116,7 +115,8 @@ def test_dissipator_sum_rule_and_trace_preservation_for_171yb() -> None:
 
 
 def test_frame_puts_every_detuning_on_the_diagonal() -> None:
-    """The four F=1 -> F'=0, F=1 -> F'=1, F=0 -> F'=1 detunings of the detection beam appear as -Delta on the diagonal."""
+    """The detection beam's F=1 -> F'=0, F=1 -> F'=1 and F=0 -> F'=1 detunings are -Gamma/2 (1e-6, also as -Delta on the
+    diagonal), -Gamma/2 - 2.105 GHz and -Gamma/2 - 14.748 GHz (1e-3)."""
     m = detection_model(0.1, 1.0, delta_rad_s=-0.5 * GAMMA_S)
     b = m.build
     assert isinstance(b.H, qt.Qobj)
@@ -142,9 +142,8 @@ def test_frame_puts_every_detuning_on_the_diagonal() -> None:
 def test_yb171_detection_rate_recovers_gamma_over_18_and_two_ninths(
     s0: float, b_gauss: float, tol: float
 ) -> None:
-    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o] from the conditional bright state at pumping rate << Zeeman << Gamma; the 1/3 :
-    2/3 branching makes the prefactor Gamma/18. The exact four-level rate sits BELOW the closed form, because the field that
-    destabilizes the dark state also detunes the sigma transitions: 0.995 to 0.9986 of it at the best field."""
+    """The four-level R_o lies within 1 % below (Gamma/18) s_o/[1 + (2/9) s_o] at three (s_o, B), under the Gamma/4
+    ceiling of the 3 + 1 manifold, with a bright/dark separation above 100."""
     dr = detection_model(s0, b_gauss).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     ratio = dr.R_bright_per_s / yb171_detection_rate(s0, GAMMA_S)
     assert 1.0 - tol < ratio <= 1.0 + 1e-6
@@ -165,8 +164,8 @@ def test_yb171_detuning_dependence_is_the_lorentzian_bracket() -> None:
 
 
 def test_yb171_leakage_prefactors_settle_the_noek_crain_factor_in_noeks_favour() -> None:
-    """R_d = (2/3)(1/3)(Gamma/2) s (Gamma/2 Delta_HFP)^2 and R_b = (2/3)(Gamma/2) s (Gamma/(2(Delta_HFP + Delta_HFS)))^2 with
-    Noek's s = s_o/3, i.e. R_d = (2/27)(Gamma/2) s_o (Gamma/2 Delta_HFP)^2; R_b/R_d = 3/49."""
+    """At s_o = 0.1 the four-level R_d and R_b match Noek's (2/3)(1/3) and (2/3) prefactors with s = s_o/3 to 1 %
+    (Crain's R_d is off by more than 30 %), and R_b/R_d = 3/49 to 1 %."""
     s0 = 0.1
     dr = detection_model(s0, 1.0).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     rd_noek = (2.0 / 3.0) * (1.0 / 3.0) * (GAMMA_S / 2.0) * (s0 / 3.0) * (GAMMA_S / (2.0 * D_HFP)) ** 2
@@ -179,8 +178,8 @@ def test_yb171_leakage_prefactors_settle_the_noek_crain_factor_in_noeks_favour()
 
 
 def test_yb171_crain_operating_point_numbers() -> None:
-    """At s_o = 2.45 Noek's form predicts 243 Hz, Crain's 364 Hz for R_d and 14.9 Hz for R_b; the exact four-level solve
-    at the field that maximizes the fluorescence sits near Crain's measured 341(13) and 16.4(5) Hz."""
+    """At s_o = 2.45 Noek's form gives R_d = 243 Hz (Crain's 364.6 Hz) and R_b = 14.86 Hz, which the four-level solve at
+    4.7 G matches to 3 % and 1 %, while at 1 G its R_d lies in (320, 380) Hz, near Crain's measured 341(13) Hz."""
     s0 = 2.45
     rd_noek = (2.0 / 27.0) * (GAMMA_S / 2.0) * s0 * (GAMMA_S / (2.0 * D_HFP)) ** 2
     rd_crain = (1.0 / 9.0) * (GAMMA_S / 2.0) * s0 * (GAMMA_S / (2.0 * D_HFP)) ** 2
@@ -192,15 +191,15 @@ def test_yb171_crain_operating_point_numbers() -> None:
     assert 0.99 < dr.R_bright_per_s / yb171_detection_rate(s0, GAMMA_S) <= 1.0 + 1e-6
     assert dr.R_dark_pumping_per_s == pytest.approx(rd_noek, rel=0.03)
     assert dr.R_bright_pumping_per_s == pytest.approx(rb, rel=0.01)
-    # at a sub-optimal field (1 G) the bright manifold is redistributed by the dark-state coherence and R_d rises to about 347 Hz,
-    # near Crain's measured 341(13) Hz; the measured triple is therefore not a test of the prefactor alone
+    # at 1 G the dark-state coherence redistributes the bright manifold and R_d rises to about 347 Hz
     dr1 = detection_model(s0, 1.0).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     assert 320.0 < dr1.R_dark_pumping_per_s < 380.0
     assert dr1.R_bright_per_s / yb171_detection_rate(s0, GAMMA_S) < 0.3
 
 
 def test_full_steady_state_is_mostly_dark_and_the_conditional_state_is_bright() -> None:
-    """The long-time steady state of a detected ion sits in F = 0 with weight R_d/(R_d + R_b) ~ 0.95."""
+    """The steady state sits in F = 0 with the weight R_d/(R_d + R_b) of the manifold rates to 2e-3, and the conditional
+    bright state has no F = 0 population (1e-9)."""
     m = detection_model(0.1, 1.0)
     ss = m.steadystate()
     p_dark = ss.populations["S1/2 F=0 mF=0"]
@@ -215,11 +214,8 @@ def test_full_steady_state_is_mostly_dark_and_the_conditional_state_is_bright() 
 
 
 def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochModel:
-    """171Yb+ S1/2 + P1/2 + D3/2 + 3D[3/2]1/2 with BOTH the 369.5 nm detection beam and the 935 nm repump present.
-
-    The repump is tuned to the level centroid rather than to a sublevel pair, so its residual against the frame that
-    the D3/2 <- P1/2 decay already fixes is zero and the build stays static.
-    """
+    """171Yb+ S1/2 + P1/2 + D3/2 + 3D[3/2]1/2 under the 369.5 nm detection beam and a 935 nm repump tuned to the level
+    centroid, so that the build stays static."""
     st = AtomicStructure(YB, b_gauss, (0.0, 0.0, 1.0))
     line935 = YB.transition("D3/2-3D[3/2]1/2")
     power = s0 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
@@ -249,11 +245,9 @@ def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochMode
 
 
 def test_the_slow_manifold_mode_is_chosen_by_its_manifold_weights_not_by_its_index() -> None:
-    """With the 935 nm repump beam and the D manifold in the model, the SECOND-slowest Liouvillian mode is a D-manifold
-    relaxation, not the bright <-> dark pumping, so the connecting mode is found by its projections on the two
-    manifolds. 3D[3/2]1/2 -> S1/2 at 297 nm is untabulated branching, not a Transition, so nothing returns from the D
-    branch to S1/2 and the D manifold is ABSORBING; both refusals name their cause instead of returning a negative rate.
-    """
+    """With the 935 nm repump and the D manifold in the model, manifold_rates refuses the incomplete partition and the
+    absorbing D branch by name, the second- and third-slowest Liouvillian modes carry no bright weight, and the closed
+    S1/2 + P1/2 model skips no mode."""
     m = _repump_935_model(2.45, 10.0)
     assert m.build.static and m.build.frame.beats_rad_s == ()
     assert m.build.n_internal == 20
@@ -301,7 +295,8 @@ def test_ceiling_is_asserted_not_assumed() -> None:
 
 
 def test_dark_state_counts_follow_berkelands_table_i() -> None:
-    """J_i = 1 <-> J_f = 0 (171Yb+ F = 1 -> F' = 0): two dark states at any polarization; the magic angle is 54.7356 deg."""
+    """171Yb+ F = 1 -> F' = 0 has two dark states and the 1/4 ceiling, and the magic angle is atan(sqrt 2) = 54.7356 deg
+    to 1e-6 (Berkeland Table I)."""
     m = detection_model(0.1, 1.0)
     ds = m.dark_states()
     assert (ds.n_ground, ds.n_excited, ds.ceiling, ds.dark_dimension) == (3, 1, 0.25, 2)
@@ -310,7 +305,7 @@ def test_dark_state_counts_follow_berkelands_table_i() -> None:
 
 
 def test_sigma_plus_light_leaves_span_of_m0_and_m_plus1_dark() -> None:
-    """The Zeeman-degenerate dark-state condition in the straight pairing, never the printed reversed one."""
+    """Sigma+ light on F = 1 -> F' = 0 leaves the span of mF = 0 and mF = +1 dark (weights 0, 1, 1 to 1e-12)."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     sp = (-1.0 / math.sqrt(2.0) + 0j, -1j / math.sqrt(2.0), 0j)
     beam = beam_for_transition(
@@ -359,8 +354,8 @@ def test_f1_to_f1_linear_light_has_one_dark_state_and_f0_to_f1_none() -> None:
 
 
 def test_optical_pumping_into_f0_takes_three_photons_and_leaves_a_small_residual() -> None:
-    """1/3 branching into |0> per excitation: three scattered photons on average; the residual F = 1
-    population is the off-resonant F = 0 -> F' = 1 excitation at 12.6 GHz, of order 1e-6 at s_o = 0.5."""
+    """Pumping F = 1 into F = 0 at s_o = 0.5 scatters 3.00 +- 0.05 photons, reaches 99 % in 1 to 5 us and leaves an F =
+    1 residual between 1e-7 and 1e-5, conserving probability to 1e-10."""
     st = AtomicStructure(YB, 5.0, (0.0, 0.0, 1.0))
     power = 0.5 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     pump = beam_for_transition(
@@ -392,8 +387,8 @@ def test_optical_pumping_into_f0_takes_three_photons_and_leaves_a_small_residual
 
 
 def test_pumping_matches_the_weak_drive_rate_equations() -> None:
-    """With Omega << Gamma and the Zeeman splitting >> pumping rate the evolution reduces to rate equations built from the
-    Lorentzian excitation rates and the branching ratios."""
+    """At s_o = 0.02 the F = 0 population follows the rate equations of the Lorentzian excitation rates and the
+    branching ratios to 0.01."""
     st = AtomicStructure(YB, 5.0, (0.0, 0.0, 1.0))
     power = 0.02 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     pump = beam_for_transition(
@@ -428,7 +423,6 @@ def test_pumping_matches_the_weak_drive_rate_equations() -> None:
     trace = m.evolve("S1/2 F=1 mF=0", times)
     p0_init = np.zeros(len(ground))
     p0_init[ground.index("S1/2 F=1 mF=0")] = 1.0
-    from scipy.linalg import expm
 
     for t, target in zip(times[::10], trace.population(DARK)[::10]):
         p = expm(gen * t) @ p0_init
@@ -502,8 +496,9 @@ def _secular_reference(m: BlochModel, window_gammas: float = 10.0) -> qt.Qobj:
 
 
 def test_floquet_fixed_point_matches_the_secular_static_model() -> None:
-    """Two tones on one transition (369 nm on F=1 -> F'=0 plus its 14.7 GHz sideband on F=0 -> F'=1) make the frame graph
-    inconsistent; the period-propagator fixed point agrees with the secular static model to O(Omega/14.7 GHz) and repumps F=0."""
+    """The 369 nm beam plus its 14.7 GHz sideband make the Liouvillian periodic, and the Floquet fixed point matches the
+    secular static model's populations to 5e-4 and photon rate to 2e-3 while repumping F = 0 (bright weight above
+    0.9)."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     power = 0.1 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     main = beam_for_transition(
@@ -590,7 +585,8 @@ def test_polarization_modulation_makes_the_liouvillian_periodic_and_still_solves
 
 
 def test_sink_policy_preserves_the_trace_and_measures_the_leak() -> None:
-    """171Yb+ S1/2 + P1/2 with the 0.501% D3/2 branch routed to the sink: the sink fills at Gamma_D P_e."""
+    """With the D3/2 branch routed to the sink the decay sum rule holds to 1e-12, the sink channel carries the D3/2-P1/2
+    partial rate (1e-9) and the sink fills at Gamma_D P_e to 5 %."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     power = 0.1 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     beam = beam_for_transition(
@@ -619,12 +615,8 @@ def test_sink_policy_preserves_the_trace_and_measures_the_leak() -> None:
 
 
 def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_a_repump() -> None:
-    """Without the 935 nm repump the 0.501% branch collects the ion in D3/2 within a few hundred scattered photons; the
-    eight D3/2 sublevels make the steady state non-unique, so the statement is one about the time evolution.
-
-    MultiLevelOptions.address_window is 0.5 of the transition frequency, so the 369.5 nm beam counts the 329 nm S1/2-P3/2
-    line as addressed and leak = "include" pulls in P3/2's D5/2 decay target; P3/2 is 26 THz off resonance and changes no
-    rate here."""
+    """leak = "include" pulls in D3/2 and, through the addressed 329 nm P3/2 line, D5/2 (36 sublevels); without a repump
+    the ion collects in D3/2 (above 0.99 in 2 ms) after 150 to 800 photons, the 0.501 % branching."""
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     power = 0.1 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     beam = beam_for_transition(
@@ -654,9 +646,9 @@ def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_
 
 
 def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
-    """S1/2-P1/2-D3/2 with 397 and 866 beams polarized perpendicular to B at 4 G: fluorescence vanishes when the two
-    detunings coincide (the S(-1/2)-D(-1/2) dark state through P(+1/2) is exact at any field) and is restored on either
-    side, with the Zeeman-shifted two-photon resonances as further dips."""
+    """40Ca+ S-P-D at 4 G with both beams polarized perpendicular to B: at equal 397/866 detunings the fluorescence is
+    below 1e-6 of its value half a linewidth away, the ceiling is 1/4 over (6, 2) sublevels and the dark space is
+    four-dimensional with a Raman margin below 1 Hz."""
     ca = species("40Ca+")
     st = AtomicStructure(ca, 4.0, (0.0, 0.0, 1.0))
     t397 = ca.transition("S1/2-P1/2")
@@ -702,8 +694,8 @@ def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
 
 @pytest.mark.skipif(
     sys.platform != "darwin",
-    reason="two trap states leave the Liouvillian a two-dimensional null space, so the direct steady state is not unique: the "
-    "Linux runner's LAPACK returns populations of +-7e14 where this machine returns a density matrix (a solver robustness gap)",
+    reason="two trap states leave the Liouvillian a two-dimensional null space, so the direct steady state is not "
+    "unique and other LAPACK builds return populations of +-7e14",
 )
 def test_ca40_pi_only_repump_leaves_the_m_three_halves_states_as_traps() -> None:
     ca = species("40Ca+")
@@ -764,8 +756,8 @@ def _profile_fwhm_over_gamma(width_rad_s: float) -> tuple[float, float]:
 
 
 def test_the_excitation_profile_broadens_to_gamma_plus_the_laser_linewidth() -> None:
-    """W(Delta) is a Lorentzian of full width Gamma + delta omega_L at constant area: the peak falls as
-    Gamma/(Gamma + delta omega_L)."""
+    """W(Delta) is a Lorentzian of full width Gamma + delta omega_L (to 0.02 Gamma) whose peak falls as
+    Gamma/(Gamma + delta omega_L) (2e-3) and whose shape matches at three offsets (3e-3)."""
     peak0, fwhm0 = _profile_fwhm_over_gamma(0.0)
     assert fwhm0 == pytest.approx(1.0, abs=0.02)
     for factor in (0.5, 1.0, 2.0):
@@ -797,8 +789,8 @@ def test_a_zero_linewidth_changes_no_rate_and_adds_no_operator() -> None:
 
 
 def test_the_phase_diffusion_operator_touches_no_population_and_leaves_the_decay_sum_rule_alone() -> None:
-    """C_b is diagonal, carries no photon and no recoil, and the decay sum rule sum_k C_k^dagger C_k = Gamma P_e
-    excludes it."""
+    """C_b is diagonal with entries +-sqrt(delta omega_L/4) (1e-9), belongs to no photon channel and leaves the decay
+    sum rule at 1e-12."""
     beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.3 * G, 0.0)
     plain = BlochModel(ST, [beam])
     finite = BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(0.4 * G,)))
@@ -820,7 +812,8 @@ def test_the_phase_diffusion_operator_touches_no_population_and_leaves_the_decay
 
 
 def test_the_optical_coherence_decays_at_gamma_over_two_plus_half_the_linewidth() -> None:
-    """With the drive off, rho_eg decays at gamma/2 + delta omega_L/2 while the excited population decays at gamma."""
+    """With the drive off rho_eg decays at gamma/2 + delta omega_L/2 and the excited population at gamma, both to
+    1e-9."""
     width = 0.6 * G
     beam = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.0, 0.0)
     build = BlochModel(ST, [beam], options=MultiLevelOptions(laser_linewidth_rad_s=(width,))).build

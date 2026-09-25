@@ -1,6 +1,5 @@
-"""The atomic-rate layer of readout: the Bloch-solved rates against the closed forms and the ceiling, the detected line, the
-micromotion factor, the efficiency entering once, the apparatus presets and the scheme's polarity (PLAN.md Section
-8.1)."""
+"""The atomic-rate layer of readout (PLAN.md Section 8.1): Bloch-solved rates against the closed forms and the ceiling, the
+detected line, the micromotion factor, the efficiency entering once, the apparatus presets and the scheme's polarity."""
 
 from __future__ import annotations
 
@@ -93,8 +92,8 @@ def test_yb171_leakage_prefactors_and_the_3_over_49_ratio() -> None:
 
 
 def test_scattering_rate_derives_the_bright_and_dark_manifolds_from_the_beams() -> None:
-    """With no labels the bright manifold is what the beam drives resonantly (the three F = 1 sublevels) and the dark
-    manifold the remaining S1/2 sublevel; the rates equal the explicit-label solve."""
+    """Without labels the bright manifold is the resonantly driven F = 1 triplet and the rates equal the explicit-label
+    solve to 1e-9."""
     m = detection_model(0.1, 1.0)
     st = AtomicStructure(YB, 1.0, (0.0, 0.0, 1.0))
     fl, model = scattering_rate(st, m.beams, levels=("S1/2", "P1/2"))
@@ -157,8 +156,8 @@ def _ca_detection_beams() -> tuple[AtomicStructure, list[object]]:
 
 
 def test_r_o_counts_the_cycling_line_only() -> None:
-    """In steady state every photon leaves P1/2, so the all-line sum exceeds the detected 397 nm rate by exactly
-    1/BR(S1/2) = 1/(1 - 0.06435) = 1.0688; a multi-line model refuses to guess the detected line."""
+    """The all-line rate exceeds the detected 397 nm rate (2.2591e6/s) by 1/BR(S1/2) = 1.0688 to 1e-9, and a multi-line
+    model refuses to guess the detected line."""
     st, beams = _ca_detection_beams()
     opts = MultiLevelOptions(leak="renormalize")
     detected, model = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="S1/2<-P1/2")  # type: ignore[arg-type]
@@ -196,7 +195,7 @@ def test_detection_rates_for_ion_selects_the_species_cycling_line() -> None:
 
 
 def test_a_single_line_model_derives_its_detected_line() -> None:
-    """171Yb+'s detection build carries one line, so the detected line is unambiguous and line=None derives it."""
+    """On 171Yb+'s one-line detection build ``line=None`` derives S1/2<-P1/2 and the explicit rate (1e-12)."""
     beam = yb_detection_beam(0.5)
     opts = MultiLevelOptions(leak="renormalize")
     st = AtomicStructure(YB, 5.0, (1.0, 0.0, 0.0))
@@ -207,9 +206,8 @@ def test_a_single_line_model_derives_its_detected_line() -> None:
 
 
 def test_micromotion_puts_j0_squared_on_the_carrier_and_j1_squared_on_the_sidebands() -> None:
-    """R_o(beta) = J_0^2 R(Delta) + J_1^2 [R(Delta - Omega_rf) + R(Delta + Omega_rf)] over three solves, below R_o(0): at
-    beta = 0.4 and 30 MHz the sidebands give back 0.0074 of the carrier's 0.9224. The pumping rates carry the same
-    weighting but are linear in intensity, so they barely change and the leakage ratio rises."""
+    """R_o(beta) = J_0^2 R(Delta) + J_1^2 [R(Delta - Omega_rf) + R(Delta + Omega_rf)] to 1e-9 (0.930 of R_o(0) at beta = 0.4,
+    30 MHz) with the pumping rates within 2 %; beta = 0 changes nothing and a missing rf frequency is refused."""
     beta = 0.4
     omega_rf = TWO_PI * 30e6
     beam = yb_detection_beam(0.5)
@@ -254,8 +252,8 @@ def test_micromotion_puts_j0_squared_on_the_carrier_and_j1_squared_on_the_sideba
 
 
 def test_the_efficiency_enters_once_and_linearly() -> None:
-    """epsilon_sys applies once, at scattered -> detected rate: the detected rate is linear in ``Detector.efficiency`` with
-    slope R_o, which leaves no room for a hidden factor (such as a lumped eta/3), and the background stays separate."""
+    """The detected rate is efficiency x R_o (1e-12) at every ``Detector.efficiency`` with the background separate, and
+    ingested detected rates come back as measured."""
     rates = FluorescenceRates(
         R_bright_per_s=yb171_detection_rate(2.45, GAMMA_S),
         R_dark_pumping_per_s=341.0,
@@ -293,8 +291,8 @@ def test_neighbour_intensity_ratio() -> None:
 
 
 def test_mean_count_curve_is_the_two_state_rate_equation_and_its_fit_recovers_the_rates() -> None:
-    """n(tau) = eps R_o [(R_b/k) tau + (R_d/k^2)(1 - e^{-k tau})] equals the exact Markov-chain mean when only R_d and R_b
-    act, and the least-squares fit recovers (eps R_o, R_d, R_b) from noiseless samples."""
+    """n(tau) = eps R_o [(R_b/k) tau + (R_d/k^2)(1 - e^{-k tau})] equals the Markov-chain mean to 1e-9, and the fit
+    recovers (eps R_o, R_d, R_b) to 1e-5 from noiseless samples."""
     rm = crain_record_model()
     taus = np.linspace(1e-4, 60e-3, 12)
     curve = np.asarray(mean_count_curve(taus, 472e3, 341.0, 16.4))

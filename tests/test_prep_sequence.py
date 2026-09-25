@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import qutip as qt
 
+from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
@@ -26,7 +27,6 @@ from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
-from qutip_trap.trap.model import Trap
 from qutip_trap.units import TWO_PI
 from tests.fixtures import (
     TWO_LEVEL_EXCITED_PLUS,
@@ -119,15 +119,7 @@ def test_prepare_state_refuses_undefined_modes_and_unpumped_ions() -> None:
 def test_doppler_stage_wraps_the_rate_result() -> None:
     sp = two_level_atom()
     g = gamma_rad_s()
-    trap = Trap(
-        omega_hz=(2.5e6, 2.6e6, 0.05 * g / TWO_PI),
-        axis_angle_rad=0.0,
-        rf=None,
-        dc=None,
-        geometry=None,
-        stray_field_v_per_m=(0.0, 0.0, 0.0),
-        shim_voltages_v={},
-    )
+    trap = secular_trap((2.5e6, 2.6e6, 0.05 * g / TWO_PI))
     crystal = solve_crystal(trap, (sp,))
     st = structure(sp)
     beam = sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * g, -0.5 * g)

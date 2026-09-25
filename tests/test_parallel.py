@@ -1,8 +1,5 @@
-"""Trajectory, branch and sample parallelism and the propagator cache (PLAN.md Sections 3.4, 9.9, 11.3).
-
-The same run over 1 and N workers agrees to 1e-12 under the same keyed seeds; pulse propagators are reused only on
-internal-state-only spaces, where one propagator serves many initial states.
-"""
+"""Trajectory, branch and tomography parallelism and the propagator cache (PLAN.md Section 11.3): one and several workers
+agree to 1e-12 under the same keyed seeds, and propagators are reused only on internal-state-only spaces."""
 
 from __future__ import annotations
 
@@ -13,6 +10,7 @@ import numpy as np
 import pytest
 from qutip.settings import available_cpu_count
 
+import qutip_trap.dynamics.parallel as par
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.pulses import Pulse
@@ -23,6 +21,7 @@ from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import cp_residual
+from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics
@@ -51,8 +50,6 @@ def _square(x: int) -> int:
 def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import qutip_trap.dynamics.parallel as par
-
     # the default-count formula without the environment cap tests/conftest.py sets under xdist
     monkeypatch.delenv(par.WORKERS_ENV, raising=False)
     items = list(range(7))
@@ -69,11 +66,8 @@ def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_thr
 
 
 def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """QuTiP's parallel map forks its workers, each a copy-on-write image of the parent that can grow to its size: the cap
-    keeps N x (parent peak) inside half of physical memory. A 3 GB parent on a 48 GB machine gets 8 workers, a 6 GB one 4, a
-    small parent every CPU; an explicit request is capped too, never raised."""
-    import qutip_trap.dynamics.parallel as par
-
+    """The cap keeps N x (parent peak) within half of physical memory: 8 workers for a 3 GB parent on 48 GB, 4 for 6 GB, 48
+    below the 512 MB floor and 1 at 40 GB; an explicit request is capped, never raised."""
     monkeypatch.setattr(par, "physical_memory_bytes", lambda: 48 * 1024**3)
     monkeypatch.setattr(par, "peak_rss_bytes", lambda: 3 * 1024**3)
     assert par.memory_worker_cap() == 8
@@ -92,11 +86,8 @@ def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch:
 def test_the_environment_caps_the_default_worker_count_but_not_an_explicit_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``QUTIP_TRAP_MAX_WORKERS`` (``dynamics/parallel.WORKERS_ENV``): a process that already runs beside others, such as a
-    pytest-xdist worker (``tests/conftest.py``), caps the DEFAULT count so that no run forks a pool of its own; a test that asks
-    for ``workers=`` explicitly is not touched, and a serial map stays at one."""
-    import qutip_trap.dynamics.parallel as par
-
+    """``QUTIP_TRAP_MAX_WORKERS`` caps the default worker count (blank means no cap) but not an explicit ``workers=``, and a
+    serial map stays at one."""
     monkeypatch.setattr(par, "memory_worker_cap", lambda: 64)
     monkeypatch.delenv(par.WORKERS_ENV, raising=False)
     assert worker_count(SolverOptions(map="parallel")) == int(available_cpu_count())
@@ -135,16 +126,14 @@ def heating_fixture():  # type: ignore[no-untyped-def]
 
 
 def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identity(heating_fixture) -> None:  # type: ignore[no-untyped-def]
-    """Six keyed trajectories of a dissipative entangling pulse in-process and over every CPU: the register, the
-    ensemble's density matrix and the jump records agree, and the report names the map. Plain (uniform-weight) trajectories:
-    the Bell caps (d = 10, 11) are sized for them, while improved sampling conditions every stochastic member on jumping and
-    would need larger caps (its worker identity is tested below on a space sized for it).
-    """
+    """Six keyed plain trajectories of a heated MS pulse in-process and over every CPU give the same register, P1 and joint state
+    to 1e-12 and the same jumps, and the report names the map and the worker count."""
     dev, _drives, sched, space, _table = heating_fixture
     state = space.initial_state([0, 0])
     out = {}
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
+        # plain trajectories: improved sampling conditions every member on jumping, which needs larger caps than these
         opts = SolverOptions(
             lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False
         )  # type: ignore[arg-type]
@@ -172,8 +161,8 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
 
 
 def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> None:  # type: ignore[no-untyped-def]
-    """The four basis columns of a unitary two-ion step (the isometry route; the engine carries no channel here) spread over the
-    workers reproduce the in-process Choi matrix to 1e-10."""
+    """The isometry route's eight columns (four and the keyed-tolerance probe's four) over at most four workers reproduce the
+    in-process Choi matrix to 1e-10."""
     dev, _drives, sched, space, _table = heating_fixture
     model = MotionalModel(reduced={}, nbar={m: 0.0 for m in range(6)}, frozen=(0, 1, 4, 5))
     recs = {}
@@ -210,8 +199,8 @@ def carrier_fixture():  # type: ignore[no-untyped-def]
 
 
 def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
-    """An internal-state-only space: the segment propagator is integrated once, every later state of the same segment is a
-    matrix product (a cache hit), the result equals the per-state ODE path to the solver tolerance, and the labels say so."""
+    """On an internal-state-only space the segment propagator is integrated once and then served from the cache, every state
+    matching the per-state ODE path to 1e-9."""
     dev, sched, space = carrier_fixture
     eng = JointExactEngine()
     states = [space.initial_state([0, 0]), space.initial_state([1, 0]), space.initial_state([0, 1])]
@@ -245,10 +234,8 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
 def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
     carrier_fixture, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """A carrier step on an internal-state-only space, times the frozen modes' Fock branches: the propagator route integrates one
-    propagator per branch (the Debye-Waller factors differ between branches, so H differs) and takes it as the branch's Kraus
-    operator, no state propagated; the "states" route propagates the sixteen inputs through the
-    same cached propagators and reconstructs the same channel to round-off."""
+    """A carrier step's propagator route integrates one propagator per frozen Fock branch as that branch's Kraus operator, the
+    state route reuses the cached propagators for the sixteen inputs, and both give the same channel to 1e-12."""
     dev, sched, space = carrier_fixture
     model = MotionalModel(
         reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.05, 3: 0.05, 4: 0.0, 5: 0.0}, frozen=tuple(range(6))
@@ -337,8 +324,8 @@ def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
 
 
 def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The GPi2 circuit's initial-mixture branches spread over the workers: identical bitstrings and register state to 1e-12, the
-    diagnostics naming the worker count and the propagator cache hits of the in-process run."""
+    """The GPi2 circuit's branches over the workers give the in-process bitstrings and register state (1e-12), with the worker
+    count and one propagator per frozen Fock tuple reported."""
     fx, sur = two_ion
     a, b = _run_both(GPI2, fx, sur, 200, branch_weight_min=1e-9)
     assert np.array_equal(a.bitstrings, b.bitstrings)
@@ -359,8 +346,8 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
 
 @pytest.mark.slow
 def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The two-ion Bell circuit (twelve branches on the 572-dimensional joint space, the factorized kernel): the
-    serial and the parallel run agree to 1e-12 in the register state and shot by shot."""
+    """The Bell circuit (factorized kernel) run serially and in parallel agrees shot by shot and in the register state to
+    1e-12."""
     fx, sur = two_ion
     if worker_count(SolverOptions(map="parallel", workers=min(N_WORKERS, 6))) < 2:
         pytest.skip("the memory cap left no room for a parallel run on this machine")
@@ -374,11 +361,8 @@ def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_
 
 
 def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heating_pulse() -> None:
-    """Worker identity on the improved-sampling path: a 10 us carrier pulse on one ion whose x mode heats at the
-    white-noise rate, four keyed stochastic trajectories plus the deterministic no-jump member, in-process and over every
-    CPU: the register, P1, the ensemble's density matrix and the jump records agree."""
-    from qutip_trap.light.raman import derive_raman_drive, square_drive
-
+    """Four improved-sampling trajectories and the no-jump member of a heated single-ion carrier pulse agree in-process and over
+    every CPU: register, P1 and joint state to 1e-12, and the jumps."""
     base = single_ion_raman_device()
     dev = dataclasses.replace(
         base,

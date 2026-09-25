@@ -7,6 +7,7 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap.light.beams import Beam
 from qutip_trap.species.polarization import (
     atomic_frame,
     linear_polarization,
@@ -14,6 +15,8 @@ from qutip_trap.species.polarization import (
     spherical_components,
     to_atomic_frame,
 )
+from qutip_trap.species.raman import AtomicStructure
+from qutip_trap.units import C_M_PER_S
 from tests.fixtures import be9_like, field_z
 
 X, Y, Z = np.eye(3)
@@ -25,8 +28,8 @@ SIGMA_MINUS = (X - 1j * Y) / math.sqrt(2.0)
 
 
 def test_circular_light_along_b_is_pure_sigma() -> None:
-    """k along B with eps = -(x + iy)/sqrt2 gives (|eps_-1|^2, |eps_0|^2, |eps_+1|^2) = (0, 0, 1), and the
-    opposite handedness (1, 0, 0). A beam along B carries NO pi component."""
+    """Circular light along B has spherical weights (0, 0, 1) for eps = -(x + iy)/sqrt2 and (1, 0, 0) for the opposite
+    handedness, to 1e-15."""
     plus = np.abs(spherical_components(SIGMA_PLUS, Z)) ** 2
     minus = np.abs(spherical_components(SIGMA_MINUS, Z)) ** 2
     assert plus == pytest.approx([0.0, 0.0, 1.0], abs=1e-15)
@@ -34,14 +37,14 @@ def test_circular_light_along_b_is_pure_sigma() -> None:
 
 
 def test_linear_light_along_b_is_half_and_half_with_no_pi_component() -> None:
-    """k along B with a LINEAR eps gives (1/2, 0, 1/2): equal sigma+ and sigma-, still no pi."""
+    """Linear light along B has weights (1/2, 0, 1/2) to 1e-15."""
     for eps in (X, Y, (X + Y) / math.sqrt(2.0)):
         w = np.abs(spherical_components(eps, Z)) ** 2
         assert w == pytest.approx([0.5, 0.0, 0.5], abs=1e-15)
 
 
 def test_light_polarized_along_b_is_pure_pi() -> None:
-    """k perpendicular to B with eps along B gives (0, 1, 0): eps = B_hat is pure pi whatever k is."""
+    """eps along B is pure pi, (0, 1, 0) to 1e-14, also through linear_polarization at angle 0 (1e-12)."""
     for b_hat in (X, Y, Z, np.array([0.6, 0.0, 0.8])):
         w = np.abs(spherical_components(b_hat, b_hat)) ** 2
         assert w == pytest.approx([0.0, 1.0, 0.0], abs=1e-14)
@@ -51,7 +54,7 @@ def test_light_polarized_along_b_is_pure_pi() -> None:
 
 
 def test_light_polarized_perpendicular_to_b_is_half_and_half() -> None:
-    """k perpendicular to B with eps perpendicular to B gives (1/2, 0, 1/2)."""
+    """eps perpendicular to B and to k gives (1/2, 0, 1/2) to 1e-15, also through linear_polarization (1e-12)."""
     w = np.abs(spherical_components(Y, X)) ** 2
     assert w == pytest.approx([0.5, 0.0, 0.5], abs=1e-15)
     eps = linear_polarization(X, math.pi / 2.0, Z)
@@ -60,10 +63,8 @@ def test_light_polarized_perpendicular_to_b_is_half_and_half() -> None:
 
 @pytest.mark.parametrize("theta_deg", [0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
 def test_the_general_angle_gives_the_sin_squared_over_two_cos_squared_split(theta_deg: float) -> None:
-    """At angle theta between k and B with eps in the k-B plane the weights are
-    (cos^2 theta/2, sin^2 theta, cos^2 theta/2) -- the interpolation between the two limiting statements
-    above: theta = 0 (k along B) gives (1/2, 0, 1/2) and theta = 90 deg (k perpendicular to B, so eps in the
-    k-B plane is along B) gives pure pi. |eps_0|^2 = |eps . B_hat|^2 = sin^2 theta is the whole content."""
+    """With eps in the k-B plane at angle theta between k and B the weights are (cos^2 theta/2, sin^2 theta,
+    cos^2 theta/2) to 1e-14."""
     theta = math.radians(theta_deg)
     k = np.array([math.sin(theta), 0.0, math.cos(theta)])
     eps = np.array([math.cos(theta), 0.0, -math.sin(theta)])  # in the k-B plane, transverse to k
@@ -82,7 +83,7 @@ def test_the_general_angle_gives_the_sin_squared_over_two_cos_squared_split(thet
 def test_the_sum_rule_holds_for_any_field_direction_and_any_polarization(
     b_hat: tuple[float, ...],
 ) -> None:
-    """sum_q |eps_q|^2 = 1 (``spherical_components`` asserts it internally, so a violation raises)."""
+    """sum_q |eps_q|^2 = 1 to 1e-12 for random polarizations and four field directions."""
     rng = np.random.default_rng(11)
     for _ in range(20):
         v = rng.normal(size=3) + 1j * rng.normal(size=3)
@@ -111,7 +112,7 @@ def test_the_atomic_frame_is_right_handed_and_orthonormal_with_z_along_b(b_hat: 
 
 @pytest.mark.parametrize("b_hat", [(0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.6, 0.0, 0.8)])
 def test_the_spherical_basis_is_orthonormal_and_conjugate_paired(b_hat: tuple[float, ...]) -> None:
-    """<e_q|e_q'> = delta_{qq'} and e_{-1} = -conj(e_{+1}) (Section 13's e_{+-1} = -+(x +- iy)/sqrt2)."""
+    """<e_q|e_q'> = delta_{qq'} to 1e-14 and e_{-1} = -conj(e_{+1}) (Section 13's e_{+-1} = -+(x +- iy)/sqrt2)."""
     e_minus, e_zero, e_plus = spherical_basis(b_hat)
     basis = (e_minus, e_zero, e_plus)
     for i, a in enumerate(basis):
@@ -132,7 +133,7 @@ def test_to_atomic_frame_agrees_with_the_frame_it_is_built_from() -> None:
 
 
 def test_linear_polarization_refuses_a_beam_along_b() -> None:
-    """A beam along B carries no pi component, so the angle to B is undefined rather than zero."""
+    """linear_polarization refuses a beam along B, where the angle to B is undefined."""
     with pytest.raises(ValueError, match="parallel to B_hat"):
         linear_polarization(Z, 0.0, Z)
 
@@ -141,11 +142,8 @@ def test_linear_polarization_refuses_a_beam_along_b() -> None:
 
 
 def test_a_pure_sigma_plus_beam_drives_only_m_to_m_plus_one() -> None:
-    """A pure eps_{+1} beam drives m_F -> m_F + 1 only (relative to the largest coupling of the set)."""
-    from qutip_trap.light.beams import Beam
-    from qutip_trap.species.raman import AtomicStructure
-    from qutip_trap.units import C_M_PER_S
-
+    """A pure eps_{+1} beam drives only m_F -> m_F + 1 from each 9Be+ F = 2 state (couplings above 1e-9 of the
+    largest)."""
     sp = be9_like()
     st = AtomicStructure(sp, 1.0, field_z().direction)
     e_p32 = sp.level("P3/2").energy_hz

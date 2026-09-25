@@ -3,6 +3,7 @@ vector form, the Kraus kicks of one ion on one mode, the per-ion participation a
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Sequence
 
@@ -10,6 +11,7 @@ import numpy as np
 import pytest
 import qutip as qt
 
+from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.multilevel import (
     ModeSpec,
     MultiLevelOptions,
@@ -35,7 +37,6 @@ from qutip_trap.light.recoil import (
 )
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import Crystal, solve_crystal
-from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 from tests.fixtures import (
@@ -63,7 +64,8 @@ def test_pattern_densities_normalize_to_one_over_the_sphere() -> None:
 
 
 def test_analytic_angular_factors() -> None:
-    """pi: 1/5 along B, 2/5 perpendicular; sigma: 2/5 along B, 3/10 perpendicular; isotropic 1/3."""
+    """The angular factors are pi 1/5 along B and 2/5 perpendicular, sigma 2/5 and 3/10, isotropic 1/3, and each
+    pattern's Cartesian sum is 1."""
     assert angular_factor(0, 1.0) == pytest.approx(0.2)
     assert angular_factor(0, 0.0) == pytest.approx(0.4)
     assert angular_factor(1, 1.0) == pytest.approx(0.4)
@@ -131,7 +133,8 @@ def _alphas(channels: Sequence[VectorChannel]) -> dict[int, float]:
 def test_vector_form_derives_the_scalar_angular_factors_without_hard_coding_them(
     axis: tuple[float, float, float], expected: tuple[float, float, float]
 ) -> None:
-    """sum_lambda |eps . e_q|^2 = 1 - |k . e_q|^2 is the scalar pattern: unit norm, and second moments alpha_q."""
+    """The vector form's channels reproduce each pure-q pattern's unit norm and second moment alpha_q (0.4/0.2/0.4 along
+    B, 0.3/0.4/0.3 perpendicular) to 1e-12."""
     channels = vector_channels(Z, axis)
     alphas = _alphas(channels)
     for i, (q, a) in enumerate(zip((-1, 0, 1), expected)):
@@ -152,7 +155,7 @@ def test_vector_form_oblique_axis_and_grid_independence() -> None:
 
 
 def test_free_recoil_energy_over_hbar_omega_is_eta_squared() -> None:
-    """(hbar k)^2/(2 m)/(hbar omega) = (k x0)^2: k x0 = 0.053 for 171Yb+ at 369.5 nm on a 3 MHz mode."""
+    """(hbar k)^2/(2 m)/(hbar omega) = (k x0)^2 to 1e-12, with k x0 = 0.053 for 171Yb+ at 369.5 nm on a 3 MHz mode."""
     k = TWO_PI / WAVELENGTH_M
     eta = k * math.sqrt(HBAR_J_S / (2.0 * MASS_KG * TWO_PI * 3.0e6))
     assert eta == pytest.approx(0.053, abs=0.001)
@@ -160,7 +163,8 @@ def test_free_recoil_energy_over_hbar_omega_is_eta_squared() -> None:
 
 
 def test_free_recoil_energy_regressions() -> None:
-    """Itano: 138Ba+ 493 nm R/h = 5.9 kHz, R/(hbar gamma) = 2.8e-4; 24Mg+ 280 nm 106 kHz, 2.5e-3."""
+    """Itano's free recoil energies: 138Ba+ at 493 nm 5.94 kHz and 2.83e-4 of hbar gamma, 24Mg+ at 280 nm 106.4 kHz and
+    2.47e-3 (2e-3 and 5e-3)."""
     for mass_u, lam, gamma_hz, khz, ratio in (
         (137.905, 493.4e-9, 21e6, 5.94, 2.83e-4),
         (23.985, 279.6e-9, 43e6, 106.4, 2.47e-3),
@@ -198,7 +202,7 @@ def test_kicks_are_unitary_sum_c_dag_c_is_gamma_projector_times_identity(recoil:
 def test_single_kick_expectation_is_alpha_eta_em_squared_with_zero_momentum(
     recoil: str, axis: tuple[float, float, float]
 ) -> None:
-    """The Kraus map applied once to |e, 0> gives <n> = alpha eta_em^2 exactly and <p> = 0."""
+    """The Kraus map applied once to |e, +1> (x) |0> gives <n> = alpha eta_em^2 to 1e-6 and <a> = 0 to 1e-12."""
     build, mode = _two_level_build(recoil, axis, d=16)
     assert build.space is not None
     e = build.index(TWO_LEVEL_EXCITED_PLUS)
@@ -216,7 +220,7 @@ def test_single_kick_expectation_is_alpha_eta_em_squared_with_zero_momentum(
 
 
 def test_recoil_kick_is_the_displacement_of_the_emitted_photon() -> None:
-    """D(-i eta u) built by expm equals exp(-i eta u (a + a^dag)) and is unitary."""
+    """D(-i eta u) equals exp(-i eta u (a + a^dag)) and is unitary, both to 1e-10."""
     d = 20
     eta_u = 0.17
     a = qt.destroy(d)
@@ -237,7 +241,8 @@ def test_recoil_needs_a_mode_and_a_mode_needs_no_recoil() -> None:
 
 @pytest.mark.parametrize("quad_name", ["marginal", "minimal"])
 def test_recoil_kernel_matrix_is_column_stochastic_with_mean_kick_alpha_eta_squared(quad_name: str) -> None:
-    """K[n, n'] = sum_j p_j |<n|D(-i eta u_j)|n'>|^2: every column sums to one and moves the mean by alpha eta_em^2."""
+    """Every column of K[n, n'] = sum_j p_j |<n|D(-i eta u_j)|n'>|^2 sums to one and moves the mean by alpha eta_em^2,
+    both to 1e-12."""
     alpha = 0.4
     quad = marginal_quadrature(1, 1.0) if quad_name == "marginal" else minimal_quadrature(alpha)
     kernel = recoil_kernel_matrix(60, 0.1, quad)
@@ -248,18 +253,6 @@ def test_recoil_kernel_matrix_is_column_stochastic_with_mean_kick_alpha_eta_squa
 
 
 # ---- a crystal: per-ion participation and the joint kick ------------------------------------------------------------
-
-
-def _trap(rf: RfDrive | None = None) -> Trap:
-    return Trap(
-        omega_hz=(3.0e6, 2.9e6, 1.0e6),
-        axis_angle_rad=0.0,
-        rf=rf,
-        dc=None,
-        geometry=None,
-        stray_field_v_per_m=(0.0, 0.0, 0.0),
-        shim_voltages_v={},
-    )
 
 
 def _quanta(crystal: Crystal, ion: int, q: int | None) -> dict[int, float]:
@@ -285,19 +278,22 @@ def _family_energy_over_free(crystal: Crystal, ion: int, q: int | None, family: 
 def test_recoil_energy_over_the_modes_of_one_axis_is_alpha_times_the_free_recoil_energy(
     family: str, q: int | None
 ) -> None:
-    """sum_m alpha_m c_{i,m}^2 (k x0_m)^2 hbar omega_m = alpha_axis (hbar k)^2/(2 m_i) exactly, by completeness of the
-    family's eigenvectors, for both ions of a two-ion 171Yb+ chain."""
+    """sum_m alpha_m c_{i,m}^2 (k x0_m)^2 hbar omega_m over one axis family is alpha_axis (hbar k)^2/(2 m_i) to 1e-12
+    for both ions of a two-ion 171Yb+ chain."""
     yb = species("171Yb+")
-    crystal = solve_crystal(_trap(), (yb, yb))
+    crystal = solve_crystal(secular_trap(), (yb, yb))
     for ion in (0, 1):
         ratio = _family_energy_over_free(crystal, ion, q, family, float(crystal.masses_kg[ion]))
         assert ratio == pytest.approx(1.0, abs=1e-12)
 
 
 def test_mixed_species_recoil_energy_uses_each_ions_own_mass() -> None:
-    """171Yb+ next to 40Ca+ (the rf at 60 MHz keeps Ca+ Mathieu-stable): the identity holds per ion with m_i, and the other
-    ion's mass breaks it by the mass ratio."""
-    crystal = solve_crystal(_trap(RfDrive(300.0, 60e6)), (species("171Yb+"), species("40Ca+")))
+    """In a 171Yb+-40Ca+ crystal the axial identity holds per ion with its own mass (1e-12) and the other ion's mass
+    breaks it by the mass ratio (1e-9)."""
+    crystal = solve_crystal(
+        dataclasses.replace(secular_trap(), rf=RfDrive(300.0, 60e6)),
+        (species("171Yb+"), species("40Ca+")),
+    )
     m0, m1 = (float(m) for m in crystal.masses_kg)
     assert m0 / m1 > 4.0
     for ion, mass in ((0, m0), (1, m1)):
@@ -306,11 +302,11 @@ def test_mixed_species_recoil_energy_uses_each_ions_own_mass() -> None:
 
 
 def test_participation_enters_the_emission_lamb_dicke_parameter_and_cancels_from_the_floor_weight() -> None:
-    """eta_em,{i,m} = k |c_{i,m}| x0_{i,m}: for the COM mode of two equal ions c = 1/sqrt 2, and the drive's eta carries the
-    same c, so the carrier weight (eta~/eta)^2 is independent of N."""
+    """The two-ion COM's c = 1/sqrt2 enters eta_em (1e-9) and the drive's eta alike, so the carrier weight (eta~/eta)^2
+    is the single ion's 0.4 (1e-12)."""
     yb = species("171Yb+")
-    two = solve_crystal(_trap(), (yb, yb))
-    one = solve_crystal(_trap(), (yb,))
+    two = solve_crystal(secular_trap(), (yb, yb))
+    one = solve_crystal(secular_trap(), (yb,))
     com = two.mode_index("axial", 0)
     assert abs(two.modes[com].eigenvector[0]) == pytest.approx(1.0 / math.sqrt(2.0))
     assert emission_lamb_dicke(two, 0, K_369, com) == pytest.approx(
@@ -324,10 +320,10 @@ def test_participation_enters_the_emission_lamb_dicke_parameter_and_cancels_from
 
 
 def test_joint_kick_over_three_axes_deposits_the_free_recoil_energy_with_the_cartesian_sum_rule() -> None:
-    """One sampled direction kicks every mode through the product of displacements prod_m D_m(-i eta_m(k_hat)); averaged
-    over the sigma pattern the per-axis quanta are alpha_axis eta_axis^2 and the total energy is (hbar k)^2/(2 m)."""
+    """Averaged over the sigma pattern the joint kick prod_m D_m(-i eta_m(k_hat)) deposits the free recoil energy (1e-6)
+    with alpha_axis eta_axis^2 quanta on each axis (1e-4)."""
     yb = species("171Yb+")
-    crystal = solve_crystal(_trap(), (yb,))
+    crystal = solve_crystal(secular_trap(), (yb,))
     space = HilbertSpace(
         ion_dims=(2,),
         resolved=tuple(ModeTruncation(m, 8, (0, 2), 0.2) for m in range(3)),

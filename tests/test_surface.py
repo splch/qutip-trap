@@ -118,9 +118,9 @@ def test_the_basis_functions_of_a_complete_layout_sum_to_one() -> None:
 
 
 def test_five_wire_house_fixture() -> None:
-    """a = 100 um, b = c = 120 um, V_rf = 300 V, Omega = 2 pi x 50 MHz, m = 1.46e-25 kg: x0 = 50.000000 um, y0 = 92.195445 um,
-    y_E = 169.655527 um, psi_E = 0.184465 eV, Q11 = -Q22 = 0.2284260, Q12 = 0; 4.038 MHz pseudopotential, 4.0804 MHz exact.
-    House's 11.5 MHz drops a 1/(2 sqrt 2) (negative control)."""
+    """House 2008 (a = 100, b = c = 120 um, 300 V, 2 pi x 50 MHz, 1.46e-25 kg): null (50.000000, 92.195445) um, escape
+    169.655527 um, depth 0.184465 eV, Q11 = -Q22 = 0.2284260, and 4.038 MHz pseudopotential and 4.0804 MHz exact secular
+    frequencies against House's 11.5 MHz, which drops a factor 1/(2 sqrt 2)."""
     trap = _five_wire()
     null = trap.rf_null()
     assert null[0] * 1e6 == pytest.approx(50.0, abs=1e-6)
@@ -156,8 +156,8 @@ def test_z_invariant_rails_have_no_axial_rf_curvature() -> None:
 
 
 def test_segmented_rf_rails_report_an_escape_point_and_a_depth() -> None:
-    """6 mm rectangle rails: the bounded seed finds the null, the numerical saddle and depth agree with the strip model's
-    algebraic route, and a short rail sits lower with a larger escape Psi; a single rf rail has no null."""
+    """On 6 mm rectangle rails the null, the saddle and the depth agree with the strip model (1e-3, 5e-3), 600 um rails sit
+    lower with a deeper trap, and a single rf rail has no escape point."""
     a, b, length = HOUSE["a"], HOUSE["b"], 6e-3
     rects = {
         "rf": ((-b, 0.0, -length, length), (a, a + b, -length, length)),
@@ -228,9 +228,8 @@ def test_electrode_record_validation() -> None:
 
 
 def test_four_wire_escape_height_and_the_wesenberg_depth_constant() -> None:
-    """The symmetric four-wire null sits one centre width up and (y_E - y0)/a = sqrt(2 + sqrt 5) - 1 = 1.0581710273
-    (Wesenberg's |p_s|/d); the depth is Ubar_s = (5 sqrt 5 - 11)/(2 pi^2) U0 = 0.009136125 U0 with
-    U0 = e^2 V_rf^2/(4 m Omega^2 d^2)."""
+    """The symmetric four-wire null sits one centre width up, (y_E - y0)/a = sqrt(2 + sqrt 5) - 1 (1e-10, Wesenberg's
+    |p_s|/d) and the depth is (5 sqrt 5 - 11)/(2 pi^2) U0 = 0.009136125 U0 (1e-9)."""
     a = 1.0
     trap = GaplessPlaneTrap(Electrodes("surface_four_wire", {"a_m": a, "c_m": a}))
     null, esc = trap.rf_null(), trap.escape_point()
@@ -262,9 +261,8 @@ def test_rf_pseudopotential_isotropic_at_the_null_and_axes_set_by_dc() -> None:
 
 
 def test_nizamani_fixture() -> None:
-    """a = 60, b = 300, c = 150 um, 171 u, Omega = 2 pi x 55 MHz, V_rf = 500 V: h = 82.46 um (quoted 85), |Q11| = 0.1976 and
-    the principal-axis q = 0.2171 giving 4.222 MHz; their height-normalized q_N = 2 e V/(m Omega^2 h^2) = 0.6948 is 3.2002
-    times that and is not a Mathieu q."""
+    """Nizamani 2012 (a = 60, b = 300, c = 150 um, 171 u, 2 pi x 55 MHz, 500 V): h = 82.46 um (quoted 85), |Q11| = 0.1976
+    and the principal-axis q = 0.2171 at 4.222 MHz, and their q_N = 0.6948 is 3.2002 q, not a Mathieu q."""
     m = 171.0 * ATOMIC_MASS_KG
     omega = TWO_PI * 55e6
     trap = _five_wire(60e-6, 300e-6, c_m=150e-6)

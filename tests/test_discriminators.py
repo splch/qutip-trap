@@ -1,6 +1,5 @@
-"""The discriminator layer and the detection calibration: Myerson's recursion, optimum and maximum-likelihood asymptote, the
-adaptive method, Noek's and Crain's first-photon protocols, the camera-exposure limits, and the calibration that picks
-(n_c, t_b) (PLAN.md Section 8.3)."""
+"""The discriminator layer and the detection calibration (PLAN.md Section 8.3): Myerson's recursion, optimum and
+maximum-likelihood limit, the adaptive method, the first-photon protocols, the camera limits and the (n_c, t_b) choice."""
 
 from __future__ import annotations
 
@@ -75,7 +74,7 @@ def test_myerson_recursion_equals_the_direct_sum_and_the_weights_normalize() -> 
 
 
 def test_the_log_domain_survives_the_227_sub_bin_underflow() -> None:
-    """M_N underflows near N ~ 227 sub-bins at the paper's rates: the log-domain recursion stays finite for long records."""
+    """The log-domain recursion stays finite past the ~227 sub-bins where M_N underflows at Myerson's rates."""
     rm = myerson_record_model()
     rng = np.random.default_rng(2)
     for window_s in (2.27e-3, 6.0e-3):
@@ -86,9 +85,8 @@ def test_the_log_domain_survives_the_227_sub_bin_underflow() -> None:
 
 
 def test_exact_forward_likelihood_agrees_with_myerson_to_first_order_in_t_over_tau() -> None:
-    """Records without a jump: the exact hidden-Markov likelihood equals Myerson's first-order form to 1e-5 in log. Records
-    with a decay inside the window: Myerson puts it at the start of its sub-bin while the exact kernel integrates over its
-    position, so ln p_D differs by up to about a nat with the same decision away from the boundary."""
+    """Without a jump the exact hidden-Markov likelihood equals Myerson's first-order form to 1e-5 in log; with a decay in
+    the window ln p_D differs by up to 1.5 nat and the decision agrees more than 2 nat from the boundary."""
     rm = myerson_record_model()
     rng = np.random.default_rng(3)
     for start in ("bright", "shelf"):
@@ -115,9 +113,8 @@ def test_exact_forward_likelihood_agrees_with_myerson_to_first_order_in_t_over_t
 
 
 def test_ca40_threshold_optimum_from_the_ideal_poisson_model() -> None:
-    """The exact chain's average error has an interior optimum in (n_c, t_b): 1.24e-4 at (3.5, 320 us); at Myerson's
-    operating point (5.5, 420 us) it gives 1.37e-4 against the measured 1.8(1)e-4, whose dark error the paper attributes
-    about 20 % to cosmic rays the ideal model has not."""
+    """The ideal chain's average error has an interior optimum of 1.24e-4 near (3.5, 320 us) and is 1.37e-4 at Myerson's
+    (5.5, 420 us), below the measured 1.8e-4 (about 20 % of it cosmic rays)."""
     rm = myerson_record_model()
     opt = optimize_threshold(rm, np.arange(100e-6, 1001e-6, 20e-6), dark_start="shelf")
     assert 280e-6 <= opt.best.window_s <= 360e-6
@@ -136,8 +133,8 @@ def test_ca40_threshold_optimum_from_the_ideal_poisson_model() -> None:
 
 @pytest.mark.slow
 def test_time_resolved_ml_beats_the_threshold_on_shelf_decays() -> None:
-    """Myerson: the ML method tends to 0.87(11)e-4 with eps_D = 1.5(2)e-4, the bright state detected to eps_B < 2e-6;
-    Monte Carlo over 30 000 records per state at t_b = 1 ms."""
+    """Over 30 000 records per state at t_b = 1 ms the ML method reaches eps_D = 1.5e-4 (+-1e-4) with at most one bright
+    error, an average below the threshold's 1.37e-4 (Myerson 2008)."""
     rm = myerson_record_model()
     ml = TimeResolvedML(10e-6, 1000e-6, dark_class="shelf")
     rng = np.random.default_rng(4)
@@ -155,8 +152,8 @@ def test_time_resolved_ml_beats_the_threshold_on_shelf_decays() -> None:
 
 
 def test_ml_catches_a_late_decay_that_the_threshold_would_call_bright() -> None:
-    """A shelf decay 200 us into a 420 us window leaves 12 bright counts: the threshold calls it bright, the ML weighs the
-    20 empty sub-bins against the decay prior and catches most; at 300 us it catches nearly all."""
+    """A shelf decay 200 us (300 us) into a 420 us window, which the threshold calls bright in over 190 (100) of 200
+    records, is caught by the ML method in over 160 (195)."""
     rm = myerson_record_model()
     rng = np.random.default_rng(5)
     ml = TimeResolvedML(10e-6, 420e-6, dark_class="shelf")
@@ -228,8 +225,8 @@ def test_noek_two_photon_rule_uses_the_cutoff_time() -> None:
 
 
 def test_camera_eps_d_floor_is_t_exp_over_2_tau() -> None:
-    """Without time resolution a shelf decay in the first half of the exposure reads bright: eps_D -> t_exp/(2 tau) =
-    1.7e-4 at 400 us on the 1168 ms shelf as the bright count grows (Burrell)."""
+    """Without time resolution eps_D tends to t_exp/(2 tau) = 1.7e-4 at 400 us on the 1168 ms shelf as the bright count
+    grows (3 % at 4e6/s; Burrell)."""
     det = Detector("camera", 0.010, 0.0, {}, None, None, 400e-6)
     for detected in (2e5, 1e6, 4e6):
         rm = RecordModel.from_rates(two_state_rates(detected, 0.010, 0.0, 0.0).with_shelf(1.168), det)
@@ -242,8 +239,8 @@ def test_camera_eps_d_floor_is_t_exp_over_2_tau() -> None:
 
 
 def test_coarse_exposures_give_no_time_resolution_gain() -> None:
-    """With 200 us sub-bins the likelihood cannot place a decay better than the exposure, so the dark error of records with
-    a decay inside the window stays near one half; 10 us sub-bins catch most (Burrell against Myerson)."""
+    """With a decay inside the window 200 us sub-bins leave the dark error at 0.35 to 0.65 and 10 us sub-bins bring it
+    below 0.2 (Burrell against Myerson)."""
     det = Detector("pmt", 0.010, 200.0, {}, None, None, 400e-6)
     rm = RecordModel.from_rates(two_state_rates(4e6, 0.010, 0.0, 0.0).with_shelf(1.168), det)
     rng = np.random.default_rng(8)
@@ -264,8 +261,8 @@ def test_coarse_exposures_give_no_time_resolution_gain() -> None:
 
 
 def test_calibrate_detection_recovers_the_rates_and_picks_the_interior_optimum() -> None:
-    """10^4 bright and dark records at Crain's operating point: the mean-count fit recovers eps R_o to 1 % and R_d within its
-    uncertainty, and the chosen (n_c, t_b) sits at the fitted model's interior optimum."""
+    """From 10^4 records per state at Crain's operating point the fit recovers eps R_o to 1 % and R_d within 4 sigma and
+    picks n_c = 0.5 at a 15-30 us window with an average error of 5.9e-4; the histograms' own errors agree."""
     rm = crain_record_model(window_s=60e-6)
     windows = tuple(float(x) for x in np.linspace(6e-6, 60e-6, 10))
     cal = calibrate_detection(
@@ -304,8 +301,8 @@ def test_calibrate_detection_on_the_shelving_scheme_reports_the_shelf_start() ->
 
 @pytest.mark.slow
 def test_detection_histogram_experiment_runs_the_bloch_model_of_the_device_beams() -> None:
-    """The experiment finds the 369.5 nm beam of the device, solves the rates at the ion's position and returns histograms,
-    the threshold, the window and the fitted rates; the scattered rate is the Bloch solve's, below Gamma/4."""
+    """The detection histogram solves the device's 369.5 nm beam at the ion (scattered rate below Gamma/4, detected =
+    efficiency x scattered to 5 %) and fits threshold and window; a device without the beam is refused."""
     base = chain_device(2)
     dev = dataclasses.replace(
         base,

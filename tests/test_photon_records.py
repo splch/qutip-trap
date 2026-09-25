@@ -1,6 +1,5 @@
-"""The photon-record layer: the exact chain against the single-jump closed forms, sampled records, detector non-idealities,
-neighbour-coupled records with both halves of Wineland's crosstalk, the camera PSF and the count-anomaly band (PLAN.md
-Section 8.2)."""
+"""The photon-record layer (PLAN.md Section 8.2): the exact chain against the single-jump closed forms, sampled records,
+detector non-idealities, neighbour-coupled records with both halves of the crosstalk, the camera PSF and the anomaly band."""
 
 from __future__ import annotations
 
@@ -65,8 +64,8 @@ def _zero_threshold_errors(t: float, r0: float, rd: float, rb: float, rbg: float
 
 
 def test_exact_chain_reduces_to_the_single_jump_form_when_one_transition_acts() -> None:
-    """With only R_d (bright start) the chain has one jump, so the matrix-exponential distribution equals the single-jump
-    closed form to machine precision; the same for a dark start with only R_b."""
+    """With one transition acting (R_d from bright, R_b from dark) the chain's count distribution equals the single-jump
+    closed form (Crain 2019 Eq. 1) to 1e-13."""
     det = Detector("snspd", 0.04356, 0.0, {}, None, None, 22e-6)
     bright_only = RecordModel.from_rates(two_state_rates(472e3, 0.04356, 341.0, 0.0), det)
     dist = bright_only.count_distribution("bright", 22e-6, n_max=60)
@@ -78,8 +77,8 @@ def test_exact_chain_reduces_to_the_single_jump_form_when_one_transition_acts() 
 
 
 def test_exact_chain_agrees_with_the_zero_threshold_closed_forms_to_first_order() -> None:
-    """The closed forms neglect re-pumping after a jump; the exact chain differs from them by that second-order amount only
-    (1e-3 relative at 22 us)."""
+    """The exact chain matches the zero-threshold closed forms (Crain 2019 Eqs. 2-3) to 1e-3 at 22 us and the mean count
+    to 5e-3."""
     rm = crain_record_model()
     eps_b, eps_d = _zero_threshold_errors(22e-6, 472e3, 341.0, 16.4, 4.2)
     assert rm.count_distribution("bright", 22e-6).pmf[0] == pytest.approx(eps_b, rel=1e-3)
@@ -101,8 +100,8 @@ def test_sampled_records_follow_the_exact_count_distribution() -> None:
 
 
 def test_long_windows_carry_many_transitions_not_one() -> None:
-    """A 100 ms window on Crain's 171Yb+ chain pumps dark in 1/R_d = 2.9 ms and back in 1/R_b = 61 ms, so the sampled paths
-    carry a few cycles and the exact mean count sits well above the single-jump (no return) one."""
+    """A 100 ms window carries 2.5 to 8 jumps on average (1/R_d = 2.9 ms, 1/R_b = 61 ms), and the exact mean count exceeds
+    the single-jump one by over 20 %."""
     rm = crain_record_model(window_s=100e-3)
     rng = np.random.default_rng(5)
     jumps = [len(rm.sample_path("bright", 100e-3, rng).jump_times_s) for _ in range(200)]
@@ -136,8 +135,8 @@ def test_dead_time_and_afterpulsing_act_on_arrival_times() -> None:
 
 
 def test_count_anomaly_band_brackets_both_hypotheses() -> None:
-    """A total outside the [1e-6, 1 - 1e-6] band of both the bright and the dark count distribution is explained by
-    neither hypothesis, so the run flags it."""
+    """The anomaly band holds all but 3e-6 of both the bright and the dark count distributions, starts at zero, widens at a
+    smaller quantile and refuses one above one half."""
     rm = crain_record_model(window_s=22e-6)
     lo, hi = count_anomaly_band(rm, 22e-6)
     bright = rm.count_distribution("bright", 22e-6)
@@ -180,8 +179,8 @@ def test_register_records_add_a_bright_neighbours_light_to_a_dark_ion() -> None:
 
 
 def test_the_pumping_a_bright_neighbour_drives_is_the_bound_times_the_ions_own_rates() -> None:
-    """R_d and R_b are linear in intensity, so the leaked light drives them at s_neighbour/s_beam, s_neighbour the bound
-    3 lambda^2/(8 pi^2 x^2); at 14 um it adds a few mHz to Crain's 341 Hz."""
+    """A bright neighbour pumps at the ion's own rates times s_nb/s_beam, s_nb = 3 lambda^2/(8 pi^2 x^2) (1e-12): a few mHz
+    at 14 um, halved at polarization purity 0.5 and quartered at twice the spacing."""
     rates = CRAIN_YB171_SNSPD.rates()
     s_beam = 2.45
     s_nb = neighbour_intensity_ratio(YB_WAVELENGTH_M, SPACING_M)
@@ -227,8 +226,8 @@ def test_depumped_model_touches_only_the_pumping_channels_and_only_for_bright_ne
 
 
 def test_a_bright_ion_beside_a_bright_one_loses_photons_the_depumping_reduced_n() -> None:
-    """With the neighbour bright the ion is pumped dark during the window: dR_d t = 0.11 costs about 5 % of the mean count,
-    and the threshold error grows."""
+    """A bright neighbour's extra R_d = 5e3/s lowers the mean count by the factor 1 - dR_d t/2 (2 %) and raises the threshold
+    error."""
     rm = crain_record_model()
     extra = {1: (5.0e3, 0.0)}
     alone = neighbourhood_model([rm, rm], 0, ["bright", "dark"], {}, extra)
@@ -278,9 +277,8 @@ def test_the_register_confusion_and_the_sampled_records_both_carry_the_depumping
 
 
 def test_camera_psf_leakage_from_the_airy_pattern_and_an_aberrated_gaussian() -> None:
-    """A diffraction-limited NA 0.25 system at 397 nm leaks under 0.5 % into a 28-pixel neighbour ROI at 14 um; Burrell's
-    measured 4.0 % nearest-neighbour signal (relative to the ion's own) belongs to an aberrated PSF, which a Gaussian of
-    sigma 4.1 um reproduces, collecting 0.757 of the ion's own light in an ROI of one spacing's diameter."""
+    """An NA 0.25 Airy PSF at 397 nm leaks under 0.5 % into a 28-pixel neighbour ROI at 14 um; a 4.1 um Gaussian reproduces
+    Burrell's 4.0 % neighbour signal (0.6 %) and collects 0.757 of the ion's own light (0.02)."""
 
     def leakage(geo: CameraGeometry, ion: int, other: int, n_pixels: int) -> float:
         roi = geo.roi(ion, n_pixels)

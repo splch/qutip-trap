@@ -62,7 +62,7 @@ def test_exact_exponent_against_the_lowest_order_and_preprint_forms() -> None:
 
 @pytest.mark.parametrize(("q", "expected"), [(0.1, 1.001890), (0.2, 1.007741), (0.3, 1.018161)])
 def test_c0_wronskian_anchors_and_series(q: float, expected: float) -> None:
-    """C0 = 1.001890, 1.007741, 1.018161, even in q, equal to 1 + 3q^2/16 to O(q^4)."""
+    """C0 = 1.001890, 1.007741, 1.018161 (1e-6), even in q and within q^4/4 of c0_series = 1 + 3q^2/16."""
     c0 = c0_wronskian(0.0, q)
     assert c0 == pytest.approx(expected, abs=1e-6)
     assert c0 == pytest.approx(c0_wronskian(0.0, -q), abs=1e-12)

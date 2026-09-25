@@ -1,8 +1,6 @@
-"""Benchmark emulation (PLAN.md Sections 7.9, 13 'RB error rate'): randomized benchmarking (single-qubit, simultaneous,
-two-qubit and Knill-style), GHZ fidelity and a quantum-volume style run on the two-ion example device with the simulator's
-own budget alongside, and the algebra behind them on synthetic inputs: the decay fit and its units, the channel
-reduction, the GHZ parity bound, the heavy outputs and Cross et al.'s Eq. (32) criterion, the intrinsic-budget keys and
-the depolarizing conversions."""
+"""Benchmark emulation (PLAN.md Section 7.9): randomized benchmarking, GHZ fidelity and quantum volume on the two-ion
+example device with their budgets, and the decay-fit, channel-reduction, parity-bound, heavy-output and depolarizing
+algebra on synthetic inputs."""
 
 from __future__ import annotations
 
@@ -58,7 +56,7 @@ from qutip_trap.noise.summary import (
 )
 from qutip_trap.options import Numerics, Truncation
 from qutip_trap.run.job import last_record
-from tests.fixtures import FAST, two_ion_surrogate
+from tests.fixtures import FAST, make_result, two_ion_surrogate
 
 
 @pytest.fixture(scope="module")
@@ -86,9 +84,8 @@ def test_decay_fit_recovers_p_and_the_section_13_conversions() -> None:
 
 
 def test_marginal_fit_recovers_the_per_qubit_rate_and_the_joint_fit_their_sum() -> None:
-    """Two independent qubits, each decaying as 0.5 p_q^m + 0.5 with r_q = (1 - p_q)/2: the marginal fit returns r_q, the
-    joint fit's (1 - p)(2^n - 1)/2^n returns sum_q r_q to first order, an error per LAYER of n Cliffords and a factor n
-    away from any per-Clifford rate."""
+    """Two independent qubits decaying at r_q: the marginal fit returns r_q to 1e-6 and the joint two-qubit fit about
+    2 r_q (7 %), the sum over the qubits rather than a per-Clifford rate."""
     ls = (1, 128, 512)
     for r_q in (2.0e-5, 1.0e-4, 3.426e-4):
         marginal = np.array([0.5 * (1.0 - 2.0 * r_q) ** m + 0.5 for m in ls])
@@ -101,27 +98,21 @@ def test_marginal_fit_recovers_the_per_qubit_rate_and_the_joint_fit_their_sum() 
 
 
 def test_marginal_survival_reads_the_histogram_in_the_section_13_bit_order() -> None:
-    """The histogram key sorts the measured qubits with the lowest-indexed one RIGHTMOST (``conv.result_bit_order``), so a
-    marginal read off position i belongs to the (n - 1 - i)-th sorted qubit."""
-
-    class _Diag:
-        effective_sample_size = 1000.0
-
-    class _Res:
-        diagnostics = _Diag()
-        probabilities = {"01": 0.7, "11": 0.2, "00": 0.1}
-
-    got = marginal_survival(_Res(), "01", (0, 1))  # type: ignore[arg-type]
+    """The marginal of qubit q reads position n - 1 - q of the histogram key, the lowest-indexed qubit rightmost
+    (``conv.result_bit_order``); a key of the wrong length is refused."""
+    # rows are (q0, q1): the keys "01", "11" and "00" at 0.7, 0.2 and 0.1
+    res = make_result(np.array([[1, 0]] * 7 + [[1, 1]] * 2 + [[0, 0]], dtype=np.uint8))
+    got = marginal_survival(res, "01", (0, 1))
     # key "01" means qubit 1 reads 0 and qubit 0 reads 1
     assert got[1][0] == pytest.approx(0.8)  # keys "01" and "00" have a 0 at position 0 -> qubit 1
     assert got[0][0] == pytest.approx(0.9)  # keys "01" and "11" have a 1 at position 1 -> qubit 0
     with pytest.raises(ValueError):
-        marginal_survival(_Res(), "0", (0, 1))  # type: ignore[arg-type]
+        marginal_survival(res, "0", (0, 1))
 
 
 def test_mean_survival_sigma_does_not_double_count_the_shot_noise() -> None:
-    """The between-sequence sample variance already contains each point's shot noise; adding the within-sequence variance
-    to it would inflate the error bar by up to sqrt 2 where shot noise dominates."""
+    """The mean survival's error bar is the between-sequence standard error alone (to 1e-12), the shot noise at one
+    sequence, and one count of the run, 1/(shots n), when both vanish."""
     values = np.array([[0.90, 0.92, 0.88]])
     sigma = np.full((1, 3), 0.01)
     got = mean_survival_sigma(values, sigma, 3, 100)
@@ -136,8 +127,8 @@ def test_mean_survival_sigma_does_not_double_count_the_shot_noise() -> None:
 
 
 def test_knill_sequences_end_on_their_own_target_and_cost_one_pulse_per_gate() -> None:
-    """Section 7.9's first RB variant: pi/2 gates with an interleaved pi or identity and one final pi/2. The ideal state
-    never leaves the six Pauli eigenstates, so the sequence's own target bitstring carries the whole ideal probability."""
+    """Knill sequences (Section 7.9) put the whole ideal probability (to 1e-9) on their own target key, measure their
+    qubits and cost L to 2L + 1 pulses per qubit; every target bit is reachable."""
     rng = np.random.default_rng(11)
     for length in (1, 3, 9, 24):
         for qubits in ((0,), (0, 1), (0, 1, 2), (2, 0)):
@@ -195,9 +186,8 @@ def test_reduced_choi_traces_the_spectator_in_zero_and_keeps_the_kept_channel() 
 
 
 def test_reduced_ideal_factors_a_step_s_target_instead_of_taking_its_zero_block() -> None:
-    """A GATE_LOCAL step's ideal is a product over its ions of each ion's own target, so the factor on the benchmarked
-    qubits is what the reduced channel is compared with; the <0_rest| U |0_rest> block would be off by 1/sqrt 2 for a GPi2
-    on the other ion and exactly zero for a GPi."""
+    """A step's ideal factors into each ion's own target (unitary to 1e-10, equal up to phase), the identity for a GPi or
+    GPi2 on the other ion; an entangling ideal is refused."""
     eye = np.eye(2, dtype=complex)
     a, b = native.gpi2(0.3), native.gpi(1.1)
     haar = haar_random_unitary(np.random.default_rng(5), 2)
@@ -220,8 +210,8 @@ def test_reduced_ideal_factors_a_step_s_target_instead_of_taking_its_zero_block(
 
 
 def test_gate_piece_of_finds_multi_piece_gate_ids_by_longest_prefix() -> None:
-    """``kinds_of_schedule`` keys on ``Schedule.target.gate_id``, and the ZZ wrapper's ids contain a slash of their own
-    (``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/loop2``), so the piece is the longest gate id prefixing the key."""
+    """A budget key maps to the longest gate id prefixing it, the ZZ wrapper's slashed ids (``zz[k]/ms``,
+    ``zz[k]/loop1``) included, and an unknown key to None."""
     kinds = {
         "gpi2[0]": "gpi2[0]",
         "ms[2]": "ms[2,3]",
@@ -239,16 +229,14 @@ def test_gate_piece_of_finds_multi_piece_gate_ids_by_longest_prefix() -> None:
 
 
 def test_depolarizing_kraus_normalizations_and_the_qiskit_lambda_conversion() -> None:
-    """The depolarizing conversions: sum K^dag K = 1 for the p/3 and p/15 weights, the entanglement
-    infidelity is p, the average gate infidelity (2/3)p and (4/5)p, and Qiskit's lambda = p 4^n/(4^n - 1) turns Chen et
-    al.'s Forte medians 2.0e-4 and 46.4e-4 into 2.67e-4 and 49.5e-4."""
+    """Depolarizing Kraus sets sum to 1 (1e-12) with weights p/3 and p/15, entanglement infidelity p and average gate
+    infidelity (2/3)p and (4/5)p; Qiskit's lambda turns Chen et al.'s 2.0e-4 and 46.4e-4 into 2.67e-4 and 49.5e-4."""
     for n, weight in ((1, 3), (2, 15)):
         d = 2**n
         for p in (0.0, 1e-4, 0.1, 1.0):
             kraus = depolarizing_kraus(p, n)
             assert len(kraus) == 4**n
             assert np.max(np.abs(sum(k.conj().T @ k for k in kraus) - np.eye(d))) < 1e-12, (n, p)
-            # the non-identity Kraus weights are exactly p/3 (one qubit) and p/15 (two qubits)
             assert float(np.real(kraus[1].conj().T @ kraus[1])[0, 0]) == pytest.approx(p / weight, abs=1e-15)
         eps = 0.05
         choi = depolarizing_choi(eps, n)
@@ -307,8 +295,8 @@ def test_parity_fit_and_ghz_circuits() -> None:
 
 
 def test_the_parity_bound_equals_the_phase_optimised_ghz_fidelity_and_exceeds_the_fixed_phase_one() -> None:
-    """(P_0 + P_1 + C)/2 = (rho_00 + rho_11)/2 + |rho_{0...0,1...1}| = max_theta <GHZ_theta| rho |GHZ_theta> exactly, the
-    fitted contrast being 2|rho_{0...0,1...1}|; against a FIXED-phase GHZ state the same number is an upper bound."""
+    """(P_0 + P_1 + C)/2 with the fitted contrast C = 2|rho_{0..0,1..1}| (1e-8) equals max_theta <GHZ_theta| rho |GHZ_theta>
+    (1e-8; scanned, 1e-5) and bounds the fixed-phase fidelity from above."""
     for n in (2, 3, 4):
         phases = np.linspace(0.0, 2.0 * math.pi / n, 8, endpoint=False)
         for theta, mix in ((0.0, 0.0), (0.7, 0.0), (math.pi, 0.0), (0.4, 0.15), (2.0, 0.05)):
@@ -352,8 +340,8 @@ def test_random_square_circuits_have_heavy_sets_of_half_the_strings_and_three_ga
 
 
 def test_cross_confidence_sigma_reduces_appendix_c_equation_32_exactly() -> None:
-    """Eq. (32) is [n_h - z sqrt(n_h (n_s - n_h/n_c))]/(n_c n_s) > 2/3; with n_h = h n_c n_s it is h - z sqrt(h(1-h)/n_c)
-    identically, so the criterion's sigma is the per-circuit binomial one, not the standard error of the mean."""
+    """h - z sigma(h, n_c) equals Cross et al.'s Eq. (32), [n_h - z sqrt(n_h (n_s - n_h/n_c))]/(n_c n_s) at n_h = h n_c n_s,
+    to 1e-12; n_c = 0 is refused."""
     for n_c, n_s, h in ((4, 400, 0.7163), (100, 400, 0.7163), (7, 33, 0.61), (100, 1000, 0.68)):
         n_h = h * n_c * n_s
         equation_32 = (n_h - CONFIDENCE_Z * math.sqrt(n_h * (n_s - n_h / n_c))) / (n_c * n_s)
@@ -377,9 +365,8 @@ def test_a_pass_needs_the_confidence_bound_and_the_hundred_circuits() -> None:
 
 
 def test_single_qubit_rb_decays_at_the_channel_scale_with_the_budget_alongside(two_ion: Machine) -> None:
-    """Section 13 'RB error rate': r = (1 - p)/2 from the fit; the survival decays over hundreds of Cliffords at the 1e-5 level
-    the channel of the carrier pulses predicts (the first-order composition is an estimate: coherent errors of one
-    Clifford's pulses partly cancel); the SPAM offset F(0) matches the readout and preparation errors."""
+    """Single-qubit RB decays at r < 1e-4 within a factor 5 of the composed carrier-pulse channels (1e-6 to 1e-4), below the
+    intrinsic scale, and its offset F(0) matches the readout and preparation errors."""
     rb = randomized_benchmarking(two_ion, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True)
     assert rb.n_qubits == 1 and rb.survival.shape == (3, 1) and rb.converged
     assert rb.mean_survival[0] > 0.998 and rb.mean_survival[-1] < rb.mean_survival[0]
@@ -409,8 +396,8 @@ def test_single_qubit_rb_decays_at_the_channel_scale_with_the_budget_alongside(t
 
 @pytest.mark.slow
 def test_two_qubit_rb_and_the_entangling_channel(two_ion: Machine) -> None:
-    """Two-qubit Clifford RB on the pair: 1.5 entangling gates per Clifford on average, r = (3/4)(1 - p) at the 1e-3 level of
-    the composed channels (five pulses per Clifford at 2.6e-4 each on the pair dominate the 1.1e-4 entangling gate)."""
+    """Two-qubit RB decays at 1e-4 < r < 3e-2 within a factor 5 of the composed channels, with 0.5 to 3 entangling gates
+    per Clifford and an MS channel of average infidelity 1e-5 to 1e-3."""
     rb = randomized_benchmarking(two_ion, (0, 1), (1, 6, 16), n_sequences=1, shots=400, fix_offset=True)
     assert rb.n_qubits == 2 and rb.fit["B"] == (0.25, 0.0)
     assert rb.mean_survival[0] > 0.97 and rb.mean_survival[-1] < rb.mean_survival[0]
@@ -429,9 +416,8 @@ def test_two_qubit_rb_and_the_entangling_channel(two_ion: Machine) -> None:
 
 @pytest.mark.slow
 def test_simultaneous_rb_reports_marginals_in_the_budget_s_own_unit(two_ion: Machine) -> None:
-    """Gambetta et al. 2012 on the two-ion example device: the per-qubit marginal r_q, the per-qubit composition
-    r_channel.q{i} (each kind's channel reduced to THAT ONE qubit) in the same unit, and the joint decay beside them as the
-    correlation diagnostic, in the unit of r_channel_joint_layer."""
+    """Simultaneous RB (Gambetta 2012): r is the mean of the per-qubit marginals (1e-4 to 1e-3) within a factor 3 of the
+    per-qubit composition, and the joint decay (1.4 to 3 r) within a factor 4 of the joint-layer composition."""
     rb = randomized_benchmarking(
         two_ion, (0, 1), (1, 32, 128), n_sequences=1, shots=600, pair=False, fix_offset=True
     )
@@ -464,7 +450,8 @@ def test_simultaneous_rb_reports_marginals_in_the_budget_s_own_unit(two_ion: Mac
 
 @pytest.mark.slow
 def test_simultaneous_rb_runs_on_three_ions() -> None:
-    """Simultaneous single-qubit RB on a three-ion chain, whose middle ion sees crosstalk from both sides."""
+    """Simultaneous RB on three ions (the middle one crosstalked from both sides) reports three marginals below 1e-2
+    whose mean is r."""
     preset = yb171_chain(3, address_waist_m=2.0e-6)
     rb = randomized_benchmarking(
         Machine(preset.device, numerics=Numerics(truncation=Truncation(branch_weight_min=3e-3))),
@@ -489,8 +476,8 @@ def test_simultaneous_rb_runs_on_three_ions() -> None:
 
 @pytest.mark.slow
 def test_the_intrinsic_budget_keeps_the_zz_wrapper_s_section_9_6_scales(two_ion: Machine) -> None:
-    """With ``entangler="zz"`` the CNOT template's pieces carry gate ids containing a slash (``zz[0]/ms``, ``zz[0]/loop1``,
-    ``zz[0]/loop2``); every intrinsic entry of the run belongs to a piece and the wrapper's pieces contribute."""
+    """With ``entangler="zz"`` every intrinsic-budget entry belongs to a schedule piece, the slashed wrapper ids
+    (``zz[0]/ms``, ``zz[0]/loop1``) included, and the wrapper's pieces contribute."""
     circuit = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
     zz = dataclasses.replace(two_ion, physics=dataclasses.replace(two_ion.physics, entangler="zz"))
     res = zz.run(circuit, 1)
@@ -512,9 +499,8 @@ def test_the_intrinsic_budget_keeps_the_zz_wrapper_s_section_9_6_scales(two_ion:
 
 @pytest.mark.slow
 def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion: Machine) -> None:
-    """Section 7.9: the Bell/GHZ bound (P_00 + P_11 + C)/2 from populations and a parity scan through run(), and the two
-    exact fidelities it sits between: it estimates max_theta <GHZ_theta| rho |GHZ_theta> (``conv.ghz_parity_bound``) and so
-    bounds the fixed-phase <GHZ| rho |GHZ> from above; the predicted floor from the channels beside them."""
+    """The bound (P_00 + P_11 + C)/2 from a parity scan matches the max-phase register fidelity (3 sigma + 2e-3,
+    ``conv.ghz_parity_bound``) and bounds the fixed-phase one (0.98 to 1) from above; the channels predict it to 5e-3."""
     g = ghz_fidelity(two_ion, (0, 1), shots=500)
     assert g.n_qubits == 2 and len(g.results) == 9 and g.converged
     p0, p1 = g.populations["P0"][0], g.populations["P1"][0]
@@ -538,8 +524,8 @@ def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion: Machine) -> Non
 
 @pytest.mark.slow
 def test_quantum_volume_style_run_at_width_two(two_ion: Machine) -> None:
-    """Cross et al. 2019 at width two: heavy outputs from the ideal distribution, the measured heavy-output probability near
-    the ideal one on this device, three entangling gates per SU(4), the depolarizing prediction from the channels."""
+    """Width-two quantum volume (Cross 2019): six entangling gates per circuit, heavy-output probabilities within
+    4 sigma + 0.05 of the ideal, Eq. (32)'s binomial sigma, and no pass on two circuits."""
     qv = quantum_volume(two_ion, (0, 1), n_circuits=2, shots=300)
     assert qv.depth == 2 and qv.n_circuits == 2 and qv.entangling_per_circuit == 6.0
     assert np.all(qv.ideal_heavy_probability > 0.5) and np.all(qv.register_fidelity > 0.95)

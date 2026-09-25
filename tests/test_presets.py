@@ -8,7 +8,7 @@ import json
 import pytest
 
 from qutip_trap.control.compiler import Circuit, Operation
-from qutip_trap.control.schedule import GateDrive
+from qutip_trap.control.schedule import GateDrive, ScheduleError
 from qutip_trap.device.model import Device
 from qutip_trap.device.presets import (
     CA40_DETECTION_WINDOW_S,
@@ -60,8 +60,7 @@ def test_preset_overrides_and_refusals() -> None:
 
 
 def test_standard_recipe_refuses_the_optical_qubit_with_a_clear_error() -> None:
-    """``standard_recipe`` covers hyperfine qubits whose lower level is an F = 0 state, which is why the 40Ca+ preset carries
-    a recipe of its own."""
+    """``standard_recipe`` refuses the 40Ca+ optical qubit: it covers hyperfine qubits with an F = 0 lower level."""
     device = ca40_optical(1).device
     assert species("40Ca+").qubit == ("S1/2 mJ=-1/2", "D5/2 mJ=-1/2")
     with pytest.raises(NotImplementedError, match="no standard pump for a 40Ca"):
@@ -69,9 +68,8 @@ def test_standard_recipe_refuses_the_optical_qubit_with_a_clear_error() -> None:
 
 
 def test_the_ca40_preset_derives_a_non_zero_e2_rabi_frequency_and_one_gate_beam() -> None:
-    """The Delta m = 0 E2 geometric factor vanishes for the obvious k = y, pol = x choice, so the preset's 729 nm beam runs
-    at k = (1, 1, 0)/sqrt 2 with the polarization at 135 degrees and derives 34.7 kHz."""
-
+    """The 40Ca+ preset's one gate beam, the 729 nm quadrupole beam along (1, 1, 0)/sqrt 2, derives an E2 Rabi frequency of
+    34742.25 Hz (1e-4) and a Stark shift below 10 Hz, and there is no entangling drive."""
     preset = ca40_optical(1)
     device = preset.device
     assert gate_beams(device) == (0,), "only the 729 nm quadrupole beam is a gate drive"
@@ -87,10 +85,8 @@ def test_the_ca40_preset_derives_a_non_zero_e2_rabi_frequency_and_one_gate_beam(
 
 
 def test_the_ca40_recipe_prepares_the_lower_qubit_level_with_the_doppler_occupations() -> None:
-    """Doppler cooling on 397 nm at -Gamma/2 with the 866 nm repump, then the sigma- pump into S1/2 mJ = -1/2; no sideband
-    stage, so the Doppler occupations stand: nbar 12.9, 8.9, 9.1 at the 2.0 MHz axial and 3.0/2.9 MHz radial modes, and a
-    preparation error of 1.06e-5 (the residual D3/2 population), with the 40Ca+ P1/2 rate read as
-    ``conv.ca40_linewidth_reading``."""
+    """The 40Ca+ recipe (397 nm Doppler with the 866 nm repump, the sigma- pump, no sideband stage) leaves nbar 12.9, 8.9,
+    9.1 and a preparation error of 1.06e-5 (5 %, ``conv.ca40_linewidth_reading``); a strong pump leaves over 0.1."""
     device = ca40_optical(1).device
     recipe = recipe_of(device)
     assert recipe is device.preparation and recipe.sideband is None
@@ -107,8 +103,8 @@ def test_the_ca40_recipe_prepares_the_lower_qubit_level_with_the_doppler_occupat
 
 @pytest.mark.slow
 def test_run_completes_one_gpi2_on_the_optical_qubit() -> None:
-    """The pipeline end to end on a second species: GPi2(0) on |0> gives the Section 7.6 state, the register infidelity is
-    the two frozen radial modes' Debye-Waller loss at the Doppler occupations (5.98e-4), and the shelving readout works."""
+    """GPi2(0) on the 40Ca+ optical qubit runs end to end with the register infidelity 5.98e-4 (5 %) of the frozen radial
+    modes' Debye-Waller loss at the Doppler occupations and readout errors below 5e-3."""
     preset = ca40_optical(1)
     result = (
         Machine(preset.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-4)))
@@ -133,11 +129,10 @@ def test_run_completes_one_gpi2_on_the_optical_qubit() -> None:
 
 
 def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() -> None:
-    """No far-detuned 398.5 nm pair, so the Section 4.4.4 light-shift force cannot be played: a circuit with a two-qubit
-    gate is refused rather than silently mis-scheduled."""
+    """A two-qubit circuit on the 40Ca+ preset, which has no light-shift pair (Section 4.4.4), is refused."""
     preset = ca40_optical(2)
     bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(ScheduleError, match="no entangling waveform"):
         (
             Machine(
                 preset.device, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
@@ -147,7 +142,6 @@ def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() 
             )
             .run(bell, 10)
         )
-    assert excinfo.type is not AssertionError
 
 
 # ---- the Device record ------------------------------------------------------------------------------------------------

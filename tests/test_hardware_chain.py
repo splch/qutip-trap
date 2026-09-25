@@ -65,8 +65,8 @@ def test_hardware_record_validation_resolutions_and_description() -> None:
 
 
 def test_response_filters_the_envelope_preserving_the_area_and_adds_the_tail() -> None:
-    """A first-order low-pass on a square pulse: the played envelope rises as 1 - e^{-t/tau}, the tail carries the missing area
-    (e^{-8} dropped), so a pi pulse still flips the ion to 1e-5 while the field arrives tau later."""
+    """The first-order modulator response makes a square envelope rise as 1 - e^{-t/tau} (to 1e-3) with a tail carrying the
+    missing area, so the pi pulse still flips the ion to 2e-5."""
     dev = _device()
     sched, t_pi = _pi_schedule(dev)
     hw = dev.hardware
@@ -162,7 +162,8 @@ def test_trains_are_contiguous_same_ion_pulses_and_jitter_moves_a_train_rigidly(
 
 
 def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_note() -> None:
-    """phi -> phi + sgn(mu) arctan(2 pi |mu| tau_r) per leg (3e-3 leakage without it on the two-ion fixture)."""
+    """The response phase reference is sgn(mu) arctan(2 pi |mu| tau_r) per leg, zero for an ideal modulator, with a callable
+    (FM) beat note evaluated."""
     assert response_phase_rad(3.0e6, 0.0) == 0.0
     assert response_phase_rad(3.0e6, 50e-9) == pytest.approx(math.atan(2 * math.pi * 3e6 * 50e-9))
     assert response_phase_rad(-3.0e6, 50e-9) == pytest.approx(-math.atan(2 * math.pi * 3e6 * 50e-9))
@@ -171,8 +172,8 @@ def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_no
 
 @pytest.mark.slow
 def test_calibrated_gate_survives_the_modulator_response_with_the_phase_reference() -> None:
-    """With ``REALISTIC_HARDWARE``'s 50 ns rise time the chain plus the Roos beat-phase reference reaches
-    0.999923 (leakage 3.32e-5) against 0.999868 (4.49e-5) for an ideal modulator."""
+    """With a 50 ns modulator rise the chain plus the Roos beat-phase reference reaches F = 0.999923 (leakage 3.315e-5)
+    against 0.999868 (4.485e-5) for an ideal modulator, to 5e-6 and 0.5 %."""
     fx = yb171_chain(2)
 
     def check(hardware, chain: bool):  # type: ignore[no-untyped-def]
@@ -210,11 +211,9 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
 
 
 def test_stark_shift_follows_the_played_light_into_the_tail() -> None:
-    """A microwave square pulse with a Stark shift through a 100 MHz amplifier (tau = 1.6 ns): the played shift rises as the
-    intensity (Omega_played/Omega)^2 (power 2 for a microwave drive) and decays as e^{-2t/tau} through the tail, instead of
-    staying at the programmed value while the field is gone; with an infinite bandwidth the shift is the programmed one times
-    the amplitude word's rounding, a callable envelope is not resampled, and a constant shift on a shaped pulse is read as
-    the shift at the peak and follows the intensity."""
+    """Through a 100 MHz amplifier the played Stark shift follows the intensity (Omega_played/Omega)^2 through the rise and
+    decays as e^{-2t/tau} in the tail (to 1e-3); an infinite bandwidth keeps the programmed shift, and a shaped envelope is
+    quantized in place with its shift following the intensity."""
     hw = dataclasses.replace(REALISTIC_HARDWARE, aom_rise_s=0.0)
     tau = hw.response_time_s("microwave")
     stark, rabi, t_end = 250.0, 50e3, 1e-6

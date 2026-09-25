@@ -24,7 +24,7 @@ from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.trap.surface import Electrodes, five_wire_null_height_m
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
-from tests.fixtures import KX, single_ion_raman_device, two_ion_device
+from tests.fixtures import KX, chain_device, single_ion_raman_device
 
 K_369 = TWO_PI / 369.5e-9
 
@@ -105,8 +105,8 @@ def test_explicit_path_needs_the_rf_frequency_for_mathieu_parameters() -> None:
 
 
 def test_mixed_species_on_the_explicit_path_scale_with_the_mathieu_parameters() -> None:
-    """omega_z ~ 1/sqrt m exactly; the lighter ion's radial frequencies are higher and follow beta(a m_ref/m, q m_ref/m).
-    171Yb+ at q = 0.28 would put a 40Ca+ neighbour at q = 1.2, outside the stability region."""
+    """On the explicit path omega_z scales as 1/sqrt m and the lighter ion's radial frequencies follow beta(a m_ref/m,
+    q m_ref/m) to 1e-9; a 40Ca+ neighbour of 171Yb+ at q = 0.28 (so q = 1.2) is refused as unstable."""
     sr, ca, yb = species("88Sr+"), species("40Ca+"), species("171Yb+")
     with pytest.raises(ValueError, match="rf frequency"):
         secular_trap().single_ion_frequencies_rad_s((yb, ca))
@@ -152,8 +152,8 @@ def test_rod_trap_path_follows_berkeland_and_the_phase_imbalance_term() -> None:
 
 
 def test_a_rod_or_blade_trap_refuses_shim_voltages_it_cannot_turn_into_a_field() -> None:
-    """Berkeland's rod map has no shim -> field response, so a non-zero shim is refused rather than dropped; an explicitly
-    zero shim is a record of nothing applied."""
+    """A rod trap refuses any non-zero shim voltage (no shim -> field map) and accepts an explicitly zero one, the residual
+    field then being the stray field."""
     rod = dataclasses.replace(_rod(), stray_field_v_per_m=(5.0, 0.0, 0.0))
     for shims in ({"shim_x": 3.0}, {"endcaps": 1.0}, {"shim_x": -1e-9}):
         with pytest.raises(ValueError, match="no electrode model to convert shim voltages into fields"):
@@ -165,8 +165,8 @@ def test_a_rod_or_blade_trap_refuses_shim_voltages_it_cannot_turn_into_a_field()
 
 
 def test_surface_trap_path_end_to_end_with_88sr() -> None:
-    """House's five-wire rails with an external axial curvature: Mathieu parameters, a two-ion chain at the null, and a shim
-    whose field at the null drives a signed in-phase index that a matching stray field compensates."""
+    """On House's five-wire rails q matches House's Q11 (1e-6), a two-ion 88Sr+ chain sits collinear at the rf null, and a
+    shim's field drives a signed in-phase index that a matching stray field cancels (1e-12)."""
     sr = species("88Sr+")
     m = sr.mass_u * ATOMIC_MASS_KG
     trap = _house_surface(m, shim_voltages_v={"left": 0.0, "right": 0.0})
@@ -198,8 +198,8 @@ def test_surface_trap_path_end_to_end_with_88sr() -> None:
 
 
 def test_the_in_phase_amplitude_is_minus_half_q_u0_against_the_pseudopotential_spring() -> None:
-    """u_1 = -(1/2) q u_0 with u_0 = Q E/(m (Omega/2)^2 (a + q^2/2)): a contraction at the rf phase origin, so
-    sign(u_1 . x) = -sign(q_x E_x), odd in the field."""
+    """u_1 = -(1/2) q u_0 with u_0 = Q E/(m (Omega/2)^2 (a + q^2/2)) to 1e-9, negative for q_x E_x > 0 and odd in the
+    field."""
     yb = species("171Yb+")
     p = _yb_trap(1.0).mathieu(yb)
     q_x = float(p.q[0, 0])
@@ -213,7 +213,8 @@ def test_the_in_phase_amplitude_is_minus_half_q_u0_against_the_pseudopotential_s
 
 
 def test_trap_micromotion_beta_scales_with_stray_field_and_wavevector() -> None:
-    """Berkeland's 0.034 at 1 V/m and 369.5 nm (the magnitude; the index is SIGNED, stepping by pi across zero field)."""
+    """The signed index -k (q/2) u_0 (1e-9) has Berkeland's magnitude 0.034 at 1 V/m and 369.5 nm (10 %), linear in the
+    field and the wavevector, zero along z and odd in the field."""
     yb = species("171Yb+")
     p = _yb_trap(1.0).mathieu(yb)
     assert p.q[0, 0] == pytest.approx(0.28, abs=0.02), "q_x = 2 sqrt 2 omega_x/Omega ~ 0.28"
@@ -238,8 +239,8 @@ def test_trap_micromotion_beta_scales_with_stray_field_and_wavevector() -> None:
 
 
 def test_the_modulation_index_is_signed_and_its_quadrature_pair_reproduces_both_terms() -> None:
-    """beta = delta_k . u_1, not its modulus; ``as_modulation`` turns (ip, op) into (beta, offset) with
-    beta cos(theta + offset) = ip cos(theta) + op sin(theta)."""
+    """beta = delta_k . u_1 is signed, and ``as_modulation`` turns (ip, op) into (beta, offset) with
+    beta cos(theta + offset) = ip cos(theta) + op sin(theta) to 1e-12."""
     yb = species("171Yb+")
     dk = np.array([K_369, 0.0, 0.0])
     plus = _yb_trap(1.0).micromotion_beta(yb, dk)
@@ -257,8 +258,8 @@ def test_the_modulation_index_is_signed_and_its_quadrature_pair_reproduces_both_
 
 
 def test_micromotion_index_refuses_a_missing_geometry_instead_of_reporting_beta_zero() -> None:
-    """beta = 0 means no micromotion, not an unavailable number: an rf phase imbalance without the rod factors, or a rod
-    record whose dc voltages the map cannot read, raises; a trap with no rf record is the legitimately zero case."""
+    """An rf phase imbalance without the rod factors, or rod dc voltages the map cannot read, raises rather than reporting
+    beta = 0; no rf record, or no wavevector, gives zero."""
     base = single_ion_raman_device(
         rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0)
     )
@@ -292,8 +293,8 @@ def test_micromotion_index_refuses_a_missing_geometry_instead_of_reporting_beta_
 
 
 def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_the_compensating_shim() -> None:
-    """The first micromotion sideband of the exact modulated drive steps by pi as the residual field crosses zero: its
-    weight in e^{i beta cos(Omega_rf t + delta)} is 2 i J_1(beta) e^{i delta}/J_0, odd in the signed index."""
+    """The modulated drive's first micromotion-sideband weight flips sign across the compensating field (5e-3), vanishes at
+    zero field and equals 2 i J_1(beta) e^{i delta}/J_0(beta) up to complex conjugation (5e-3)."""
     base = single_ion_raman_device(
         rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0)
     )
@@ -346,15 +347,15 @@ def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_th
 
 
 def _surface_device(stray_x: float = 0.0):  # type: ignore[no-untyped-def]
-    base = two_ion_device()
+    base = chain_device(2)
     mass = base.crystal.species[0].mass_u * ATOMIC_MASS_KG
     trap = _house_surface(mass, stray_field_v_per_m=(stray_x, 0.0, 0.0))
     return dataclasses.replace(base, trap=trap, crystal=solve_crystal(trap, base.crystal.species))
 
 
 def test_surface_device_reports_its_ion_height_and_trap_depth() -> None:
-    """House's y0 = 92.195445 um and the depth 0.184465 eV at 1.46e-25 kg scaled as 1/m; no height or depth without an
-    electrode plane."""
+    """The surface device reports House's height 92.195445 um (1e-6 um) and depth 0.184465 eV at 1.46e-25 kg scaled as 1/m
+    (1e-5); a device without an electrode plane reports neither."""
     dev = _surface_device()
     d = dev.derived()
     assert set(d.values) == set(d.provenance)
@@ -363,14 +364,14 @@ def test_surface_device_reports_its_ion_height_and_trap_depth() -> None:
     mass = dev.crystal.species[0].mass_u * ATOMIC_MASS_KG
     assert d.values["trap_depth_ev"] == pytest.approx(0.184465 * 1.46e-25 / mass, rel=1e-5)
     assert d.provenance["ion_height_m"] == d.provenance["trap_depth_ev"] == "conv.surface_electrode_geometry"
-    plain = two_ion_device().derived()
+    plain = chain_device(2).derived()
     assert "ion_height_m" not in plain.values and "trap_depth_ev" not in plain.values
 
 
 def test_second_order_doppler_and_the_pseudopotential_error_estimate() -> None:
-    """<Delta nu/nu> = -<v^2>/(2 c^2) of the excess micromotion and |u_1|/s, the small parameter of the pseudopotential
-    modes; exactly zero on the rf null, and unavailable without an rf record."""
-    base = two_ion_device()
+    """``derived()`` reports <Delta nu/nu> = -<v^2>/(2 c^2) of the excess micromotion and |u_1|/s (1e-12), zero on the rf
+    null and absent without an rf record."""
+    base = chain_device(2)
     trap = dataclasses.replace(
         base.trap, rf=RfDrive(voltage_peak_v=200.0, frequency_hz=30e6), stray_field_v_per_m=(20.0, 0.0, 0.0)
     )
@@ -388,7 +389,7 @@ def test_second_order_doppler_and_the_pseudopotential_error_estimate() -> None:
     assert d.values["pseudopotential_error"] == pytest.approx(float(np.linalg.norm(u1)) / spacing, rel=1e-12)
     assert 0.0 < d.values["pseudopotential_error"] < 1e-2
     assert _surface_device().derived().values["pseudopotential_error"] == 0.0
-    plain = two_ion_device().derived()
+    plain = chain_device(2).derived()
     assert not any(k.startswith("second_order_doppler") for k in plain.values)
     assert "pseudopotential_error" not in plain.values
     assert any("need the rf record" in n for n in plain.notes)
@@ -397,7 +398,7 @@ def test_second_order_doppler_and_the_pseudopotential_error_estimate() -> None:
 def test_the_pseudopotential_error_grows_linearly_with_the_stray_field() -> None:
     values = []
     for stray in (10.0, 20.0, 40.0):
-        base = two_ion_device()
+        base = chain_device(2)
         trap = dataclasses.replace(
             base.trap,
             rf=RfDrive(voltage_peak_v=200.0, frequency_hz=30e6),

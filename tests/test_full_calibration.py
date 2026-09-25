@@ -1,10 +1,6 @@
-"""The calibration by simulated experiments (PLAN.md Section 7.5). End to end, ``calibrate(method="experiments")`` on the
-two-ion 171Yb+ fixture with reduced scans follows the dependency graph, replaces every seed by a calibrated entry that agrees
-with the device's true derived value within the uncertainty the fit reports, stores the entangling waveform at its closure
-amplitude with aligned phases, and a Bell circuit run from that table reaches the fidelity the noise model predicts. Then the
-parts: the Stark scan's fringe branch and aliasing guard, the refusal cascade of an uncalibrated upstream entry, the
-programmed micromotion shims, the entangling scans' frame and mode beliefs, every accepted experiment name, a device with no
-entangling drive, the heating experiment, and the run-level over-rotation of a miscalibrated Rabi entry."""
+"""The calibration by simulated experiments (PLAN.md Section 7.5): the end-to-end table on the two-ion 171Yb+ chain against the
+derived truth and the Bell fidelity it reaches, and the parts (the Stark scan's guards, the refusal cascade, the micromotion
+shims, the entangling scans' beliefs, the experiment names, the heating experiment and a miscalibrated Rabi entry)."""
 
 from __future__ import annotations
 
@@ -85,8 +81,8 @@ def calibrated():  # type: ignore[no-untyped-def]
 
 
 SIGMA = 2.0
-"""'Within the uncertainty the fits report', in units of the entry's own sigma: with the fixture's seeds the field, the qubit
-frequencies, the modes, the occupations, the Rabi frequencies and the crosstalk ratios land at or below 0.77 sigma."""
+"""The agreement bound in units of each entry's own sigma (at seed 11 the field, qubit frequencies, modes, occupations, Rabi
+frequencies and crosstalk ratios land at or below 0.77 sigma)."""
 
 SIGMA_STARK = 2.5
 """The light shift at seed 11: ion 0 realizes 2.00 sigma (-44.306 +- 4.92 Hz against the derived -54.1445) and ion 1 0.74
@@ -96,7 +92,8 @@ sigma, with opposite signs, so it is scatter and not a bias."""
 @pytest.mark.slow
 @pytest.mark.timeout(3600)
 def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncertainty(calibrated) -> None:  # type: ignore[no-untyped-def]
-    """Calibrated parameters agree with the device's true derived parameters within the uncertainty the fits report."""
+    """Every calibrated entry agrees with the device's derived value within SIGMA of its reported uncertainty (SIGMA_STARK for
+    the light shifts), the waveform closes at chi = pi/4 to 1e-9 and the heating entries stay zero seeds on the quiet device."""
     fx, report = calibrated
     t = report.table
     dev = fx.device
@@ -182,10 +179,8 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
 
 @pytest.mark.slow
 def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity(calibrated) -> None:  # type: ignore[no-untyped-def]
-    """Gates built from calibrations reach the fidelity the noise model predicts. The scheduler reads the fitted table
-    (frame, pi times, compensated shifts, the waveform at its closure amplitude and aligned phases), the ions see the device through
-    the played chain; the register infidelity lies inside the intrinsic budget plus the calibration's own contribution, and the
-    histogram agrees with the surrogate-table run within statistics."""
+    """A Bell circuit from the calibrated table has 1 - F inside the intrinsic budget plus the fits' own over-rotation and frame
+    terms, above the surrogate table's and within 5e-3 of it, with P_00 + P_11 > 0.98."""
     fx, report = calibrated
     kw = dict(
         keep_final_state=True,
@@ -294,9 +289,8 @@ def _exact_fringe(shift_hz: float):  # type: ignore[no-untyped-def]
 def test_stark_scan_resolves_the_fringe_branch_with_two_probe_signs(
     two_ion, monkeypatch, shift_hz, ok
 ) -> None:  # type: ignore[no-untyped-def]
-    """The Ramsey fit returns |probe - delta|, so ONE probe sign loses the sign of (delta - probe). Two probe signs give
-    delta = (f_minus - f_plus)/2, exact while |delta| < probe, and the sum f_plus + f_minus = 2 probe detects the out-of-range
-    case."""
+    """Two probe signs recover the light shift delta = (f_minus - f_plus)/2 to 1e-9 while |delta| < probe, and a shift beyond the
+    probe saturates at it and is reported."""
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(shift_hz))
     probe = 1e3
@@ -317,9 +311,8 @@ def test_stark_scan_resolves_the_fringe_branch_with_two_probe_signs(
 
 
 def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two_ion, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The delay grid aliases the per-beam fringe at probe + |delta| when the step is too coarse: five delays over 2 ms
-    resolve 1 kHz at best, so a 1 kHz probe with any non-zero shift is refused, and nine delays over the same span accept
-    it."""
+    """Five delays over 2 ms cannot resolve the probe + |delta| fringe of a 1 kHz probe and are refused as above Nyquist, nine
+    are accepted, and both return the same shift."""
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
     kw = dict(probe_hz=1e3, shots=None)
@@ -333,7 +326,8 @@ def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two
 
 
 def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """``stark_scan``'s own ``mode`` switch is not forwarded to the Ramsey setup, which reads ``mode`` as a mode INDEX."""
+    """``stark_scan(mode="beat_note")`` runs without forwarding its ``mode`` to the Ramsey setup (which reads ``mode`` as a mode
+    index), and an unknown mode is refused."""
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
     res = stark_scan(
@@ -350,9 +344,8 @@ def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion,
 def test_a_refused_experiment_marks_its_own_entries_uncalibrated_and_the_schedule_then_refuses(
     two_ion,
 ) -> None:  # type: ignore[no-untyped-def]
-    """An entry the calibration could not establish is uncalibrated and refuses to schedule. An uncalibrated
-    field refuses the micromotion, mode, Rabi, Stark and Ramsey fits in turn; each marks the entry groups it would have
-    written, and the uncalibrated Rabi entry then makes ``schedule()`` raise."""
+    """An uncalibrated field refuses the micromotion, mode, Rabi, Stark and Ramsey fits, each marks the entry groups it would
+    have written uncalibrated, and ``schedule()`` then refuses the table."""
     fx, sur = two_ion
     bad_field = dataclasses.replace(
         sur.table,
@@ -401,8 +394,7 @@ def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated
 
 
 def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """``qubit_shifts_hz`` is the only channel by which the table's frequency error reaches the physics, so an uncalibrated
-    qubit frequency refuses the run instead of putting the frame on the true transition."""
+    """A run on a table whose qubit frequency is uncalibrated is refused rather than put the frame on the true transition."""
     fx, sur = two_ion
     bad = dataclasses.replace(
         sur.table,
@@ -433,8 +425,8 @@ def _rf_two_ion(stray_x_v_per_m: float):  # type: ignore[no-untyped-def]
 
 
 def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The closed loop: a ``calibrated`` shim reaches the device the run evolves (``device_with_compensation`` re-solves the
-    crystal), a ``seed`` one does not (it is the device's own setting) and an ``uncalibrated`` one is reported."""
+    """A calibrated shim reaches the device the run evolves (the compensated residual beta < 1e-9), a seed one does not and an
+    uncalibrated one is reported."""
     fx, dev = _rf_two_ion(20.0)
     dk = np.asarray(derive_raman_drive(dev, 0, fx.gate_drives[0].beams, scattering=False).delta_k)
     beta_uncompensated = signed_beta(dev, 0, dk)
@@ -468,9 +460,8 @@ def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two
 
 @pytest.mark.slow
 def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_growing_residual() -> None:
-    """Calibrate the shims at t0 = 0 against one stray field, then run an hour later on a trap whose stray field has
-    drifted: the compensation the table still carries no longer nulls the field, the residual beta grows from the
-    calibration's own to the drift's, and the gate error grows with it."""
+    """Shims nulled against a 20 V/m stray field leave, at 35 V/m, the residual beta of the 15 V/m drift (to 5 %), more than ten
+    times the fresh residual, and a carrier loss that grows with it."""
     fx, at_t0 = _rf_two_ion(20.0)
     # an hour of stray-field drift: the trap the run evolves is not the one the shims were nulled on
     drifted = dataclasses.replace(
@@ -499,8 +490,8 @@ def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_
 
 
 def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_discard(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """A supplied ``modes`` together with ``mode_frequencies_hz`` is refused rather than one of them dropped, and the
-    frequencies the table believes reach the GateModes the entangling scans build."""
+    """Supplying both ``modes`` and ``mode_frequencies_hz`` is refused, and the table's mode frequencies reach the GateModes the
+    entangling scans build (to 1e-12)."""
     fx, sur = two_ion
     beams = fx.entangling_drives[0].beams
     modes = gate_modes(fx.device, (0, 1), (beams[0], beams[1]), nbar={})
@@ -526,16 +517,8 @@ def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_d
 
 @pytest.mark.slow
 def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_frame_phase(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The frame error the table's qubit frequency leaves is a sigma_z rotation at 2 pi delta_f, so the entangling axis the
-    phase scan measures rotates during the gate and the correction it writes moves with it.
-
-    The reported offset is in spin-phase units - the spin-phase offset that would give the same parity fringe shift - so the
-    coefficient is not 2 pi delta_f t_gate itself: a drift that grows across the pulse shifts the fringe by less than a
-    constant spin-phase offset of its final size, and the measured factor is 0.611 t_gate on this five-segment AM waveform
-    (which the amplitude-weighted time of its segments and the analysis pulse's own timing set; not derived here). What IS a
-    physics statement and is asserted: the shift is LINEAR in the frequency error, of the order of 2 pi delta_f t_gate, and
-    lands on the shifted ion alone, because the per-ion corrections are the half-sum and half-difference of the |00> and
-    |01> scans' offsets."""
+    """A 1 kHz qubit-frequency error on ion 0 moves the phase scan's ion-0 correction by 0.4 to 0.8 of 2 pi delta_f t_gate
+    (twice the error, twice the shift to 5 %) and the ion-1 correction by less than 5 % of that."""
     fx, sur = two_ion
     wf = sur.table.waveform_for((0, 1))
     assert wf is not None
@@ -565,16 +548,14 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
 # ---- every accepted experiment name runs something ------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reason(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Every accepted name (``ORDER`` and its ``ALIASES``) leaves one of three traces: a result, a refusal with its upstream
-    reason, or a note saying why the scan does not exist on this device (``heating_rate`` on the quiet fixture, whose
-    10/ndot delay span is unbounded at ndot = 0)."""
+    """Every accepted name (``ORDER`` and ``ALIASES``) leaves a result, a refusal with its upstream reason, or a note saying why
+    the scan does not exist on the device."""
     fx, sur = two_ion
-    # the point of this test is that a NAME leaves a trace, not that the physics is right, so the entries that gate the
-    # expensive scans are left uncalibrated and the rest of the scans are as small as they go: the field refuses the
-    # micromotion, mode, Rabi, Stark and Ramsey fits, and the light shift refuses the entangling ones. What is left running
-    # is the crosstalk scan (reduced to four durations and three phases), crystal_image, field_scan, detection_histogram and
-    # heating_rate, which is the name that reaches the third outcome.
+    # a NAME must leave a trace, so the entries that gate the expensive scans are uncalibrated and the other scans minimal: the
+    # field refuses the micromotion, mode, Rabi, Stark and Ramsey fits and the light shift the entangling ones, leaving the
+    # crosstalk scan, crystal_image, field_scan, detection_histogram and heating_rate (the note: no scan at ndot = 0)
     blocked = dataclasses.replace(
         sur.table,
         field=dataclasses.replace(sur.table.field, status="uncalibrated"),
@@ -606,8 +587,8 @@ def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reaso
 
 
 def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """A device with no entangling drive (the 40Ca+ single-qubit preset) gets no entangling seed and no waveform and still
-    runs, and a chain whose entangling drives are a subset seeds only those."""
+    """The 40Ca+ preset, with no entangling drive, gets no entangling seed or waveform and still runs, and a chain whose
+    entangling drive covers one ion seeds only that one."""
     preset = ca40_optical()
     assert preset.entangling_drives == {}, "the 40Ca+ optical preset carries no entangling pair"
     sur = surrogate_table(preset.device, detection_records=200, detection_windows_s=(20e-6,))
@@ -635,9 +616,8 @@ def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:
 
 @pytest.mark.slow
 def test_the_heating_experiment_runs_end_to_end_on_a_device_with_electric_field_noise() -> None:
-    """With a non-zero S_E the heating scan runs and the entry is a measurement with an uncertainty; the seed its span
-    10/ndot is taken from is the rate the noise model heats at (the white level included). Exact populations, so the
-    agreement is asserted relatively."""
+    """With a non-zero S_E the heating scan's seed carries the white level and every calibrated heating entry equals the noise
+    model's rate to 3 %."""
     fx = yb171_chain(2)
     noisy = dataclasses.replace(
         fx.device,
@@ -672,9 +652,8 @@ def test_the_heating_experiment_runs_end_to_end_on_a_device_with_electric_field_
 
 
 def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The played chain at the run level: a table whose Rabi belief is 5 % HIGH schedules a GPi 1/1.05 too short, the ion
-    sees Omega_phys = Omega_req x Omega_derived/Omega_table = Omega_req/1.05, and the achieved rotation is pi/1.05, so the
-    excited population misses by cos^2(pi/2/1.05) = 5.58e-3."""
+    """A table whose Rabi entry is 5 % high shortens the GPi by 1/1.05 (to 1e-12), and the run's loss lies within 0.8 to 2
+    times cos^2(pi/2/1.05) = 5.58e-3."""
     fx, sur = two_ion
     key = (0, fx.gate_drives[0].table_key_beam)
     high = dataclasses.replace(

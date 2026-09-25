@@ -1,7 +1,5 @@
-"""The readout POVM and the measurement (PLAN.md Section 5.7): the product form equals the full record path at
-zero crosstalk, the register-wide confusion carries a bounded, reported discrepancy at configured crosstalk, the rows are
-indexed by level with the transfer channel folded in once, correlations survive both paths, and the record seeds are
-keyed by shot."""
+"""The readout POVM and the measurement (PLAN.md Section 5.7): the product and register-wide forms against the full
+record path, rows indexed by level with the transfer folded in once, correlations on both paths and records keyed by shot."""
 
 from __future__ import annotations
 
@@ -99,8 +97,8 @@ def test_product_povm_is_exact_for_the_threshold_discriminator_and_sums_to_ident
 
 
 def test_imperfect_shelving_transfer_makes_pi_dark_non_rank_one_in_the_povm() -> None:
-    """Harty-like transfer (1.7e-4 of the shelved level stays bright, 3e-4 of the other shelves off-resonantly) enters the
-    POVM through the start distribution: the dark-outcome element is a mixture, not a projector."""
+    """A Harty-like transfer (1.7e-4 of the shelved level stays bright, 3e-4 of the other shelves) adds those errors to
+    the POVM rows (2 %)."""
     rm = myerson_record_model()
     ideal = ReadoutScheme.shelving(1)
     imperfect = ReadoutScheme.shelving(1, transfer_probability=1.0 - 1.7e-4, off_resonant_shelving=3e-4)
@@ -129,8 +127,8 @@ def test_per_ion_confusion_rows_are_indexed_by_level_with_the_transfer_folded_in
 
 
 def test_full_and_fast_paths_agree_in_confusion_at_zero_crosstalk_and_bell_correlations_survive() -> None:
-    """The record path and the POVM path give the same per-ion confusion within statistics, and the Bell state's bit
-    correlations survive both because the joint outcome is sampled projectively first."""
+    """Full and fast paths share the seeded projective outcome, keep the Bell correlations (> 0.995) and match the POVM's
+    per-ion confusion within 4 sigma + 5e-4."""
     rm = crain_record_model()
     space = register_space(2)
     state = space.initial_state(bell_state(2))
@@ -161,8 +159,8 @@ def test_full_and_fast_paths_agree_in_confusion_at_zero_crosstalk_and_bell_corre
 
 
 def test_fast_and_full_paths_agree_on_an_imperfect_transfer_scheme() -> None:
-    """Where the start class and the qubit level do not coincide the fast path must index the POVM by level and sample no
-    start class of its own; both paths then agree with the POVM (applying the transfer twice would give 0.193, not 0.100)."""
+    """With a 10 % transfer failure both paths reproduce the level-indexed POVM within 4 sigma and P(bright | shelved) stays
+    below 0.13 (a doubly applied transfer gives 0.193)."""
     rm = myerson_record_model()
     scheme = ReadoutScheme.shelving(1, transfer_probability=TRANSFER)
     space = register_space(1)
@@ -188,9 +186,8 @@ def test_fast_and_full_paths_agree_on_an_imperfect_transfer_scheme() -> None:
 
 
 def test_register_confusion_at_configured_crosstalk_is_bounded_and_reported() -> None:
-    """At 4.0 % nearest-neighbour leakage a dark ion beside a bright one collects 0.42 counts in 22 us: the zero-threshold
-    protocol misreads it 34 % of the time, so the product POVM (blind to the neighbour) and the register-wide confusion
-    differ by that bounded, reported amount, while the full record path agrees with the register form."""
+    """At 4 % neighbour leakage a dark ion beside a bright one reads bright 34 % of the time: the register-wide confusion
+    differs from the product POVM by 0.3 to 0.4, both paths reproduce it to 0.03 and a Bell state keeps its correlations."""
     rm = crain_record_model()
     schemes = [YB_DIRECT, YB_DIRECT]
     product = povm_for([rm, rm], schemes, THRESHOLD)
@@ -225,8 +222,8 @@ def test_register_confusion_at_configured_crosstalk_is_bounded_and_reported() ->
 
 
 def test_register_confusion_indexes_the_ions_own_axis_by_level_and_its_neighbours_by_class() -> None:
-    """The ion's own axis carries its level (the transfer inside the table), a neighbour's axis its start class; the fast
-    path then agrees with the full record path on the imperfect-transfer scheme too."""
+    """The register table indexes an ion's own axis by level and a neighbour's by start class, and the fast path matches the
+    full path (5 sigma + 2e-3) on the imperfect-transfer scheme."""
     rm = myerson_record_model()
     scheme = ReadoutScheme.shelving(1, transfer_probability=TRANSFER)
     schemes = [scheme, scheme]
@@ -299,8 +296,8 @@ def test_povm_invariants() -> None:
 
 
 def test_two_shots_on_one_sample_and_trajectory_draw_different_records() -> None:
-    """The shot slot in the seed key gives two shots on one (sample, trajectory) independent photon records, and a run is
-    reproducible shot by shot."""
+    """The shot slot in the seed key draws different records for different shots, the same seeds reproduce them, and
+    ``first_shot`` moves the stream."""
     rm = crain_record_model(window_s=200e-6)
     space = register_space(1)
     state = space.initial_state(product_state((1,)))
@@ -333,7 +330,8 @@ def test_measure_with_a_time_resolved_discriminator_reports_posteriors_and_the_s
 
 
 def test_leakage_levels_are_read_out_by_their_class() -> None:
-    """A qutrit whose third level is bright (a leaked F = 1 sublevel of 171Yb+) reads as the bright bit on both paths."""
+    """A qutrit whose third level is bright (a leaked F = 1 sublevel of 171Yb+) reads the bright bit in over 99 % of the
+    shots on both paths."""
     rm = crain_record_model()
     scheme = ReadoutScheme.direct(1, leak_classes=("bright",))
     space = HilbertSpace((3,), (), None, ())
@@ -346,8 +344,8 @@ def test_leakage_levels_are_read_out_by_their_class() -> None:
 
 
 def test_a_leak_level_gets_its_own_povm_row_rather_than_a_qubit_levels_start_class() -> None:
-    """A third level that is a leaked D sublevel read "dark" goes through its own start distribution (R_b pumping), not
-    through the qubit level that shares a class with it (the shelf's 1/tau_D decay)."""
+    """A leaked D sublevel read "dark" gets its own POVM row from the R_b-pumping start distribution (1e-12), not the
+    shelf's, and reads dark in over 99 % of the fast-path shots."""
     rm = myerson_record_model()
     scheme = ReadoutScheme.shelving(1, transfer_probability=TRANSFER, leak_classes=("dark",))
     assert scheme.n_levels == 3 and scheme.classes == ("bright", "shelf", "dark")

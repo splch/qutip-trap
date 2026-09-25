@@ -1,7 +1,5 @@
-"""Doppler cooling at level A: per-mode nbar_D from the rate framework with the configured angular factor, one detuning
-per beam over the whole mode set, the uncooled-mode guard, the multi-ion participation weights, the force-model
-cross-check, the validity conditions (Lamb-Dicke, adiabatic elimination, Gamma > omega_R) and the Monroe and 40Ca+
-anchors."""
+"""Doppler cooling at level A: per-mode nbar_D from the rate framework, the uncooled-mode guard, multi-ion
+participation, the force-model cross-check, the validity conditions and the Monroe 1995 and 40Ca+ anchors."""
 
 from __future__ import annotations
 
@@ -10,7 +8,7 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.device.presets import OBLIQUE
+from qutip_trap.device.presets import OBLIQUE, secular_trap
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import CoolingError, beam_for_transition
@@ -38,7 +36,6 @@ from qutip_trap.species import species
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
-from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, ELECTRON_MASS_U, TWO_PI
 from tests.fixtures import (
     MASS_KG,
@@ -51,18 +48,6 @@ from tests.fixtures import (
     structure,
     two_level_atom,
 )
-
-
-def trap_for(freqs_hz: tuple[float, float, float]) -> Trap:
-    return Trap(
-        omega_hz=freqs_hz,
-        axis_angle_rad=0.0,
-        rf=None,
-        dc=None,
-        geometry=None,
-        stray_field_v_per_m=(0.0, 0.0, 0.0),
-        shim_voltages_v={},
-    )
 
 
 def sigma_plus_along(
@@ -81,13 +66,12 @@ def sigma_plus_along(
 def test_doppler_stage_reproduces_the_rate_framework_limit_on_every_mode_and_the_force_model_cross_check() -> (
     None
 ):
-    """One sigma+ beam along B = (1,1,1)/sqrt3 sees all three modes at cos^2 = 1/3 with alpha(chi) = 1/3:
-    nbar_D = (Gamma/4 nu)(1 + alpha/cos^2) - 1/2 to 0.5 % at nu = Gamma/20, and the force model, valid there, agrees to
-    1e-6."""
+    """One sigma+ beam along B = (1,1,1)/sqrt3 cools every mode to (Gamma/4 nu)(1 + alpha/cos^2) - 1/2 with cos^2 = 1/3
+    (3 %), the nu = Gamma/20 axial mode to 9.5 (6e-3) where the force model gives 9.5 to 1e-5."""
     sp = two_level_atom()
     g = gamma_rad_s()
     nu = 0.05 * g
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, nu / TWO_PI)), (sp,))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, nu / TWO_PI)), (sp,))
     st = structure(sp, b_hat=OBLIQUE)
     beam = sigma_plus_along(st, OBLIQUE, 0.05 * g, -0.5 * g)
     res = doppler_cooling(st, [beam], crystal)
@@ -109,7 +93,7 @@ def test_doppler_stage_reproduces_the_rate_framework_limit_on_every_mode_and_the
 def test_a_mode_no_cooling_beam_addresses_raises_instead_of_returning_a_steady_state() -> None:
     sp = two_level_atom()
     g = gamma_rad_s()
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
     st = structure(sp)
     beam = sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * g, -0.5 * g)  # along z = B
     with pytest.raises(UncooledModeError):
@@ -120,11 +104,11 @@ def test_a_mode_no_cooling_beam_addresses_raises_instead_of_returning_a_steady_s
 
 
 def test_one_beam_along_one_axis_leaves_the_transverse_occupations_growing_linearly() -> None:
-    """The transverse modes get no friction from a beam along z (no force spectrum to take) but still take the emission
-    recoil, so heating and cooling are both 2D: W_m = 0, no steady state, and <n_m>(t) = n_0 + 2D t grows linearly."""
+    """A beam along z gives the transverse modes no projection and heating and cooling rates both equal to the recoil 2D
+    (1e-15), so W = 0 and their nbar is refused, while the axial mode cools."""
     sp = two_level_atom()
     g = gamma_rad_s()
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
     st = structure(sp)
     beam = sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * g, -0.5 * g)  # along z = B
     models = models_per_ion(st, [beam], crystal, (0,))
@@ -146,11 +130,11 @@ def test_one_beam_along_one_axis_leaves_the_transverse_occupations_growing_linea
 
 
 def test_optimum_detuning_of_a_low_frequency_mode_is_minus_half_the_linewidth() -> None:
-    """With all the weight on the nu = Gamma/20 mode the optimum detuning sits at -(Gamma/2) sqrt(1 + s) (RMP Eq. 106)
-    within the search tolerance."""
+    """With all the weight on the nu = Gamma/20 mode the optimum detuning is -(Gamma/2) sqrt(1 + s) (RMP Eq. 106) to
+    0.02 Gamma, and a heating configuration inside the bounds is skipped."""
     sp = two_level_atom()
     g = gamma_rad_s()
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
     st = structure(sp, b_hat=OBLIQUE)
     beams = [sigma_plus_along(st, OBLIQUE, 0.05 * g, -0.5 * g)]
 
@@ -167,11 +151,11 @@ def test_optimum_detuning_of_a_low_frequency_mode_is_minus_half_the_linewidth() 
 
 
 def test_two_ion_chain_participation_weights_scale_the_rates_and_leave_nbar_unchanged() -> None:
-    """W_k = sum_{i illuminated} c_{i,k}^2 (...): illuminating one ion of a two-ion chain halves every COM rate against
-    illuminating both, while nbar is identical (the participation cancels between eta~ and eta)."""
+    """Illuminating one ion of a two-ion chain halves every mode's rate (participation 0.5 against 1, to 1e-6) and
+    leaves nbar unchanged, and the COM matches the single ion to 1e-5."""
     sp = two_level_atom()
     g = gamma_rad_s()
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp, sp))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp, sp))
     st = structure(sp, b_hat=OBLIQUE)
     beam = sigma_plus_along(
         st, OBLIQUE, 0.05 * g, -0.5 * g, waist_m=2e-3
@@ -185,7 +169,7 @@ def test_two_ion_chain_participation_weights_scale_the_rates_and_leave_nbar_unch
         assert m_both.rate_per_s == pytest.approx(2.0 * m_one.rate_per_s, rel=1e-6)
         assert m_both.nbar == pytest.approx(m_one.nbar, rel=1e-6)
     com = crystal.mode_index("axial", 0)
-    single = solve_crystal(trap_for((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
+    single = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.05 * g / TWO_PI)), (sp,))
     solo = doppler_cooling(st, [beam], single)
     assert both.mode(com).nbar == pytest.approx(solo.mode(0).nbar, rel=1e-5)
     assert both.mode(com).rate_per_s == pytest.approx(solo.mode(0).rate_per_s, rel=1e-5)  # 2.7 um off axis
@@ -198,10 +182,9 @@ def test_two_ion_chain_participation_weights_scale_the_rates_and_leave_nbar_unch
 
 
 def test_monroe_1995_theory_value_is_the_force_model_with_isotropic_emission_at_minus_30_mhz() -> None:
-    """Monroe's 'theoretical 0.484' for the 11.2 MHz mode at Gamma/2pi = 19.4 MHz and Delta = -30 MHz is the force model
-    with alpha = 1/3 and cos^2 = 1 minus the zero point, although nu/Gamma = 0.58 is outside that model's regime; the rate
-    framework gives 0.573 (sigma pattern along B) or 0.533 (alpha = 1/3) for a weak beam along the mode, against the
-    measured 0.47(5)."""
+    """Monroe 1995's theoretical 0.484 for the 11.2 MHz mode at Delta = -30 MHz is the alpha = 1/3 force model (3e-3);
+    the rate framework gives 0.573 (alpha = 0.4) and 0.533 (alpha = 1/3), and 0.211 and 0.065 on the 18.2 and 29.8 MHz
+    modes."""
     g = TWO_PI * 19.4e6
     nu = TWO_PI * 11.2e6
     assert doppler_force_nbar(g, -TWO_PI * 30e6, 0.0, nu, 1.0 / 3.0) == pytest.approx(0.484, abs=0.003)
@@ -210,7 +193,7 @@ def test_monroe_1995_theory_value_is_the_force_model_with_isotropic_emission_at_
     assert stenholm_coefficients(0.01 * g, g, nu, -TWO_PI * 30e6, 1.0 / 3.0).nbar == pytest.approx(
         0.533, abs=0.002
     )
-    # the other two modes for a beam along each: 0.211 and 0.065 against the measured 0.30 and 0.18
+    # the other two modes, each under a beam along it (measured 0.30 and 0.18)
     assert stenholm_coefficients(0.01 * g, g, TWO_PI * 18.2e6, -TWO_PI * 30e6, 0.4).nbar == pytest.approx(
         0.211, abs=0.002
     )
@@ -220,13 +203,12 @@ def test_monroe_1995_theory_value_is_the_force_model_with_isotropic_emission_at_
 
 
 def test_monroe_three_modes_from_one_beam_are_not_reproduced_by_a_single_oblique_beam() -> None:
-    """One sigma+ beam at Delta = -30 MHz along (1,1,1)/sqrt3 on modes at 11.2, 18.2, 29.8 MHz: the rate framework at
-    s = 0.5 gives about (1.02, 0.41, 0.13) against the measured (0.47, 0.30, 0.18), the ordering right but the measured
-    triple needing the actual D1-D3 beam geometry (the numbers are the regression)."""
+    """One oblique sigma+ beam at Delta = -30 MHz and s = 0.5 cools Monroe's 11.2, 18.2 and 29.8 MHz modes to 1.02, 0.41
+    and 0.13 (3e-2, 2e-2, 1e-2), in the measured order but not to the measured (0.47, 0.30, 0.18)."""
     mass = (9.0121831 - ELECTRON_MASS_U) * ATOMIC_MASS_KG
     be = two_level_atom(gamma_hz=19.4e6, wavelength_m=313e-9, mass_kg=mass)
     g = TWO_PI * 19.4e6
-    crystal = solve_crystal(trap_for((18.2e6, 29.8e6, 11.2e6)), (be,))
+    crystal = solve_crystal(secular_trap((18.2e6, 29.8e6, 11.2e6)), (be,))
     st = structure(be, b_hat=OBLIQUE)
     beam = sigma_plus_along(st, OBLIQUE, math.sqrt(0.25) * g, -TWO_PI * 30e6)  # s = 2 Omega^2/Gamma^2 = 0.5
     res = doppler_cooling(st, [beam], crystal)
@@ -241,14 +223,13 @@ def test_monroe_three_modes_from_one_beam_are_not_reproduced_by_a_single_oblique
 
 
 def test_ca40_multilevel_doppler_limit_against_the_two_level_estimate() -> None:
-    """S1/2-P1/2-D3/2 with the 397 nm beam at -20 MHz along (1,1,1)/sqrt3 and the 866 nm repumper, B = 4 G along z, on
-    Roos's 3.3 MHz axial and 1.6 MHz radial modes: the eight-state model gives nbar_z = 4.0 and nbar_y = 9.4 at s_397 = 1,
-    s_866 = 3, within 6 % of the S-P two-level model with the D branch renormalized (3.90, 9.08), both well below the
-    measured 6.5(1.0) and 16(2) (the 397 nm rate is Hettrich et al. 2015's gamma/2pi = 23.0526 MHz)."""
+    """40Ca+ S-P-D under the 397 nm beam at -20 MHz and the 866 nm repump cools Roos's 3.3 MHz axial and 1.6 MHz radial
+    modes to 4.02 and 9.41 (0.1, 0.2), within 6 % of the renormalized two-level 3.90 and 9.08 and below the measured
+    6.5(1.0) and 16(2)."""
     ca = species("40Ca+")
     st = AtomicStructure(ca, 4.0, (0.0, 0.0, 1.0))
     l397, l866 = ca.transition("S1/2-P1/2"), ca.transition("D3/2-P1/2")
-    crystal = solve_crystal(trap_for((1.7e6, 1.6e6, 3.3e6)), (ca,))
+    crystal = solve_crystal(secular_trap((1.7e6, 1.6e6, 3.3e6)), (ca,))
     waist = 20e-6
     pol397 = (1.0 / math.sqrt(2.0) + 0j, -1.0 / math.sqrt(2.0) + 0j, 0j)
     k866 = (1.0 / math.sqrt(2.0), -1.0 / math.sqrt(2.0), 0.0)
@@ -280,8 +261,8 @@ def test_ca40_multilevel_doppler_limit_against_the_two_level_estimate() -> None:
 
 
 def test_the_lamb_dicke_expansion_parameter_is_asserted_on_every_level_a_mode() -> None:
-    """eta sqrt(2 nbar + 1) < 1/2: the 171Yb+ polarization-gradient triple (0.09023 sqrt(21) = 0.413) is inside; a
-    low-frequency mode at the Doppler limit is refused."""
+    """The Lamb-Dicke guard eta sqrt(2 nbar + 1) < 1/2 passes 0.09023 sqrt(21) and a nu = 0.15 Gamma mode, and refuses a
+    nu = 0.01 Gamma mode at the Doppler limit unless strong coupling is allowed."""
     assert_lamb_dicke(0.09023, 10.0)
     with pytest.raises(ValidityError, match=r"eta\^2"):
         assert_lamb_dicke(0.3, 20.0)
@@ -292,10 +273,10 @@ def test_the_lamb_dicke_expansion_parameter_is_asserted_on_every_level_a_mode() 
     sp = two_level_atom()
     st = structure(sp, b_hat=OBLIQUE)
     beam = sigma_plus_along(st, OBLIQUE, 0.05 * g, -0.5 * g)
-    inside = solve_crystal(trap_for((2.5e6, 2.6e6, 0.15 * g / TWO_PI)), (sp,))
+    inside = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.15 * g / TWO_PI)), (sp,))
     res = doppler_cooling(st, [beam], inside, modes=[inside.mode_index("axial", 0)])
     assert res.lamb_dicke_guard()[inside.mode_index("axial", 0)] ** 2 < LAMB_DICKE_MAX
-    outside = solve_crystal(trap_for((2.5e6, 2.6e6, 0.01 * g / TWO_PI)), (sp,))
+    outside = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.01 * g / TWO_PI)), (sp,))
     axial = outside.mode_index("axial", 0)
     with pytest.raises(ValidityError, match=r"eta\^2"):
         doppler_cooling(st, [beam], outside, modes=[axial])
@@ -304,7 +285,8 @@ def test_the_lamb_dicke_expansion_parameter_is_asserted_on_every_level_a_mode() 
 
 
 def test_the_adiabatic_elimination_conditions_are_asserted_on_the_rate_and_the_internal_rates() -> None:
-    """W << nu (the motion is eliminated) and W << every internal rate (the internal state is)."""
+    """assert_adiabatic enforces W << nu and W << every internal rate, and a real level-A stage has W below SMALL times
+    both."""
     assert_adiabatic(1.0, 1e3, {"P": 1e4})
     with pytest.raises(ValidityError, match="W/nu"):
         assert_adiabatic(200.0, 1e3, {"P": 1e9})
@@ -318,7 +300,7 @@ def test_the_adiabatic_elimination_conditions_are_asserted_on_the_rate_and_the_i
     sp = two_level_atom()
     st = structure(sp, b_hat=OBLIQUE)
     beam = sigma_plus_along(st, OBLIQUE, 0.05 * g, -0.5 * g)
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 0.15 * g / TWO_PI)), (sp,))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, 0.15 * g / TWO_PI)), (sp,))
     models = models_per_ion(st, [beam], crystal, (0,))
     rates = mode_rates(models, crystal, 0)
     assert rates.rate_per_s < SMALL * rates.omega_rad_s
@@ -328,8 +310,8 @@ def test_the_adiabatic_elimination_conditions_are_asserted_on_the_rate_and_the_i
 
 
 def test_doppler_cooling_refuses_a_recoil_limited_line() -> None:
-    """Below Gamma = omega_R = hbar k^2/2m the single-photon recoil exceeds the linewidth: 171Yb+ at 369.5 nm has
-    omega_R/2 pi = 8.5 kHz against Gamma/2 pi = 19.6 MHz, so a 1 kHz line on the same mass and wavelength is refused."""
+    """171Yb+ at 369.5 nm has omega_R/2pi = 8.5 kHz (2 %), so a 1 kHz line on the same mass and wavelength is refused as
+    recoil-limited and, with the escapes, cools nothing (nbar above 1e6)."""
     assert recoil_frequency_rad_s(TWO_PI / WAVELENGTH_M, MASS_KG) / TWO_PI == pytest.approx(8.5e3, rel=0.02)
     assert_doppler_recoil_limit(gamma_rad_s(), TWO_PI / WAVELENGTH_M, MASS_KG)
     with pytest.raises(ValidityError, match="Gamma/omega_R"):
@@ -337,7 +319,7 @@ def test_doppler_cooling_refuses_a_recoil_limited_line() -> None:
     narrow = two_level_atom(gamma_hz=1e3)
     st = structure(narrow, b_hat=OBLIQUE)
     beam = sigma_plus_along(st, OBLIQUE, 0.05 * TWO_PI * 1e3, -0.5 * TWO_PI * 1e3)
-    crystal = solve_crystal(trap_for((2.5e6, 2.6e6, 1.0e6)), (narrow,))
+    crystal = solve_crystal(secular_trap((2.5e6, 2.6e6, 1.0e6)), (narrow,))
     with pytest.raises(ValidityError, match="Gamma/omega_R"):
         doppler_cooling(st, [beam], crystal, modes=[crystal.mode_index("axial", 0)])
     # with the escapes the stage evaluates, and Gamma << nu at Delta = -Gamma/2 leaves no cooling at all

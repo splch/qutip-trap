@@ -8,6 +8,7 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.light.recoil import angular_factor, emission_lamb_dicke
@@ -16,7 +17,6 @@ from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
-from qutip_trap.trap.model import Trap
 from qutip_trap.units import TWO_PI
 from tests.fixtures import spin_zero_like
 
@@ -38,19 +38,10 @@ def yb_pump_model(s0: float = 0.5) -> BlochModel:
 
 
 def test_yb171_pump_error_time_photons_and_recoil_heating_with_participation() -> None:
-    """Three photons per pump (1/3 branching into |0>), 99.99 % in |0,0> within 10 us at s_o = 0.5, residual 2.5e-6 from
-    the 12.6 GHz off-resonant excitation, and the recoil of the three photons heats a 1 MHz mode along B by 8.5e-3 quanta
-    and a 3 MHz mode by 2.8e-3 (the quantitative content of the sources' 'Delta n ~ 0')."""
+    """Pumping 171Yb+ into |0,0> at s_o = 0.5 scatters 3.00 +- 0.02 photons and reaches its 2.5e-6 residual (10 %)
+    within 10 us, and the recoil heats the 1 MHz and 3 MHz modes by 8.5e-3 and 2.8e-3 quanta (5 %)."""
     model = yb_pump_model()
-    trap = Trap(
-        omega_hz=(3.0e6, 2.9e6, 1.0e6),
-        axis_angle_rad=0.0,
-        rf=None,
-        dc=None,
-        geometry=None,
-        stray_field_v_per_m=(0.0, 0.0, 0.0),
-        shim_voltages_v={},
-    )
+    trap = secular_trap((3.0e6, 2.9e6, 1.0e6))
     crystal = solve_crystal(trap, (YB,))
     res = optical_pumping(model, [DARK], duration_s=30e-6, samples=6001, crystal=crystal, ion=0)
     assert res.photons_scattered == pytest.approx(3.0, abs=0.02)
@@ -81,9 +72,8 @@ def test_scrambled_initial_state_is_the_resonant_ground_manifold() -> None:
 
 
 def test_zeeman_pumping_on_the_spin_zero_fixture_takes_three_photons() -> None:
-    """sigma+ light on S1/2 -> P1/2 of an I = 0 ion pumps |-1/2> into |+1/2>, which sigma+ cannot excite (P1/2 has no
-    m = 3/2): from |P1/2, +1/2> the pi decay into the target carries the branching 1/3 and the sigma decay back to |-1/2>
-    2/3, so the mean photon number is exactly 3 and the residual is the far-off-resonant P3/2 excitation only."""
+    """sigma+ light pumps a spin-zero S1/2 |-1/2> into the dark |+1/2> with 3.00 +- 0.01 photons (a 1/3 branching into
+    the target) and a residual below 1e-6."""
     sp = spin_zero_like()
     st = AtomicStructure(sp, 1.0, (0.0, 0.0, 1.0))
     line = sp.transition("S1/2-P1/2")

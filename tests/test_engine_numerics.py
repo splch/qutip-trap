@@ -1,15 +1,11 @@
-"""The engine's exact shortcuts against independent references, the integrator ladder and the tolerance-convergence check,
-and the per-time Fock marginals and wall times of ``Traces`` (PLAN.md Sections 5.3, 5.5).
-
-A constant segment (an idle, a zero-envelope pulse) is propagated by its exact phases, and with the device's heating
-operators by the master equation in the frame rotating with H_mot; a mixture without dissipation is evolved as its weighted
-pure eigen-branches. None of them is an approximation beyond the declared branch threshold.
-"""
+"""The engine's exact shortcuts (constant segments, the rotating-frame idle, pure branches) against independent references,
+the tolerance check and the integrator ladder, and the Fock marginals and wall times of ``Traces`` (PLAN.md Section 5.3)."""
 
 from __future__ import annotations
 
 import dataclasses
 import math
+import time
 
 import numpy as np
 import pytest
@@ -31,6 +27,7 @@ from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, i
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.truncation import regrid_state
 from qutip_trap.experiments.single_ion import ramsey
+from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
@@ -68,8 +65,8 @@ def _heated(dev):  # type: ignore[no-untyped-def]
 
 
 def test_idle_and_zero_envelope_segments_are_the_exact_propagator(raman) -> None:  # type: ignore[no-untyped-def]
-    """A pi/2 pulse, a 300 us idle and a zero-envelope Stark probe: the constant segments report ``exact``, hold P1 constant
-    and leave the state that e^{-iH tau} of the builder's constant Hamiltonian gives, to round-off."""
+    """A 300 us idle and a zero-envelope Stark probe between two pi/2 pulses integrate as ``exact``, hold P1 to 1e-12 and give
+    e^{-iH tau} of the builder's constant Hamiltonian to 1e-10."""
     dev, dd, space = raman
     om = 2.0 * math.pi * dd.carrier_rabi_hz
     t_half = 0.5 * math.pi / om
@@ -99,9 +96,7 @@ def test_idle_and_zero_envelope_segments_are_the_exact_propagator(raman) -> None
 
 
 def test_a_ramsey_scan_with_millisecond_delays_costs_milliseconds() -> None:
-    """The Ramsey experiments idle for up to 2 ms; the closed form makes them cheap."""
-    import time
-
+    """A three-point Ramsey scan with delays up to 1 ms runs in under 5 s and shows the 1 kHz fringe."""
     fx = yb171_chain(2)
     t0 = time.perf_counter()
     res = ramsey(Machine(fx.device), 0, [0.0, 0.5e-3, 1e-3], nbar={2: 0.0185, 3: 0.0154}, detuning_hz=1e3)
@@ -113,8 +108,8 @@ def test_a_ramsey_scan_with_millisecond_delays_costs_milliseconds() -> None:
 
 
 def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -> None:  # type: ignore[no-untyped-def]
-    """With the device's heating operators (eigenoperators of ad_H) an idle is integrated in the frame rotating with H_mot;
-    its state, populations and occupations agree with the Schroedinger-picture master equation of the same idle."""
+    """A heated idle integrates in the frame rotating with H_mot and matches the Schroedinger-picture master equation (state to
+    1e-6, P1 and n to 1e-7) while the mode heats."""
     dev, dd, space = raman
     noisy = _heated(dev)
     om = 2.0 * math.pi * dd.carrier_rabi_hz
@@ -129,9 +124,8 @@ def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -
         noisy, Schedule((pulse,), ((t_half, t_half + idle),), (), {0: 0.0}), state, space, opts, **kw
     )
     assert eng.last_report.segments[1].integrator.startswith("dop853[rotating frame]")
-    sp = (
-        eng.last_report.space
-    )  # the margin monitor raised the cap during the pulse; the idle runs on the grown space
+    # the margin monitor raised the cap during the pulse; the idle runs on the grown space
+    sp = eng.last_report.space
     assert eng_p.last_report.space == sp
     times = np.linspace(t_half, t_half + idle, 4)
     ref = evolve(
@@ -151,8 +145,8 @@ def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -
 
 
 def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(raman) -> None:  # type: ignore[no-untyped-def]
-    """A thermal mode under a carrier pulse: the eigen-branches through sesolve reproduce the density matrix through the
-    master equation, the weights renormalize and the dropped weight is reported (the Fock-sum path of Section 5.3)."""
+    """A thermal mode under a carrier pulse evolves as sesolve eigen-branches that reproduce the master equation (P1 and state to
+    1e-6, n to 1e-5) and drop weight below the threshold with a note; a heated mixture keeps mesolve."""
     dev, dd, space = raman
     om = 2.0 * math.pi * dd.carrier_rabi_hz
     state = space.initial_state([0], thermal={KX: 0.8})
@@ -195,8 +189,8 @@ def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(rama
 
 
 def test_drive_coefficients_are_the_plans_tone_sum(raman) -> None:  # type: ignore[no-untyped-def]
-    """The plain and conjugate terms (and every sideband term of the interaction picture) carry (1/2) sum_tones Omega
-    e^{-i(mu t - phi)} times the static factors, to round-off."""
+    """The plain and conjugate drive terms carry (1/2) Omega e^{-i(mu t - phi)} times the static factors to 1e-12, and every
+    interaction-picture sideband term has the same modulus."""
     dev, dd, space = raman
     drive = square_drive(dd, detuning_hz=12.5e3, phase_rad=0.3, include_stark=False)
     pulse = Pulse(drive, 2e-6, 12e-6, "p", ())
@@ -231,10 +225,8 @@ def test_drive_coefficients_are_the_plans_tone_sum(raman) -> None:  # type: igno
 
 
 def test_simultaneous_pulses_of_unequal_length_are_integrated_segment_by_segment() -> None:
-    """Two ions' pi/2 pulses at two fitted Rabi frequencies start together and end 1 % apart: the engine cuts the schedule at
-    both ends and the builder takes the pulses that span each segment, each on its own clock."""
-    from qutip_trap.light.microwave import square_microwave_drive
-
+    """Two pi/2 pulses that start together and end 1% apart run as two segments, both ions reach P1 = 0.5 to 1e-6 and the
+    shorter pulse's ion holds (1e-9) after it ends."""
     dev = two_ion_raman_device()
     space = HilbertSpace((2, 2), (), None, tuple(range(len(dev.crystal.modes))))
     rabi = {0: 100e3, 1: 101e3}
@@ -278,7 +270,7 @@ def _runner(dev, drive, t_end, space, n0=0):  # type: ignore[no-untyped-def]
 
 
 def test_tolerance_convergence_on_the_carrier_and_sideband_fixtures(raman) -> None:  # type: ignore[no-untyped-def]
-    """Carrier and blue-sideband flopping, each quoted with the change under atol/10, rtol/10."""
+    """Carrier and blue-sideband pi pulses change by less than 1e-6 when the tolerances (1e-10, 1e-8) are tightened ten-fold."""
     dev, dd, _space = raman
     space = HilbertSpace((2,), (ModeTruncation(KX, 12, (0, 3), 0.2),), None, (0, 2))
     om = TWO_PI * dd.carrier_rabi_hz
@@ -313,8 +305,8 @@ def test_convergence_check_rejects_a_mismatched_observable_set_and_a_bad_factor(
 
 
 def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
-    """The default atol relaxes above d_m = 100; a tightened or loosened atol is kept (the atol the integration reports, on a
-    bare oscillator of d_m = 121)."""
+    """At d_m = 121 the default atol relaxes to LARGE_MODE_ATOL (at d_m = 100 it stays 1e-10) while a tightened (1e-11) or
+    loosened (1e-6) one is kept."""
     d = 121
     assert d > LARGE_MODE_DIMENSION
     h = WX * qt.num(d)
@@ -322,6 +314,10 @@ def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
     times = np.linspace(0.0, 1e-6, 5)
     default = evolve(h, psi0, times, options=SolverOptions(), largest_mode_dimension=d)
     assert default.atol == LARGE_MODE_ATOL
+    at_threshold = evolve(
+        h, psi0, times, options=SolverOptions(), largest_mode_dimension=LARGE_MODE_DIMENSION
+    )
+    assert at_threshold.atol == 1e-10
     tight = tightened(SolverOptions())
     got = evolve(h, psi0, times, options=tight, largest_mode_dimension=d)
     assert got.atol == tight.atol == pytest.approx(1e-11, rel=1e-12)
@@ -331,8 +327,8 @@ def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
 
 @pytest.mark.slow
 def test_the_ladder_at_the_three_large_caps() -> None:
-    """The escalation ladder at large caps: a blue-sideband-detuned spin-dependent force at d_m = 101, 121, 151 and 201
-    integrates on the first rung with no retry and keeps its norm; the keying gives 1e-8 above d_m = 100 and 1e-10 at it."""
+    """A spin-dependent force at d_m = 101, 121, 151 and 201 integrates on dop853 with no retry, atol LARGE_MODE_ATOL and norm 1
+    to 1e-7, and at d_m = 100 atol stays 1e-10."""
     eta, om_drive = 0.1, TWO_PI * 250e3
     delta = WX - TWO_PI * 20e3
     for d in (101, 121, 151, 201):

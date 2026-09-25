@@ -1,17 +1,6 @@
-"""The sigma_z-force (ZZ) gates: the light-shift gate from the atomic layer and the near-field microwave-gradient gate
-(PLAN.md Section 4.4).
-
-Srinivas et al., Nature 597, 209 (2021) drive two ions with two microwave tones at +-delta from the ac-Zeeman-shifted
-qubit frequency plus a magnetic-field gradient oscillating at omega_g near the motional frequency:
-
-    H_I(t) = hbar Omega_g J_2(4 Omega_mu/delta)(sigma_z1 - sigma_z2)(a e^{i Delta t} + a^dag e^{-i Delta t}),
-    Omega_g = (r_0/4)[grad(B_g . r_hat_q) . r_hat](d omega_0/dB),   Omega_mu = (B_x/2 hbar)<dn|mu_x|up>,
-
-with intrinsic dynamical decoupling where J_0(4 Omega_mu/delta) = 0, i.e. Omega_mu/delta = 0.6012. The gradient fixture
-is a 40Ca+ ZEEMAN qubit (S1/2 mJ = -1/2 <-> +1/2 at 5 G, 2.8025 MHz/G): the gradient couples through d omega_0/dB, which
-vanishes at a clock point, and the 25Mg+ species table lacks cited P-level constants, so the paper's own 25Mg+ numbers
-are checked against the hyperfine-Zeeman diagonalization directly.
-"""
+"""The sigma_z-force (ZZ) gates (PLAN.md Section 4.4): the light-shift gate from the atomic layer on the 40Ca+ optical qubit,
+and the microwave-gradient gate of Srinivas et al., Nature 597, 209 (2021) on the 40Ca+ Zeeman qubit and at the paper's own
+25Mg+ numbers."""
 
 from __future__ import annotations
 
@@ -53,11 +42,11 @@ from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, HBAR_J_S, TWO_PI
 from tests.fixtures import (
     G_J_S12,
     ca_light_shift_device,
+    chain_device,
     derived_seeds,
     make_calibration_table,
     quiet_device,
     table_with_waveform,
-    two_ion_device,
 )
 from tests.oracles import (
     intrinsic_dynamical_decoupling_ratio,
@@ -87,9 +76,8 @@ def ca_device():  # type: ignore[no-untyped-def]
 
 
 def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:  # type: ignore[no-untyped-def]
-    """Essentially only the S1/2 level of the optical qubit sees the 398 nm two-photon shift (weights (-1.99748, 0.00252)), the
-    S-to-D5/2 Raman spin flip the same beams drive is 411 THz off resonance, and the differential coupling is half the
-    difference of the two levels' self-couplings (Zhu 2006 Eq. 2)."""
+    """The 398 nm pair shifts S1/2 by -10554.4 Hz and D5/2 by 13.311 Hz (level weights (-1.997481, 0.002519) to 1e-6), the force
+    is half their difference (Zhu 2006 Eq. 2) and the static shift 10567.7 Hz; a clock qubit under linear light is refused."""
     dev, _ent, _sq, modes = ca_device
     dn, up = two_photon_self_couplings_hz(dev, 0, (0, 1))
     # the D5/2 level's own two-photon shift is 1.3e-3 of the S level's
@@ -121,12 +109,12 @@ def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:  # type
         Drive("raman", (0,), (Tone(0.0, 0.0, 1.0),), (0, 1), 0.0, {}, light_shift=ls.light_shift)
     # a clock qubit under linear light has no differential shift: the derivation refuses it
     with pytest.raises(ValueError, match="no state-dependent force"):
-        derive_light_shift_drive(two_ion_device(), 0, (0, 1), scattering=False)
+        derive_light_shift_drive(chain_device(2), 0, (0, 1), scattering=False)
 
 
 def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> None:  # type: ignore[no-untyped-def]
-    """The drive term is (1/2) Omega_LS e^{-i(mu t - phi)} [w_dn P_0 + w_up P_1] (x) D + h.c. = Omega_LS cos(...) [sigma_z + (w_up + w_dn)/2] (x) D:
-    at t = 0 with phi = 0 the Hamiltonian's spin part on ion 0 is Omega_LS (w_dn P_0 + w_up P_1) (x) (D + D^dag)/2."""
+    """At t = 0 the built Hamiltonian is the free motion plus Omega_LS (w_dn P_0 + w_up P_1) (x) (D + D^dag)/2 on ion 0 to
+    1e-9, with no spin-flip term."""
     dev, _ent, _sq, _modes = ca_device
     ls = derive_light_shift_drive(dev, 0, (0, 1), scattering=False)
     omega_ls = TWO_PI * abs(ls.rabi_hz)
@@ -148,9 +136,8 @@ def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> 
 
 @pytest.mark.slow
 def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignore[no-untyped-def]
-    """Two light-shift pulses of two-body angle pi/8 around a pi pulse on both ions give ZZ(pi/2) = exp(-i (pi/4) Z Z) on the
-    optical qubit; the sign follows the detuning side; the exact spot check calibrates the pulse angle; the AM solver closes the
-    rocking mode for a light-shift force too."""
+    """Two pi/8 light-shift pulses around a pi pulse give ZZ(pi/2) on the optical qubit with fidelity > 0.97 (the opposite
+    detuning side < 0.05), and the AM pulse calibrated exactly reaches > 0.99 with leakage < 5e-3."""
     dev, ent, sq, modes = ca_device
     # the table's 729 nm E2 entries are the derived values (200144 Hz at 166 mW in a 200 um waist), so the played chain is
     # the identity; the E2 drive has no differential light shift
@@ -241,8 +228,7 @@ RABI_HZ_PER_MICROTESLA = 14012.475693
 
 
 def zeeman_calcium() -> Species:
-    """40Ca+ with its S1/2 Zeeman pair as the qubit: field-sensitive (2.8025 MHz/G) and magnetic-dipole coupled, which a
-    gradient gate needs (the optical S1/2-D5/2 qubit, two fine-structure levels, has no magnetic-dipole drive)."""
+    """40Ca+ with its field-sensitive (2.8025 MHz/G), magnetic-dipole-coupled S1/2 Zeeman pair as the qubit."""
     return dataclasses.replace(species("40Ca+"), qubit=("S1/2 mJ=-1/2", "S1/2 mJ=1/2"))
 
 
@@ -272,10 +258,8 @@ def gradient_space() -> HilbertSpace:
 
 
 def test_gradient_couplings_are_derived_and_r0_carries_the_total_two_ion_mass() -> None:
-    """Omega_g = (r_0/4) grad(B)(d omega_0/dB) with r_0 from the TOTAL two-ion mass, and the laboratory force coefficient
-    w_{i,m} is +-2 Omega_g exactly on the antisymmetric mode, so (sigma_z1 - sigma_z2) is the right normalization. Every
-    coupling is derived: d omega_0/dB from the hyperfine-Zeeman diagonalization, Omega_mu from the magnetic-dipole matrix
-    element of the configured field, w_{i,m} from the crystal's mass-weighted mode pattern."""
+    """Omega_g = (r_0/4) grad(B) d omega_0/dB with r_0 of the total two-ion mass is 5035.3 Hz, the force coefficients are
+    -/+2 Omega_g on the antisymmetric mode to 1e-9, Omega_mu/delta = 0.6012 and the dressed coupling 2174.0 Hz (Srinivas 2021)."""
     dev = gradient_device()
     dd = derive_gradient_drive(dev, (0, 1))
     assert dd.field_sensitivity_rad_s_per_t == pytest.approx(1.76086e11, rel=1e-5)
@@ -306,8 +290,7 @@ def test_gradient_couplings_are_derived_and_r0_carries_the_total_two_ion_mass() 
 
 
 def test_field_sensitivity_vanishes_on_a_clock_transition() -> None:
-    """At a clock point d omega_0/dB = 0 and Omega_g vanishes with it, which is why a gradient gate needs a field-sensitive
-    qubit (Srinivas et al. drive |F=3,mF=3> <-> |F=2,mF=2> of 25Mg+, not its 212.78 G clock line)."""
+    """d omega_0/dB is below 1e3 rad/s/T on the 171Yb+ clock line at zero field and above 1e11 on the 40Ca+ Zeeman qubit."""
     yb = species("171Yb+")
     field = Field(1e-6, (1.0, 0.0, 0.0))
     assert abs(field_sensitivity_rad_s_per_t(yb, field)) < 1e3, (
@@ -317,8 +300,8 @@ def test_field_sensitivity_vanishes_on_a_clock_transition() -> None:
 
 
 def test_builder_dressed_gradient_operator_is_the_j2_weighted_sigma_z_force() -> None:
-    """With ``gradient_form="dressed"`` the Hamiltonian at t = 0 is exactly the free motion plus
-    Omega_g J_2(4 Omega_mu/delta)(sigma_z1 - sigma_z0)(a + a^dag), and the elimination is recorded in ``approximations``."""
+    """With ``gradient_form="dressed"`` the Hamiltonian at t = 0 is the free motion plus Omega_g J_2(4 Omega_mu/delta)
+    (sigma_z1 - sigma_z0)(a + a^dag) to 1e-9 in four drive terms, with the elimination recorded."""
     dev = gradient_device()
     dd = derive_gradient_drive(dev, (0, 1))
     delta = TWO_PI * DELTA_HZ
@@ -344,9 +327,8 @@ def test_builder_dressed_gradient_operator_is_the_j2_weighted_sigma_z_force() ->
 
 
 def test_builder_bare_gradient_keeps_both_microwave_tones_and_the_force() -> None:
-    """The default ``gradient_form="bare"`` builds the two microwave tones as ordinary carrier terms BESIDE the laboratory
-    sigma_z force w_{i,m} cos(omega_g t + phi_g), so J_2(4 Omega_mu/delta) and the J_0 = 0 decoupling emerge from the exact
-    dynamics rather than being put in by hand."""
+    """The bare form builds the two microwave tones as carrier terms beside the laboratory sigma_z force (eight drive terms,
+    the force's projection to 1e-3), more terms than the dressed form."""
     dev = gradient_device()
     dd = derive_gradient_drive(dev, (0, 1))
     drive = gradient_drive(dd, detuning_hz=DELTA_HZ)
@@ -380,8 +362,8 @@ def test_builder_bare_gradient_keeps_both_microwave_tones_and_the_force() -> Non
 
 
 def test_gradient_drive_refuses_a_malformed_tone_pair() -> None:
-    """A gradient drive carries exactly the two tones at -/+ delta: anything else is refused rather than built as
-    something else."""
+    """A gradient drive with one tone or tones not at -/+ delta, on a device without electrodes, or in the interaction frame
+    is refused."""
     dev = gradient_device()
     dd = derive_gradient_drive(dev, (0, 1))
     space = gradient_space()
@@ -416,12 +398,8 @@ def test_gradient_drive_refuses_a_malformed_tone_pair() -> None:
 
 @pytest.mark.slow
 def test_intrinsic_dynamical_decoupling_at_the_bessel_zero() -> None:
-    """The intrinsic dynamical decoupling from the exact dynamics rather than from a Bessel-zero lookup.
-
-    A slow (here static) qubit-frequency drift enters the dressed frame weighted by J_0(4 Omega_mu/delta), so at
-    Omega_mu/delta = 0.6012 the gate is first-order insensitive to it and at 0.3 it is not. Measured over 100 us with a
-    2 kHz offset on both ions, starting from |+ +>|0>: infidelity 6.9e-5 at the decoupling point against 3.06e-1 at
-    Omega_mu/delta = 0.3, a suppression of 4400."""
+    """From |+ +>|0> a static 2 kHz qubit offset over 100 us costs below 1e-3 at the Bessel zero Omega_mu/delta = 0.6012 and
+    above 0.1 at 0.3 (measured 6.9e-5 against 0.306) in the exact dynamics, a suppression beyond 1e3."""
     space = gradient_space()
     plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
     psi0 = space.product_state(qt.tensor(plus, plus), {X_ROCK: qt.basis(8, 0)})
@@ -486,8 +464,8 @@ def gradient_waveform(dev: Device, *, chi_rad: float) -> Waveform:
 
 
 def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> None:
-    """The scheduler plays a ``gradient`` waveform as ZZ(theta) on the light-shift gate's two-loop spin-echo path (the
-    same sigma_z force), one ``gradient`` Drive per ion and loop; the sign comes only from the detuning side."""
+    """ZZ(pi/2) on a gradient waveform schedules four gradient pulses at -/+ delta and four echo pi pulses as two zz gates;
+    a non-gradient entangling drive, an MS on the gradient waveform and a waveform of the wrong sign are refused."""
     dev = gradient_device()
     wf = gradient_waveform(dev, chi_rad=-math.pi / 8.0)
     table = dataclasses.replace(
@@ -513,7 +491,7 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
         detunings = sorted(float(t.detuning_hz) for t in pulse.drive.tones)  # type: ignore[arg-type]
         assert detunings == pytest.approx([-DELTA_HZ, DELTA_HZ])
     assert [g.kind for g in sched.gates] == ["zz", "zz"]
-    # a gradient waveform on a light-shift drive is refused, and so is MS(...) on a gradient waveform
+    # a gradient waveform on a non-gradient entangling drive is refused, and so is MS(...) on a gradient waveform
     with pytest.raises(ScheduleError, match="gradient gate drive"):
         schedule(circuit, dataclasses.replace(dev, roles=BeamRoles(gate=micro, entangling=micro)), table)
     ms_circuit = Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1))
@@ -526,16 +504,8 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
 
 
 def test_srinivas_own_parameters() -> None:
-    """Srinivas et al.'s own numbers. Their qubit is |F=3, mF=3> <-> |F=2, mF=2> of the 25Mg+ S1/2 manifold at 21.3 mT, NOT
-    the 212.78 G clock line: the hyperfine-Zeeman diagonalization of the cited 25Mg+ constants puts that transition at
-    1.326467 GHz with d f_0/dB = 1.97333 MHz/G at 212.78 G against the paper's omega~_0 ~ 2 pi x 1.326 GHz, and the clock
-    pair at the same field at 1.686462 GHz with 21 Hz/G.
-
-    With the paper's gradient (152(15) T/m), mode (omega_r ~ 2 pi x 6.9 MHz) and gradient frequency
-    (omega_g = 2 pi x 5 MHz), Omega_g/2pi = 2870.8 Hz and the dressed coupling at the decoupling point is
-    Omega_g J_2(4 x 0.6012)/2pi = 1239.5 Hz. The paper's delta ~ (omega_r - omega_g)/2 = 2 pi x 950 kHz is exactly the
-    2 delta = omega_r - omega_g resonance the dressed force needs, and one closed loop at the maximally entangling
-    (Omega_eff/Delta_gate) = 1/4 takes 202 us, the scale of the paper's 740 us eight-segment Walsh sequence."""
+    """Srinivas 2021's 25Mg+ numbers: the |3,3> <-> |2,2> line at 212.78 G is 1.326467253 GHz with 1.97333 MHz/G and the clock
+    pair 1.686462 GHz with < 25 Hz/G, Omega_g/2pi = 2870.8 Hz and the dressed coupling 1239.5 Hz (to 1e-4), one loop 202 us."""
     table = MODULES["25Mg+"].TABLE
     level = Level("S1/2", 0.0, None, table["mg25.S12.A_hfs_hz"].value, 0.0, G_J_S12, ("Steck",))
     hz = HyperfineZeeman(level, 2.5, table["mg25.mu_I_nuclear_magnetons"].value)
@@ -575,8 +545,8 @@ def test_srinivas_own_parameters() -> None:
 
 
 def test_gradient_couplings_scale_as_the_configured_gradient() -> None:
-    """Doubling the electrodes' gradient doubles every force coefficient and Omega_g, and leaves Omega_mu (a property of
-    the microwave field, not of the gradient) alone."""
+    """Doubling the gradient doubles every force coefficient and Omega_g (to 1e-12) and leaves Omega_mu alone; the y and z
+    modes get no force and the COM force is in phase on both ions."""
     dev = gradient_device()
     base = derive_gradient_drive(dev, (0, 1))
     doubled = derive_gradient_drive(

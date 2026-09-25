@@ -40,9 +40,8 @@ OM_R = math.sqrt(OM1**2 + OM2**2)
 
 
 def test_morigi_fixture_in_the_plans_sign_and_its_negative_controls() -> None:
-    """Delta = +70 MHz with Omega_r = sqrt(17^2 + 17^2) = 24.04 MHz gives <n>_S = 0.005102 = (gamma/4 Delta)^2;
-    Delta = -70 (Morigi's sign) trips the A_- - A_+ <= 0 guard; a single 17 in place of the quadrature sum returns
-    0.1467, 29x the target."""
+    """At Delta = +70 MHz and Omega_r = 24.04 MHz <n>_S = 0.005102 = (gamma/4 Delta)^2 (1e-6), Delta = -70 MHz raises, a
+    single 17 MHz coupling gives 0.1467 (2e-4), and A_- = Omega_g^2/gamma and A_+ = 0.0734 (2e-3)."""
     om_r = OM_R
     assert om_r == pytest.approx(24.0416, abs=1e-4)
     assert om_r**2 == pytest.approx(4.0 * NU * (NU + DELTA), rel=2e-3)
@@ -53,29 +52,25 @@ def test_morigi_fixture_in_the_plans_sign_and_its_negative_controls() -> None:
         eit_steady_state_nbar(om_r, NU, -DELTA, GAMMA)
     single = eit_steady_state_nbar(17.0, NU, DELTA, GAMMA)
     assert single == pytest.approx(0.1467, abs=2e-4) and single / nbar == pytest.approx(29.0, abs=0.5)
-    # the coefficients at the tuning: A_- = Omega_g^2/gamma exactly (twice the 7.225 the plan prints for 17); Omega_g = 17
-    # against gamma = 20 is outside the weak-probe regime, so the escape is passed explicitly
+    # Omega_g = 17 against gamma = 20 is outside the weak-probe regime, so the escape is passed explicitly
     rc = eit_rate_coefficients(OM1, om_r, NU, DELTA, GAMMA, allow_saturation=True)
     assert rc.A_minus_per_s == pytest.approx(OM1**2 / GAMMA, rel=2e-3)
     assert rc.A_plus_per_s == pytest.approx(0.0734, abs=2e-4)
     assert rc.carrier_weight == 0.0
-    assert 0.02**2 * rc.cooling_rate_bare_per_s == pytest.approx(
-        5.75e-3, rel=2e-3
-    )  # MHz: 5.75 kHz, twice the row's 2.875
+    assert 0.02**2 * rc.cooling_rate_bare_per_s == pytest.approx(5.75e-3, rel=2e-3)  # MHz: 5.75 kHz
 
 
 def test_rmp_tuning_exact_value() -> None:
-    """At Omega_r^2 = 4 nu Delta the exact steady state is (Gamma^2 + 4 nu^2)/(16 Delta (Delta - nu)) = 0.00361702 for
-    gamma = 1, nu = 0.3, Delta = 5 (the (Delta + nu) form would give 0.00320755)."""
+    """At Omega_r^2 = 4 nu Delta the steady state is (Gamma^2 + 4 nu^2)/(16 Delta (Delta - nu)) = 0.00361702 to 1e-8 for
+    gamma = 1, nu = 0.3, Delta = 5."""
     assert eit_steady_state_nbar(math.sqrt(4.0 * 0.3 * 5.0), 0.3, 5.0, 1.0) == pytest.approx(
         0.00361702, abs=1e-8
     )
 
 
 def test_light_shift_tuning_rule_bandwidth_and_poles() -> None:
-    """Roos 2000: Delta = 70 MHz and Omega_sigma = 21.4 MHz put the narrow dressed state 1.6 MHz up (1.599); the inverse
-    rule returns 21.4 for nu = 1.6; the poles Delta = 0 and Omega_r = 2 nu raise; Delta < 0 raises; the dressed linewidth
-    is about Gamma nu/Delta."""
+    """Roos 2000's Delta = 70 MHz and Omega_sigma = 21.4 MHz give a 1.599 MHz light shift (1e-3) and the inverse rule
+    21.41 MHz (0.01), the poles and Delta < 0 raise, and the dressed linewidth is Gamma nu/Delta to 10 %."""
     assert light_shift_rad_s(70.0, 21.4) == pytest.approx(1.599, abs=1e-3)
     assert coupling_for_target_rad_s(1.6, 70.0) == pytest.approx(21.41, abs=0.01)
     assert light_shift_rad_s(70.0, coupling_for_target_rad_s(1.6, 70.0)) == pytest.approx(1.6, rel=1e-12)
@@ -90,9 +85,8 @@ def test_light_shift_tuning_rule_bandwidth_and_poles() -> None:
 
 
 def test_lechner_2016_rate_ratio_favours_the_mode_nearer_the_bright_resonance() -> None:
-    """Omega_sigma = 30 MHz, Omega_pi = 6.2 MHz and a light shift of 2.2-2.3 MHz (Delta = 96-100 MHz):
-    W = eta^2 (A_- - A_+) with eta^2 proportional to 1/nu gives R(3.29 MHz)/R(1.13 MHz) = 2.7-3.8 (3.2 at 2.25 MHz)
-    against the measured 17/5 = 3.4."""
+    """At Lechner 2016's couplings and a 2.2 to 2.3 MHz light shift the rate ratio R(3.29 MHz)/R(1.13 MHz) lies in
+    (2.6, 3.9), 3.19 at 2.25 MHz (0.02), against the measured 3.4."""
     gamma, om_s, om_p = 21.57, 30.0, 6.2
     ratios = []
     for shift in (2.2, 2.25, 2.3):
@@ -111,9 +105,8 @@ def test_lechner_2016_rate_ratio_favours_the_mode_nearer_the_bright_resonance() 
 
 
 def test_roos_operating_point_closed_form_is_far_below_his_measured_occupation() -> None:
-    """Roos's 40Ca+ operating point (Delta = 70 MHz, Omega_sigma = 21.4 MHz, the narrow dressed state delta = 1.6 MHz up,
-    on his 1.6 MHz radial mode) gives the floor (gamma/4 Delta)^2 = 0.00593 at gamma = 2 pi x 21.57 MHz; his measured
-    nbar_y = 0.18 is 30 times that, an anchor that reports rather than a target of the closed form."""
+    """At Roos's 40Ca+ operating point the steady state on the 1.6 MHz mode is (gamma/4 Delta)^2 = 0.00593 (3e-3), 30.4
+    times below his measured 0.18."""
     gamma_ca, delta_roos, om_sigma = 21.57, 70.0, 21.4
     nu = light_shift_rad_s(delta_roos, om_sigma)
     assert nu == pytest.approx(1.6, abs=2e-3)
@@ -125,14 +118,9 @@ def test_roos_operating_point_closed_form_is_far_below_his_measured_occupation()
 
 
 def test_lechner_eighteen_ion_radial_band_is_wider_than_the_dressed_cooling_bandwidth() -> None:
-    """Lechner et al. cool an 18-ion 40Ca+ string, quoting 0.01-0.02 on the radial modes in under 1 ms at
-    Omega_sigma = 2 pi x 30 MHz, Omega_pi = 2 pi x 6.2 MHz and a light shift of 2.2-2.3 MHz.
-
-    The 18-ion radial mode set (the band edges 3.29 and 1.13 MHz fix the anisotropy through the transverse eigenvalues
-    gamma_p = 1/alpha + 1/2 - mu_p/2, Marquet 2003) with W_m = (|Delta k| x0,m)^2 (A_- - A_+) for a global beam: 17 of
-    the 18 modes relax in under 1 ms, but only the 7 within the dressed linewidth Gamma' = 0.485 MHz of the light shift
-    reach nbar <= 0.02, the 2.16 MHz band being 4.45 times that bandwidth.
-    """
+    """On Lechner's 18-ion radial band (1.13 to 3.29 MHz, Marquet 2003) at a 2.25 MHz light shift 17 modes relax within
+    1 ms but only 7 reach nbar <= 0.02, the band being 4.45 times the 0.4853 MHz dressed linewidth (nbar 0.04645,
+    0.13129 and 0.00334 to 2e-3)."""
     n_ions = 18
     mu, _b = axial_modes_dimensionless(equilibrium_dimensionless(n_ions))
     mu_max = float(mu[-1])
@@ -163,7 +151,6 @@ def test_lechner_eighteen_ion_radial_band_is_wider_than_the_dressed_cooling_band
     assert sum(1 for t in times_ms if t < 1.0) == 17
     assert times_ms[0] == pytest.approx(1.1708, rel=2e-3)
     assert sum(1 for n in nbars if n <= 0.02) == 7
-    # why: the band is four times wider than the dressed cooling bandwidth at this operating point
     bandwidth = dressed_linewidth_rad_s(gamma_ca, delta, om_sigma)
     assert bandwidth == pytest.approx(0.4853, abs=1e-3)
     assert (radial[-1] - radial[0]) / bandwidth == pytest.approx(4.45, abs=0.05)
@@ -213,9 +200,8 @@ def _lambda_eit(
 
 @pytest.mark.slow
 def test_morigi_2000_fig_3_ground_state_occupation() -> None:
-    """Omega_r = gamma, Omega_g = gamma/20, nu = gamma/10, eta = 0.145, Delta = 2.5 gamma (the paper's caption): 99 %
-    ground-state occupation; level C sits within 6 % of the rate-equation nbar_S = 0.01083 (Lamb-Dicke corrections at
-    eta = 0.145)."""
+    """At Morigi 2000 Fig. 3's parameters level C holds more than 98.5 % in the ground state with nbar within 6 % of the
+    rate-equation 0.01083 (1e-3) and a boundary population below 1e-8."""
     om_g, om_r, nu, delta = 0.05 * G, 1.0 * G, 0.1 * G, 2.5 * G
     nbar_s = eit_rate_coefficients(om_g, om_r, nu, delta, G).nbar
     assert nbar_s == pytest.approx(0.010833, rel=1e-3)
@@ -229,8 +215,8 @@ def test_morigi_2000_fig_3_ground_state_occupation() -> None:
 
 @pytest.mark.slow
 def test_eit_closed_form_is_the_weak_probe_limit_of_level_c() -> None:
-    """At the delta = nu tuning Omega_r^2 = 4 nu (nu + Delta) the closed form gives (gamma/4 Delta)^2 exactly and level C
-    approaches it as the probe weakens, the residual being the O(nu/Delta) the closed form drops."""
+    """At the delta = nu tuning the closed form is (gamma/4 Delta)^2 to 1e-9 and level C falls toward it as the probe
+    weakens, to 6 % at Omega_g = 0.03 gamma, while Omega_r = 2 nu is refused as a pole."""
     nu, delta = 0.1 * G, 3.5 * G
     om_r = math.sqrt(4.0 * nu * (nu + delta))
     nbar_s = eit_rate_coefficients(0.01 * G, om_r, nu, delta, G).nbar
@@ -242,6 +228,5 @@ def test_eit_closed_form_is_the_weak_probe_limit_of_level_c() -> None:
         assert nbar < previous
         previous = nbar
     assert previous == pytest.approx(nbar_s, rel=0.06)
-    # a blue-detuned but mis-tuned coupling (Omega_r = 2 nu) is the pole where cooling vanishes
     with pytest.raises(CoolingError):
         _ = eit_rate_coefficients(0.01 * G, 2.0 * nu, nu, delta, G).nbar

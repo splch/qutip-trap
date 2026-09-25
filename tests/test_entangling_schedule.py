@@ -1,6 +1,5 @@
-"""ms and zz through the scheduler (PLAN.md Section 7): the native matrices, the sign and axis conventions, the ZZ wrapper
-construction, virtual-Z frames, partial angles, refusals, the IonQ JSON path, and one entangling gate at a time per crystal
-under parallel addressing."""
+"""ms and zz through the scheduler (PLAN.md Section 7): the native matrices, sign and axis conventions, the ZZ wrapper,
+virtual-Z frames, partial angles, refusals, the IonQ JSON path, and one entangling gate at a time per crystal."""
 
 from __future__ import annotations
 
@@ -26,14 +25,14 @@ from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.noise.sampling import quiet_sample
 from tests.fixtures import (
     X_COM_TWO_IONS,
+    chain_device,
     derived_seeds,
     raman_gate_drives,
     table_with_waveform,
-    two_ion_device,
     two_ion_modes,
 )
 
-RABI_TABLE, STARK_TABLE = derived_seeds(two_ion_device(), raman_gate_drives(2))
+RABI_TABLE, STARK_TABLE = derived_seeds(chain_device(2), raman_gate_drives(2))
 """The derived carrier Rabi frequencies and differential Stark shifts a calibrated table of this device holds (the played
 chain is then the identity; the scheduler compensates the Stark shifts)."""
 MS = math.pi / 2.0
@@ -42,7 +41,7 @@ MS = math.pi / 2.0
 @pytest.fixture(scope="module")
 def calibrated():  # type: ignore[no-untyped-def]
     """The two-mode AM gate, exactly calibrated to chi = pi/4, with its table, space and drives."""
-    dev = two_ion_device()
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
@@ -88,7 +87,8 @@ KET00 = np.array([1.0, 0.0, 0.0, 0.0], dtype=complex)
 
 
 def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> None:  # type: ignore[no-untyped-def]
-    """MS(phi_0, phi_1, pi/2) = exp[-i (pi/4) GPi(phi_0) (x) GPi(phi_1)] on |00> to the gate's exact infidelity."""
+    """MS(phi_0, phi_1, pi/2) on |00> reproduces the native matrix to 1.1 times the spot check's infidelity at three phase pairs
+    and overlaps the opposite sign by less than 0.02; a positive kernel plays pi on the second ion."""
     dev, _modes, _drives, space, table, run = calibrated
     budget = 1.0 - run.checks[-1].fidelity
     assert budget < 1e-3
@@ -109,7 +109,8 @@ def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> Non
 
 
 def test_partial_angle_rescales_by_the_s_squared_law(calibrated) -> None:  # type: ignore[no-untyped-def]
-    """MS(0, 0, theta) at theta = 0.6: every amplitude scales by sqrt((theta/2)/(pi/4)) and P_11 = sin^2(theta/2)."""
+    """MS(0, 0, +-0.6) scales every amplitude by sqrt((theta/2)/chi) to 1e-12, gives P_11 = sin^2(theta/2) to 3e-3 and
+    matches the native matrix above 0.995."""
     dev, _modes, _drives, space, table, _run = calibrated
     theta = 0.6
     rho, sch = _run_circuit(dev, table, space, [Operation("ms", (0, 1), (0.0, 0.0, theta))])
@@ -130,8 +131,8 @@ def test_partial_angle_rescales_by_the_s_squared_law(calibrated) -> None:  # typ
 
 
 def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # type: ignore[no-untyped-def]
-    """ZZ(theta) = [GPi2(pi/2) (x) GPi2(pi/2)] XX(theta/2) [GPi2(3 pi/2) (x) GPi2(3 pi/2)] exactly (R_y(pi/2) X R_y(pi/2)^dag = -Z);
-    the schedule plays wrappers, the MS segments and wrappers with dead times between."""
+    """ZZ(theta) = [GPi2(pi/2) (x) GPi2(pi/2)] XX(theta/2) [GPi2(3 pi/2) (x) GPi2(3 pi/2)] exactly, and the scheduled wrappers,
+    ten MS segments and dead times reproduce ZZ(pi/2) to 2.6 times the spot check's infidelity."""
     w = np.kron(gpi2(math.pi / 2), gpi2(math.pi / 2))
     w_in = np.kron(gpi2(1.5 * math.pi), gpi2(1.5 * math.pi))
     for theta in (math.pi / 2, 0.8, -0.4):
@@ -165,8 +166,8 @@ def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # typ
 
 
 def test_virtual_z_frame_carries_through_ms(calibrated) -> None:  # type: ignore[no-untyped-def]
-    """RZ(theta) on ion 1 then MS(0, 0): the played state is RZ_1(theta)^dag [MS(0, 0) RZ_1(theta)] |00> (the frame the measurement
-    discards), equivalently MS(0, -theta) |00>; comparing with MS(0,0) RZ|00> directly fails by cos^2(theta/2)."""
+    """RZ(0.4) on ion 1 then MS(0, 0) plays MS(0, -theta)|00> up to the frame (to three times the spot check's infidelity),
+    while MS(0, 0) RZ|00> without the frame overlaps it by cos^2(theta/2)."""
     dev, _modes, _drives, space, table, run = calibrated
     theta = 0.4
     rho, sch = _run_circuit(
@@ -278,7 +279,8 @@ def _span(sch, gate_id_prefix: str) -> tuple[float, float]:  # type: ignore[no-u
 
 @pytest.mark.parametrize("parallel_addressing", [False, True])
 def test_two_ms_gates_on_disjoint_pairs_never_overlap(four_ion, parallel_addressing: bool) -> None:  # type: ignore[no-untyped-def]
-    """One entangling gate at a time per crystal, whether or not the chain addresses in parallel."""
+    """Two MS gates on disjoint pairs run one after the other, separated by exactly the dead time, with or without parallel
+    addressing."""
     fx, table = four_ion
     dev = dataclasses.replace(
         fx.device,
@@ -303,7 +305,8 @@ def test_two_ms_gates_on_disjoint_pairs_never_overlap(four_ion, parallel_address
 
 
 def test_parallel_addressing_overlaps_single_qubit_gates_but_the_serial_default_does_not(four_ion) -> None:  # type: ignore[no-untyped-def]
-    """With the device model allowing it, carrier pulses on distinct ions run together."""
+    """Carrier pulses on distinct ions share one window when the hardware allows parallel addressing and are sequenced by the
+    serial default."""
     fx, table = four_ion
     circ = Circuit(4, (Operation("gpi2", (0,), (0.0,)), Operation("gpi2", (2,), (0.0,))), (0, 1, 2, 3))
     serial = schedule(circ, fx.device, table)
@@ -318,7 +321,8 @@ def test_parallel_addressing_overlaps_single_qubit_gates_but_the_serial_default_
 
 
 def test_a_single_qubit_gate_after_an_ms_still_waits_for_it_under_parallel_addressing(four_ion) -> None:  # type: ignore[no-untyped-def]
-    """The pair clocks must move too: a carrier pulse on a gate ion cannot run inside the entangling pulse it follows."""
+    """Under parallel addressing a carrier pulse on a gate ion waits for the MS it follows while a spectator's starts at
+    t = 0."""
     fx, table = four_ion
     dev = dataclasses.replace(
         fx.device, hardware=dataclasses.replace(fx.device.hardware, parallel_addressing=True)
@@ -342,7 +346,8 @@ def test_a_single_qubit_gate_after_an_ms_still_waits_for_it_under_parallel_addre
 
 
 def test_parallel_true_is_refused_when_the_device_model_does_not_allow_it(four_ion) -> None:  # type: ignore[no-untyped-def]
-    """Parallelism is conditioned on the device model, so the flag cannot contradict ``HardwareChain``."""
+    """``parallel=True`` is refused on hardware without parallel addressing, and ``parallel=False`` is allowed on hardware
+    with it."""
     fx, table = four_ion
     circ = Circuit(4, (Operation("gpi2", (0,), (0.0,)),), (0, 1, 2, 3))
     assert fx.device.hardware.parallel_addressing is False

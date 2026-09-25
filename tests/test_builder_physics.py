@@ -1,5 +1,5 @@
-"""The Hamiltonian builder and engine against the closed forms of Sections 4.3.1, 4.2.7, 6.2 and 9.2 (JOINT_EXACT), and the
-optical phase factor e^{+i(Delta k . X_i - Delta phi_i)} on sigma_+ (Section 13)."""
+"""The Hamiltonian builder and engine against the closed forms of flopping, micromotion, frozen spectators, channels,
+crosstalk and beam curvature (PLAN.md Section 9.2), and the optical phase e^{+i(Delta k . X_i - Delta phi_i)} on sigma_+."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from qutip_trap.dynamics.hamiltonian import (
 from qutip_trap.dynamics.operators import debye_waller_factor, rabi_matrix_element, thermal_populations
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
-from qutip_trap.light.raman import derive_raman_drive, square_drive
+from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import (
     KEY_RABI_SCALE,
     NoiseSample,
@@ -131,8 +131,8 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
 
 
 def test_blue_and_red_sideband_flopping_and_the_sideband_phase(raman) -> None:  # type: ignore[no-untyped-def]
-    """Omega_{1,0} = Omega eta e^{-eta^2/2}, Omega_{0,1} likewise; the transition amplitude carries phi + pi/2 (Wineland Eq. 21);
-    the full model deviates from the two-level form by the carrier's light shift of the sideband, ~(Omega/(2 eta omega))^2."""
+    """Blue and red sidebands flop at Omega eta e^{-eta^2/2} within three times the carrier's light shift (Omega/(2 eta
+    omega))^2 of the two-level form, the amplitude carrying phi + pi/2 (Wineland Eq. 21) to 2e-3."""
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -162,8 +162,8 @@ def test_blue_and_red_sideband_flopping_and_the_sideband_phase(raman) -> None:  
 
 
 def test_rwa_option_is_the_exact_jaynes_cummings_model_and_the_detuned_two_level_propagator(raman) -> None:  # type: ignore[no-untyped-def]
-    """In the interaction picture with rwa the single sideband term reproduces the two-level closed forms to 1e-9, including
-    the generalized Rabi frequency sqrt(Omega_{n'n}^2 + Delta^2) (Section 4.3.1, Wineland Eq. 21 in the plan's convention)."""
+    """In the rwa interaction picture the single sideband term reproduces the detuned two-level form with frequency
+    sqrt(Omega_{n'n}^2 + Delta^2) to 1e-9 (Wineland Eq. 21) and reports the approximation."""
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -187,7 +187,7 @@ def test_rwa_option_is_the_exact_jaynes_cummings_model_and_the_detuned_two_level
 
 
 def test_interaction_picture_equals_the_schroedinger_picture(raman) -> None:  # type: ignore[no-untyped-def]
-    """The two pictures agree to 1e-8 in the final state; k_max truncation reports the dropped weight."""
+    """The two pictures agree to 2e-8 in the final state, and the k_max = 2 truncation to 1e-4 with its dropped weight noted."""
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -225,8 +225,8 @@ def test_lamb_dicke_expansion_is_an_approximation_of_order_eta_squared(raman) ->
 
 
 def test_micromotion_j0_factor_and_modulated_drive() -> None:
-    """Section 4.3.6: an unlocked drive's carrier is reduced by J_0(beta); the rf-locked modulated drive averages to the same
-    carrier when the rf is far above every other frequency; C0 enters eta once, through Crystal.lamb_dicke."""
+    """Section 4.3.6: ``carrier_j0`` reduces an unlocked carrier by J_0(beta) (1e-5), the rf-locked modulated drive averages to
+    it (1e-4), ``none`` leaves the bare carrier, and a modulated drive without an rf phase is refused."""
     dev = single_ion_raman_device(rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0))
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     assert dd.micromotion is not None and dd.c0_applied
@@ -265,7 +265,8 @@ def test_micromotion_j0_factor_and_modulated_drive() -> None:
 
 
 def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman) -> None:  # type: ignore[no-untyped-def]
-    """Section 5.2: a frozen mode multiplies Omega by e^{-eta^2/2} L_n(eta^2) for the shot's Fock state n, sampled once per shot."""
+    """Section 5.2: a frozen mode multiplies Omega by e^{-eta^2/2} L_n(eta^2) for the sampled Fock state (to 1e-9), drawn
+    reproducibly from the keyed seeds when the sample has none."""
     dev, dd, _ = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -289,7 +290,7 @@ def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman
 
 
 def test_thermal_carrier_flopping_matches_the_fock_sum(raman) -> None:  # type: ignore[no-untyped-def]
-    """Carrier Rabi flopping on a thermal resolved mode is sum_n P_n sin^2(Omega_n t/2) (Section 4.2.7, the calibration fit model)."""
+    """Carrier flopping on a resolved mode at nbar = 1.5 is sum_n P_n sin^2(Omega_n t/2) to 2e-5 (Section 4.2.7)."""
     dev, dd, _ = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -302,8 +303,8 @@ def test_thermal_carrier_flopping_matches_the_fock_sum(raman) -> None:  # type: 
 
 
 def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type: ignore[no-untyped-def]
-    """H_Stark = (delta_St/2) sigma_z and H_int = (Delta/2) sigma_z: a superposition acquires the phase 2 pi (delta_St + Delta) t
-    relative to the frame; idle intervals evolve under H_0 alone (Section 3.4)."""
+    """A Stark-only pulse and the qubit shifts turn a superposition by -2 pi (delta_St + Delta) t to 1e-6 rad, and an idle by
+    the qubit shifts alone."""
     dev = microwave_device()
     space = HilbertSpace((2,), (), None, (0, 1, 2))
     plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
@@ -334,8 +335,8 @@ def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type:
 
 
 def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: ignore[no-untyped-def]
-    """Idle evolution with sqrt(Gamma) a and sqrt(Gamma) a^dag heats at Gamma quanta per second; sqrt(gamma/2) sigma_z decays the
-    coherence at gamma (Section 13 rows)."""
+    """An idle with the heating pair heats at Gamma quanta/s and with sqrt(gamma/2) sigma_z decays the coherence at gamma,
+    both to 1e-3."""
     dev, _, _ = raman
     space = HilbertSpace((2,), (ModeTruncation(KX, 14, (0, 4), 0.2),), None, (0, 2))
     gamma_h = 2000.0
@@ -360,7 +361,8 @@ def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: igno
 
 
 def test_boundary_monitor_grows_the_cap(raman) -> None:  # type: ignore[no-untyped-def]
-    """Section 5.5: a cap too low for the pulse trips the boundary monitor and the run repeats with the cap raised."""
+    """Section 5.5: a cap too low for a blue sideband trips the boundary monitor, the run repeats with the cap raised until the
+    boundary is below the threshold, and every retry is named in the notes."""
     dev, dd, _ = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -377,10 +379,10 @@ def test_boundary_monitor_grows_the_cap(raman) -> None:  # type: ignore[no-untyp
 
 
 def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:
-    """Section 6.6: the leaked drive on a neighbour is the same term with Omega -> eps Omega and the neighbour's own eta."""
+    """Section 6.6: the neighbour flops at eps Omega with its own Debye-Waller factor (to 1e-6), and ``include_crosstalk=False``
+    drops the term with a note."""
     dev = two_ion_raman_device(waist_m=10e-6)
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
-    from qutip_trap.light.raman import crosstalk_ratios
 
     eps = crosstalk_ratios(dev, 0, (0, 1))[1]
     space = HilbertSpace((2, 2), (), None, (0, 1, 2, 3, 4, 5))
@@ -423,9 +425,8 @@ def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:
 
 
 def test_beam_curvature_cetina_forms() -> None:
-    """Section 6.2: Omega(x) = Omega_0 (1 + (Omega''/2 Omega_0) x^2) on a thermal axial mode reproduces the frozen-Fock secular sum
-    exactly and Cetina's algebraic contrast C = prod (1 + theta^2 Omega^2 t^2)^{-1/2} with the phase lag sum arctan(theta Omega t)
-    in the continuum limit; Omega''/Omega = -2/w^2 = -2.6424e12 at w = 870 nm."""
+    """Section 6.2: a curved beam on a thermal axial mode reproduces the frozen-Fock secular sum to 1e-6 and Cetina 2022's
+    contrast and phase lag to 2e-3, closer as nbar grows; Omega''/Omega = -2/w^2 = -2.6424e12 at w = 870 nm."""
     assert gaussian_curvature_per_m2(870e-9) == pytest.approx(-2.6424e12, rel=1e-4)
     m = 170.93578 * ATOMIC_MASS_KG
     trap = secular_trap((3.0e6, 2.9e6, 0.2e6))
@@ -516,8 +517,8 @@ def _overlap(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def test_beam_path_phase_sign_is_delta_phi() -> None:
-    """Delta phi = phi_2 - phi_1 for the Raman pair: a sampled phi_1 = +0.4 rad plays GPi2(+0.4), phi_2 = +0.4 plays
-    GPi2(-0.4) (each against the wrong sign, so the pin is sharp), and a common-mode drift cancels."""
+    """With Delta phi = phi_2 - phi_1 a sampled phi_1 = 0.4 rad plays GPi2(+0.4) and phi_2 = 0.4 plays GPi2(-0.4) (overlap 1
+    to 1e-4, the wrong sign measurably below), and a common-mode drift cancels."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     right = gpi2(+0.4) @ DOWN
@@ -547,9 +548,8 @@ def _sigma_plus_phase(built, space, ion: int) -> float:  # type: ignore[no-untyp
 
 
 def test_ion_position_drift_enters_the_optical_phase() -> None:
-    """The relative optical phase Delta k . (u_0(1) - u_0(0)) of a stray-field drift u_0 = Q E_dc/(m omega^2) (Berkeland 1998
-    Eq. 16) appears on the crosstalk neighbour's coefficient (about half a radian at 14.3 nm, 1 V/m on the 1 MHz axial mode of
-    171Yb+, on a 355 nm pair); a common drift leaves the relative phase alone."""
+    """A 14.3 nm stray-field drift of the neighbour (Berkeland 1998 Eq. 16) turns its sigma_+ coefficient by Delta k . u_0 to
+    1e-9, about half a radian, and a common drift leaves the relative phase alone."""
     dev = two_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     drive = square_drive(dd, include_stark=False, crosstalk={1: 0.1})

@@ -40,7 +40,7 @@ def _col(**kw: object) -> Collisions:
 
 def test_langevin_rate_at_1e_11_torr() -> None:
     """H2 at 1e-11 torr and 300 K: k_L = 1.63e-9 / 1.51e-9 / 1.48e-9 cm^3/s and Gamma_L = 5.25e-4 / 4.87e-4 / 4.78e-4 s^-1
-    per ion for 9, 40 and 171 u, one event per 32 to 35 minutes per ion."""
+    per ion for 9, 40 and 171 u to 5e-3, one event per 35 minutes on 171Yb+."""
     col = Collisions(1e-11 * TORR_PA, {"H2": 1.0}, {"heating_kick": 1.0})
     assert number_density_per_m3(col.pressure_pa, 300.0) * 1e-6 == pytest.approx(3.22e5, rel=2e-3)
     for mass_u, k_l, gamma in (
@@ -87,7 +87,7 @@ def test_event_sampling_is_poisson_with_uniform_times_and_the_configured_outcome
 
 
 def test_the_kick_energy_scale_is_the_neutrals_thermal_energy_times_the_mass_ratio() -> None:
-    """<E> = k_B T (m_gas/m_ion) x multiplier, with the partial-pressure-weighted gas mass."""
+    """<E> = k_B T (m_gas/m_ion) x multiplier with the partial-pressure-weighted gas mass, to 1e-12."""
     col = _col()
     expect = K_B_J_PER_K * 300.0 * (GAS_MASS_U["H2"] * ATOMIC_MASS_KG / YB_KG)
     assert mean_kick_energy_j(col, YB_KG) == pytest.approx(expect, rel=1e-12)
@@ -111,8 +111,8 @@ def test_the_kick_energy_scale_is_the_neutrals_thermal_energy_times_the_mass_rat
 
 
 def test_the_kick_in_quanta() -> None:
-    """<delta nbar> = <E>/(hbar omega_m): H2 at 300 K on 171Yb+ gives 7.4e4 quanta of a 1 MHz mode, above Section 6.7's
-    parenthetical "tens to thousands"; a 4 K chamber lands inside it."""
+    """<delta nbar> = <E>/(hbar omega_m): H2 at 300 K gives 7.36e4 quanta of a 1 MHz 171Yb+ mode (2 %), above Section 6.7's
+    "tens to thousands", which a 4 K chamber lands inside."""
     col = _col()
     q_1mhz = mean_kick_quanta(col, YB_KG, 2.0 * math.pi * 1e6)
     assert q_1mhz == pytest.approx(7.36e4, rel=2e-2), q_1mhz
@@ -126,8 +126,8 @@ def test_the_kick_in_quanta() -> None:
 
 @pytest.mark.parametrize("shape", ["exponential", "thermal_maxwell"])
 def test_the_two_kick_distributions_have_the_stated_mean_and_the_right_spread(shape: str) -> None:
-    """Both shapes carry the same mean and differ in their tail: an exponential has relative spread 1, the Maxwell chi^2_3
-    sqrt(2/3)."""
+    """Both kick shapes have the stated mean (3 %) and relative spreads 1 (exponential) and sqrt(2/3) (Maxwell chi^2_3) to
+    5 %, and seeded draws repeat."""
     col = _col(kick_distribution=shape)
     w = 2.0 * math.pi * 1e6
     mean = mean_kick_quanta(col, YB_KG, w)
@@ -144,8 +144,8 @@ def test_the_two_kick_distributions_have_the_stated_mean_and_the_right_spread(sh
 
 
 def test_the_reorder_draws_from_the_configured_permutation_distribution() -> None:
-    """Configured permutations are drawn uniformly and applied as new[k] = order[perm[k]]; without one the adjacent
-    transposition at the struck ion is used."""
+    """Configured permutations are drawn and applied as new[k] = order[perm[k]]; without one the struck ion swaps with its
+    neighbour, a wrong-length permutation is ignored and an invalid one refused."""
     rng = np.random.default_rng(1)
     three = _col(reorder_permutations=((1, 0, 2), (0, 2, 1), (2, 1, 0)))
     seen = {sample_reorder(rng, three, (0, 1, 2), 0) for _ in range(400)}

@@ -1,10 +1,5 @@
-"""Level C (internal levels plus one mode) against the level-A spectrum path and the closed forms in their stated regimes.
-
-Every closed form here is evaluated on the closed two-level fixture (J = 0 -> J' = 1 with sigma+ light along B), for which
-Stenholm's A_+- = W(Delta -+ nu) + alpha W(Delta), the sideband floor (Gamma/2 nu)^2 [alpha/cos^2 theta_L + 1/4] and the
-Doppler limit hold exactly; the recoil kernel enters through the three discretizations, and the spectrum path
-A_+- = 2 Re[S(-+ nu) + D] through the internal Liouvillian.
-"""
+"""Level C (internal levels plus one mode) against the level-A spectrum path and Stenholm's closed forms, on the closed
+two-level fixture (J = 0 -> J' = 1 with sigma+ light along B) where those forms hold exactly."""
 
 from __future__ import annotations
 
@@ -57,9 +52,8 @@ def sideband_setup(axis: tuple[float, float, float], omega: float) -> tuple[Beam
 def test_level_c_sideband_floor_is_gamma_over_2nu_squared_times_alpha_over_cos2_plus_quarter(
     axis: tuple[float, float, float], expected_weight: float, recoil: str
 ) -> None:
-    """nbar_SB = (Gamma/2 nu)^2 [alpha (k_em/k_L)^2 / cos^2 theta_L + 1/4] (Roos Eq. 3.20) for one beam on the emitting
-    line (alpha = 2/5 along B; 0.35/0.5 = 0.7 at 45 degrees); all three recoil discretizations agree, since the floor
-    needs only the second moment."""
+    """Level C reaches the sideband floor (Gamma/2 nu)^2 [alpha (k_em/k_L)^2/cos^2 theta_L + 1/4] of Roos Eq. 3.20 to
+    1e-4 with every recoil discretization, along B (weight 0.4) and at 45 degrees (0.7)."""
     beam, mode, _alpha, cw = sideband_setup(axis, 0.5 * G)
     assert cw == pytest.approx(expected_weight, abs=1e-12)
     build = BlochModel(ST, [beam], mode=mode, options=MultiLevelOptions(recoil=recoil)).build  # type: ignore[arg-type]
@@ -71,7 +65,7 @@ def test_level_c_sideband_floor_is_gamma_over_2nu_squared_times_alpha_over_cos2_
 
 
 def test_alpha_to_zero_leaves_the_blue_sideband_floor_gamma_over_4nu_squared_not_zero() -> None:
-    """Recoil off: nbar = (Gamma/4 nu)^2 from off-resonant blue-sideband excitation."""
+    """Without recoil nbar is the blue-sideband floor (Gamma/4 nu)^2 to 1e-4."""
     beam, mode, _alpha, _cw = sideband_setup(Z, 0.5 * G)
     lc = level_c_steady_state(BlochModel(ST, [beam], mode=mode).build)
     assert lc.nbar == pytest.approx((G / (4.0 * NU)) ** 2, rel=1e-4)
@@ -79,7 +73,8 @@ def test_alpha_to_zero_leaves_the_blue_sideband_floor_gamma_over_4nu_squared_not
 
 
 def test_halving_omega_leaves_the_floor_and_doubling_eta_em_quadruples_the_recoil_part() -> None:
-    """Halving Omega leaves nbar unchanged; the floor is eta independent."""
+    """Halving Omega leaves the floor unchanged (2e-3), and so does a four times lighter mode (1e-3): eta_em and the
+    drive's eta double together."""
     beam, mode, _alpha, cw = sideband_setup(Z, 0.5 * G)
     half = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.25 * G, -NU)
     n_full = level_c_steady_state(
@@ -106,9 +101,8 @@ def test_halving_omega_leaves_the_floor_and_doubling_eta_em_quadruples_the_recoi
 def test_spectrum_path_reproduces_level_c_and_pins_qutips_sign_convention(
     axis: tuple[float, float, float],
 ) -> None:
-    """A_+ = S(+nu) + 2D and A_- = S(-nu) + 2D with QuTiP's spectrum(omega) = W(Delta - omega); nbar and the relaxation
-    rate agree with the full solve to 1e-4 at Omega = Gamma/2, where the W(Delta -+ nu) form with the saturated W is off by
-    1 + s."""
+    """With QuTiP's spectrum(omega) = W(Delta - omega) the spectrum path's nbar and relaxation rate match level C to
+    2e-4 and 5e-4 at Omega = Gamma/2, where the saturated W(Delta -+ nu) form is off by 1 + s (2e-3)."""
     beam, mode, alpha, cw = sideband_setup(axis, 0.5 * G)
     model = BlochModel(ST, [beam])
     sc = rate_coefficients_from_spectrum(model, mode)
@@ -134,7 +128,8 @@ def test_spectrum_path_reproduces_level_c_and_pins_qutips_sign_convention(
 
 
 def test_weak_drive_spectrum_path_agrees_with_stenholm_to_the_saturation_order() -> None:
-    """Omega = Gamma/20 (s = 0.005): Stenholm's weak-drive A_+- agree with the spectrum path to 0.6 %."""
+    """At Omega = Gamma/20 Stenholm's weak-drive nbar and cooling rate agree with the spectrum path to 0.6 %, at the
+    floor (Gamma/2 nu)^2 (0.4 + 1/4)."""
     beam_w = sigma_plus_beam(ST, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.05 * G, -NU)
     mode = ModeSpec(NU, MASS_KG, Z, d=14, expected_n_max=3)
     rc = stenholm_coefficients(0.05 * G, G, NU, -NU, 0.4)
@@ -147,8 +142,8 @@ def test_weak_drive_spectrum_path_agrees_with_stenholm_to_the_saturation_order()
 
 
 def test_mixed_pi_and_sigma_channels_need_one_alpha_per_channel() -> None:
-    """A beam at 45 degrees with pi and sigma components populates |e, 0> and |e, +-1>; the per-channel D reproduces
-    level C while any single mean alpha does not."""
+    """A 45-degree beam with pi and sigma components populates |e, 0> and |e, +-1>, and the per-channel D reproduces
+    level C to 1e-4 while any single mean alpha misses 2D by more than 10 %."""
     k_hat = (1.0 / math.sqrt(2.0), 0.0, 1.0 / math.sqrt(2.0))
     pol = (1.0 / math.sqrt(2.0) + 0j, 0j, -1.0 / math.sqrt(2.0) + 0j)
     probe = Beam(WAVELENGTH_M, k_hat, pol, 20e-6, 1e-3, (0.0, 0.0, 0.0))
@@ -179,8 +174,8 @@ def test_mixed_pi_and_sigma_channels_need_one_alpha_per_channel() -> None:
 
 
 def test_q_coherence_terms_of_the_vector_form_matter_for_a_mode_perpendicular_to_b() -> None:
-    """With the excited sublevels driven coherently and the mode perpendicular to B, the vector form (Steck's f_qq' tensor)
-    and the per-q scalar patterns differ; along B the azimuthal symmetry kills the cross terms and they coincide."""
+    """Under coherent pi and sigma driving the vector recoil form and the per-q scalar patterns agree for a mode along B
+    (1e-4) and differ by more than 1e-3 for one perpendicular to B."""
     k_hat = (1.0 / math.sqrt(2.0), 0.0, 1.0 / math.sqrt(2.0))
     pol = (1.0 / math.sqrt(2.0) + 0j, 0j, -1.0 / math.sqrt(2.0) + 0j)
     probe = Beam(WAVELENGTH_M, k_hat, pol, 20e-6, 1e-3, (0.0, 0.0, 0.0))

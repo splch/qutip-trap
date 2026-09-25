@@ -1,4 +1,5 @@
-"""Raman couplings, light shifts, decay amplitudes and scattering from the level structure (PLAN.md Section 4.5) against the closed forms of Ozeri 2005/2007 and Wineland 2003 and against a full multi-level master equation."""
+"""Raman couplings, light shifts, decay amplitudes and scattering from the level structure (PLAN.md Section 4.5) against
+Ozeri 2005/2007, Wineland 2003 and a multi-level master equation."""
 
 from __future__ import annotations
 
@@ -148,9 +149,8 @@ def _clock_states(st: AtomicStructure):  # type: ignore[no-untyped-def]
 
 
 def test_raman_coupling_reduces_to_ozeris_closed_form(be: AtomicStructure) -> None:
-    """Omega_{g1 g2} = 2 x (g_b g_r/3)(b_- r_- - b_+ r_+) omega_f/[Delta(Delta - omega_f)] for lin-perp-lin beams, where
-    b_- = r_- = b_+ = -r_+ = 1/sqrt2 (PLAN.md 4.3.2); the residual is O(omega_0/Delta) from referencing Delta to one ground
-    state. Same-handed pairs cancel."""
+    """The lin-perp-lin clock Raman coupling is Ozeri's 2 (g_b g_r/3) omega_f/[Delta(Delta - omega_f)] to 3 % at three
+    detunings (the O(omega_0/Delta) reference ambiguity), and a same-handed pair cancels exactly."""
     sp = be.species
     omega_f = fine_structure_omega(sp)
     low, high = _clock_states(be)
@@ -169,8 +169,7 @@ def test_raman_coupling_reduces_to_ozeris_closed_form(be: AtomicStructure) -> No
 
 
 def test_raman_coupling_closed_form_tightens_as_the_hyperfine_splitting_shrinks() -> None:
-    """The residual is the O(omega_0/Delta) reference ambiguity: scaling A_S by 1e-3 brings the agreement to 2e-4 (at a
-    negligible field, where the F labels are the states the closed form assumes)."""
+    """With A_hfs scaled by 1e-3 at a negligible field the Raman coupling matches Ozeri's closed form to 2e-4."""
     sp = be9_like(a_scale=1e-3)
     st = AtomicStructure(sp, 1e-6, Z_HAT)
     omega_f = fine_structure_omega(sp)
@@ -185,8 +184,8 @@ def test_raman_coupling_closed_form_tightens_as_the_hyperfine_splitting_shrinks(
 
 
 def test_total_and_raman_scattering_rates_reduce_to_ozeris_forms(be: AtomicStructure) -> None:
-    """Gamma_total = (gamma/3) g^2 [1/Delta^2 + 2/(Delta - omega_f)^2] per lin-perp-B beam; the inelastic part is
-    (2 gamma/9) g^2 [omega_f/(Delta(Delta - omega_f))]^2 (Ozeri Eqs. 14-15)."""
+    """Per lin-perp-B beam the total and inelastic scattering rates are Ozeri's Eqs. 14-15 to 3e-3 and 3e-2 at three
+    detunings, and the total is gamma times the residual excited population to 1e-3."""
     sp = be.species
     gamma = TWO_PI * GAMMA_HZ
     omega_f = fine_structure_omega(sp)
@@ -207,8 +206,8 @@ def test_total_and_raman_scattering_rates_reduce_to_ozeris_forms(be: AtomicStruc
 
 
 def test_scattering_probability_per_pi_pulse_has_ozeris_minimum(be: AtomicStructure) -> None:
-    """P_total = Gamma_total x pi/|Omega_R| = (pi gamma/omega_f)(2 Delta^2 + (Delta - omega_f)^2)/|Delta(Delta - omega_f)|,
-    minimum 2 sqrt2 pi gamma/omega_f at Delta = (sqrt2 - 1) omega_f, power independent (Section 4.3.2)."""
+    """The scattering probability per pi pulse is Ozeri's P_total to 3 % at four detunings, minimal at
+    Delta = (sqrt2 - 1) omega_f where it equals 2 sqrt2 pi gamma/omega_f (3 %), and independent of the power (1e-9)."""
     sp = be.species
     gamma = TWO_PI * GAMMA_HZ
     omega_f = fine_structure_omega(sp)
@@ -232,9 +231,9 @@ def test_scattering_probability_per_pi_pulse_has_ozeris_minimum(be: AtomicStruct
 
 
 def test_clock_light_shift_needs_the_three_index_detuning(be: AtomicStructure) -> None:
-    """delta_{0<->0} = -(g_b^2 + g_r^2)(omega_0/3)[1/Delta^2 + 2/(Delta - omega_F)^2] (Wineland Eq. 2.17) comes out because
-    each ground state carries its own detuning; the summed line strength is the same for both clock states, so one Delta
-    per intermediate level would give exactly zero."""
+    """The clock differential light shift is Wineland Eq. 2.17 to 3 % (2e-3 at a 1e-3 hyperfine scale and negligible
+    field) while both clock states carry the same summed line strength (1e-12), so it comes from the per-state detunings
+    alone."""
     sp = be.species
     omega_f = fine_structure_omega(sp)
     low, high = _clock_states(be)
@@ -267,8 +266,9 @@ def _elliptical_beam(sp: Species, delta_rad_s: float, angle_rad: float, ground_e
 
 
 def test_the_9be_zeeman_qubit_shift_has_a_polarization_null_and_the_clock_one_does_not() -> None:
-    """The |2,2> <-> |1,1> differential shift crosses zero between sigma+ and sigma-; the clock shift, sharing one prefactor
-    and one bracket with R_SE, is polarization independent and therefore unnullable (PLAN.md 4.3.2)."""
+    """The 9Be+ |2,2> <-> |1,1> differential shift has a polarization null between sigma+ and sigma- (to 1e-6 of its
+    sigma+ value), the clock shift keeps its sign at every polarization, and each pair's summed line strengths agree to
+    1e-12."""
     sp = be9_like()
     st = AtomicStructure(sp, 1.0, Z_HAT)
     delta = 0.414213562373 * fine_structure_omega(sp)
@@ -298,8 +298,9 @@ def test_the_9be_zeeman_qubit_shift_has_a_polarization_null_and_the_clock_one_do
 
 
 def test_ozeri_2005_single_electron_amplitudes() -> None:
-    """Raman a^(1/2) = -sqrt2/3, a^(3/2) = +sqrt2/3 (equal and opposite); Rayleigh with sigma+ on m = -1/2: 2/3 and 1/3; with
-    pi on m = -1/2: 1/3 and 2/3; the stretched state under sigma+: 0 and 1 (Ozeri 2005)."""
+    """The single-electron path amplitudes are Ozeri 2005's to 2e-3: Raman -+sqrt2/3 through P1/2 and P3/2 (opposite
+    signs), Rayleigh 2/3 and 1/3 under sigma+ and 1/3 and 2/3 under pi on m = -1/2, and 0 and 1 for the stretched
+    state."""
     sp = spin_zero_like()
     st = AtomicStructure(sp, 1.0, Z_HAT)
     gamma = TWO_PI * GAMMA_HZ
@@ -418,8 +419,8 @@ def _multilevel_mesolve(st: AtomicStructure, beam: Beam, initial: np.ndarray, t_
 
 
 def test_scattering_rates_against_mesolve_with_unequal_fine_structure_rates() -> None:
-    """With Gamma(P1/2) != Gamma(P3/2) only the sqrt(Gamma_e)-inside form matches the master equation (P levels 100 and
-    150 MHz above S keep the dynamics unstiff; the initial state is the DRESSED ground state)."""
+    """With Gamma(P1/2) != Gamma(P3/2) the spin-flip rate matches the master equation from the dressed ground state to
+    5e-3, while one shared Gamma times the residual population misses it by more than 30 %."""
     sp = toy_spin_zero(gamma_p32_s=3.0e5)
     st = AtomicStructure(sp, 1.0, Z_HAT)
     delta = 0.2 * fine_structure_omega(sp)  # far detuned (Delta/Gamma ~ 600) and interfering
@@ -432,7 +433,6 @@ def test_scattering_rates_against_mesolve_with_unequal_fine_structure_rates() ->
     idx, times, res = _multilevel_mesolve(st, beam, np.outer(psi, psi.conj()), t_final, n=101)
     p_up = np.array([r[idx[up.full_label], idx[up.full_label]].real for r in res.states])
     assert np.polyfit(times, p_up, 1)[0] == pytest.approx(predicted[up.full_label], rel=5e-3)
-    # one shared Gamma times the residual population (the Gamma_e-outside form) is wrong by a large factor here
     outside = st.residual_excited_population(down, beam)
     for gamma_shared in (1.0e5, 3.0e5):
         assert not math.isclose(outside * gamma_shared, predicted[up.full_label], rel_tol=0.3)
@@ -440,7 +440,8 @@ def test_scattering_rates_against_mesolve_with_unequal_fine_structure_rates() ->
 
 @pytest.mark.slow
 def test_rayleigh_dephasing_against_mesolve() -> None:
-    """The qubit coherence decays at (Gamma_Ram + Gamma_el)/2 with Gamma_el = sum_q' |r_u - r_d|^2 (Uys Eqs. 6-8)."""
+    """The qubit coherence decays at (Gamma_Ram + Gamma_el)/2 with Gamma_el = sum_q' |r_u - r_d|^2 to 1 %
+    (Uys Eqs. 6-8)."""
     sp = toy_spin_zero(gamma_p32_s=1.0e5)
     st = AtomicStructure(sp, 1.0, Z_HAT)
     down, up = st.state("S1/2 mJ=-1/2"), st.state("S1/2 mJ=1/2")
@@ -459,9 +460,8 @@ def test_rayleigh_dephasing_against_mesolve() -> None:
 
 
 def test_species_api_end_to_end_on_the_fixture() -> None:
-    """The Species methods route through the same engine and speak Hz."""
-    from qutip_trap.device.model import Field
-
+    """The Species methods return the AtomicStructure's coupling, shift, rates, dephasing and Rabi frequency, the
+    angular ones divided by 2 pi (1e-6)."""
     sp = be9_like()
     field = Field(B_gauss=1.0, direction=Z_HAT)
     st = AtomicStructure(sp, 1.0, Z_HAT)
@@ -491,8 +491,8 @@ def test_species_api_end_to_end_on_the_fixture() -> None:
 
 @pytest.mark.parametrize("name", ["171Yb+", "40Ca+", "88Sr+"])
 def test_decay_amplitude_shares_reproduce_the_tabulated_branchings(name: str) -> None:
-    """sum_{b in lo, q} |c_{e->b q}|^2 / Gamma_e == Transition.branching(lo -> e) to 1e-12 for every E1-reached upper level
-    and every dressed sublevel: |c|^2 is the partial-rate fraction, each channel weighted by its own omega^3."""
+    """For every E1-reached upper level and dressed sublevel the decay-amplitude shares sum_{b in lo, q} |c|^2/Gamma_e
+    equal the tabulated branching to 1e-12."""
     st = AtomicStructure(species(name), B_GAUSS, Z_HAT)
     checked = 0
     for level in {up for (_lo, up) in st.e1}:
@@ -511,8 +511,7 @@ def test_decay_amplitude_shares_reproduce_the_tabulated_branchings(name: str) ->
 
 
 def test_the_scattering_budget_of_the_355_nm_drive_leaks_at_the_tabulated_rate(yb: Species) -> None:
-    """On the 355 nm clock drive the leakage share out of the qubit manifold is percent level (the D branchings weighted
-    by the two paths)."""
+    """On the 171Yb+ 355 nm clock drive the leakage out of S1/2 is between 0 and 2 % of the scattering rate."""
     st = AtomicStructure(yb, 5.0, Z_HAT)
     beam = Beam(355e-9, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 20e-6, 10e-3, (0.0, 0.0, 0.0))
     rates = st.scattering_rates(st.state("S1/2 F=0 mF=0"), beam)
@@ -531,7 +530,8 @@ def _lin_perp_lin(lam: float) -> tuple[Beam, Beam]:
 
 
 def test_the_two_paths_enter_with_opposite_signs(yb: Species) -> None:
-    """The P1/2 and P3/2 partial Raman sums are antiparallel (PLAN.md 4.5.4): the origin of omega_f/[Delta(Delta - omega_f)]."""
+    """The 171Yb+ P1/2 and P3/2 partial Raman sums are antiparallel (imaginary part below 1e-9 of the ratio) from -50 to
+    -400 THz."""
     st = AtomicStructure(yb, 5.0, Z_HAT)
     dn, up = st.state("S1/2 F=0 mF=0"), st.state("S1/2 F=1 mF=0")
     f0 = yb.level("P1/2").energy_hz
@@ -553,8 +553,8 @@ def test_the_two_paths_enter_with_opposite_signs(yb: Species) -> None:
 
 
 def test_the_raman_coupling_follows_the_two_path_closed_form_not_one_over_delta(yb: Species) -> None:
-    """|Omega_R| |Delta(Delta - omega_f)|/omega_f varies by < 35% over Delta/2pi = -50 to -400 THz, |Omega_R Delta| by 2.6x
-    (171Yb+'s 99.84 THz fine structure puts the 1/Delta^2 regime outside the optical band)."""
+    """Over Delta/2pi = -50 to -400 THz |Omega_R Delta(Delta - omega_f)|/omega_f varies by less than 35 % and
+    |Omega_R Delta| by more than 2.5x, with 171Yb+'s omega_f/2pi = 99.8432 THz (1e-5)."""
     st = AtomicStructure(yb, 5.0, Z_HAT)
     dn, up = st.state("S1/2 F=0 mF=0"), st.state("S1/2 F=1 mF=0")
     f0 = yb.level("P1/2").energy_hz
@@ -571,7 +571,8 @@ def test_the_raman_coupling_follows_the_two_path_closed_form_not_one_over_delta(
 
 
 def test_the_raman_spin_flip_rate_is_interference_protected_and_the_leakage_is_not(yb: Species) -> None:
-    """The spin-flip rate falls faster than 1/Delta^3; the D-state leakage, not protected, as about 1/Delta^2 (4.5.5)."""
+    """Each doubling of Delta from -100 to -400 THz cuts the spin-flip rate more than 10x (faster than 1/Delta^3) and
+    the D-state leakage by a factor 0.2 to 0.45 (about 1/Delta^2)."""
     st = AtomicStructure(yb, 5.0, Z_HAT)
     dn, up = st.state("S1/2 F=0 mF=0"), st.state("S1/2 F=1 mF=0")
     f0 = yb.level("P1/2").energy_hz
@@ -626,7 +627,8 @@ def test_an_incomplete_branching_set_is_refused_unless_the_deficit_is_declared()
 
 
 def test_a_declared_deficit_scales_the_amplitudes_rather_than_being_renormalized_away() -> None:
-    """sum_{b q} |c|^2 equals the TABULATED total: a declared 4% leak stays 4% missing."""
+    """With a declared 4 % untabulated channel the decay-amplitude shares stay at the tabulated 0.90 and 0.06
+    (1e-12)."""
     st = AtomicStructure(_two_channel_species((0.90, 0.06), 0.04), B_GAUSS, Z_HAT)
     assert st.tabulated_branching_total("P1/2") == pytest.approx(0.96, rel=1e-12)
     e = st.states_of("P1/2")[0]
@@ -665,7 +667,8 @@ def test_transitions_out_of_one_upper_level_must_agree_on_its_total_rate() -> No
 
 
 def test_atomic_structure_refuses_a_species_with_no_e1_structure() -> None:
-    """An E2-only record answers no Section 4.5.4/4.5.5 question: it builds only when its qubit is the E2 pair itself."""
+    """An E2-only species builds an AtomicStructure without E1 elements when its qubit is the E2 pair and is refused
+    otherwise."""
     levels = (
         Level("S1/2", 0.0, None, 0.0, 0.0, 2.0, ("test",)),
         Level("D5/2", 4.4e14, 0.39, 0.0, 0.0, 1.2, ("test",)),

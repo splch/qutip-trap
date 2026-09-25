@@ -1,10 +1,5 @@
 """Two-qubit gate physics through the JOINT_EXACT engine against the closed forms (PLAN.md Section 4.4), and the reference MS
-pulse against the native matrix inside its intrinsic budget.
-
-The reference pulse plays on the two-ion 171Yb+ chain at (3.0, 2.9, 1.0) MHz with the Raman Delta k in the transverse
-plane: the x-COM mode at 3.0000 MHz (eta = 0.078577 on both ions), a square bichromatic pulse with the tones
-eps/2pi = 10 kHz inside the sideband (one 100 us loop) at the maximally entangling closure eta Omega/eps = 1/2, and
-d_m = 12 (joint dimension 48)."""
+pulse (one 100 us loop on the two-ion chain's x-COM mode at d_m = 12) against the native matrix inside its intrinsic budget."""
 
 from __future__ import annotations
 
@@ -59,11 +54,11 @@ from qutip_trap.trap.crystal import Crystal, Mode
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 from tests.fixtures import (
     X_COM_TWO_IONS,
+    chain_device,
     derived_seeds,
     quiet_device,
     raman_gate_drives,
     table_with_waveform,
-    two_ion_device,
     two_ion_modes,
 )
 from tests.oracles import (
@@ -80,8 +75,8 @@ EPS_ANCHOR_HZ = 10e3
 
 
 def anchor_device() -> Device:
-    """Two 171Yb+ ions whose x-COM mode at 1 MHz carries eta = 0.05 exactly (the crossing angle of the 355 nm pair is chosen
-    for it; the other modes carry eta = 0 or are frozen in the tests)."""
+    """Two 171Yb+ ions whose x-COM mode at 1 MHz carries eta = 0.05 exactly (the 355 nm pair's crossing angle is chosen for
+    it)."""
     yb = species("171Yb+")
     mass = yb.mass_u * ATOMIC_MASS_KG
     x0 = math.sqrt(HBAR_J_S / (2.0 * mass * TWO_PI * NU_ANCHOR_HZ))
@@ -123,8 +118,7 @@ ONE_MODE_OPTIONS = BuilderOptions(frozen_debye_waller=False)
 def _run(
     dev: Device, wf: Waveform, space: HilbertSpace, opts: BuilderOptions, internal=(0, 0), nbar=None, store=2
 ):  # type: ignore[no-untyped-def]
-    # the closed forms these anchors reproduce carry no light shift: a table with the derived Rabi entries and no Stark belief, played
-    # without the truth chain (the engine without the table), is the idealization of a device whose beams shift nothing
+    # the closed forms carry no light shift: derived Rabi entries, no Stark entry, and an engine without the table
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2), stark_hz={})
     sched = ms_schedule(wf, (0, 1), raman_gate_drives(2), table)
     eng = JointExactEngine(builder_options=opts, store_per_segment=store)
@@ -150,9 +144,9 @@ def anchor():  # type: ignore[no-untyped-def]
     return dev, modes
 
 
-def test_check_ms_closure_anchors_reproduce_through_the_package(anchor) -> None:  # type: ignore[no-untyped-def]
-    """eta = 0.05, nu = 2 pi x 1 MHz, eps = 2 pi x 10 kHz, d_m = 16, one loop from |dd>: concurrence 0.9999 with populations
-    (0.4926, 0, 0, 0.5074) at eta Omega/eps = 1/2 and 0.38 (chi = pi/16) at 1/4, the tones at equal phase."""
+def test_ms_closure_anchors_reproduce_through_the_package(anchor) -> None:  # type: ignore[no-untyped-def]
+    """One loop from |dd> at eta = 0.05, nu = 1 MHz, eps = 10 kHz, d_m = 16: concurrence 0.9999 and populations (0.5074, 0, 0,
+    0.4926) at eta Omega/eps = 1/2, and 0.3825 with (0.962, 0, 0, 0.038) at 1/4, to 6e-5 and 6e-4."""
     dev, modes = anchor
     for ratio, conc, p_dd, p_uu in ((0.5, 0.9999, 0.5074, 0.4926), (0.25, 0.3825, 0.962, 0.038)):
         wf = Waveform.symmetric(
@@ -175,9 +169,8 @@ def test_check_ms_closure_anchors_reproduce_through_the_package(anchor) -> None:
 
 
 def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -> None:  # type: ignore[no-untyped-def]
-    """Roos 2008's psi = (4 Omega_Roos/delta) sin zeta: with the tone phases differing by pi (Choi's sine convention) the
-    carrier's frame rotation has the mean 2 Omega/mu, the entangling axis tilts by 0.2 rad and the |dd> gate leaks sin^2(0.2)
-    into |du>, |ud>; with equal tone phases the tilt vanishes."""
+    """With the tone phases pi apart (Choi's sine convention) the carrier tilts the entangling axis by psi = 2 Omega/mu = 0.2
+    rad (Roos 2008) and the closed-loop |dd> gate leaks sin^2(psi) into |du>, |ud> to 10 %."""
     dev, modes = anchor
     wf = Waveform.symmetric(
         modes,
@@ -202,10 +195,8 @@ def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -
 
 
 def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:  # type: ignore[no-untyped-def]
-    """With the displacement expanded to first order and the resonant sidebands kept (frame='interaction', rwa,
-    lamb_dicke_order=1) the drive IS the spin-dependent force and the state equals D(alpha S_y) exp[i gamma S_y^2]|dd, 0> with
-    alpha = (eta Omega/(2 eps))(e^{i eps t} - 1), gamma = lambda t - chi sin(eps t), at every stored time; the populations follow
-    Kirchmair's envelopes with nbar = 0."""
+    """In the first-order Lamb-Dicke, RWA interaction picture the state equals the MS propagator D(alpha S) exp(i gamma S^2)
+    |dd, 0> to 1e-9 at every stored time and the populations follow Kirchmair's nbar = 0 envelopes to 1e-9."""
     dev, modes = anchor
     wf = Waveform.symmetric(modes, gate_mode=ANCHOR_MODE, loops=1, epsilon_hz=EPS_ANCHOR_HZ, kernel="rwa")
     opts = BuilderOptions(frame="interaction", rwa=True, lamb_dicke_order=1, frozen_debye_waller=False)
@@ -219,7 +210,6 @@ def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:  # type: ig
     for t, state in zip(tr.times_s, tr.reduced_internal):
         alpha = ms_alpha(ETA_ANCHOR, omega, eps, t)
         gamma = ms_gamma(ETA_ANCHOR, omega, eps, t)
-        # the force axis is phi_s + pi/2 = pi/2: S_y for equal tone phases at zero
         # alpha carries the -(hbar eta Omega/2) sign; the MS(0, 0) schedule's axes are X on ion 0 and -X on ion 1 (S = X_0 - X_1)
         u = ms_propagator(-alpha, gamma, 16, phi_rad=0.0, phi2_rad=math.pi)
         ref = (u * psi0).ptrace([0, 1])
@@ -236,8 +226,8 @@ def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:  # type: ig
 
 
 def test_thermal_envelopes_and_debye_waller_references(anchor) -> None:  # type: ignore[no-untyped-def]
-    """Kirchmair Eq. 14 with a thermal mode (first-order force: exact at nbar = 1) and the three thermal Debye-Waller references
-    in units of (pi^2/4) eta^4 (2.000, 3.000, 4.250 at nbar = 1)."""
+    """The first-order force on a thermal mode (nbar = 1) follows Kirchmair Eq. 14 to 3e-4, and the three thermal Debye-Waller
+    references are 2, 3 and 4.25 in units of (pi^2/4) eta^4 at nbar = 1."""
     dev, modes = anchor
     wf = Waveform.symmetric(modes, gate_mode=ANCHOR_MODE, loops=1, epsilon_hz=EPS_ANCHOR_HZ, kernel="rwa")
     omega = TWO_PI * wf.segments[0].amplitude_hz[(0, "blue")]
@@ -253,8 +243,6 @@ def test_thermal_envelopes_and_debye_waller_references(anchor) -> None:  # type:
         assert p[0] == pytest.approx(p2, abs=3e-4)
         assert p[1] + p[2] == pytest.approx(p1, abs=3e-4)
         assert p[3] == pytest.approx(p0, abs=3e-4)
-    # the three thermal references in units of (pi^2/4) eta^4 (the exact thermal curve of the calibrated gate is in
-    # tests/test_gate_calibration.py, Fock-resolved)
     assert thermal_debye_waller_infidelity(0.1, 1.0, "mean") / ((math.pi**2 / 4) * 1e-4) == pytest.approx(2.0)
     assert thermal_debye_waller_infidelity(0.1, 1.0, "n0") / ((math.pi**2 / 4) * 1e-4) == pytest.approx(3.0)
     assert thermal_debye_waller_infidelity(0.1, 1.0, "minus_half") / (
@@ -263,9 +251,8 @@ def test_thermal_envelopes_and_debye_waller_references(anchor) -> None:  # type:
 
 
 def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
-    """The first-order Lamb-Dicke Hamiltonian is block diagonal in the sigma_x basis, so chi follows exactly from the four blocks'
-    phases; with non-proportional envelopes it equals the symmetrized kernel chi_ij = K_ij + K_ji and neither printed reading
-    2 K_ij, 2 K_ji of Choi's 2 Omega_i(t) Omega_j(t')."""
+    """With non-proportional envelopes chi from the four sigma_x blocks' exact phases equals the symmetrized kernel K_ij + K_ji
+    to 1e-8, and Choi's two printed readings 2 K_ij, 2 K_ji miss it by equal and opposite amounts (26.8 % here)."""
     omega = TWO_PI * 1.0e6
     mu = TWO_PI * 0.96e6
     # a wide-open loop: at closure (F = 0) the two printed readings coincide
@@ -319,7 +306,7 @@ def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
     assert full_square == pytest.approx(kab - kba, rel=1e-8), (
         "int_0^tau dt' int_0^tau dt of the printed integrand = K_ab - K_ba"
     )
-    # the two printed readings 2 K_ab and 2 K_ba miss chi by equal and opposite amounts; measured here
+    # the two printed readings 2 K_ab and 2 K_ba miss chi by equal and opposite amounts
     dev_ab = 2 * kab / chi_exact - 1.0
     dev_ba = 2 * kba / chi_exact - 1.0
     assert abs(dev_ab) > 0.1 and abs(dev_ba) > 0.1
@@ -330,9 +317,8 @@ def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
 
 
 def test_residual_displacement_conversions_by_direct_integration(anchor) -> None:  # type: ignore[no-untyped-def]
-    """An open loop (1.1 loops) with the first-order force: eps_ent = sum |alpha|^2 equals the final mode energy exactly, and the
-    entanglement infidelity 1 - F_ent from the four sigma_x-basis inputs is the exact uniform-input form and eps_ent to first
-    order."""
+    """On an open loop (1.1 loops) of the first-order force the final <n> is eps_ent = sum |alpha|^2 to 1e-3, and 1 - F_ent from
+    the four sigma_x inputs is the exact uniform-input form to 2e-4 and eps_ent to 10 %."""
     dev, modes = anchor
     eps = TWO_PI * EPS_ANCHOR_HZ
     tau = 1.1 * 2.0 * math.pi / eps
@@ -380,9 +366,9 @@ def test_residual_displacement_conversions_by_direct_integration(anchor) -> None
 
 
 def test_spectator_loop_error_and_am_closure_exactly() -> None:
-    """The open rocking-mode loop of the symmetric COM pulse costs sum_j |alpha_jm|^2 quanta, the derived spectator-loop form
-    pi^2 N K (omega_g/omega_m) sin^2(delta t_g/2)/(delta t_g)^2 with 2n + 1 = 1; the five-segment AM pulse closes it."""
-    dev = two_ion_device()
+    """The symmetric COM pulse leaves sum_j |alpha_jm|^2 quanta in the open rocking-mode loop (to 5 %, the spectator-loop form to
+    1e-9) and a fidelity below 0.995; the AM pulse closes every loop (leakage < 2e-4, fidelity > 0.999)."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
@@ -419,9 +405,9 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
 
 
 def test_ms_gate_from_the_scheduler_matches_the_native_matrix_up_to_the_open_spectator() -> None:
-    """The exact two-mode gate of the symmetric pulse against MS(phi_0, phi_1, 2 chi_exact): the phase conventions (axes at phi_i, the
-    sign) hold for arbitrary phases, the residual being the open rocking-mode loop."""
-    dev = two_ion_device()
+    """At arbitrary phases the exact two-mode gate matches MS(phi_0, phi_1, 2 chi) up to the open rocking-mode loop's leakage
+    (2e-3) and overlaps the opposite-sign gate by less than 0.02."""
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
@@ -446,7 +432,7 @@ EPSILON_HZ = 10e3
 
 def _single_mode_fixture():  # type: ignore[no-untyped-def]
     """(device, drives, the one-mode GateModes of the x-COM, the closed-form pulse, the d_m = 12 space)."""
-    device = two_ion_device()
+    device = chain_device(2)
     drives = raman_gate_drives(2)
     full = two_ion_modes(device)
     k = full.modes.index(X_COM_TWO_IONS)
@@ -517,7 +503,8 @@ def _exact_play(builder: BuilderOptions):  # type: ignore[no-untyped-def]
 
 
 def test_the_section_11_1_fixture_is_the_plan_s_pulse() -> None:
-    """d_m = 12 on one mode is joint dimension 48; the loop closes at 100 us with chi = pi/4 and eta Omega/eps = 1/2."""
+    """The Section 11.1 pulse: joint dimension 48 at d_m = 12, a 100 us loop with chi = pi/4, eta = 0.078577 and
+    eta Omega/eps = 0.499583 (1/2 to 1e-3)."""
     _device, _drives, modes, waveform, space = _single_mode_fixture()
     assert space.dims == [2, 2, 12] and space.dimension == 48
     assert waveform.duration_s == pytest.approx(1.0 / EPSILON_HZ, rel=1e-12)
@@ -533,11 +520,9 @@ def test_the_section_11_1_fixture_is_the_plan_s_pulse() -> None:
 
 @pytest.mark.slow
 def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intrinsic_budget() -> None:
-    """The exact play (no Lamb-Dicke expansion, no RWA, no noise) of the calibrated reference pulse against MS(0, 0, pi/2).
-
-    One tone's off-resonant carrier excitation (Omega_tone/(2 nu))^2 = 1.143e-4, at the calibrated Omega_tone/2pi =
-    64.148 kHz and nu/2pi = 3.0000 MHz, bounds the realized infidelity 4.66e-5 and dominates it (two ions, each excited off
-    resonance by both tones). ``intrinsic_budget``'s ``carrier_scale`` is (Omega/nu_min)^2, a looser bound."""
+    """The exact play of the calibrated reference pulse misses MS(0, 0, pi/2) by 4.66e-5 (2 %), inside the off-resonant
+    carrier term (Omega_tone/(2 nu))^2 = 1.143e-4 and the budget's carrier_scale 5.14e-4, with the budget's other terms at
+    their closed forms."""
     device, modes, waveform, sched, infidelity = _exact_play(BuilderOptions(include_stark=False))
     omega_tone = TWO_PI * float(waveform.segments[0].amplitude_hz[(0, "blue")])
     nu = modes.omega_rad_s[0]
@@ -590,8 +575,7 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
 
 @pytest.mark.slow
 def test_the_same_identity_reaches_1e_6_with_lamb_dicke_order_and_rwa_on() -> None:
-    """With ``lamb_dicke_order`` and ``rwa`` on, the simulated generator IS the ideal MS generator, so the same pulse
-    reproduces the native matrix to 2.3e-10, against 4.66e-5 for the exact play."""
+    """With lamb_dicke_order = 1 and the RWA the same pulse reproduces the native matrix to 2.32e-10 (20 %), below 1e-6."""
     *_, infidelity = _exact_play(
         BuilderOptions(lamb_dicke_order=1, rwa=True, frame="interaction", include_stark=False)
     )
@@ -600,9 +584,8 @@ def test_the_same_identity_reaches_1e_6_with_lamb_dicke_order_and_rwa_on() -> No
 
 
 def test_sideband_lamb_dicke_deficit_against_eta_sqrt_n_plus_one() -> None:
-    """The reported (not summed) Lamb-Dicke deficit: f = 1 - |<n+1|D(i eta)|n>|/(eta sqrt(n+1)) (Wineland 1998 Eq. 18),
-    the worst case over the gate's ions and its carried modes at the highest Fock index each carries; zero at eta -> 0 and
-    growing with eta and n."""
+    """The Lamb-Dicke deficit is 1 - |<n+1|D(i eta)|n>|/(eta sqrt(n+1)) at the top carried Fock level to 1e-12 (Wineland 1998
+    Eq. 18), monotone in eta and zero at eta = 0."""
 
     def _selection(d: int) -> SpaceSelection:
         space = HilbertSpace((2, 2), (ModeTruncation(X_COM_TWO_IONS, d, (0, d - 1), 0.1),), None, ())

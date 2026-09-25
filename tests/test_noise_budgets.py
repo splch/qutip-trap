@@ -25,9 +25,9 @@ from qutip_trap.noise.summary import (
 )
 from tests.fixtures import (
     X_COM_TWO_IONS,
+    chain_device,
     raman_gate_drives,
     table_with_waveform,
-    two_ion_device,
     two_ion_modes,
 )
 from tests.oracles import ballance_dephasing_error, ballance_heating_error
@@ -37,7 +37,7 @@ FAST = SolverOptions(mesolve_dimension_max=4096)
 
 def _gate(loops: int, epsilon_hz: float):  # type: ignore[no-untyped-def]
     """A K-loop symmetric MS gate closed on the COM alone with the rocking mode frozen: dims 2 x 2 x 12."""
-    dev = two_ion_device()
+    dev = chain_device(2)
     modes = two_ion_modes(dev)
     wf = Waveform.symmetric(
         modes, gate_mode=X_COM_TWO_IONS, loops=loops, epsilon_hz=epsilon_hz, all_modes=False
@@ -57,7 +57,7 @@ def _check(dev, wf, space, table, channels=()):  # type: ignore[no-untyped-def]
 @pytest.mark.slow
 @pytest.mark.parametrize("loops", [1, 2])
 def test_heating_during_the_gate_costs_ndot_tg_over_2k(loops: int) -> None:
-    """Ballance: eps_h = ndot t_g/(2K) for the K-loop gate, under the heating channel on the gate mode."""
+    """Heating at 400 quanta/s on the gate mode costs eps_h = ndot t_g/(2K) of the K-loop gate to 8 % (Ballance 2016)."""
     dev, wf, space, table = _gate(loops, 20e3 * loops)
     base = _check(dev, wf, space, table)
     ndot = 400.0
@@ -70,7 +70,7 @@ def test_heating_during_the_gate_costs_ndot_tg_over_2k(loops: int) -> None:
 @pytest.mark.slow
 @pytest.mark.parametrize("loops", [1, 2])
 def test_motional_dephasing_costs_alpha_k_tg_over_tau(loops: int) -> None:
-    """Ballance: L = a^dag a sqrt(2/tau) gives eps_d = alpha_K t_g/tau with alpha_K = (8K + 3)/(16 K^2)."""
+    """L = a^dag a sqrt(2/tau) costs eps_d = alpha_K t_g/tau with alpha_K = (8K + 3)/(16 K^2) to 10 % (Ballance 2016)."""
     dev, wf, space, table = _gate(loops, 20e3 * loops)
     base = _check(dev, wf, space, table)
     t_g = wf.duration_s
@@ -80,8 +80,8 @@ def test_motional_dephasing_costs_alpha_k_tg_over_tau(loops: int) -> None:
 
 
 def test_depolarizing_summary_and_over_rotation_twirl() -> None:
-    """Lambda_eps's entanglement infidelity equals eps exactly (Chen 2023); the twirl of exp(-i alpha XX) is
-    p_xx = sin^2 alpha (Trout 2018); the average gate infidelity is 4/5 of the entanglement one for two qubits."""
+    """Lambda_eps has entanglement infidelity and depolarizing rate eps (1e-10, Chen 2023), the twirl of exp(-i alpha XX) is
+    p_xx = sin^2 alpha (1e-12, Trout 2018), and a two-qubit average gate infidelity is 4/5 of the entanglement one."""
     for n in (1, 2):
         for eps in (1e-3, 0.05):
             c = depolarizing_choi(eps, n)

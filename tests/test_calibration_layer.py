@@ -1,6 +1,6 @@
-"""The calibration layer without the long experiments (PLAN.md Section 7): the played chain (requested -> physical through
-the device), the scheduler's Stark compensation, the servo, the calibration cache, the sideband-lineshape fit, the crystal
-image, ``Device.derived()``, the dependency-graph refusal, and table edits as proposals."""
+"""The calibration layer without the long experiments (PLAN.md Section 7): the played chain, the scheduler's Stark
+compensation, the servo, the cache, the lineshape fit, the crystal image, ``Device.derived()``, the dependency refusal and
+table edits as proposals."""
 
 from __future__ import annotations
 
@@ -74,8 +74,8 @@ def two_ion():  # type: ignore[no-untyped-def]
 
 
 def test_sideband_lineshape_row_pi_time_half_depth_and_the_half_rabi_negative_control() -> None:
-    """P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)): a carrier pi pulse at Omega t = pi; the full
-    form fitted to a synthetic scan returns Omega, the half-Rabi form returns Omega/2."""
+    """The sideband lineshape gives full transfer at Omega t = pi and half at pi/2; fitted to a synthetic scan the full form
+    returns Omega and pi/Omega to 1e-6 and the half-Rabi form Omega/2."""
     omega = TWO_PI * 50e3
     t_pi = math.pi / omega
     assert sideband_lineshape(0.0, omega, t_pi) == pytest.approx(1.0)
@@ -149,8 +149,8 @@ def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalib
 
 
 def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Every tone is detuned by the shift the table predicts for the played amplitude; both legs of an MS
-    segment move together (the spin and motion phases are untouched); the flag switches it off."""
+    """Every tone is detuned by the table's Stark shift for its amplitude (to 1e-9), both MS legs by the same amount, none with
+    stark_compensation=False, and the crosstalk belief carries the table's phase."""
     fx, sur = two_ion
     rep = compile_report(BELL)
     on = schedule(rep.circuit, fx.device, sur.table)
@@ -188,8 +188,8 @@ def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -
 
 
 def test_servo_high_passes_a_slow_drift_into_its_residual_band() -> None:
-    """A first-order lock of bandwidth f_s tracks an OU drift of correlation time tau: the residual variance falls to about
-    sigma^2/(1 + 2 pi f_s tau), the first sample carries no offset (the calibration measured it), and a quiet servo changes nothing."""
+    """A servo of bandwidth f_s leaves an OU drift the residual variance sigma^2/(1 + 2 pi f_s tau) to 50 %, zero at the first
+    sample and the drift itself at f_s = 0; through the noise model it holds field offsets below 0.2 of the rms."""
     rng = np.random.default_rng(1)
     times = np.linspace(0.0, 100.0, 4001)
     tau = 5.0
@@ -320,8 +320,8 @@ def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -
     assert d.values["qubit_freq_hz[0]"] == pytest.approx(sur.table.qubit_freq[0].value)
     assert d.values["mode_hz[3]"] == pytest.approx(sur.table.modes[3].value)
     assert d.values["R_bright_per_s[0]"] > 1e6
-    # the fixture declares which of its six far-detuned beams play which gates (Device.roles), so the device derives the
-    # addressing pairs' Rabi frequencies: the same numbers the surrogate seeds its table with
+    # the preset's roles name which of its six far-detuned beams play which gates, so the device derives the addressing
+    # pairs' Rabi frequencies: the numbers the surrogate seeds its table with
     assert d.values["rabi_hz[(0, 2)]"] == pytest.approx(sur.table.rabi[(0, 2)].value)
     assert d.values["rabi_hz[(1, 4)]"] == pytest.approx(sur.table.rabi[(1, 4)].value)
     # without the roles the same beams do not identify ONE single-qubit drive: the device says so instead of guessing
@@ -346,11 +346,9 @@ def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -
 
 
 def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_inside_a_gate(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The builder plays phase-continuous tones e^{-i(2 pi mu t - phi)} in absolute time, so a compensation detuning delta_s
-    programmed without a phase reference rotates the pulse axis by 2 pi delta_s t_s (an uncorrected GPi2 one millisecond into a
-    schedule lost 1.5e-2 on this fixture, (2 pi delta_s t_s)^2/4 for delta_s = -38 Hz): every compensated tone carries
-    ``compensation_phase_rad`` at its own start and, inside a multi-segment gate, minus the frame the earlier segments
-    accumulated; a compensated GPi2 then has the same fidelity at t = 0 and at t = 1 ms."""
+    """Every compensated tone carries compensation_phase_rad = 2 pi delta_s t_s at its own start (to 1e-12), minus the frame the
+    gate's earlier segments accumulated, so a GPi2 at t = 1 ms keeps its t = 0 fidelity to 1e-6 where the uncorrected axis
+    error would exceed 1e-2."""
     fx, sur = two_ion
     table = sur.table
     spec = fx.gate_drives[0]
@@ -418,10 +416,8 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
 
 
 def test_every_experiment_and_sub_run_draws_its_own_shot_noise() -> None:
-    """The observation model keys its draws by (sample, point index, ion, outcome); a calibration that runs the same experiment
-    twice, or an experiment that repeats a scan (the Stark scan's Ramsey per beam), would otherwise replay identical noise and
-    report a correlated pair as two independent measurements. ``stream`` labels keep the runs independent and compose through
-    ``sub_stream``."""
+    """Observations with different ``stream`` labels draw independent shot noise, the same label replays the same draws,
+    ``sub_stream`` composes labels, and exact observations ignore them."""
     base = Observation(shots=400, seed=3)
     beam0 = Observation(shots=400, seed=3, stream="stark_scan[0]/beam2")
     beam1 = Observation(shots=400, seed=3, stream="stark_scan[0]/beam3")

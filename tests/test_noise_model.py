@@ -1,5 +1,5 @@
-"""NoiseModel's collapse operators, its dynamical samples and how a sample reaches the Hamiltonian (PLAN.md
-Section 6)."""
+"""NoiseModel (PLAN.md Section 6): its collapse operators, the quiet default and the summary, its dynamical samples and
+how a sample reaches the Hamiltonian."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from qutip_trap.noise.sampling import (
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, ou_spectrum, power_law_spectrum, white_spectrum
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate, thermal_collapse_rates
 from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
-from tests.fixtures import single_ion_raman_device, two_ion_device
+from tests.fixtures import chain_device, single_ion_raman_device
 
 
 def _with(device, **noise_fields):  # type: ignore[no-untyped-def]
@@ -53,9 +53,9 @@ def _with(device, **noise_fields):  # type: ignore[no-untyped-def]
 
 
 def test_heating_rates_follow_the_correlation_length_and_refuse_its_absence() -> None:
-    """Uncorrelated noise heats every mode at the single-ion rate; a uniform field only the centre-of-mass modes of an
-    equal-mass chain; the correlation length is required once S_E is non-zero."""
-    dev = two_ion_device()
+    """Uncorrelated noise heats every mode at the single-ion rate (1e-9), a uniform field only the COM at twice it, and a
+    missing correlation length is refused once S_E is non-zero."""
+    dev = chain_device(2)
     mass = dev.crystal.species[0].mass_u * ATOMIC_MASS_KG
     com = dev.crystal.mode_index("transverse_1", 1)
     rock = dev.crystal.mode_index("transverse_1", 0)
@@ -82,7 +82,8 @@ def test_heating_rates_follow_the_correlation_length_and_refuse_its_absence() ->
 
 
 def test_white_field_noise_is_the_qubit_dephasing_operator_with_gamma_equal_to_one_over_t2() -> None:
-    """S_B,white -> gamma_phi = 2 pi^2 (d nu/dB)^2 S_B, and a Ramsey coherence under the channel decays as e^{-gamma t}."""
+    """S_B,white gives gamma_phi = 2 pi^2 (d nu/dB)^2 S_B (1e-12), and a Ramsey coherence under the channel decays as
+    e^{-gamma t} (1e-4)."""
     dev = single_ion_raman_device()
     sp = dev.crystal.species[0]
     _f, d1, _d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], dev.field.B_gauss)
@@ -110,7 +111,8 @@ def test_white_field_noise_is_the_qubit_dephasing_operator_with_gamma_equal_to_o
 
 
 def test_white_rf_amplitude_noise_is_motional_dephasing_on_the_transverse_modes() -> None:
-    """2/tau = omega_m^2 S_V,white per rf-derived mode; the coherence of |0> + |1> of that mode decays at 1/tau."""
+    """2/tau = omega_m^2 S_V,white on the two radial modes only (1e-12), and a motional |0> + |1> coherence decays at 1/tau
+    (2e-3)."""
     dev = single_ion_raman_device()
     noisy = _with(
         dev, rf_amplitude_noise=white_spectrum(5e-11, "1/(rad/s)")
@@ -207,9 +209,9 @@ def test_summary_lists_heating_when_the_field_spectrum_is_set_and_nothing_when_i
 
 
 def test_sample_sequence_draws_drifts_at_the_shot_clock_with_their_correlation_and_ramp() -> None:
-    """Samples at t and t' correlate as exp(-|t - t'|/tau); a Drift ramp advances linearly; the field offset converts to the
-    exact transition offset (the diagonalization at the shifted field) and moves both ions alike."""
-    dev = two_ion_device()
+    """Drift samples correlate as exp(-|t - t'|/tau) (> 0.99 at 1 ms, < 0.15 at 50 s for tau = 1 s), a ramp moves the mean
+    (5e-7 T at 50 s, 3e-8), and the field offset becomes the exact transition offset on both ions (1e-9)."""
+    dev = chain_device(2)
     noisy = _with(
         dev,
         field_drift=Drift(1e-7, 1.0, None, rate_per_s=1e-8),
@@ -249,7 +251,6 @@ def test_sample_sequence_draws_drifts_at_the_shot_clock_with_their_correlation_a
         for k in range(200)
     ]
     assert np.mean(late) == pytest.approx(5e-7, abs=3e-8)
-    # correlation of the 1 s field drift between 0 and 1 ms is ~1, between 0 and 50 s ~0
     pairs = [
         noisy.noise.sample_sequence(np.random.default_rng(k), [0.0, 1e-3, 50.0], device=noisy)
         for k in range(300)
@@ -262,8 +263,8 @@ def test_sample_sequence_draws_drifts_at_the_shot_clock_with_their_correlation_a
 
 
 def test_sampled_bands_become_per_ion_trajectories_through_the_sensitivities_plus_the_mains() -> None:
-    """S_B's tabulated band and the mains at the shot's trigger phase synthesize into delta nu_i(t) = d1 dB + d2 dB^2/2 on a
-    fixed grid; the mains phase is uniform per sample when free-running and zero when line-triggered."""
+    """S_B's band and the mains at the shot's trigger phase synthesize into delta nu_i(t) = d1 dB + d2 dB^2/2 on a fixed
+    grid (the mains term within 5 sigma of S_B at t = 0), and a line-triggered mains has phase zero."""
     dev = single_ion_raman_device()
     sp = dev.crystal.species[0]
     _f, d1, d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], dev.field.B_gauss)
@@ -288,8 +289,8 @@ def test_sampled_bands_become_per_ion_trajectories_through_the_sensitivities_plu
 
 @pytest.mark.slow
 def test_beam_phase_noise_synthesizes_an_independent_trajectory_per_beam() -> None:
-    """Each beam gets its own realization of the same path-phase spectrum, so a Raman pair's beat-note (differential)
-    phase has twice one beam's variance (Section 7.10)."""
+    """Each beam draws its own path-phase realization with the spectrum's variance, and the pair's differential phase has
+    twice it (12 %, Section 7.10)."""
     dev = single_ion_raman_device()
     sp = ou_spectrum(0.04, 1e-4, "rad^2/(rad/s)")
     dev = _with(dev, beam_phase_noise=sp)
@@ -321,8 +322,8 @@ def test_a_white_level_is_a_channel_not_a_sample() -> None:
 
 
 def test_noise_rates_carry_provenance_and_the_model_says_how_many_apparatus() -> None:
-    """Section 6.1: a budget assembled from published rates is stitched from several apparatus, and the report says so. A
-    zero rate contributes no apparatus; a non-zero rate with no tag is counted as undeclared."""
+    """The noise report names every apparatus a non-zero rate is tagged with and counts the untagged rates (Section 6.1);
+    the quiet model reports nothing."""
     quiet = NoiseModel()
     assert quiet.apparatus() == () and quiet.provenance_sentence() == ""
     tagged = dataclasses.replace(
@@ -376,7 +377,8 @@ def _grid(values0, values1):  # type: ignore[no-untyped-def]
 
 
 def test_constant_beam_phase_trajectories_reproduce_the_quasi_static_build() -> None:
-    """Delta phi = phi_2 - phi_1 multiplies the beat note by e^{-i Delta phi}, as the quasi-static key_beam_phase_rad does."""
+    """Constant trajectories turn the beat note by e^{-i Delta phi}, Delta phi = phi_2 - phi_1, as the quasi-static phases do
+    (1e-12)."""
     dev = single_ion_raman_device()
     static, space = _built(dev, NoiseSample(0, {key_beam_phase_rad(0): 0.3, key_beam_phase_rad(1): 0.1}, {}))
     sampled, _ = _built(dev, NoiseSample(0, {}, _grid(lambda t: 0.3 + 0.0 * t, lambda t: 0.1 + 0.0 * t)))

@@ -1,4 +1,4 @@
-"""OpenQASM 2 both ways (PLAN.md Sections 1.4, 7.2, 7.6): the importer subset, the registers and the exporter."""
+"""OpenQASM 2 both ways (PLAN.md Section 1.4): the importer subset, the registers and the exporter."""
 
 from __future__ import annotations
 
@@ -14,7 +14,16 @@ from qutip_trap.control.compiler import (
     compile_report,
     ideal_probabilities,
 )
-from qutip_trap.io.openqasm import OpenQASMError, evaluate, load_openqasm2, tokenize
+from qutip_trap.control.native import gpi, gpi2
+from qutip_trap.io.openqasm import (
+    NATIVE_DECLARATIONS,
+    OpenQASMError,
+    dumps,
+    evaluate,
+    load_openqasm2,
+    loads,
+    tokenize,
+)
 
 BELL = """
 OPENQASM 2.0;
@@ -68,8 +77,8 @@ def test_expressions_registers_and_broadcasting() -> None:
 
 
 def test_custom_gate_definitions_are_inlined_including_the_sdk_style_native_declarations() -> None:
-    """Section 7.6: the client SDKs' OpenQASM 2 export declares gpi, gpi2, ms and zz as custom gates built from u, rz, rxx and rzz;
-    the importer expands them through their own bodies, and the result compiles to the same unitary as the native gates."""
+    """Custom gate definitions, the SDK-style gpi, gpi2, ms and zz declarations among them, are inlined to the native
+    gates' unitary up to a global phase (1e-9)."""
     text = """
     OPENQASM 2.0;
     include "qelib1.inc";
@@ -137,8 +146,6 @@ def test_refusals_and_expression_errors() -> None:
 
 
 def test_registers_survive_an_openqasm_round_trip() -> None:
-    from qutip_trap.io.openqasm import dumps, loads
-
     text = (
         "OPENQASM 2.0; qreg q[3]; creg a[1]; creg b[2]; h q[0]; cx q[0], q[2]; "
         "measure q[2] -> a[0]; measure q[0] -> b[1]; measure q[1] -> b[0];"
@@ -161,11 +168,8 @@ def test_registers_survive_an_openqasm_round_trip() -> None:
 
 
 def test_dumps_declares_the_native_gates_and_the_bare_form_round_trips_exactly() -> None:
-    """The declarations (the forms the client SDKs' exports use) are the native matrices up to a global phase, the declared
-    text reads back to the same unitary, and the bare form round-trips the native operations exactly."""
-    from qutip_trap.control.native import gpi, gpi2
-    from qutip_trap.io.openqasm import NATIVE_DECLARATIONS, dumps, loads
-
+    """``dumps`` declares the natives in the SDK forms, the native matrices up to a global phase (1e-9) one by one and
+    together, and its bare form round-trips the native operations exactly."""
     native = Circuit(2).gpi2(0, 0.3).gpi(1, 1.1).ms(0, 1, 0.2, -0.4, 0.9).zz(1, 0, 0.5)
     text = dumps(native)
     assert text.startswith('OPENQASM 2.0;\ninclude "qelib1.inc";\n') and NATIVE_DECLARATIONS["ms"] in text
@@ -207,8 +211,6 @@ def test_dumps_declares_the_native_gates_and_the_bare_form_round_trips_exactly()
 
 
 def test_dumps_writes_standard_gates_mid_circuit_operations_and_refuses_recool() -> None:
-    from qutip_trap.io.openqasm import dumps, loads
-
     c = (
         Circuit(3)
         .h(0)

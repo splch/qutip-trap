@@ -1,6 +1,5 @@
-"""Runs with the noise layer on (PLAN.md Sections 3.4, 6.1, 6.6, 6.7, 7.5, 7.10; Section 9.17 rows 'Shot clock', 'Seeds and
-reproducibility'): dynamical samples at the shot clock, the effective sample size, the trajectory path, leakage levels,
-collisions with heralds and the persistent machine state, and the scheduler's crosstalk-suppression echoes."""
+"""Runs with the noise layer on (PLAN.md Section 6): dynamical samples at the shot clock, the effective sample size, the
+trajectory path, leakage levels, collisions with heralds and the persistent machine state, and the crosstalk echoes."""
 
 from __future__ import annotations
 
@@ -12,7 +11,7 @@ import pytest
 
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
-from qutip_trap.control.schedule import schedule
+from qutip_trap.control.schedule import schedule, stark_phase_rad
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.noise.spectra import Collisions, Drift, white_spectrum
@@ -35,8 +34,8 @@ def _noisy(device, **fields):  # type: ignore[no-untyped-def]
 
 
 def test_effective_sample_size_between_and_within_samples() -> None:
-    """Var(p_hat) = Var_total(p_s)/S: i.i.d. samples must return the full shot count (adding the within-sample binomial term
-    on top of the total per-sample variance halves n_eff, which the bands below are tight enough to catch)."""
+    """Var(p_hat) = Var_total(p_s)/S: i.i.d. samples give 90-100 % of the shots, eight spread means (sigma 0.19) 40 to 80 of
+    800, two opposite samples fewer than 10 and a single sample its shot count."""
     rng = np.random.default_rng(0)
     same = [rng.integers(0, 2, size=(100, 1)).astype(np.uint8) for _ in range(4)]
     n_same = effective_sample_size(same)
@@ -61,8 +60,7 @@ def test_effective_sample_size_between_and_within_samples() -> None:
 
 
 def test_effective_sample_size_weights_unequal_sample_sizes() -> None:
-    """Unequal M_s: the weighted total-variance estimator reduces to var(p_s, ddof=1)/S when the counts are equal and stays
-    an unbiased Var(p_hat) estimate when they are not (a 900/100 split of i.i.d. shots is still 1000 independent shots)."""
+    """Unequal sample sizes of i.i.d. shots (900 down to 100, 3000 in all) keep n_eff between half and all of the shots."""
     rng = np.random.default_rng(3)
     uneven = [
         rng.integers(0, 2, size=(n, 1)).astype(np.uint8) for n in (900, 100, 500, 500, 250, 250, 250, 250)
@@ -73,8 +71,8 @@ def test_effective_sample_size_weights_unequal_sample_sizes() -> None:
 
 @pytest.mark.slow
 def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample_size(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """A field drift and a Rabi drift sampled at the shot clock: two samples carry different offsets, the shots split into contiguous blocks at the shot clock (conv.shot_blocks_per_sample),
-    the error bars use n_eff <= shots, and the same seed reproduces everything (Section 3.4)."""
+    """Field and Rabi drifts give two samples of 150 contiguous shots at the shot clock with different qubit offsets
+    (conv.shot_blocks_per_sample), error bars from n_eff <= shots, and a run the same seed reproduces."""
     fx, sur = two_ion
     dev = _noisy(fx.device, field_drift=Drift(4e-7, 10.0, None), rabi_drift=Drift(2e-2, 1.0, None))
     kw = dict(
@@ -101,8 +99,8 @@ def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample
 
 @pytest.mark.slow
 def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """S_E with an uncorrelated correlation length assembles heating channels on the resolved modes; at dimension 400 the run takes
-    the keyed trajectory path (ntraj per branch), reports the method, and the register state stays close to the quiet one."""
+    """Uncorrelated field noise heats the resolved modes, the run takes the mcsolve trajectory path and says so, and the
+    register fidelity stays within 5e-3 of the quiet run's."""
     fx, sur = two_ion
     dev = _noisy(fx.device, S_E=white_spectrum(1e-13, "(V/m)^2/(rad/s)"), correlation_length_m=0.0)
     assert dev.noise.heating_rates_quanta_per_s(dev)[3] > 1.0
@@ -126,10 +124,9 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
 @pytest.mark.timeout(3600)
 def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    # internal_levels = 3 turns the scattering channels on automatically (Section 4.5.5; conv.scattering_channels_at_d_gt_2):
-    # 28 register-only leakage, spin-flip and Rayleigh operators per pulse ride along on the trajectory path (dimension
-    # 1287 is above mesolve_dimension_max). Eight keyed trajectories per branch keep the test at about three minutes where
-    # the default 64 made it a 25-minute one; the assertions below are coarse enough for that count (measured F = 0.9976)
+    # internal_levels = 3 turns the scattering channels on (conv.scattering_channels_at_d_gt_2) and dimension 1287 goes to
+    # trajectories; eight per branch keep the test near three minutes, and the bounds are coarse enough for that count
+    # (measured F = 0.9976)
     kw = dict(
         table=sur.table,
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2, ntraj=8)),
@@ -149,10 +146,8 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
 
 @pytest.mark.slow
 def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """An absurd pressure makes collisions frequent: heating kicks during the cooling stage are heralded and kept with their drawn
-    energy reported (Section 6.7's k_B T m_gas/m_ion scale), events during the sequence discard the shot, a reorder permutes
-    RunState.order from the configured permutation distribution, and a loss or dark-ion event flags the ion so that every later shot
-    reads it dark (Section 6.7). All four outcomes are enabled."""
+    """At 3e-6 Torr collisions discard shots, herald cooling-stage kicks with their drawn energy, apply the configured
+    reorder to RunState.order by parity and flag lost or dark ions in the heralds; the quiet device has none."""
     fx, sur = two_ion
     col = Collisions(
         3e-6 * TORR_PA,
@@ -221,7 +216,6 @@ def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:
         "the spectator gets X(pi) then Y(pi) = Z(pi)"
     )
     # Z(pi) plus the virtual-Z frame the two compensated echo pulses leave behind (2 pi delta_St t_pi each, Section 7.5 item 7)
-    from qutip_trap.control.schedule import stark_phase_rad
 
     stark_frame = sum(stark_phase_rad(p) for p in echo_neigh)
     assert stark_frame != 0.0 and abs(stark_frame) < 0.01

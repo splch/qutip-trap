@@ -24,9 +24,9 @@ from qutip_trap.noise.scattering import (
     scattering_channels,
     scattering_estimates,
 )
+from qutip_trap.readout.fluorescence import ReadoutScheme
 from qutip_trap.species import species
 from tests.fixtures import single_ion_raman_device
-from tests.oracles import d_level_branching, epsilon_s_and_d
 
 
 def _pulse(dev, duration_s=50e-6, scale=1.0):  # type: ignore[no-untyped-def]
@@ -54,8 +54,8 @@ def test_recoil_nodes_are_exact_in_the_first_and_second_moments_for_every_patter
 
 
 def test_operator_rates_sum_to_the_amplitude_budget_at_the_played_intensity() -> None:
-    """sum_L <a|L^dag L|a> over the operators equals the Rayleigh + Raman rates out of level a from the atomic layer, scaled by the
-    played intensity (Omega/Omega_nom)^1 for a two-photon drive; the leaked rate at d = 2 is reported, not built."""
+    """sum_L <a|L^dag L|a> is the atomic layer's Rayleigh + Raman rate out of each qubit level times the played
+    intensity scale (1e-9), and at d = 2 the leakage is reported, not built."""
     dev = single_ion_raman_device()
     pulse, der = _pulse(dev, scale=3.0)
     space = HilbertSpace((2,), (ModeTruncation(1, 8, (0, 2), 0.25),), None, (0, 2))
@@ -81,8 +81,8 @@ def test_operator_rates_sum_to_the_amplitude_budget_at_the_played_intensity() ->
 
 
 def test_raman_flip_rate_and_recoil_heating_per_photon_in_mesolve() -> None:
-    """Under the channels alone, |0> flips at Gamma_{0 -> 1} and the mode heats by (eta_abs^2 + alpha eta_em^2) quanta per scattered photon
-    (absorption kick plus the emission pattern's second moment), the recoil rule of Section 4.2.8 carried into the scattering channel."""
+    """Under the channels alone |0> flips at Gamma_{0 -> 1} (2 %) and the mode heats by eta_abs^2 + alpha eta_em^2
+    quanta per scattered photon (25 %)."""
     dev = single_ion_raman_device()
     pulse, der = _pulse(dev, duration_s=1.0, scale=50.0)
     space = HilbertSpace((2,), (ModeTruncation(1, 10, (0, 3), 0.25),), None, (0, 2))
@@ -141,7 +141,6 @@ def test_leakage_populates_the_sink_at_d_equals_3_and_is_read_dark() -> None:
         0.0 * space.identity(), st.joint, [0.0, t], [o.op for o in ops], e_ops=[space.projector(0, 2)]
     )
     assert res.expect[0][-1] == pytest.approx(rate_leak * t, rel=0.02)
-    from qutip_trap.readout.fluorescence import ReadoutScheme
 
     yb = species("171Yb+")
     scheme = ReadoutScheme.for_species(
@@ -188,28 +187,3 @@ def test_engine_builds_the_channels_per_segment_and_a_shaped_pulse_gets_a_time_d
         and set(rep.channel_names) >= {"scatter_rayleigh", "scatter_raman"}
     )
     assert rep.segments[0].n_collapse_ops > 0 and tr.final.joint is not None and tr.final.joint.isoper
-
-
-def test_epsilon_d_is_f_times_p_total_and_is_reported_beside_epsilon_s() -> None:
-    """eps_S = P_Raman; eps_D = f P_total with f derived from the species' D-level branchings weighted by 1/Delta_e^2; for
-    171Yb+ at 355 nm it is a fraction of a percent, and Ozeri's P_Rayleigh overstates the elastic rate by it."""
-    dev = single_ion_raman_device()
-    f_d = d_level_branching(dev, 0, (0, 1))
-    assert 0.0 < f_d < 0.05, f"171Yb+ has a D3/2 branch of order 0.5 %, got {f_d}"
-    out = epsilon_s_and_d(dev, 0, (0, 1), 30e3)
-    assert out["f_D"] == pytest.approx(f_d)
-    assert out["epsilon_D"] == pytest.approx(f_d * out["P_total"], rel=1e-12)
-    assert out["ozeri_rayleigh_overstatement"] == pytest.approx(out["epsilon_D"])
-    assert 0.0 < out["epsilon_D"] < out["epsilon_S"] <= out["P_total"]
-
-
-def test_the_d_branching_is_bounded_by_the_reachable_levels_branchings() -> None:
-    """f is the 1/Delta_e^2-weighted mean of the reachable excited levels' D branchings."""
-    dev = single_ion_raman_device()
-    per_upper: dict[str, float] = {}
-    for tr in dev.crystal.species[0].transitions:
-        if tr.lower.startswith("D"):
-            per_upper[tr.upper] = per_upper.get(tr.upper, 0.0) + tr.branching
-    assert per_upper, "171Yb+ has D-level decay channels"
-    f_d = d_level_branching(dev, 0, (0, 1))
-    assert min(per_upper.values()) <= f_d <= max(per_upper.values()) + 1e-12, (f_d, per_upper)

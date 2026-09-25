@@ -1,11 +1,12 @@
-"""GATE_LOCAL against JOINT_EXACT (PLAN.md Sections 5.4, 6.8, 9.8, 9.17): the step partition of a schedule, the exact
-agreement on a single-qubit gate, the Bell circuit within the reported bound with the motional bookkeeping, the register as
-a density matrix or a Kraus-sampled ensemble, the per-step register and channels, the map-accuracy rule on the trajectory
-path, the caches, and the three- and four-ion circuits of Section 9.8 row 1 as slow tests."""
+"""GATE_LOCAL against JOINT_EXACT (PLAN.md Section 9.8): the step partition, single-qubit and Bell agreement within the
+reported bound, the density-matrix and ensemble registers, the per-step channels, the map-accuracy rule, the caches and the
+three- and four-ion circuits."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
+import uuid
 
 import numpy as np
 import pytest
@@ -19,12 +20,18 @@ from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import apply_kraus_dm, kraus_operators
-from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.light.raman import derive_raman_drive, square_drive
+from qutip_trap.noise.sampling import NoiseSample, key_qubit_offset_hz, key_qubit_trajectory_hz, quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
+from qutip_trap.run import gate_local
 from qutip_trap.run.gate_local import (
     REGISTER_STORE_DIM_MAX,
     AppliedChannel,
+    EngineSetup,
+    GateStep,
+    Register,
+    _idle_key,
     clear_gate_local_cache,
     gate_steps,
 )
@@ -77,16 +84,12 @@ def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None
 
 
 def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """A GPi2 on ion 0 with its addressing crosstalk onto ion 1: the gate-local space is the two ions with every mode frozen, the
-    tomography (the propagator route: one segment propagator per Fock branch is the branch's Kraus operator, the sixteen inputs
-    follow by linearity) returns a CPTP map whose application reproduces the JOINT_EXACT register to the solver tolerance; the
-    channel summary sits at the crosstalk scale; a second run hits the cache, for the gate step and for the idle channels."""
+    """A GPi2 with crosstalk through GATE_LOCAL (propagator route, every mode frozen) reproduces the JOINT_EXACT register to 1e-7
+    with a CPTP map at the crosstalk scale and the reported bound terms, and a second run is served from the caches."""
     fx, sur, kw = two_ion
     clear_gate_local_cache()
-    # the register of GATE_LOCAL is the pumped density matrix itself; JOINT_EXACT enumerates it into branches, so the comparison
-    # keeps every branch (the preparation error is 2.5e-6, below the default cutoff) on this cheap all-frozen space, and the
-    # tomography's tail rule is switched off for the same reason (the keyed tolerance and the derived margin never touch a
-    # carrier step: no resolved mode)
+    # GATE_LOCAL's register is the pumped density matrix, which JOINT_EXACT enumerates into branches: keep every branch (the
+    # preparation error is 2.5e-6, below the default cutoff) and switch the tomography's tail rule off
     exact = {
         **kw,
         "numerics": Numerics.from_solver_options(
@@ -115,7 +118,7 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
     # the floor at 1e-9 drops a few 1e-10 of weight (reported as 2w); no tail rule here, no keyed tolerance on a carrier step
     assert 0.0 <= s.branch_error_bound < 1e-8 and s.tolerance_change == 0.0 and s.tolerances == (1e-10, 1e-8)
     assert gl.branch_error_total < 1e-8 and gl.tolerance_change_total == 0.0 and s.element_error == {}
-    assert s.tp_residual < 1e-10 and s.cp_residual < 1e-10, "Section 9.17: both residuals reported and tiny"
+    assert s.tp_residual < 1e-10 and s.cp_residual < 1e-10, "both residuals reported and tiny"
     assert s.summary is not None
     eps = sur.table.crosstalk[(0, 1)].value
     crosstalk_flip = math.sin(eps * math.pi / 4.0) ** 2
@@ -146,18 +149,15 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
 
 @pytest.mark.slow
 def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.8: the Bell circuit through GATE_LOCAL (the MS step on the exact two-ion, two-mode space from the tracked thermal
-    state) against JOINT_EXACT: the register populations agree within the residual-displacement bound the run reports, the tracked
-    occupations match the joint run's reduced motional state to 5%, the channel summary of the MS step sits inside the
-    intrinsic budget, and the Choi matrix is trace preserving to 1e-10."""
+    """Section 9.8: the Bell circuit through GATE_LOCAL agrees with JOINT_EXACT within the reported bound, tracks the joint run's
+    nbar to 5%, and its MS step is TP to 1e-10 with an infidelity inside the intrinsic budget."""
     fx, sur, kw = two_ion
     a = run(BELL, fx.device, 300, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
     b = run(BELL, fx.device, 300, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
     pa, pb = _populations(a), _populations(b)
     gl = b.diagnostics.gate_local
     assert gl is not None
-    # the bound plus the weight of the initial-mixture branches JOINT_EXACT dropped (GATE_LOCAL keeps the full register),
-    # no slack on top: Section 9.8 row 1 says "disagreement above it fails"
+    # the bound plus the initial-mixture weight JOINT_EXACT dropped (GATE_LOCAL keeps the full register), no other slack
     bound = gl.discrepancy_bound + a.diagnostics.dropped_branch_weight
     assert gl.discrepancy_bound > 0.0
     assert np.max(np.abs(pa - pb)) < bound, (pa, pb, bound)
@@ -215,8 +215,8 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
 
 
 def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Above ``register_dm_max_qubits`` the register is a pure-state ensemble and every map is applied by Kraus sampling
-    (Section 5.4); forced on the two-ion GPi2 circuit it reproduces the density-matrix histogram within statistics."""
+    """With ``register_dm_max_qubits = 1`` the register is a 24-member Kraus-sampled ensemble whose GPi2 histogram matches the
+    density matrix's within 0.12."""
     fx, sur, kw = two_ion
     opts = SolverOptions(branch_weight_min=1e-3, register_dm_max_qubits=1, register_ensemble=24)
     b = run(
@@ -232,10 +232,8 @@ def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_
 
 
 def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -> None:
-    """Section 5.4: on the trajectory path every tomography input is propagated with n_traj = ceil(1/epsilon_map); with mesolve
-    (the deterministic cross-check below the dimension threshold) the count is one. A one-ion, one-mode space with heating."""
-    import dataclasses
-
+    """Section 5.4: on a heated one-mode space the mesolve tomography uses one trajectory and the mcsolve one ceil(1/eps_map) = 4
+    (five with the no-jump member), within 0.15 of the deterministic Choi matrix."""
     dev = single_ion_raman_device()
     noisy = dataclasses.replace(
         dev,
@@ -243,7 +241,6 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
             dev.noise, S_E=white_spectrum(2e-11, "(V/m)^2/(rad/s)"), correlation_length_m=0.0
         ),
     )
-    from qutip_trap.light.raman import derive_raman_drive, square_drive
 
     dd = derive_raman_drive(noisy, 0, (0, 1), scattering=False)
     om = 2.0 * math.pi * dd.carrier_rabi_hz
@@ -258,8 +255,8 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
     assert len(rec_me.labels) == 4 and rec_me.branches >= 1
     opts = SolverOptions(lindblad_method="mcsolve", map_accuracy=0.25, branch_weight_min=0.05)
     rec_mc = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), opts)
-    # Section 9.17's rule is ceil(1/eps_map) = 4 STOCHASTIC trajectories per input; under improved_sampling (Section 5.3's
-    # default) the no-jump trajectory is one more, deterministic member of weight p_no-jump, so the mixture has five
+    # ceil(1/eps_map) = 4 stochastic trajectories per input; improved sampling (the default) adds the deterministic no-jump
+    # member, so the mixture has five
     plain = dataclasses.replace(opts, improved_sampling=False)
     rec_plain = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), plain)
     assert rec_mc.method == "mcsolve" and rec_plain.method == "mcsolve"
@@ -276,8 +273,8 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
 
 
 def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Every step of the first sample's walk reports the register after it and the channels it applied; composing a step's
-    channels on the previous step's register gives its own, and the last equals the run's recombined register."""
+    """Every step reports the register after it and the channels it applied; a step's channels on the previous register give its
+    own to 1e-10, and the last equals the run's recombined register."""
     fx, _sur, kw = two_ion
     rec = last_record(run(BELL, fx.device, 100, level="GATE_LOCAL", **kw))  # type: ignore[arg-type]
     assert rec.gate_local is not None
@@ -305,10 +302,8 @@ def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) ->
 
 
 def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """An idle Schedule through the tomography: a quasi-static qubit offset makes the one-qubit channel the unitary
-    e^{-i pi delta t sigma_z} (the closed-form segment), the map is unitary (one Kraus operator) and trace preserving."""
-    from qutip_trap.noise.sampling import NoiseSample, key_qubit_offset_hz
-
+    """A 400 Hz qubit offset over an idle makes the one-qubit channel the single Kraus operator e^{-i pi delta t sigma_z} (to
+    1e-7, one exact segment) with infidelity below 1e-10."""
     fx, _sur, _kw = two_ion
     dev = fx.device
     n_modes = len(dev.crystal.modes)
@@ -365,8 +360,8 @@ def _compare_levels(a, b):  # type: ignore[no-untyped-def]
 
 @pytest.mark.slow
 def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
-    """Section 9.8 row 1: the three-ion GHZ circuit (two entangling gates, five carrier pulses), with the crosstalk
-    neighbours inside the gate-local spaces."""
+    """Section 9.8 row 1: the three-ion GHZ circuit through GATE_LOCAL agrees with JOINT_EXACT within the reported bound, its two
+    MS steps' nbar to 5%, with GHZ populations and fidelity above 0.9."""
     fx = yb171_chain(3, address_waist_m=2.0e-6)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2)], detection_records=1000, detection_windows_s=WINDOWS
@@ -401,11 +396,8 @@ GHZ4 = Circuit(
 
 @pytest.mark.slow
 def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
-    """Section 9.8 row 1 on four ions: GHZ4 has three Mølmer-Sørensen steps, and at ``freeze_chi_max_rad = 0.3`` the gate
-    mode (chi 0.81 to 0.84 rad per step, the other x modes at most 0.13) is the only resolved mode at BOTH levels, so the
-    comparison measures GATE_LOCAL's own approximation: JOINT_EXACT runs at dimension 192, and the three frozen x modes, whose
-    chi the common surrogate table absorbs, carry their Debye-Waller factors and Fock branches at both levels
-    (``conv.four_ion_gate_local_fixture``)."""
+    """Section 9.8 row 1 on four ions: with ``freeze_chi_max_rad = 0.3`` only the gate mode is resolved (dimension 192) at both
+    levels, and GHZ4's three MS steps agree within the reported bound (``conv.four_ion_gate_local_fixture``)."""
     fx = yb171_chain(4)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2), (2, 3)], detection_records=200, detection_windows_s=WINDOWS
@@ -439,10 +431,8 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
 
 
 def test_register_marginal_is_the_partial_trace_in_the_requested_factor_order() -> None:
-    """``Register.marginal`` reads the strided view of the density matrix; against QuTiP's ``ptrace`` (which returns the kept
-    factors in ascending order) with the factors requested in a non-ascending order, and the ensemble path against the average."""
-    from qutip_trap.run.gate_local import Register
-
+    """``Register.marginal`` of a density matrix and of a ket ensemble equals QuTiP's ``ptrace`` to 1e-14 in the requested factor
+    order, ascending or not."""
     rng = np.random.default_rng(11)
     dims = (2, 3, 2)
     total = int(np.prod(dims))
@@ -470,16 +460,8 @@ def test_register_marginal_is_the_partial_trace_in_the_requested_factor_order() 
 def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_the_walk(
     two_ion, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """Three carrier gates leave three dead-time idles of the same length: the six one-ion idle channels cost two extractions
-    and four cache hits, the walk builds ONE engine, and with the cache defeated (a unique key per call) the register is the same
-    to round-off and the run costs four more engine calls. The key is blind to the absolute window unless the sample carries a fast
-    trajectory (an OU grid indexed by absolute time), and it sees the duration, the ion and the options."""
-    import uuid
-
-    from qutip_trap.noise.sampling import NoiseSample, key_qubit_trajectory_hz
-    from qutip_trap.run import gate_local
-    from qutip_trap.run.gate_local import EngineSetup, GateStep, _idle_key
-
+    """Three equal idles cost two channel extractions and four cache hits with one engine per walk, defeating the cache changes
+    the register by under 1e-14, and the key ignores the idle's position unless a fast trajectory makes it matter."""
     fx, sur, kw = two_ion
     circ = Circuit(
         2,

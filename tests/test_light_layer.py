@@ -29,12 +29,12 @@ from qutip_trap.species import species
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.species.zeeman import g_I_steck
 from qutip_trap.units import H_J_S, MU_B_J_PER_T, TWO_PI
-from tests.fixtures import make_raman_pair, single_ion_raman_device, two_ion_raman_device
+from tests.fixtures import make_device, single_ion_raman_device, two_ion_raman_device
 
 
 def test_raman_drive_geometry_and_lamb_dicke() -> None:
-    """Delta k = k_1 - k_2: 2k counter-propagating with eta on the x mode only; a co-propagating pair has Delta k = 0 and no
-    motional coupling; eta equals Crystal.lamb_dicke and the 171Yb+ 355 nm anchor scaled to 3.0 MHz."""
+    """The counter-propagating pair's Delta k is 2k with eta on the x mode only, equal to ``Crystal.lamb_dicke`` and to the
+    171Yb+ 355 nm anchor scaled to 3.0 MHz (0.2%); a co-propagating pair has Delta k = 0 and no motional coupling."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1))
     k = TWO_PI / 355e-9
@@ -53,7 +53,7 @@ def test_raman_drive_geometry_and_lamb_dicke() -> None:
 
 def test_delta_k_geometry_rules() -> None:
     """|Delta k| = 2k sin(theta/2): sqrt 2 k at 90 degrees, 2k counter-propagating, 0 for microwaves, k for one E2 beam."""
-    b1, b2 = make_raman_pair()
+    b1, b2 = make_device().beams
     k = 2.0 * math.pi / 355e-9
     tone = Tone(0.0, 0.0, 1e6)
     raman = Drive("raman", (0,), (tone,), (0, 1), 0.0, {})
@@ -113,9 +113,8 @@ def test_raman_rabi_frequency_scales_as_the_field_product_and_matches_the_specie
 
 
 def test_stark_shift_is_the_differential_light_shift() -> None:
-    """delta_St = delta(up) - delta(down) summed over the beams. 355 nm is blue of P1/2 (+33.2 THz) and red of P3/2
-    (-66.6 THz), so each level is pushed up while the scalar shift nearly cancels and the differential shift, set by the
-    hyperfine splittings in the denominators, is 1.3e-2 of it."""
+    """delta_St = delta(up) - delta(down) summed over the beams to 1e-9, below 3e-2 of the shift 355 nm light gives each level,
+    and ``square_drive`` carries it."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     yb = species("171Yb+")
@@ -135,8 +134,8 @@ def test_stark_shift_is_the_differential_light_shift() -> None:
 
 
 def test_scattering_budget_and_per_pulse_error() -> None:
-    """Rates per second from both qubit states under both beams; the d = 2 per-pulse error is the Raman probability during
-    the pulse, of order Ozeri's P_Raman ~ pi gamma/omega_f ~ 1e-6 for 171Yb+ at 355 nm."""
+    """Both qubit states scatter under the pair, and the per-pulse error lies between 1e-7 and 1e-4, around Ozeri's P_Raman ~ 1e-6
+    for 171Yb+ at 355 nm."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1))
     assert dd.scattering is not None
@@ -149,8 +148,8 @@ def test_scattering_budget_and_per_pulse_error() -> None:
 
 
 def test_crosstalk_ratios_follow_the_beam_profile() -> None:
-    """eps_ij = Omega_j/Omega_i is a Rabi (amplitude) ratio: for beams pointed at ion 0, the neighbour at distance s along z
-    sees the product of two Gaussian FIELD factors exp(-s^2/w^2)."""
+    """The crosstalk ratio is the Rabi amplitude ratio exp(-2 s^2/w^2) at the neighbour a distance s from beams pointed at ion
+    0, to 1e-6."""
     dev = two_ion_raman_device(waist_m=10e-6)
     ratios = crosstalk_ratios(dev, 0, (0, 1))
     assert set(ratios) == {1}
@@ -160,8 +159,8 @@ def test_crosstalk_ratios_follow_the_beam_profile() -> None:
 
 
 def test_microwave_rabi_frequency_closed_form_and_ac_zeeman_sign() -> None:
-    """The clock transition |0,0> <-> |1,0> is driven by the pi component of B_1: Omega = mu_B B_1 (g_J - g_I)/(2 hbar) for
-    B_1 || B, zero for B_1 perpendicular to B; a pi drive has no spectator coupling; delta_eff = delta - delta_ac."""
+    """A microwave B_1 along B drives the clock line at mu_B B_1 (g_J - g_I)/(2h) to 1e-6 and a perpendicular one not at all, whose
+    ac-Zeeman shift is the term-by-term sum to 1e-9; delta_eff = delta - delta_ac (Harty 2014)."""
     yb = species("171Yb+")
     field = Field(5.0, (0.0, 0.0, 1.0))
     b1 = 1e-6  # tesla

@@ -25,9 +25,8 @@ from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, K_B_J_PER_K, TWO_PI
 
 
 def test_doppler_limit_fork_and_bose_occupations() -> None:
-    """k_B T = hbar Gamma/2 (alpha = 1) against 0.35 hbar Gamma (alpha = 2/5) at Delta = -Gamma/2: 0.480 vs 0.336 mK at
-    Gamma/2pi = 20 MHz (ratio 1.4286), 1.680 vs 1.176 mK at 70 MHz (Berkeland's 1.7 mK), and a 1 MHz mode holds 9.5
-    against 6.5 quanta."""
+    """At Delta = -Gamma/2 the force model gives k_B T = 0.480 and 0.336 mK (alpha = 1, 2/5) at Gamma/2pi = 20 MHz and
+    1.680 and 1.176 mK at 70 MHz (1e-3 mK), a 1 MHz mode holding 9.5 and 6.5 quanta (0.02)."""
     g = TWO_PI * 20e6
     t1 = doppler_force_energy_j(g, -0.5 * g, 0.0, 1.0) / K_B_J_PER_K
     t2 = doppler_force_energy_j(g, -0.5 * g, 0.0, 0.4) / K_B_J_PER_K
@@ -45,9 +44,8 @@ def test_doppler_limit_fork_and_bose_occupations() -> None:
 
 
 def test_force_model_optimum_and_the_zero_point_offset() -> None:
-    """The energy is minimal at Delta = -(Gamma/2) sqrt(1 + s); E_K = E/2 = (1 + alpha) hbar Gamma/8 (hbar Gamma/6 for
-    1/3, 7 hbar Gamma/40 for 2/5); at Gamma/nu = 1e3 the force model gives 349.5 against (Gamma/4 nu)(1 + alpha) = 350,
-    the 1/2 being the zero point."""
+    """The force-model energy is minimal at Delta = -(Gamma/2) sqrt(1 + s) (2e-3), E_K is hbar Gamma/6 and
+    7 hbar Gamma/40 for alpha = 1/3 and 2/5, nbar = 349.5 at Gamma/nu = 1e3 (1e-9), and a blue detuning raises."""
     for s in (0.0, 0.5, 3.0):
         grid = np.linspace(-3.0, -0.05, 4001)
         e = [doppler_force_energy_j(1.0, d, s, 0.4) for d in grid]
@@ -60,8 +58,8 @@ def test_force_model_optimum_and_the_zero_point_offset() -> None:
 
 
 def test_stenholm_coefficients_carrier_term_cancels_in_the_rate_but_not_in_the_steady_state() -> None:
-    """The floor is (Gamma/2 nu)^2 [(eta~/eta)^2 + 1/4]: alpha = 2/5 raises the alpha -> 0 value (Gamma/4 nu)^2 by 2.6;
-    halving Omega leaves it unchanged; a blue detuning heats and raises."""
+    """Stenholm's floor is (Gamma/2 nu)^2 [(eta~/eta)^2 + 1/4] (2e-3), alpha = 2/5 raising the alpha = 0 value 2.6 times
+    (1e-3) at an unchanged rate; halving Omega leaves it unchanged and a blue detuning raises."""
     gamma, nu = 1.0, 50.0
     with_carrier = stenholm_coefficients(0.1, gamma, nu, -nu, 0.4)
     without = stenholm_coefficients(0.1, gamma, nu, -nu, 0.0)
@@ -78,8 +76,9 @@ def test_stenholm_coefficients_carrier_term_cancels_in_the_rate_but_not_in_the_s
 
 
 def test_morigi_walther_sympathetic_steady_states_are_stenholms_form_with_alpha_two_fifths() -> None:
-    """A_- - A_+ = 1 - 1/(16 Omega^2/gamma^2 + 1) with their Omega the trap frequency, and nbar_ss = 0.5, 0.1475, 0.039522,
-    0.0064703, 0.0016231 at Omega/gamma = 0.5, 1, 2, 5, 10, limit 0.1625 (gamma/Omega)^2."""
+    """Stenholm's form with alpha = 2/5 gives Morigi and Walther's A_- - A_+ = 1 - 1/(16 Omega^2/gamma^2 + 1) (1e-12)
+    and nbar = 0.5, 0.1475, 0.039522, 0.0064703, 0.0016231 at Omega/gamma = 0.5 to 10 (2e-4), limit 0.1625
+    (gamma/Omega)^2."""
     expected = {0.5: 0.5, 1.0: 0.1475, 2.0: 0.039522, 5.0: 0.0064703, 10.0: 0.0016231}
     for ratio, nbar in expected.items():
         nu = ratio  # in units of gamma = Gamma (full width) = 1
@@ -93,7 +92,7 @@ def test_morigi_walther_sympathetic_steady_states_are_stenholms_form_with_alpha_
 
 
 def test_the_closed_forms_refuse_a_saturated_drive_unless_the_caller_says_so() -> None:
-    """Omega/Gamma above one tenth raises: the unsaturated W is high by 1 + s."""
+    """The closed forms refuse Omega/Gamma above 0.1 unless allow_saturation is passed."""
     for bad in (0.11, 0.5, 1.0):
         with pytest.raises(ValidityError, match="Omega/Gamma"):
             lorentzian_scattering_rate(bad, 1.0, 0.0)
@@ -107,7 +106,7 @@ def test_the_closed_forms_refuse_a_saturated_drive_unless_the_caller_says_so() -
 
 
 def test_ca40_lamb_dicke_parameters_at_1_mhz() -> None:
-    """eta_729 = 0.0969 and eta_393 = 0.180 at 2 pi x 1 MHz with x0 = 11.24 nm for 40 u (Roos thesis p. 28: 0.096, 0.179)."""
+    """eta_729 = 0.0969 and eta_393 = 0.180 (5e-4) at 2 pi x 1 MHz with x0 = 11.24 nm for 40 u (Roos thesis p. 28)."""
     m = 40.0 * ATOMIC_MASS_KG
     assert x0_m(m, TWO_PI * 1e6) * 1e9 == pytest.approx(11.24, abs=0.005)
     assert lamb_dicke_parameter(TWO_PI / 729.147e-9, m, TWO_PI * 1e6) == pytest.approx(0.0969, abs=5e-4)
@@ -115,8 +114,8 @@ def test_ca40_lamb_dicke_parameters_at_1_mhz() -> None:
 
 
 def test_roos_eq_3_11_as_printed_overstates_the_lower_sidebands() -> None:
-    """|<n+m|D|n>| = e^{-eta^2/2} eta^|m| L^(|m|)_{n<}(eta^2) sqrt(n<!/n>!); the printed L_n is 2.00x too large at
-    (1, -1), 3.3x at (3, -2) and 2.9x at (8, -3) for eta = 0.05."""
+    """|<n+m|D|n>| = e^{-eta^2/2} eta^|m| L^(|m|)_{n<}(eta^2) sqrt(n<!/n>!) to 1e-10, and Roos's printed L_n overstates
+    it 2.00, 3.3 and 2.9 times at (1, -1), (3, -2) and (8, -3) for eta = 0.05."""
     eta = 0.05
     ratios = {}
     for n, m in ((1, -1), (3, -2), (8, -3)):

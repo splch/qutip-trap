@@ -1,8 +1,5 @@
-"""Dipole elements, hyperfine factors and saturation: the anchors of PLAN.md Section 4.5.2.
-
-The hyperfine-resolved elements are those of the live uncoupled-basis operator between coupled states; Steck's 6j
-factorization, evaluated with sympy, is the independent cross-check.
-"""
+"""Dipole elements, hyperfine factors and saturation (PLAN.md Section 4.5.2), with Steck's 6j factorization (sympy) as
+the independent check of the uncoupled-basis operator."""
 
 from __future__ import annotations
 
@@ -29,8 +26,8 @@ from qutip_trap.species.dipole import (
 from qutip_trap.species.model import Transition
 from qutip_trap.species.wigner import m_values
 from qutip_trap.units import C_M_PER_S, E_C, EPSILON_0_F_PER_M, HBAR_J_S, TWO_PI
+from tests.fixtures import HALF
 
-HALF = Fraction(1, 2)
 Fr = Fraction | int
 E_A0 = E_C * physical_constants["Bohr radius"][0]
 
@@ -106,7 +103,7 @@ def _emission(i_n: Fraction, J: Fraction, F: int, Jp: Fraction, Fp: int) -> floa
 
 
 def test_j_level_sum_rules() -> None:
-    """sum_{m',q} |<J m|T_q|J' m'>|^2 = |d|^2 at fixed m; sum_{m,q} at fixed m' = (2J+1)/(2J'+1)|d|^2 (Section 4.5.2)."""
+    """The Wigner-Eckart sums are |d|^2 at fixed m and (2J+1)/(2J'+1)|d|^2 at fixed m', to 1e-14."""
     for J, Jp in (
         (HALF, HALF),
         (HALF, Fraction(3, 2)),
@@ -122,8 +119,8 @@ def test_j_level_sum_rules() -> None:
 
 
 def test_hyperfine_factors_of_87rb_and_171yb() -> None:
-    """87Rb S_FF' rows {1/20, 1/4, 7/10} (F = 2) and {1/6, 5/12, 5/12} (F = 1) on D2, {1/2, 1/2} and {1/6, 5/6} on D1; 171Yb+
-    b(1 -> 0) = 1/3, b(1 -> 1) = 2/3, b(0 -> 0) = 0, and the |1,1> -> P3/2 strength is 1/2 in the cycling |2,2> component."""
+    """To 1e-14: 87Rb S_FF' rows {1/20, 1/4, 7/10} and {1/6, 5/12, 5/12} on D2 and {1/2, 1/2}, {1/6, 5/6} on D1, 171Yb+
+    b(1 -> 0) = 1/3, b(1 -> 1) = 2/3, b(0 -> 0) = 0, and the |1,1> -> P3/2 cycling strength 1/2."""
     i_rb, three_half = Fraction(3, 2), Fraction(3, 2)
     d2 = {
         F: [_absorption(i_rb, HALF, F, three_half, Fp) for Fp in range(abs(F - 1), F + 2) if Fp <= 3]
@@ -143,8 +140,8 @@ def test_hyperfine_factors_of_87rb_and_171yb() -> None:
 
 
 def test_steck_6j_factorization_equals_the_uncoupled_basis_operator() -> None:
-    """<F mF|d_q|F' mF'> of Steck's 6j form equals the live uncoupled-basis element, with |F mF> built in the |(J I) F>
-    coupling order, for I up to 7/2 and four (J, J') pairs; the m_F = m_F' + q rule holds."""
+    """Steck's 6j form of <F mF|d_q|F' mF'> equals the uncoupled-basis element to 1e-13 for I up to 7/2 and four (J, J')
+    pairs."""
     pairs = (
         (HALF, HALF),
         (HALF, Fraction(3, 2)),
@@ -167,8 +164,8 @@ def test_steck_6j_factorization_equals_the_uncoupled_basis_operator() -> None:
 
 
 def test_reduced_element_and_saturation_of_87rb_d2_and_d1() -> None:
-    """|<J||er||J'>| = 4.227524 e a0 (D2), 2.993125 (D1); stretched element sqrt(1/2) x 4.227524 = 2.989311; I_sat 1.669325
-    and 1.495851 mW/cm^2; the rounded 26.24 ns already moves the D2 element to 4.227104 (Section 4.5.6)."""
+    """87Rb D2 and D1: |<J||er||J'>| = 4.227524 and 2.993125 e a0, I_sat = 1.669325 and 1.495851 mW/cm^2 and the
+    stretched element 2.989311, all to 2e-6, and the rounded 26.24 ns lifetime already gives 4.227104."""
     for lam, tau, jp, d_ref, isat_ref in (
         (RB87_D2_LAMBDA, RB87_D2_TAU, Fraction(3, 2), 4.227524, 1.669325),
         (RB87_D1_LAMBDA, RB87_D1_TAU, HALF, 2.993125, 1.495851),
@@ -188,7 +185,7 @@ def test_reduced_element_and_saturation_of_87rb_d2_and_d1() -> None:
 
 
 def test_171yb_gamma_to_element_to_i_sat_chain() -> None:
-    """171Yb+ 369.5 nm with the partial 19.62 MHz rate: 1.752 e a0 and 50.83 mW/cm^2."""
+    """171Yb+ 369.5 nm with the partial 19.62 MHz rate: 1.752 e a0 (1.5e-3) and 50.83 mW/cm^2 (0.01)."""
     yb = species("171Yb+").transition("S1/2-P1/2")
     omega = TWO_PI * C_M_PER_S / yb.wavelength_vac_m
     d = reduced_element_from_partial_rate(yb.partial_rate_rad_s, omega, HALF, HALF)
@@ -197,8 +194,8 @@ def test_171yb_gamma_to_element_to_i_sat_chain() -> None:
 
 
 def test_total_decay_rate_of_every_excited_sublevel_is_one_over_tau() -> None:
-    """The 24-level 87Rb D2 manifold on the |m_I, m_J> basis: omega^3/(3 pi eps0 hbar c^3) sum_{m,q}|<J_g m|d_q|J_e m'>|^2
-    equals 1/tau for all 16 excited sublevels (Steck's Gamma formula fed the reduced element)."""
+    """Every one of the 16 excited 87Rb D2 sublevels decays at omega^3/(3 pi eps0 hbar c^3) sum |d_q|^2 = 1/tau to
+    1e-12."""
     i_rb = Fraction(3, 2)
     omega = TWO_PI * C_M_PER_S / RB87_D2_LAMBDA
     d = reduced_element_from_partial_rate(1.0 / RB87_D2_TAU, omega, HALF, Fraction(3, 2))

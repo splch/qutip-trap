@@ -1,6 +1,5 @@
-"""Under pytest-xdist every worker is already one of several processes, so the engine's default trajectory map must not fork
-a pool of its own inside each of them; ``QUTIP_TRAP_MAX_WORKERS`` caps the default worker count (a test that asks for
-``workers=`` explicitly still gets its pool)."""
+"""Under pytest-xdist each worker caps the engine's default worker count at one (``QUTIP_TRAP_MAX_WORKERS``), so no test
+forks a trajectory pool inside a worker unless it asks for ``workers=``."""
 
 import os
 

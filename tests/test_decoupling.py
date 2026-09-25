@@ -109,7 +109,7 @@ def test_free_induction_and_hahn_echo_limits_and_biercuk_both_parities() -> None
 
 def test_finite_pulse_collapse_of_the_udd_order_and_the_universal_coefficients() -> None:
     """At delta_pi = 0.02 the gated UDD order drops from 2n + 2 to 4 (odd n, F -> (omega tau_pi)^4/16) and 6 (even n,
-    (omega tau)^2 (omega tau_pi)^4/64); n = 1, 2 keep 4 and 6."""
+    (omega tau)^2 (omega tau_pi)^4/64) to 2e-3, and the ungated form keeps omega^2 at n = 3."""
     w = np.array([1e-3, 1e-2])
     for n, order, coeff in (
         (1, 4, None),
@@ -135,8 +135,8 @@ def test_finite_pulse_collapse_of_the_udd_order_and_the_universal_coefficients()
 
 
 def test_mixed_axis_sequences_match_brute_force_propagation() -> None:
-    """XY4, XY8, KDD and CDD compose per-pulse blocks with the accumulated Lambda: the closed-form R(omega) equals
-    -i omega int R(t) e^{i omega t} dt from the propagator, and the sequences return to the identity."""
+    """XY4, XY8, KDD and CDD return to the identity (to 1e-12), and the closed-form R(omega) equals -i omega int R(t)
+    e^{i omega t} dt from the propagator to 1e-8."""
     for timing, n in (("xy4", 4), ("xy8", 8), ("kdd", 20), ("cdd", 2)):
         seq = decoupling_sequence(timing, n, TAU, 0.01)
         assert not seq.is_single_axis() and seq.feasible()
@@ -189,9 +189,8 @@ def test_end_to_end_dephasing_normalization_and_chi() -> None:
 
 
 def test_amplitude_filter_function_dc_polygon_crossover_and_dc_floor() -> None:
-    """Primitive F_a = sin^2(omega tau_P/2); SK1 and BB1 give 5.17486e-14 and 1.52202e-14 at omega = 1e-4 Omega
-    (theta = pi); the dc polygon closes for the amplitude-correcting families; the dc floors 5.87365e-6 (SK1),
-    3.53675e-9 (BB1) and 1.67248e-9 (CORPSE) at the benchmark <beta^2> = 2.07e9/pi, Omega = 1.5e6."""
+    """F_a is sin^2(omega tau_P/2) for the primitive, 5.17486e-14 (SK1) and 1.52202e-14 (BB1) at 1e-4 Omega, crossing the
+    primitive at 0.0702926 and 0.132464 Omega; dc_floor gives 5.87365e-6, 3.53675e-9 and 1.67248e-9 (to 1e-5)."""
     prim = composite_segments(composite_pulse("primitive", math.pi), 1.0)
     for x in (0.3, 0.7, 1.9):
         assert amplitude_filter_function(prim, np.array([x]))[0] == pytest.approx(
@@ -250,9 +249,8 @@ def _slow_band(omega_max_rad_s: float | None = None) -> NoiseSpectrum:
 
 @pytest.mark.slow
 def test_filter_function_api_with_the_monte_carlo_path_through_the_builder() -> None:
-    """The first-order 1 - F_av = chi/2 against a Monte Carlo over sampled b(t) trajectories propagated through the
-    Hamiltonian builder, inside xi^2 << 1; the infrared cutoff is reported with its sensitivity; FID >> Hahn >> CPMG-2 on
-    a slow spectrum."""
+    """A 24-sample Monte Carlo through the builder agrees with a Hahn echo's first-order 1 - F_av = chi/2 within 3 sigma + 25 %
+    at xi^2 = 0.14, the infrared cutoff is reported with its sensitivity, and FID > 30 x Hahn > 30 x CPMG-2."""
     dev = microwave_device()
     tau = 200e-6
     spec = _slow_band(2.0 * math.pi * 3e3)  # xi^2 = 0.14
@@ -283,8 +281,8 @@ def test_filter_function_api_with_the_monte_carlo_path_through_the_builder() -> 
 
 
 def test_power_law_spectrum_is_infrared_divergent_for_the_hahn_echo() -> None:
-    """On S_b ~ 1/omega^4, chi is infrared-divergent for free induction, the Hahn echo and odd-n CPMG, and
-    ``filter_function`` reports d ln chi/d ln omega_min beside chi: -3, -1, -1 and 0 for UDD-3."""
+    """On S_b ~ 1/omega^4 the roll-off orders are 0, 1, 1, 2, 3 for FID, Hahn, CPMG-3, CPMG-2 and UDD-3, and d ln chi/d ln
+    omega_min is -3, -1, -1 and 0 for FID, Hahn, CPMG-3 and UDD-3 (to 1e-3)."""
     dev = microwave_device()
     tau = 1e-3
     div = power_law_spectrum(1e-6, 1.0, 4.0, "u", omega_min_rad_s=1e-4, omega_max_rad_s=1e6)
@@ -325,8 +323,8 @@ def _mains_spectrum(background_at_1hz: float, line_amp: float, line_hz: float = 
 
 
 def test_the_mains_lines_are_visible_to_the_filter_function() -> None:
-    """A Hahn echo over 1/(2 x 60 Hz) puts its filter maximum on the 60 Hz line and sees far more chi than the bare 1/f
-    background; deep in the omega^4 asymptote the lines' contribution falls as tau^4."""
+    """A 1/60 s Hahn echo sees more than twice the chi of the bare 1/f background, and deep in the omega^4 asymptote chi falls
+    9975.4-fold per decade of tau with the lines carrying 3.367 times the background (to 1e-3)."""
     spec = _mains_spectrum(1e-4, 4.0)
     bare = _mains_spectrum(1e-4, 0.0)
 
@@ -358,9 +356,8 @@ def test_the_mains_lines_are_visible_to_the_filter_function() -> None:
 
 @pytest.mark.slow
 def test_xy_n_decay_laws_as_w_equals_exp_minus_chi() -> None:
-    """Section 6.9: the (XY)^N row is evaluated as W = e^{-chi}. Free induction gives chi ~ tau^2 (ratio 4 per doubling), a
-    real (XY)^N at fixed pulse spacing chi ~ tau (ratio 2), so T_2 = tau/chi is exact for (XY)^N; at fixed total time the
-    suppression grows with the pulse count, independently of tau."""
+    """With W = e^{-chi}, free induction's chi quadruples and a fixed-spacing (XY)^N's doubles per doubling of tau (to 1e-3 and
+    1e-2), and at fixed tau N = 4, 20, 40 pulses suppress chi 6.5, 32.7 and 65-fold (to 8 %)."""
     dev = microwave_device()
     bg = 1e-3
     spec = _mains_spectrum(bg, bg * 4.0)
@@ -399,9 +396,8 @@ def test_xy_n_decay_laws_as_w_equals_exp_minus_chi() -> None:
 
 
 def test_dc_floor_order_is_channel_matched_not_the_pulses_own_order() -> None:
-    """At m = 0 the floor is c_hat_1 <beta^2>_eps/Omega^2 with c_hat_1 = 1 (detuning) and pi^2/4 (amplitude): the dephasing
-    floors of the primitive, SK1 and BB1 coincide, CORPSE's amplitude floor equals the primitive's, and SCROFULOUS's
-    eps_d coefficient 4 makes its dephasing floor 4x the primitive's."""
+    """At m = 0 the dc floor carries c_hat = 1 (detuning) or pi^2/4 (amplitude): the dephasing floors of the primitive, SK1 and
+    BB1 coincide, CORPSE's amplitude floor is the primitive's, and SCROFULOUS's dephasing floor is four times it (to 1e-4)."""
     dev, spec = microwave_device(), _slow_band()
 
     def floor(family: str, quadrature: str) -> float:
@@ -431,8 +427,8 @@ def test_dc_floor_order_is_channel_matched_not_the_pulses_own_order() -> None:
 
 
 def test_frozen_noise_infidelity_is_the_exact_dc_limit_of_both_quadratures() -> None:
-    """H_0 = beta . sigma with no 1/2 on the Pauli vector: a frozen sigma_z coefficient b on a primitive pi pulse costs
-    4(b/Omega)^2, a frozen amplitude beta_a costs sin^2(pi beta_a/2 Omega)."""
+    """With H_0 = beta . sigma a frozen sigma_z coefficient b costs a primitive pi pulse 4 (b/Omega)^2 (to 1e-4) and a frozen
+    amplitude beta_a sin^2(pi beta_a/2 Omega) (to 1e-9)."""
     prim = composite_segments(composite_pulse("primitive", math.pi), 1.0)
     for rel in (1e-3, 2e-3, 4e-3):
         assert frozen_noise_infidelity(prim, rel, "dephasing") == pytest.approx(4.0 * rel**2, rel=1e-4)
@@ -462,8 +458,8 @@ def test_frozen_noise_infidelity_is_the_exact_dc_limit_of_both_quadratures() -> 
 def test_reported_dc_floor_matches_the_exact_gaussian_frozen_average(
     family: str, quadrature: str, rel: float
 ) -> None:
-    """The c_hat (2m + 1)!! rel^{m+1} floor is the leading term of <1 - F> over a Gaussian frozen beta; at
-    <beta^2>/Omega^2 = 3.6e-5 the two agree to 5e-4 relative."""
+    """The reported dc floor c_hat (2m + 1)!! rel^(m+1) matches the exact Gaussian frozen average at <beta^2>/Omega^2 = 3.6e-5
+    to 5e-4 (2e-3 for SCROFULOUS dephasing)."""
     dev, spec = microwave_device(), _slow_band()
     pulse = composite_pulse(family, math.pi)
     reported = float(
@@ -497,8 +493,8 @@ def test_corpse_detuning_floor_needs_the_splitting_normalization() -> None:
 
 
 def test_decoupling_sequences_get_the_max_rule_too() -> None:
-    """A sequence's floor is the exact Gaussian frozen average, and for CPMG-4 on the 300 Hz band it exceeds the first-order
-    estimate (8.93e-6 against 1.29e-6), so the reported max is load-bearing."""
+    """A sequence's reported infidelity is the max of its first-order estimate and its dc floor, the exact Gaussian frozen
+    average (to 1e-9), which for CPMG-4 on the 300 Hz band is 8.93e-6, above five times the estimate."""
     dev = microwave_device()
     tau, tau_pi = 200e-6, 4e-6
     spec = _slow_band(2.0 * math.pi * 3e3)

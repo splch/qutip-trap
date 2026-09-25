@@ -23,11 +23,12 @@ from qutip_trap.trap.heating import (
     thermal_collapse_rates,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, HBAR_J_S, TWO_PI
-from tests.fixtures import MassOnly, two_ion_device
+from tests.fixtures import MassOnly, chain_device
 
 
 def test_heating_round_trip_and_sidedness() -> None:
-    """S_E = 2.2250e-13 (V/m)^2/Hz for 9Be+ at 3.6 MHz gives 40 quanta/s; a two-sided density needs the factor 2."""
+    """S_E = 2.2250e-13 (V/m)^2/Hz for 9Be+ at 3.6 MHz gives 40 quanta/s and back (to 1e-3), a two-sided density entering
+    with the factor 2."""
     m = 9.0121822 * ATOMIC_MASS_KG
     w = TWO_PI * 3.6e6
     assert heating_rate_quanta_per_s(2.2250e-13, m, w) == pytest.approx(40.0, rel=1e-3)
@@ -50,7 +51,7 @@ def test_collapse_rates_carry_n_plus_one_and_n() -> None:
 
 
 def test_a_symmetric_two_sided_tabulation_keeps_its_shape() -> None:
-    """S_E = 2 x NoiseSpectrum.tabulated at DC, mid-band and the edge of a symmetric (-omega_max .. +omega_max) table."""
+    """S_E = 2 x NoiseSpectrum.tabulated, even in omega, at DC, mid-band and the edge of a symmetric table, to 1e-12."""
     spectrum = NoiseSpectrum(
         np.array([-3e7, -1e7, 0.0, 1e7, 3e7]),
         np.array([1e-14, 5e-14, 1e-13, 5e-14, 1e-14]),
@@ -65,7 +66,8 @@ def test_a_symmetric_two_sided_tabulation_keeps_its_shape() -> None:
 
 
 def test_above_the_tabulated_band_the_density_is_the_white_level_alone() -> None:
-    """A mode above the band heats at the white level, counted once, and not at 2 S[-1] + white."""
+    """Above the tabulated band S_E is twice the white level alone (1e-12), and every two-ion mode there heats at that rate
+    (1e-9)."""
     white_two_sided = 3e-15
     spectrum = power_law_spectrum(
         1e-13,
@@ -83,7 +85,7 @@ def test_above_the_tabulated_band_the_density_is_the_white_level_alone() -> None
     for omega in (1.5 * top, 10.0 * top, 100.0 * top):
         assert s_e(omega) == pytest.approx(2.0 * white_two_sided, rel=1e-12)
     assert s_e(top) == pytest.approx(2.0 * (float(spectrum.tabulated(top)) + white_two_sided), rel=1e-12)
-    dev = two_ion_device()
+    dev = chain_device(2)
     dev = dataclasses.replace(
         dev, noise=dataclasses.replace(dev.noise, S_E=spectrum, correlation_length_m=0.0)
     )
@@ -97,8 +99,8 @@ def test_above_the_tabulated_band_the_density_is_the_white_level_alone() -> None
 
 
 def test_uniform_noise_heats_only_the_com_at_n_times_the_single_ion_rate() -> None:
-    """Lechner 2016: 9 x 7.2 = 65 quanta/s on the 9-ion COM at 2.74 MHz; uncorrelated noise heats every mode at the
-    single-ion rate."""
+    """Lechner 2016: uniform noise heats only the 9-ion COM modes, the 2.74 MHz one at 9 x 7.2 = 65 quanta/s (to 0.3), and
+    uncorrelated noise heats every mode at the single-ion rate (1e-9)."""
     yb = species("171Yb+")
     m = yb.mass_u * ATOMIC_MASS_KG
     s_e = s_e_from_heating_rate(7.2, m, TWO_PI * 2.74e6)
@@ -120,8 +122,8 @@ def test_uniform_noise_heats_only_the_com_at_n_times_the_single_ion_rate() -> No
 
 
 def test_mixed_crystal_every_mode_heats_and_the_two_ion_sum_rule_holds() -> None:
-    """A mixed pair has no mode orthogonal to a uniform field; sum_k hbar omega_k n_dot_k = (e^2 S_E/4)(1/m1 + 1/m2) for
-    every mu (Wubbena 2012 Eqs. 30-31)."""
+    """A uniform field heats both axial modes of a mixed pair with sum_k hbar omega_k n_dot_k = (e^2 S_E/4)(1/m1 + 1/m2) to
+    1e-9 (Wubbena 2012 Eqs. 30-31), and not the stretch of an equal-mass pair."""
     w1 = TWO_PI * 1e6
     for mu in (0.5, 2.6614, 4.6):
         w = np.array(

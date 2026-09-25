@@ -1,7 +1,5 @@
-"""The simulated laboratory (PLAN.md Section 7.5) against the device's true derived values: Rabi, Ramsey and sideband
-spectroscopy, thermometry, mode spectroscopy and the C0 row, the heating rate, the field, Stark and crosstalk scans, the
-micromotion compensation by the exact modulated builder and by the rf-photon-correlation steady state; the laboratory
-keywords, the typed results with their table proposals, and the scan as requested beside the scan the hardware played."""
+"""The simulated laboratory (PLAN.md Section 7.5) against the device's derived values: spectroscopy, thermometry, mode and
+heating scans, the field, Stark and crosstalk scans, micromotion compensation, and the laboratory keywords and typed results."""
 
 from __future__ import annotations
 
@@ -77,7 +75,8 @@ def machine(two_ion) -> Machine:  # type: ignore[no-untyped-def]
 
 
 def test_rabi_scan_fits_the_rabi_frequency_and_the_thermal_occupation(single) -> None:  # type: ignore[no-untyped-def]
-    """Rabi flopping fitted with the thermal Debye-Waller envelope returns the carrier Rabi frequency and nbar."""
+    """The thermal Debye-Waller fit of Rabi flopping returns the carrier Rabi frequency to 1e-3, nbar = 0.6 to 0.05 and unit
+    contrast, and its model matches the data to 5e-3."""
     dev, dd = single
     f = dd.carrier_rabi_hz
     ts = np.linspace(0.0, 1.2 / f, 13)
@@ -121,7 +120,7 @@ def test_microwave_ramsey_frequency() -> None:
 
 
 def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(single) -> None:  # type: ignore[no-untyped-def]
-    """From n = 0 the red sideband is dark (sideband-asymmetry thermometry) while the blue sideband flops."""
+    """From n = 0 the blue sideband, found at 3.0 MHz to 10 kHz, flops above 0.9 while the red one stays below 1e-3."""
     dev, dd = single
     f, eta = dd.carrier_rabi_hz, dd.etas[1]
     mus = np.concatenate(
@@ -136,8 +135,8 @@ def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(sing
 
 
 def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequency_and_pi_time(single) -> None:  # type: ignore[no-untyped-def]
-    """Section 7.5: the fitted Omega of a noiseless carrier scan reproduces the derived Omega (the n = 0 Debye-Waller factor
-    e^{-eta^2/2} included, Section 4.2.7) within the reported uncertainty, and the pi time is pi/Omega."""
+    """The fitted Omega of a noiseless carrier scan is the derived Omega times the n = 0 Debye-Waller factor e^{-eta^2/2} to
+    2e-3 (and within five fit sigmas), and the pi time is pi/Omega."""
     dev, dd = single
     f, eta = dd.carrier_rabi_hz, dd.etas[1]
     t_pi = 0.5 / f
@@ -155,8 +154,8 @@ def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequenc
 def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_every_modes_debye_waller_factor(
     two_ion,
 ) -> None:  # type: ignore[no-untyped-def]
-    """Section 7.5's bootstrap on two coupled modes: nbar fixed from thermometry, the fit (f, contrast, offset) carries the
-    Debye-Waller factor of both x modes (Section 4.2.7 iii), so the fitted f is the bare derived Omega within its uncertainty."""
+    """With nbar fixed from thermometry the fit carries both x modes' Debye-Waller factors and returns the bare derived Omega
+    within four sigmas (sigma < 1e-3 Omega) and unit contrast to 0.02."""
     fx, dd = two_ion
     f = dd.carrier_rabi_hz
     res = rabi_scan(
@@ -295,8 +294,8 @@ def test_calibrate_returns_the_report(two_ion, machine: Machine) -> None:  # typ
 
 @pytest.mark.slow
 def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(single) -> None:  # type: ignore[no-untyped-def]
-    """P_rsb/P_bsb = nbar/(nbar + 1) for every pulse duration on a thermal state (Turchette); the shot-noise uncertainty covers
-    the truth."""
+    """The sideband ratio P_rsb/P_bsb = nbar/(nbar + 1) (Turchette) returns nbar = 0.3 to 2e-3 at every duration on a thermal
+    state, and its shot-noise twin within four sigmas."""
     dev, _dd = single
     exact = thermometry(Machine(dev), 0, 1, nbar={1: 0.3}, include_stark=False, check_durations_s=(31e-6,))
     assert exact.converged and exact.fitted["nbar"][0] == pytest.approx(0.3, abs=2e-3)
@@ -310,9 +309,8 @@ def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(si
 
 @pytest.mark.slow
 def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_uncertainty(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Section 7.5 item 2 on the two-ion fixture's COM mode: the mode frequency to well below the kilohertz the FM solvers
-    need (the uncertainty scales with the line's own width, Omega/2), |eta| from the sideband Rabi frequency (C0 = 1 without
-    an rf record) and nbar from the sideband ratio, each within its reported uncertainty."""
+    """On the two-ion COM mode the scan recovers the mode frequency (sigma < 450 Hz), |eta| from the sideband Rabi frequency and
+    nbar from the sideband ratio, each within four sigmas."""
     fx, dd = two_ion
     nbar = {2: 0.0185, 3: 0.0154}
     res = mode_spectroscopy(
@@ -340,8 +338,8 @@ def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_u
 
 @pytest.mark.slow
 def test_sideband_calibrated_eta_carries_c0_and_a_carrier_derived_one_does_not() -> None:
-    """C0 applied once: with an rf record at q = 0.3 the sideband Rabi frequency gives eta C0 (C0 = 1 + 3q^2/16 +
-    O(q^4) = 1.018), the bare Delta k x0 c does not, and the two-body phase of a gate built from the two differs by 2(C0 - 1)."""
+    """With an rf record at q = 0.3 the derived and the sideband-measured eta both carry C0 = 1.018 (to 2e-4 and three sigmas),
+    so a gate built from the bare eta misses 2(C0 - 1) of two-body phase (to 6e-3)."""
     omega_hz = (3.0e6, 2.9e6, 1.0e6)
     f_rf = 2.0 * math.sqrt(2.0) * 3.0e6 / 0.3
     dev = single_ion_raman_device(rf=RfDrive(voltage_peak_v=100.0, frequency_hz=f_rf))
@@ -366,14 +364,13 @@ def test_sideband_calibrated_eta_carries_c0_and_a_carrier_derived_one_does_not()
     )
 
 
-# twelve long density-matrix integrations twice over (the exact scan and its Monte Carlo twin), beyond the suite's 30-minute
-# per-test timeout on a loaded 4-vCPU runner
+# twelve long density-matrix integrations (the exact scan and its shot-noise twin): beyond the default 30-minute timeout on a
+# loaded runner
 @pytest.mark.slow
 @pytest.mark.timeout(3600)
 def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # type: ignore[no-untyped-def]
-    """Section 4.1.5's procedure through the engine's own heating channels: nbar against the delay is linear at Gamma_h and
-    the fit recovers the rate and the prepared occupation within their uncertainties; the
-    probes at the hottest delays are density matrices of d ~ 70 Fock levels under mesolve."""
+    """Through the engine's heating channels nbar grows linearly with the delay and the fit recovers Gamma_h to 3 % and
+    nbar0 = 0.1 to 0.01, and its shot-noise twin Gamma_h within four sigmas."""
     dev, _dd = single
     noisy = dataclasses.replace(
         dev,
@@ -399,8 +396,8 @@ def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # ty
 
 
 def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:  # type: ignore[no-untyped-def]
-    """With the frame at nu(B_seed), the Ramsey-frequency offset inverted through nu(B) recovers the device's field within
-    sigma_nu/|d nu/dB| (3.1 kHz/G for the 171Yb+ clock transition at 5 G)."""
+    """The Ramsey-frequency offset from a frame at nu(5.03 G), inverted through nu(B), recovers B = 5 G within four sigmas
+    (sigma < 0.01 G; to 2e-5 G without shot noise) with d nu/dB = 3.1 kHz/G."""
     dev, _dd = single
     res = field_scan(
         Machine(dev),
@@ -420,8 +417,8 @@ def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:  # t
 
 
 def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Per (ion, beam): one beam on during the Ramsey delay gives that beam's differential light shift; the drive's shift is
-    the sum, equal to the derived one within the fit uncertainty."""
+    """One beam on during the Ramsey delay measures that beam's differential light shift and the drive's shift is their sum,
+    each equal to the derived one within four sigmas (sigma < 10 Hz)."""
     fx, dd = two_ion
     res = stark_scan(
         Machine(fx.device),
@@ -445,9 +442,8 @@ def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> No
 
 
 def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """The neighbour's Rabi rate under ion 0's beams over ion 0's own gives epsilon_01 = 2.2 % on the 2.5 um fixture; the
-    crosstalk axis from pi/2 - pi - pi/2(phi) coincides with the neighbour's frame (the beams' wavefront is perpendicular to
-    the chain, so the geometric phase is zero)."""
+    """The neighbour's Rabi rate under ion 0's beams gives the derived crosstalk ratio within four sigmas and, the wavefront
+    being perpendicular to the chain, a zero crosstalk phase."""
     fx, dd = two_ion
     eps = abs(crosstalk_ratios(fx.device, 0, fx.gate_drives[0].beams)[1])
     res = crosstalk_scan(
@@ -475,10 +471,8 @@ def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> 
 def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_the_exact_modulated_builder() -> (
     None
 ):
-    """A 30 V/m stray field gives beta = 0.245 along the Raman Delta k at Omega_rf = 2 pi x 30 MHz; the exact
-    e^{i beta cos Omega t} modulation of the rf-locked drive puts J_1(beta) Omega on the first micromotion sideband, whose
-    excitation is even in beta: the parabola over the compensation field has its minimum at -30 V/m and the residual |beta|
-    at the null is below 1e-3."""
+    """A 30 V/m stray field (beta = 0.245 at 30 MHz rf) is nulled by the sideband-ratio scan through the exact modulated
+    builder at -30 V/m to 0.5 V/m, with the residual |beta| below 1e-3."""
     dev = single_ion_raman_device(rf=RfDrive(voltage_peak_v=200.0, frequency_hz=30e6), stray=(30.0, 0.0, 0.0))
     dk = derive_raman_drive(dev, 0, (0, 1), scattering=False).delta_k
     # the in-phase index is signed (u_1 = -(1/2) q u_0 at the adopted Mathieu origin); Berkeland's magnitude is pinned
@@ -497,10 +491,8 @@ def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_th
 
 @pytest.mark.slow
 def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field() -> None:
-    """Berkeland's rf-photon correlation from the periodic steady state of the detection beam's Bloch model: the complex first
-    harmonic of the photon rate at the rf frequency is odd in the signed modulation index and linear near the null; projected
-    on the atom's response phase half a linewidth to the red it is the signal whose slope the residual beta is read from (a
-    thousand times the on-resonance response), and the shim scan's line fit crosses zero at the compensating field."""
+    """Berkeland's rf-photon correlation: the first rf harmonic of the detection beam's periodic steady state is odd and linear
+    in beta, larger half a linewidth to the red, follows the sign of the residual field, and nulls a 20 V/m field to 0.5 V/m."""
     base = yb171_chain(2).device
     dev = dataclasses.replace(
         base,
@@ -540,8 +532,8 @@ def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field()
     assert mean_plus < signals[0.1][1], "half a linewidth to the red the mean rate is lower than on resonance"
     k_vec = np.asarray(dev.beams[beam].k_vector())
     assert signed_beta(dev, 0, k_vec) != 0.0
-    # the modulation index changes sign as the shim crosses the compensated value, with an absolute sign: The residual field is +20 V/m along x, compensated at Ex = -20 V/m; under the adopted rf phase origin u_1 =
-    # -(1/2) Q u_0, so sign(beta) = -sign(q_x E_x) on either side, and the odd signal steps by pi with it.
+    # beta changes sign as the shim crosses the compensated value (+20 V/m residual along x, compensated at Ex = -20 V/m):
+    # under the adopted rf phase origin u_1 = -(1/2) q u_0, sign(beta) = -sign(q_x E_x), and the odd signal steps by pi with it
     q_x = float(dev.trap.mathieu(dev.crystal.species[0]).q[0, 0])
     for shim, residual_x in ((-10.0, +10.0), (-30.0, -10.0)):
         trial = device_with_compensation(dev, {"Ex": shim})

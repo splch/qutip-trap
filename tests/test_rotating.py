@@ -1,8 +1,5 @@
-"""The exact rotating frame of the ket integrations (PLAN.md Sections 5.2, 5.3): psi = e^{-i H_0 t} phi is a change of
-variable, so every test is an exactness test (the phased sum against the assembled matrix, V_I(t) against
-Theta^dag [H(t) - H_0] Theta on the real builder's QobjEvo) plus the engine-level statement that both pictures give the same
-state to the solver tolerance, on the sesolve and the mcsolve path.
-"""
+"""The exact rotating frame psi = e^{-i H_0 t} phi (PLAN.md Section 5.2): the frame energies, the phased sum and
+Theta^dag [H(t) - H_0] Theta against assembled matrices, and the two pictures agreeing in the engine on sesolve and mcsolve."""
 
 from __future__ import annotations
 
@@ -113,7 +110,8 @@ def test_eigen_frequencies_of_the_standard_collapse_operators() -> None:
 
 
 def test_phased_sum_equals_its_assembled_matrix_through_the_data_layer() -> None:
-    """Applied to kets and column stacks, through ``matmul`` on a Dense state, converted to Dense and back, and pickled."""
+    """The phased sum equals its assembled matrix to 1e-13 on kets, column stacks and Dense states, converted to Dense and
+    back, and exactly after pickling."""
     dims = (2, 3, 4)
     n = 24
     d1 = displacement_operator(3, 0.2j).full()
@@ -193,7 +191,7 @@ def test_rotating_frame_of_the_real_hamiltonian_is_theta_dag_v_theta(ms_fixture)
         t = 2.3e-6
         assert (c_a(t) - a2 * np.exp(-1j * omega2 * t)).norm() < 1e-9 * a2.norm()
         assert any("phase of the rotating frame" in n for n in rot.notes)
-        # a recoil kick is not an eigenoperator of H_0: the segment keeps the Schroedinger picture (module docstring)
+        # a recoil kick is not an eigenoperator of H_0: the segment keeps the Schroedinger picture
         kick = space.embed_many({0: qudit_sigma_plus(2), 2: displacement_operator(10, 0.1j)})
         assert rotating_frame(built.H, space.dims, [a2, kick]) is None
         assert rotating_collapse(kick, rot.frame) is None
@@ -236,9 +234,8 @@ def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, mo
         # (9 points would sample it at whole and half periods, where e^{-i omega t} is +-1)
         eng = JointExactEngine(store_per_segment=10)
         with monkeypatch.context() as m:
-            if (
-                not flag
-            ):  # the Schroedinger-picture reference: the frame builder declines and the engine falls back
+            # the Schroedinger-picture reference: the frame builder declines and the engine falls back
+            if not flag:
                 m.setattr("qutip_trap.dynamics.engine.rotating_frame", lambda *args, **kwargs: None)
             traces[flag] = eng.run_pulses(
                 dev, sched, state, space, quiet_sample(), SeedSpec(0), SolverOptions()
@@ -270,8 +267,8 @@ def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, mo
 
 
 def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_fixture, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Heating channels present, ``mcsolve`` forced: the collapse operators carry their e^{i lambda t} in the frame, and the
-    trajectories (same seeds) make the same jumps at the same times and end in the same ensemble, to the solver tolerance."""
+    """With heating on the mcsolve path the frame's collapse operators carry e^{i lambda t}: three seeded trajectories jump alike
+    (times to 1e-9) and end in the same ensemble (1e-6) in both pictures."""
     dev, sched, _space = ms_fixture
     noisy = dataclasses.replace(
         dev,
@@ -287,9 +284,8 @@ def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_
     for flag in (False, True):
         eng = JointExactEngine(device_channels=True)
         with monkeypatch.context() as m:
-            if (
-                not flag
-            ):  # the Schroedinger-picture reference: the frame builder declines and the engine falls back
+            # the Schroedinger-picture reference: the frame builder declines and the engine falls back
+            if not flag:
                 m.setattr("qutip_trap.dynamics.engine.rotating_frame", lambda *args, **kwargs: None)
             tr = eng.run_pulses(
                 noisy,

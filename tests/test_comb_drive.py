@@ -1,5 +1,5 @@
-"""Frequency-comb Raman drives: the tooth-pair weight, the fourth-order Stark l-sum and its guards, the explicit/folded
-partition of the beat notes, and a comb drive through the Hamiltonian builder, against the numbers of check_comb.py."""
+"""Frequency-comb Raman drives (PLAN.md Section 4.3.7): the tooth-pair weight, the fourth-order Stark l-sum and its guards,
+the explicit/folded partition of the beat notes, and a comb drive through the Hamiltonian builder."""
 
 from __future__ import annotations
 
@@ -45,8 +45,8 @@ def _pair_sum_exact(comb: CombSpec, l: int, n_teeth: int) -> float:  # noqa: E74
 
 
 def test_pair_weight_uses_the_half_argument() -> None:
-    """sech(pi l nu_rep tau) = 0.863911 at l = 105 against the wrong sech(2 pi l ...) = 0.595332, a 27% error; the closed
-    form is itself about 5% high against the exact convolution."""
+    """The pair weight is sech(pi l nu_rep tau) = 0.863911 at l = 105 (to 1e-6), not sech(2 pi l nu_rep tau) = 0.595332, and
+    lies 3 to 7 % above the exact tooth convolution."""
     assert LEE.pair_weight(105) == pytest.approx(0.863911, abs=1e-6)
     assert 1.0 / math.cosh(2 * math.pi * 105 * 120e6 * 14e-12) == pytest.approx(0.595332, abs=1e-6)
     assert 0.03 < LEE.pair_weight(105) / _pair_sum_exact(LEE, 105, 200_000) - 1.0 < 0.07
@@ -73,8 +73,8 @@ def test_pulse_width_conventions() -> None:
 
 
 def test_comb_factor_convergence_sweep() -> None:
-    """C_00,10 partial sums 0.746343, 0.453162, 0.450920, 0.669087, 0.940671, 0.943780, 0.943789 for |k| <= 0, 5, 10, 100,
-    500, 1000, 5000: the |k| ~ 5 to 10 plateau converges falsely a factor 2.093 low."""
+    """C_00,10 partial sums are 0.746343, 0.453162, 0.450920, 0.669087, 0.940671, 0.943780, 0.943789 for |k| <= 0, 5, 10, 100,
+    500, 1000, 5000 (to 2e-6), the |k| ~ 5 to 10 plateau a factor 2.093 low, and C_10,11 = 0.988841."""
     expected = {
         0: 0.746343,
         5: 0.453162,
@@ -108,7 +108,7 @@ def test_fourth_order_single_sum_guards_and_converges() -> None:
 
 
 def test_the_offset_lock_and_the_beat_note_grid() -> None:
-    """Islam's lock: n = 157 with |Delta nu_M| = 11.381 MHz at 80.6 MHz."""
+    """Islam's lock: n = 157 with |Delta nu_M| = 11.381 MHz (to 2 kHz) at 80.6 MHz, the beat note at 157 nu_rep."""
     islam = CombSpec(80.6e6, 10e-12, "field_sech", 157, 0.0)
     j, off = islam.solve_offset(12.642819e9)
     assert j == 157 and off == pytest.approx(-11.381e6, abs=2e3)
@@ -150,8 +150,8 @@ def test_tone_set_is_cut_at_the_gate_window() -> None:
 
 
 def test_sum_depth_comes_from_the_envelope_and_covers_both_operating_points() -> None:
-    """l_max = ceil(8/(pi nu_rep tau)): 1516 at the Lee point and 3184 at the APB one; a literal 1200 plateaus falsely at
-    the APB point and is refused."""
+    """The sum depth ceil(8/(pi nu_rep tau)) is 1516 at the Lee point and 3184 at the APB one, where the fourth-order shifts are
+    5510.08 and 79680.65 Hz (to 1e-5); a literal 1200 and an unconverged comb factor are refused."""
     assert LEE.sum_half_width == pytest.approx(189.470, abs=1e-3)
     assert APB.sum_half_width == pytest.approx(397.887, abs=1e-3)
     assert LEE.sum_depth == math.ceil(SUM_DEPTH_HALF_WIDTHS * LEE.sum_half_width) == 1516
@@ -166,8 +166,8 @@ def test_sum_depth_comes_from_the_envelope_and_covers_both_operating_points() ->
 
 
 def test_the_resonant_comb_is_refused_rather_than_returning_a_huge_shift() -> None:
-    """A rep rate that nearly divides the splitting (nu_rep = nu_q/158, resonant to 1.9 microhertz) would give 1.12e17 Hz
-    under an exact-equality guard; the threshold guard refuses it."""
+    """A rep rate dividing the splitting (nu_q/158) is refused in the static sum and the comb factor, is finite once the resonant
+    beat note is explicit, and the marginal full-power band warns."""
     resonant = CombSpec(NU_Q / 158.0, 10e-12, "field_sech", 158, 0.0)
     assert abs(NU_Q / resonant.rep_rate_hz - 158.0) < 1e-12
     with pytest.raises(ZeroDivisionError, match="sits on beat note"):
@@ -186,8 +186,8 @@ def test_the_resonant_comb_is_refused_rather_than_returning_a_huge_shift() -> No
 
 
 def test_near_resonant_explicit_far_detuned_folded_never_both() -> None:
-    """The static l-sum excludes every beat note ``tones()`` keeps explicit; keeping the resonant one in both inflates the
-    shift by 4.78 at the Lee point (5510 Hz against 1153 Hz)."""
+    """The static l-sum excludes every beat note ``tones()`` keeps explicit (keeping the resonant one in both inflates the shift
+    4.78-fold at the Lee point), and the total gate phase is invariant to 1e-4 rad under moving the cut."""
     w = 12.642821e9
     both = LEE.stark4_hz([0.0, w], couplings_hz=[0.0, 1e6])[0]
     partitioned = LEE.stark4_hz([0.0, w], couplings_hz=[0.0, 1e6], gate_time_s=100e-6, resonance_hz=w)[0]
@@ -263,8 +263,8 @@ def _fixture() -> tuple[Device, DerivedDrive, CombSpec, float]:
 
 
 def test_a_comb_carrier_pulse_matches_the_single_tone_prediction() -> None:
-    """Inside the gate window the train reduces to ONE tone of envelope Omega_0 sech(pi j nu_rep tau), so a pulse of length
-    pi/(Omega_0 sech x e^{-eta^2/2}) inverts the qubit."""
+    """Inside the gate window the train is one tone of envelope Omega_0 sech(pi j nu_rep tau) = 0.926025 Omega_0, and a pi pulse
+    on it inverts the qubit to 3e-6, the off-resonant sideband residual."""
     dev, dd, comb, nu_q = _fixture()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # the un-evaluable guards are reported, not fatal
@@ -306,7 +306,8 @@ def test_a_comb_carrier_pulse_matches_the_single_tone_prediction() -> None:
 
 
 def test_the_comb_drives_fold_their_far_detuned_teeth_into_a_static_shift() -> None:
-    """With the level structure supplied the factory sets ``stark_shift_hz`` from ``comb.stark4_hz`` on the SAME cut."""
+    """With the level structure supplied the factory sets ``stark_shift_hz`` from ``comb.stark4_hz`` on the same cut (to
+    1e-12), and the builder reports it."""
     dev, dd, comb, nu_q = _fixture()
     levels = [0.0, nu_q]
     couplings = [0.0, 1e6]
@@ -351,8 +352,8 @@ def test_the_factory_reports_the_guards_it_cannot_evaluate() -> None:
 
 
 def test_the_tone_set_and_the_static_shift_share_one_operator_and_one_grid() -> None:
-    """Widening the cut moves beat notes from the folded sum into the tone list, and the builder still emits one drive term
-    (one operator with a summed coefficient)."""
+    """Widening the cut moves the two neighbouring beat notes (-/+80 MHz) from the folded sum into the tone list without adding
+    drive terms to the built Hamiltonian."""
     dev, dd, comb, nu_q = _fixture()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)

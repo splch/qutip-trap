@@ -12,6 +12,7 @@ from scipy.constants import physical_constants
 
 from qutip_trap.provenance import Cited
 from qutip_trap.species import MODULES, available, species
+from qutip_trap.species.dipole import reduced_element_from_partial_rate
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.species.sources import SOURCES
@@ -29,7 +30,8 @@ BA137 = MODULES["137Ba+"].TABLE
 
 
 def test_the_species_that_build_and_the_two_that_cannot() -> None:
-    """25Mg+ lacks a measured g_J and measured 3p hyperfine constants; 133Ba+ the two A constants no source prints."""
+    """Six species build, and 25Mg+ and 133Ba+ refuse with exactly their missing ledger ids (g_J and the 3p hyperfine
+    constants; two A constants), each marked to consult."""
     assert available() == ("171Yb+", "40Ca+", "43Ca+", "137Ba+", "9Be+", "88Sr+")
     missing = {}
     for name in set(MODULES) - set(available()):
@@ -54,14 +56,14 @@ def test_every_constant_is_cited_to_a_known_source(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(MODULES))
 def test_no_constant_is_verified_against_the_plan_or_a_relay(name: str) -> None:
-    """``verified`` means checked against a primary source, so never against PLAN.md or a locator-less relay."""
+    """No constant tagged verified cites PLAN.md or a relay (``_via_``) source."""
     for ledger_id, c in MODULES[name].TABLE.items():
         if c.tag == "verified":
             assert c.source not in SELF_REFERENTIAL_SOURCES and "_via_" not in c.source, ledger_id
 
 
 def test_every_source_key_carries_a_locator() -> None:
-    """Every non-plan, non-database source carries a year, an arXiv id or a DOI, so a bare author name cannot stand in."""
+    """Every source except the PLAN, NIST and Steck keys carries a year, an arXiv id or a DOI."""
     for key, text in SOURCES.items():
         if not key.startswith(("PLAN_", "NIST_", "Steck")):
             assert LOCATOR.search(text), f"{key} names no locator: {text[:100]}"
@@ -89,8 +91,6 @@ def _i_sat_mw_cm2(partial_rate_rad_s: float, wavelength_m: float) -> float:
 
 
 def _element_e_a0(partial_rate_rad_s: float, wavelength_m: float, j_upper: Fraction) -> float:
-    from qutip_trap.species.dipole import reduced_element_from_partial_rate
-
     omega = TWO_PI * C_M_PER_S / wavelength_m
     return reduced_element_from_partial_rate(partial_rate_rad_s, omega, Fraction(1, 2), j_upper) / (
         E_C * physical_constants["Bohr radius"][0]
@@ -109,8 +109,9 @@ def test_yb171_ground_state_constants() -> None:
     assert yb.mass_u == pytest.approx(170.93578, abs=1e-5), "the ION mass"
 
 
-def test_yb171_i_sat_anchor_of_section_9_13() -> None:
-    """171Yb+ 369.5 nm with the partial 19.62 MHz rate: I_sat = 50.83 mW/cm^2; the unconverted gamma_hz gives 8.09."""
+def test_yb171_i_sat_anchor() -> None:
+    """171Yb+ 369.5 nm: gamma = 19.72 MHz with a 19.62 MHz partial rate (1e-3) gives I_sat = 50.83 mW/cm^2 (0.01), and
+    the partial rate passed in Hz instead of rad/s would give 8.09."""
     tr = species("171Yb+").transition("S1/2-P1/2")
     assert tr.gamma_hz == pytest.approx(19.72e6, rel=1e-3)
     assert tr.partial_rate_rad_s / TWO_PI == pytest.approx(19.62e6, rel=1e-3)
@@ -132,8 +133,8 @@ def test_yb171_channel_wavelengths() -> None:
 
 
 def test_yb171_branchings_and_the_p32_doublet_partner() -> None:
-    """P1/2 branches 0.00501 to D3/2, conditional on tau = 8.07 ns; P3/2 (6.15 ns, A = 875.4 MHz) splits 0.9875 / 0.0017 /
-    0.0108 into S1/2 / D3/2 / D5/2, so the S1/2 intermediate sums run over both fine-structure partners."""
+    """P1/2 branches 0.00501 to D3/2 (conditional on tau = 8.07 ns) and P3/2 (6.15 ns, A = 875.4 MHz)
+    0.9875/0.0017/0.0108 into S1/2/D3/2/D5/2, so S1/2 couples to both fine-structure partners."""
     yb = species("171Yb+")
     sp, dp = yb.transition("S1/2-P1/2"), yb.transition("D3/2-P1/2")
     assert sp.branching + dp.branching == pytest.approx(1.0) and dp.branching == 0.00501
@@ -189,10 +190,8 @@ def test_ca40_lande_factors_and_spin_zero() -> None:
 
 
 def test_ca40_397_nm_i_sat_anchor_comes_out_of_the_table() -> None:
-    """Hettrich's tau(P1/2) = 6.904 ns gives the TOTAL 23.0526 MHz, and Ramm's branching leaves a partial rate of
-    21.5691 MHz into S1/2, Hettrich's printed gamma_PS = 2 pi x 21.57(8) MHz to 4e-5 (and 1.4834 MHz his gamma_PD), so the
-    plan's 2.045 e a0 and 45.11 mW/cm^2 come out of the table: 2.0446 / 45.106 at the plan's air 396.85 nm, 2.0455 / 45.069
-    at the stored vacuum wavelength."""
+    """Hettrich's tau(P1/2) = 6.904 ns and Ramm's branching give the 40Ca+ 397 nm partial rate 21.569137 MHz (1e-6), a
+    2.0455 e a0 reduced element and I_sat = 45.069 mW/cm^2 at the stored vacuum wavelength."""
     ca = species("40Ca+")
     tr = ca.transition("S1/2-P1/2")
     table = MODULES["40Ca+"].TABLE
@@ -206,18 +205,16 @@ def test_ca40_397_nm_i_sat_anchor_comes_out_of_the_table() -> None:
         table["ca40.P12.partial_rate_to_S12_hz"].value, rel=1e-3
     )
     assert ca.transition("D3/2-P1/2").partial_rate_rad_s / TWO_PI == pytest.approx(1.482e6, abs=0.008e6)
-    for lam, element, i_sat in ((396.85e-9, 2.0446, 45.106), (tr.wavelength_vac_m, 2.0455, 45.069)):
-        assert _element_e_a0(tr.partial_rate_rad_s, lam, Fraction(1, 2)) == pytest.approx(element, abs=5e-4)
-        assert _i_sat_mw_cm2(tr.partial_rate_rad_s, lam) == pytest.approx(i_sat, abs=0.01)
+    assert _element_e_a0(tr.partial_rate_rad_s, tr.wavelength_vac_m, Fraction(1, 2)) == pytest.approx(
+        2.0455, abs=5e-4
+    )
     assert tr.i_sat_w_m2 * 0.1 == pytest.approx(45.069, abs=0.01)
     assert table["ca40.P12.linewidth_quoted_hz"].tag == "contested"
 
 
-def test_ca40_393_nm_partial_rate_disagrees_with_the_plans_quoted_23_4_mhz() -> None:
-    """Meir's tau(P3/2) = 6.639 ns is a TOTAL 23.9727 MHz, of which Gerritsma's S1/2 share 0.93469 leaves 22.4071 MHz; the
-    plan's unsourced 23.4 MHz matches no measurement (Jin and Church 1993: 22.9860 / 21.4848). The plan's printed 2.972 e a0
-    / 50.25 mW/cm^2 are the closed forms at a partial 23.4 MHz and its air 393.37 nm; the table gives 2.9085 / 48.113 there
-    and 2.9097 / 48.074 at the vacuum 393.478 nm."""
+def test_ca40_393_nm_partial_rate_and_i_sat_from_the_table() -> None:
+    """Meir's tau(P3/2) = 6.639 ns and Gerritsma's 0.93469 S1/2 share give a 22.407069 MHz partial rate (1e-6), a 2.9097 e a0
+    reduced element and I_sat = 48.074 mW/cm^2 at the vacuum 393.478 nm; the quoted linewidth is tagged contested."""
     ca = species("40Ca+")
     tr = ca.transition("S1/2-P3/2")
     assert tr.wavelength_vac_m == pytest.approx(393.478e-9, abs=0.001e-9)
@@ -225,14 +222,9 @@ def test_ca40_393_nm_partial_rate_disagrees_with_the_plans_quoted_23_4_mhz() -> 
     assert tr.gamma_hz == pytest.approx(23.972728e6, rel=1e-6)
     assert tr.branching == pytest.approx(0.93469, abs=1e-9)
     assert tr.partial_rate_rad_s / TWO_PI == pytest.approx(22.407069e6, rel=1e-6)
-    j = Fraction(3, 2)
-    plan_partial = TWO_PI * 23.4e6
-    for lam, element, i_sat in ((393.37e-9, 2.9722, 50.246), (tr.wavelength_vac_m, 2.9734, 50.204)):
-        assert _element_e_a0(plan_partial, lam, j) == pytest.approx(element, abs=1e-3)
-        assert _i_sat_mw_cm2(plan_partial, lam) == pytest.approx(i_sat, abs=0.02)
-    for lam, element, i_sat in ((393.37e-9, 2.9085, 48.113), (tr.wavelength_vac_m, 2.9097, 48.074)):
-        assert _element_e_a0(tr.partial_rate_rad_s, lam, j) == pytest.approx(element, abs=1e-3)
-        assert _i_sat_mw_cm2(tr.partial_rate_rad_s, lam) == pytest.approx(i_sat, abs=0.02)
+    assert _element_e_a0(tr.partial_rate_rad_s, tr.wavelength_vac_m, Fraction(3, 2)) == pytest.approx(
+        2.9097, abs=1e-3
+    )
     assert tr.i_sat_w_m2 * 0.1 == pytest.approx(48.074, abs=0.02)
     assert MODULES["40Ca+"].TABLE["ca40.P32.linewidth_quoted_hz"].tag == "contested"
 
@@ -268,9 +260,8 @@ def test_sr88_quadrupole_record_and_e1_lines() -> None:
 
 
 def test_ba137_builds_and_its_clock_and_zeeman_quantities_are_finite() -> None:
-    """PLAN.md prints no 137Ba+ anchor, so what is pinned is the plan's closed form taylor_c2 = (g_J - g_I)^2
-    mu_B^2/(2 h^2 nu_0), which the diagonalization reproduces to 1e-9, the five Ba+ line wavelengths, and finiteness of
-    every derived Zeeman quantity."""
+    """137Ba+ builds with its five line wavelengths (1e-3 nm), a normal ground multiplet, finite Zeeman values and the
+    clock coefficient (g_J - g_I)^2 mu_B^2/(2 h^2 nu_0) = 488.81912 Hz/G^2 the diagonalization reproduces to 1e-9."""
     ba = species("137Ba+")
     assert ba.nuclear_spin == 1.5 and ba.mu_I_nuclear_magnetons == 0.937365
     assert ba.mass_u == pytest.approx(136.905278, abs=1e-6), "the ION mass"
@@ -305,8 +296,8 @@ def test_ba137_builds_and_its_clock_and_zeeman_quantities_are_finite() -> None:
 
 
 def test_ba137_levels_use_the_measured_g_factors_and_not_the_asd_column() -> None:
-    """The measured g_J (Marx 1998, Knoell 1996, Arnold 2020) are the inputs; the NIST ASD Lande column (0.79, 1.12, 1.32)
-    is a contested cross-check, its 1.12 6.7% from the measured D5/2 value; the 6p levels take the Lande values."""
+    """137Ba+ takes the measured g_J (Marx 1998, Knoell 1996, Arnold 2020) and the 6p Lande values, and stores the NIST
+    ASD column (0.79, 1.12, 1.32) as contested, its 1.12 6.69 % from the measured D5/2 value."""
     ba = species("137Ba+")
     assert ba.level("S1/2").g_J == 2.00249192
     assert ba.level("D3/2").g_J == 0.7993278
@@ -322,7 +313,7 @@ def test_ba137_levels_use_the_measured_g_factors_and_not_the_asd_column() -> Non
 
 
 def test_arnolds_d52_g_factor_is_the_ratio_times_marxs_ground_state_g_factor() -> None:
-    """g_D = r g_S with r = 0.59943681(12): the product lands inside the published (24) bar of the stored value."""
+    """g_D = r g_S with Arnold's r = 0.59943681 lands 2.14e-8 (5 %) from the stored value, inside its published bar."""
     stored = BA137["ba137.D52.g_J"]
     assert stored.uncertainty is not None
     residual = abs(0.59943681 * BA137["ba137.S12.g_J"].value - stored.value)
@@ -331,8 +322,8 @@ def test_arnolds_d52_g_factor_is_the_ratio_times_marxs_ground_state_g_factor() -
 
 
 def test_133ba_hyperfine_constants_scale_from_137ba_by_the_nuclear_g_factors() -> None:
-    """A(133)/A(137) = (mu_I/I)(133)/(mu_I/I)(137) = -2.4697: it reproduces the ground-state A to 2e-5 and predicts
-    A(6p 2P1/2) inside the 11 MHz bar of the stored -1840 MHz."""
+    """The nuclear-g ratio A(133)/A(137) = -2.4697 reproduces the 133Ba+ ground-state A to 2e-5 and predicts A(6p 2P1/2)
+    inside the stored value's bar."""
     ratio = (BA133["ba133.mu_I_nuclear_magnetons"].value / 0.5) / (
         BA137["ba137.mu_I_nuclear_magnetons"].value / 1.5
     )

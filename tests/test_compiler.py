@@ -53,7 +53,7 @@ def _random_su2(rng: np.random.Generator) -> np.ndarray:
 
 
 def test_zxzxz_decomposition_is_complete_on_twenty_random_su2_targets() -> None:
-    """Every U in SU(2) is RZ GPi2(0) RZ GPi2(0) RZ up to a global phase, to round-off."""
+    """Twenty random SU(2) targets decompose into RZ GPi2(0) RZ GPi2(0) RZ to 1e-12 up to a global phase."""
     rng = np.random.default_rng(7)
     worst = 0.0
     for _ in range(20):

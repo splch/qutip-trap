@@ -119,8 +119,8 @@ def test_cartesian_route_reproduces_marquet_for_equal_masses_and_com_decouples()
 
 
 def test_the_two_ion_stretch_self_coupling_is_marquets_d222() -> None:
-    """D_222 = -1.1225 at N = 2: the coefficient is 2 eps omega_z D_222/3^{3/4}, negative because stretching the pair
-    softens the Coulomb spring."""
+    """The two-ion stretch self-coupling is Marquet 2003's 2 eps omega_z D_222/3^{3/4} with D_222 = -1.1225 (to 1e-4) and
+    eps = 7.09e-4."""
     ca = species("40Ca+")
     cr = solve_crystal(secular_trap((5e6, 5e6, 2e6)), (ca, ca))
     mass = float(cr.masses_kg[0])
@@ -133,7 +133,8 @@ def test_the_two_ion_stretch_self_coupling_is_marquets_d222() -> None:
 
 
 def test_resonance_checker_finds_a_tuned_three_mode_resonance() -> None:
-    """omega_z,stretch = 2 omega_x,rock when omega_x^2 = 7/4 omega_z^2 for two ions (a z x x coupling); none detuned."""
+    """At omega_x^2 = 7/4 omega_z^2 the checker finds the two-ion stretch/rock resonance (mismatch below 1 Hz), and in a detuned
+    trap none."""
     ca = species("40Ca+")
     cr = solve_crystal(secular_trap((math.sqrt(1.75) * 1.0e6, 1.5e6, 1.0e6)), (ca, ca))
     hits = three_mode_resonances(cr, coulomb_anharmonic_terms(cr), width_hz=1.0)
@@ -153,8 +154,8 @@ def test_resonance_checker_finds_a_tuned_three_mode_resonance() -> None:
 def test_integrated_cubic_phase_against_the_second_order_bound(
     mismatch_hz: float, phase_rad: float, bound_rad: float
 ) -> None:
-    """At g/2pi = 1.419 kHz over 100 us on |1, 0> of the 2:1 model (w_b = 2 w_a - 2 pi Delta) the integrated phase is
-    0.0041, 0.0034, 0.0032, 0.0032 rad at Delta = 1, 0.3, 0.1, 0.03 MHz, against g^2 t/Delta = 0.0013 ... 0.0422."""
+    """At g/2pi = 1.419 kHz over 100 us on |1, 0> of the 2:1 model the integrated phase is 0.0041, 0.0034, 0.0032, 0.0032 rad
+    at Delta = 1, 0.3, 0.1, 0.03 MHz against g^2 t/Delta = 0.0013 ... 0.0422, to 5e-5."""
     got = integrated_cubic_phase_rad(
         G_RAD_S, OMEGA_A_RAD_S, 2.0 * OMEGA_A_RAD_S - TWO_PI * mismatch_hz, DURATION_S
     )
@@ -165,8 +166,8 @@ def test_integrated_cubic_phase_against_the_second_order_bound(
 
 
 def test_the_integrated_phase_is_flat_in_the_mismatch_and_the_resonant_pair_is_larger() -> None:
-    """The phase varies by 22 % over a factor 33 in Delta where g^2 t/Delta varies 33x; the resonant |2, 0> <-> |0, 1>
-    pair accumulates 0.016 rad at 0.1 MHz."""
+    """The phase varies by under 35% over a factor 33 in Delta, where g^2 t/Delta varies 33-fold, and the resonant
+    |2, 0> <-> |0, 1> pair accumulates -0.01589 rad at 0.1 MHz (to 5e-6)."""
     phases = [
         integrated_cubic_phase_rad(G_RAD_S, OMEGA_A_RAD_S, 2.0 * OMEGA_A_RAD_S - TWO_PI * d, DURATION_S)
         for d in (1.0e6, 0.03e6)

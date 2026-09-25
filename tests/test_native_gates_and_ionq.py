@@ -1,5 +1,5 @@
-"""Native gates exactly (PLAN.md Section 7.6), the IonQ circuit and job formats, and the Result's exports (Sections 8.6,
-9.13): the v1 decimal keys, the v2 register envelope in wire order, the reversed-bit view and the versioned record."""
+"""Native gates exactly (PLAN.md Section 7.6), the IonQ circuit and job formats, and the Result's exports: the v1 decimal
+keys, the v2 register envelope in wire order, the reversed-bit view and the versioned record."""
 
 from __future__ import annotations
 
@@ -38,16 +38,15 @@ def test_gpi_is_cos_x_plus_sin_y() -> None:
 
 
 PHASE_SWEEP_TURNS = tuple(float(x) for x in np.linspace(0.0, 1.0, 9)[:-1])
-"""Eight phases over a full turn: the sweep the Section 9.10 identity row is checked over."""
+"""Eight phases over a full turn."""
 OPERATOR_ATOL = 1e-12
-"""Section 9's operator-identity tolerance (the measured deviations are 0 to 7.1e-16)."""
+"""The operator-identity tolerance (the measured deviations are 0 to 7.1e-16)."""
 
 
 @pytest.mark.parametrize("turns", PHASE_SWEEP_TURNS)
-def test_the_six_native_gate_identities_of_section_9_10(turns: float) -> None:
-    """Section 9.10 row "Native-gate identities" in full, over a phase sweep at the 1e-12 operator tolerance:
-    GPi(phi)^2 = I; GPi2(phi)^2 = -i GPi(phi); GPi2(phi + 0.5) = GPi2(phi)^dag; GPi2(phi) = R(pi/2, 2 pi phi);
-    GPi(phi) = i R(pi, 2 pi phi); VZ(t) G(p) VZ(t)^dag = G(p + t) for both natives (phi in TURNS, p in radians)."""
+def test_the_six_native_gate_identities(turns: float) -> None:
+    """GPi(phi)^2 = I, GPi2(phi)^2 = -i GPi(phi), GPi2(phi + 0.5) = GPi2(phi)^dag, GPi2(phi) = R(pi/2, 2 pi phi),
+    GPi(phi) = i R(pi, 2 pi phi) and VZ(t) G(p) VZ(t)^dag = G(p + t) to 1e-12 over a phase sweep (phi in turns)."""
     p = native.rad_from_turns(turns)
     eye = np.eye(2, dtype=complex)
     assert np.allclose(native.gpi(p) @ native.gpi(p), eye, atol=OPERATOR_ATOL)
@@ -67,18 +66,16 @@ def test_the_six_native_gate_identities_of_section_9_10(turns: float) -> None:
 
 
 def test_gpi2_half_turn_is_hilbert_schmidt_orthogonal_to_rx_plus_pi_over_two() -> None:
-    """Section 9.10 row "Native-gate axis mapping": GPi2(0.5) = RX(-pi/2), and its Hilbert-Schmidt overlap with RX(+pi/2)
-    is EXACTLY 0 (the two half-turn rotations about opposite senses of x differ by Z, which is traceless against I)."""
+    """GPi2(0.5) = RX(-pi/2) with a Hilbert-Schmidt overlap below 1e-12 against RX(+pi/2), GPi(0) and GPi(0.25) are
+    orthogonal, and the self-overlap is 2."""
     half = native.gpi2(native.rad_from_turns(0.5))
     assert np.allclose(half, native.r_phi(-math.pi / 2, 0.0), atol=OPERATOR_ATOL)
     overlap = complex(np.trace(half.conj().T @ native.r_phi(math.pi / 2, 0.0)))
     assert abs(overlap) < OPERATOR_ATOL, overlap
-    # the same statement for GPi: GPi(0) and GPi(0.25) are orthogonal (X against Y)
     assert (
         abs(complex(np.trace(native.gpi(0.0).conj().T @ native.gpi(native.rad_from_turns(0.25)))))
         < OPERATOR_ATOL
     )
-    # a negative control: the overlap of GPi2(0.5) with itself is the full 2
     assert abs(complex(np.trace(half.conj().T @ half))) == pytest.approx(2.0, rel=1e-12)
 
 
@@ -113,7 +110,8 @@ def test_zz_and_rz_diagonals_in_turns() -> None:
 
 
 def test_virtual_z_rule_in_time_order() -> None:
-    """Section 7.6: RZ(theta), GPi(0.5), GPi2(0) equals GPi(0.5 - theta), GPi2(-theta) followed by RZ(theta)."""
+    """RZ(theta), GPi(0.5), GPi2(0) equals GPi(0.5 - theta), GPi2(-theta) followed by RZ(theta) (Section 7.6); the
+    +theta reading does not."""
     theta = native.rad_from_turns(0.17)
     half = native.rad_from_turns(0.5)
     left = native.gpi2(0.0) @ native.gpi(half) @ native.rz(theta)  # time order right to left
@@ -123,12 +121,11 @@ def test_virtual_z_rule_in_time_order() -> None:
         @ native.gpi(native.virtual_z_frame_shift(half, theta))
     )
     assert np.allclose(left, right)
-    # the +theta rule of the documentation, read in time order, is wrong
     wrong = native.rz(theta) @ native.gpi2(theta) @ native.gpi(half + theta)
     assert not native.equal_up_to_global_phase(left, wrong)
 
 
-def test_ionq_circuit_json_round_trip_of_section_9_13() -> None:
+def test_ionq_circuit_json_round_trip() -> None:
     obj = {
         "gateset": "native",
         "qubits": 2,
@@ -183,7 +180,7 @@ def test_circuit_ir_validation() -> None:
     assert c.is_native
 
 
-def test_result_bit_order_examples_of_section_9_13() -> None:
+def test_result_bit_order_examples() -> None:
     # "5" and "7" on three qubits are 101 and 111 with qubit 0 least significant
     rows = np.array([[1, 0, 1], [1, 1, 1]] * 2, dtype=np.uint8)
     res = make_result(rows)
@@ -220,8 +217,8 @@ X_ON_QUBIT_ZERO = np.array([[1, 0, 0]] * 4, dtype=np.uint8)
 
 
 def test_sample_of_shot_is_the_contiguous_block_map() -> None:
-    """Shots are allocated in contiguous blocks (``conv.shot_blocks_per_sample``), so sample k owns
-    [sum_{j<k} M_j, sum_{j<=k} M_j) and ``noise_samples[sample_of_shot[k]]`` is shot k's parameter draw."""
+    """Shots are allocated in contiguous blocks (``conv.shot_blocks_per_sample``): samples of 2, 2 and 1 shots map the
+    shots to [0, 0, 1, 1, 2]."""
     result = make_result(BITS)
     assert result.sample_of_shot.tolist() == [0, 0, 0, 0, 0]
     uneven = dataclasses.replace(
@@ -232,8 +229,8 @@ def test_sample_of_shot_is_the_contiguous_block_map() -> None:
 
 
 def test_x_on_qubit_zero_reads_1_in_the_v1_formats_and_100_in_the_v2_envelope() -> None:
-    """v1: decimal keys, qubit 0 the least-significant bit. v2 (the v0.4 envelope): ``output_all`` in wire order, q[0] the
-    leftmost character, the default register ``c`` beside it."""
+    """``x q[0]`` on three qubits reads "1" in the v1 formats (qubit 0 the least-significant bit) and "100" in the v2
+    envelope (wire order, q[0] leftmost), in ``output_all`` and the default register ``c``."""
     result = make_result(X_ON_QUBIT_ZERO)
     assert result.counts == {"001": 4}  # this package's key: qubit 0 rightmost
     assert result.to_ionq_v1_probabilities() == {"1": 1.0}
@@ -250,8 +247,8 @@ def test_x_on_qubit_zero_reads_1_in_the_v1_formats_and_100_in_the_v2_envelope() 
 
 
 def test_the_v2_exporters_follow_the_circuit_registers_and_the_measured_columns() -> None:
-    """Columns hold the measured qubits (``qubits``); a register lists its qubits in bit order, the first bit the first
-    character; ``output_all`` is every measured qubit ascending."""
+    """A v2 register lists its qubits in bit order, first bit first, and ``output_all`` every measured qubit ascending; an
+    unmeasured register qubit and a repeated column are refused."""
     result = dataclasses.replace(
         make_result(np.array([[1, 0], [1, 0], [0, 1]], dtype=np.uint8)),
         qubits=(0, 2),
@@ -347,8 +344,8 @@ def test_the_envelope_round_trips() -> None:
 
 
 def test_dump_job_writes_the_v0_4_body_and_load_job_reads_v0_3_and_v0_4() -> None:
-    """The v0.4 ``CircuitJobCreationPayload`` (IonQ OpenAPI v0.4): the required type, backend and input, and no other key
-    than the spec allows; ``load_job`` reads v0.3's ``target`` as the backend."""
+    """``dump_job`` writes IonQ's v0.4 ``CircuitJobCreationPayload`` with only the spec's keys, ``load_job`` reads it and
+    v0.3's ``target`` back, and malformed noise, settings and job types are refused."""
     circuit = Circuit(2).gpi2(0, native.rad_from_turns(0.25)).ms(0, 1, 0.0, 0.0, native.rad_from_turns(0.25))
     body = dump_job(
         circuit,

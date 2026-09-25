@@ -9,10 +9,7 @@ import numpy as np
 import qutip as qt
 from scipy.special import eval_genlaguerre, jn_zeros, jv
 
-from qutip_trap.device.model import Device
-from qutip_trap.dynamics.operators import displacement_element_analytic
-from qutip_trap.light.raman import scattering_budget
-from qutip_trap.units import C_M_PER_S, TWO_PI
+from qutip_trap.dynamics.operators import displacement_element_analytic, thermal_populations
 
 
 def ms_closure_ratio(loops: int = 1) -> float:
@@ -194,23 +191,9 @@ def wineland_clock_light_shift(g_b: float, g_r: float, omega_0: float, delta: fl
     return -(g_b**2 + g_r**2) * (omega_0 / 3.0) * (1.0 / delta**2 + 2.0 / (delta - omega_f) ** 2)
 
 
-def epsilon_d_from_p_total(branching_fraction: float, p_total: float) -> float:
-    """eps_D = f P_total, the D-level leakage error per pi pulse (Ozeri 2007).
-
-    ``f`` is the excited manifold's branching fraction into the D levels. Section 4.5.5 records that Ozeri's own
-    P_Rayleigh silently includes this channel for Ca+, Sr+, Ba+ and Yb+, "overstating the elastic rate by f P_total",
-    so eps_D is reported BESIDE eps_S = P_Raman and subtracted from the elastic rate rather than added to it.
-    """
-    if not 0.0 <= branching_fraction <= 1.0:
-        raise ValueError("a branching fraction lies in [0, 1]")
-    if p_total < 0.0:
-        raise ValueError("P_total is non-negative")
-    return branching_fraction * p_total
-
-
 def yb171_detection_rate(s_o: float, gamma_rad_s: float, detuning_rad_s: float = 0.0) -> float:
     """R_o = (Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] for the 171Yb+ F = 1 -> F' = 0 cycle, saturating at Gamma/4
-    (Noek 2013)."""
+    (Noek 2013; Crain 2019)."""
     return (gamma_rad_s / 18.0) * s_o / (1.0 + (2.0 / 9.0) * s_o + (2.0 * detuning_rad_s / gamma_rad_s) ** 2)
 
 
@@ -282,8 +265,6 @@ def frozen_thermal_population(
     omega_rad_s: float, eta: float, nbar: float, t_s: float, *, n_max: int | None = None
 ) -> float:
     """sum_n P_n sin^2(Omega_n t/2) with Omega_n = Omega e^{-eta^2/2} L_n(eta^2): the carrier under a frozen thermal spectator."""
-    from qutip_trap.dynamics.operators import thermal_populations
-
     if n_max is None:
         n_max = int(60 + 40 * nbar)
     p = thermal_populations(nbar, n_max + 1)
@@ -293,65 +274,3 @@ def frozen_thermal_population(
             for n in range(n_max + 1)
         )
     )
-
-
-def d_level_branching(device: Device, ion: int, beam_indices: Sequence[int]) -> float:
-    """f: the tabulated and untabulated D-level branching of the excited levels the beams reach, weighted by their
-    1/Delta_e^2 excitation at the first beam's frequency; zero for a species with no D manifold."""
-    species = device.crystal.species[ion]
-    by_upper: dict[str, float] = {}
-    for tr in species.transitions:
-        if tr.lower.startswith("D"):
-            by_upper[tr.upper] = by_upper.get(tr.upper, 0.0) + tr.branching
-    for lv in species.levels:
-        for what, fraction in lv.untabulated_branching:
-            if "D" in what and lv.name not in ("S1/2",):
-                by_upper[lv.name] = by_upper.get(lv.name, 0.0) + fraction
-    if not by_upper:
-        return 0.0
-    if not beam_indices:
-        return float(max(by_upper.values()))
-    omega_l = TWO_PI * C_M_PER_S / device.beams[beam_indices[0]].wavelength_m
-    num = den = 0.0
-    for tr in species.transitions:
-        if tr.upper not in by_upper:
-            continue
-        detuning = TWO_PI * tr.frequency_hz - omega_l
-        if detuning == 0.0:
-            continue
-        weight = 1.0 / detuning**2
-        num += weight * by_upper[tr.upper]
-        den += weight
-    return float(num / den) if den > 0.0 else float(max(by_upper.values()))
-
-
-def epsilon_s_and_d(
-    device: Device, ion: int, beam_indices: Sequence[int], rabi_hz: float
-) -> dict[str, float]:
-    """eps_S = P_Raman and eps_D = f P_total per pi pulse, averaged over the qubit states, side by side.
-
-    The elastic rate here excludes the D-level Raman channel (it counts as leakage, hence in eps_S), so
-    ``ozeri_rayleigh_overstatement`` is eps_D: the amount by which Ozeri's P_Rayleigh closed form exceeds this one.
-    """
-
-    if rabi_hz <= 0.0:
-        raise ValueError("rabi_hz must be positive")
-    budget = scattering_budget(device, ion, beam_indices)
-    t_pi = 0.5 / rabi_hz
-    states = list(budget.rayleigh_per_s)
-    raman = {a: (budget.raman_spin_flip_per_s[a] + budget.leakage_per_s[a]) * t_pi for a in states}
-    rayleigh = {a: budget.rayleigh_per_s[a] * t_pi for a in states}
-    p_total = sum(
-        (budget.raman_spin_flip_per_s[a] + budget.leakage_per_s[a] + budget.rayleigh_per_s[a]) * t_pi
-        for a in states
-    ) / len(states)
-    f_d = d_level_branching(device, ion, beam_indices)
-    eps_d = epsilon_d_from_p_total(f_d, p_total)
-    return {
-        "epsilon_S": sum(raman.values()) / len(states),
-        "epsilon_D": eps_d,
-        "f_D": f_d,
-        "P_total": p_total,
-        "P_Rayleigh": sum(rayleigh.values()) / len(states),
-        "ozeri_rayleigh_overstatement": eps_d,
-    }

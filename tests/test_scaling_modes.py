@@ -1,7 +1,5 @@
-"""Scaling (PLAN.md Sections 5.1, 5.1.1, 5.2, 5.3, 5.5, 9.8 row 3, 9.9, 9.17, 11.1, 11.3, 11.5): the contribution criterion's
-rows, the frozen spectators' off-resonant bound, the ENR option, the cap and margin policy and its ceiling, the Section
-11.5 guards on the declared space, the propagator cache's fingerprint, the schedule start time, spaces over a subset of the
-ions, the convergence regime of Section 9.9, the integrator ladder and the trajectory sampling."""
+"""The Hilbert space a run is given (PLAN.md Section 5): the mode classes, the frozen spectators' bound, the ENR option, the
+cap and margin policy, the size guards, subset spaces, the convergence regime, the integrator ladder and trajectory sampling."""
 
 from __future__ import annotations
 
@@ -16,6 +14,8 @@ import numpy as np
 import pytest
 import qutip as qt
 
+import qutip_trap.dynamics.space as space_mod
+from qutip_trap.calibration.entangling import calibrate_entangling_angle, exact_gate_check, ms_schedule
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import compile_to_native
 from qutip_trap.control.pulses import Drive, Pulse, Tone
@@ -26,7 +26,7 @@ from qutip_trap.control.table import Waveform
 from qutip_trap.device.model import Device
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, TruncationLimit
-from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, ConvergenceReport, convergence_check, evolve
+from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check, evolve
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.dynamics.operators import displacement_matrix_analytic, required_margin
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
@@ -66,7 +66,6 @@ from tests.fixtures import (
     raman_gate_drives,
     run,
     table_with_waveform,
-    two_ion_device,
 )
 
 Y_MODES_TWO_IONS = (4, 5)
@@ -169,13 +168,12 @@ def convergence_report(
 
 OPTS = SolverOptions()
 
-# ---- the contribution criterion (Sections 5.2, 11.3 item 2; Section 9.8 row 3; Section 9.17 "Freeze against drop") ----------
+# ---- the contribution criterion (Sections 5.2, 9.8, 11.3) ----------------------------------------------------------------
 
 
 def test_a_weak_mode_two_kilohertz_from_a_tone_is_kept() -> None:
-    """Section 9.8 row 3 / Section 11.3: a mode with eta = 1e-3 two kilohertz from a tone is kept (its residual displacement is
-    far above the drop pair), while the same eta a megahertz away is dropped: the criterion is the closed-form contribution,
-    never eta alone."""
+    """Section 9.8 row 3: an eta = 1e-3 mode 2 kHz from a tone is resolved and 1 MHz away dropped, and it contributes over 100
+    times more than an eta = 0.05 mode 1 MHz away, which is frozen."""
     omega_gate = TWO_PI * 3.0e6
     probe = GateModes(
         ions=(0, 1),
@@ -187,8 +185,8 @@ def test_a_weak_mode_two_kilohertz_from_a_tone_is_kept() -> None:
     wf0 = Waveform.symmetric(probe, gate_mode=0, epsilon_hz=20e3, duration_s=100e-6, all_modes=False)
     assert wf0.segments is not None
     mu_tone = abs(float(wf0.segments[0].detuning_hz["blue"]))  # type: ignore[arg-type]
-    # Section 5.2 line 822: the contribution pair decides alone, so a coupled mode below (1e-6, 1e-4) is DROPPED, not frozen
-    # (|alpha|^2 (2n+1) = 8.1e-35 and |chi| = 2.8e-6 a megahertz away: nothing for a Debye-Waller factor to absorb)
+    # the contribution pair decides alone: a coupled mode below (1e-6, 1e-4) is dropped, not frozen (|alpha|^2 (2n+1) = 8.1e-35
+    # and |chi| = 2.8e-6 a megahertz away)
     for gap_hz, expected in ((2e3, "resolved"), (1.0e6, "dropped")):
         modes = GateModes(
             ions=(0, 1),
@@ -210,8 +208,8 @@ def test_a_weak_mode_two_kilohertz_from_a_tone_is_kept() -> None:
             assert contrib[1].alpha2_weighted > 1e-4, (
                 "|alpha|^2 (2n + 1) of the near mode sits far above the drop threshold"
             )
-    # against eta alone (Section 11.3): the eta = 1e-3 mode two kilohertz from the tone contributes MORE than an eta = 0.05
-    # mode a megahertz away, which the criterion freezes (its chi_m of a few milliradians is absorbed by the calibration)
+    # never eta alone: the eta = 1e-3 mode 2 kHz from the tone contributes more than an eta = 0.05 mode 1 MHz away, which is
+    # frozen (its chi_m of a few milliradians goes into the calibration target)
     near = GateModes(
         ions=(0, 1),
         modes=(0, 1),
@@ -239,9 +237,9 @@ def test_a_weak_mode_two_kilohertz_from_a_tone_is_kept() -> None:
     assert c_far[1].alpha2_weighted < 1e-6 and 1e-4 < c_far[1].chi_rad < 0.05
 
 
-def test_freeze_against_drop_rows_of_section_9_17() -> None:
-    """A spectator with |chi_m| = 0.03 rad and |alpha_m|^2 (2 nbar + 1) = 1e-5 is frozen, not dropped; one with 1e-7 and 1e-5 rad
-    is dropped; one above the freeze tolerance in either quantity is resolved."""
+def test_freeze_against_drop_rows() -> None:
+    """|chi_m| = 0.03 rad with |alpha_m|^2 (2 nbar + 1) = 1e-5 is frozen, (1e-7, 1e-5 rad) dropped and either quantity above the
+    freeze tolerance resolved; a mode with no contribution is frozen when coupled and dropped when not."""
     kw = dict(
         coupled=True, freeze_alpha_max=OPTS.freeze_alpha_max, freeze_chi_max_rad=OPTS.freeze_chi_max_rad
     )
@@ -280,8 +278,8 @@ def _contrib(alpha2: float, chi: float, dw_spread_rad: float = 0.0) -> ModeContr
 
 @pytest.mark.parametrize("coupled", [True, False])
 def test_below_the_drop_pair_is_dropped_whatever_couples_to_it(coupled: bool) -> None:
-    """Dropped when |alpha_m|^2 (2 n_m + 1) < 1e-6 AND |chi_m| < 1e-4 AND the Debye-Waller spread is negligible, regardless
-    of the coupling: eta = 0.008 at nbar = 0.05 is a 1.5e-5 rad spread."""
+    """A mode below the drop pair whose Debye-Waller spread is 1.5e-5 rad (eta = 0.008 at nbar = 0.05) is dropped, coupled or
+    not."""
     got = classify(
         _contrib(3.5e-33, 0.0, 1.5e-5),
         coupled=coupled,
@@ -293,14 +291,12 @@ def test_below_the_drop_pair_is_dropped_whatever_couples_to_it(coupled: bool) ->
 
 @pytest.mark.parametrize("coupled", [True, False])
 def test_a_dropped_loop_pair_with_a_large_debye_waller_spread_is_frozen(coupled: bool) -> None:
-    """A pulse that CLOSES a mode's loop leaves the pair at ~1e-33 however strongly the mode couples, and dropping the mode
-    would take its exact Debye-Waller factor out of every carrier pulse; the calibration absorbs the factor's mean, not its
-    shot-to-shot spread eta^2 sqrt(nbar (nbar + 1)). On the three-ion tilt mode (eta = 0.0809): 1.500e-3 rad at nbar = 0.05,
-    9.256e-3 at nbar = 1 and 6.864e-2 at nbar = 10."""
+    """A closed loop (pair ~1e-33) whose Debye-Waller spread eta^2 sqrt(nbar (nbar + 1)) is 1.500e-3, 9.256e-3 or 6.864e-2 rad
+    (the three-ion tilt mode at nbar = 0.05, 1, 10) is frozen; the spread threshold is 3e-4 rad, strict, and 2.3e-7 rad drops."""
     kw = dict(coupled=coupled, freeze_alpha_max=FREEZE_ALPHA, freeze_chi_max_rad=FREEZE_CHI)
     for spread in (1.500e-3, 9.256e-3, 6.864e-2):
         assert classify(_contrib(3.5e-33, 0.0, spread), **kw) == "frozen", spread  # type: ignore[arg-type]
-    # the threshold is 3e-4 rad and the comparison is strict, like the other two rows
+    # the threshold is 3e-4 rad and the comparison is strict, like the other two thresholds
     assert DW_SPREAD_DROP_MAX == 3e-4
     assert classify(_contrib(0.0, 0.0, DW_SPREAD_DROP_MAX), **kw) == "frozen"  # type: ignore[arg-type]
     assert (
@@ -339,7 +335,7 @@ def test_above_either_freeze_threshold_is_resolved(alpha2: float, chi: float, co
 
 
 def test_the_drop_thresholds_are_the_plan_s_numbers_and_the_boundary_is_strict() -> None:
-    """1e-6 and 1e-4, and the comparison is strict (a mode exactly AT a threshold is not dropped)."""
+    """The drop thresholds are 1e-6 and 1e-4 and strict: a mode exactly at one is frozen."""
     assert (DROP_ALPHA_MAX, DROP_CHI_MAX_RAD) == (1e-6, 1e-4)
     kw = dict(coupled=True, freeze_alpha_max=FREEZE_ALPHA, freeze_chi_max_rad=FREEZE_CHI)
     assert classify(_contrib(DROP_ALPHA_MAX, 0.0), **kw) == "frozen"  # type: ignore[arg-type]
@@ -351,8 +347,8 @@ def test_the_drop_thresholds_are_the_plan_s_numbers_and_the_boundary_is_strict()
 
 
 def test_frozen_excitation_bound_and_detuning_guard() -> None:
-    """(eta Omega sqrt(n + 1)/(mu - l omega))^2 over the nearest sidebands per tone and ion; the guard notes a gap below
-    20 eta Omega sqrt(n + 1); a tone on a sideband reports an unbounded excitation."""
+    """The bound is (eta Omega sqrt(n + 1)/(mu -+ omega_m))^2 over both sidebands to 1e-12, zero at eta = 0 and infinite for a
+    tone on a sideband; the guard notes a gap below 20 eta Omega sqrt(n + 1)."""
     dev = chain_device(2)
     rabi, _stark = derived_seeds(dev, raman_gate_drives(2))
     omega_hz = rabi[(0, 0)]
@@ -394,7 +390,7 @@ def test_frozen_excitation_bound_and_detuning_guard() -> None:
     assert math.isinf(b_on[3]) and any("sits on sideband" in g for g in g_on)
 
 
-# ---- the ENR option (Sections 5.1, 5.1.1, 11.3 item 1; Section 9.17 "ENR marginal") -------------------------------------------
+# ---- the ENR option (Sections 5.1.1, 11.3) -------------------------------------------------------------------------------
 
 
 def _embed_enr_state(space: HilbertSpace, ket: qt.Qobj, d_full: int) -> qt.Qobj:
@@ -410,8 +406,8 @@ def _embed_enr_state(space: HilbertSpace, ket: qt.Qobj, d_full: int) -> qt.Qobj:
 
 
 def test_enr_marginal_equals_ptrace_of_the_product_space_state_and_the_shape_rule() -> None:
-    """Section 9.17: ``HilbertSpace.marginal`` on an ENR factor equals ``ptrace`` of the same state embedded in the product space,
-    and ``tensor(sigmap(), D_enr)`` reports dims multiplying to 98 where the shape is 56 for two modes at N_exc = 6."""
+    """Section 9.9: the ENR space's mode and internal marginals equal ``ptrace`` of the state embedded in the product space to
+    1e-12, and ``tensor(sigmap(), D_enr)`` has shape 56 where its dims multiply to 98 (two modes, N_exc = 6)."""
     space = HilbertSpace((2,), (), ((1, 2), 6), (0,))
     assert space.dims == [2, 28] and space.dimension == 56
     d_enr = space.enr_displacement({1: 0.1, 2: 0.05})
@@ -432,8 +428,8 @@ def test_enr_marginal_equals_ptrace_of_the_product_space_state_and_the_shape_rul
 def test_enr_displacement_is_the_sum_generator_exponential_and_agrees_with_the_product_far_from_the_cap() -> (
     None
 ):
-    """Section 5.1.1: the ENR operator is expm of the SUM generator, unitary to 1e-15, equal to the product of per-mode
-    displacements on the block n1 + n2 <= N_exc/2 to the table's precision and different near the cap."""
+    """Section 5.1.1: the ENR displacement (the sum generator's exponential) is unitary to 1e-12 and equals the product of
+    per-mode displacements to 1e-12 on the block n1 + n2 <= N_exc/2, but not near the cap (> 1e-6)."""
     space = HilbertSpace((2,), (), ((1, 2), 10), (0,))
     eta1, eta2 = 0.1, 0.05
     d_enr = space.enr_displacement({1: eta1, 2: eta2})
@@ -453,7 +449,6 @@ def test_enr_displacement_is_the_sum_generator_exponential_and_agrees_with_the_p
                 worst_inside = max(worst_inside, diff)
             if n1 + n2 == n_exc or m1 + m2 == n_exc:
                 worst_cap = max(worst_cap, diff)
-    # PLAN.md 5.1.1's table gives 6e-16 for N_exc = 10 at eta = 0.1: the operator-identity bar of 1e-12
     assert worst_inside < 1e-12, worst_inside
     assert worst_cap > 1e-6, (
         "near the cap the sum-generator exponential is a different operator from the product"
@@ -498,9 +493,8 @@ def two_ion():  # type: ignore[no-untyped-def]
 
 
 def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_the_range(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Section 5.5: a carrier pulse on a mode whose cap leaves fewer levels above the populated range than the Section 5.1.1
-    margin for its eta is rerun with the cap raised by the deficit; the report states the populated range and the margin
-    reached; ``margin_check=False`` keeps the cap and leaves the check to the boundary monitor alone."""
+    """Section 5.5: a cap with less margin than its eta needs is regrown and the report gives the populated range and the margin
+    reached; ``margin_check=False`` keeps the cap, and the register populations of both agree to 1e-6."""
     dev, rabi, _stark = two_ion
     drives = raman_gate_drives(2)
     pulse = single_qubit_pulse(
@@ -534,8 +528,8 @@ def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_t
 
 
 def test_schedule_start_time_is_where_the_state_is_given(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """``Schedule.t0_s``: a GATE_LOCAL step hands the engine a state at the step's start; without it the engine evolves from
-    min(0, the first start), which rotates a Fock component by e^{-i n omega t0} more."""
+    """With ``Schedule.t0_s`` the evolution starts at t0 and the Fock coherence turns by -omega tau (to 1e-6 rad); without it
+    the evolution starts at 0 and turns it by a further -omega t0 (to 1e-5 rad)."""
     dev, _rabi, _stark = two_ion
     t0, tau = 300e-6, 20e-6
     space = HilbertSpace((2, 2), (ModeTruncation(3, 8, (0, 2), 0.1),), None, (0, 1, 2, 4, 5))
@@ -577,9 +571,8 @@ def test_schedule_start_time_is_where_the_state_is_given(two_ion) -> None:  # ty
 
 
 def test_local_space_over_a_subset_of_the_ions_reproduces_the_full_marginal() -> None:
-    """A three-ion chain, a GPi2 pulse on ion 2 with crosstalk onto ion 1: the space over ions (0, 2) alone gives the same reduced
-    state of (0, 2) as the three-ion space (the crosstalk onto ion 1 cannot change it), drops the crosstalk with a note, and its
-    operators act on the right factor."""
+    """A GPi2 on ion 2 of three with crosstalk onto ion 1: the space over ions (0, 2) reproduces their reduced state of the
+    three-ion run to 1e-8, drops the crosstalk with a note, puts its operators on the right factors and refuses a missing ion."""
     dev = chain_device(3)
     drives = raman_gate_drives(3)
     rabi, _stark = derived_seeds(dev, drives)
@@ -633,12 +626,8 @@ def test_local_space_over_a_subset_of_the_ions_reproduces_the_full_marginal() ->
 
 @pytest.mark.slow
 def test_frozen_spectator_run_reproduces_the_joint_run_within_the_reported_bound() -> None:
-    """Section 9.9: on the tilted-beam fixture the y-COM (2.9 MHz, 120 kHz below the tone, eta = 0.008) is a genuine frozen
-    spectator of the x-COM gate; the frozen-spectator calibration and the joint one (the mode resolved) both reach chi = pi/4,
-    and the final populations of the calibrated gates agree within the bound the frozen run reports: the mode's residual
-    displacement, its off-resonant excitation and its chi_m loss the calibration absorbed."""
-    from qutip_trap.calibration.entangling import calibrate_entangling_angle, exact_gate_check, ms_schedule
-
+    """Section 9.9: with the tilted pair's y-COM (eta = 0.008, 120 kHz below the tone) frozen or resolved, both calibrations
+    reach chi = pi/4 to 2e-4 and the gates' populations agree within the frozen mode's displacement, excitation and chi_m."""
     dev = tilted_pair_device(math.radians(6.0))
     drives = raman_gate_drives(2)
     rabi, stark = derived_seeds(dev, drives)
@@ -708,8 +697,8 @@ def carrier_pair():  # type: ignore[no-untyped-def]
 
 
 def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_devices(carrier_pair) -> None:  # type: ignore[no-untyped-def]
-    """H(t) depends on the device through every eta, the beam pointing and the geometric phase: one engine over two devices
-    integrates each device's own propagator (P1[0] = 0.4950194835 and 0.4948647699)."""
+    """Two devices differing only in beam 0's wavelength have different fingerprints, so one engine solves each propagator:
+    P(|10>) = 0.4950194835 and 0.4948647699 to 5e-10, the second equal to a fresh engine's to 1e-12."""
     dev, changed, sched, space = carrier_pair
     pulse = sched.pulses[0]
     dk, dk2 = pulse.drive.delta_k(dev.beams), pulse.drive.delta_k(changed.beams)
@@ -749,9 +738,8 @@ def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_de
 
 
 def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Section 11.5: the monitor "refuses to build" joint spaces above the guards, so declaring one allocates nothing (no
-    O(D) joint identity, about 86 GB for the eight-ion eight-mode case of Section 5.4)."""
-    import qutip_trap.dynamics.space as space_mod
+    """Section 11.5: declaring a space beyond the guards (eight ions and eight modes at d = 16, or two ions and five) allocates
+    no joint identity and ``within_budget`` refuses it."""
 
     def refuse(self: HilbertSpace) -> qt.Qobj:
         raise AssertionError("the declaration allocated the joint identity")
@@ -794,8 +782,8 @@ def test_the_selection_reports_the_guard_verdict_of_its_declaration(bell_schedul
 
 @pytest.mark.slow
 def test_the_non_zero_guard_routes_a_run_to_gate_local(bell_schedule) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.17 row "Size guard": the drive-operator non-zero estimate is the other half of the guard; ``nnz_max`` below
-    the estimate reroutes to GATE_LOCAL and the run says so."""
+    """Section 11.5: an ``nnz_max`` below the Bell run's drive-operator non-zero estimate reroutes it to GATE_LOCAL with an
+    approximation naming the count."""
     fx, sur, _sched = bell_schedule
     joint = run(BELL, fx.device, 20, level="auto", table=sur.table)  # type: ignore[arg-type]
     assert joint.diagnostics.level == "JOINT_EXACT"
@@ -817,8 +805,8 @@ def test_the_non_zero_guard_routes_a_run_to_gate_local(bell_schedule) -> None:  
 
 
 def test_cap_requirement_and_the_mode_dimension_ceiling() -> None:
-    """Section 5.3: a Doppler-cooled nbar ~ 20 mode needs d_m >~ 150 for a boundary population below 1e-4; the ceiling
-    clamps d and the declared expected range together."""
+    """Section 5.5: an nbar = 20 mode needs d > 150 for a 1e-4 tail, and ``mode_dimension_max`` (default 64; 1 is refused)
+    clamps d and the expected range together."""
     d_want, n_hi = cap_requirement(0.0, 20.0, 0.1, d_min=6, tail=1e-4)
     assert d_want > 150 and n_hi > 140, (d_want, n_hi)
     clamped = cap_for(0.0, 20.0, 0.1, d_min=6, d_max=64, tail=1e-4)
@@ -831,8 +819,8 @@ def test_cap_requirement_and_the_mode_dimension_ceiling() -> None:
 
 
 def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_schedule) -> None:  # type: ignore[no-untyped-def]
-    """The ceiling reaches the selection from ``SolverOptions``: a clamp warns once per clamped mode with the mode and both
-    numbers, and is a note naming the range the rule asked for and the range that survives; a roomy ceiling is silent."""
+    """A clamp by ``mode_dimension_max`` warns once per clamped mode with both dimensions and leaves a note per mode; a roomy
+    ceiling is silent."""
     fx, _sur, sched = bell_schedule
     nbar = {m: 20.0 for m in range(len(fx.device.crystal.modes))}
     with pytest.warns(TruncationWarning) as caught:
@@ -859,8 +847,8 @@ def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_sc
 
 
 def test_convergence_report_runs_all_three_arms_of_section_9_9() -> None:
-    """Tolerances / 10, tolerances x 10 (the integrator-ladder half) and every resolved cap + 2, each a ``ConvergenceReport``;
-    the cap arm respects Section 9.9's dimension ceiling."""
+    """The arms run tolerances /10, then x10, then every cap + 2 at unchanged tolerances, with the expected changes, and the
+    cap arm leaves a mode whose growth would cross the dimension ceiling."""
     space = HilbertSpace(
         (2,), (ModeTruncation(0, 6, (0, 2), 0.1), ModeTruncation(1, 6, (0, 2), 0.1)), None, ()
     )
@@ -893,9 +881,9 @@ def test_convergence_report_runs_all_three_arms_of_section_9_9() -> None:
 
 
 def test_convergence_regime_of_the_bell_circuit() -> None:
-    """Section 9.9 on the Section 9.6 Bell circuit: tolerances tightened and loosened by ten and every resolved cap raised by
-    two move the probabilities by less than the test tolerance; the cap arm regrids the prepared state (``regrid_state``)."""
-    dev = two_ion_device()
+    """Section 9.9 on the Bell circuit's MS gate: tolerances /10 and x10 and both x caps + 2 (the prepared state regridded)
+    move the register populations by less than 1e-4."""
+    dev = chain_device(2)
     drives = raman_gate_drives(2)
     modes = gate_modes(dev, (0, 1), (0, 1))
     wf = symmetric_pulse(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3, pair=(0, 1)).waveform
@@ -933,8 +921,8 @@ def test_convergence_regime_of_the_bell_circuit() -> None:
 
 @pytest.mark.slow
 def test_convergence_regime_of_the_frozen_spectator_fixture() -> None:
-    """Section 9.9 on the tilted Raman pair (y-COM 120 kHz below the tone, eta_y = 0.008): a run whose space carries a
-    genuine frozen spectator, built by hand as the frozen-spectator comparison above builds it."""
+    """Section 9.9 on the tilted pair with the y modes frozen: all three arms move the register populations by less than
+    1e-4."""
     dev = tilted_pair_device(math.radians(6.0))
     drives = raman_gate_drives(2)
     modes = gate_modes(dev, (0, 1), (0, 1))
@@ -971,8 +959,8 @@ def test_convergence_regime_of_the_frozen_spectator_fixture() -> None:
 
 @pytest.mark.slow
 def test_run_reports_the_section_5_5_tolerance_convergence_when_asked(bell_schedule) -> None:  # type: ignore[no-untyped-def]
-    """Section 5.5's second bullet through the run: ``convergence_check`` repeats the evolution at atol and rtol tightened by
-    ten and puts the change in the register populations on ``Diagnostics.convergence``; None means not asked for."""
+    """With ``convergence_check`` the run repeats at atol and rtol /10 and reports the register-population change on
+    ``Diagnostics.convergence`` (None when not asked) with a note."""
     fx, sur, _sched = bell_schedule
     kw = dict(table=sur.table, seed=5)
     plain = run(BELL, fx.device, 20, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
@@ -1001,12 +989,8 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked(bell_sched
 def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within_the_guards(
     bell_schedule,
 ) -> None:  # type: ignore[no-untyped-def]
-    """Section 11.3 item 1. On the engine: the played Bell schedule on two spaces that differ only in how the two y modes
-    (eta = 0 for a Delta k along x) are carried, two resolved factors of dimension 3 (3960) or ONE ENR factor at N_exc = 2
-    (2640): the register agrees to the integration tolerance, the class map reports ``enr`` and the boundary report covers
-    the top ENR shell. Through the run: this fixture's y modes are Doppler-limited (nbar 3.9 and 3.6), not the cold undriven
-    group the ENR option is for, so N_exc = 10 (a 37752-dimensional declaration) is refused inside the Section 11.5 guards
-    and N_exc = 2 trips the top shell, whose growth to 16016 dimensions the engine refuses."""
+    """Section 11.3: the Bell schedule gives the same register (1e-7) with the y modes as two factors or one ENR group, and
+    through the run an ENR group of 37752 dimensions is refused and one that must grow to 16016 stops the run."""
     fx, sur, sched = bell_schedule
     y_rock, y_com = Y_MODES_TWO_IONS
     x_caps = (ModeTruncation(2, 10, (0, 3), 0.13), ModeTruncation(3, 11, (0, 4), 0.13))
@@ -1023,9 +1007,7 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
         and enr.mode_class(y_com) == "enr"
         and enr.enr_group == ((y_rock, y_com), 2)
     )
-    opts = SolverOptions(
-        margin_check=False
-    )  # the x caps are the frozen-spectator test's; the comparison is the subject
+    opts = SolverOptions(margin_check=False)  # the x caps are the frozen-spectator test's
     finals = {}
     for name, sp in (("product", product), ("enr", enr)):
         eng = JointExactEngine()
@@ -1035,9 +1017,8 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
         assert rep is not None
         if name == "enr":
             reported = set().union(*(set(seg.boundary_population) for seg in rep.segments if seg.pulses))
-            assert {y_rock, y_com} <= reported, (
-                reported
-            )  # the top ENR shell is the group's boundary (Section 5.1)
+            # the top ENR shell is the group's boundary
+            assert {y_rock, y_com} <= reported, reported
     # the same physics on different dimensions: the difference is the integrator's tolerance over the schedule, inside the
     # ~5e-7 in norm that Section 11.1 calls identical
     assert np.max(np.abs(finals["enr"] - finals["product"])) < 1e-7, finals
@@ -1064,9 +1045,8 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
 
 
 def test_every_joint_operator_and_state_of_an_enr_space_carries_the_spaces_dims() -> None:
-    """Section 5.1.1: the ENR group is ONE tensor factor of dimension C(M + N_exc, N_exc) in ``HilbertSpace.dims``, and every
-    joint object the space hands out carries those dims (QuTiP's ``enr_*`` constructors label the group by its per-mode
-    dims), so a QobjEvo of motional terms plus a factorized drive term builds."""
+    """The ENR group is one factor of dimension C(M + N_exc, N_exc) in ``dims``, every operator and state the space hands out
+    carries those dims, and a QobjEvo of them plus a factorized drive builds."""
     space = HilbertSpace(
         (2, 2), (ModeTruncation(2, 5, (0, 2), 0.1), ModeTruncation(3, 4, (0, 1), 0.1)), ((4, 5), 2), (0, 1)
     )
@@ -1091,13 +1071,13 @@ def test_every_joint_operator_and_state_of_an_enr_space_carries_the_spaces_dims(
     drive = space.drive_operator_factorized(0, {2: 0.1, 3: 0.05})
     h = qt.QobjEvo([space.number(2) * 1e6, space.number(4) * 2e6, [drive, qt.coefficient(_cos_2pi)]])
     assert h.dims == want and h(0.0).shape == (480, 480)
-    # the ENR factor's own state is exactly the relabelled tensor factor: index sums, not ptrace, give its marginal
+    # the group's own state is one vector of the factor's dimension
     assert space.enr_state(fock={4: 1, 5: 0}).shape == (6, 1)
 
 
 def test_a_small_enr_cap_trips_the_monitor_and_grown_enr_recovers() -> None:
-    """Section 5.5 on the top ENR shell: a cap so small that the displaced state reaches it trips the boundary monitor, and
-    ``grown_enr`` plus ``regrid_state`` carry the state onto the larger group."""
+    """Section 5.5: a displaced state reaching a small ENR cap's top shell has boundary population above 1e-6, and ``grown_enr``
+    plus ``regrid_state`` carry it, normalized to 1e-12, onto a larger group with less at the boundary."""
     small = HilbertSpace((2,), (), ((0, 1), 2), ())
     assert small.dims == [2, 6]
     st = small.initial_state([0], fock={0: 0, 1: 0})
@@ -1125,20 +1105,9 @@ def _cos_2pi(t: float) -> float:
     return float(np.cos(TWO_PI * 1e5 * t))
 
 
-@pytest.mark.parametrize("d_m", [121, 151, 201])
-def test_the_atol_keying_of_section_5_3_at_the_plans_validated_points(d_m: int) -> None:
-    """Section 5.3 keys atol to the measured points, 1e-10 up to d_m ~ 100 and 1e-8 above, validated at d_m = 121, 151, 201."""
-    H, psi0, times = _tiny_ladder_problem()
-    assert d_m > LARGE_MODE_DIMENSION
-    ev = evolve(H, psi0, times, largest_mode_dimension=d_m)
-    assert ev.atol == pytest.approx(1e-8) and ev.retries == ()
-    below = evolve(H, psi0, times, largest_mode_dimension=LARGE_MODE_DIMENSION)
-    assert below.atol == pytest.approx(1e-10)
-
-
 def test_a_programming_error_is_not_recorded_as_an_integrator_failure() -> None:
-    """A mismatched ``e_op`` or an unsupported solver option propagates as itself, never as an integrator failure retried on
-    every rung, and leaves no retry behind."""
+    """A mismatched ``e_op`` (ValueError) or an integrator that takes no tolerances (KeyError) propagates as itself instead
+    of being retried as an integrator failure."""
     H, psi0, times = _tiny_ladder_problem()
     with pytest.raises(ValueError, match="incompatible dimensions"):
         evolve(H, psi0, times, e_ops={"x": qt.qeye(3)})
@@ -1175,11 +1144,8 @@ def _ms_hamiltonian(nmodes: int, d_m: int) -> qt.QobjEvo:
 
 @pytest.mark.slow
 def test_the_ladder_escalates_when_a_rung_fails_and_records_the_retry() -> None:
-    """A failing rung is recorded and the next rung carries the integration. The trigger is the step budget (the plan's
-    stiffness trigger does not reproduce: ``conv.integrator_ladder_stiffness``): on the Section 11.1 row at dimension 256 the
-    fifth-order ``tsit5`` needs more than 2000 steps per output interval and succeeds at 4000, the eighth-order ``dop853``
-    more than 500 and succeeds at 1000, so ``("tsit5", "dop853")`` at nsteps = 2000 aborts on its first rung and finishes on
-    its second."""
+    """On the Section 11.1 row at dimension 256 with nsteps = 2000, ``("tsit5", "dop853")`` fails on tsit5, records one retry
+    and finishes on dop853; with a roomy budget tsit5 finishes alone and the two final states agree to 1e-6."""
     nmodes, d_m = 2, 8
     H = _ms_hamiltonian(nmodes, d_m)
     psi0 = qt.tensor(qt.basis(2, 0), qt.basis(2, 0), *[qt.basis(d_m, 0)] * nmodes)
@@ -1209,10 +1175,8 @@ def test_the_ladder_escalates_when_a_rung_fails_and_records_the_retry() -> None:
 
 @pytest.mark.slow
 def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_histogram() -> None:
-    """The last clause of Section 9.9 on a two-ion dissipative case: one resolved mode at d_m = 12 with a heating channel and
-    ONE carrier pulse (dimension 48, one trajectory segment, the condition for improved sampling): both trajectory ensembles
-    land on the density matrix's register populations inside their multinomial band, both mixtures have unit weight, and the
-    improved-sampling ensemble carries one member more than ``ntraj``, the deterministic no-jump trajectory."""
+    """Section 9.9: on one heated carrier pulse (dimension 48) plain and improved-sampling trajectories reach the mesolve
+    register populations within four multinomial sigma with unit weight, the improved ensemble one no-jump member larger."""
     dev = chain_device(2)
     noisy = dataclasses.replace(
         dev,

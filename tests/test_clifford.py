@@ -1,8 +1,6 @@
-"""The Clifford groups behind randomized benchmarking (PLAN.md Section 7.9): the 24- and 11520-element groups by closure,
-the four entangling classes and their sizes from the stabilizers, uniform sampling by the double-coset construction, the
-class recognition of an arbitrary two-qubit Clifford, and the closure of a random sequence by the inverse of its product.
-The 11520-element group, the stabilizers and the symplectic class are oracles computed here, independently of the
-sampler and the recognizer they check."""
+"""The Clifford groups behind randomized benchmarking (PLAN.md Section 7.9): the 24- and 11520-element groups, the four
+entangling classes, uniform sampling, class recognition and sequence closure, against a group closure, stabilizers and a
+symplectic class computed here independently of the sampler and the recognizer."""
 
 from __future__ import annotations
 
@@ -134,7 +132,8 @@ def test_single_qubit_group_has_24_elements_closed_under_products_and_inverses()
 
 
 def test_two_qubit_group_order_class_sizes_and_stabilizers() -> None:
-    """|C2| = 11520 by closure; the classes L g L have sizes 576^2 / |L intersect g L g^-1| = 576, 5184, 5184, 576."""
+    """|C2| = 11520 by closure and the classes L g L have 576^2/|L intersect g L g^-1| = 576, 5184, 5184, 576 elements,
+    1.5 entangling gates per Clifford on average."""
     group = two_qubit_clifford_group()
     assert len(group) == TWO_QUBIT_GROUP_ORDER
     assert {c: stabilizer_size(c) for c in CORES} == {"identity": 576, "cnot": 64, "iswap": 64, "swap": 576}
@@ -144,7 +143,6 @@ def test_two_qubit_group_order_class_sizes_and_stabilizers() -> None:
     for m in group:
         counts[pauli_frame_of(m)] += 1
     assert counts == CLASS_SIZES
-    # 1.5 entangling gates per Clifford on average (the count RB papers quote)
     assert sum(
         ENTANGLING_COUNT[c] * n for c, n in CLASS_SIZES.items()
     ) / TWO_QUBIT_GROUP_ORDER == pytest.approx(1.5)

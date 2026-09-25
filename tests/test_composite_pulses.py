@@ -54,7 +54,7 @@ def test_primitive_is_exact_and_a_2pi_segment_is_minus_identity() -> None:
 
 
 def test_fidelity_measure_relations() -> None:
-    """1 - F_K = 2(1 - F_C) and 1 - F_avg = (4/3)(1 - F_C) at leading order."""
+    """F_K = F_C^2, and 1 - F_K = 2(1 - F_C) and 1 - F_avg = (4/3)(1 - F_C) at leading order to 1e-3."""
     v = rotation(PI, 0.0)
     u = fold(seq_sk1(PI), eps_a=0.03)
     fc, fk, fav = fidelity_c(v, u), fidelity_k(v, u), fidelity_avg(v, u)
@@ -84,8 +84,8 @@ def test_order_ladder_at_theta_pi(
     sim_slope: int,
     windows: tuple[tuple[float, float], tuple[float, float]],
 ) -> None:
-    """Log-log slopes of 1 - F_K, order n <=> infidelity slope 2(n + 1); CORPSE's detuning exponent is fitted
-    below 1e-4 because its eps_D^3 term dominates a wide intermediate regime."""
+    """The log-log slopes of 1 - F_K in amplitude, detuning and both at once are 2(n + 1) for each family's correction order n
+    to 0.12 (0.2 for both at once), CORPSE's detuning window lying below its eps_D^3 regime."""
     cp = composite_pulse(family, PI)
     sa, _ = cp.order_slope("amplitude", windows[0])
     sd, _ = cp.order_slope("detuning", windows[1])
@@ -97,8 +97,8 @@ def test_order_ladder_at_theta_pi(
 
 
 def test_leading_coefficients_at_theta_pi() -> None:
-    """SK1 22.830256 eps_a^4 = (pi^2 sin 2 phi_1)^2; BB1 and CinBB 9.388566 eps_a^6; SCROFULOUS
-    4.566051 eps_a^4 and 4.000000 eps_d^2; CORPSE 6.5008e-3 eps_d^4, degraded 115-fold to 0.75 by either concatenation."""
+    """At theta = pi: SK1 22.830256 eps_a^4, BB1 and CinBB 9.388566 eps_a^6, PB1 118.295936 eps_a^6, SCROFULOUS 4.566051 eps_a^4
+    and 4 eps_d^2, CORPSE 6.5008e-3 eps_d^4 and both concatenations 0.75, to 2e-3 or better."""
     assert leading_coefficient(composite_pulse("SK1", PI), "amplitude", 4, 1e-3) == pytest.approx(
         22.830256, rel=2e-3
     )
@@ -142,7 +142,8 @@ def test_sk1_suppresses_the_bare_pulse_error_to_second_order() -> None:
 
 
 def test_bb1_general_axis_and_the_corrector_identity() -> None:
-    """The target phase is ADDED to every entry (Z(phi_0) U Z(phi_0)^dag exactly); W1 = R(pi, phi) R(2 pi, 3 phi) R(pi, phi) is +I."""
+    """BB1 about phi_0 is Z(phi_0) BB1 Z(phi_0)^dag and W1 = R(pi, phi) R(2 pi, 3 phi) R(pi, phi) = +I to 1e-12, phi_1 =
+    arccos(-theta/4 pi) at three angles, and NB1 in the addressing model equals B2 in the amplitude model to 1e-9."""
     phit = 0.7
     z = np.diag([np.exp(-0.5j * phit), np.exp(0.5j * phit)])
     ua = fold(seq_bb1(PI, phit), eps_a=0.05)
@@ -168,8 +169,8 @@ def test_bb1_general_axis_and_the_corrector_identity() -> None:
 
 
 def test_corpse_scrofulous_and_durations() -> None:
-    """CORPSE 420/300/60 degrees at theta = pi; SCROFULOUS 180_60 180_300 180_60; durations 4 pi + theta (SK1, BB1),
-    4 pi + theta - 4k (CORPSE) and 8 pi + theta - 4k (CinSK, CinBB), with 1500 degrees at theta = pi for the concatenations."""
+    """At theta = pi CORPSE is 420/300/60 degrees and SCROFULOUS 180_60 180_300 180_60, and the total rotations are 5 pi (SK1,
+    BB1), 5 pi - 4k (CORPSE), 9 pi - 4k (CinSK) and 1500 degrees (CinBB)."""
     a = corpse_angles(PI)
     assert [round(math.degrees(x), 6) for x in a] == [420.0, 300.0, 60.0]
     assert np.allclose(fold(seq_short_corpse(PI)), -rotation(PI, 0.0)), "the (0, 1, 0) winding returns -R"
@@ -184,8 +185,8 @@ def test_corpse_scrofulous_and_durations() -> None:
 
 
 def test_suzuki_ladder() -> None:
-    """f_j = (2^{2j-1} - 2) f_{j-1}: 4, 24, 720, 90720 (P) and 2, 12, 360, 45360 (N, B); phi_P2 = arccos(-theta/8 pi),
-    phi_P4 = arccos(-theta/48 pi); P2 is PB1; the corrected odd-k B layer reproduces Eq. 43."""
+    """The Suzuki factors are 4, 24, 720, 90720 (P) and 2, 12, 360, 45360 (N, B), the root-found phases match
+    arccos(-theta/(2 pi f)) to 1e-12, P2 is PB1, P4 has 37 segments and slope 10, and B2 is BB1."""
     assert [suzuki_factor(j, 4) for j in (1, 2, 3, 4)] == [4, 24, 720, 90720]
     assert [suzuki_factor(j, 2) for j in (1, 2, 3, 4)] == [2, 12, 360, 45360]
     # the phase is ROOT-FOUND on the leading eps coefficient (P/B null the toggled amplitude polygon, N the bare
@@ -228,8 +229,8 @@ def test_low_yoder_chuang_certificate_and_toggling() -> None:
 
 
 def test_mount_pd6_anchors() -> None:
-    """PD6 keyed by theta_t: 2.447e-2 -> 3.713e-11 at theta_t = pi, eps = 0.1, and 6.156e-3 -> 1.348e-11 at pi/2, while
-    cross-keyed rows leave 6.156e-3; B2 stays below 1% for |eps| < 0.4 and PD6 for |eps| < 0.6."""
+    """Mount 2015's PD6 keyed by theta_t takes 2.447e-2 to 3.713e-11 at pi and 6.156e-3 to 1.348e-11 at pi/2 for eps = 0.1 (to
+    2e-3), cross-keyed rows leave 6.156e-3, and B2 and PD6 stay below 1 % for |eps| < 0.4 and 0.6."""
     pd6_pi = composite_pulse("PDn", PI, order=6)
     pd6_half = composite_pulse("PDn", PI / 2, order=6)
     assert len(pd6_pi.segments) == 13 and pd6_pi.total_rotation_rad() == pytest.approx(13 * PI)
@@ -252,7 +253,8 @@ def test_mount_pd6_anchors() -> None:
 
 
 def test_dc_polygon_and_record_invariants() -> None:
-    """The polygon closes for every amplitude-correcting family and equals (pi, 0, 0) otherwise."""
+    """The dc polygon closes for every amplitude-correcting family and is (pi, 0, 0) otherwise, and malformed records are
+    refused."""
     for family in ("SK1", "BB1", "PB1", "SCROFULOUS", "CinSK", "CinBB"):
         assert composite_pulse(family, PI).dc_polygon()[1], family
     for family in ("primitive", "CORPSE"):
@@ -289,7 +291,7 @@ def test_composite_segments_carry_the_target_azimuth_once(family: str) -> None:
     [("P2j", 1), ("P2j", 2), ("P2j", 3), ("N2j", 1), ("N2j", 2), ("B2j", 1), ("B2j", 2), ("SK1", 1)],
 )
 def test_duration_agrees_with_the_control_segments(family: str, order: int) -> None:
-    """The sum of the segment areas over Omega, one number however it is reached."""
+    """The control segments' areas and durations sum to the pulse's total rotation and duration to 1e-15."""
     pulse = composite_pulse(family, PI / 2.0, 0.7, order=order)
     segs = composite_segments(pulse, 2.0)
     assert sum(s.theta_rad for s in segs) == pytest.approx(pulse.total_rotation_rad(), rel=1e-15)
@@ -310,8 +312,8 @@ def test_duration_agrees_with_the_control_segments(family: str, order: int) -> N
     ],
 )
 def test_filter_function_amplitude_low_frequency_slope(family: str, slope: float) -> None:
-    """F_a ~ omega^2 for a family that does not correct amplitude at first order, omega^4 for one that does;
-    ``CompositePulse.filter_function_amplitude`` is the exact A_l/B_l segment sum of the noise module."""
+    """F_a rises as omega^2 for families that do not correct amplitude and omega^4 for those that do (slope to 1e-3), equals
+    the noise module's segment sum exactly and depends on omega/Omega only."""
     cp = composite_pulse(family, PI)
     omega = np.geomspace(1e-5, 1e-4, 4)
     f = cp.filter_function_amplitude(omega, 1.0)
@@ -321,9 +323,10 @@ def test_filter_function_amplitude_low_frequency_slope(family: str, slope: float
     assert cp.filter_function_amplitude(2.0 * omega, 2.0) == pytest.approx(f, rel=1e-12)
 
 
-def test_dc_floor_method_fits_the_leading_coefficients_and_the_section_9_15_floors() -> None:
-    """``dc_floor``: c-hat fitted numerically, cached, and combined as c-hat (2m+1)!! (<beta^2>/Omega^2)^{m+1}; the fitted
-    c-hats reproduce the closed-form values to 2e-7 relative or better."""
+def test_dc_floor_method_fits_the_leading_coefficients_and_the_floors() -> None:
+    """The fitted leading coefficients are SK1 22.8302557, BB1 9.388566 and CORPSE 6.500752e-3 (to 1e-6) and the floors
+    c (2m+1)!! (<beta^2>/Omega^2)^(m+1) 5.87365e-6, 3.53675e-9 and 1.67248e-9 (to 1e-5); an uncorrected channel enters
+    at m = 0 and channels add."""
     assert fitted_leading_coefficient(composite_pulse("SK1", PI), "amplitude", 4) == pytest.approx(
         22.8302557111, rel=1e-6
     )
@@ -343,8 +346,8 @@ def test_dc_floor_method_fits_the_leading_coefficients_and_the_section_9_15_floo
     assert composite_pulse("CORPSE", PI).dc_floor({"detuning": var}, 1.5e6) == pytest.approx(
         1.67248e-9, rel=1e-5
     )
-    # a channel the family does not correct enters at m = 0: BB1 has no detuning correction, so its detuning floor is
-    # the primitive's (c-hat = 1 at theta = pi, (2.0 + 1)!! ... m = 0 gives 1!! = 1)
+    # a channel the family does not correct enters at m = 0: BB1 has no detuning correction, so its detuning floor is the
+    # primitive's
     prim = composite_pulse("primitive", PI)
     bb1 = composite_pulse("BB1", PI)
     assert bb1.dc_floor({"detuning": var}, 1.5e6) == pytest.approx(

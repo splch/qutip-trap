@@ -37,6 +37,7 @@ from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
+from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.model import NoiseModel
 from qutip_trap.options import Numerics, Truncation
@@ -102,33 +103,23 @@ REALISTIC_HARDWARE = HardwareChain(
 """A 16-bit phase / 14-bit amplitude DDS, a 50 ns modulator rise and a 100 MHz amplifier (Section 7.10)."""
 
 
-def make_detector() -> Detector:
-    return Detector(
-        kind="pmt",
-        efficiency=0.02,
-        background_cps=100.0,
-        psf_leakage={},
-        dead_time_s=None,
-        afterpulse_prob=None,
-        window_s=100e-6,
-    )
-
-
 def quiet_device(crystal: Crystal, trap: Trap, field: Field, beams: tuple[Beam, ...]) -> Device:
-    """A device with the fixture PMT, the quiet noise model and near-ideal phase-continuous electronics."""
+    """A device with a PMT (2 % efficiency, 100 cps background, 100 us window), the quiet noise model and near-ideal
+    phase-continuous electronics."""
     return Device(
         crystal=crystal,
         trap=trap,
         field=field,
         beams=beams,
         noise=NoiseModel(),
-        detector=make_detector(),
+        detector=Detector("pmt", 0.02, 100.0, {}, None, None, 100e-6),
         hardware=ideal_hardware(phase_continuous=True),
     )
 
 
-def make_crystal() -> Crystal:
-    """Two 171Yb+ ions with the modes written out: axial 1.000/1.732, x 2.828/3.000, y 2.720/2.900 MHz."""
+def make_device() -> Device:
+    """Two 171Yb+ ions with the modes written out (axial 1.000/1.732, x 2.828/3.000, y 2.720/2.900 MHz), B along z and two
+    355 nm Raman beams crossing at 90 degrees, both polarized along z."""
     yb = species("171Yb+")
     sq = 1.0 / math.sqrt(2.0)
     com = np.array([sq, sq])
@@ -141,19 +132,12 @@ def make_crystal() -> Crystal:
         Mode("transverse_2", 0, 2.720e6, (0.0, 1.0, 0.0), rock),
         Mode("transverse_2", 1, 2.900e6, (0.0, 1.0, 0.0), com),
     )
-    positions = np.array([[0.0, 0.0, -2.7e-6], [0.0, 0.0, 2.7e-6]])
-    return Crystal(species=(yb, yb), positions_m=positions, modes=modes)
-
-
-def make_raman_pair() -> tuple[Beam, Beam]:
-    """Two 355 nm Raman beams crossing at 90 degrees, both polarized along z (the quantization axis)."""
+    crystal = Crystal(
+        species=(yb, yb), positions_m=np.array([[0.0, 0.0, -2.7e-6], [0.0, 0.0, 2.7e-6]]), modes=modes
+    )
     b1 = Beam(355e-9, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), 20e-6, 10e-3, (0.0, 0.0, 0.0))
     b2 = Beam(355e-9, (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 20e-6, 10e-3, (0.0, 0.0, 0.0))
-    return b1, b2
-
-
-def make_device() -> Device:
-    return quiet_device(make_crystal(), secular_trap(), Field(5.0, (0.0, 0.0, 1.0)), make_raman_pair())
+    return quiet_device(crystal, secular_trap(), Field(5.0, (0.0, 0.0, 1.0)), (b1, b2))
 
 
 def make_run_state() -> RunState:
@@ -294,10 +278,6 @@ def chain_device(n_ions: int, omega_hz: tuple[float, float, float] = (3.0e6, 2.9
     )
 
 
-def two_ion_device() -> Device:
-    return chain_device(2)
-
-
 def raman_gate_drives(n_ions: int) -> dict[int, GateDrive]:
     return {i: GateDrive("raman", (0, 1)) for i in range(n_ions)}
 
@@ -312,8 +292,6 @@ def derived_seeds(
 ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], float]]:
     """(carrier Rabi frequency, differential Stark shift) per (ion, table key beam) that the device derives for ``drives``,
     so that a table seeded with them plays the physical drive it requests."""
-    from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive
-
     rabi: dict[tuple[int, int], float] = {}
     stark: dict[tuple[int, int], float] = {}
     for ion, spec in drives.items():

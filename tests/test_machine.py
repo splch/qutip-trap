@@ -1,7 +1,5 @@
-"""``Machine``: its run equals a run on the bare device at the same seed, its schedule is the scheduler's on the same table,
-``calibrated`` pins a table, a forced level shows in the diagnostics, ``estimate`` matches the run that follows, ``hash``
-moves when and only when the device, the table or the policy moves; the ``progress`` callback; ``RunSpec`` and the ``Job``
-of ``Machine.submit``."""
+"""``Machine``: run, schedule, calibrated, a forced level, estimate and hash; the ``progress`` callback; ``RunSpec`` and
+the ``Job`` of ``Machine.submit``."""
 
 from __future__ import annotations
 
@@ -170,7 +168,8 @@ def test_progress_is_a_frozen_record() -> None:
 
 
 def test_the_callback_sequence_is_monotone_per_stage_and_complete(machine) -> None:  # type: ignore[no-untyped-def]
-    """The serial map keeps every (sample, branch) engine run in-process, where the pulses are reported."""
+    """Under the serial map every stage (pulse, branch, sample, readout) reports monotone, complete progress with rising
+    elapsed times, and ``run`` reports the same sequence."""
     _preset, m = machine
     serial = dataclasses.replace(m, numerics=SERIAL)
     seen: list[Progress] = []
@@ -309,7 +308,7 @@ def test_submit_result_equals_run_and_carries_its_record(machine) -> None:  # ty
 
 
 def test_cancel_stops_the_worker_within_one_pulse(machine) -> None:  # type: ignore[no-untyped-def]
-    """Under a serial map the engine runs in-process and reports every pulse, so the cancel lands within one pulse."""
+    """Under the serial map a cancel after the first pulse report stops the worker within one more pulse and 120 s."""
     _preset, m = machine
     job = submit(dataclasses.replace(m, numerics=SERIAL), BELL, 2000, seed=1)
     deadline = time.monotonic() + 300.0

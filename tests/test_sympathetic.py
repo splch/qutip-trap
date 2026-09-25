@@ -1,11 +1,5 @@
-"""Sympathetic cooling of a mixed crystal at level A: the coolant is the illuminated set and the shared modes take their
-nbar from its stage; a mode the illuminated ions barely participate in is refused.
-
-The Home 2009 crystal is 9Be+ - 24Mg+ - 24Mg+ - 9Be+ with the cooling light on the 24Mg+ ions only; Home 2013's
-single-ion frequencies for the same apparatus (2 pi x 2.69 MHz axial for 9Be+, 1.65 MHz for 24Mg+ from the
-mass-independent dc curvature) and the isotope masses 9.0121822 u and 23.985042 u give the four-ion axial spectrum,
-checked against Home's 251 kHz spacing of the two highest axial modes and Jost's printed mode table.
-"""
+"""Sympathetic cooling of a mixed crystal at level A: the coolant is the illuminated set, the shared modes take their
+nbar from its stage and a mode it barely participates in is refused; the Home 2009 Be-Mg-Mg-Be axial spectrum."""
 
 from __future__ import annotations
 
@@ -25,7 +19,6 @@ from qutip_trap.prep.doppler import (
 )
 from qutip_trap.species.polarization import spherical_basis
 from qutip_trap.trap.crystal import build_crystal
-from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG as U_KG
 from qutip_trap.units import C_M_PER_S, TWO_PI
 from tests.fixtures import (
@@ -50,18 +43,6 @@ MIXED_TRAP_HZ = (30e6, 31e6, 3e6)
 """The coolant's single-ion frequencies: strong radial confinement, so the radial modes decouple by species."""
 
 
-def _trap(freqs_hz: tuple[float, float, float]) -> Trap:
-    return Trap(
-        omega_hz=freqs_hz,
-        axis_angle_rad=0.0,
-        rf=None,
-        dc=None,
-        geometry=None,
-        stray_field_v_per_m=(0.0, 0.0, 0.0),
-        shim_voltages_v={},
-    )
-
-
 def _sigma_plus_along(st, k_hat, omega, delta, waist_m=2e-3):  # type: ignore[no-untyped-def]
     """A sigma+ beam along B = k_hat with Rabi frequency ``omega`` on the fixture's closed line (wide: one intensity)."""
     _m, _z, e_plus = spherical_basis(k_hat)
@@ -77,17 +58,9 @@ def _sigma_plus_along(st, k_hat, omega, delta, waist_m=2e-3):  # type: ignore[no
 
 
 def test_home_2009_be_mg_mg_be_axial_spectrum_and_the_251_khz_mode_spacing() -> None:
-    """The 9Be+-24Mg+-24Mg+-9Be+ axial spectrum from Home 2013's single-ion frequencies, checked against two published
-    quantities of the same apparatus.
-
-    Home, Hanneke, Jost, Amini, Leibfried, Wineland, Science 325, 1227 (2009), supporting online material, "Two-qubit
-    logic gate": "The two modes we excite are the highest frequency axial modes, which are separated in frequency by
-    2 pi x 251 kHz", with the gate detuning delta = 2 pi x 83.6 kHz, so that 3 delta = 250.8 kHz.
-    Jost, Home, Amini, Hanneke, Ozeri, Langer, Bollinger, Leibfried, Wineland, Nature 459, 683 (2009), Methods:
-    "the in-phase mode (frequency ~ 2.0 MHz, mode vector: [0.32, 0.63, 0.63, 0.32]), the out-of-phase mode (4.1 MHz,
-    [-0.47, -0.53, 0.53, 0.47]), a third mode (5.5 MHz, [0.63, -0.32, -0.32, 0.63]) and a fourth mode (5.7 MHz,
-    [0.53, -0.47, 0.47, -0.53])", the amplitudes being the mass-weighted components c_{i,m}.
-    """
+    """From Home 2013's single-ion frequencies the Be-Mg-Mg-Be axial modes are 1.9488, 4.0854, 5.4862 and 5.7373 MHz
+    (1e-3) with Jost 2009's mass-weighted mode vectors (0.005) and Home 2009's 251 kHz spacing of the top two
+    (2 kHz)."""
     be = two_level_atom(mass_kg=BE_MASS_U * U_KG)
     mg = two_level_atom(mass_kg=MG24_MASS_U * U_KG)
     freqs = np.array([BE_SINGLE_ION_HZ, MG24_SINGLE_ION_HZ, MG24_SINGLE_ION_HZ, BE_SINGLE_ION_HZ])
@@ -169,9 +142,8 @@ def _mixed_pair(coolant_mass_u: float, qubit_mass_u: float, freqs_hz: tuple[floa
 
 
 def test_a_stage_illuminating_only_the_coolant_cools_the_shared_modes_through_its_participation() -> None:
-    """Cooling only ion 0 of a mixed pair cools every mode it participates in; the participation changes the RATE and not
-    the steady state (it cancels between eta~ and eta), so each mode's nbar equals the single-ion value while its W_m is
-    scaled by sum_i c_{i,m}^2 over the illuminated ions."""
+    """Cooling only the coolant of a mixed pair gives each mode the single-ion nbar and the single-ion rate times its
+    participation weight (3e-3), the axial weights being 0.07721 and 0.92279 (1e-5)."""
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     weights = _coolant_weights(crystal)
     bright = [k for k, w in weights.items() if w >= PARTICIPATION_THRESHOLD]
@@ -200,8 +172,8 @@ def test_a_stage_illuminating_only_the_coolant_cools_the_shared_modes_through_it
 
 
 def test_models_per_ion_takes_a_per_ion_structure_and_refuses_an_illuminated_ion_without_one() -> None:
-    """One stage call holds a coolant and a qubit species: ``models_per_ion`` accepts a mapping, and an illuminated ion
-    with no structure is refused rather than given a guessed one."""
+    """models_per_ion accepts a per-ion mapping of structures (the same rates to 1e-12) and refuses an illuminated ion
+    without one."""
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     shared = models_per_ion(st, [beam], crystal, (0,))
     mapped = models_per_ion({0: st}, [beam], crystal, (0,))
@@ -217,9 +189,8 @@ def test_models_per_ion_takes_a_per_ion_structure_and_refuses_an_illuminated_ion
 
 
 def test_a_mode_the_coolant_barely_participates_in_is_refused_instead_of_reported_as_a_steady_state() -> None:
-    """A spectator species' radial mode carries a mathematically consistent nbar (the participation cancels) at a
-    relaxation rate of order 1e-2 s^-1, i.e. tens of seconds: level A refuses it, and only an explicit lower
-    ``participation_threshold`` reports it."""
+    """Modes the coolant barely participates in are refused, and with participation_threshold = 0 they report relaxation
+    rates below 1/s."""
     # a light coolant and a heavy qubit under strong radial confinement: the radial modes decouple by species
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     coolant_weight = _coolant_weights(crystal)
@@ -233,7 +204,7 @@ def test_a_mode_the_coolant_barely_participates_in_is_refused_instead_of_reporte
     # lowering the threshold reports the steady state and shows why it is refused: a relaxation time of many seconds
     loose = doppler_cooling(st, [beam], crystal, illuminated=[0], modes=dark, participation_threshold=0.0)
     for m in loose.modes:
-        assert m.rate_per_s < 1.0 and 1.0 / m.rate_per_s > 1.0
+        assert 0.0 < m.rate_per_s < 1.0
     # the coolant-participating modes come back normally
     bright = [k for k, w in coolant_weight.items() if w >= PARTICIPATION_THRESHOLD]
     assert bright
@@ -242,7 +213,7 @@ def test_a_mode_the_coolant_barely_participates_in_is_refused_instead_of_reporte
 
 
 def test_a_stated_minimum_rate_refuses_a_mode_that_cannot_reach_its_steady_state_in_the_stage() -> None:
-    """``min_rate_per_s`` is the direct bound on W_m for a caller that knows its stage duration."""
+    """min_rate_per_s refuses the stage at twice its slowest mode's rate and passes it at half."""
     crystal, st, beam = _mixed_pair(*COOLANT_QUBIT, MIXED_TRAP_HZ)
     weights = _coolant_weights(crystal)
     bright = [k for k, w in weights.items() if w >= PARTICIPATION_THRESHOLD]

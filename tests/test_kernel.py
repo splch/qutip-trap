@@ -1,8 +1,5 @@
-"""The mode-factorized drive kernel: a ``FactorizedOperator`` is the drive operator sigma_+^i (x) prod_m D_m held as its
-factors, so every test is an exactness test against the assembled operator, plus the timing acceptance rows on the two-ion
-benchmark fixture (final states equal, the factorized wall time below the CSR one at dimension 2048) and the parallel-map
-plumbing (the real builder's ``QobjEvo`` pickles and ``mcsolve`` runs it under ``map="parallel"``).
-"""
+"""The mode-factorized drive kernel (PLAN.md Section 11.3): ``FactorizedOperator``, sigma_+^i (x) prod_m D_m held as its
+factors, against the assembled operator, the builder's choice between them, the parallel map and the timing rows."""
 
 from __future__ import annotations
 
@@ -61,9 +58,8 @@ def _random_ket(dims: tuple[int, ...], seed: int) -> np.ndarray:
 
 
 def test_factorized_operator_equals_its_assembled_matrix_on_kets_matrices_and_adjoints() -> None:
-    """Slice (sigma_+), diagonal (a light-shift projector) and dense ion factors, two displacement factors: the application
-    equals the Kronecker product to round-off on a ket and on a three-column matrix; the adjoint and the largest element are
-    the matrix's."""
+    """With a sigma_+, projector or dense ion factor and two displacement factors the operator is its Kronecker product to 1e-14,
+    on kets and matrices to 1e-13, with that matrix's adjoint and largest element; misfit factors are refused."""
     dims = (2, 2, 5, 6)
     d1 = displacement_operator(5, 0.1j).full()
     d2 = displacement_operator(6, 0.07j).full()
@@ -93,8 +89,8 @@ def test_factorized_operator_equals_its_assembled_matrix_on_kets_matrices_and_ad
 
 
 def test_qutip_data_layer_registration_keeps_the_type_through_the_operations_the_solvers_use() -> None:
-    """Qobj construction, dag, scalar multiplication, the structural equality, conversion, factor-wise products, matmul on
-    Dense states and pickling; a sum converts to Dense (the fallback)."""
+    """The type survives Qobj construction, dag, scaling, factor-wise products and pickling, compares structurally, converts
+    and multiplies Dense states to 1e-13, and a sum falls back to Dense."""
     dims = (2, 3, 4)
     d1 = displacement_operator(3, 0.2j).full()
     d2 = displacement_operator(4, 0.05j).full()
@@ -159,8 +155,8 @@ def test_hilbert_space_factorized_drive_operator_is_the_assembled_one_and_refuse
 
 
 def test_cost_model_reproduces_the_measured_crossover_of_section_11_1() -> None:
-    """The ``auto`` rule (the cost model): assembled at dimensions 48 and 256, factorized from the
-    440-dimensional Bell space upward; the estimates grow with the space."""
+    """The cost model assembles at dimensions 48 and 256 and factorizes from the 440-dimensional Bell space up, never without a
+    mode factor; the assembled cost at 2048 is 0.5 + 0.57e-3 x nnz us."""
     assert not prefer_factorized((2, 2, 12), 0, [2])
     assert not prefer_factorized((2, 2, 8, 8), 0, [2, 3])
     assert prefer_factorized((2, 2, 10, 11), 0, [2, 3])
@@ -254,8 +250,8 @@ def test_builder_kernel_option_auto_rule_and_report(ms_fixture) -> None:  # type
 
 
 def test_engine_factorized_and_assembled_kernels_give_the_same_entangling_pulse(ms_fixture) -> None:  # type: ignore[no-untyped-def]
-    """The 20 us pulse through the JOINT_EXACT engine with the kernel forced each way: final states equal to the solver tolerance
-    (the same integrator on the same H(t)), the segment and engine reports name the kernel, and ``auto`` picks factorized."""
+    """The 20 us MS pulse with the kernel forced each way gives final states equal to 1e-9 and reports that name the kernel;
+    ``auto`` picks factorized."""
     dev, _drives, sched, space, _table = ms_fixture
     state = space.initial_state([0, 0])
     finals = {}
@@ -277,11 +273,8 @@ def test_engine_factorized_and_assembled_kernels_give_the_same_entangling_pulse(
 
 
 def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixture) -> None:  # type: ignore[no-untyped-def]
-    """With heating channels present the builder is told the segment's method: a ``mesolve`` segment assembles even when
-    factorization is forced (the Liouvillian is formed from the matrix), an ``mcsolve`` segment keeps the factorized kernel;
-    the trajectory results with the kernel forced each way agree under the same seeds (jump records and the ensemble's
-    density matrix). The space is small (dimension 64) and its boundary threshold loose (the pulse leaves 3e-3 on the top two
-    levels of mode 2): the test compares two kernels on one space, not the truncation."""
+    """With heating a forced-factorized mesolve segment assembles and mcsolve keeps the factorized kernel, whose three seeded
+    trajectories match the assembled ones (jumps, states to 1e-8) on a 64-dimensional space with a loose boundary threshold."""
     dev, _drives, sched, _space, _table = ms_fixture
     noisy = dataclasses.replace(
         dev,
@@ -336,9 +329,8 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
 
 
 def test_the_real_builders_qobjevo_pickles_and_mcsolve_runs_it_under_the_parallel_map(ms_fixture) -> None:  # type: ignore[no-untyped-def]
-    """With the realistic hardware chain (filtered envelopes), a sampled intensity trajectory and the factorized kernel, the
-    QobjEvo the real builder emits pickles and evaluates identically after the round trip, and ``mcsolve`` with
-    ``map="parallel"`` on it reproduces the serial trajectories one by one."""
+    """The real builder's factorized ``QobjEvo`` with filtered envelopes and an intensity trajectory evaluates identically after
+    pickling, and ``mcsolve`` under ``map="parallel"`` reproduces the serial trajectories to 1e-14."""
     dev, _drives, sched, space, _table = ms_fixture
     played, _notes = apply_hardware_chain(sched, REALISTIC_HARDWARE, rng=np.random.default_rng(0))
     grid = np.linspace(0.0, 40e-6, 401)
@@ -390,18 +382,18 @@ ETA = ((0.080, 0.080), (0.0824, -0.0824), (0.047, 0.047))
 EPS = 2 * np.pi * 10e3
 
 
-BENCH_CALLS = [0]
+COEFFICIENT_CALLS = [0]
 
 
-def _bench_coefficient(t: float, Om: float, mu: float, tag: object = None) -> float:
-    BENCH_CALLS[0] += 1
+def _counted_coefficient(t: float, Om: float, mu: float, tag: object = None) -> float:
+    COEFFICIENT_CALLS[0] += 1
     return float(Om * np.cos(mu * t))
 
 
 # The four rows under dop853 at atol 1e-10, rtol 1e-8: (right-hand-side evaluations, factorized us per evaluation, CSR us
 # per evaluation, factorized wall time in seconds) on the reference machine. The evaluation counts are set by the
 # integrator's arithmetic; the costs and the wall time are the machine's.
-BENCH_V5 = {
+REFERENCE_ROWS = {
     (1, 12): (19283, 13.2, 1.9, 0.25),
     (2, 8): (21067, 21.5, 16.7, 0.35),
     (3, 6): (24366, 45.4, 195.2, 1.11),
@@ -409,7 +401,7 @@ BENCH_V5 = {
 }
 
 
-def _bench_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
+def _ms_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
     """The benchmark fixture: two ions, the bichromatic force on every mode, one distinct coefficient per drive term so
     that ``QobjEvo.compress`` merges nothing (the structure the real builder produces)."""
     dims = [2, 2] + [nmax] * nmodes
@@ -433,18 +425,15 @@ def _bench_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
             ops[i] = qt.sigmap()
             v = qt.tensor(*ops, *[d.to("CSR") for d in d_m]).to("CSR")
         for j, op in enumerate((v, v.dag())):
-            terms.append([op, qt.coefficient(_bench_coefficient, args={"Om": om, "mu": mu, "tag": (i, j)})])
+            terms.append([op, qt.coefficient(_counted_coefficient, args={"Om": om, "mu": mu, "tag": (i, j)})])
     return qt.QobjEvo(terms)
 
 
 @pytest.mark.slow
-@pytest.mark.heavy  # wall times within a factor of four of the reference machine: measured alone, never beside three other workers
+@pytest.mark.heavy  # wall times against the reference machine's: measured alone, never beside other workers
 def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_time() -> None:
-    """The factorized kernel's acceptance test on every row of the benchmark table: the factorized right-hand side gives
-    the assembled operator's final state to the solver tolerance, the evaluation counts are the reference numbers,
-    the per-evaluation cost ratio factorized/CSR (6.9 at dimension 48, 1.29 at 256, 0.23 at 864, 0.074 at 2048, the crossover
-    of the cost model) is reproduced within a factor of two, and the absolute factorized wall times within a factor of eight.
-    """
+    """On the four Section 11.1 rows both kernels reach the same state (2e-7) in the reference evaluation counts (20%), with the
+    cost ratio within a factor of two, the factorized wall time within a factor of eight, and the crossover."""
     walls: dict[tuple[int, int, bool], float] = {}
     per_eval: dict[tuple[int, int, bool], float] = {}
     for nmodes, nmax in [(1, 12), (2, 8), (3, 6), (3, 8)]:
@@ -452,8 +441,8 @@ def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_ti
         evals = {}
         psi0 = qt.tensor(qt.basis(2, 1), qt.basis(2, 1), *[qt.basis(nmax, 0)] * nmodes)
         for factorized in (False, True):
-            h = _bench_hamiltonian(nmodes, nmax, factorized)
-            BENCH_CALLS[0] = 0
+            h = _ms_hamiltonian(nmodes, nmax, factorized)
+            COEFFICIENT_CALLS[0] = 0
             t0 = time.perf_counter()
             res = qt.sesolve(
                 h,
@@ -469,12 +458,12 @@ def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_ti
             )
             wall = time.perf_counter() - t0
             # four drive terms, each with its own coefficient object: four calls per right-hand side
-            evals[factorized] = BENCH_CALLS[0] // 4
+            evals[factorized] = COEFFICIENT_CALLS[0] // 4
             walls[(nmodes, nmax, factorized)] = wall
             per_eval[(nmodes, nmax, factorized)] = 1e6 * wall / max(evals[factorized], 1)
             finals[factorized] = res.final_state
         assert (finals[True] - finals[False]).norm() < 2e-7, (nmodes, nmax)
-        n_ref, us_fact, us_csr, wall_fact = BENCH_V5[(nmodes, nmax)]
+        n_ref, us_fact, us_csr, wall_fact = REFERENCE_ROWS[(nmodes, nmax)]
         # the two kernels take the same steps here; on the Linux runner the integrator's step choice differs by 8%
         assert evals[True] == pytest.approx(evals[False], rel=0.1), (nmodes, nmax, evals)
         assert evals[True] == pytest.approx(n_ref, rel=0.2), (nmodes, nmax, evals[True], n_ref)

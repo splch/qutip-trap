@@ -11,6 +11,7 @@ from scipy.constants import physical_constants
 
 from qutip_trap.device.model import Field
 from qutip_trap.light.beams import Beam
+from qutip_trap.light.raman import derive_optical_drive, quadrupole_stark_shift_hz
 from qutip_trap.species import species
 from qutip_trap.species.dipole import field_amplitude_v_per_m
 from qutip_trap.species.quadrupole import (
@@ -24,9 +25,8 @@ from qutip_trap.species.quadrupole import (
     reduced_element_from_lifetime_m2,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, E_C, EPSILON_0_F_PER_M, HBAR_J_S, TWO_PI
-from tests.fixtures import ca_light_shift_device, single_ion_raman_device
+from tests.fixtures import HALF, ca_light_shift_device, single_ion_raman_device
 
-HALF = Fraction(1, 2)
 FIVE_HALF = Fraction(5, 2)
 B_Z = (0.0, 0.0, 1.0)
 
@@ -80,7 +80,8 @@ def test_c_alpha() -> None:
 
 
 def test_rank2_tensors_normalization_symmetry_and_generation() -> None:
-    """sum_ij |c^(q)|^2 = 2/3 for all q; symmetric and traceless; c^(q) = (-1)^q c^(-q)*; b^(q)_ij r_i r_j = r^2 C^(2)_q."""
+    """The rank-2 tensors are symmetric, traceless and orthogonal with sum_ij |c^(q)|^2 = 2/3 and c^(q) = (-1)^q c^(-q)*
+    (1e-15), and b^(q)_ij r_i r_j = r^2 C^(2)_q."""
     rng = np.random.default_rng(3)
     for q, c in C_TENSORS.items():
         assert float(np.sum(np.abs(c) ** 2)) == pytest.approx(2.0 / 3.0, abs=1e-15)
@@ -111,7 +112,7 @@ def test_geometric_factors_against_the_closed_forms_and_the_sum_rule(
     )
 
 
-def test_geometric_factor_special_values_of_section_9_14() -> None:
+def test_geometric_factor_special_values() -> None:
     g = _factors(*_geometry(90, 90))
     assert abs(g[0]) < 1e-15 and abs(g[1]) < 1e-15
     assert abs(g[2]) == pytest.approx(0.4082483, abs=1e-7)
@@ -128,9 +129,8 @@ def test_geometric_factor_special_values_of_section_9_14() -> None:
 
 
 def test_3j_table_mask_and_peak_coupling() -> None:
-    """|Lambda| for m = -1/2: 0.408248, 0.365148, 0.316228, 0.258199, 0.182574, 0 for m' = -5/2 .. +5/2; sum_{m,q}|Lambda|^2 =
-    1/6 at fixed m'; 10 of 12 pairs allowed; peak |Lambda| g = 1/6 on the stretched line at (90, 90), runner-up 0.158114,
-    best |Delta m| = 1: 0.149071."""
+    """|Lambda| for m = -1/2 is 0.408248 ... 0 over m' = -5/2 .. +5/2 (1e-6) with sum 1/6 at fixed m' and 10 of 12 pairs
+    allowed, and the peak |Lambda g| is 1/6 at (90, 90), the runner-up 0.158114 and the best |Delta m| = 1 0.149071."""
     table = [abs(lambda_3j(HALF, -HALF, FIVE_HALF, Fraction(2 * k - 5, 2))) for k in range(6)]
     assert table == pytest.approx([0.408248, 0.365148, 0.316228, 0.258199, 0.182574, 0.0], abs=1e-6)
     for mp in (Fraction(2 * k - 5, 2) for k in range(6)):
@@ -152,9 +152,9 @@ def test_3j_table_mask_and_peak_coupling() -> None:
     assert delta_m1 == pytest.approx(0.149071, abs=1e-6)
 
 
-def test_reduced_elements_of_section_9_14() -> None:
-    """40Ca+: 2.724e-20 m^2 = 9.73 a0^2 (tau 1.168 s, vacuum lambda, 2j'+1 = 6); 10.29 with Roos's 1.045 s; 9.73/sqrt 3 with
-    2j+1 = 2; 88Sr+: 13.81 a0^2 at 0.3908 s and 14.70 with the superseded 0.345 s."""
+def test_reduced_elements() -> None:
+    """The E2 reduced elements are 9.73 a0^2 = 2.724e-20 m^2 for 40Ca+ at 1.168 s (10.29 at Roos's 1.045 s, 9.73/sqrt 3
+    with 2j + 1 = 2) and 13.81 and 14.70 a0^2 for 88Sr+ at 0.3908 and 0.345 s, to 5e-3 a0^2."""
     a0_sq = physical_constants["Bohr radius"][0] ** 2
     assert reduced_element_from_lifetime_m2(729.347e-9, 1.0 / 1.168, FIVE_HALF) == pytest.approx(
         2.724e-20, rel=1e-3
@@ -171,10 +171,8 @@ def test_reduced_elements_of_section_9_14() -> None:
 
 
 def test_stretched_closed_form_equals_the_pipeline_and_roos_worked_numbers() -> None:
-    """(e E0 k/(2 hbar)) x element x 1/6 at (90, 90), (m, m') = (-1/2, -5/2) equals the closed form to 1e-12: Roos's worked
-    example (2.3e5 V/m, air 729.147 nm, 1.045 s) gives 1.1495 MHz (printed 1.2); the plan's 1.088 MHz and 460 ns pi time
-    hold at 2.3e5 V/m with the vacuum wavelength and 1.168 s, and 2.309e5 V/m gives 1.0920 MHz (the row pairs its result
-    with the other field value)."""
+    """The stretched-line Rabi frequency is James's closed form to 1e-12: 1.1495 MHz for Roos's air-wavelength example
+    and 1.0877 and 1.0920 MHz at 2.3e5 and 2.309e5 V/m with the vacuum wavelength (5e-4), a 460 ns pi time."""
     eps, k = _geometry(90, 90)
     for e0, lam, tau, ref_mhz in (
         (2.3e5, 729.147e-9, 1.045, 1.1495),
@@ -190,7 +188,7 @@ def test_stretched_closed_form_equals_the_pipeline_and_roos_worked_numbers() -> 
 
 
 def test_field_from_power_round_trip() -> None:
-    """100 mW in a 30 um waist: I0 = 7.074e7 W/m^2, E0 = 2.3087e5 V/m; I = (1/2) c eps0 E0^2."""
+    """100 mW in a 30 um waist gives E0 = 2.3087e5 V/m (1e-4), and I0 = (1/2) c eps0 E0^2 (1e-12)."""
     i0 = 2.0 * 0.1 / (math.pi * (30e-6) ** 2)
     e0 = field_amplitude_v_per_m(i0)
     assert e0 == pytest.approx(2.3087e5, rel=1e-4)
@@ -198,7 +196,7 @@ def test_field_from_power_round_trip() -> None:
 
 
 def test_sigma_plus_along_b_drives_delta_m_plus_one_with_the_c_tensors() -> None:
-    """sigma+ along B requires |g^(-1)| = 1/sqrt3 and |g^(+1)| = 0, driving Delta m = +1 with q = m - m'."""
+    """sigma+ light along B has |g^(-1)| = 1/sqrt3 (1e-14) and every other factor zero, driving Delta m = +1."""
     g = _factors(np.array([-1.0, -1.0j, 0.0]) / math.sqrt(2.0), np.array([0.0, 0.0, 1.0]))
     assert abs(g[-1]) == pytest.approx(1.0 / math.sqrt(3.0), abs=1e-14)
     assert abs(g[1]) < 1e-15 and abs(g[0]) < 1e-15 and abs(g[2]) < 1e-15 and abs(g[-2]) < 1e-15
@@ -206,9 +204,8 @@ def test_sigma_plus_along_b_drives_delta_m_plus_one_with_the_c_tensors() -> None
 
 
 def test_species_api_e2_rabi_frequency_and_lamb_dicke_input() -> None:
-    """Species.rabi_frequency_hz on the 40Ca+ 729 nm line: 100 mW in a 30 um waist on the stretched line at (90, 90) gives
-    1.0918 MHz with the table's tau and vacuum wavelength; |Delta m| = 3 is forbidden; x0 = 11.246 nm and k x0 = 0.0969 at
-    1 MHz."""
+    """Species.rabi_frequency_hz gives 1.0918 MHz (1e-3) for 100 mW in 30 um on the 40Ca+ stretched line at (90, 90) and
+    zero for |Delta m| = 3, with x0 = 11.246 nm and k x0 = 0.0969 at 1 MHz."""
     ca = species("40Ca+")
     eps, k = _geometry(90, 90)
     beam = Beam(
@@ -237,7 +234,7 @@ def _toy_e2_table(zeeman_lower_hz: float, zeeman_upper_hz: float, omega: float) 
 
 
 def test_the_e2_stark_shift_is_second_order_in_the_off_resonant_components() -> None:
-    """Doubling every coupling quadruples the shift; halving the Zeeman span doubles it."""
+    """Doubling every coupling quadruples the E2 Stark shift and halving the Zeeman span doubles it (1e-12)."""
     couplings, lower, upper = _toy_e2_table(1e6, 0.8e6, TWO_PI * 1e5)
     base = e2_stark_shift_rad_s(couplings, lower, upper, -HALF, -HALF)
     assert base != 0.0
@@ -262,7 +259,8 @@ def test_only_the_components_sharing_a_level_with_the_driven_one_contribute() ->
 
 
 def test_the_e2_stark_shift_refuses_a_degenerate_component() -> None:
-    """The sums have no i gamma/2, so a component degenerate with the driven one raises rather than returning infinity."""
+    """A component degenerate with the driven one raises instead of returning infinity, and an undriven component is
+    refused."""
     couplings, lower, upper = _toy_e2_table(0.0, 0.0, TWO_PI * 1e5)
     with pytest.raises(ZeroDivisionError, match="degenerate"):
         e2_stark_shift_rad_s(couplings, lower, upper, -HALF, -HALF)
@@ -271,9 +269,7 @@ def test_the_e2_stark_shift_refuses_a_degenerate_component() -> None:
 
 
 def test_the_derived_optical_e2_drive_carries_the_stark_shift() -> None:
-    """The 40Ca+ 729 nm drive's Stark shift is the quadrupole sum, small against the carrier Rabi frequency."""
-    from qutip_trap.light.raman import derive_optical_drive, quadrupole_stark_shift_hz
-
+    """The 40Ca+ 729 nm drive's Stark shift is the quadrupole sum (1e-12), below the carrier Rabi frequency."""
     dev = ca_light_shift_device()
     assert dev.crystal.species[0].name == "40Ca+"
     e2_beam = next(i for i, b in enumerate(dev.beams) if 7.0e-7 < b.wavelength_m < 7.5e-7)
@@ -286,9 +282,7 @@ def test_the_derived_optical_e2_drive_carries_the_stark_shift() -> None:
 
 
 def test_a_hyperfine_e2_stark_shift_raises() -> None:
-    """Section 4.5.7 specifies the E2 coupling for I = 0 only."""
-    from qutip_trap.light.raman import quadrupole_stark_shift_hz
-
+    """The E2 Stark shift is refused for a species with nuclear spin (Section 4.5.7 covers I = 0)."""
     dev = single_ion_raman_device()
     assert dev.crystal.species[0].nuclear_spin != 0.0
     with pytest.raises(NotImplementedError, match="I = 0"):
