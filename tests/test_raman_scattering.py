@@ -14,14 +14,6 @@ from qutip_trap.species import species
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.units import C_M_PER_S, TWO_PI
-from qutip_trap.validation.atomic_closed_forms import (
-    ozeri_gamma_raman,
-    ozeri_gamma_total,
-    ozeri_p_total,
-    ozeri_raman_rabi_half,
-    wineland_clock_light_shift,
-    wineland_p_se_clock,
-)
 from tests.atomic_fixtures import (
     GAMMA_HZ,
     be9_like,
@@ -34,6 +26,14 @@ from tests.atomic_fixtures import (
     spin_zero_like,
     stretched_g_half,
     toy_spin_zero,
+)
+from tests.oracles import (
+    ozeri_gamma_raman,
+    ozeri_gamma_total,
+    ozeri_p_total,
+    ozeri_raman_rabi_half,
+    wineland_clock_light_shift,
+    wineland_p_se_clock,
 )
 
 B_GAUSS = 4.0

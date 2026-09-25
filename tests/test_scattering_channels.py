@@ -16,7 +16,6 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, scattering_budget, square_drive
 from qutip_trap.light.recoil import angular_factor
-from qutip_trap.light.scattering import d_level_branching, epsilon_s_and_d
 from qutip_trap.noise.levels import internal_levels
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.scattering import (
@@ -27,6 +26,7 @@ from qutip_trap.noise.scattering import (
 )
 from qutip_trap.species import species
 from tests.m2_fixtures import single_ion_raman_device
+from tests.oracles import d_level_branching, epsilon_s_and_d
 
 
 def _pulse(dev, duration_s=50e-6, scale=1.0):  # type: ignore[no-untyped-def]

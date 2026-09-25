@@ -11,21 +11,19 @@ import pytest
 from scipy.special import jv
 
 from qutip_trap.light.microwave import effective_detuning_hz
-from qutip_trap.units import TWO_PI
-from qutip_trap.validation.harty_rb import (
+from qutip_trap.published import (
     HartyParameters,
+    ballance_thermal_error,
     delay_propagator,
+    ms_alpha,
     pulse_propagator,
     random_sequences,
+    roos_force_saturation,
     simulate_epg_sets,
     simulate_sequences,
 )
-from qutip_trap.validation.two_qubit_closed_forms import (
-    ballance_thermal_error,
-    ms_alpha,
-    ms_closure_ratio,
-    roos_force_saturation,
-)
+from qutip_trap.units import TWO_PI
+from tests.oracles import ms_closure_ratio
 
 
 def test_ac_zeeman_sign_and_pulse_parameters() -> None:

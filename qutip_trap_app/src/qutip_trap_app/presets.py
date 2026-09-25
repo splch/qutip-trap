@@ -27,7 +27,7 @@ def _progress(progress: Progress | None, stage: str, fraction: float | None, mes
 
 
 def harty_2014(progress: Progress | None = None, *, n_sets: int = 16, seed: int = 3) -> PresetResult:
-    """Microwave randomized benchmarking with the paper's own error model (Section 4.3.3; ``qutip_trap.validation.harty_rb``)."""
+    """Microwave randomized benchmarking with the paper's own error model (Section 4.3.3; ``qutip_trap.published``)."""
     t0 = time.perf_counter()
     p = core.HartyParameters()
     _progress(

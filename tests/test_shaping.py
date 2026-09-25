@@ -38,7 +38,6 @@ from qutip_trap.control.shaping import (
 from qutip_trap.control.table import Waveform
 from qutip_trap.light.beams import Beam
 from qutip_trap.units import TWO_PI
-from qutip_trap.validation.two_qubit_closed_forms import choi_segment_count, ms_two_body_angle
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -46,6 +45,7 @@ from tests.m4_fixtures import (
     two_ion_device,
     two_ion_modes,
 )
+from tests.oracles import choi_segment_count, ms_two_body_angle
 
 ONE_MODE = GateModes(
     ions=(0, 1), modes=(0,), omega_rad_s=(TWO_PI * 1.0e6,), eta={0: (0.05,), 1: (0.05,)}, nbar=(0.0,)

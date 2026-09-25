@@ -51,13 +51,13 @@ from qutip_trap.species.model import Level, Species
 from qutip_trap.species.zeeman import HyperfineZeeman
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from qutip_trap.validation.two_qubit_closed_forms import (
+from tests.fixtures import make_calibration_table, make_detector, make_hardware, make_noise
+from tests.m4_fixtures import CA40_729_E2_BEAM, derived_seeds, table_with_waveform, two_ion_device
+from tests.oracles import (
     intrinsic_dynamical_decoupling_ratio,
     srinivas_effective_coupling_rad_s,
     srinivas_gradient_rabi_rad_s,
 )
-from tests.fixtures import make_calibration_table, make_detector, make_hardware, make_noise
-from tests.m4_fixtures import CA40_729_E2_BEAM, derived_seeds, table_with_waveform, two_ion_device
 from tests.test_zeeman_anchors import MG25_G_J_ASSUMED
 
 C_M_PER_S = 299792458.0

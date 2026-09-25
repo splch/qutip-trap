@@ -549,7 +549,6 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
         nbar={m: e.value for m, e in sur.table.nbar.items()},
         inputs=("00", "01"),
         shots=None,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
     )
     df = 1e3
     ref = ms_phase_scan(Machine(fx.device), (0, 1), phases, **kw)  # type: ignore[arg-type]

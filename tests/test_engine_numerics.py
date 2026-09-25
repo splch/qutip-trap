@@ -37,9 +37,9 @@ from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.run.job import last_record
 from qutip_trap.units import TWO_PI
-from qutip_trap.validation.spin_motion_closed_forms import sideband_rabi_rad_s
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
+from tests.oracles import sideband_rabi_rad_s
 
 KX = 1  # the 3 MHz x mode of the single-ion fixture
 WX = TWO_PI * 3.0e6

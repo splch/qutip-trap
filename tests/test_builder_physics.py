@@ -37,7 +37,8 @@ from qutip_trap.noise.sampling import (
 )
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from qutip_trap.validation.spin_motion_closed_forms import (
+from tests.m2_fixtures import microwave_device, single_ion_raman_device, two_ion_raman_device
+from tests.oracles import (
     cetina_population,
     cetina_theta,
     frozen_thermal_population,
@@ -47,7 +48,6 @@ from qutip_trap.validation.spin_motion_closed_forms import (
     sideband_rabi_rad_s,
     two_level_population,
 )
-from tests.m2_fixtures import microwave_device, single_ion_raman_device, two_ion_raman_device
 
 KX = 1  # the 3 MHz x mode of the single-ion fixture
 WX = TWO_PI * 3.0e6

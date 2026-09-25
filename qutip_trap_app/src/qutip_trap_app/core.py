@@ -61,6 +61,15 @@ from qutip_trap.prep.closed_forms import doppler_force_nbar, lamb_dicke_paramete
 from qutip_trap.prep.recipe import PreparationRun, run_preparation, standard_recipe
 from qutip_trap.prep.sideband import apply_pulses, mean_occupation, thermal_distribution
 from qutip_trap.provenance import TAGS, load_ledger, repository_root
+from qutip_trap.published import (
+    HartyParameters,
+    ballance_thermal_error,
+    kirchmair_populations,
+    ms_alpha,
+    ms_gamma,
+    simulate_epg_sets,
+    thermal_debye_waller_infidelity,
+)
 from qutip_trap.readout.detection import RecordModel
 from qutip_trap.readout.discriminate import ThresholdDiscriminator, optimize_threshold
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
@@ -77,14 +86,6 @@ from qutip_trap.trap.mathieu import is_stable, monodromy
 from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, E_C, EPSILON_0_F_PER_M, TWO_PI
-from qutip_trap.validation.harty_rb import HartyParameters, simulate_epg_sets
-from qutip_trap.validation.two_qubit_closed_forms import (
-    ballance_thermal_error,
-    kirchmair_populations,
-    ms_alpha,
-    ms_gamma,
-    thermal_debye_waller_infidelity,
-)
 
 __all__ = [
     "ATOMIC_MASS_KG",

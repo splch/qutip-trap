@@ -33,11 +33,8 @@ from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.experiments.entangling import ms_scan, parity_scan
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.published import ballance_thermal_error, thermal_debye_waller_infidelity
 from qutip_trap.units import TWO_PI
-from qutip_trap.validation.two_qubit_closed_forms import (
-    ballance_thermal_error,
-    thermal_debye_waller_infidelity,
-)
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     derived_seeds,

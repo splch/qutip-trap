@@ -1,26 +1,83 @@
-"""Harty et al. 2014's microwave randomized benchmarking with the paper's own error model (PLAN.md Section 4.3.3).
-
-Protocol (PRL 113, 220501 and its supplement): prepare |up>; each computational gate is a Pauli gate (pi about +-x, +-y as
-two pi/2 pulses, +-z as an identity delay plus a frame rotation, +-I as a delay) followed by a Clifford gate (pi/2 about
-+-x or +-y); the phase is switched during the 14 us dead time between pulses; final pi/2 pulses rotate into |down> or
-|up> with equal probability. The model multiplies the propagators of each imperfect pulse and dead time, averages the
-error over the sequences and divides by the number of gates (EPG). The paper's 500 sets of 32 sequences of 2000 gates at
-12.1 us pulses, +4.5 Hz detuning and a 5e-4 Rabi error gave 0.81(14)e-6 (detuning alone 0.7e-6 with the -1.0 Hz ac
-Zeeman shift, Rabi error alone 0.3e-6); measured 1.0(3)e-6.
-
-Propagators in the frame of the DRIVE: a pulse of area theta at azimuth phi under detuning delta = omega_drive - omega_0
-is exp[-i (theta/2)((1 + eps_a) sigma_phi - (delta/Omega) sigma_z)], a delay tau is exp[+i (delta tau/2) sigma_z], with
-sigma_z = |up><up| - |down><down|.
+"""Closed forms from the published experiments the simulator is compared with: the microwave randomized-benchmarking error
+model of Harty et al. (2014) and the Molmer-Sorensen closed forms of Kirchmair et al. (2009), Roos (2008) and Ballance et
+al. (2016). Frequencies are angular (rad/s), the per-tone (hbar Omega/2) convention holds and S_alpha = sum_i sigma_alpha^i.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from typing import Literal
 
 import numpy as np
+from scipy.special import jv
 
 from qutip_trap.units import TWO_PI
+
+
+def ms_alpha(eta: float, omega_rad_s: float, epsilon_rad_s: float, t_s: float) -> complex:
+    """alpha(t) = (eta Omega/(2 eps))(e^{i eps t} - 1): each S_y eigenstate m moves on a circle of radius |m| eta Omega/(2 eps) (Kirchmair Eq. 4)."""
+    return complex(eta * omega_rad_s / (2.0 * epsilon_rad_s) * (np.exp(1j * epsilon_rad_s * t_s) - 1.0))
+
+
+def ms_lambda_rad_s(eta: float, omega_rad_s: float, epsilon_rad_s: float) -> float:
+    """lambda = eta^2 Omega^2/(4 eps): the secular rate of the S_y^2 phase."""
+    return eta**2 * omega_rad_s**2 / (4.0 * epsilon_rad_s)
+
+
+def ms_chi(eta: float, omega_rad_s: float, epsilon_rad_s: float) -> float:
+    """chi = eta^2 Omega^2/(4 eps^2): the oscillating part of the S_y^2 phase (Kirchmair's chi, not the entangling angle)."""
+    return eta**2 * omega_rad_s**2 / (4.0 * epsilon_rad_s**2)
+
+
+def ms_gamma(eta: float, omega_rad_s: float, epsilon_rad_s: float, t_s: float) -> float:
+    """gamma(t) = lambda t - chi sin(eps t): the coefficient of S_y^2 in the exact propagator D(alpha S_y) exp[i gamma S_y^2]."""
+    return ms_lambda_rad_s(eta, omega_rad_s, epsilon_rad_s) * t_s - ms_chi(
+        eta, omega_rad_s, epsilon_rad_s
+    ) * math.sin(epsilon_rad_s * t_s)
+
+
+def kirchmair_populations(alpha_abs: float, gamma: float, nbar: float) -> tuple[float, float, float]:
+    """(p_0, p_1, p_2) populations with zero, one and two ions BRIGHT from |dd> with a thermal mode (Kirchmair 2009 Eq. 14):
+    p_2 = (1/8)(3 + e^{-16|a|^2(n+1/2)} + 4 cos(4 gamma) e^{-4|a|^2(n+1/2)}), p_1 = (1/4)(1 - e^{-16|a|^2(n+1/2)}).
+
+    Bright is the fluorescing S1/2 state, the LOWER qubit level |d> of 40Ca+: p_2 = P(dd) = P_00 in the computational ordering,
+    p_0 = P(uu) = P_11; at t = 0 the formula gives p_2 = 1."""
+    x = alpha_abs**2 * (nbar + 0.5)
+    p2 = (3.0 + math.exp(-16.0 * x) + 4.0 * math.cos(4.0 * gamma) * math.exp(-4.0 * x)) / 8.0
+    p1 = (1.0 - math.exp(-16.0 * x)) / 4.0
+    return 1.0 - p1 - p2, p1, p2
+
+
+def roos_force_saturation(omega_rad_s: float, delta_rad_s: float) -> float:
+    """J_0(x) + J_2(x) at x = 4 Omega/delta: the carrier's saturation of the spin-dependent force (Roos Eq. 17)."""
+    x = 4.0 * omega_rad_s / delta_rad_s
+    return float(jv(0, x) + jv(2, x))
+
+
+ThermalReference = Literal["mean", "n0", "minus_half"]
+"""Which occupation the thermal Debye-Waller infidelity is referred to: the mean nbar, the ground state, or nbar - 1/2
+(the three conventions of the two-qubit gate literature)."""
+
+
+def thermal_debye_waller_infidelity(eta: float, nbar: float, reference: ThermalReference) -> float:
+    """(pi^2/4) eta^4 <(n - n_ref)^2> over the thermal distribution: n_ref = nbar (Sorensen-Molmer, re-optimized duration:
+    nbar^2 + nbar), 0 (Ballance, calibrated at n = 0: 2 nbar^2 + nbar), -1/2 (Zhu, referenced to eta^2 (2n + 1) = 0:
+    2 nbar^2 + 2 nbar + 1/4), in units of (pi^2/4) eta^4."""
+    pref = (math.pi**2 / 4.0) * eta**4
+    var = nbar * (nbar + 1.0)
+    if reference == "mean":
+        return pref * var
+    if reference == "n0":
+        return pref * (var + nbar**2)
+    if reference == "minus_half":
+        return pref * (var + (nbar + 0.5) ** 2)
+    raise ValueError("reference is 'mean', 'n0' or 'minus_half'")
+
+
+def ballance_thermal_error(eta: float, nbar: float) -> float:
+    """eps_nbar = (1/4) pi^2 eta^4 nbar (2 nbar + 1) = (pi^2/4) eta^4 <n^2>, calibrated at n = 0 (Ballance 2016 supplement)."""
+    return 0.25 * math.pi**2 * eta**4 * nbar * (2.0 * nbar + 1.0)
 
 
 @dataclass(frozen=True)
@@ -51,8 +108,11 @@ class HartyParameters:
 
 
 _SX = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+
 _SY = np.array([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
+
 _SZ = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=complex)  # |up> = index 0 here (the paper prepares |up>)
+
 _I2 = np.eye(2, dtype=complex)
 
 
@@ -79,8 +139,6 @@ def delay_propagator(tau_s: float, params: HartyParameters) -> np.ndarray:
     return rotation(-TWO_PI * params.detuning_hz * tau_s, 0.0, 0.0, 1.0)
 
 
-# Pauli codes 0..7: +x, -x, +y, -y (pairs of pi/2 pulses), +z, -z (frame rotations), +I, -I (delays)
-# Clifford codes 0..3: pi/2 about +x, -x, +y, -y (azimuths 0, pi, pi/2, 3pi/2)
 CLIFFORD_AZIMUTH = (0.0, math.pi, 0.5 * math.pi, 1.5 * math.pi)
 
 

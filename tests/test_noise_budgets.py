@@ -23,7 +23,6 @@ from qutip_trap.noise.summary import (
     pauli_string,
     pauli_twirl,
 )
-from qutip_trap.validation.two_qubit_closed_forms import ballance_dephasing_error, ballance_heating_error
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     raman_gate_drives,
@@ -31,6 +30,7 @@ from tests.m4_fixtures import (
     two_ion_device,
     two_ion_modes,
 )
+from tests.oracles import ballance_dephasing_error, ballance_heating_error
 
 FAST = SolverOptions(mesolve_dimension_max=4096)
 

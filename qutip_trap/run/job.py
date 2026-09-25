@@ -28,6 +28,7 @@ from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.noise.scattering import scattering_estimates
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
 from qutip_trap.prep.sequence import prepare_state
+from qutip_trap.published import ballance_thermal_error
 from qutip_trap.readout.detection import RecordModel
 from qutip_trap.readout.discriminate import (
     POVM,
@@ -44,7 +45,6 @@ from qutip_trap.run.gate_local import GateLocalReport
 from qutip_trap.run.results import Result, aggregate
 from qutip_trap.run.space import SpaceSelection
 from qutip_trap.units import TWO_PI
-from qutip_trap.validation.two_qubit_closed_forms import ballance_thermal_error
 
 if TYPE_CHECKING:
     from qutip_trap.control.compiler import Circuit
@@ -395,7 +395,7 @@ def roos_bessel_saturation(waveform: Waveform) -> float:
     spin-dependent force by (J_0 + J_2)(4 Omega/mu) (Roos 2008, New J. Phys. 10, 013002, Eq. 17), so a pulse solved for
     chi = pi/4 with the linear force reaches chi (1 - f)^2 with f = 1 - (J_0 + J_2), and 1 - F = sin^2(pi f / 2); at the
     largest tone amplitude and the smallest tone-to-carrier detuning of the played waveform. Zero for a non-MS waveform."""
-    from qutip_trap.validation.two_qubit_closed_forms import roos_force_saturation
+    from qutip_trap.published import roos_force_saturation
 
     if waveform.kind != "ms" or waveform.segments is None:
         return 0.0

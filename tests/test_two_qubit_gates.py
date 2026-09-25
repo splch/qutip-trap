@@ -46,22 +46,18 @@ from qutip_trap.hilbert.operators import rabi_matrix_element
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.published import (
+    kirchmair_populations,
+    ms_alpha,
+    ms_gamma,
+    roos_force_saturation,
+    thermal_debye_waller_infidelity,
+)
 from qutip_trap.run.job import intrinsic_budget, roos_bessel_saturation, sideband_lamb_dicke_deficit
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import Crystal, Mode
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from qutip_trap.validation.two_qubit_closed_forms import (
-    entanglement_infidelity_from_displacements,
-    kirchmair_populations,
-    ms_alpha,
-    ms_gamma,
-    ms_propagator,
-    roos_force_saturation,
-    spectator_loop_error,
-    state_infidelity_uniform_input,
-    thermal_debye_waller_infidelity,
-)
 from tests.fixtures import make_detector, make_hardware, make_noise
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
@@ -70,6 +66,12 @@ from tests.m4_fixtures import (
     table_with_waveform,
     two_ion_device,
     two_ion_modes,
+)
+from tests.oracles import (
+    entanglement_infidelity_from_displacements,
+    ms_propagator,
+    spectator_loop_error,
+    state_infidelity_uniform_input,
 )
 
 KET00 = np.array([1.0, 0.0, 0.0, 0.0], dtype=complex)
