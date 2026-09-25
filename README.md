@@ -57,11 +57,9 @@ Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a 
 
 ## Documentation
 
-- [PLAN.md](PLAN.md) is the specification: the physics (Part II), the numerics, noise, control and readout (Part III), the validation suite (Section 9) and the public API (Appendix E).
+- [PLAN.md](PLAN.md) is the specification: the scope and what the simulator does not do (Section 1.3), the physics (Part II), the numerics, noise, control and readout with the governing equations in one place (Part III, Section 5.7), the validation targets (Section 9), the open physics (Section 12) and one convention per quantity (Section 13).
 - [docs/examples.md](docs/examples.md): runnable examples from a device to the benchmarks, executed by the test suite.
 - [docs/machine.md](docs/machine.md), [docs/circuit.md](docs/circuit.md), [docs/schedule.md](docs/schedule.md), [docs/dynamics.md](docs/dynamics.md), [docs/physics.md](docs/physics.md), [docs/laboratory.md](docs/laboratory.md), [docs/experimental.md](docs/experimental.md): the ladder, one page per rung with every public name on it, the laboratory and the experimental namespace (0.4.0).
-- [docs/physics_notes.md](docs/physics_notes.md), [docs/conventions.md](docs/conventions.md), [docs/limits.md](docs/limits.md): the equations, the one convention per quantity, and what the simulator does not do.
-
 ## Development
 
 ```sh
