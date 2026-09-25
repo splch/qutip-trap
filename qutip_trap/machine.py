@@ -3,9 +3,9 @@ level policy; ``run`` takes a circuit to a ``Result`` (PLAN.md Section 3.4)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.options import Numerics, Physics, Readout
@@ -14,6 +14,7 @@ from qutip_trap.run.space import ModeClass3
 
 if TYPE_CHECKING:
     from qutip_trap.benchmarks.error_model import ErrorModel
+    from qutip_trap.calibration import CalibrationMethod
     from qutip_trap.control.compiler import Circuit, CompileReport
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.control.table import CalibrationTable
@@ -23,8 +24,6 @@ if TYPE_CHECKING:
     from qutip_trap.run.results import Progress, Result
     from qutip_trap.run.spec import Job, RunSpec
 
-CalibrationMethod = Literal["closed_form", "experiments"]
-"""``Machine.calibrated`` and ``calibration.calibrate``: the closed-form surrogate or the simulated experiments."""
 
 COST_FIXED_S = 0.02
 """Section 11.2's fitted per-segment constant a of cost = a + b x elements x evaluations."""
@@ -266,16 +265,3 @@ class Machine:
         )
         lines.append(f"  level = {self.level.value}")
         return "\n".join(lines)
-
-
-def laboratory_kwargs(machine: Machine, kw: Mapping[str, Any]) -> tuple[Device, dict[str, Any]]:
-    """The device and the keyword arguments an experiment reads for a call on ``machine``: the machine supplies ``table``
-    (its pinned table), ``options`` (``numerics.to_solver_options(physics)``) and ``builder_options`` (``physics.builder``)
-    wherever the call did not pass them."""
-    out = dict(kw)
-    if machine.table is not None:
-        out.setdefault("table", machine.table)
-    out.setdefault("options", machine.numerics.to_solver_options(machine.physics))
-    if machine.physics.builder is not None:
-        out.setdefault("builder_options", machine.physics.builder)
-    return machine.device, out

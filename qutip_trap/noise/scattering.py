@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import qutip as qt
@@ -32,7 +32,7 @@ import qutip as qt
 from qutip_trap.control.pulses import ConstantFn, InterpFn, Pulse, ScaledFn
 from qutip_trap.control.schedule import stark_scaling_power
 from qutip_trap.device.model import Device
-from qutip_trap.dynamics.channels import CollapseOp
+from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
 from qutip_trap.hilbert.operators import displacement_operator
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.light.raman import (
@@ -46,8 +46,6 @@ from qutip_trap.light.recoil import angular_factor, direction_quadrature, patter
 from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.species.polarization import atomic_frame
 from qutip_trap.species.raman import structure_at
-
-RecoilOption = Literal["off", "minimal", "vector"]
 
 
 @dataclass(frozen=True)

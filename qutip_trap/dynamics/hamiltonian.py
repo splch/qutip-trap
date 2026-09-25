@@ -61,7 +61,6 @@ from qutip_trap.noise.sampling import (
     KEY_LASER_PHASE_TRAJECTORY,
     KEY_RABI_SCALE,
     KEY_RF_FRACTION_TRAJECTORY,
-    KEY_RF_PHASE,
     NoiseSample,
     key_beam_offset_m,
     key_beam_phase_rad,
@@ -379,7 +378,7 @@ def micromotion_index(device: Device, ion: int, delta_k: np.ndarray) -> tuple[fl
     """
     if float(np.linalg.norm(delta_k)) == 0.0 or device.trap.rf is None:
         return 0.0, 0.0
-    return device.trap.micromotion_beta(device.crystal.species[ion], delta_k).as_peak().as_modulation()
+    return device.trap.micromotion_beta(device.crystal.species[ion], delta_k).as_modulation()
 
 
 def _truncated_exponential(space: HilbertSpace, mode: int, eta: float, order: int) -> qt.Qobj:
@@ -887,12 +886,9 @@ def build_hamiltonian(
             rf_omega = device.trap.rf.omega_rad_s
             if drive.rf_locked:
                 rf_delta = float(drive.rf_phase_rad or 0.0)
-            elif KEY_RF_PHASE in smp.values:
-                rf_delta = smp.values[KEY_RF_PHASE]
             else:
                 raise ValueError(
-                    "an unlocked drive has no rf phase reference: use micromotion='carrier_j0' (the shot average, "
-                    "Section 4.3.6) or supply the sample key rf_phase_rad"
+                    "an unlocked drive has no rf phase reference: use micromotion='carrier_j0' (the shot average)"
                 )
         targets: list[tuple[int, complex]] = [(i, 1.0 + 0.0j) for i in drive.ions]
         for ion_addr in drive.ions:

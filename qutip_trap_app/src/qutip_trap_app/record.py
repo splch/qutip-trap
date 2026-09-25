@@ -1237,16 +1237,6 @@ def space_record(space: core.HilbertSpace, selection: core.SpaceSelection) -> Sp
     )
 
 
-def preparation_record(prep: core.PreparationRun) -> PreparationRecord:
-    return PreparationRecord(
-        nbar={int(m): float(v) for m, v in prep.nbar.items()},
-        duration_s=float(prep.duration_s),
-        preparation_error={int(i): float(prep.preparation_error(i)) for i in prep.pumps},
-        provenance=tuple(prep.provenance),
-        notes=tuple(prep.notes),
-    )
-
-
 def _qobj_array(q: Any) -> np.ndarray:
     return np.asarray(q.full(), dtype=complex)
 

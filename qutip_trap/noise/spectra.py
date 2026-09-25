@@ -23,7 +23,6 @@ class NoiseSpectrum:
     S: np.ndarray
     unit: str
     """The unit of S, e.g. "(V/m)^2/(rad/s)" or "(rad/s)^2/(rad/s)"."""
-    sidedness: Literal["two-sided"] = "two-sided"
     white_level: float = 0.0
     """The flat two-sided density above the tabulated band (unit of S), routed to a Lindblad operator."""
     provenance: tuple[str, ...] = ()
@@ -38,8 +37,6 @@ class NoiseSpectrum:
             raise ValueError("omega_rad_s must be strictly increasing")
         if np.any(s < 0.0) or self.white_level < 0.0:
             raise ValueError("a power spectral density is non-negative")
-        if self.sidedness != "two-sided":
-            raise ValueError("NoiseSpectrum is always two-sided; convert single-sided data at the boundary")
 
     @property
     def omega_max_rad_s(self) -> float:

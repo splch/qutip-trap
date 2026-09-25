@@ -344,9 +344,7 @@ def detection_micromotion(device: Device, ion: int, beams: Sequence[Beam]) -> tu
     if device.trap.rf is None or not beams:
         return 0.0, 0.0
     cycling = min(beams, key=lambda b: b.wavelength_m)
-    beta = float(
-        device.trap.micromotion_beta(device.crystal.species[ion], cycling.k_vector()).as_peak().total
-    )
+    beta = float(device.trap.micromotion_beta(device.crystal.species[ion], cycling.k_vector()).total)
     if beta <= 0.0:
         return 0.0, 0.0
     return beta, float(device.trap.rf.omega_rad_s)

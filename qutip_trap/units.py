@@ -16,6 +16,8 @@ import scipy.constants as sc
 
 TWO_PI: Final[float] = 2.0 * math.pi
 
+GAUSS_PER_TESLA: Final[float] = 1.0e4
+
 C_M_PER_S: Final[float] = sc.c
 """Speed of light in vacuum, m/s."""
 H_J_S: Final[float] = sc.h

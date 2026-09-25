@@ -43,8 +43,6 @@ def test_spectrum_records_are_two_sided_with_the_variance_kernel_and_a_white_lev
     assert pl.tabulated(2.0) == pytest.approx(0.25, rel=1e-6) and pl.omega_max_rad_s == 10.0
     with pytest.raises(ValueError):
         NoiseSpectrum(np.array([0.0, 1.0]), np.array([1.0, -1.0]), "u")
-    with pytest.raises(ValueError):
-        NoiseSpectrum(np.array([0.0, 1.0]), np.array([1.0, 1.0]), "u", sidedness="one-sided")  # type: ignore[arg-type]
 
 
 @pytest.mark.slow

@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from qutip_trap.control.schedule import CrosstalkSuppression
-from qutip_trap.dynamics.engine import LindbladMethod, RecoilOption, SolverOptions
+from qutip_trap.dynamics.channels import RecoilOption
+from qutip_trap.dynamics.engine import LindbladMethod, SolverOptions
 from qutip_trap.dynamics.parallel import MapKind
 
 if TYPE_CHECKING:

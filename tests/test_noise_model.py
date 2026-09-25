@@ -21,7 +21,6 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
-from qutip_trap.noise.model import GAUSS_PER_TESLA
 from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
@@ -39,7 +38,7 @@ from qutip_trap.noise.sampling import (
 )
 from qutip_trap.noise.spectra import Drift, Mains, ou_spectrum, white_spectrum
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate, thermal_collapse_rates
-from qutip_trap.units import ATOMIC_MASS_KG
+from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
 from tests.fixtures import make_noise
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m4_fixtures import two_ion_device

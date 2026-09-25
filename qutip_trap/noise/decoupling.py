@@ -613,7 +613,7 @@ def filter_function(
     1 - F_av beside the filter-function one.
     """
     from qutip_trap.experiments.result import ExperimentResult
-    from qutip_trap.noise.model import GAUSS_PER_TESLA
+    from qutip_trap.units import GAUSS_PER_TESLA
 
     if isinstance(control, DecouplingSequence):
         segs = control.segments()

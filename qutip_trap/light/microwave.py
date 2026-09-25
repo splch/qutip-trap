@@ -23,7 +23,7 @@ from qutip_trap.species.polarization import to_atomic_frame
 from qutip_trap.species.raman import AtomicStructure, structure_at
 from qutip_trap.species.wigner import angular_momentum_matrices, as_half_integer
 from qutip_trap.species.zeeman import g_I_steck
-from qutip_trap.units import HBAR_J_S, MU_B_J_PER_T, TWO_PI
+from qutip_trap.units import GAUSS_PER_TESLA, HBAR_J_S, MU_B_J_PER_T, TWO_PI
 
 
 def magnetic_moment_operators(species: Species, level: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -91,10 +91,6 @@ def ac_zeeman_shift_hz(
 def effective_detuning_hz(detuning_hz: float, ac_zeeman_shift_hz_: float) -> float:
     """delta_eff = delta - delta_ac: a negative transition shift increases the detuning."""
     return detuning_hz - ac_zeeman_shift_hz_
-
-
-GAUSS_PER_TESLA = 1.0e4
-"""1 T = 10^4 G: the species layer's field sensitivities are per gauss, the gradient record's per tesla."""
 
 
 def field_sensitivity_rad_s_per_t(species: Species, field: Field) -> float:

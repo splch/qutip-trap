@@ -28,10 +28,6 @@ class MicromotionIndex:
         """sqrt(in_phase^2 + out_of_phase^2): the two terms are in quadrature."""
         return float(np.hypot(self.in_phase, self.out_of_phase))
 
-    def as_peak(self) -> MicromotionIndex:
-        """The index itself: it is always the peak convention."""
-        return self
-
     def as_modulation(self) -> tuple[float, float]:
         """(beta, offset) with beta cos(theta + offset) = in_phase cos(theta) + out_of_phase sin(theta) for every theta.
 

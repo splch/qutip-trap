@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 import numpy as np
 import qutip as qt
 
-from qutip_trap.dynamics.channels import CollapseOp
+from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
 from qutip_trap.dynamics.parallel import worker_count
 from qutip_trap.dynamics.rotating import RotatingSegment, _diagonal_energies, eigen_frequency, rotating_frame
 from qutip_trap.hilbert.operators import _highest_populated, _thermal_levels, required_margin
@@ -49,7 +49,6 @@ ALLOWED_INTEGRATORS: frozenset[str] = frozenset(
 )
 
 LindbladMethod = Literal["auto", "mesolve", "mcsolve"]
-RecoilOption = Literal["off", "minimal", "vector"]
 
 
 @dataclass(frozen=True)

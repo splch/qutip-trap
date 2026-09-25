@@ -27,7 +27,8 @@ from typing import Final, Literal
 import numpy as np
 
 from qutip_trap.control.compiler import CNOT_MATRIX, SWAP_MATRIX, Operation, decompose_single_qubit
-from qutip_trap.control.two_qubit import global_phase, kron_factor
+from qutip_trap.control.native import global_phase
+from qutip_trap.control.two_qubit import kron_factor
 
 _H: Final[np.ndarray] = np.array([[1.0, 1.0], [1.0, -1.0]], dtype=complex) / math.sqrt(2.0)
 _S: Final[np.ndarray] = np.diag([1.0, 1.0j]).astype(complex)

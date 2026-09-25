@@ -14,7 +14,6 @@ from qutip_trap.noise.processes import Trajectory
 
 KEY_RABI_SCALE = "rabi_scale"
 """Multiplies every drive's Rabi frequency."""
-KEY_RF_PHASE = "rf_phase_rad"
 """The trap rf phase at t = 0 for an unlocked drive's micromotion modulation; absent = the J_0 average."""
 KEY_MAINS_PHASE = "mains_phase_rad"
 """The line-trigger phase of the mains pickup: uniform when free-running, 0 when line-triggered."""

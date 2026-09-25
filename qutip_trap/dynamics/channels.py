@@ -10,11 +10,14 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import qutip as qt
 
 from qutip_trap.trap.heating import thermal_collapse_rates
+
+RecoilOption = Literal["off", "minimal", "vector"]
+"""The photon-recoil model of the scattering channels: none, the minimal quadrature, or the full vector quadrature."""
 
 if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace

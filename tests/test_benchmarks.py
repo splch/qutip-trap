@@ -41,7 +41,8 @@ from qutip_trap.benchmarks.volume import (
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control import native
 from qutip_trap.control.compiler import CNOT_MATRIX, Circuit, Operation, compile_report, ideal_probabilities
-from qutip_trap.control.two_qubit import global_phase, haar_random_unitary
+from qutip_trap.control.native import global_phase
+from qutip_trap.control.two_qubit import haar_random_unitary
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.experiments.fitting import fit_fringe
 from qutip_trap.machine import Machine

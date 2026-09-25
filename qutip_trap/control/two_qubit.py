@@ -84,11 +84,6 @@ def kron_factor(u: np.ndarray, *, tol: float = 1e-9) -> tuple[np.ndarray, np.nda
     return a / scale, b * scale
 
 
-def global_phase(a: np.ndarray, b: np.ndarray, *, atol: float = 1e-9) -> float | None:
-    """alpha with a = e^{i alpha} b, or None (``native.global_phase``)."""
-    return native.global_phase(a, b, atol=atol)
-
-
 @dataclass(frozen=True)
 class KAK:
     """u = e^{i phase} (A (x) B) exp[-i (a XX + b YY + c ZZ)] (C (x) D) with (a, b, c) in the Weyl chamber."""

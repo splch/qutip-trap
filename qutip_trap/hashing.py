@@ -3,8 +3,7 @@
 Python's ``hash()`` is no identity here (the records carry ndarrays, dicts and Qobj), so the digest is taken over a
 canonical form: dataclass fields in declaration order, floats to 12 significant digits, ndarrays as dtype,
 shape and C-order bytes, mappings and sets sorted, callables by qualified name plus a digest of their source, Qobj fields
-excluded. A field with ``metadata={"hash": "exclude"}`` is left out (``Device.roles``, which ``Machine.hash()`` carries),
-one with ``metadata={"hash": "skip_default"}`` while it holds its default (``CalEntry.kind``).
+excluded. A field with ``metadata={"hash": "exclude"}`` is left out (``Device.roles``, which ``Machine.hash()`` carries).
 """
 
 from __future__ import annotations
@@ -76,14 +75,10 @@ def _feed(h: Any, obj: object) -> None:
     elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         h.update(f"D{type(obj).__qualname__}(".encode())
         for f in dataclasses.fields(obj):
-            rule = f.metadata.get("hash")
-            if rule == "exclude":
-                continue
-            value = getattr(obj, f.name)
-            if rule == "skip_default" and f.default is not dataclasses.MISSING and value == f.default:
+            if f.metadata.get("hash") == "exclude":
                 continue
             h.update(f"{f.name}=".encode())
-            _feed(h, value)
+            _feed(h, getattr(obj, f.name))
         h.update(b");")
     elif isinstance(obj, Mapping):
         h.update(f"m{len(obj)}(".encode())

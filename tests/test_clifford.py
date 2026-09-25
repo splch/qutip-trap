@@ -39,7 +39,7 @@ from qutip_trap.control.compiler import (
     compile_report,
     decompose_single_qubit,
 )
-from qutip_trap.control.two_qubit import global_phase
+from qutip_trap.control.native import global_phase
 
 ENTANGLING_COUNT: dict[CoreName, int] = {"identity": 0, "cnot": 1, "iswap": 2, "swap": 3}
 """The Moelmer-Soerensen gates each core compiles to."""

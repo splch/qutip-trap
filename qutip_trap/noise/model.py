@@ -54,7 +54,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_trajectory_hz,
 )
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum
-from qutip_trap.units import E_C, TWO_PI
+from qutip_trap.units import E_C, GAUSS_PER_TESLA, TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
@@ -63,8 +63,6 @@ if TYPE_CHECKING:
 
 RF_DERIVED_FAMILIES = ("transverse_1", "transverse_2")
 """The mode families whose frequencies follow the rf amplitude."""
-
-GAUSS_PER_TESLA = 1.0e4
 
 
 class _DriftField(NamedTuple):
