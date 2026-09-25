@@ -25,7 +25,6 @@ dev = [
     "mypy>=1.17",
     "types-PyYAML>=6.0.12",
     "sympy>=1.14",
-    "mpmath>=1.3",
     "qiskit>=2.0,<3",
     "pytest-xdist>=3.8.0",
     "pytest-timeout>=2.4.0",
