@@ -23,7 +23,7 @@ from qutip_trap.prep.level_c import level_c_steady_state
 from qutip_trap.prep.validity import ValidityError
 from qutip_trap.trap.crystal import axial_modes_dimensionless, equilibrium_dimensionless
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from tests.bloch_fixtures import (
+from tests.fixtures import (
     LAMBDA_EXCITED,
     LAMBDA_GROUND_MINUS,
     LAMBDA_GROUND_PLUS,

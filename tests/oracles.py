@@ -208,6 +208,12 @@ def epsilon_d_from_p_total(branching_fraction: float, p_total: float) -> float:
     return branching_fraction * p_total
 
 
+def yb171_detection_rate(s_o: float, gamma_rad_s: float, detuning_rad_s: float = 0.0) -> float:
+    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] for the 171Yb+ F = 1 -> F' = 0 cycle, saturating at Gamma/4
+    (Noek 2013)."""
+    return (gamma_rad_s / 18.0) * s_o / (1.0 + (2.0 / 9.0) * s_o + (2.0 * detuning_rad_s / gamma_rad_s) ** 2)
+
+
 def generalized_rabi_rad_s(omega_rad_s: float, detuning_rad_s: float) -> float:
     """sqrt(Omega^2 + Delta^2) in the plan's convention (Wineland's (Delta^2 + 4 Omega_W^2)^{1/2} with Omega = 2 Omega_W)."""
     return math.sqrt(omega_rad_s**2 + detuning_rad_s**2)

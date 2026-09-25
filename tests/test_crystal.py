@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from dataclasses import dataclass
 
 import numpy as np
 import pytest
@@ -25,13 +24,7 @@ from qutip_trap.trap.crystal import (
 from qutip_trap.trap.mathieu import MathieuParameters, c0_wronskian
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, TWO_PI
-
-
-@dataclass(frozen=True)
-class _Mass:
-    """A stand-in for ``Species`` carrying only the mass, for fixtures quoted with isotope (atomic) masses."""
-
-    mass_u: float
+from tests.fixtures import MassOnly
 
 
 def _mixed_pair(
@@ -41,7 +34,7 @@ def _mixed_pair(
     w1 = TWO_PI * omega_z1_hz
     per_ion = np.array([transverse_factor * w1, transverse_factor * w1, w1])
     w = np.vstack([per_ion, per_ion / math.sqrt(m2_u / m1_u)])
-    return build_crystal((_Mass(m1_u), _Mass(m2_u)), w)  # type: ignore[arg-type]
+    return build_crystal((MassOnly(m1_u), MassOnly(m2_u)), w)  # type: ignore[arg-type]
 
 
 def _two_ion_axial_squared(mu: float) -> tuple[float, float]:
@@ -190,7 +183,7 @@ def test_home_2013_table_i_end_to_end() -> None:
     """Be+ (12.26, 11.19, 2.69) and Mg+ (4.82, 3.72, 1.65) MHz: x 12.11/4.67, y 11.03/3.53, z 4.04/1.90 MHz; axial eigenvectors
     (-0.926, 0.379) and (0.379, 0.926); off-species radial amplitudes 0.018 (x) and 0.020 (y), the caption's transposed
     order 0.017 and 0.022 (negative control); separation 4.76 um; eta_Be = 0.1844 on the 1.90 MHz mode at 313 nm."""
-    be, mg = _Mass(9.0121822), _Mass(23.985042)
+    be, mg = MassOnly(9.0121822), MassOnly(23.985042)
     w_be = TWO_PI * np.array([12.26, 11.19, 2.69]) * 1e6
     w_mg = TWO_PI * np.array([4.82, 3.72, 1.65]) * 1e6
     cr = build_crystal((be, mg), np.vstack([w_be, w_mg]))  # type: ignore[arg-type]
@@ -228,7 +221,7 @@ def test_the_exact_route_approaches_homes_pseudopotential_scaling_and_keeps_the_
     """Be+ at [9.7, 12.9, 4.6] MHz gives Mg+ [1.52, 5.43, 2.82] MHz in the pseudopotential limit (Home 2013 Eqs. 6-19); the
     exact-exponent route at a 1 GHz rf reaches it and preserves sign(omega_x^2 - omega_y^2) across species."""
     trap = dataclasses.replace(secular_trap((9.7e6, 12.9e6, 4.6e6)), rf=RfDrive(0.0, 1.0e9))
-    exact, _axes, _field = trap.single_ion_frequencies_rad_s((_Mass(9.0121822), _Mass(23.985042)))  # type: ignore[arg-type]
+    exact, _axes, _field = trap.single_ion_frequencies_rad_s((MassOnly(9.0121822), MassOnly(23.985042)))  # type: ignore[arg-type]
     assert exact[1] / TWO_PI / 1e6 == pytest.approx([1.52, 5.43, 2.82], abs=1e-2)
     assert exact[1][0] < exact[1][1]
 
@@ -256,7 +249,8 @@ def test_kielpinski_three_ion_axial_modes_and_parity() -> None:
         w1 = TWO_PI * 10e6
         w_out = np.array([10 * w1, 10 * w1, w1])
         cr = build_crystal(
-            (_Mass(9.0), _Mass(9.0 * mu), _Mass(9.0)), np.vstack([w_out, w_out / math.sqrt(mu), w_out])
+            (MassOnly(9.0), MassOnly(9.0 * mu), MassOnly(9.0)),
+            np.vstack([w_out, w_out / math.sqrt(mu), w_out]),
         )  # type: ignore[arg-type]
         assert np.array([m.omega_hz for m in cr.family("axial")]) / 10e6 == pytest.approx(closed, abs=1e-6)
         assert abs(cr.family("axial")[1].eigenvector[1]) < 1e-10, "zero impurity amplitude"

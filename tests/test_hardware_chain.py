@@ -15,20 +15,19 @@ from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains, apply_hard
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, response_phase_rad
 from qutip_trap.control.shaping import gate_modes
+from qutip_trap.device.presets import ideal_hardware, yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample
-from tests.fixtures import make_hardware
-from tests.m2_fixtures import single_ion_raman_device
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import REALISTIC_HARDWARE, single_ion_raman_device
 
 
 def _device():  # type: ignore[no-untyped-def]
     """The single-ion fixture with the realistic 16-bit / 14-bit / 50 ns chain."""
     dev = single_ion_raman_device()
-    return dataclasses.replace(dev, hardware=make_hardware(realistic=True))
+    return dataclasses.replace(dev, hardware=REALISTIC_HARDWARE)
 
 
 def _pi_schedule(dev):  # type: ignore[no-untyped-def]
@@ -39,10 +38,8 @@ def _pi_schedule(dev):  # type: ignore[no-untyped-def]
 
 
 def test_hardware_record_validation_resolutions_and_description() -> None:
-    hw = make_hardware(realistic=True)
-    assert make_hardware().aom_rise_s == 0.0 and make_hardware().phase_resolution_rad < 2e-9, (
-        "the shared fixture is near-ideal"
-    )
+    hw = REALISTIC_HARDWARE
+    assert ideal_hardware().aom_rise_s == 0.0 and ideal_hardware().phase_resolution_rad < 2e-9
     assert (
         hw.phase_resolution_rad == pytest.approx(2 * math.pi / 65536) and hw.frequency_resolution_hz is None
     )
@@ -174,9 +171,9 @@ def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_no
 
 @pytest.mark.slow
 def test_calibrated_gate_survives_the_modulator_response_with_the_phase_reference() -> None:
-    """With ``make_hardware(realistic=True)``'s 50 ns rise time the chain plus the Roos beat-phase reference reaches
+    """With ``REALISTIC_HARDWARE``'s 50 ns rise time the chain plus the Roos beat-phase reference reaches
     0.999923 (leakage 3.32e-5) against 0.999868 (4.49e-5) for an ideal modulator."""
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
 
     def check(hardware, chain: bool):  # type: ignore[no-untyped-def]
         dev = dataclasses.replace(fx.device, hardware=hardware)
@@ -197,8 +194,8 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
         )
         return out
 
-    realistic = check(make_hardware(realistic=True), True)
-    ideal = check(make_hardware(), True)
+    realistic = check(REALISTIC_HARDWARE, True)
+    ideal = check(ideal_hardware(phase_continuous=True), True)
     assert realistic.fidelity == pytest.approx(0.999923, abs=5e-6), realistic.fidelity
     assert ideal.fidelity == pytest.approx(0.999868, abs=5e-6), ideal.fidelity
     assert realistic.leakage == pytest.approx(3.315e-5, rel=5e-3), realistic.leakage
@@ -207,7 +204,9 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
         "the arctan reference over-compensates the ideal modulator's (absent) delay slightly in the ion's favour"
     )
     # an ideal modulator's response is the identity, so the chain switch cannot matter there
-    assert check(make_hardware(), False).fidelity == pytest.approx(ideal.fidelity, abs=1e-9)
+    assert check(ideal_hardware(phase_continuous=True), False).fidelity == pytest.approx(
+        ideal.fidelity, abs=1e-9
+    )
 
 
 def test_stark_shift_follows_the_played_light_into_the_tail() -> None:
@@ -216,7 +215,7 @@ def test_stark_shift_follows_the_played_light_into_the_tail() -> None:
     staying at the programmed value while the field is gone; with an infinite bandwidth the shift is the programmed one times
     the amplitude word's rounding, a callable envelope is not resampled, and a constant shift on a shaped pulse is read as
     the shift at the peak and follows the intensity."""
-    hw = dataclasses.replace(make_hardware(realistic=True), aom_rise_s=0.0)
+    hw = dataclasses.replace(REALISTIC_HARDWARE, aom_rise_s=0.0)
     tau = hw.response_time_s("microwave")
     stark, rabi, t_end = 250.0, 50e3, 1e-6
     drive = square_microwave_drive(0, rabi, stark_shift_hz=stark)

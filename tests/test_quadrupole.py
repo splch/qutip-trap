@@ -24,6 +24,7 @@ from qutip_trap.species.quadrupole import (
     reduced_element_from_lifetime_m2,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, E_C, EPSILON_0_F_PER_M, HBAR_J_S, TWO_PI
+from tests.fixtures import ca_light_shift_device, single_ion_raman_device
 
 HALF = Fraction(1, 2)
 FIVE_HALF = Fraction(5, 2)
@@ -272,7 +273,6 @@ def test_the_e2_stark_shift_refuses_a_degenerate_component() -> None:
 def test_the_derived_optical_e2_drive_carries_the_stark_shift() -> None:
     """The 40Ca+ 729 nm drive's Stark shift is the quadrupole sum, small against the carrier Rabi frequency."""
     from qutip_trap.light.raman import derive_optical_drive, quadrupole_stark_shift_hz
-    from tests.test_light_shift_gate import ca_light_shift_device
 
     dev = ca_light_shift_device()
     assert dev.crystal.species[0].name == "40Ca+"
@@ -288,7 +288,6 @@ def test_the_derived_optical_e2_drive_carries_the_stark_shift() -> None:
 def test_a_hyperfine_e2_stark_shift_raises() -> None:
     """Section 4.5.7 specifies the E2 coupling for I = 0 only."""
     from qutip_trap.light.raman import quadrupole_stark_shift_hz
-    from tests.m2_fixtures import single_ion_raman_device
 
     dev = single_ion_raman_device()
     assert dev.crystal.species[0].nuclear_spin != 0.0

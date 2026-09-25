@@ -16,9 +16,9 @@ import pytest
 import qutip as qt
 
 import qutip_trap as trap
-from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import Schedule
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, _pure_branches
 from qutip_trap.dynamics.evolve import (
     LARGE_MODE_ATOL,
@@ -37,11 +37,9 @@ from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.run.job import last_record
 from qutip_trap.units import TWO_PI
-from tests.m2_fixtures import single_ion_raman_device
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import BELL, KX, single_ion_raman_device, two_ion_raman_device
 from tests.oracles import sideband_rabi_rad_s
 
-KX = 1  # the 3 MHz x mode of the single-ion fixture
 WX = TWO_PI * 3.0e6
 NO_CHAIN = SolverOptions(hardware_chain=False)
 """The references integrate the schedule as written, so the engine does not play it through the hardware chain."""
@@ -104,7 +102,7 @@ def test_a_ramsey_scan_with_millisecond_delays_costs_milliseconds() -> None:
     """The Ramsey experiments idle for up to 2 ms; the closed form makes them cheap."""
     import time
 
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     t0 = time.perf_counter()
     res = ramsey(Machine(fx.device), 0, [0.0, 0.5e-3, 1e-3], nbar={2: 0.0185, 3: 0.0154}, detuning_hz=1e3)
     assert time.perf_counter() - t0 < 5.0
@@ -236,7 +234,6 @@ def test_simultaneous_pulses_of_unequal_length_are_integrated_segment_by_segment
     """Two ions' pi/2 pulses at two fitted Rabi frequencies start together and end 1 % apart: the engine cuts the schedule at
     both ends and the builder takes the pulses that span each segment, each on its own clock."""
     from qutip_trap.light.microwave import square_microwave_drive
-    from tests.m2_fixtures import two_ion_raman_device
 
     dev = two_ion_raman_device()
     space = HilbertSpace((2, 2), (), None, tuple(range(len(dev.crystal.modes))))
@@ -374,12 +371,10 @@ def test_the_ladder_at_the_three_large_caps() -> None:
 
 # ---- the per-time Fock marginals and the wall times of Traces -----------------------------------------------------------------
 
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-
 
 @pytest.fixture(scope="module")
 def stored() -> tuple[Machine, trap.Result]:
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     machine = Machine(
         fx.device,
         numerics=trap.Numerics(truncation={"branch_weight_min": 1e-3}, integration={"store_marginals": True}),

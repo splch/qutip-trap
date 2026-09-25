@@ -23,7 +23,7 @@ from qutip_trap.noise.summary import (
     pauli_string,
     pauli_twirl,
 )
-from tests.m4_fixtures import (
+from tests.fixtures import (
     X_COM_TWO_IONS,
     raman_gate_drives,
     table_with_waveform,

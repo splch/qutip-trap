@@ -18,7 +18,7 @@ from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.model import Trap
 from qutip_trap.units import TWO_PI
-from tests.atomic_fixtures import spin_zero_like
+from tests.fixtures import spin_zero_like
 
 YB = species("171Yb+")
 DARK = "S1/2 F=0 mF=0"

@@ -14,6 +14,7 @@ from qutip_trap.species.polarization import (
     spherical_components,
     to_atomic_frame,
 )
+from tests.fixtures import be9_like, field_z
 
 X, Y, Z = np.eye(3)
 SIGMA_PLUS = -(X + 1j * Y) / math.sqrt(2.0)
@@ -144,7 +145,6 @@ def test_a_pure_sigma_plus_beam_drives_only_m_to_m_plus_one() -> None:
     from qutip_trap.light.beams import Beam
     from qutip_trap.species.raman import AtomicStructure
     from qutip_trap.units import C_M_PER_S
-    from tests.atomic_fixtures import be9_like, field_z
 
     sp = be9_like()
     st = AtomicStructure(sp, 1.0, field_z().direction)

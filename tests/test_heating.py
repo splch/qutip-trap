@@ -23,8 +23,7 @@ from qutip_trap.trap.heating import (
     thermal_collapse_rates,
 )
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, HBAR_J_S, TWO_PI
-from tests.m4_fixtures import two_ion_device
-from tests.test_crystal import _Mass
+from tests.fixtures import MassOnly, two_ion_device
 
 
 def test_heating_round_trip_and_sidedness() -> None:
@@ -128,13 +127,13 @@ def test_mixed_crystal_every_mode_heats_and_the_two_ion_sum_rule_holds() -> None
         w = np.array(
             [[8 * w1, 8 * w1, w1], [8 * w1 / math.sqrt(mu), 8 * w1 / math.sqrt(mu), w1 / math.sqrt(mu)]]
         )
-        cr = build_crystal((_Mass(25.0), _Mass(25.0 * mu)), w)  # type: ignore[arg-type]
+        cr = build_crystal((MassOnly(25.0), MassOnly(25.0 * mu)), w)  # type: ignore[arg-type]
         rates = heating_rates_per_mode(cr, 1e-13, math.inf)
         axial = [cr.mode_index("axial", k) for k in (0, 1)]
         assert all(rates[k] > 0.05 * rates[axial[0]] for k in axial)
         energy_rate = sum(HBAR_J_S * cr.modes[k].omega_rad_s * rates[k] for k in axial)
         assert energy_rate == pytest.approx(E_C**2 * 1e-13 / 4.0 * np.sum(1.0 / cr.masses_kg), rel=1e-9)
-    equal = build_crystal((_Mass(25.0), _Mass(25.0)), np.array([[8 * w1, 8 * w1, w1]] * 2))  # type: ignore[arg-type]
+    equal = build_crystal((MassOnly(25.0), MassOnly(25.0)), np.array([[8 * w1, 8 * w1, w1]] * 2))  # type: ignore[arg-type]
     rates_eq = heating_rates_per_mode(equal, 1e-13, math.inf)
     assert rates_eq[equal.mode_index("axial", 1)] < 1e-12 * rates_eq[equal.mode_index("axial", 0)]
 
@@ -146,7 +145,8 @@ def test_parity_rule_for_a_reflection_symmetric_mixed_chain() -> None:
     w_be = np.array([8 * w1, 8 * w1, w1])
     mu = 23.985042 / 9.0121822
     cr = build_crystal(
-        (_Mass(9.0121822), _Mass(23.985042), _Mass(9.0121822)), np.vstack([w_be, w_be / math.sqrt(mu), w_be])
+        (MassOnly(9.0121822), MassOnly(23.985042), MassOnly(9.0121822)),
+        np.vstack([w_be, w_be / math.sqrt(mu), w_be]),
     )  # type: ignore[arg-type]
     rates = heating_rates_per_mode(cr, 1e-13, math.inf)
     axial_rates = [rates[cr.mode_index("axial", k)] for k in range(3)]

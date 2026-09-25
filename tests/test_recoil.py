@@ -38,7 +38,7 @@ from qutip_trap.trap.crystal import Crystal, solve_crystal
 from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from tests.bloch_fixtures import (
+from tests.fixtures import (
     MASS_KG,
     TWO_LEVEL_EXCITED_PLUS,
     TWO_LEVEL_GROUND,

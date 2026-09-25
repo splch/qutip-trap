@@ -33,7 +33,6 @@ from qutip_trap.device.model import BeamRoles, Device, Field, GradientField
 from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
-from qutip_trap.light.beams import Beam
 from qutip_trap.light.microwave import (
     derive_gradient_drive,
     field_sensitivity_rad_s_per_t,
@@ -50,42 +49,25 @@ from qutip_trap.species import MODULES, species
 from qutip_trap.species.model import Level, Species
 from qutip_trap.species.zeeman import HyperfineZeeman
 from qutip_trap.trap.crystal import solve_crystal
-from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from tests.fixtures import make_calibration_table, make_detector, make_hardware, make_noise
-from tests.m4_fixtures import CA40_729_E2_BEAM, derived_seeds, table_with_waveform, two_ion_device
+from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, HBAR_J_S, TWO_PI
+from tests.fixtures import (
+    G_J_S12,
+    ca_light_shift_device,
+    derived_seeds,
+    make_calibration_table,
+    quiet_device,
+    table_with_waveform,
+    two_ion_device,
+)
 from tests.oracles import (
     intrinsic_dynamical_decoupling_ratio,
     srinivas_effective_coupling_rad_s,
     srinivas_gradient_rabi_rad_s,
 )
-from tests.test_zeeman_anchors import MG25_G_J_ASSUMED
 
-C_M_PER_S = 299792458.0
 X_COM = 3
 X_ROCK = 2
 """The transverse-x mode with the ANTISYMMETRIC pattern (-1, +1)/sqrt2: the one a (sigma_z1 - sigma_z2) force drives."""
-
-
-def ca_light_shift_device() -> Device:
-    """Two 40Ca+ ions (optical S1/2-D5/2 qubit), a counter-propagating 398.5 nm pair along x (3 THz below the S-P1/2 line, both
-    circular about B || x) for the light-shift force, and the ``CA40_729_E2_BEAM`` quadrupole beam for the E2 single-qubit
-    pulses - rotated into the xy plane so that its Rabi frequency is DERIVED (200144 Hz at 166 mW) rather than supplied."""
-    ca = species("40Ca+")
-    trap = secular_trap()
-    crystal = solve_crystal(trap, (ca, ca))
-    lam = C_M_PER_S / (C_M_PER_S / 396.959e-9 - 3.0e12)
-    s = 1.0 / math.sqrt(2.0)
-    b1 = Beam(lam, (1.0, 0.0, 0.0), (0.0, s, 1j * s), 200e-6, 10e-3, (0.0, 0.0, 0.0))
-    b2 = Beam(lam, (-1.0, 0.0, 0.0), (0.0, s, 1j * s), 200e-6, 10e-3, (0.0, 0.0, 0.0))
-    return Device(
-        crystal=crystal,
-        trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0)),
-        beams=(b1, b2, CA40_729_E2_BEAM),
-        noise=make_noise(),
-        detector=make_detector(),
-        hardware=make_hardware(),
-    )
 
 
 @pytest.fixture(scope="module")
@@ -280,15 +262,8 @@ def gradient_device(*, ratio: float | None = None) -> Device:
         b1_tesla_lab=b1,
         phase_rad=0.0,
     )
-    return Device(
-        crystal=crystal,
-        trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0)),
-        beams=(),
-        noise=make_noise(),
-        detector=make_detector(),
-        hardware=make_hardware(),
-        gradient=gradient,
+    return dataclasses.replace(
+        quiet_device(crystal, trap, Field(5.0, (1.0, 0.0, 0.0)), ()), gradient=gradient
     )
 
 
@@ -562,7 +537,7 @@ def test_srinivas_own_parameters() -> None:
     2 delta = omega_r - omega_g resonance the dressed force needs, and one closed loop at the maximally entangling
     (Omega_eff/Delta_gate) = 1/4 takes 202 us, the scale of the paper's 740 us eight-segment Walsh sequence."""
     table = MODULES["25Mg+"].TABLE
-    level = Level("S1/2", 0.0, None, table["mg25.S12.A_hfs_hz"].value, 0.0, MG25_G_J_ASSUMED, ("Steck",))
+    level = Level("S1/2", 0.0, None, table["mg25.S12.A_hfs_hz"].value, 0.0, G_J_S12, ("Steck",))
     hz = HyperfineZeeman(level, 2.5, table["mg25.mu_I_nuclear_magnetons"].value)
     spectrum = hz.spectrum(212.78)
     i_up, i_dn = spectrum.index("F=3 mF=3"), spectrum.index("F=2 mF=2")

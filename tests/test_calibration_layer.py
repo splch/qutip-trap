@@ -14,8 +14,7 @@ import qutip as qt
 from qutip_trap.calibration import CalibrationCache, calibrate
 from qutip_trap.calibration.entangling import frame_rotated, gate_space
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
-from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.compiler import Circuit, Operation, compile_report
+from qutip_trap.control.compiler import compile_report
 from qutip_trap.control.hardware import physical_schedule
 from qutip_trap.control.native import gpi2
 from qutip_trap.control.schedule import (
@@ -34,6 +33,7 @@ from qutip_trap.control.schedule import (
 from qutip_trap.control.shaping import gate_modes
 from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable
 from qutip_trap.device.model import BeamRoles
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.experiments.fitting import (
     Observation,
@@ -54,24 +54,19 @@ from qutip_trap.experiments.result import (
 from qutip_trap.experiments.single_ion import rabi_scan, sub_stream
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
 from qutip_trap.machine import Machine
-from qutip_trap.noise.model import servo_residual
+from qutip_trap.noise.model import NoiseModel, servo_residual
 from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, correlated_normals, quiet_sample
 from qutip_trap.noise.spectra import Drift
 from qutip_trap.provenance import load_ledger
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
-from tests.fixtures import make_device, make_noise
-from tests.m2_fixtures import single_ion_raman_device
-from tests.m6_fixtures import circuit_fixture
-
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
+from tests.fixtures import BELL, WINDOWS, make_device, single_ion_raman_device, two_ion_surrogate
 
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
-    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
+    fx = yb171_chain(2)
+    sur = two_ion_surrogate(1000)
     return fx, sur
 
 
@@ -207,8 +202,8 @@ def test_servo_high_passes_a_slow_drift_into_its_residual_band() -> None:
     assert np.array_equal(servo_residual(x[:, None], times, 0.0)[:, 0], x)
     # through the noise model: a field drift with a servo leaves the later samples' offsets far below the rms
     dev = make_device()
-    noisy = dataclasses.replace(make_noise(), field_drift=Drift(1e-6, 10.0, 5.0))
-    free = dataclasses.replace(make_noise(), field_drift=Drift(1e-6, 10.0, None))
+    noisy = dataclasses.replace(NoiseModel(), field_drift=Drift(1e-6, 10.0, 5.0))
+    free = dataclasses.replace(NoiseModel(), field_drift=Drift(1e-6, 10.0, None))
     ts = np.linspace(0.0, 20.0, 201)
     seq_servo = noisy.sample_sequence(np.random.default_rng(0), ts, device=dev)
     seq_free = free.sample_sequence(np.random.default_rng(0), ts, device=dev)
@@ -449,7 +444,7 @@ def test_every_experiment_and_sub_run_draws_its_own_shot_noise() -> None:
 
 @pytest.fixture(scope="module")
 def machine() -> Machine:
-    return Machine(circuit_fixture(2).device).calibrated(
+    return Machine(yb171_chain(2).device).calibrated(
         pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS
     )
 

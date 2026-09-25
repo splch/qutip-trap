@@ -21,6 +21,7 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
+from qutip_trap.noise.model import NoiseModel
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
     KEY_MAINS_PHASE,
@@ -39,9 +40,7 @@ from qutip_trap.noise.sampling import (
 from qutip_trap.noise.spectra import Drift, Mains, ou_spectrum, white_spectrum
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate, thermal_collapse_rates
 from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
-from tests.fixtures import make_noise
-from tests.m2_fixtures import single_ion_raman_device
-from tests.m4_fixtures import two_ion_device
+from tests.fixtures import single_ion_raman_device, two_ion_device
 
 
 def _with(device, **noise_fields):  # type: ignore[no-untyped-def]
@@ -72,7 +71,7 @@ def test_heating_rates_follow_the_correlation_length_and_refuse_its_absence() ->
     bad = _with(dev, S_E=white_spectrum(s_e / 2.0, "(V/m)^2/(rad/s)"), correlation_length_m=None)
     with pytest.raises(ValueError, match="correlation_length_m"):
         bad.noise.heating_rates_quanta_per_s(bad)
-    assert make_noise().is_quiet() and make_noise().heating_rates_quanta_per_s(dev) == {}
+    assert NoiseModel().is_quiet() and NoiseModel().heating_rates_quanta_per_s(dev) == {}
     space = HilbertSpace(
         (2, 2), (ModeTruncation(com, 6, (0, 2), 0.1),), None, tuple(m for m in range(6) if m != com)
     )
@@ -264,7 +263,7 @@ def test_beam_phase_noise_synthesizes_an_independent_trajectory_per_beam() -> No
 
 
 def test_a_white_level_is_a_channel_not_a_sample() -> None:
-    nm = make_noise()
+    nm = NoiseModel()
     assert nm.is_quiet() and nm.intensity_white_density() == 0.0
     nm2 = dataclasses.replace(nm, laser_intensity=white_spectrum(2e-9, "1/(rad/s)"))
     assert nm2.intensity_white_density() == 2e-9 and nm2.is_quiet()
@@ -273,7 +272,7 @@ def test_a_white_level_is_a_channel_not_a_sample() -> None:
 def test_noise_rates_carry_provenance_and_the_model_says_how_many_apparatus() -> None:
     """Section 6.1: a budget assembled from published rates is stitched from several apparatus, and the report says so. A
     zero rate contributes no apparatus; a non-zero rate with no tag is counted as undeclared."""
-    quiet = make_noise()
+    quiet = NoiseModel()
     assert quiet.apparatus() == () and quiet.provenance_sentence() == ""
     tagged = dataclasses.replace(
         white_spectrum(1e-24, "T^2/(rad/s)"), provenance=("Fang 2022, 171Yb+, 5 ions",)

@@ -28,7 +28,7 @@ from qutip_trap.readout.fluorescence import (
     rates_from_detected,
 )
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD
-from tests.readout_fixtures import YB_DIRECT, crain_record_model, myerson_record_model, two_state_rates
+from tests.fixtures import YB_DIRECT, crain_record_model, myerson_record_model, two_state_rates
 
 WINDOW_S = 22e-6
 YB_WAVELENGTH_M = 369.5e-9

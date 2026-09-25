@@ -10,6 +10,7 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap.device.presets import OBLIQUE
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import CoolingError, beam_for_transition
@@ -39,7 +40,7 @@ from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, ELECTRON_MASS_U, TWO_PI
-from tests.bloch_fixtures import (
+from tests.fixtures import (
     MASS_KG,
     TWO_LEVEL_EXCITED_PLUS,
     TWO_LEVEL_GROUND,
@@ -50,8 +51,6 @@ from tests.bloch_fixtures import (
     structure,
     two_level_atom,
 )
-
-OBLIQUE = (1.0 / math.sqrt(3.0),) * 3
 
 
 def trap_for(freqs_hz: tuple[float, float, float]) -> Trap:

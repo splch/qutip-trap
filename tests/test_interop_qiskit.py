@@ -12,9 +12,8 @@ from qiskit import QuantumCircuit, transpile  # noqa: E402
 from qutip_trap.device.presets import yb171_chain  # noqa: E402
 from qutip_trap.interop.qiskit import QutipTrapBackend, QutipTrapProvider  # noqa: E402
 from qutip_trap.machine import Machine  # noqa: E402
-from qutip_trap.options import Numerics, Readout  # noqa: E402
-
-FAST = Numerics(truncation={"branch_weight_min": 1e-3})  # type: ignore[arg-type]  (a mapping is accepted)
+from qutip_trap.options import Readout  # noqa: E402
+from tests.fixtures import FAST
 
 
 def test_bell_and_x_on_qubit_zero_through_qiskit() -> None:

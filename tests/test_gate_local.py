@@ -15,6 +15,7 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, schedule
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import apply_kraus_dm, kraus_operators
@@ -30,20 +31,16 @@ from qutip_trap.run.gate_local import (
 from qutip_trap.run.job import last_record, register_fidelity
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import best_contributions, select_space
-from tests.fixtures import run
-from tests.m2_fixtures import single_ion_raman_device
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import BELL, WINDOWS, run, single_ion_raman_device, two_ion_surrogate
 
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 GPI2 = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 FAST = SolverOptions(branch_weight_min=1e-3)
 
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
-    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
+    fx = yb171_chain(2)
+    sur = two_ion_surrogate(1000)
     kw = dict(
         table=sur.table,
         keep_final_state=True,
@@ -370,7 +367,7 @@ def _compare_levels(a, b):  # type: ignore[no-untyped-def]
 def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     """Section 9.8 row 1: the three-ion GHZ circuit (two entangling gates, five carrier pulses), with the crosstalk
     neighbours inside the gate-local spaces."""
-    fx = circuit_fixture(3, address_waist_m=2.0e-6)
+    fx = yb171_chain(3, address_waist_m=2.0e-6)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2)], detection_records=1000, detection_windows_s=WINDOWS
     )
@@ -409,7 +406,7 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     comparison measures GATE_LOCAL's own approximation: JOINT_EXACT runs at dimension 192, and the three frozen x modes, whose
     chi the common surrogate table absorbs, carry their Debye-Waller factors and Fock branches at both levels
     (``conv.four_ion_gate_local_fixture``)."""
-    fx = circuit_fixture(4)
+    fx = yb171_chain(4)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2), (2, 3)], detection_records=200, detection_windows_s=WINDOWS
     )

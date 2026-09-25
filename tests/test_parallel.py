@@ -14,11 +14,11 @@ import pytest
 from qutip.settings import available_cpu_count
 
 from qutip_trap.calibration.entangling import ms_schedule
-from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
@@ -27,16 +27,18 @@ from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import last_record
-from tests.fixtures import run
-from tests.m4_fixtures import (
+from tests.fixtures import (
+    BELL,
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,
     raman_gate_drives,
+    run,
+    single_ion_raman_device,
     table_with_waveform,
     two_ion_modes,
+    two_ion_surrogate,
 )
-from tests.m6_fixtures import circuit_fixture
 
 N_WORKERS = max(2, int(available_cpu_count()))
 """Every CPU QuTiP sees."""
@@ -308,14 +310,12 @@ def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
 # ---- run() over workers ---------------------------------------------------------------------------------------------------------------
 
 GPI2 = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
-    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
+    fx = yb171_chain(2)
+    sur = two_ion_surrogate(1000)
     return fx, sur
 
 
@@ -378,7 +378,6 @@ def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heati
     white-noise rate, four keyed stochastic trajectories plus the deterministic no-jump member, in-process and over every
     CPU: the register, P1, the ensemble's density matrix and the jump records agree."""
     from qutip_trap.light.raman import derive_raman_drive, square_drive
-    from tests.m2_fixtures import single_ion_raman_device
 
     base = single_ion_raman_device()
     dev = dataclasses.replace(

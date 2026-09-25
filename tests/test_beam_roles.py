@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import dataclasses
 
-import numpy as np
 import pytest
 
-from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import (
     GateDrive,
@@ -23,13 +21,8 @@ from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
-from qutip_trap.options import Numerics, Truncation
 from qutip_trap.run.levels import FidelityLevel, decide_level, within_budget
-from tests.fixtures import make_device, run
-from tests.m6_fixtures import circuit_fixture
-
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
+from tests.fixtures import BELL, FAST, make_device, run, two_ion_surrogate
 
 
 def test_inference_where_the_beams_identify_one_drive() -> None:
@@ -52,7 +45,7 @@ def test_inference_where_the_beams_identify_one_drive() -> None:
 
 
 def test_several_raman_pairs_still_refuse_without_roles_and_resolve_with_them() -> None:
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     bare = dataclasses.replace(fx.device, roles=BeamRoles())
     with pytest.raises(ScheduleError, match=r"do not identify a single-qubit gate drive"):
         default_gate_drives(bare)
@@ -128,13 +121,10 @@ def test_the_level_decision_names_both_numbers_and_both_guards() -> None:
     assert forced.reason == f"GATE_LOCAL forced by the caller; level='auto' would choose {d.reason}"
 
 
-FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
-
-
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
     preset = yb171_chain(2)
-    sur = surrogate_table(preset.device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
+    sur = two_ion_surrogate(2000)
     return preset, sur.table
 
 

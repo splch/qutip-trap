@@ -38,13 +38,7 @@ from qutip_trap.control.shaping import (
 from qutip_trap.control.table import Waveform
 from qutip_trap.light.beams import Beam
 from qutip_trap.units import TWO_PI
-from tests.m4_fixtures import (
-    X_COM_TWO_IONS,
-    chain_device,
-    three_ion_device,
-    two_ion_device,
-    two_ion_modes,
-)
+from tests.fixtures import X_COM_TWO_IONS, chain_device, two_ion_device, two_ion_modes
 from tests.oracles import choi_segment_count, ms_two_body_angle
 
 ONE_MODE = GateModes(
@@ -386,7 +380,7 @@ def test_multi_pair_waveform_stores_the_solved_pairs_angles() -> None:
     """A pulse solved for pair (0, 2) of a THREE-ion GateModes stores pair (0, 2)'s per-mode angles, not the first pair's:
     the same envelope carries chi(0,1) = chi(1,2) = 0.449272 while chi(0,2) = pi/4. A multi-pair GateModes with no pair
     named is refused."""
-    dev = three_ion_device()
+    dev = chain_device(3)
     modes = gate_modes(dev, (0, 1, 2), (0, 1))
     assert abs(modes.eta[1][1]) < 1e-15, (
         "the centre ion sits at a node of the antisymmetric mode; the eigensolver leaves 1e-17, not an exact zero"

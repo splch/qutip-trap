@@ -11,6 +11,7 @@ import pytest
 import qutip as qt
 from scipy.special import j0, j1
 
+from qutip_trap.device.presets import crain_snspd_detector
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.bloch import CeilingViolation, beam_for_transition, shifted_beam
 from qutip_trap.readout.detection import Detector, RecordModel
@@ -34,23 +35,23 @@ from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.species.sources import SOURCES
 from qutip_trap.units import TWO_PI
-from tests.readout_fixtures import crain_record_model, snspd_detector, yb_detection_beam
-from tests.test_bloch import BRIGHT, DARK, detection_model
+from tests.fixtures import (
+    BRIGHT,
+    D_HFP,
+    D_HFS,
+    DARK,
+    GAMMA_S,
+    MAGIC_ANGLE_RAD,
+    YB,
+    crain_record_model,
+    detection_model,
+    yb_detection_beam,
+)
+from tests.oracles import yb171_detection_rate
 
-YB = species("171Yb+")
 CA = species("40Ca+")
-GAMMA_S = YB.transition("S1/2-P1/2").partial_rate_rad_s
-D_HFP = TWO_PI * 2.105e9
-D_HFS = TWO_PI * 12_642_812_118.5
-MAGIC_ANGLE_RAD = math.acos(1.0 / math.sqrt(3.0))
 WAIST_M = 20e-6
 CA_LEVELS = ("S1/2", "P1/2", "D3/2")
-
-
-def _yb171_closed_rate(s_o: float, gamma: float, detuning: float = 0.0) -> float:
-    """R_o = (Gamma/18) s_o/[1 + (2/9) s_o + (2 Delta/Gamma)^2] for the 171Yb+ F = 1 -> F' = 0 cycle, saturating at Gamma/4:
-    the ceiling of the exact four-level rate at its optimum field."""
-    return (gamma / 18.0) * s_o / (1.0 + (2.0 / 9.0) * s_o + (2.0 * detuning / gamma) ** 2)
 
 
 def _yb171_leakage_closed(s_o: float, gamma: float) -> tuple[float, float]:
@@ -69,7 +70,7 @@ def test_yb171_bloch_rates_sit_below_the_closed_form_ceiling_and_obey_gamma_over
     """R_o from the exact four-level solve is within 1 % below the (Gamma/18) form at s_o = 0.1, 1 G, the resonant manifold's
     ceiling is 1/4 and the excited population sits below it."""
     fl = rates_from_bloch(detection_model(0.1, 1.0), BRIGHT, DARK, line="S1/2<-P1/2")
-    assert 0.99 < fl.R_bright_per_s / _yb171_closed_rate(0.1, GAMMA_S) < 1.0
+    assert 0.99 < fl.R_bright_per_s / yb171_detection_rate(0.1, GAMMA_S) < 1.0
     assert fl.ceiling == 0.25
     assert fl.excited_population is not None and fl.excited_population < 0.25
     assert fl.R_bright_per_s < GAMMA_S / 4.0
@@ -112,7 +113,7 @@ def test_detection_rates_for_ion_builds_the_species_scheme_with_bright_is_1_pola
     )
     assert fl.R_bright_per_s > 0.0 and fl.shelf_decay_per_s == 0.0
     # the magic-angle beam along y at B = 5 G is destabilized: the rate is a sizeable fraction of the closed form
-    assert fl.R_bright_per_s / _yb171_closed_rate(0.5, GAMMA_S) > 0.5
+    assert fl.R_bright_per_s / yb171_detection_rate(0.5, GAMMA_S) > 0.5
 
 
 def test_ceiling_violation_is_raised_not_assumed() -> None:
@@ -256,7 +257,7 @@ def test_the_efficiency_enters_once_and_linearly() -> None:
     """epsilon_sys applies once, at scattered -> detected rate: the detected rate is linear in ``Detector.efficiency`` with
     slope R_o, which leaves no room for a hidden factor (such as a lumped eta/3), and the background stays separate."""
     rates = FluorescenceRates(
-        R_bright_per_s=_yb171_closed_rate(2.45, GAMMA_S),
+        R_bright_per_s=yb171_detection_rate(2.45, GAMMA_S),
         R_dark_pumping_per_s=341.0,
         R_bright_pumping_per_s=16.4,
     )
@@ -267,7 +268,7 @@ def test_the_efficiency_enters_once_and_linearly() -> None:
         assert model.detected_bright_per_s == pytest.approx(eff * rates.R_bright_per_s, rel=1e-12)
         assert model.background_per_s == 4.2
     ingested = rates_from_detected(472e3, 0.04356, dark_pumping_per_s=341.0, bright_pumping_per_s=16.4)
-    detected, background = ingested.detected(snspd_detector())
+    detected, background = ingested.detected(crain_snspd_detector())
     assert detected == pytest.approx(472e3) and background == 4.2
     assert ingested.ceiling is None and "apparatus" in ingested.provenance[-1]
 

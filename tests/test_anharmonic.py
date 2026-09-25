@@ -27,7 +27,7 @@ from qutip_trap.trap.anharmonic import (
 )
 from qutip_trap.trap.crystal import Crystal, coulomb_hessian_j_per_m2, length_scale_m, solve_crystal
 from qutip_trap.units import HBAR_J_S, TWO_PI
-from tests.m2_fixtures import two_ion_raman_device
+from tests.fixtures import two_ion_raman_device
 
 G_RAD_S = TWO_PI * 1.419e3
 """g = eps omega_z for 40Ca+ at omega_z = 2 pi x 2 MHz, eps = x0/(4 l)."""

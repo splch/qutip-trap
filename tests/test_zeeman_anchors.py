@@ -20,15 +20,12 @@ from qutip_trap.species.zeeman import (
     transition_sensitivity,
 )
 from qutip_trap.units import M_E_OVER_M_P
+from tests.fixtures import G_J_S12
 
 CA43 = MODULES["43Ca+"].TABLE
 BE9 = MODULES["9Be+"].TABLE
 MG25 = MODULES["25Mg+"].TABLE
 YB = MODULES["171Yb+"].TABLE
-
-MG25_G_J_ASSUMED = 2.00226
-"""The g_J the 25Mg+ anchor is evaluated at: no absolute 25Mg+ g_J is measured (only g_I/g_J), so 9Be+'s 2.00226(2) is
-declared here as an assumption; the anchor depends on it at the 0.25 G level."""
 
 
 def breit_rabi_hz(
@@ -75,7 +72,7 @@ def be9_ground(g_j: float | None = None) -> HyperfineZeeman:
     )
 
 
-def mg25_ground(g_j: float = MG25_G_J_ASSUMED) -> HyperfineZeeman:
+def mg25_ground(g_j: float = G_J_S12) -> HyperfineZeeman:
     return HyperfineZeeman(
         _s12(MG25["mg25.S12.A_hfs_hz"].value, g_j), 2.5, MG25["mg25.mu_I_nuclear_magnetons"].value
     )

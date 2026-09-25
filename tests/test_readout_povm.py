@@ -28,20 +28,25 @@ from qutip_trap.readout.discriminate import (
     product_povm,
 )
 from qutip_trap.readout.fluorescence import ReadoutScheme
-from tests.readout_fixtures import (
-    CA_OPTICAL,
-    YB_DIRECT,
-    bell_state,
-    crain_record_model,
-    myerson_record_model,
-    product_state,
-    register_space,
-)
+from tests.fixtures import CA_OPTICAL, YB_DIRECT, crain_record_model, myerson_record_model
 
 THRESHOLD = ThresholdDiscriminator(0.5, 22e-6)
 MYERSON_THRESHOLD = ThresholdDiscriminator(5.5, 420e-6)
 TRANSFER = 0.9
 """A 10 % shelving-transfer failure, where the start class and the qubit level do not coincide."""
+
+
+def register_space(n_ions: int) -> HilbertSpace:
+    """An internal-only register space (no resolved modes): what the readout stage reads after the pulses."""
+    return HilbertSpace(tuple([2] * n_ions), (), None, ())
+
+
+def product_state(bits: tuple[int, ...]) -> qt.Qobj:
+    return qt.tensor(*[qt.basis(2, b) for b in bits])
+
+
+def bell_state(n_ions: int) -> qt.Qobj:
+    return (product_state((0,) * n_ions) + product_state((1,) * n_ions)).unit()
 
 
 def _empirical_confusion(outcome: ReadoutOutcome) -> np.ndarray:
@@ -128,7 +133,7 @@ def test_full_and_fast_paths_agree_in_confusion_at_zero_crosstalk_and_bell_corre
     correlations survive both because the joint outcome is sampled projectively first."""
     rm = crain_record_model()
     space = register_space(2)
-    state = space.initial_state(bell_state(space))
+    state = space.initial_state(bell_state(2))
     probs = joint_level_probabilities(space, state)
     assert probs[0, 0] == pytest.approx(0.5) and probs[1, 1] == pytest.approx(0.5) and probs[0, 1] == 0.0
     seeds = SeedSpec(11)
@@ -165,7 +170,7 @@ def test_fast_and_full_paths_agree_on_an_imperfect_transfer_scheme() -> None:
     expected = _povm_confusion(pov, [scheme])[0]
     shots = 20_000
     for level in (0, 1):
-        state = space.initial_state(product_state(space, (level,)))
+        state = space.initial_state(product_state((level,)))
         full = measure(space, state, [scheme], [rm], MYERSON_THRESHOLD, SeedSpec(7), shots=shots)
         fast = measure(
             space, state, [scheme], [rm], MYERSON_THRESHOLD, SeedSpec(7), shots=shots, mode="fast", povm=pov
@@ -202,7 +207,7 @@ def test_register_confusion_at_configured_crosstalk_is_bounded_and_reported() ->
     assert max_confusion_discrepancy(register, product) == pytest.approx(discrepancy, abs=0.02)
     # the full path on |01> (ion 0 dark, ion 1 bright) reproduces the register form, not the product
     space = register_space(2)
-    state = space.initial_state(product_state(space, (0, 1)))
+    state = space.initial_state(product_state((0, 1)))
     full = measure(
         space, state, schemes, [rm, rm], THRESHOLD, SeedSpec(3), shots=4000, mode="full", leakage={1: 0.04}
     )
@@ -212,7 +217,7 @@ def test_register_confusion_at_configured_crosstalk_is_bounded_and_reported() ->
     )
     assert float(np.mean(fast.bits[:, 0] == 1)) == pytest.approx(leaked, abs=0.03)
     # a Bell state does not expose the crosstalk (neighbours always share the class), and its correlations survive
-    bell = space.initial_state(bell_state(space))
+    bell = space.initial_state(bell_state(2))
     out = measure(
         space, bell, schemes, [rm, rm], THRESHOLD, SeedSpec(5), shots=3000, mode="fast", povm=register
     )
@@ -236,7 +241,7 @@ def test_register_confusion_indexes_the_ions_own_axis_by_level_and_its_neighbour
     assert register.factored.tables[0][1, 0, 0] > register.factored.tables[0][1, 1, 0]
     assert 0.0 < max_confusion_discrepancy(register, product) < 1.0
     space = register_space(2)
-    state = space.initial_state(product_state(space, (1, 0)))
+    state = space.initial_state(product_state((1, 0)))
     shots = 20_000
     full = measure(space, state, schemes, [rm, rm], MYERSON_THRESHOLD, SeedSpec(9), shots=shots, leakage=leak)
     fast = measure(
@@ -298,7 +303,7 @@ def test_two_shots_on_one_sample_and_trajectory_draw_different_records() -> None
     reproducible shot by shot."""
     rm = crain_record_model(window_s=200e-6)
     space = register_space(1)
-    state = space.initial_state(product_state(space, (1,)))
+    state = space.initial_state(product_state((1,)))
     seeds = SeedSpec(21)
     disc = ThresholdDiscriminator(0.5, 200e-6)
     a = measure(space, state, [YB_DIRECT], [rm], disc, seeds, shots=6, mode="full", keep_records=True)
@@ -319,7 +324,7 @@ def test_measure_with_a_time_resolved_discriminator_reports_posteriors_and_the_s
     space = register_space(1)
     disc = TimeResolvedML(10e-6, 420e-6, dark_class="shelf")
     for level, expected_bit in ((0, 0), (1, 1)):
-        state = space.initial_state(product_state(space, (level,)))
+        state = space.initial_state(product_state((level,)))
         out = measure(space, state, [CA_OPTICAL], [rm], disc, SeedSpec(1), shots=40, mode="full")
         assert np.mean(out.bits[:, 0] == expected_bit) > 0.95
         assert out.posteriors is not None and np.all(out.posteriors[:, 0] >= 0.0)

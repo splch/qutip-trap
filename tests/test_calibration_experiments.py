@@ -14,7 +14,7 @@ import pytest
 
 from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.experiments import CalibrationReport
-from qutip_trap.device.presets import ideal_hardware
+from qutip_trap.device.presets import ideal_hardware, yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.fitting import thermal_rabi_model
 from qutip_trap.experiments.imaging import crystal_image
@@ -43,16 +43,12 @@ from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, differe
 from qutip_trap.light.roles import detection_beams
 from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
-from qutip_trap.options import Numerics, Truncation
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
 from qutip_trap.trap.pseudopotential import RfDrive
-from tests.m2_fixtures import microwave_device, single_ion_raman_device
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import FAST, WINDOWS, microwave_device, single_ion_raman_device
 
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
-FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
 DURATIONS = np.linspace(0.0, 20e-6, 9)
 DETUNINGS = np.linspace(-3.2e6, 3.2e6, 9)
 
@@ -65,7 +61,7 @@ def single():  # type: ignore[no-untyped-def]
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     return fx, derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False)
 
 
@@ -505,14 +501,15 @@ def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field()
     harmonic of the photon rate at the rf frequency is odd in the signed modulation index and linear near the null; projected
     on the atom's response phase half a linewidth to the red it is the signal whose slope the residual beta is read from (a
     thousand times the on-resonance response), and the shim scan's line fit crosses zero at the compensating field."""
-    fx = circuit_fixture(2, with_recipe=False)
+    base = yb171_chain(2).device
     dev = dataclasses.replace(
-        fx.device,
+        base,
         trap=dataclasses.replace(
-            fx.device.trap,
+            base.trap,
             rf=RfDrive(voltage_peak_v=200.0, frequency_hz=30e6),
             stray_field_v_per_m=(20.0, 0.0, 0.0),
         ),
+        preparation=None,
     )
     dev = dataclasses.replace(dev, crystal=solve_crystal(dev.trap, dev.crystal.species))
     idx = detection_beams(dev, 0)

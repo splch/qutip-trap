@@ -28,12 +28,9 @@ from qutip_trap.run.job import last_record
 from qutip_trap.run.levels import FidelityLevel
 from qutip_trap.run.results import Progress
 from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec, submit
-from tests.fixtures import run
+from tests.fixtures import BELL, FAST, WINDOWS, run
 
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
-FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
 SERIAL = Numerics(truncation=Truncation(branch_weight_min=1e-3), parallel=Parallel(map="serial"))
 
 

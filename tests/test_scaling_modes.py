@@ -17,12 +17,14 @@ import pytest
 import qutip as qt
 
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
+from qutip_trap.control.compiler import compile_to_native
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import Schedule, entangling_pulses, single_qubit_pulse
 from qutip_trap.control.schedule import schedule as make_schedule
 from qutip_trap.control.shaping import GateModes, gate_modes, symmetric_pulse, waveform_integrals
 from qutip_trap.control.table import Waveform
+from qutip_trap.device.model import Device
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, TruncationLimit
 from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, ConvergenceReport, convergence_check, evolve
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
@@ -33,6 +35,7 @@ from qutip_trap.dynamics.truncation import (
     boundary_population,
     regrid_state,
 )
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
@@ -51,17 +54,29 @@ from qutip_trap.run.space import (
     waveform_contributions,
 )
 from qutip_trap.units import TWO_PI
-from tests.fixtures import run
-from tests.m4_fixtures import (
+from tests.fixtures import (
+    BELL,
+    WINDOWS,
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,
     raman_gate_drives,
+    run,
     table_with_waveform,
     two_ion_device,
 )
-from tests.m6_fixtures import circuit_fixture
-from tests.m9_fixtures import Y_MODES_TWO_IONS, tilted_pair_device
+
+Y_MODES_TWO_IONS = (4, 5)
+"""The y family of the two-ion chain: 4 the rocking mode (2.720 MHz), 5 the COM (2.900 MHz)."""
+
+
+def tilted_pair_device(theta_rad: float) -> Device:
+    """The two-ion chain with its global pair along +-(cos theta, sin theta, 0): Delta k gains a y component, so the drive
+    couples weakly to the y modes (eta_y = eta_x tan theta, about 0.008 at 6 degrees against 0.08 on x)."""
+    c, s = math.cos(theta_rad), math.sin(theta_rad)
+    b1 = Beam(355e-9, (c, s, 0.0), (-s, c, 0.0), 60e-6, 0.3, (0.0, 0.0, 0.0))
+    b2 = Beam(355e-9, (-c, -s, 0.0), (0.0, 0.0, 1.0), 60e-6, 0.3, (0.0, 0.0, 0.0))
+    return dataclasses.replace(chain_device(2), beams=(b1, b2))
 
 
 def grown_caps(space: HilbertSpace, add: int = 2, *, dimension_max: int | None = None) -> HilbertSpace:
@@ -150,8 +165,6 @@ def convergence_report(
 
 
 OPTS = SolverOptions()
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 
 # ---- the contribution criterion (Sections 5.2, 11.3 item 2; Section 9.8 row 3; Section 9.17 "Freeze against drop") ----------
 
@@ -674,7 +687,7 @@ def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(mo
 
 @pytest.fixture(scope="module")
 def bell_schedule():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
     sched = make_schedule(compile_to_native(BELL), fx.device, sur.table, t0_s=0.0)
     return fx, sur, sched

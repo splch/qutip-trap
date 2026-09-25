@@ -25,7 +25,7 @@ from qutip_trap.noise.scattering import (
     scattering_estimates,
 )
 from qutip_trap.species import species
-from tests.m2_fixtures import single_ion_raman_device
+from tests.fixtures import single_ion_raman_device
 from tests.oracles import d_level_branching, epsilon_s_and_d
 
 

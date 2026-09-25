@@ -15,6 +15,7 @@ from collections.abc import Sequence
 import numpy as np
 import pytest
 
+from qutip_trap.device.presets import OBLIQUE
 from qutip_trap.light.beams import Beam
 from qutip_trap.prep.doppler import (
     PARTICIPATION_THRESHOLD,
@@ -27,7 +28,7 @@ from qutip_trap.trap.crystal import build_crystal
 from qutip_trap.trap.model import Trap
 from qutip_trap.units import ATOMIC_MASS_KG as U_KG
 from qutip_trap.units import C_M_PER_S, TWO_PI
-from tests.bloch_fixtures import (
+from tests.fixtures import (
     TWO_LEVEL_EXCITED_PLUS,
     TWO_LEVEL_GROUND,
     gamma_rad_s,
@@ -42,7 +43,6 @@ MG24_MASS_U = 23.985042
 BE_SINGLE_ION_HZ = (12.26e6, 11.19e6, 2.69e6)
 MG24_SINGLE_ION_HZ = (4.82e6, 3.72e6, 1.65e6)
 
-OBLIQUE = (1.0 / math.sqrt(3.0),) * 3
 
 COOLANT_QUBIT = (40.0, 171.0)
 """(coolant, qubit) masses in u of the mixed pair: a 40Ca+-like coolant next to a 171Yb+-like qubit."""

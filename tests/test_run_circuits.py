@@ -15,25 +15,23 @@ from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, ideal_probabilities
 from qutip_trap.control.schedule import ScheduleError
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import AdaptiveML, FirstPhoton, ThresholdDiscriminator, TimeResolvedML
 from qutip_trap.run.job import enumerate_branches, ideal_register_state, last_record, register_fidelity
-from tests.fixtures import run
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import BELL, WINDOWS, run, table_with_waveform, two_ion_modes, two_ion_surrogate
 
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 FAST = SolverOptions(branch_weight_min=1e-4)
 
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
-    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
+    fx = yb171_chain(2)
+    sur = two_ion_surrogate(2000)
     return fx, sur
 
 
@@ -118,9 +116,8 @@ def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None: 
     gate_inf = 1.0 - sur.entangling[(0, 1)].checks[-1].fidelity
     assert 1.0 - fid > 0.3 * gate_inf
     # against the uncompiled target the frame matters: (|00> + |11>)/sqrt2 differs from the played state by the frame's sign
-    from tests.m6_fixtures import bell_target
-
-    assert register_fidelity(res, bell_target()) < 0.05 or register_fidelity(res, bell_target()) > 0.95
+    target = np.array([1.0, 0.0, 0.0, 1.0], dtype=complex) / math.sqrt(2.0)
+    assert register_fidelity(res, target) < 0.05 or register_fidelity(res, target) > 0.95
 
 
 def test_bell_diagnostics_report_the_space_classes_branches_and_approximations(bell) -> None:  # type: ignore[no-untyped-def]
@@ -257,10 +254,9 @@ def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase()
 
     from qutip_trap.control.schedule import beat_phase_offset_rad, schedule
     from qutip_trap.control.table import Waveform
-    from tests.m4_fixtures import table_with_waveform, two_ion_modes
 
-    fx = circuit_fixture(2, with_recipe=False)
-    modes = two_ion_modes(fx.device)
+    device = dataclasses.replace(yb171_chain(2).device, preparation=None)
+    modes = two_ion_modes(device)
     wf = Waveform.symmetric(modes, gate_mode=3, epsilon_hz=20e3)
     table = table_with_waveform((0, 1), wf, rabi_hz={(0, 2): 1e5, (1, 4): 1e5})
     circ = Circuit(
@@ -275,7 +271,7 @@ def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase()
     spin_by_mode: dict[bool, list[float]] = {}
     for continuous in (True, False):
         dev = dataclasses.replace(
-            fx.device, hardware=dataclasses.replace(fx.device.hardware, phase_continuous=continuous)
+            device, hardware=dataclasses.replace(device.hardware, phase_continuous=continuous)
         )
         sch = schedule(circ, dev, table)
         ms_pulses = [p for p in sch.pulses if (p.gate_id or "").startswith("ms")]
@@ -368,7 +364,7 @@ def test_run_record_outcome_covers_every_kept_shot(two_ion) -> None:  # type: ig
 
 @pytest.fixture(scope="module")
 def one_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(1)
+    fx = yb171_chain(1)
     sur = surrogate_table(
         fx.device,
         pairs=[],
@@ -454,7 +450,7 @@ def test_the_adaptive_and_first_photon_protocols_also_run(one_ion) -> None:  # t
 @pytest.mark.slow
 def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_pairs() -> None:
     """A run without a table calibrates the surrogate for the pairs the circuit uses; ``calibrate`` is the same table."""
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     table = calibrate(
         Machine(fx.device), pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS
     ).table
@@ -498,7 +494,7 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
     """Section 9.6 row 2: H, CNOT(0,1), CNOT(1,2) on the three-ion chain; the adjacent pairs resolve the COM and zigzag modes
     and freeze the tilt (whose participation on the middle ion vanishes), the frozen contribution is reported, the boundary
     populations stay below the threshold and the histogram is the GHZ one within the readout and the crosstalk."""
-    fx = circuit_fixture(3, address_waist_m=2.0e-6)
+    fx = yb171_chain(3, address_waist_m=2.0e-6)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2)], detection_records=1500, detection_windows_s=WINDOWS
     )
@@ -562,7 +558,7 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
     1 -> 0 flip of the secret than on the 0 -> 1 flip: the oracle CNOT maps the ancilla's crosstalk rotations onto its
     control while the 0 bit sees only the ancilla pulses' direct rotations, and the bright-state readout error exceeding the
     dark one adds to it."""
-    fx = circuit_fixture(3, address_waist_m=2.0e-6)
+    fx = yb171_chain(3, address_waist_m=2.0e-6)
     sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS)
     ops = (
         Operation("x", (1,), ()),
@@ -602,7 +598,7 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
 
 @pytest.fixture(scope="module")
 def four_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(4, address_waist_m=2.0e-6)
+    fx = yb171_chain(4, address_waist_m=2.0e-6)
     sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=800, detection_windows_s=WINDOWS)
     return fx, sur
 

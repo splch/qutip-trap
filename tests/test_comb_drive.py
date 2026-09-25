@@ -26,13 +26,12 @@ from qutip_trap.light.comb import (
 from qutip_trap.light.raman import DerivedDrive, comb_drive, derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.units import TWO_PI
-from tests.m2_fixtures import single_ion_raman_device
+from tests.fixtures import KX, single_ion_raman_device
 
 LEE = CombSpec(120e6, 14e-12, "field_sech", 105, 0.0)
 APB = CombSpec(80e6, 10e-12, "field_sech", 158, 0.0)
 NU_Q = 12.642812118466e9
 """The 171Yb+ zero-field clock splitting: the APB operating point's qubit frequency."""
-KX = 1
 """The 3 MHz x mode of the single-ion fixture."""
 GATE_TIME_S = 100e-6
 """The explicit-tone cut is 10/t_g, about 100 kHz for a 100 us gate: far inside the 80 MHz tooth gap."""

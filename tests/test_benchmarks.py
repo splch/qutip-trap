@@ -38,7 +38,6 @@ from qutip_trap.benchmarks.volume import (
     quantum_volume,
     random_square_circuit,
 )
-from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control import native
 from qutip_trap.control.compiler import CNOT_MATRIX, Circuit, Operation, compile_report, ideal_probabilities
 from qutip_trap.control.native import global_phase
@@ -59,17 +58,12 @@ from qutip_trap.noise.summary import (
 )
 from qutip_trap.options import Numerics, Truncation
 from qutip_trap.run.job import last_record
-
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
+from tests.fixtures import FAST, two_ion_surrogate
 
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    preset = yb171_chain(2)
-    sur = surrogate_table(preset.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
-    return Machine(
-        preset.device, table=sur.table, numerics=Numerics(truncation=Truncation(branch_weight_min=1e-3))
-    )
+    return Machine(yb171_chain(2).device, table=two_ion_surrogate(1000).table, numerics=FAST)
 
 
 # ---- the decay fit and its units -------------------------------------------------------------------------------------------------

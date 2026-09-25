@@ -4,12 +4,14 @@ adaptive method, Noek's and Crain's first-photon protocols, the camera-exposure 
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
 import pytest
 
 from qutip_trap.calibration.readout import calibrate_detection, histogram_error_rates
+from qutip_trap.device.presets import crain_snspd_detector
 from qutip_trap.experiments.readout import detection_histogram
 from qutip_trap.machine import Machine
 from qutip_trap.readout.detection import ClassPath, Detector, PhotonRecord, RecordModel, log_poisson_pmf
@@ -22,15 +24,15 @@ from qutip_trap.readout.discriminate import (
     myerson_log_likelihoods,
     optimize_threshold,
 )
-from qutip_trap.species import species
-from tests.m4_fixtures import chain_device
-from tests.readout_fixtures import (
+from tests.fixtures import (
     CA_OPTICAL,
+    GAMMA_S,
     YB_DIRECT,
+    chain_device,
     crain_record_model,
     myerson_record_model,
     two_state_rates,
-    yb_readout_device,
+    yb_detection_beam,
 )
 
 pytestmark = pytest.mark.filterwarnings("ignore::RuntimeWarning")
@@ -304,13 +306,17 @@ def test_calibrate_detection_on_the_shelving_scheme_reports_the_shelf_start() ->
 def test_detection_histogram_experiment_runs_the_bloch_model_of_the_device_beams() -> None:
     """The experiment finds the 369.5 nm beam of the device, solves the rates at the ion's position and returns histograms,
     the threshold, the window and the fitted rates; the scattered rate is the Bloch solve's, below Gamma/4."""
-    dev = yb_readout_device(2, s_o=2.45)
+    base = chain_device(2)
+    dev = dataclasses.replace(
+        base,
+        beams=base.beams + (yb_detection_beam(2.45, base.field.B_gauss),),
+        detector=crain_snspd_detector(),
+    )
     res = detection_histogram(Machine(dev), 0, 2000, windows_s=tuple(np.linspace(10e-6, 60e-6, 6)), seed=0)
     assert res.model == "detection_histogram" and res.data.shape[0] == 2
     assert res.data[0].sum() == 2000 and res.data[1].sum() == 2000
     fitted = res.fitted
-    gamma = species("171Yb+").transition("S1/2-P1/2").partial_rate_rad_s
-    assert 0.0 < fitted["R_bright_scattered_per_s"][0] < gamma / 4.0
+    assert 0.0 < fitted["R_bright_scattered_per_s"][0] < GAMMA_S / 4.0
     assert fitted["R_bright_detected_per_s"][0] == pytest.approx(
         dev.detector.efficiency * fitted["R_bright_scattered_per_s"][0], rel=0.05
     )

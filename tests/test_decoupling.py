@@ -29,7 +29,7 @@ from qutip_trap.noise.decoupling import (
     rotation,
 )
 from qutip_trap.noise.spectra import NoiseSpectrum, gaussian_spectrum, power_law_spectrum
-from tests.m2_fixtures import microwave_device
+from tests.fixtures import microwave_device
 
 TAU = 1.0
 RABI_HZ = 50e3

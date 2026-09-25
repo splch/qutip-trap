@@ -25,52 +25,44 @@ from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.units import C_M_PER_S, TWO_PI
-from tests.bloch_fixtures import (
+from tests.fixtures import (
+    BRIGHT,
+    D_HFP,
+    D_HFS,
+    DARK,
+    GAMMA_S,
     TWO_LEVEL_EXCITED,
     TWO_LEVEL_EXCITED_PLUS,
     TWO_LEVEL_GROUND,
+    YB,
+    detection_model,
     gamma_rad_s,
-    pi_beam,
+    power_for_rabi,
     sigma_plus_beam,
     structure,
     two_level_atom,
-    two_level_lorentzian,
 )
+from tests.oracles import yb171_detection_rate
 
-YB = species("171Yb+")
 YB_LINE = YB.transition("S1/2-P1/2")
-GAMMA_S = YB_LINE.partial_rate_rad_s
-"""The partial S1/2-P1/2 rate, 2 pi x 19.62 MHz, the Gamma of the detection-rate closed forms."""
-D_HFP = TWO_PI * 2.105e9
-D_HFS = TWO_PI * 12_642_812_118.5
-BRIGHT = tuple(f"S1/2 F=1 mF={m}" for m in (-1, 0, 1))
-DARK = ("S1/2 F=0 mF=0",)
 MAGIC = tuple(linear_polarization((1.0, 0.0, 0.0), math.acos(1.0 / math.sqrt(3.0)), (0.0, 0.0, 1.0)))
 WAIST = 20e-6
 
 
-def detection_model(s0: float, b_gauss: float, delta_rad_s: float = 0.0, **kw: object) -> BlochModel:
-    """171Yb+ S1/2 + P1/2 with the D3/2 branch folded back (the repump-level constants are not tabulated), the
-    detection beam at the magic angle with I/I_sat = s0 on the partial-rate I_sat."""
-    st = AtomicStructure(YB, b_gauss, (0.0, 0.0, 1.0))
-    power = s0 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
-    beam = beam_for_transition(
-        st,
-        "S1/2 F=1 mF=0",
-        "P1/2 F=0 mF=0",
-        delta_rad_s,
-        (1.0, 0.0, 0.0),
-        MAGIC,
-        power_w=power,
-        waist_m=WAIST,  # type: ignore[arg-type]
-    )
-    return BlochModel(
-        st, [beam], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"), **kw
-    )  # type: ignore[arg-type]
+def pi_beam(st: AtomicStructure, lower: str, upper: str, omega_rad_s: float, detuning_rad_s: float) -> Beam:
+    """A 20 um pi-polarized beam (polarization along B = z) along x with Rabi frequency ``omega`` and the detuning."""
+    pol = (0.0 + 0.0j, 0.0 + 0.0j, 1.0 + 0.0j)
+    k_hat = (1.0, 0.0, 0.0)
+    power = power_for_rabi(st, lower, upper, omega_rad_s, 20e-6, pol, k_hat)
+    omega = TWO_PI * (st.state(upper).energy_hz - st.state(lower).energy_hz) + detuning_rad_s
+    return Beam(TWO_PI * C_M_PER_S / omega, k_hat, pol, 20e-6, power, (0.0, 0.0, 0.0))
 
 
-def closed_form_rate(s0: float, delta_rad_s: float = 0.0) -> float:
-    return (GAMMA_S / 18.0) * s0 / (1.0 + (2.0 / 9.0) * s0 + (2.0 * delta_rad_s / GAMMA_S) ** 2)
+def two_level_lorentzian(omega_rad_s: float, delta_rad_s: float) -> float:
+    """W(Delta) = Gamma (s/2)/(1 + s + (2 Delta/Gamma)^2), s = 2 Omega^2/Gamma^2 (RMP 2003 Eq. 96)."""
+    g = gamma_rad_s()
+    s = 2.0 * omega_rad_s**2 / g**2
+    return g * (s / 2.0) / (1.0 + s + (2.0 * delta_rad_s / g) ** 2)
 
 
 # ---- the builder ---------------------------------------------------------------------------------------------------------
@@ -154,7 +146,7 @@ def test_yb171_detection_rate_recovers_gamma_over_18_and_two_ninths(
     2/3 branching makes the prefactor Gamma/18. The exact four-level rate sits BELOW the closed form, because the field that
     destabilizes the dark state also detunes the sigma transitions: 0.995 to 0.9986 of it at the best field."""
     dr = detection_model(s0, b_gauss).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
-    ratio = dr.R_bright_per_s / closed_form_rate(s0)
+    ratio = dr.R_bright_per_s / yb171_detection_rate(s0, GAMMA_S)
     assert 1.0 - tol < ratio <= 1.0 + 1e-6
     assert dr.ceiling.ceiling == 0.25
     assert (len(dr.ceiling.ground_labels), len(dr.ceiling.excited_labels)) == (3, 1)
@@ -168,7 +160,7 @@ def test_yb171_detuning_dependence_is_the_lorentzian_bracket() -> None:
         BRIGHT, DARK, line="S1/2<-P1/2"
     )
     assert dr1.R_bright_per_s / dr0.R_bright_per_s == pytest.approx(
-        closed_form_rate(0.1, -0.5 * GAMMA_S) / closed_form_rate(0.1), rel=6e-3
+        yb171_detection_rate(0.1, GAMMA_S, -0.5 * GAMMA_S) / yb171_detection_rate(0.1, GAMMA_S), rel=6e-3
     )
 
 
@@ -197,14 +189,14 @@ def test_yb171_crain_operating_point_numbers() -> None:
     assert rd_crain == pytest.approx(364.6, rel=0.01)
     assert rb == pytest.approx(14.86, rel=0.01)
     dr = detection_model(s0, 4.7).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
-    assert 0.99 < dr.R_bright_per_s / closed_form_rate(s0) <= 1.0 + 1e-6
+    assert 0.99 < dr.R_bright_per_s / yb171_detection_rate(s0, GAMMA_S) <= 1.0 + 1e-6
     assert dr.R_dark_pumping_per_s == pytest.approx(rd_noek, rel=0.03)
     assert dr.R_bright_pumping_per_s == pytest.approx(rb, rel=0.01)
     # at a sub-optimal field (1 G) the bright manifold is redistributed by the dark-state coherence and R_d rises to about 347 Hz,
     # near Crain's measured 341(13) Hz; the measured triple is therefore not a test of the prefactor alone
     dr1 = detection_model(s0, 1.0).detection_rates(BRIGHT, DARK, line="S1/2<-P1/2")
     assert 320.0 < dr1.R_dark_pumping_per_s < 380.0
-    assert dr1.R_bright_per_s / closed_form_rate(s0) < 0.3
+    assert dr1.R_bright_per_s / yb171_detection_rate(s0, GAMMA_S) < 0.3
 
 
 def test_full_steady_state_is_mostly_dark_and_the_conditional_state_is_bright() -> None:

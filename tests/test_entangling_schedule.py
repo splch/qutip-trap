@@ -20,10 +20,11 @@ from qutip_trap.control.pulses import LightShiftCouplings
 from qutip_trap.control.schedule import GateDrive, PhaseFrame, ScheduleError, ms_spin_phases, schedule
 from qutip_trap.control.shaping import gate_modes, solve_amplitude_modulation, symmetric_pulse
 from qutip_trap.control.table import Waveform
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.noise.sampling import quiet_sample
-from tests.m4_fixtures import (
+from tests.fixtures import (
     X_COM_TWO_IONS,
     derived_seeds,
     raman_gate_drives,
@@ -31,7 +32,6 @@ from tests.m4_fixtures import (
     two_ion_device,
     two_ion_modes,
 )
-from tests.m6_fixtures import circuit_fixture
 
 RABI_TABLE, STARK_TABLE = derived_seeds(two_ion_device(), raman_gate_drives(2))
 """The derived carrier Rabi frequencies and differential Stark shifts a calibrated table of this device holds (the played
@@ -256,7 +256,8 @@ def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:  # type: 
 @pytest.fixture(scope="module")
 def four_ion():  # type: ignore[no-untyped-def]
     """A four-ion chain with one calibrated symmetric waveform served for both disjoint pairs (0, 1) and (2, 3)."""
-    fx = circuit_fixture(4, with_recipe=False)
+    preset = yb171_chain(4)
+    fx = dataclasses.replace(preset, device=dataclasses.replace(preset.device, preparation=None))
     waveforms = {}
     for pair in ((0, 1), (2, 3)):
         modes = gate_modes(fx.device, pair, (0, 1))

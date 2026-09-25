@@ -28,7 +28,7 @@ from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.model import Trap
 from qutip_trap.units import TWO_PI
-from tests.bloch_fixtures import (
+from tests.fixtures import (
     TWO_LEVEL_EXCITED_PLUS,
     TWO_LEVEL_GROUND,
     gamma_rad_s,

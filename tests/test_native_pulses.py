@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -18,14 +19,22 @@ from qutip_trap.control.schedule import (
     schedule,
     single_qubit_pulse,
 )
+from qutip_trap.control.table import CalEntry, CalibrationTable
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample
-from tests.m2_fixtures import microwave_device, single_ion_raman_device, table_with_rabi
+from tests.fixtures import make_calibration_table, microwave_device, single_ion_raman_device
 
 KET0 = np.array([1.0, 0.0])
 RABI_HZ = 20661.157  # a 12.1 us pi/2 pulse (Harty)
+
+
+def table_with_rabi(entries: dict[tuple[int, int], float], status: str = "calibrated") -> CalibrationTable:
+    rabi = {
+        k: CalEntry(v, 1.0, status, "rabi_scan", "conv.rabi_frequency", 0.0, 0) for k, v in entries.items()
+    }  # type: ignore[arg-type]
+    return dataclasses.replace(make_calibration_table(), rabi=rabi)
 
 
 def _run_microwave(ops: list[Operation]) -> tuple[np.ndarray, object]:

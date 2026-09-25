@@ -1,13 +1,12 @@
-"""The example devices of ``device/presets.py`` (PLAN.md Section 3.2): the 171Yb+ chain is the validated fixture, hash for
-hash, with the drive maps the scheduler needs, and the 40Ca+ optical qubit runs the pipeline on a second species."""
+"""The example devices of ``device/presets.py`` (PLAN.md Section 3.2): the 171Yb+ chain's beams and drive maps, and the
+40Ca+ optical qubit running the pipeline on a second species."""
 
 from __future__ import annotations
 
 import pytest
 
 from qutip_trap.control.compiler import Circuit, Operation
-from qutip_trap.control.schedule import default_gate_drives
-from qutip_trap.device.model import BeamRoles
+from qutip_trap.control.schedule import GateDrive
 from qutip_trap.device.presets import (
     CA40_DETECTION_WINDOW_S,
     CA40_TRAP_HZ,
@@ -23,31 +22,23 @@ from qutip_trap.options import Numerics
 from qutip_trap.prep.recipe import recipe_of, run_preparation, standard_recipe
 from qutip_trap.run.job import register_fidelity
 from qutip_trap.species import species
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import derived_seeds
 
 GPI2 = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
 CA40_WINDOWS = (1e-3, 2e-3, 3e-3)
 
 
-def test_yb171_chain_is_the_validated_fixture_device() -> None:
+def test_yb171_chain_layout() -> None:
+    """The global pair first, one addressing pair per ion at the requested waist, the detection beam last; prepared and quiet."""
     for n, waist in ((2, 2.5e-6), (3, 2.0e-6)):
         preset = yb171_chain(n, address_waist_m=waist)
-        fixture = circuit_fixture(n, address_waist_m=waist)
+        dev = preset.device
         assert isinstance(preset, DevicePreset) and preset.n_ions == n
-        assert preset.device.hash() == fixture.device.hash(), (
-            "the preset and the validated fixture are one device"
-        )
-        assert (
-            preset.gate_drives == fixture.gate_drives
-            and preset.entangling_drives == fixture.entangling_drives
-        )
-        assert preset.detection_beam == fixture.detection_beam == len(preset.device.beams) - 1
-        # the device carries the drive maps as its roles, so the scheduler's default reads them without ambiguity
-        assert preset.device.roles == BeamRoles(
-            gate=preset.gate_drives, entangling=preset.entangling_drives, detection=preset.detection_beam
-        )
-        assert default_gate_drives(preset.device) == preset.gate_drives
-        assert preset.device.preparation is not None and preset.device.noise.is_quiet()
+        assert preset.entangling_drives == {i: GateDrive("raman", (0, 1)) for i in range(n)}
+        assert preset.gate_drives == {i: GateDrive("raman", (2 + 2 * i, 3 + 2 * i)) for i in range(n)}
+        assert all(dev.beams[k].waist_m == waist for d in preset.gate_drives.values() for k in d.beams)
+        assert preset.detection_beam == len(dev.beams) - 1 == 2 * n + 2
+        assert dev.preparation is not None and dev.noise.is_quiet()
 
 
 def test_preset_overrides_and_refusals() -> None:
@@ -76,7 +67,6 @@ def test_standard_recipe_refuses_the_optical_qubit_with_a_clear_error() -> None:
 def test_the_ca40_preset_derives_a_non_zero_e2_rabi_frequency_and_one_gate_beam() -> None:
     """The Delta m = 0 E2 geometric factor vanishes for the obvious k = y, pol = x choice, so the preset's 729 nm beam runs
     at k = (1, 1, 0)/sqrt 2 with the polarization at 135 degrees and derives 34.7 kHz."""
-    from tests.m4_fixtures import derived_seeds
 
     preset = ca40_optical(1)
     device = preset.device

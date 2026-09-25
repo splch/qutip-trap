@@ -32,7 +32,7 @@ from qutip_trap.dynamics.rotating import (
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
-from tests.m4_fixtures import (
+from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,

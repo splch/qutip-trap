@@ -13,6 +13,8 @@ from scipy.special import jv
 from qutip_trap.control.native import gpi2
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule
+from qutip_trap.device.model import Field
+from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.channels import heating_channels, qubit_dephasing_channels
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.evolve import evolve
@@ -35,9 +37,11 @@ from qutip_trap.noise.sampling import (
     key_qubit_offset_hz,
     quiet_sample,
 )
+from qutip_trap.species import species
+from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from tests.m2_fixtures import microwave_device, single_ion_raman_device, two_ion_raman_device
+from tests.fixtures import KX, microwave_device, quiet_device, single_ion_raman_device, two_ion_raman_device
 from tests.oracles import (
     cetina_population,
     cetina_theta,
@@ -49,7 +53,6 @@ from tests.oracles import (
     two_level_population,
 )
 
-KX = 1  # the 3 MHz x mode of the single-ion fixture
 WX = TWO_PI * 3.0e6
 
 
@@ -425,24 +428,8 @@ def test_beam_curvature_cetina_forms() -> None:
     in the continuum limit; Omega''/Omega = -2/w^2 = -2.6424e12 at w = 870 nm."""
     assert gaussian_curvature_per_m2(870e-9) == pytest.approx(-2.6424e12, rel=1e-4)
     m = 170.93578 * ATOMIC_MASS_KG
-    from qutip_trap.device.model import Device, Field
-    from qutip_trap.species import species
-    from qutip_trap.trap.crystal import solve_crystal
-    from tests.fixtures import make_detector, make_hardware, make_noise
-    from tests.m2_fixtures import explicit_trap
-
-    trap = explicit_trap()
-    trap = trap.__class__(**{**trap.__dict__, "omega_hz": (3.0e6, 2.9e6, 0.2e6)})
-    yb = species("171Yb+")
-    dev = Device(
-        crystal=solve_crystal(trap, (yb,)),
-        trap=trap,
-        field=Field(5.0, (0.0, 0.0, 1.0)),
-        beams=(),
-        noise=make_noise(),
-        detector=make_detector(),
-        hardware=make_hardware(),
-    )
+    trap = secular_trap((3.0e6, 2.9e6, 0.2e6))
+    dev = quiet_device(solve_crystal(trap, (species("171Yb+"),)), trap, Field(5.0, (0.0, 0.0, 1.0)), ())
     kz = 0
     kappa = gaussian_curvature_per_m2(2e-6)
     xi = math.sqrt(HBAR_J_S / (2 * m * TWO_PI * 0.2e6))

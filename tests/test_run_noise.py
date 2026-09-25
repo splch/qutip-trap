@@ -13,22 +13,20 @@ import pytest
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
 from qutip_trap.control.schedule import schedule
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.noise.spectra import Collisions, Drift, white_spectrum
 from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import effective_sample_size, last_record, register_fidelity
-from tests.fixtures import run
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import BELL, run, two_ion_surrogate
 
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 TORR_PA = 133.32236842105263
 
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
-    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
+    fx = yb171_chain(2)
+    sur = two_ion_surrogate(1000)
     return fx, sur
 
 
@@ -201,7 +199,7 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
 
 
 def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:
-    fx = circuit_fixture(3)
+    fx = yb171_chain(3)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
     )

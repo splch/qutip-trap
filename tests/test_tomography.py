@@ -45,7 +45,7 @@ from qutip_trap.noise.summary import (
     entanglement_infidelity,
     pauli_twirl,
 )
-from tests.m4_fixtures import (
+from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,

@@ -29,7 +29,7 @@ from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import ScheduleError, schedule
 from qutip_trap.control.shaping import gate_modes
 from qutip_trap.control.table import CalEntry, usable
-from qutip_trap.device.presets import ca40_optical
+from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.entangling import _entangling_setup, ms_phase_scan, ms_scan
 from qutip_trap.experiments.light import stark_scan
@@ -43,12 +43,9 @@ from qutip_trap.run.job import RunError, last_record, register_fidelity
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import TWO_PI
-from tests.fixtures import run
-from tests.m6_fixtures import circuit_fixture
+from tests.fixtures import BELL, WINDOWS, run, two_ion_surrogate
 
-BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 GPI = Circuit(2, (Operation("gpi", (0,), (0.0,)),), (0,))
-WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 SCANS = CalibrationScans(
     shots=400,
     rabi_points=33,
@@ -72,7 +69,7 @@ SCANS = CalibrationScans(
 
 @pytest.fixture(scope="module")
 def calibrated():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     report = calibrate(
         Machine(fx.device),
         method="experiments",
@@ -257,8 +254,8 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
 
 @pytest.fixture(scope="module")
 def two_ion():  # type: ignore[no-untyped-def]
-    fx = circuit_fixture(2)
-    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1000, detection_windows_s=WINDOWS)
+    fx = yb171_chain(2)
+    sur = two_ion_surrogate(1000)
     return fx, sur
 
 
@@ -423,7 +420,7 @@ def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:  # type: 
 
 def _rf_two_ion(stray_x_v_per_m: float):  # type: ignore[no-untyped-def]
     """The two-ion fixture with an rf record and a stray field along x (excess micromotion to compensate)."""
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     dev = dataclasses.replace(
         fx.device,
         trap=dataclasses.replace(
@@ -641,7 +638,7 @@ def test_the_heating_experiment_runs_end_to_end_on_a_device_with_electric_field_
     """With a non-zero S_E the heating scan runs and the entry is a measurement with an uncertainty; the seed its span
     10/ndot is taken from is the rate the noise model heats at (the white level included). Exact populations, so the
     agreement is asserted relatively."""
-    fx = circuit_fixture(2)
+    fx = yb171_chain(2)
     noisy = dataclasses.replace(
         fx.device,
         noise=dataclasses.replace(

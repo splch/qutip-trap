@@ -57,10 +57,10 @@ from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import Crystal, Mode
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
-from tests.fixtures import make_detector, make_hardware, make_noise
-from tests.m4_fixtures import (
+from tests.fixtures import (
     X_COM_TWO_IONS,
     derived_seeds,
+    quiet_device,
     raman_gate_drives,
     table_with_waveform,
     two_ion_device,
@@ -111,15 +111,7 @@ def anchor_device() -> Device:
         10e-3,
         (0.0, 0.0, 0.0),
     )
-    return Device(
-        crystal=crystal,
-        trap=secular_trap((1.0e6, 0.9e6, 0.5e6)),
-        field=Field(5.0, (1.0, 0.0, 0.0)),
-        beams=(b1, b2),
-        noise=make_noise(),
-        detector=make_detector(),
-        hardware=make_hardware(),
-    )
+    return quiet_device(crystal, secular_trap((1.0e6, 0.9e6, 0.5e6)), Field(5.0, (1.0, 0.0, 0.0)), (b1, b2))
 
 
 ANCHOR_MODE = 3

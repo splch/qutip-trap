@@ -24,12 +24,9 @@ from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.trap.surface import Electrodes, five_wire_null_height_m
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
-from tests.fixtures import make_trap
-from tests.m2_fixtures import single_ion_raman_device
-from tests.m4_fixtures import two_ion_device
+from tests.fixtures import KX, single_ion_raman_device, two_ion_device
 
 K_369 = TWO_PI / 369.5e-9
-KX = 1  # the 3 MHz x mode of the single-ion fixture
 
 
 def _yb_trap(e_x: float = 0.0) -> Trap:
@@ -81,16 +78,16 @@ def _rod(**rf: float) -> Trap:
 
 def test_fixture_trap_reproduces_the_fixture_crystal_frequencies() -> None:
     yb = species("171Yb+")
-    f = {(m.family, m.index): m.omega_hz for m in solve_crystal(make_trap(), (yb, yb)).modes}
+    f = {(m.family, m.index): m.omega_hz for m in solve_crystal(secular_trap(), (yb, yb)).modes}
     assert f[("transverse_1", 0)] == pytest.approx(math.sqrt(3.0**2 - 1.0**2) * 1e6, rel=1e-12)
     assert f[("transverse_2", 0)] == pytest.approx(math.sqrt(2.9**2 - 1.0**2) * 1e6, rel=1e-12)
     assert f[("axial", 1)] == pytest.approx(math.sqrt(3.0) * 1e6, rel=1e-12)
-    assert make_trap().path == "explicit" and make_trap().anharmonic() is None
+    assert secular_trap().path == "explicit" and secular_trap().anharmonic() is None
 
 
 def test_explicit_path_needs_the_rf_frequency_for_mathieu_parameters() -> None:
     yb = species("171Yb+")
-    trap = make_trap()
+    trap = secular_trap()
     with pytest.raises(ValueError, match="rf frequency"):
         trap.mathieu(yb)
     assert trap.secular_hz(yb) == (3.0e6, 2.9e6, 1.0e6)
@@ -112,7 +109,7 @@ def test_mixed_species_on_the_explicit_path_scale_with_the_mathieu_parameters() 
     171Yb+ at q = 0.28 would put a 40Ca+ neighbour at q = 1.2, outside the stability region."""
     sr, ca, yb = species("88Sr+"), species("40Ca+"), species("171Yb+")
     with pytest.raises(ValueError, match="rf frequency"):
-        make_trap().single_ion_frequencies_rad_s((yb, ca))
+        secular_trap().single_ion_frequencies_rad_s((yb, ca))
     trap = dataclasses.replace(secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6))
     omega, axes, field = trap.single_ion_frequencies_rad_s((sr, ca), reference=0)
     assert omega[0] == pytest.approx(TWO_PI * np.array([3.0e6, 2.9e6, 1.0e6]))

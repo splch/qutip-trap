@@ -31,8 +31,8 @@ from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import KEY_INTENSITY_TRAJECTORY, NoiseSample, quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
-from tests.fixtures import make_hardware
-from tests.m4_fixtures import (
+from tests.fixtures import (
+    REALISTIC_HARDWARE,
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,
@@ -340,7 +340,7 @@ def test_the_real_builders_qobjevo_pickles_and_mcsolve_runs_it_under_the_paralle
     QobjEvo the real builder emits pickles and evaluates identically after the round trip, and ``mcsolve`` with
     ``map="parallel"`` on it reproduces the serial trajectories one by one."""
     dev, _drives, sched, space, _table = ms_fixture
-    played, _notes = apply_hardware_chain(sched, make_hardware(realistic=True), rng=np.random.default_rng(0))
+    played, _notes = apply_hardware_chain(sched, REALISTIC_HARDWARE, rng=np.random.default_rng(0))
     grid = np.linspace(0.0, 40e-6, 401)
     traj = np.vstack([grid, 1e-3 * np.sin(2.0 * math.pi * 1e5 * grid)])
     sample = NoiseSample(0, {}, {KEY_INTENSITY_TRAJECTORY: traj})

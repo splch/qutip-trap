@@ -27,7 +27,7 @@ from qutip_trap.species import species
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.species.zeeman import g_I_steck
 from qutip_trap.units import H_J_S, MU_B_J_PER_T, TWO_PI
-from tests.m2_fixtures import single_ion_raman_device, two_ion_raman_device
+from tests.fixtures import single_ion_raman_device, two_ion_raman_device
 
 
 def test_raman_drive_geometry_and_lamb_dicke() -> None:

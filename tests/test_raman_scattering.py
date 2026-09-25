@@ -3,30 +3,21 @@
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 import numpy as np
 import pytest
 import qutip as qt
 from scipy.optimize import brentq
 
+from qutip_trap.device.model import Field
 from qutip_trap.light.beams import Beam
 from qutip_trap.species import species
+from qutip_trap.species.dipole import field_amplitude_v_per_m, stretched_element_factor
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.raman import AtomicStructure
-from qutip_trap.units import C_M_PER_S, TWO_PI
-from tests.atomic_fixtures import (
-    GAMMA_HZ,
-    be9_like,
-    beam_at_detuning,
-    field_z,
-    fine_structure_omega,
-    lin_perp_lin_pair,
-    pi_beam_perp,
-    sigma_plus_along_z,
-    spin_zero_like,
-    stretched_g_half,
-    toy_spin_zero,
-)
+from qutip_trap.units import C_M_PER_S, HBAR_J_S, TWO_PI, lande_g_j
+from tests.fixtures import GAMMA_HZ, HALF, be9_like, field_z, spin_zero_like
 from tests.oracles import (
     ozeri_gamma_raman,
     ozeri_gamma_total,
@@ -38,6 +29,102 @@ from tests.oracles import (
 
 B_GAUSS = 4.0
 Z_HAT = (0.0, 0.0, 1.0)
+
+
+def fine_structure_omega(sp: Species) -> float:
+    """omega_f = 2 pi (E(P3/2) - E(P1/2))."""
+    return TWO_PI * (sp.level("P3/2").energy_hz - sp.level("P1/2").energy_hz)
+
+
+def beam_at_detuning(
+    sp: Species,
+    delta_rad_s: float,
+    k_hat: tuple[float, float, float],
+    polarization: tuple[complex, complex, complex],
+    *,
+    power_w: float = 1e-3,
+    waist_m: float = 20e-6,
+    ground_energy_hz: float = 0.0,
+) -> Beam:
+    """A beam ``delta`` (angular, plan sign) from the S1/2 (at ``ground_energy_hz``) -> P1/2 transition."""
+    omega_p12 = TWO_PI * (sp.level("P1/2").energy_hz - ground_energy_hz)
+    omega_l = omega_p12 + delta_rad_s
+    return Beam(TWO_PI * C_M_PER_S / omega_l, k_hat, polarization, waist_m, power_w, (0.0, 0.0, 0.0))
+
+
+def lin_perp_lin_pair(
+    sp: Species,
+    delta_rad_s: float,
+    *,
+    power_w: float = 1e-3,
+    waist_m: float = 20e-6,
+    ground_energy_hz: float = 0.0,
+    omega_q_rad_s: float = 0.0,
+) -> tuple[Beam, Beam]:
+    """Two beams perpendicular to B = z with orthogonal polarizations perpendicular to B (along x polarized y, along y
+    polarized x); the second is lowered by ``omega_q_rad_s`` so that the pair is Raman resonant."""
+    b = beam_at_detuning(
+        sp,
+        delta_rad_s,
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        power_w=power_w,
+        waist_m=waist_m,
+        ground_energy_hz=ground_energy_hz,
+    )
+    r = beam_at_detuning(
+        sp,
+        delta_rad_s - omega_q_rad_s,
+        (0.0, 1.0, 0.0),
+        (1.0, 0.0, 0.0),
+        power_w=power_w,
+        waist_m=waist_m,
+        ground_energy_hz=ground_energy_hz,
+    )
+    return b, r
+
+
+def sigma_plus_along_z(sp: Species, delta_rad_s: float, **kw: float) -> Beam:
+    """A sigma+ beam along B = z: eps = -(x + i y)/sqrt2 = e_{+1}."""
+    pol = (-1.0 / math.sqrt(2.0), -1j / math.sqrt(2.0), 0.0)
+    return beam_at_detuning(sp, delta_rad_s, (0.0, 0.0, 1.0), pol, **kw)  # type: ignore[arg-type]
+
+
+def pi_beam_perp(sp: Species, delta_rad_s: float, **kw: float) -> Beam:
+    """A pi-polarized beam along x with eps along B = z."""
+    return beam_at_detuning(sp, delta_rad_s, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), **kw)  # type: ignore[arg-type]
+
+
+def stretched_g_half(sp: Species, beam: Beam, field: Field) -> float:
+    """Ozeri's g: half the plan's Rabi frequency of the stretched sigma+ cycling line at the beam's intensity."""
+    st = AtomicStructure(sp, field.B_gauss, field.direction)
+    d_str = stretched_element_factor(HALF, Fraction(3, 2)) * st.reduced_element_c_m("S1/2", "P3/2")
+    e0 = field_amplitude_v_per_m(beam.intensity_at(np.zeros(3)))
+    return e0 * d_str / HBAR_J_S / 2.0
+
+
+def toy_spin_zero(gamma_p32_s: float) -> Species:
+    """An I = 0 S1/2, P1/2, P3/2 atom with 100/150 MHz level energies and a 1e5/s P1/2 decay rate: the angular algebra of a
+    real ion in a master equation that is not stiff (the metre-scale wavelengths do not enter)."""
+    cites = ("Steck",)
+    g12, g32 = 1.0e5 / TWO_PI, gamma_p32_s / TWO_PI
+    s12 = Level("S1/2", 0.0, None, 0.0, 0.0, lande_g_j(0, HALF, HALF), cites)
+    p12 = Level("P1/2", 1.0e8, 1.0 / (TWO_PI * g12), 0.0, 0.0, lande_g_j(1, HALF, HALF), cites)
+    p32 = Level("P3/2", 1.5e8, 1.0 / (TWO_PI * g32), 0.0, 0.0, lande_g_j(1, HALF, Fraction(3, 2)), cites)
+    t12 = Transition("S1/2", "P1/2", C_M_PER_S / 1.0e8, g12, 1.0, "E1", cites)
+    t32 = Transition("S1/2", "P3/2", C_M_PER_S / 1.5e8, g32, 1.0, "E1", cites)
+    return Species(
+        "toy spin-zero fixture",
+        9.0,
+        0.0,
+        0.0,
+        (s12, p12, p32),
+        (t12, t32),
+        ("S1/2 mJ=-1/2", "S1/2 mJ=1/2"),
+        "S1/2-P3/2",
+        (),
+        None,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -333,7 +420,7 @@ def _multilevel_mesolve(st: AtomicStructure, beam: Beam, initial: np.ndarray, t_
 def test_scattering_rates_against_mesolve_with_unequal_fine_structure_rates() -> None:
     """With Gamma(P1/2) != Gamma(P3/2) only the sqrt(Gamma_e)-inside form matches the master equation (P levels 100 and
     150 MHz above S keep the dynamics unstiff; the initial state is the DRESSED ground state)."""
-    sp = toy_spin_zero(gamma_p12_s=1.0e5, gamma_p32_s=3.0e5)
+    sp = toy_spin_zero(gamma_p32_s=3.0e5)
     st = AtomicStructure(sp, 1.0, Z_HAT)
     delta = 0.2 * fine_structure_omega(sp)  # far detuned (Delta/Gamma ~ 600) and interfering
     down, up = st.state("S1/2 mJ=-1/2"), st.state("S1/2 mJ=1/2")
@@ -354,7 +441,7 @@ def test_scattering_rates_against_mesolve_with_unequal_fine_structure_rates() ->
 @pytest.mark.slow
 def test_rayleigh_dephasing_against_mesolve() -> None:
     """The qubit coherence decays at (Gamma_Ram + Gamma_el)/2 with Gamma_el = sum_q' |r_u - r_d|^2 (Uys Eqs. 6-8)."""
-    sp = toy_spin_zero(gamma_p12_s=1.0e5, gamma_p32_s=1.0e5)
+    sp = toy_spin_zero(gamma_p32_s=1.0e5)
     st = AtomicStructure(sp, 1.0, Z_HAT)
     down, up = st.state("S1/2 mJ=-1/2"), st.state("S1/2 mJ=1/2")
     beam = _weak_beam(

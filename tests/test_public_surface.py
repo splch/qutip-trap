@@ -11,23 +11,16 @@ import numpy as np
 import pytest
 
 import qutip_trap
-from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.space import ModeTruncation
 from tests.fixtures import (
+    BELL,
     make_calibration_table,
-    make_crystal,
-    make_detector,
     make_device,
     make_diagnostics,
-    make_field,
-    make_hardware,
-    make_noise,
-    make_raman_pair,
     make_result,
     make_run_state,
     make_space,
-    make_trap,
 )
 
 MUTABLE_SERVICES = frozenset({"JointExactEngine"})
@@ -86,23 +79,24 @@ def _equal(a: object, b: object) -> bool:
 
 
 def _instances() -> list[object]:
+    device = make_device()
     table = make_calibration_table()
     return [
-        make_device(),
-        make_crystal(),
-        make_trap(),
-        make_field(),
-        make_noise(),
-        make_detector(),
-        make_hardware(),
-        *make_raman_pair(),
+        device,
+        device.crystal,
+        device.trap,
+        device.field,
+        device.noise,
+        device.detector,
+        device.hardware,
+        *device.beams,
         make_run_state(),
         table,
         table.field,
         make_space(),
         make_diagnostics(),
         make_result(np.array([[0, 1], [1, 1], [0, 0]], dtype=np.uint8)),
-        Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1)),
+        BELL,
         SolverOptions(),
         ModeTruncation(0, 4, (0, 1), 0.1),
     ]
