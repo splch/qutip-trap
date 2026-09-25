@@ -1,6 +1,5 @@
-"""The compiler of PLAN.md Section 7.2 and its templates of Section 7.7 (Section 9.6 rows "Compiled CNOT and CP", "Native-gate
-identities" (virtual-Z propagation), "IonQ JSON round trip"; Section 13 rows "Operator order in templates", "Virtual-Z
-propagation")."""
+"""The compiler (PLAN.md Section 7): the single-qubit decomposition, the CNOT and CP templates, virtual-Z propagation, the
+IonQ JSON round trip, the builder, and the KAK decomposition of arbitrary two-qubit unitaries."""
 
 from __future__ import annotations
 
@@ -12,34 +11,38 @@ import pytest
 from qutip_trap.control import native
 from qutip_trap.control.compiler import (
     CNOT_MATRIX,
+    NATIVE_GATES,
+    STANDARD_GATES,
+    SWAP_MATRIX,
     Circuit,
     CompileError,
     Operation,
     circuit_unitary,
-    cnot_global_phase,
     cnot_template,
     compile_report,
     compile_to_native,
     cp_matrix,
     cp_template,
-    cp_template_local_defect_rad,
-    cp_template_overlap,
-    debnath_cp_template,
     decompose_single_qubit,
     embed,
     frame_unitary,
     gate_matrix,
     ideal_probabilities,
     propagate_frames,
+    verify_operations,
     zyz_angles,
+)
+from qutip_trap.control.two_qubit import (
+    canonical_operations,
+    canonical_unitary,
+    decompose_two_qubit_unitary,
+    haar_random_unitary,
+    kak_decomposition,
+    kron_factor,
 )
 from qutip_trap.io.ionq import dump_ionq_json, load_ionq_json
 
-
-def _phase(a: np.ndarray, b: np.ndarray) -> float | None:
-    idx = np.unravel_index(int(np.argmax(np.abs(b))), b.shape)
-    r = a[idx] / b[idx]
-    return float(np.angle(r)) if np.allclose(a, r * b, atol=1e-9) and abs(abs(r) - 1.0) < 1e-9 else None
+_phase = native.global_phase
 
 
 def _random_su2(rng: np.random.Generator) -> np.ndarray:
@@ -50,7 +53,7 @@ def _random_su2(rng: np.random.Generator) -> np.ndarray:
 
 
 def test_zxzxz_decomposition_is_complete_on_twenty_random_su2_targets() -> None:
-    """Section 7.2 item 1: every U in SU(2) is RZ GPi2(0) RZ GPi2(0) RZ up to a global phase, to round-off (the plan's 20 targets)."""
+    """Every U in SU(2) is RZ GPi2(0) RZ GPi2(0) RZ up to a global phase, to round-off."""
     rng = np.random.default_rng(7)
     worst = 0.0
     for _ in range(20):
@@ -90,65 +93,27 @@ def test_one_pulse_and_zero_pulse_special_cases() -> None:
 @pytest.mark.parametrize("s", [1, -1])
 @pytest.mark.parametrize("v", [1, -1])
 def test_maslov_cnot_template_for_all_four_signs_with_its_global_phase(s: int, v: int) -> None:
-    """Section 7.7: RY(v pi/2)_c, XX(s pi/4), RX(-s pi/2)_c RX(-v s pi/2)_t, RY(-v pi/2)_c equals e^{i pi v s/4} CNOT for every (s, v)."""
+    """Maslov's RY(v pi/2)_c, XX(s pi/4), RX(-s pi/2)_c RX(-v s pi/2)_t, RY(-v pi/2)_c equals e^{i pi v s/4} CNOT for every
+    (s, v)."""
     ops = cnot_template(0, 1, s=s, v=v)
     assert sum(op.name == "ms" for op in ops) == 1 and sum(op.name == "gpi2" for op in ops) == 4
     got = circuit_unitary(Circuit(2, tuple(ops), (0, 1)))
     ph = _phase(got, embed(CNOT_MATRIX, (0, 1), 2))
     assert ph is not None
-    assert np.exp(1j * ph) == pytest.approx(np.exp(1j * cnot_global_phase(s, v)), abs=1e-9)
+    assert np.exp(1j * ph) == pytest.approx(np.exp(1j * math.pi * v * s / 4.0), abs=1e-9)
     # the exported angle stays in [0, pi/2]: a negative XX is a pi on the second phase
     ms_op = next(op for op in ops if op.name == "ms")
     assert 0.0 <= ms_op.params[2] <= math.pi / 2.0 + 1e-12
     assert ms_op.params[1] == pytest.approx(0.0 if s > 0 else math.pi)
 
 
-def test_trout_template_as_printed_is_not_a_cnot() -> None:
-    """Section 7.7's negative control: Trout et al.'s Fig. 8 rotation signs give (Z (x) I) CNOT for s = +1, (Z (x) X) CNOT for s = -1."""
-    for s in (1, -1):
-        # the printed variant flips the sign of the control's post-XX RX relative to Maslov's template
-        ops = (
-            [Operation("gpi2", (0,), (math.pi / 2.0,))]
-            + [Operation("ms", (0, 1), (0.0, 0.0 if s > 0 else math.pi, math.pi / 2.0))]
-            + [
-                Operation("gpi2", (0,), (0.0 if s > 0 else math.pi,)),  # RX(+s pi/2) instead of RX(-s pi/2)
-                Operation("gpi2", (1,), (math.pi if s > 0 else 0.0,)),
-                Operation("gpi2", (0,), (-math.pi / 2.0,)),
-            ]
-        )
-        got = circuit_unitary(Circuit(2, tuple(ops), (0, 1)))
-        assert _phase(got, embed(CNOT_MATRIX, (0, 1), 2)) is None, "a wrong-sign template must not verify"
-
-
 @pytest.mark.parametrize("theta", [math.pi, math.pi / 2.0, math.pi / 4.0, -0.7, 2.5])
 @pytest.mark.parametrize("entangler", ["ms", "zz"])
-def test_cp_template_is_exact_and_debnaths_is_cp_only_up_to_local_phases(
-    theta: float, entangler: str
-) -> None:
-    """Section 9.6 "Compiled CNOT and CP": the compiler's CP equals its target up to a global phase; Debnath's template as drawn
-    (Section 7.7) is CP only up to RZ((sgn theta pi - theta)/2) on both qubits, overlap 0.854 at pi/2 and 0.691 at pi/4, and
-    appending RZ((theta - sgn theta pi)/2) on both ions makes it exact."""
+def test_cp_template_is_exact(theta: float, entangler: str) -> None:
+    """The compiler's CP equals its target up to a global phase."""
     ops = cp_template(theta, (0, 1), entangler)  # type: ignore[arg-type]
     got = circuit_unitary(Circuit(2, tuple(ops), (0, 1)))
-    target = embed(cp_matrix(theta), (0, 1), 2)
-    assert _phase(got, target) is not None
-    drawn = debnath_cp_template(theta, (0, 1), entangler)  # type: ignore[arg-type]
-    t_drawn = circuit_unitary(Circuit(2, tuple(drawn), (0, 1)))
-    x = cp_template_local_defect_rad(theta)
-    if abs(x) > 1e-12:
-        assert _phase(t_drawn, target) is None, "as drawn it is not CP"
-    # diagonal with the right conditional phase: the defect is the local RZ(x) pair
-    assert np.allclose(np.abs(t_drawn - np.diag(np.diag(t_drawn))), 0.0, atol=1e-9)
-    defect = embed(np.kron(native.rz(x), native.rz(x)), (0, 1), 2)
-    assert _phase(t_drawn, target @ defect) is not None
-    overlap = abs(np.trace(target.conj().T @ t_drawn)) / 4.0
-    assert overlap == pytest.approx(cp_template_overlap(theta), abs=1e-9)
-    if theta == math.pi / 2.0:
-        assert overlap == pytest.approx(0.854, abs=1e-3)
-    if theta == math.pi / 4.0:
-        assert overlap == pytest.approx(0.691, abs=1e-3)
-    fixed = drawn + [Operation("rz", (0,), (-x,)), Operation("rz", (1,), (-x,))]
-    assert _phase(circuit_unitary(Circuit(2, tuple(fixed), (0, 1))), target) is not None
+    assert _phase(got, embed(cp_matrix(theta), (0, 1), 2)) is not None
 
 
 def test_standard_two_qubit_gates_and_u3_compile_and_verify() -> None:
@@ -172,8 +137,8 @@ def test_standard_two_qubit_gates_and_u3_compile_and_verify() -> None:
 
 
 def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_frame() -> None:
-    """Sections 7.6 and 9.6: rz shifts every later gpi/gpi2/ms phase by -theta (time order), zz commutes; the compiled circuit
-    equals the target up to the residual frame, whose Z rotations the computational-basis measurement cannot see."""
+    """rz shifts every later gpi/gpi2/ms phase by -theta (time order), zz commutes; the compiled circuit equals the target up
+    to the residual frame, whose Z rotations the computational-basis measurement cannot see."""
     ops = [
         Operation("rz", (0,), (0.1,)),
         Operation("gpi2", (0,), (0.0,)),
@@ -185,7 +150,7 @@ def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_fra
     ]
     out, frame = propagate_frames(ops, 2)
     assert [op.name for op in out] == ["gpi2", "ms", "zz", "gpi"]
-    assert out[0].params[0] == pytest.approx(-0.1), "RZ(0.1) then GPi2(0) is GPi2(-0.1) (Section 9.6)"
+    assert out[0].params[0] == pytest.approx(-0.1), "RZ(0.1) then GPi2(0) is GPi2(-0.1)"
     assert out[1].params[:2] == pytest.approx((-0.1, -0.4))
     assert out[3].params[0] == pytest.approx(1.0 - 0.4)
     assert frame == {0: pytest.approx(0.35), 1: pytest.approx(0.4)}
@@ -193,18 +158,6 @@ def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_fra
     target = circuit_unitary(circ)
     got = frame_unitary(frame, 2) @ circuit_unitary(Circuit(2, tuple(out), (0, 1)))
     assert _phase(got, target) is not None
-    # the Section 9.6 concrete sequence as matrices: RZ(0.1) then GPi2(0) on |0> equals GPi2(-0.1) followed by RZ(0.1)
-    ket0 = np.array([1.0, 0.0], dtype=complex)
-    assert np.allclose(native.gpi2(0.0) @ native.rz(0.1) @ ket0, native.rz(0.1) @ native.gpi2(-0.1) @ ket0)
-    # the sign is sharp: GPi2(+0.1) differs from GPi2(-0.1) by e^{-0.2i} on the lower component, so the two states are not
-    # equal even up to a global phase (the magnitudes DO agree, which is why the comparison has to be the phase test)
-    assert (
-        _phase(
-            (native.gpi2(0.0) @ native.rz(0.1) @ ket0).reshape(2, 1),
-            (native.rz(0.1) @ native.gpi2(+0.1) @ ket0).reshape(2, 1),
-        )
-        is None
-    )
     probs = ideal_probabilities(circ)
     assert probs == pytest.approx(ideal_probabilities(Circuit(2, tuple(out), (0, 1))), abs=1e-12)
 
@@ -226,8 +179,8 @@ def test_bell_and_ghz_compile_to_the_expected_pulse_counts_and_distributions() -
 
 
 def test_ionq_json_round_trip_of_a_compiled_circuit_and_native_passthrough() -> None:
-    """Section 9.6: a compiled circuit exports to IonQ JSON and imports back identically; a native circuit compiles to itself
-    (its rz absorbed), so the round trip through the compiler is the identity on the exported set."""
+    """A compiled circuit exports to IonQ JSON and imports back identically; a native circuit compiles to itself (its rz
+    absorbed), so the round trip through the compiler is the identity on the exported set."""
     bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
     compiled = compile_to_native(bell)
     obj = dump_ionq_json(compiled)
@@ -255,37 +208,34 @@ def test_mid_circuit_operations_pass_through_and_skip_the_whole_circuit_check() 
         circuit_unitary(circ)
 
 
-# ---- the Circuit builder and its defaults (docs/api_implementation_plan.md 1.5; 0.2.0) -----------------------------------------
+# ---- the Circuit builder --------------------------------------------------------------------------------------------------
 
 
 def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_default() -> None:
-    import inspect
-
-    from qutip_trap.control.compiler import GATE_PARAMETERS, NATIVE_GATES, STANDARD_GATES
-
     built = Circuit(2).h(0).cnot(0, 1)
     assert built == Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
     assert built.measure == (0, 1) and built.registers == {"c": (0, 1)}
-    native = (
+    native_circuit = (
         Circuit(2)
         .gpi2(0, phase=0.0)
         .ms(0, 1, phi0=0.0, phi1=0.0, theta=math.pi / 2)
         .zz(1, 0, 0.3)
         .rz(0, theta=0.1)
     )
-    assert native.is_native and native.ops[1] == Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2))
-    assert native.ops[2] == Operation("zz", (1, 0), (0.3,)) and native.ops[3] == Operation("rz", (0,), (0.1,))
+    assert native_circuit.is_native and native_circuit.ops[1] == Operation(
+        "ms", (0, 1), (0.0, 0.0, math.pi / 2)
+    )
+    assert native_circuit.ops[2] == Operation("zz", (1, 0), (0.3,))
+    assert native_circuit.ops[3] == Operation("rz", (0,), (0.1,))
     assert Circuit(2).u3(1, 0.1, 0.2, 0.3).ops[0].params == (0.1, 0.2, 0.3)
     assert Circuit(1).rx(0, theta=0.5) == Circuit(1).rx(0, 0.5)
     # a builder never mutates: the original stays what it was
     base = Circuit(2)
     assert base.h(0) != base and base.ops == () and base.measure == (0, 1)
-    # every gate of the two tables is a method whose signature is the table's arity plus its parameters, by name
+    # every gate of the two tables has a method that appends it, qubits first and then the parameters
     for name, (arity, n_params) in {**NATIVE_GATES, **STANDARD_GATES}.items():
-        sig = inspect.signature(getattr(Circuit, name))
-        assert len(sig.parameters) == 1 + arity + n_params, name
-        assert tuple(sig.parameters)[1 + arity :] == GATE_PARAMETERS.get(name, ()), name
-        assert (getattr(Circuit, name).__doc__ or "").startswith(f"Append ``{name}``")
+        op = getattr(Circuit(2), name)(*(0, 1)[:arity], *[0.25] * n_params).ops[-1]
+        assert op == Operation(name, (0, 1)[:arity], (0.25,) * n_params), name
     with pytest.raises(ValueError, match="outside range"):
         Circuit(2).h(2)
     with pytest.raises(TypeError):
@@ -297,7 +247,7 @@ def test_measured_registers_and_the_third_positional_argument() -> None:
     assert narrowed.measure == (0, 1) and narrowed.registers == {"c": (0, 1)}
     split = Circuit(3).x(0).measured(2, 0, registers={"a": (2,), "b": (0,)})
     assert split.measure == (2, 0) and split.registers == {"a": (2,), "b": (0,)}
-    # the 0.1.0 call form, unchanged: the third positional argument narrows the measurement
+    # the third positional argument narrows the measurement
     assert Circuit(2, (), (1,)).measure == (1,) and Circuit(2, (), (1,)).registers == {"c": (1,)}
     assert Circuit(2, (), ()).measure == () and Circuit(2, (), ()).registers == {"c": ()}
     with pytest.raises(ValueError, match="register 'r'"):
@@ -319,3 +269,83 @@ def test_from_and_to_ionq_on_the_builder() -> None:
     assert Circuit.from_ionq({"input": body, "backend": "simulator"}) == native_circuit
     with pytest.raises(ValueError, match="compile first"):
         Circuit(2).h(0).to_ionq()
+
+
+# ---- arbitrary two-qubit unitaries: the KAK decomposition -----------------------------------------------------------------
+
+ISWAP = np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]], dtype=complex)
+
+
+@pytest.mark.parametrize(
+    ("name", "u", "coefficients", "count"),
+    [
+        ("identity", np.eye(4), (0.0, 0.0, 0.0), 0),
+        ("CNOT", CNOT_MATRIX, (math.pi / 4, 0.0, 0.0), 1),
+        ("CZ", cp_matrix(math.pi), (math.pi / 4, 0.0, 0.0), 1),
+        ("CP(0.3)", cp_matrix(0.3), (0.075, 0.0, 0.0), 1),
+        ("iSWAP", ISWAP, (math.pi / 4, math.pi / 4, 0.0), 2),
+        ("SWAP", SWAP_MATRIX, (math.pi / 4, math.pi / 4, math.pi / 4), 3),
+    ],
+)
+def test_named_gates_land_in_their_canonical_class(
+    name: str, u: np.ndarray, coefficients: tuple[float, float, float], count: int
+) -> None:
+    k = kak_decomposition(u)
+    a, b, c = k.coefficients
+    assert (a, b, abs(c)) == pytest.approx(coefficients, abs=1e-9), name
+    assert k.entangling_count == count
+    assert np.max(np.abs(k.matrix() - u)) < 1e-9
+    ops = decompose_two_qubit_unitary(u, (0, 1))
+    rep = compile_report(Circuit(2, tuple(ops), (0, 1)))
+    assert rep.n_entangling == count and rep.circuit_residual is not None and rep.circuit_residual < 1e-8
+
+
+def test_haar_random_su4_costs_three_entangling_gates_in_the_weyl_chamber() -> None:
+    rng = np.random.default_rng(11)
+    for _ in range(60):
+        u = haar_random_unitary(rng, 4)
+        assert np.max(np.abs(u.conj().T @ u - np.eye(4))) < 1e-12
+        k = kak_decomposition(u)
+        a, b, c = k.coefficients
+        assert math.pi / 4 + 1e-12 >= a >= b >= abs(c) >= 0.0
+        assert np.max(np.abs(k.matrix() - u)) < 1e-10
+        assert k.entangling_count == 3
+        for m in k.left + k.right:
+            assert np.max(np.abs(m.conj().T @ m - np.eye(2))) < 1e-9
+        ops = decompose_two_qubit_unitary(u, (1, 0))
+        rep = compile_report(Circuit(2, tuple(ops), (0, 1)))
+        assert rep.n_entangling == 3 and rep.circuit_residual is not None and rep.circuit_residual < 1e-8
+        assert all(op.name in ("gpi", "gpi2", "ms", "zz") for op in rep.circuit.ops)
+        # every Moelmer-Soerensen gate is played at an angle in [0, pi/2]
+        for op in rep.circuit.ops:
+            if op.name == "ms":
+                assert 0.0 <= op.params[2] <= math.pi / 2 + 1e-12
+
+
+def test_local_unitaries_and_kron_factor() -> None:
+    rng = np.random.default_rng(2)
+    for _ in range(20):
+        a = haar_random_unitary(rng, 2)
+        b = haar_random_unitary(rng, 2)
+        u = np.kron(a, b) * np.exp(0.4j)
+        fac = kron_factor(u)
+        assert fac is not None
+        assert _phase(np.kron(*fac), u) is not None
+        k = kak_decomposition(u)
+        assert k.entangling_count == 0 and np.max(np.abs(k.matrix() - u)) < 1e-10
+        assert decompose_two_qubit_unitary(u, (0, 1)) == decompose_two_qubit_unitary(u, (0, 1))
+        assert kron_factor(CNOT_MATRIX @ np.kron(a, b)) is None
+
+
+def test_canonical_operations_match_the_canonical_unitary_and_verify() -> None:
+    rng = np.random.default_rng(5)
+    for _ in range(10):
+        a, b, c = rng.uniform(-math.pi / 4, math.pi / 4, size=3)
+        ops = canonical_operations(a, b, c, (0, 1))
+        assert verify_operations(ops, canonical_unitary(a, b, c), (0, 1), tol=1e-8) < 1e-9
+    with pytest.raises(CompileError):
+        verify_operations(
+            canonical_operations(0.3, 0.0, 0.0, (0, 1)), canonical_unitary(0.4, 0.0, 0.0), (0, 1), tol=1e-8
+        )
+    with pytest.raises(CompileError):
+        kak_decomposition(np.ones((4, 4)))

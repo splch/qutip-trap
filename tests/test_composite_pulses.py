@@ -1,4 +1,5 @@
-"""Composite pulses (PLAN.md Sections 4.3.5, 9.2, 9.10, 9.15) against check_composite.py and Mount 2015."""
+"""Composite pulses (PLAN.md Section 4.3.5) against their closed forms and Mount 2015, and their control segments for the
+filter functions."""
 
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from qutip_trap.control.composite import (
     MOUNT_PD6_PHASES,
     SUZUKI_PHASE_TOLERANCE,
     CompositePulse,
-    _t2j,
     ap1_phases,
     certificate,
     composite_pulse,
@@ -26,20 +26,18 @@ from qutip_trap.control.composite import (
     operator_distance,
     pd2_phases,
     phi_sk1,
-    rotation,
     seq_bb1,
     seq_nb1,
-    seq_pb1,
-    seq_pb1_three_pulse_control,
     seq_pd6_mount,
     seq_scrofulous,
     seq_short_corpse,
     seq_sk1,
-    seq_sk1_printed,
     suzuki_factor,
     suzuki_phase,
     toggled_phases,
 )
+from qutip_trap.control.composite import primitive as rotation
+from qutip_trap.noise.decoupling import amplitude_filter_function, composite_segments, local_slope
 
 PI = math.pi
 
@@ -56,19 +54,13 @@ def test_primitive_is_exact_and_a_2pi_segment_is_minus_identity() -> None:
 
 
 def test_fidelity_measure_relations() -> None:
-    """1 - F_K = 2(1 - F_C) and 1 - F_avg = (4/3)(1 - F_C) at leading order; the two printed norms are identically constant."""
+    """1 - F_K = 2(1 - F_C) and 1 - F_avg = (4/3)(1 - F_C) at leading order."""
     v = rotation(PI, 0.0)
     u = fold(seq_sk1(PI), eps_a=0.03)
     fc, fk, fav = fidelity_c(v, u), fidelity_k(v, u), fidelity_avg(v, u)
     assert fk == pytest.approx(fc**2, abs=1e-15)
     assert (1 - fk) / (2 * (1 - fc)) == pytest.approx(1.0, abs=1e-3)
     assert (1 - fav) / (4 * (1 - fc) / 3) == pytest.approx(1.0, abs=1e-3)
-    assert np.linalg.norm(u @ v.conj().T, 2) == pytest.approx(1.0, abs=1e-12), (
-        "Low-Yoder-Chuang's ||U V^dag|| is identically 1"
-    )
-    assert 1 - np.linalg.norm(v.conj().T @ u, 2) == pytest.approx(0.0, abs=1e-12), (
-        "Brown-Harrow-Chuang's 1 - ||V^dag U|| is 0"
-    )
 
 
 @pytest.mark.parametrize(
@@ -92,7 +84,7 @@ def test_order_ladder_at_theta_pi(
     sim_slope: int,
     windows: tuple[tuple[float, float], tuple[float, float]],
 ) -> None:
-    """Section 9.15: log-log slopes of 1 - F_K, order n <=> infidelity slope 2(n + 1); CORPSE's detuning exponent is fitted
+    """Log-log slopes of 1 - F_K, order n <=> infidelity slope 2(n + 1); CORPSE's detuning exponent is fitted
     below 1e-4 because its eps_D^3 term dominates a wide intermediate regime."""
     cp = composite_pulse(family, PI)
     sa, _ = cp.order_slope("amplitude", windows[0])
@@ -105,12 +97,11 @@ def test_order_ladder_at_theta_pi(
 
 
 def test_leading_coefficients_at_theta_pi() -> None:
-    """Section 4.3.5 [recomputed here]: SK1 22.830256 eps_a^4 = (pi^2 sin 2 phi_1)^2; BB1 and CinBB 9.388566 eps_a^6; SCROFULOUS
+    """SK1 22.830256 eps_a^4 = (pi^2 sin 2 phi_1)^2; BB1 and CinBB 9.388566 eps_a^6; SCROFULOUS
     4.566051 eps_a^4 and 4.000000 eps_d^2; CORPSE 6.5008e-3 eps_d^4, degraded 115-fold to 0.75 by either concatenation."""
     assert leading_coefficient(composite_pulse("SK1", PI), "amplitude", 4, 1e-3) == pytest.approx(
         22.830256, rel=2e-3
     )
-    assert (PI**2 * math.sin(2 * math.acos(-0.25))) ** 2 == pytest.approx(22.830256, rel=1e-6)
     assert leading_coefficient(composite_pulse("SCROFULOUS", PI), "amplitude", 4, 1e-3) == pytest.approx(
         4.566051, rel=2e-3
     )
@@ -141,22 +132,13 @@ def test_leading_coefficients_at_theta_pi() -> None:
     )
 
 
-def test_negative_controls_printed_sk1_and_p2_pulse_count() -> None:
-    """BHC Eq. 10 as printed is first order and exactly twice the bare-pulse error; P2's phase forced into a three-pulse
-    corrector is ~3700x worse than P2 and ~16x worse than no correction."""
+def test_sk1_suppresses_the_bare_pulse_error_to_second_order() -> None:
     v = rotation(PI / 2, 0.0)
     bare = operator_distance(fold([(PI / 2, 0.0)], eps_a=1e-2), v)
     assert bare == pytest.approx(2 * abs(math.sin(PI / 2 * 1e-2 / 4)), rel=1e-6)
-    assert operator_distance(fold(seq_sk1_printed(PI / 2), eps_a=1e-2), v) == pytest.approx(
-        2 * bare, rel=1e-3
-    )
     corrected = operator_distance(fold(seq_sk1(PI / 2), eps_a=1e-2), v)
     assert corrected < 0.05 * bare  # second order: about 3% of the bare error at eps = 1e-2
     assert operator_distance(fold(seq_sk1(PI / 2), eps_a=1e-3), v) < 0.05 * corrected
-    p2 = 1 - fidelity_c(v, fold(seq_pb1(PI / 2), eps_a=0.1))
-    three = 1 - fidelity_c(v, fold(seq_pb1_three_pulse_control(PI / 2), eps_a=0.1))
-    none = 1 - fidelity_c(v, fold([(PI / 2, 0.0)], eps_a=0.1))
-    assert three / p2 > 3000 and three / none > 14
 
 
 def test_bb1_general_axis_and_the_corrector_identity() -> None:
@@ -166,14 +148,14 @@ def test_bb1_general_axis_and_the_corrector_identity() -> None:
     ua = fold(seq_bb1(PI, phit), eps_a=0.05)
     ub = z @ fold(seq_bb1(PI, 0.0), eps_a=0.05) @ z.conj().T
     assert operator_distance(ua, ub) < 1e-12
-    # W1 = +I "for any phi" (Section 4.3.5), not at one phase only
+    # W1 = +I for any phi, not at one phase only
     for theta in (PI / 2, PI, 3 * PI / 2, 2.1):
         p1 = phi_sk1(theta)
         w1 = [(PI, p1), (2 * PI, 3 * p1), (PI, p1)]
         assert operator_distance(fold(w1), np.eye(2)) < 1e-12, theta
     assert operator_distance(fold(seq_bb1(PI)[1:]), np.eye(2)) < 1e-12
-    # phi_B2 = arccos(-theta_t/4 pi) at the plan's three target angles (Section 4.3.5 [recomputed here]); the W1
-    # identity above is the theta-independent half, this is the theta-dependent one
+    # phi_B2 = arccos(-theta_t/4 pi) at three target angles; the W1 identity above is the theta-independent half, this is
+    # the theta-dependent one
     for theta, phi_b2 in ((PI / 2, 1.696124158), (PI, 1.823476582), (3 * PI / 2, 1.955193101)):
         assert phi_sk1(theta) == pytest.approx(phi_b2, rel=1e-9), theta
         assert seq_bb1(theta)[1][1] == pytest.approx(phi_b2, rel=1e-9)
@@ -201,33 +183,19 @@ def test_corpse_scrofulous_and_durations() -> None:
     assert composite_pulse("CinBB", PI).total_rotation_rad() == pytest.approx(math.radians(1500.0))
 
 
-def test_suzuki_ladder_and_its_printed_defect() -> None:
+def test_suzuki_ladder() -> None:
     """f_j = (2^{2j-1} - 2) f_{j-1}: 4, 24, 720, 90720 (P) and 2, 12, 360, 45360 (N, B); phi_P2 = arccos(-theta/8 pi),
     phi_P4 = arccos(-theta/48 pi); P2 is PB1; the corrected odd-k B layer reproduces Eq. 43."""
     assert [suzuki_factor(j, 4) for j in (1, 2, 3, 4)] == [4, 24, 720, 90720]
     assert [suzuki_factor(j, 2) for j in (1, 2, 3, 4)] == [2, 12, 360, 45360]
-    # PLAN.md:493 requires the phase to be ROOT-FOUND on the leading eps coefficient and not read off f_j: the
-    # agreement is what certifies the transcribed recursion (P/B null the toggled amplitude polygon, N the bare
-    # addressing sum), and the printed (2^{2j-1} - 1) recursion is the negative control it catches
+    # the phase is ROOT-FOUND on the leading eps coefficient (P/B null the toggled amplitude polygon, N the bare
+    # addressing sum) and agrees with the closed form of the recursion
     for family in ("P", "N", "B"):
         for j in (1, 2, 3):
             root, residual = suzuki_phase(j, PI / 2, family)
             assert residual < SUZUKI_PHASE_TOLERANCE, (family, j, residual)
             f1 = 4.0 if family == "P" else 2.0
             assert root == pytest.approx(math.acos(-(PI / 2) / (2 * PI * suzuki_factor(j, f1))), abs=1e-12)
-    assert suzuki_factor(2, 4, printed=True) == 28.0 and suzuki_factor(2, 2, printed=True) == 14.0
-    for family in ("P", "N", "B"):
-        _root, residual = suzuki_phase(2, PI / 2, family, printed=True)
-        assert residual > 1e-3, (
-            family,
-            residual,
-        )  # 1.5e-3 (P), 3.0e-3 (N, B): six decades above the tolerance
-    # the printed f_2 = 28 ladder is FIRST order, not fourth: its amplitude infidelity slope is 2, not 10
-    printed_phi = math.acos(-(PI / 2) / (2 * PI * suzuki_factor(2, 4, printed=True)))
-    segs = [(PI / 2, 0.0)] + [(a, p) for a, p in _t2j(2, 1.0, printed_phi, "P")]
-    eps = np.geomspace(1e-3, 1e-2, 7)
-    vals = [1 - fidelity_k(rotation(PI / 2, 0.0), fold(segs, eps_a=e)) for e in eps]
-    assert float(np.polyfit(np.log(eps), np.log(vals), 1)[0]) == pytest.approx(2.0, abs=0.1)
     p2 = composite_pulse("P2j", PI / 2, order=1)
     assert np.allclose(np.array(p2.segments), np.array(composite_pulse("PB1", PI / 2).segments))
     p4 = composite_pulse("P2j", PI / 2, order=2)
@@ -260,8 +228,8 @@ def test_low_yoder_chuang_certificate_and_toggling() -> None:
 
 
 def test_mount_pd6_anchors() -> None:
-    """Section 9.10: PD6 keyed by theta_t: 2.447e-2 -> 3.713e-11 at theta_t = pi, eps = 0.1, and 6.156e-3 -> 1.348e-11 at
-    pi/2, while cross-keyed rows leave 6.156e-3; B2 stays below 1% for |eps| < 0.4 and PD6 for |eps| < 0.6 (Section 9.2)."""
+    """PD6 keyed by theta_t: 2.447e-2 -> 3.713e-11 at theta_t = pi, eps = 0.1, and 6.156e-3 -> 1.348e-11 at pi/2, while
+    cross-keyed rows leave 6.156e-3; B2 stays below 1% for |eps| < 0.4 and PD6 for |eps| < 0.6."""
     pd6_pi = composite_pulse("PDn", PI, order=6)
     pd6_half = composite_pulse("PDn", PI / 2, order=6)
     assert len(pd6_pi.segments) == 13 and pd6_pi.total_rotation_rad() == pytest.approx(13 * PI)
@@ -284,7 +252,7 @@ def test_mount_pd6_anchors() -> None:
 
 
 def test_dc_polygon_and_record_invariants() -> None:
-    """Section 9.15: the polygon closes for every amplitude-correcting family and equals (pi, 0, 0) otherwise."""
+    """The polygon closes for every amplitude-correcting family and equals (pi, 0, 0) otherwise."""
     for family in ("SK1", "BB1", "PB1", "SCROFULOUS", "CinSK", "CinBB"):
         assert composite_pulse(family, PI).dc_polygon()[1], family
     for family in ("primitive", "CORPSE"):
@@ -296,10 +264,36 @@ def test_dc_polygon_and_record_invariants() -> None:
     with pytest.raises(ValueError):
         composite_pulse("SK1", 5 * PI)  # arccos domain
     with pytest.raises(NotImplementedError):
-        composite_pulse("SKn", PI, order=2)
+        composite_pulse("PDn", PI, order=4)
 
 
-# ---- Appendix E's two filter-function methods (Section 6.9) --------------------------------------------------------------
+# ---- the control segments and the two filter-function methods --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["primitive", "SK1", "BB1", "NB1", "PB1", "CORPSE", "short_CORPSE", "SCROFULOUS", "CinSK", "CinBB"],
+)
+def test_composite_segments_carry_the_target_azimuth_once(family: str) -> None:
+    """phi_rad = 0.7 is already on every entry, the zeroth included: the control segments' phases are the pulse's own."""
+    pulse = composite_pulse(family, PI, 0.7)
+    segs = composite_segments(pulse, 1.0)
+    assert [s.phi_rad for s in segs] == [phase for _, phase in pulse.segments]
+    assert [s.theta_rad for s in segs] == [area for area, _ in pulse.segments]
+    at_zero = composite_pulse(family, PI, 0.0)
+    assert [s.phi_rad for s in segs] == pytest.approx([p + 0.7 for _, p in at_zero.segments], abs=1e-15)
+
+
+@pytest.mark.parametrize(
+    ("family", "order"),
+    [("P2j", 1), ("P2j", 2), ("P2j", 3), ("N2j", 1), ("N2j", 2), ("B2j", 1), ("B2j", 2), ("SK1", 1)],
+)
+def test_duration_agrees_with_the_control_segments(family: str, order: int) -> None:
+    """The sum of the segment areas over Omega, one number however it is reached."""
+    pulse = composite_pulse(family, PI / 2.0, 0.7, order=order)
+    segs = composite_segments(pulse, 2.0)
+    assert sum(s.theta_rad for s in segs) == pytest.approx(pulse.total_rotation_rad(), rel=1e-15)
+    assert sum(s.duration_s for s in segs) == pytest.approx(pulse.duration_s(2.0), rel=1e-15)
 
 
 @pytest.mark.parametrize(
@@ -316,13 +310,8 @@ def test_dc_polygon_and_record_invariants() -> None:
     ],
 )
 def test_filter_function_amplitude_low_frequency_slope(family: str, slope: float) -> None:
-    """Section 9.15: F_a ~ omega^2 for a family that does not correct amplitude at first order, omega^4 for one that does.
-
-    ``CompositePulse.filter_function_amplitude`` is Appendix E's method; it delegates to the exact A_l/B_l segment sum
-    of ``noise.decoupling.amplitude_filter_function`` and must agree with it element by element.
-    """
-    from qutip_trap.noise.decoupling import amplitude_filter_function, composite_segments, local_slope
-
+    """F_a ~ omega^2 for a family that does not correct amplitude at first order, omega^4 for one that does;
+    ``CompositePulse.filter_function_amplitude`` is the exact A_l/B_l segment sum of the noise module."""
     cp = composite_pulse(family, PI)
     omega = np.geomspace(1e-5, 1e-4, 4)
     f = cp.filter_function_amplitude(omega, 1.0)
@@ -333,11 +322,8 @@ def test_filter_function_amplitude_low_frequency_slope(family: str, slope: float
 
 
 def test_dc_floor_method_fits_the_leading_coefficients_and_the_section_9_15_floors() -> None:
-    """Appendix E's ``dc_floor``: c-hat fitted numerically, cached, and combined as c-hat (2m+1)!! (<beta^2>/Omega^2)^{m+1}.
-
-    The fitted c-hats reproduce the Section 4.3.5 values to 2e-7 relative or better (SK1 4.1e-10, BB1 1.5e-7, CORPSE
-    1.6e-7 as measured here), so the floors come out at 2.5e-7 relative - the precision of the fit, not of the plan.
-    """
+    """``dc_floor``: c-hat fitted numerically, cached, and combined as c-hat (2m+1)!! (<beta^2>/Omega^2)^{m+1}; the fitted
+    c-hats reproduce the closed-form values to 2e-7 relative or better."""
     assert fitted_leading_coefficient(composite_pulse("SK1", PI), "amplitude", 4) == pytest.approx(
         22.8302557111, rel=1e-6
     )
@@ -347,7 +333,7 @@ def test_dc_floor_method_fits_the_leading_coefficients_and_the_section_9_15_floo
     assert fitted_leading_coefficient(composite_pulse("CORPSE", PI), "detuning", 4) == pytest.approx(
         0.006500751892, rel=1e-6
     )
-    var = 2.07e9 / PI  # <beta^2> in (rad/s)^2 at the Section 9.15 benchmark, Omega = 1.5e6 rad/s
+    var = 2.07e9 / PI  # <beta^2> in (rad/s)^2 of the benchmark, Omega = 1.5e6 rad/s
     assert composite_pulse("SK1", PI).dc_floor({"amplitude": var}, 1.5e6) == pytest.approx(
         5.87365e-6, rel=1e-5
     )

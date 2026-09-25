@@ -1,19 +1,15 @@
-"""The surrogate calibration table (PLAN.md Section 7.5, "Bootstrap, fits and failure" and "Age, drift and cost"; milestone M6).
+"""The surrogate calibration table, the default calibration of PLAN.md Section 7.5.
 
-Section 7.5 makes the surrogate the DEFAULT calibration: the derived values of the device as ``seed`` entries (the initial
-guesses the M8 experiments start from), the closed-form alpha_m and chi_m integrals of Section 4.4.3 for the entangling
-waveforms, corrected by the exact spot checks of ``calibration.entangling`` on the resolved-mode space of Section 5.2, and the
-detection threshold and window from ``calibration.readout`` on the simulated readout model. Every entry carries its
-status, experiment, provenance id, fit time and noise sample (Appendix E ``CalEntry``); the scheduler reads only this table
-(Section 7.3), so a run on a surrogate table behaves like a laboratory whose knowledge of itself is its own derived model
-plus a handful of exact checks, which is what the plan asks of the first release. The full simulated-experiment path
-(``surrogate=False``) is milestone M8.
+The derived values of the device become ``seed`` entries, the entangling waveforms come from the closed-form integrals
+corrected by the exact spot checks of ``calibration.entangling`` on the resolved-mode space, and the detection threshold
+and window come from ``calibration.readout`` on the simulated readout model.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,7 +34,7 @@ from qutip_trap.light.raman import (
     derive_raman_drive,
 )
 from qutip_trap.light.roles import detection_beams
-from qutip_trap.prep.recipe import PreparationRecipe, preparation_occupations, recipe_of
+from qutip_trap.prep.recipe import preparation_occupations, recipe_of
 from qutip_trap.readout.detection import RecordModel
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.run.levels import within_budget
@@ -52,24 +48,24 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
 
 CROSSTALK_MIN = 1e-6
-"""Rabi ratios below this are not stored (a beam of finite waist gives every ion some light; the threshold keeps the table small)."""
+"""Rabi ratios below this are not stored (a beam of finite waist gives every ion some light)."""
 MU_ABOVE_TOP_FRACTION = 0.35
-"""The surrogate's AM beat note sits this fraction of the smallest mode gap above the highest coupled mode (Section 7.8)."""
+"""The surrogate's AM beat note sits this fraction of the smallest mode gap above the highest coupled mode."""
 
 
-def _seed(value: float, pid: str, experiment: str, t0_s: float, unc: float = 0.0) -> CalEntry:
-    return CalEntry(float(value), float(unc), "seed", experiment, pid, float(t0_s), 0)
+def _seed(value: float, pid: str, experiment: str, t0_s: float) -> CalEntry:
+    return CalEntry(float(value), 0.0, "seed", experiment, pid, float(t0_s), 0)
 
 
 @dataclass(frozen=True)
 class SurrogateReport:
-    """What the surrogate calibration did per pair and per ion (the audit trail Section 7.5 asks the surrogate to report)."""
+    """What the surrogate calibration did per pair and per ion."""
 
     table: CalibrationTable
     entangling: dict[tuple[int, int], CalibrationRun]
     mode_classes: dict[tuple[int, int], dict[int, str]]
     frozen_chi_rad: dict[tuple[int, int], dict[int, float]]
-    """Per pair, the chi_m of the modes frozen in its spot check (the loss the calibration target absorbed, Section 5.2)."""
+    """Per pair, the chi_m of the modes frozen in its spot check (the loss the calibration target absorbed)."""
     detection: DetectionCalibration | None
     nbar: dict[int, float]
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -82,31 +78,19 @@ def surrogate_waveform(
     *,
     nbar: Mapping[int, float],
     duration_s: float = 100e-6,
-    mu_hz: float | None = None,
-    eta_min: float = 1e-9,
     mode_frequencies_hz: Mapping[int, float] | None = None,
 ) -> tuple[ShapedPulse, GateModes]:
-    """The closed-form waveform of Section 4.4.3 for ``pair``: the symmetric square pulse when the Raman pair couples the pair to one
-    mode, else Choi's segmented AM (2N + 1 segments) at ``mu_hz``, by default ``MU_ABOVE_TOP_FRACTION`` of the smallest gap
-    between the coupled modes above the highest one (Landsman's and Chen's placement above the spectrum, Section 7.8).
-
-    The beat note is never placed at the midpoint of two modes: there the first-order closure leaves a one-dimensional null
-    space whose power-optimal direction flips within tens of hertz, and the exact residual displacement of the solutions
-    swings from 1e-4 to 3e-3 quanta on the two-ion 171Yb+ fixture (M6 finding; the exact spot check reports whatever the
-    chosen solution leaves).
-
-    ``mode_frequencies_hz`` solves at the frequencies the table BELIEVES instead of the crystal's (Section 7.3): what the
-    full calibration re-solves the pulse at once the sideband spectroscopy has measured them (Section 7.5 item 4, "the
-    closure amplitude the pulse solver predicts at the calibrated mode frequencies").
-    """
-    modes = gate_modes(
-        device, pair, beams, nbar=nbar, eta_min=eta_min, mode_frequencies_hz=mode_frequencies_hz
-    )
+    """The closed-form waveform for ``pair``: the symmetric square pulse when the Raman pair couples the pair to
+    one mode, else Choi's segmented AM (2N + 1 segments) with the beat note ``MU_ABOVE_TOP_FRACTION`` of the smallest gap
+    between the coupled modes above the highest one (Landsman's and Chen's placement above the spectrum; at the midpoint of
+    two modes the power-optimal direction of the one-dimensional null space flips within tens of hertz).
+    ``mode_frequencies_hz`` solves at the frequencies the table BELIEVES instead of the crystal's."""
+    modes = gate_modes(device, pair, beams, nbar=nbar, eta_min=1e-9, mode_frequencies_hz=mode_frequencies_hz)
     if modes.n_modes == 1:
         return symmetric_pulse(modes, gate_mode=modes.modes[0], loops=1, duration_s=duration_s), modes
     freqs = sorted(w / TWO_PI for w in modes.omega_rad_s)
     gap = min(b - a for a, b in zip(freqs[:-1], freqs[1:]))
-    mu = float(mu_hz) if mu_hz is not None else freqs[-1] + MU_ABOVE_TOP_FRACTION * gap
+    mu = freqs[-1] + MU_ABOVE_TOP_FRACTION * gap
     return solve_amplitude_modulation(modes, mu_hz=mu, duration_s=duration_s), modes
 
 
@@ -118,22 +102,13 @@ def spot_check_space(
     *,
     freeze_alpha_max: float,
     freeze_chi_max_rad: float,
-    d_min: int = 6,
-    d_max: int = 64,
+    tail: float,
     caps: Mapping[int, int] | None = None,
     ions: Sequence[int] | None = None,
-    tail: float | None = None,
 ) -> tuple[HilbertSpace, dict[int, str]]:
-    """The reduced joint space of a pair's spot check: its resolved modes by the Section 5.2 classes, everything else frozen;
-    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone, the GATE_LOCAL space of the pair (Section 5.4; M9a).
-
-    ``tail`` is the boundary threshold the cap rule sizes at, ``SolverOptions.boundary_population_max`` (the engine's own
-    margin check reads the same number, so the initial cap and the check that grows it must not read two thresholds:
-    ledger ``conv.boundary_threshold_is_branch_scaled_on_both_sides``); None takes the SolverOptions default explicitly
-    rather than ``cap_for``'s own."""
-    from qutip_trap.dynamics.engine import SolverOptions
-
-    boundary = SolverOptions().boundary_population_max if tail is None else float(tail)
+    """The reduced joint space of a pair's spot check: its resolved modes by the mode classes, everything else frozen;
+    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone (the pair's GATE_LOCAL space). ``tail`` is the
+    boundary threshold the caps are sized at (the engine's margin check reads the same one)."""
     classes: dict[int, str] = {}
     resolved: list[ModeTruncation] = []
     for k, m in enumerate(modes.modes):
@@ -143,7 +118,7 @@ def spot_check_space(
         )
         classes[m] = cls
         if cls == "resolved":
-            tr = cap_for(c.radius, modes.nbar[k], c.eta_max, d_min=d_min, d_max=d_max, tail=boundary)
+            tr = cap_for(c.radius, modes.nbar[k], c.eta_max, d_min=6, d_max=64, tail=tail)
             d = int(caps[m]) if caps is not None and m in caps else tr.d
             resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
     frozen = tuple(m for m in range(n_modes_total) if m not in {t.mode for t in resolved})
@@ -161,25 +136,16 @@ def surrogate_table(
     gate_drives: Mapping[int, GateDrive] | None = None,
     entangling_drives: Mapping[int, GateDrive] | None = None,
     pairs: Sequence[tuple[int, int]] | None = None,
-    recipe: PreparationRecipe | None = None,
-    nbar: Mapping[int, float] | None = None,
     spot_check: bool = True,
     detection_records: int = 10_000,
     detection_windows_s: Sequence[float] | None = None,
-    ms_duration_s: float = 100e-6,
-    ms_mu_hz: float | None = None,
-    rabi_hz: Mapping[tuple[int, int], float] | None = None,
     options: SolverOptions | None = None,
     builder_options: BuilderOptions | None = None,
     caps: Mapping[int, int] | None = None,
-    tolerance_rad: float = 1e-4,
 ) -> SurrogateReport:
-    """Build the surrogate CalibrationTable of Section 7.5 for ``device``.
-
-    ``pairs`` restricts the entangling waveforms (default: every pair of the crystal); ``nbar`` overrides the prepared
-    occupations the solvers weight with (default: the device's preparation recipe); ``rabi_hz`` supplies carrier Rabi
-    frequencies the device cannot derive (microwave drives); ``spot_check=False`` stores the closed-form waveform as a seed.
-    """
+    """The surrogate CalibrationTable for ``device``: ``pairs`` restricts the entangling waveforms (default:
+    every pair of the crystal), ``spot_check=False`` stores the closed-form waveforms as seeds, the explicit drive maps
+    override the device's roles."""
     from qutip_trap.dynamics.engine import SolverOptions
 
     opts = options or SolverOptions()
@@ -191,15 +157,11 @@ def surrogate_table(
         ((int(d.beams[0]), int(d.beams[1])) for d in ent.values() if d.kind == "raman" and len(d.beams) == 2),
         None,
     )
-    occupations = (
-        dict(nbar)
-        if nbar is not None
-        else preparation_occupations(device, recipe or recipe_of(device, raman_pair=hint))
-    )
-    if nbar is None and device.preparation is None and recipe is None:
+    occupations = preparation_occupations(device, recipe_of(device, raman_pair=hint))
+    if device.preparation is None:
         notes.append("preparation recipe inferred by prep.recipe.standard_recipe (the device carries none)")
     b_gauss = device.field.B_gauss
-    # qubit frequencies, Rabi frequencies, Stark shifts and crosstalk from the derived values (seed)
+    # qubit frequencies, Rabi frequencies, Stark shifts and crosstalk from the derived values
     qubit_freq: dict[int, CalEntry] = {}
     rabi: dict[tuple[int, int], CalEntry] = {}
     stark: dict[tuple[int, int], CalEntry] = {}
@@ -212,29 +174,23 @@ def surrogate_table(
         key = (i, spec.table_key_beam)
         if spec.kind == "raman":
             dd = derive_raman_drive(device, i, (spec.beams[0], spec.beams[1]), scattering=False)
-            rabi[key] = _seed(dd.carrier_rabi_hz, "conv.two_photon_rabi", "derived_raman_drive", t0_s)
-            stark[key] = _seed(dd.stark_shift_hz, "conv.two_photon_rabi", "derived_raman_drive", t0_s)
-            for j, eps in crosstalk_ratios(device, i, spec.beams, kind="raman").items():
-                if abs(eps) >= CROSSTALK_MIN:
-                    crosstalk[(i, j)] = _seed(abs(eps), "conv.crosstalk_ratio", "derived_beam_profile", t0_s)
+            pid, experiment = "conv.two_photon_rabi", "derived_raman_drive"
         elif spec.kind in ("optical_E1", "optical_E2"):
             dd = derive_optical_drive(device, i, spec.beams[0], scattering=False)
-            rabi[key] = _seed(dd.carrier_rabi_hz, "conv.rabi_frequency", "derived_optical_drive", t0_s)
-            stark[key] = _seed(dd.stark_shift_hz, "conv.rabi_frequency", "derived_optical_drive", t0_s)
-            for j, eps in crosstalk_ratios(device, i, spec.beams, kind=spec.kind).items():
-                if abs(eps) >= CROSSTALK_MIN:
-                    crosstalk[(i, j)] = _seed(abs(eps), "conv.crosstalk_ratio", "derived_beam_profile", t0_s)
-        elif rabi_hz is not None and key in rabi_hz:
-            rabi[key] = _seed(rabi_hz[key], "conv.rabi_frequency", "supplied_rabi_frequency", t0_s)
+            pid, experiment = "conv.rabi_frequency", "derived_optical_drive"
         else:
             notes.append(
                 f"ion {i}: a {spec.kind} drive has no derivable carrier Rabi frequency; entry left absent"
             )
-    # the entangling drives' own carrier Rabi frequencies and Stark shifts (the global pair), keyed by their table beam, so that
-    # the scheduler compensates the MS gate's light shift and the played chain of M8 has a belief to convert against. Only
-    # the ions that HAVE an entangling drive: a single-qubit device (40Ca+ optical preset, entangling_drives={}) has none and
-    # gets no entangling seed and no waveform, and a partially addressed chain seeds the ions its pairs use (this loop ran
-    # over range(n) and raised KeyError on the first ion without one).
+            continue
+        rabi[key] = _seed(dd.carrier_rabi_hz, pid, experiment, t0_s)
+        stark[key] = _seed(dd.stark_shift_hz, pid, experiment, t0_s)
+        for j, eps in crosstalk_ratios(device, i, spec.beams, kind=spec.kind).items():
+            if abs(eps) >= CROSSTALK_MIN:
+                crosstalk[(i, j)] = _seed(abs(eps), "conv.crosstalk_ratio", "derived_beam_profile", t0_s)
+    # the entangling drives' own carrier Rabi frequencies and Stark shifts (the global pair), keyed by their table beam, so
+    # that the scheduler compensates the entangling gate's light shift and the played chain has a belief to convert against;
+    # only the ions that HAVE an entangling drive
     for i in sorted(ent):
         spec = ent[i]
         key = (i, spec.table_key_beam)
@@ -243,7 +199,6 @@ def surrogate_table(
         dd = derive_raman_drive(device, i, (spec.beams[0], spec.beams[1]), scattering=False)
         rabi[key] = _seed(dd.carrier_rabi_hz, "conv.two_photon_rabi", "derived_raman_drive", t0_s)
         stark[key] = _seed(dd.stark_shift_hz, "conv.two_photon_rabi", "derived_raman_drive", t0_s)
-    # modes, occupations, heating (seed)
     modes_entries = {
         m: _seed(mode.omega_hz, "conv.mode_index", "derived_crystal_modes", t0_s)
         for m, mode in enumerate(crystal.modes)
@@ -253,11 +208,7 @@ def surrogate_table(
     }
     heating: dict[int, CalEntry] = {}
     spec_e = device.noise.S_E
-    # the seed is the rate the NOISE MODEL will actually heat the run at (Section 4.1.5, the correlation length and the
-    # spectrum's white level folded in by single_sided_from_spectrum), the same quantity Device.derived() reports. Reading
-    # spec_e's tabulated arrays alone, as this did, misses NoiseSpectrum.white_level entirely, so a device whose S_E is a
-    # pure white level was seeded with zero heating while the engine heated it at tens of quanta per second - and the M8
-    # heating experiment, whose delay span is 10/ndot_seed, then had no scan to run on exactly the devices that heat.
+    # the rate the noise model heats the run at (the correlation length and the spectrum's white level folded in)
     model_rates: dict[int, float] = {}
     if not spec_e.is_zero() and device.noise.correlation_length_m is not None:
         model_rates = device.noise.heating_rates_quanta_per_s(device)
@@ -266,15 +217,13 @@ def surrogate_table(
         if m in model_rates:
             rate = float(model_rates[m])
         else:
-            # no correlation length declared (the noise model refuses to guess one): the per-mode two-sided value at the
-            # mode frequency, which is what Device.derived() falls back to as well
+            # no correlation length declared: the per-mode two-sided value at the mode frequency
             s_two = float(np.interp(w, spec_e.omega_rad_s, spec_e.S, left=0.0, right=0.0))
             ion = int(np.argmax(np.abs(mode.eigenvector)))
             rate = heating_rate_quanta_per_s(
                 float(single_sided_from_two_sided(s_two)), float(crystal.masses_kg[ion]), w
             )
         heating[m] = _seed(rate, "conv.electric_field_noise", "derived_heating_rate", t0_s)
-    field_entry = _seed(b_gauss, "conv.curvature_naming", "field_value", t0_s)
     base = CalibrationTable(
         device_hash=device.hash(),
         seed=int(seed),
@@ -286,7 +235,7 @@ def surrogate_table(
         modes=modes_entries,
         nbar=nbar_entries,
         ms={},
-        field=field_entry,
+        field=_seed(b_gauss, "conv.curvature_naming", "field_value", t0_s),
         micromotion={},
         detection={},
         heating=heating,
@@ -307,50 +256,39 @@ def surrogate_table(
         if spec_a.kind != "raman" or len(spec_a.beams) != 2:
             notes.append(f"pair {(a, b)}: the surrogate solves Raman (bichromatic) waveforms only; skipped")
             continue
-        beams = (spec_a.beams[0], spec_a.beams[1])
         try:
             shaped, modes = surrogate_waveform(
-                device, (a, b), beams, nbar=occupations, duration_s=ms_duration_s, mu_hz=ms_mu_hz
+                device, (a, b), (spec_a.beams[0], spec_a.beams[1]), nbar=occupations
             )
         except ClosureError as exc:
             notes.append(f"pair {(a, b)}: no closed-form waveform ({exc}); skipped")
             continue
-        contributions = waveform_contributions(shaped.waveform, modes, (a, b))
-        space, classes = spot_check_space(
+        space_for = partial(
+            spot_check_space,
             modes,
-            contributions,
+            waveform_contributions(shaped.waveform, modes, (a, b)),
             n,
             len(crystal.modes),
             freeze_alpha_max=opts.freeze_alpha_max,
             freeze_chi_max_rad=opts.freeze_chi_max_rad,
-            caps=caps,
             tail=opts.boundary_population_max,
+            caps=caps,
         )
+        space, classes = space_for()
         classes_by_pair[(a, b)] = classes
         frozen_chi[(a, b)] = {
             m: float(shaped.waveform.chi_m.get(m, 0.0)) for m, cls in classes.items() if cls == "frozen"
         }
         inside, dim, nnz = within_budget(space, opts)
         if spot_check and not inside:
-            # the pair's GATE_LOCAL space (Section 5.4; M9a): the two ions and the resolved modes, the rest of the chain absent
-            space, _classes_local = spot_check_space(
-                modes,
-                contributions,
-                n,
-                len(crystal.modes),
-                freeze_alpha_max=opts.freeze_alpha_max,
-                freeze_chi_max_rad=opts.freeze_chi_max_rad,
-                caps=caps,
-                ions=(a, b),
-                tail=opts.boundary_population_max,
-            )
-            inside_local, dim_local, nnz_local = within_budget(space, opts)
+            # the pair's GATE_LOCAL space: the two ions and the resolved modes, the rest of the chain absent
+            space, _classes_local = space_for(ions=(a, b))
+            inside, dim_local, nnz_local = within_budget(space, opts)
             notes.append(
                 f"pair {(a, b)}: the joint spot-check space (dimension {dim}, {nnz} drive non-zeros) exceeds the JOINT_EXACT "
                 f"guards ({opts.joint_dimension_max}, {opts.nnz_max}); the exact check runs on the pair's GATE_LOCAL space "
-                f"(dims {space.dims}, dimension {dim_local}, {nnz_local} non-zeros; Section 5.4)"
+                f"(dims {space.dims}, dimension {dim_local}, {nnz_local} non-zeros)"
             )
-            inside = inside_local
             if not inside:
                 notes.append(
                     f"pair {(a, b)}: the GATE_LOCAL spot-check space exceeds the guards too; the closed-form waveform is stored "
@@ -365,8 +303,6 @@ def surrogate_table(
                 base,
                 space=space,
                 chi_target_rad=CHI_MAXIMAL_RAD,
-                reference="n0",
-                tolerance_rad=tolerance_rad,
                 options=opts,
                 builder_options=builder_options,
             )
@@ -397,14 +333,13 @@ def surrogate_table(
             [device.beams[k] for k in det_idx],
             position_m=tuple(float(x) for x in crystal.positions_m[0]),
         )
-        record_model = RecordModel.from_rates(rates, device.detector)
         windows = (
             tuple(float(x) for x in detection_windows_s)
             if detection_windows_s is not None
             else tuple(float(x) for x in np.geomspace(0.25, 2.5, 12) * device.detector.window_s)
         )
         det_cal = calibrate_detection(
-            record_model,
+            RecordModel.from_rates(rates, device.detector),
             scheme,
             windows_s=windows,
             n_records=int(detection_records),
@@ -413,25 +348,8 @@ def surrogate_table(
             sample_id=0,
         )
         detection = dict(det_cal.entries)
-    table = CalibrationTable(
-        device_hash=base.device_hash,
-        seed=base.seed,
-        surrogate=True,
-        qubit_freq=qubit_freq,
-        rabi=rabi,
-        stark=stark,
-        crosstalk=crosstalk,
-        modes=modes_entries,
-        nbar=nbar_entries,
-        ms=ms,
-        field=field_entry,
-        micromotion={},
-        detection=detection,
-        heating=heating,
-        fitted_at_s=float(t0_s),
-    )
     return SurrogateReport(
-        table=table,
+        table=replace(base, ms=ms, detection=detection),
         entangling=runs,
         mode_classes=classes_by_pair,
         frozen_chi_rad=frozen_chi,

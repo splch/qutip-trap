@@ -1,9 +1,8 @@
-"""The control hardware chain: DDS, AOM, amplifier (PLAN.md Section 7.10; Appendix E; milestone M7).
+"""The control hardware chain: DDS, AOM, amplifier (PLAN.md Section 7.10).
 
 The pulse a ``Schedule`` specifies is not the field the ion sees. ``apply_hardware_chain`` turns a schedule into the one
-the hardware plays, every effect entering through the drive coefficient Omega(t) e^{-i(mu t - phi(t))} of Section 5.2 so
-that no new Hamiltonian term is needed **[background]** (standard instrumentation physics, user-supplied parameters with
-documented defaults):
+the hardware plays, every effect entering through the drive coefficient Omega(t) e^{-i(mu t - phi(t))} so that no new
+Hamiltonian term is needed:
 
 - Quantization: a constant tone detuning is rounded to the DDS frequency grid f_clk/2^bits (when ``dds_clock_hz`` and
   ``dds_frequency_bits`` are set), a constant phase to 2 pi/2^phase_bits, an amplitude to full_scale/2^amplitude_bits
@@ -15,16 +14,15 @@ documented defaults):
   for a microwave or gradient drive (no modulator in that path; an infinite bandwidth is an ideal envelope), continuously
   across the contiguous segments of one pulse train (an entangling gate's segments, a composite pulse) and with an
   exponential tail of 8 time constants after the train (e^-8 dropped), truncated at the next pulse on a shared ion when the
-  dead time is shorter; a filtered envelope is a uniformly sampled array the builder splines (Section 5.5), an unfiltered
-  one keeps its form (a callable is never resampled). The drive's Stark shift follows the played light: delta(t) =
-  delta_ref mean_tones (|Omega_played(t)|/Omega_ref)^p with p the ``stark_scaling_power`` of the drive kind (Section 4.3.2)
-  and the reference read at the pulse's programmed peak, so the tail carries the decaying shift of the decaying light and
-  not the programmed one; a programmed shift is read as homogeneous of degree p in the tone amplitudes (the scheduler's
-  form), exact when the tones of a drive share one envelope shape.
+  dead time is shorter; a filtered envelope is a uniformly sampled array the builder splines, an unfiltered one keeps its
+  form (a callable is never resampled). The drive's Stark shift follows the played light: delta(t) = delta_ref mean_tones
+  (|Omega_played(t)|/Omega_ref)^p with p the ``stark_scaling_power`` of the drive kind and the reference read at the
+  pulse's programmed peak, so the tail carries the decaying shift of the decaying light; a programmed shift is read as
+  homogeneous of degree p in the tone amplitudes, exact when the tones of a drive share one envelope shape.
 - Timing jitter: each pulse train is shifted rigidly by a normal deviate of ``timing_jitter_s`` drawn from the keyed seeds
   (a train shares one trigger), clamped so that no two pulses on one ion overlap.
-- Phase coherence and dead time are the scheduler's (``phase_continuous`` selects the per-gate beat-note reset, Section 7.10;
-  the dead time is idle evolution with the noise channels active).
+- Phase coherence and dead time are the scheduler's (``phase_continuous`` selects the per-gate beat-note reset; the dead
+  time is idle evolution with the noise channels active).
 
 A chain with zero rise time, infinite amplifier bandwidth, zero jitter, no frequency word and no saturation is ideal
 electronics, which ``describe`` says.
@@ -55,7 +53,7 @@ MAX_SAMPLES = 200_001
 
 @dataclass(frozen=True)
 class HardwareChain:
-    """DDS/AOM/amplifier response: quantization, rise time, bandwidth, dead time, phase continuity (Section 7.10)."""
+    """DDS/AOM/amplifier response: quantization, rise time, bandwidth, dead time, phase continuity."""
 
     dds_phase_bits: int
     dds_amplitude_bits: int
@@ -73,10 +71,9 @@ class HardwareChain:
     timing_jitter_s: float = 0.0
     """rms per-train start-time jitter (sequencer latency), drawn per sample from the keyed seeds."""
     parallel_addressing: bool = False
-    """Whether the chain can play single-qubit pulses on distinct ions at the same time (Section 7.3: single-qubit gates run
-    "in parallel if the device model allows parallel addressing"; one AWG channel per addressing beam allows it, a switched
-    single channel does not). ``schedule(parallel=None)`` and ``run(parallel=None)`` read this flag. Entangling gates are
-    serialized one at a time per crystal whatever it says (Section 7.3, first release): they share the global beam pair."""
+    """Whether the chain can play single-qubit pulses on distinct ions at the same time (one AWG channel per addressing
+    beam; a switched single channel cannot). Entangling gates are serialized one at a time per crystal whatever it says:
+    they share the global beam pair."""
 
     def __post_init__(self) -> None:
         if self.dds_phase_bits <= 0 or self.dds_amplitude_bits <= 0:
@@ -125,7 +122,7 @@ class HardwareChain:
         )
 
     def describe(self) -> tuple[str, ...]:
-        """What the chain applies, for ``Device.derived()`` and the run's approximations (Section 7.10's closing rule)."""
+        """What the chain applies, for ``Device.derived()`` and the run's approximations."""
         out = [
             f"hardware: phase word {self.dds_phase_bits} bits ({self.phase_resolution_rad:.2e} rad), amplitude word "
             f"{self.dds_amplitude_bits} bits, dead time {self.dead_time_s:.3g} s, "
@@ -162,11 +159,6 @@ class HardwareChain:
 # ---- applying the chain to a schedule -------------------------------------------------------------------------------------------
 
 
-def _held(fn: Callable[[float], float], at: float) -> Callable[[float], float]:
-    """A schedule frozen at its final value (the tail after a pulse)."""
-    return ConstantFn(float(fn(at)))
-
-
 def _round_to(value: float, step: float) -> float:
     return float(round(value / step) * step) if step > 0.0 else value
 
@@ -196,8 +188,8 @@ def _shape_array(x: np.ndarray, amp_step: float, saturation: float | None) -> np
 
 @dataclass(frozen=True, eq=False)
 class ShapedFn:
-    """A programmed callable envelope through the amplitude word and the amplifier saturation, sample by sample (picklable when
-    the programmed callable is; Section 11.3 item 9)."""
+    """A programmed callable envelope through the amplitude word and the amplifier saturation, sample by sample (picklable
+    when the programmed callable is)."""
 
     fn: Callable[[float], float]
     amp_step: float
@@ -226,11 +218,6 @@ def _constant(value: Envelope) -> float | None:
     if callable(value) or isinstance(value, np.ndarray):
         return None
     return float(value)
-
-
-def _as_function(value: Envelope, duration: float) -> Callable[[float], float]:
-    """A callable of the pulse-local time from an envelope, splining a sampled array as the builder does (Section 5.5)."""
-    return as_time_function(value, duration)
 
 
 def _stark_reference(pulse: Pulse, power: int) -> tuple[float, tuple[float, ...]]:
@@ -281,7 +268,7 @@ def _stark_played(
         return st_ref * float(
             np.mean([(abs(c) / ref) ** power for c, (_, ref) in zip(constants, pairs) if c is not None])
         )
-    fns = [_as_function(env, duration) for env, _ in pairs]
+    fns = [as_time_function(env, duration) for env, _ in pairs]
     scales = [ref for _, ref in pairs]
     return PlayedStarkFn(st_ref, tuple(fns), tuple(scales), int(power))
 
@@ -329,8 +316,8 @@ def apply_hardware_chain(
     response: bool = True,
     jitter: bool = True,
 ) -> tuple[Schedule, tuple[str, ...]]:
-    """The schedule the hardware plays (Section 7.10) and the notes: quantized tone words, saturated and low-pass-filtered
-    envelopes with their tails, jittered train starts."""
+    """The schedule the hardware plays and the notes: quantized tone words, saturated and low-pass-filtered envelopes with
+    their tails, jittered train starts."""
     from qutip_trap.control.pulses import Pulse, Tone
     from qutip_trap.control.schedule import Schedule, stark_scaling_power
 
@@ -456,10 +443,12 @@ def apply_hardware_chain(
                     arr = states[j] * np.exp(-grid / tau_r)
                     ph = tone.phase_rad
                     if callable(ph):
-                        ph = _held(ph, last.duration_s)  # the phase holds its final value through the tail
+                        ph = ConstantFn(
+                            float(ph(last.duration_s))
+                        )  # the phase holds its final value through the tail
                     det = tone.detuning_hz
                     if callable(det):
-                        det = _held(det, last.duration_s)
+                        det = ConstantFn(float(det(last.duration_s)))
                     if quantize and not callable(det) and f_res is not None:
                         det = _round_to(float(det), f_res)
                     if quantize and not callable(ph):

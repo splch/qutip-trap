@@ -1,24 +1,14 @@
-"""Arbitrary two-qubit unitaries as native gates: the KAK (Cartan) decomposition in the magic basis (PLAN.md Section 7.2, the
-compiler's "standard set" extended to an arbitrary SU(4) the way item 1 extends it to an arbitrary U3; Section 13 rows
-"Rotation generators", "Entangling angle", "Operator order in templates"; milestone M10).
+"""Arbitrary two-qubit unitaries as native gates: the KAK (Cartan) decomposition in the magic basis (PLAN.md Section 7.2).
 
 Every U in U(4) is, up to a global phase, U = (A (x) B) exp[-i (a XX + b YY + c ZZ)] (C (x) D) with A, B, C, D in SU(2) and
-the canonical class (a, b, c) in the Weyl chamber pi/4 >= a >= b >= |c| >= 0 (Khaneja-Glaser; Kraus-Cirac 2001; Zhang et
-al. 2003). The construction here is the magic-basis one: in the Bell basis M the local group SU(2) (x) SU(2) is the real
-orthogonal group SO(4) and the canonical exponential is diagonal, so Q = M^dag U M factors as O_1 D O_2^T with O_1, O_2 real
-orthogonal and D diagonal unitary. O_2 and D^2 come from the eigen-decomposition of the complex-symmetric unitary Q^T Q =
-O_2 D^2 O_2^T (its real and imaginary parts commute and are diagonalized together by one real orthogonal matrix), O_1 =
-Q O_2 D^-1, the determinants are fixed to +1 (an O(4) matrix of determinant -1 is not a tensor product), and (a, b, c) and the
-global phase follow from the four phases of D through the +-1 table of XX, YY and ZZ on the Bell states.
+(a, b, c) in the Weyl chamber pi/4 >= a >= b >= |c| >= 0 (Khaneja-Glaser; Kraus-Cirac 2001). In the magic basis M the local
+group is SO(4) and the canonical exponential is diagonal, so Q = M^dag U M = O_1 D O_2^T with O_1, O_2 real orthogonal:
+O_2 and D^2 diagonalize the complex-symmetric Q^T Q, O_1 = Q O_2 D^-1, the determinants are fixed to +1, and (a, b, c)
+follow from the four phases of D through the +-1 table of XX, YY and ZZ on the Bell states.
 
-The canonical part is emitted as the standard gates the compiler already verifies (Section 7.7): exp(-i a XX) = rxx(2a);
-exp(-i b YY) = (S (x) S) rxx(2b) (S^dag (x) S^dag) since S X S^dag = Y, in time order sdg, sdg, rxx(2b), s, s; exp(-i c ZZ) =
-rzz(2c), which the compiler realizes as the native zz or the M4 wrapper. With the chamber normalization every rxx angle is at
-most pi/2, so every Moelmer-Soerensen gate is played at an angle in [0, pi/2] (Section 7.1) and a generic SU(4) costs THREE
-entangling gates, a class with c = 0 two, the CNOT class one and a local unitary none. The local factors go through
-``decompose_single_qubit`` (at most two GPi2 pulses each plus virtual RZ). Section 7.2 item 3 applies: the emitted block is
-verified against the target up to a global phase before it is returned, and a decomposition that does not reproduce its
-target raises ``CompileError``.
+The canonical part is emitted as verified standard gates: exp(-i a XX) = rxx(2a); exp(-i b YY) = (S (x) S) rxx(2b)
+(S^dag (x) S^dag), in time order sdg, sdg, rxx(2b), s, s; exp(-i c ZZ) = rzz(2c). In the chamber every rxx angle is at
+most pi/2, so a generic SU(4) costs three entangling gates, the CNOT class one and a local unitary none.
 """
 
 from __future__ import annotations
@@ -32,12 +22,11 @@ import numpy as np
 
 from qutip_trap.control import native
 from qutip_trap.control.compiler import (
-    Circuit,
     CompileError,
     Operation,
-    circuit_unitary,
     decompose_single_qubit,
-    embed,
+    gate_matrix,
+    verify_operations,
 )
 
 SQRT_HALF: Final[float] = 1.0 / math.sqrt(2.0)
@@ -61,8 +50,8 @@ _T: Final[np.ndarray] = np.array(
 )
 _SOLVE: Final[np.ndarray] = np.linalg.inv(np.hstack([-_T, np.ones((4, 1))]))
 
-_S: Final[np.ndarray] = np.diag([1.0, 1.0j]).astype(complex)
-_H: Final[np.ndarray] = np.array([[1.0, 1.0], [1.0, -1.0]], dtype=complex) * SQRT_HALF
+_S: Final[np.ndarray] = gate_matrix(Operation("s", (0,), ()))
+_H: Final[np.ndarray] = gate_matrix(Operation("h", (0,), ()))
 _RX_HALF: Final[np.ndarray] = native.r_phi(math.pi / 2.0, 0.0)
 """exp(-i pi/4 X): conjugation maps Y -> Z and Z -> -Y, so (R (x) R) swaps the YY and ZZ coefficients."""
 
@@ -78,9 +67,8 @@ def canonical_unitary(a: float, b: float, c: float) -> np.ndarray:
 
 
 def kron_factor(u: np.ndarray, *, tol: float = 1e-9) -> tuple[np.ndarray, np.ndarray] | None:
-    """(A, B) with u = A (x) B up to a global phase, both unitary, or None when ``u`` is not a tensor product.
-
-    The 4 x 4 matrix reshaped as R[(i, k), (j, l)] = u[(i, j), (k, l)] has rank one exactly for a product A[i, k] B[j, l]."""
+    """(A, B) with u = A (x) B up to a global phase, both unitary, or None when ``u`` is not a tensor product: the matrix
+    reshaped as R[(i, k), (j, l)] = u[(i, j), (k, l)] has rank one exactly for a product A[i, k] B[j, l]."""
     m = np.asarray(u, dtype=complex)
     if m.shape != (4, 4):
         raise ValueError("a 4 x 4 matrix")
@@ -96,19 +84,9 @@ def kron_factor(u: np.ndarray, *, tol: float = 1e-9) -> tuple[np.ndarray, np.nda
     return a / scale, b * scale
 
 
-def is_local(u: np.ndarray, *, tol: float = 1e-9) -> bool:
-    return kron_factor(u, tol=tol) is not None
-
-
 def global_phase(a: np.ndarray, b: np.ndarray, *, atol: float = 1e-9) -> float | None:
-    """alpha with a = e^{i alpha} b, or None."""
-    idx = np.unravel_index(int(np.argmax(np.abs(b))), b.shape)
-    if abs(b[idx]) < atol:
-        return 0.0 if np.allclose(a, b, atol=atol) else None
-    ratio = a[idx] / b[idx]
-    if abs(abs(ratio) - 1.0) > atol or not np.allclose(a, ratio * b, atol=atol):
-        return None
-    return float(cmath.phase(ratio))
+    """alpha with a = e^{i alpha} b, or None (``native.global_phase``)."""
+    return native.global_phase(a, b, atol=atol)
 
 
 @dataclass(frozen=True)
@@ -245,7 +223,7 @@ def kak_decomposition(u: np.ndarray, *, tol: float = 1e-9) -> KAK:
         coefficients=(coefs[0], coefs[1], coefs[2]),
         phase=0.0,
     )
-    phase = global_phase(m, kak.matrix(), atol=1e3 * tol)
+    phase = native.global_phase(m, kak.matrix(), atol=1e3 * tol)
     if phase is None:
         raise CompileError("KAK: the decomposition does not reproduce its target up to a global phase")
     return KAK(kak.left, kak.right, kak.coefficients, float(phase))
@@ -275,7 +253,7 @@ def decompose_two_qubit_unitary(
     u: np.ndarray, pair: tuple[int, int], *, tol: float = 1e-9
 ) -> list[Operation]:
     """Native single-qubit operations and standard two-qubit gates (time order) for the 4 x 4 unitary ``u`` on ``pair`` (its
-    first factor the first listed qubit); verified against ``u`` up to a global phase (Section 7.2 item 3)."""
+    first factor the first listed qubit); verified against ``u`` up to a global phase."""
     kak = kak_decomposition(u, tol=tol)
     q0, q1 = pair
     ops: list[Operation] = []
@@ -286,22 +264,6 @@ def decompose_two_qubit_unitary(
     ops += decompose_single_qubit(kak.left[1], q1)
     verify_operations(ops, np.asarray(u, dtype=complex), pair, tol=1e3 * tol)
     return ops
-
-
-def verify_operations(
-    ops: list[Operation], target: np.ndarray, qubits: tuple[int, ...], *, tol: float = 1e-8
-) -> float:
-    """max |U_ops - e^{i alpha} target| on the qubits ``qubits`` (target's first factor the first listed qubit); raises
-    ``CompileError`` above ``tol``."""
-    local = {q: k for k, q in enumerate(qubits)}
-    n = len(qubits)
-    relabelled = [Operation(op.name, tuple(local[q] for q in op.qubits), op.params) for op in ops]
-    got = circuit_unitary(Circuit(n, tuple(relabelled), tuple(range(n))))
-    want = embed(target, tuple(range(n)), n)
-    phase = global_phase(got, want, atol=tol)
-    if phase is None:
-        raise CompileError("the operations do not reproduce the target unitary up to a global phase")
-    return float(np.max(np.abs(got - cmath.exp(1j * phase) * want)))
 
 
 def haar_random_unitary(rng: np.random.Generator, dim: int) -> np.ndarray:

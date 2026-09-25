@@ -1,4 +1,4 @@
-"""Single-qubit native gates as pulses and the virtual-Z frame (PLAN.md Sections 4.3.4, 7.1, 7.3, 7.6, 9.6)."""
+"""Single-qubit native gates as pulses and the virtual-Z frame (PLAN.md Section 7)."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def _run_microwave(ops: list[Operation]) -> tuple[np.ndarray, object]:
 
 
 def test_gpi2_and_gpi_pulses_reproduce_the_native_matrices_at_eta_zero() -> None:
-    """Section 9.6: GPi2(0) on |0> gives the Section 7.6 state; a microwave carrier (eta = 0) reproduces the matrices to 1e-6."""
+    """GPi2(0)|0> = (|0> - i|1>)/sqrt2; a microwave carrier (eta = 0) reproduces the native matrices to 1e-6."""
     psi, sch = _run_microwave([Operation("gpi2", (0,), (0.0,))])
     assert equal_up_to_global_phase(psi.reshape(2, 1), (gpi2(0.0) @ KET0).reshape(2, 1), atol=1e-6)
     assert np.allclose(np.abs(psi) ** 2, [0.5, 0.5], atol=1e-6)
@@ -67,8 +67,8 @@ def test_gpi2_and_gpi_pulses_reproduce_the_native_matrices_at_eta_zero() -> None
 
 
 def test_virtual_z_concrete_sequence_pins_the_sign() -> None:
-    """Section 9.6: RZ(0.1) then GPi2(0) on |0> equals GPi2(-0.1) followed by RZ(0.1) (phi -> phi - theta); a rule 'pinned'
-    would pass for either sign, so the opposite sign is asserted to FAIL."""
+    """RZ(0.1) then GPi2(0) on |0> equals GPi2(-0.1) followed by RZ(0.1) (phi -> phi - theta), and the opposite sign does
+    not."""
     psi, sch = _run_microwave([Operation("rz", (0,), (0.1,)), Operation("gpi2", (0,), (0.0,))])
     assert sch.pulses[0].drive.tones[0].phase_rad == pytest.approx(-0.1)
     assert sch.phase_frame == {0: pytest.approx(0.1)}
@@ -94,7 +94,7 @@ def test_scheduler_refusals_and_drive_inference() -> None:
     table = table_with_rabi({(0, MICROWAVE_BEAM_KEY): RABI_HZ, (1, MICROWAVE_BEAM_KEY): RABI_HZ})
     with pytest.raises(ScheduleError, match="no entangling waveform"):
         schedule(Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1)), dev, table)
-    # Section 7.2 item 4: a measure before a later gate is refused with a clear error (mid-circuit physics is Section 8.5)
+    # a measure or reset before a later gate is refused
     with pytest.raises(ScheduleError, match="mid-circuit"):
         schedule(
             Circuit(1, (Operation("measure", (0,), ()), Operation("gpi", (0,), (0.0,))), (0,)), dev, table
@@ -104,7 +104,7 @@ def test_scheduler_refusals_and_drive_inference() -> None:
     with pytest.raises(ScheduleError, match="native"):
         schedule(Circuit(1, (Operation("h", (0,), ()),), (0,)), dev, table)
     # the terminal measure is the schedule's one event, after the last pulse and dead time, of the detector's window when the
-    # table carries no detection entry (M6); two gates run sequentially with a dead time between them
+    # table carries no detection entry; two gates run sequentially with a dead time between them
     sch = schedule(
         Circuit(
             1,
@@ -130,7 +130,7 @@ def test_scheduler_refusals_and_drive_inference() -> None:
 
 
 def test_raman_gpi2_reproduces_the_matrix_within_the_debye_waller_budget() -> None:
-    """Section 9.6: with motion resolved the identity holds within the intrinsic budget (off-resonant carrier (Omega/nu)^2, the
+    """With motion resolved the identity holds within the intrinsic budget (off-resonant carrier (Omega/nu)^2, the
     Debye-Waller factor); the table's Rabi frequency is the DW-reduced carrier the calibration would have measured."""
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
@@ -145,8 +145,5 @@ def test_raman_gpi2_reproduces_the_matrix_within_the_debye_waller_budget() -> No
     rho = tr.final.internal.full()
     target = gpi2(0.0) @ KET0
     fidelity = float(np.real(target.conj() @ rho @ target))
-    budget = (TWO_PI_OMEGA := 2 * math.pi * dd.carrier_rabi_hz) ** 2 / (
-        2 * math.pi * 3.0e6
-    ) ** 2 + eta**2 * 0.01
+    budget = (dd.carrier_rabi_hz / 3.0e6) ** 2 + eta**2 * 0.01
     assert 1.0 - fidelity < 5 * budget and 1.0 - fidelity < 1e-3
-    assert TWO_PI_OMEGA > 0.0

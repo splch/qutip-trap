@@ -1,33 +1,22 @@
-"""Circuit IR and the compiler (PLAN.md Sections 3.3, 7.1, 7.2, 7.6, 7.7; Section 13 rows "Gate parameters", "Operator order
-in templates", "Virtual-Z propagation"; Appendix E; milestone M6).
+"""Circuit IR and the compiler (PLAN.md Section 7.2).
 
-The IR is a list of operations (name, qubits, params) supporting the native set (gpi, gpi2, ms, zz and the virtual rz)
-plus the standard set of Section 7.2 (x, y, z, h, s, sdg, t, tdg, rx, ry, rz, cnot/cx, cz, swap, cp, u3, and the
-two-qubit rotations rxx, rzz the OpenQASM exporters of the client SDKs use) and the non-unitary ``measure``, ``reset`` and
-``recool`` (Section 7.2 item 4: schedulable from the first release; the scheduler refuses mid-circuit measurement with a
-clear error until Section 8.5 is implemented). Parameters are RADIANS; IonQ's turns are converted at the boundary
-(``qutip_trap.io.ionq``).
+The IR is a list of operations (name, qubits, parameters in RADIANS; IonQ's turns are converted at the boundary,
+``qutip_trap.io.ionq``): the native set (gpi, gpi2, ms, zz and the virtual rz), the standard set (x, y, z, h, s, sdg, t,
+tdg, sx, rx, ry, cnot/cx, cz, swap, cp, u3, rxx, rzz) and the non-unitary measure, reset and recool.
 
-Compilation (Section 7.2), the ONE place ideal gate matrices are used (Section 3.1): every standard gate becomes native
-gates plus virtual RZ frame updates, each block is verified numerically against its target matrix up to a global phase
-before it is accepted, and the frame updates are then propagated into the phases of every later pulse (phi -> phi - theta
-in time order, Section 7.6) so that the compiled circuit carries only gpi, gpi2, ms and zz, the exported native set, and a
-residual per-qubit Z frame that the computational-basis measurement discards (``CompileReport.final_frame_rad``).
+Compilation turns every standard gate into native gates plus virtual RZ frame updates, verifies every block and the whole
+circuit against the target matrix up to a global phase, and absorbs the frame into the phases of every later pulse
+(phi -> phi - theta, time order), so the compiled circuit carries only gpi, gpi2, ms and zz plus a residual per-qubit Z
+frame that the computational-basis measurement discards (``CompileReport.final_frame_rad``).
 
-- Single-qubit gates: the ZYZ Euler angles of the target give one virtual RZ (a pure Z rotation), one GPi or GPi2 pulse
-  (a pi or pi/2 equatorial rotation), or otherwise the ZXZXZ form RZ(alpha) GPi2(0) RZ(beta) GPi2(0) RZ(gamma), complete
-  because GPi2(0) RZ(beta) GPi2(0) = RY(-beta) RX(pi) up to a phase, so (alpha, -beta, -gamma) are the ZYZ angles of U X
-  (Section 7.2 item 1; the 20-random-target check of that item is a test).
-- CNOT: Maslov's one-XX template in time order RY(v pi/2)_c, XX(s pi/4), RX(-s pi/2)_c RX(-v s pi/2)_t, RY(-v pi/2)_c, equal
-  to CNOT up to the global phase e^{i pi v s/4} for all four signs (Section 7.7). ``s`` is the template's sign convention:
-  the scheduler realizes either sign from the pair's calibrated waveform by a pi on the second ion's tones (Section 4.4.2),
-  so the physical sign of chi never reaches the compiler.
-- Controlled phase CP(theta) = RZ(theta/2) (x) RZ(theta/2) . ZZ(-theta/2) up to a global phase, exact; ZZ is emitted as the
-  native zz gate or expanded into the wrapper W XX(-theta/4) W_in with W = GPi2(pi/2)^(x2), W_in = GPi2(3 pi/2)^(x2)
-  (the M4 identity), depending on ``entangler``. Debnath's Fig. 2b template (``debnath_cp_template``: the same partially
-  entangling XX with the FIXED RZ(sgn(theta) pi/2) pair that is right for CZ only) is diagonal with the right conditional
-  phase but carries an extra RZ((sgn(theta) pi - theta)/2) on both qubits, overlap cos^2((sgn(theta) pi - theta)/4) with
-  CP(theta): 0.854 at pi/2 and 0.691 at pi/4 (Section 7.7), which appending RZ((theta - sgn(theta) pi)/2) on both fixes.
+- Single-qubit gates: the ZYZ angles of the target give one virtual RZ, one GPi or GPi2 pulse, or the ZXZXZ form
+  RZ(alpha) GPi2(0) RZ(beta) GPi2(0) RZ(gamma), complete because GPi2(0) RZ(beta) GPi2(0) = RY(-beta) RX(pi) up to a phase.
+- CNOT: Maslov's one-XX template RY(v pi/2)_c, XX(s pi/4), RX(-s pi/2)_c RX(-v s pi/2)_t, RY(-v pi/2)_c, equal to
+  e^{i pi v s/4} CNOT for all four signs; the scheduler realizes either sign of a pair's calibrated angle, so the physical
+  sign never reaches the compiler.
+- CP(theta) = [RZ(theta/2) (x) RZ(theta/2)] ZZ(-theta/2) up to a global phase, with ZZ the native zz or the wrapper
+  W XX(-theta/4) W_in, W = GPi2(pi/2)^(x2), W_in = GPi2(3 pi/2)^(x2) (Debnath's fixed RZ(sgn(theta) pi/2) pair is exact
+  for CZ only).
 - CZ = CP(pi); SWAP = three CNOTs; rxx(theta) = XX(theta/2) = MS(0, 0, theta); rzz(theta) = ZZ(theta).
 """
 
@@ -35,9 +24,8 @@ from __future__ import annotations
 
 import cmath
 import dataclasses
-import inspect
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal
 
@@ -48,15 +36,14 @@ from qutip_trap.control import native
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
 
-# name -> (number of qubits, number of parameters)
 NATIVE_GATES: Final[dict[str, tuple[int, int]]] = {
     "gpi": (1, 1),
     "gpi2": (1, 1),
     "ms": (2, 3),
     "zz": (2, 1),
-    "rz": (1, 1),  # virtual: no pulse, a frame update (Section 7.1)
+    "rz": (1, 1),
 }
-"""The native set (Section 7.1): name -> (qubits, parameters in radians); ``rz`` is virtual, a frame update without a pulse."""
+"""The native set: name -> (qubits, parameters in radians); ``rz`` is virtual, a frame update without a pulse."""
 STANDARD_GATES: Final[dict[str, tuple[int, int]]] = {
     "id": (1, 0),
     "x": (1, 0),
@@ -79,14 +66,14 @@ STANDARD_GATES: Final[dict[str, tuple[int, int]]] = {
     "rzz": (2, 1),
     "u3": (1, 3),
 }
-"""The standard set of Section 7.2 the compiler expands into native gates: name -> (qubits, parameters in radians)."""
+"""The standard set the compiler expands into native gates: name -> (qubits, parameters in radians)."""
 NON_UNITARY: Final[frozenset[str]] = frozenset({"measure", "reset", "recool"})
-"""The non-unitary operations of Section 7.2 item 4, schedulable at the end of a circuit; mid-circuit they are refused."""
+"""Schedulable at the end of a circuit; mid-circuit they are refused by the scheduler."""
 EXPORTED_NATIVE: Final[frozenset[str]] = frozenset({"gpi", "gpi2", "ms", "zz"})
-"""The native gates the IonQ JSON exporter carries (Section 7.2 item 1); rz is absorbed by the compiler."""
+"""The native gates the IonQ JSON exporter carries; rz is absorbed by the compiler."""
 
 BLOCK_TOLERANCE: Final[float] = 1e-9
-"""Residual (max |U_block - e^{i alpha} U_target|) above which a compiled block is refused (Section 7.2 item 3)."""
+"""Residual (max |U_block - e^{i alpha} U_target|) above which a compiled block is refused."""
 
 Entangler = Literal["ms", "zz"]
 
@@ -97,14 +84,12 @@ class CompileError(ValueError):
 
 @dataclass(frozen=True)
 class Operation:
-    """One operation of the IR (Section 3.3): a gate name of the native or the standard set (or ``measure``, ``reset``,
-    ``recool``), the qubits it acts on in the gate's own order (the first is the first tensor factor of its matrix) and
-    its parameters in radians; IonQ's turns are converted at the boundary."""
+    """One operation of the IR: a gate name of the native or standard set (or ``measure``, ``reset``, ``recool``), the
+    qubits in the gate's own order (the first is the first tensor factor of its matrix) and the parameters in radians."""
 
     name: str
     qubits: tuple[int, ...]
     params: tuple[float, ...]
-    """Radians; turns at the IonQ boundary."""
 
     def __post_init__(self) -> None:
         name = self.name
@@ -141,23 +126,21 @@ class Operation:
 
 @dataclass(frozen=True)
 class Circuit:
-    """A circuit of the IR (Section 3.3): ``n_qubits`` qubit labels 0 to n - 1, the operations in time order (native, standard
-    and non-unitary names, parameters in radians), the terminal measurement targets (every qubit unless narrowed) and the
-    classical registers a result is reported under. Also a persistent builder (0.2.0; docs/api_implementation_plan.md
-    1.5): one method per gate name of ``NATIVE_GATES`` and ``STANDARD_GATES`` (``Circuit(2).h(0).cnot(0, 1)``), each
-    returning a new circuit with the operation appended, ``measured`` for the terminal targets, and ``from_openqasm``,
-    ``from_ionq``, ``to_openqasm``, ``to_ionq`` for the two wire formats. The labels are the compiler's; the run maps them
-    onto ions, and the histogram keys of a ``Result`` put qubit 0 rightmost (Section 13, "Result bit order")."""
+    """A circuit: ``n_qubits`` labels 0 to n - 1, the operations in time order, the terminal measurement targets (every
+    qubit unless narrowed) and the classical registers a result is reported under. The run maps the labels onto ions, and
+    the histogram keys of a ``Result`` put qubit 0 rightmost.
+
+    Also a persistent builder: one method per gate name of ``NATIVE_GATES`` and ``STANDARD_GATES``, qubits first
+    (``q``, or ``q0`` and ``q1`` in the gate's own order) and then the parameters in radians, each returning a new circuit
+    with the operation appended (``Circuit(2).h(0).cnot(0, 1)``); ``measured`` sets the terminal targets."""
 
     n_qubits: int
     ops: tuple[Operation, ...] = ()
     measure: tuple[int, ...] = None  # type: ignore[assignment]  # omitted (None) means every qubit; a tuple after __post_init__
-    """The terminal measurement targets; omitted, every qubit. Always a tuple once constructed (the Appendix E type), so
-    omit the argument rather than passing None where a type checker watches. Mid-circuit measure and reset live in ``ops``."""
+    """The terminal measurement targets; omitted, every qubit. Mid-circuit measure and reset live in ``ops``."""
     registers: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]  # omitted (None) means {"c": measure}
-    """Name -> the qubits of each classical register in bit order (the register's bit 0 first); omitted, one register ``"c"``
-    over ``measure``. The OpenQASM 2 importer fills it from the ``creg`` declarations, the exporter writes them back, and the
-    IonQ v2 result exporter reports ``output_all`` beside them."""
+    """Name -> the qubits of each classical register in bit order (bit 0 first); omitted, one register ``"c"`` over
+    ``measure``. The OpenQASM 2 importer fills it from the ``creg`` declarations and the exporter writes them back."""
 
     def __post_init__(self) -> None:
         if self.n_qubits <= 0:
@@ -166,7 +149,6 @@ class Circuit:
         for op in self.ops:
             if any(q >= self.n_qubits for q in op.qubits):
                 raise ValueError(f"operation {op.name} addresses a qubit outside range({self.n_qubits})")
-        # the two defaults arrive as None (the omitted argument) and leave as the declared types
         given_measure: object = self.measure
         measure = (
             tuple(range(self.n_qubits)) if given_measure is None else tuple(int(q) for q in self.measure)
@@ -195,12 +177,8 @@ class Circuit:
         """Only gpi, gpi2, ms, zz (and non-unitary operations): what the IonQ JSON exporter accepts."""
         return all(op.is_exported_native or op.is_non_unitary for op in self.ops)
 
-    @property
-    def unitary_ops(self) -> tuple[Operation, ...]:
-        return tuple(op for op in self.ops if not op.is_non_unitary)
-
     def entangling_pairs(self) -> tuple[tuple[int, int], ...]:
-        """The (ordered as written) pairs of every ms/zz/two-qubit gate, each once."""
+        """The pairs (ordered as written) of every two-qubit gate, each once."""
         seen: list[tuple[int, int]] = []
         for op in self.ops:
             if len(op.qubits) == 2 and not op.is_non_unitary:
@@ -208,12 +186,6 @@ class Circuit:
                 if pair not in seen and (pair[1], pair[0]) not in seen:
                     seen.append(pair)
         return tuple(seen)
-
-    # ---- the builder (0.2.0) -----------------------------------------------------------------------------------------
-
-    def _with(self, op: Operation) -> Circuit:
-        """This circuit with ``op`` appended (the builder's one mechanism; the gate methods below call it)."""
-        return dataclasses.replace(self, ops=self.ops + (op,))
 
     def measured(self, *qubits: int, registers: Mapping[str, Sequence[int]] | None = None) -> Circuit:
         """This circuit measuring exactly ``qubits`` at the end, reported under ``registers`` (default: one register ``"c"``
@@ -228,134 +200,118 @@ class Circuit:
 
     @classmethod
     def from_openqasm(cls, text: str) -> Circuit:
-        """The OpenQASM 2 importer (``qutip_trap.io.qasm2.loads``): angles in radians, ``creg`` names into ``registers``."""
+        """The OpenQASM 2 importer (``qutip_trap.io.openqasm``): angles in radians, ``creg`` names into ``registers``."""
         from qutip_trap.io.openqasm import load_openqasm2
 
         return load_openqasm2(text)
 
     @classmethod
     def from_ionq(cls, obj: Mapping[str, Any]) -> Circuit:
-        """The IonQ circuit JSON importer (``qutip_trap.io.ionq.loads``): a job body with ``input`` or the ``input`` object,
-        native or qis gate set, turns converted to radians."""
+        """The IonQ circuit JSON importer: a job body with ``input`` or the ``input`` object, turns converted to radians."""
         from qutip_trap.io.ionq import load_ionq_json
 
         return load_ionq_json(dict(obj))
 
     def to_openqasm(self, *, declare_native: bool = True) -> str:
-        """OpenQASM 2 text (``qutip_trap.io.qasm2.dumps``), the native gates declared as qelib1.inc definitions unless told not to."""
+        """OpenQASM 2 text, the native gates declared as qelib1.inc definitions unless told not to."""
         from qutip_trap.io.qasm2 import dumps
 
         return dumps(self, declare_native=declare_native)
 
     def to_ionq(self) -> dict[str, Any]:
-        """The IonQ ``input`` object (``qutip_trap.io.ionq.dumps``); the circuit must be native (compile first)."""
+        """The IonQ ``input`` object; the circuit must be native (compile first)."""
         from qutip_trap.io.ionq import dump_ionq_json
 
         return dump_ionq_json(self)
 
-    if TYPE_CHECKING:
-        # the gate methods are attached below by ``_builder_method`` from the two gate tables (one mechanism); these
-        # declarations give type checkers their signatures, qubits first and the parameters (radians) after them
-        def gpi(self, q: int, phase: float) -> Circuit: ...
-        def gpi2(self, q: int, phase: float) -> Circuit: ...
-        def ms(self, q0: int, q1: int, phi0: float, phi1: float, theta: float) -> Circuit: ...
-        def zz(self, q0: int, q1: int, theta: float) -> Circuit: ...
-        def rz(self, q: int, theta: float) -> Circuit: ...
-        def id(self, q: int) -> Circuit: ...
-        def x(self, q: int) -> Circuit: ...
-        def y(self, q: int) -> Circuit: ...
-        def z(self, q: int) -> Circuit: ...
-        def h(self, q: int) -> Circuit: ...
-        def s(self, q: int) -> Circuit: ...
-        def sdg(self, q: int) -> Circuit: ...
-        def t(self, q: int) -> Circuit: ...
-        def tdg(self, q: int) -> Circuit: ...
-        def sx(self, q: int) -> Circuit: ...
-        def rx(self, q: int, theta: float) -> Circuit: ...
-        def ry(self, q: int, theta: float) -> Circuit: ...
-        def cnot(self, q0: int, q1: int) -> Circuit: ...
-        def cx(self, q0: int, q1: int) -> Circuit: ...
-        def cz(self, q0: int, q1: int) -> Circuit: ...
-        def swap(self, q0: int, q1: int) -> Circuit: ...
-        def cp(self, q0: int, q1: int, theta: float) -> Circuit: ...
-        def rxx(self, q0: int, q1: int, theta: float) -> Circuit: ...
-        def rzz(self, q0: int, q1: int, theta: float) -> Circuit: ...
-        def u3(self, q: int, theta: float, phi: float, lam: float) -> Circuit: ...
+    # ---- the builder -------------------------------------------------------------------------------------------------------
+
+    def _op(self, name: str, qubits: tuple[int, ...], params: tuple[float, ...] = ()) -> Circuit:
+        op = Operation(name, tuple(int(q) for q in qubits), tuple(float(p) for p in params))
+        return dataclasses.replace(self, ops=self.ops + (op,))
+
+    def gpi(self, q: int, phase: float) -> Circuit:
+        return self._op("gpi", (q,), (phase,))
+
+    def gpi2(self, q: int, phase: float) -> Circuit:
+        return self._op("gpi2", (q,), (phase,))
+
+    def ms(self, q0: int, q1: int, phi0: float, phi1: float, theta: float) -> Circuit:
+        return self._op("ms", (q0, q1), (phi0, phi1, theta))
+
+    def zz(self, q0: int, q1: int, theta: float) -> Circuit:
+        return self._op("zz", (q0, q1), (theta,))
+
+    def rz(self, q: int, theta: float) -> Circuit:
+        return self._op("rz", (q,), (theta,))
+
+    def id(self, q: int) -> Circuit:
+        return self._op("id", (q,))
+
+    def x(self, q: int) -> Circuit:
+        return self._op("x", (q,))
+
+    def y(self, q: int) -> Circuit:
+        return self._op("y", (q,))
+
+    def z(self, q: int) -> Circuit:
+        return self._op("z", (q,))
+
+    def h(self, q: int) -> Circuit:
+        return self._op("h", (q,))
+
+    def s(self, q: int) -> Circuit:
+        return self._op("s", (q,))
+
+    def sdg(self, q: int) -> Circuit:
+        return self._op("sdg", (q,))
+
+    def t(self, q: int) -> Circuit:
+        return self._op("t", (q,))
+
+    def tdg(self, q: int) -> Circuit:
+        return self._op("tdg", (q,))
+
+    def sx(self, q: int) -> Circuit:
+        return self._op("sx", (q,))
+
+    def rx(self, q: int, theta: float) -> Circuit:
+        return self._op("rx", (q,), (theta,))
+
+    def ry(self, q: int, theta: float) -> Circuit:
+        return self._op("ry", (q,), (theta,))
+
+    def cnot(self, q0: int, q1: int) -> Circuit:
+        return self._op("cnot", (q0, q1))
+
+    def cx(self, q0: int, q1: int) -> Circuit:
+        return self._op("cx", (q0, q1))
+
+    def cz(self, q0: int, q1: int) -> Circuit:
+        return self._op("cz", (q0, q1))
+
+    def swap(self, q0: int, q1: int) -> Circuit:
+        return self._op("swap", (q0, q1))
+
+    def cp(self, q0: int, q1: int, theta: float) -> Circuit:
+        return self._op("cp", (q0, q1), (theta,))
+
+    def rxx(self, q0: int, q1: int, theta: float) -> Circuit:
+        return self._op("rxx", (q0, q1), (theta,))
+
+    def rzz(self, q0: int, q1: int, theta: float) -> Circuit:
+        return self._op("rzz", (q0, q1), (theta,))
+
+    def u3(self, q: int, theta: float, phi: float, lam: float) -> Circuit:
+        return self._op("u3", (q,), (theta, phi, lam))
 
 
-GATE_PARAMETERS: Final[dict[str, tuple[str, ...]]] = {
-    "gpi": ("phase",),
-    "gpi2": ("phase",),
-    "ms": ("phi0", "phi1", "theta"),
-    "zz": ("theta",),
-    "rz": ("theta",),
-    "rx": ("theta",),
-    "ry": ("theta",),
-    "cp": ("theta",),
-    "rxx": ("theta",),
-    "rzz": ("theta",),
-    "u3": ("theta", "phi", "lam"),
-}
-"""The parameter names of the builder methods, in the order of ``Operation.params`` (radians), for every parametrized gate
-of the two tables; a gate absent here takes no parameter."""
+# ---- ideal matrices: the compiler's definition of what a gate is supposed to do ------------------------------------------
 
 
-def _builder_method(name: str, arity: int, n_params: int) -> Callable[..., Circuit]:
-    """The builder method of one gate name: qubits first (``q``, or ``q0`` and ``q1`` in the gate's own order), then the
-    parameters of ``GATE_PARAMETERS`` in radians, positional or by name; returns a new ``Circuit``."""
-    qubit_names = ("q",) if arity == 1 else ("q0", "q1")
-    param_names = GATE_PARAMETERS.get(name, ())
-    if len(param_names) != n_params:
-        raise ValueError(
-            f"GATE_PARAMETERS names {len(param_names)} parameter(s) for {name!r}, the table {n_params}"
-        )
-    kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
-    signature = inspect.Signature(
-        [
-            inspect.Parameter("self", kind),
-            *(inspect.Parameter(q, kind, annotation=int) for q in qubit_names),
-            *(inspect.Parameter(p, kind, annotation=float) for p in param_names),
-        ],
-        return_annotation="Circuit",
-    )
-
-    def method(self: Circuit, *args: Any, **kwargs: Any) -> Circuit:
-        bound = signature.bind(self, *args, **kwargs)
-        qubits = tuple(int(bound.arguments[q]) for q in qubit_names)
-        params = tuple(float(bound.arguments[p]) for p in param_names)
-        return self._with(Operation(name, qubits, params))
-
-    method.__dict__["__signature__"] = signature
-    method.__name__ = name
-    method.__qualname__ = f"Circuit.{name}"
-    where = "qubit ``q``" if arity == 1 else "qubits ``(q0, q1)``, in the gate's own order"
-    with_params = f" with ``{'``, ``'.join(param_names)}`` in radians" if param_names else ""
-    method.__doc__ = f"Append ``{name}`` on {where}{with_params}; returns a new ``Circuit``."
-    return method
-
-
-for _gate, (_arity, _n_params) in {**NATIVE_GATES, **STANDARD_GATES}.items():
-    setattr(Circuit, _gate, _builder_method(_gate, _arity, _n_params))
-
-
-# ---- ideal matrices: the compiler's definition of what a gate is supposed to do (Section 3.1) ----------------------------
-
-
-def _rx(theta: float) -> np.ndarray:
-    return native.r_phi(theta, 0.0)
-
-
-def _ry(theta: float) -> np.ndarray:
-    return native.r_phi(theta, math.pi / 2.0)
-
-
-def _u3(theta: float, phi: float, lam: float) -> np.ndarray:
-    """OpenQASM 2 U3(theta, phi, lambda) = [[cos(theta/2), -e^{i lambda} sin(theta/2)], [e^{i phi} sin(theta/2), e^{i(phi + lambda)} cos(theta/2)]]."""
-    c, s = math.cos(theta / 2.0), math.sin(theta / 2.0)
-    return np.array(
-        [[c, -cmath.exp(1j * lam) * s], [cmath.exp(1j * phi) * s, cmath.exp(1j * (phi + lam)) * c]],
-        dtype=complex,
-    )
+def cp_matrix(theta: float) -> np.ndarray:
+    """CP(theta) = diag(1, 1, 1, e^{i theta})."""
+    return np.diag([1.0, 1.0, 1.0, cmath.exp(1j * theta)]).astype(complex)
 
 
 CNOT_MATRIX: Final[np.ndarray] = np.array(
@@ -366,16 +322,30 @@ SWAP_MATRIX: Final[np.ndarray] = np.array(
     [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=complex
 )
 
-
-def cp_matrix(theta: float) -> np.ndarray:
-    """CP(theta) = diag(1, 1, 1, e^{i theta})."""
-    return np.diag([1.0, 1.0, 1.0, cmath.exp(1j * theta)]).astype(complex)
+_FIXED_MATRICES: Final[dict[str, np.ndarray]] = {
+    "id": native.IDENTITY_2,
+    "x": native.PAULI_X,
+    "y": native.PAULI_Y,
+    "z": native.PAULI_Z,
+    "h": np.array([[1.0, 1.0], [1.0, -1.0]], dtype=complex) / math.sqrt(2.0),
+    "s": np.diag([1.0, 1j]).astype(complex),
+    "sdg": np.diag([1.0, -1j]).astype(complex),
+    "t": np.diag([1.0, cmath.exp(1j * math.pi / 4.0)]).astype(complex),
+    "tdg": np.diag([1.0, cmath.exp(-1j * math.pi / 4.0)]).astype(complex),
+    "sx": 0.5 * np.array([[1.0 + 1j, 1.0 - 1j], [1.0 - 1j, 1.0 + 1j]], dtype=complex),
+    "cnot": CNOT_MATRIX,
+    "cx": CNOT_MATRIX,
+    "cz": cp_matrix(math.pi),
+    "swap": SWAP_MATRIX,
+}
+"""The matrices of the parameterless gates."""
 
 
 def gate_matrix(op: Operation) -> np.ndarray:
     """The ideal matrix of a unitary operation in the qubit order of ``op.qubits`` (first qubit = first tensor factor)."""
-    n = op.name
-    p = op.params
+    n, p = op.name, op.params
+    if n in _FIXED_MATRICES:
+        return _FIXED_MATRICES[n].copy()
     if n == "gpi":
         return native.gpi(p[0])
     if n == "gpi2":
@@ -384,51 +354,28 @@ def gate_matrix(op: Operation) -> np.ndarray:
         return native.rz(p[0])
     if n == "ms":
         return native.ms(p[0], p[1], p[2])
-    if n == "zz":
+    if n in ("zz", "rzz"):
         return native.zz(p[0])
-    if n == "id":
-        return native.IDENTITY_2.copy()
-    if n == "x":
-        return native.PAULI_X.copy()
-    if n == "y":
-        return native.PAULI_Y.copy()
-    if n == "z":
-        return native.PAULI_Z.copy()
-    if n == "h":
-        return np.array([[1.0, 1.0], [1.0, -1.0]], dtype=complex) / math.sqrt(2.0)
-    if n == "s":
-        return np.diag([1.0, 1j]).astype(complex)
-    if n == "sdg":
-        return np.diag([1.0, -1j]).astype(complex)
-    if n == "t":
-        return np.diag([1.0, cmath.exp(1j * math.pi / 4.0)]).astype(complex)
-    if n == "tdg":
-        return np.diag([1.0, cmath.exp(-1j * math.pi / 4.0)]).astype(complex)
-    if n == "sx":
-        return 0.5 * np.array([[1.0 + 1j, 1.0 - 1j], [1.0 - 1j, 1.0 + 1j]], dtype=complex)
     if n == "rx":
-        return _rx(p[0])
+        return native.r_phi(p[0], 0.0)
     if n == "ry":
-        return _ry(p[0])
-    if n in ("cnot", "cx"):
-        return CNOT_MATRIX.copy()
-    if n == "cz":
-        return cp_matrix(math.pi)
-    if n == "swap":
-        return SWAP_MATRIX.copy()
+        return native.r_phi(p[0], math.pi / 2.0)
     if n == "cp":
         return cp_matrix(p[0])
     if n == "rxx":
         return native.xx(0.5 * p[0])
-    if n == "rzz":
-        return native.zz(p[0])
     if n == "u3":
-        return _u3(p[0], p[1], p[2])
+        # OpenQASM 2: [[cos(theta/2), -e^{i lam} sin(theta/2)], [e^{i phi} sin(theta/2), e^{i(phi + lam)} cos(theta/2)]]
+        c, s = math.cos(p[0] / 2.0), math.sin(p[0] / 2.0)
+        return np.array(
+            [[c, -cmath.exp(1j * p[2]) * s], [cmath.exp(1j * p[1]) * s, cmath.exp(1j * (p[1] + p[2])) * c]],
+            dtype=complex,
+        )
     raise ValueError(f"{n!r} has no unitary matrix")
 
 
 def embed(mat: np.ndarray, qubits: Sequence[int], n_qubits: int) -> np.ndarray:
-    """``mat`` on ``qubits`` (its first factor the first listed qubit) as a 2^n x 2^n matrix in the Section 13 bit order:
+    """``mat`` on ``qubits`` (its first factor the first listed qubit) as a 2^n x 2^n matrix in the result bit order:
     qubit 0 is the LEAST-significant bit of the basis index, so the tensor axis of qubit j is n - 1 - j."""
     k = len(qubits)
     if mat.shape != (2**k, 2**k):
@@ -443,10 +390,7 @@ def embed(mat: np.ndarray, qubits: Sequence[int], n_qubits: int) -> np.ndarray:
 
 
 def circuit_unitary(circuit: Circuit, ops: Sequence[Operation] | None = None) -> np.ndarray:
-    """The ideal unitary of the circuit's unitary operations in time order (the target the compiler verifies against).
-
-    Non-unitary operations are refused: the unitary of a circuit with a mid-circuit measurement is not defined.
-    """
+    """The ideal unitary of the circuit's operations in time order; refuses a non-unitary operation."""
     dim = 2**circuit.n_qubits
     u = np.eye(dim, dtype=complex)
     for op in circuit.ops if ops is None else ops:
@@ -456,75 +400,9 @@ def circuit_unitary(circuit: Circuit, ops: Sequence[Operation] | None = None) ->
     return u
 
 
-@dataclass(frozen=True)
-class CircuitCost:
-    """Section 7.7's cost model of a native circuit: the duration and the error the templates predict."""
-
-    duration_s: float
-    """sum over the single-qubit pulses of |theta| tau_1q/pi plus tau_2q per entangling gate (Section 7.7)."""
-    n_single: int
-    n_entangling: int
-    errors: tuple[float, ...]
-    """Per gate, in circuit order: |sin theta| eps_1q for a single-qubit rotation of area theta, |sin 2 chi| E_2q for an
-    entangling gate of angle chi (theta = 2 chi in the native MS parameters)."""
-    fidelity: float
-    """prod_i (1 - e_i) over ``errors`` (Section 7.7's circuit fidelity), NOT 1 - sum e_i."""
-
-
-def cost_of(
-    circuit: Circuit,
-    *,
-    tau_1q_s: float,
-    tau_2q_s: float,
-    eps_1q: float,
-    eps_2q: float,
-) -> CircuitCost:
-    """Section 7.7's cost model: single-qubit duration |theta| tau_1q/pi with error ~ |sin theta| eps_1q, two-qubit duration
-    tau_2q with error ~ |sin 2 chi| E, and circuit fidelity prod(1 - e_i).
-
-    ``theta`` is the ROTATION AREA of the native pulse (pi for gpi, pi/2 for gpi2, |theta| for a native ms whose entangling
-    angle is chi = theta/2, so |sin 2 chi| = |sin theta| there too); a virtual ``rz`` costs no time and no error (Section
-    7.6), and a non-unitary operation is not a gate. The model makes no choices inside the compiler - it is the estimate a
-    caller compares schedules with, which is why it takes the four device numbers rather than reading a device."""
-    if tau_1q_s < 0.0 or tau_2q_s < 0.0 or eps_1q < 0.0 or eps_2q < 0.0:
-        raise ValueError("durations and per-gate errors are non-negative")
-    duration = 0.0
-    errors: list[float] = []
-    n_single = n_entangling = 0
-    for op in circuit.ops:
-        if op.is_non_unitary or op.name == "rz":
-            continue
-        if len(op.qubits) == 1:
-            area = NATIVE_AREAS_RAD.get(op.name)
-            if area is None:
-                raise CompileError(
-                    f"cost_of takes a native circuit; {op.name!r} is not a native single-qubit gate (compile first)"
-                )
-            duration += abs(area) * tau_1q_s / math.pi
-            errors.append(abs(math.sin(area)) * eps_1q)
-            n_single += 1
-        else:
-            if op.name not in ("ms", "zz"):
-                raise CompileError(
-                    f"cost_of takes a native circuit; {op.name!r} is not a native entangling gate"
-                )
-            theta = op.params[-1] if op.name == "ms" else op.params[0]
-            duration += tau_2q_s
-            errors.append(abs(math.sin(float(theta))) * eps_2q)
-            n_entangling += 1
-    fidelity = 1.0
-    for e in errors:
-        fidelity *= 1.0 - e
-    return CircuitCost(duration, n_single, n_entangling, tuple(errors), float(fidelity))
-
-
-NATIVE_AREAS_RAD: Final[dict[str, float]] = {"gpi": math.pi, "gpi2": math.pi / 2.0}
-"""The rotation area of each native single-qubit pulse (``control.schedule.NATIVE_AREAS`` in turns of 2 pi)."""
-
-
 def ideal_probabilities(circuit: Circuit) -> dict[str, float]:
-    """The compiler's target distribution (Section 14.5: shown beside the simulated one, never in its place): |<b|U|0...0>|^2 keyed
-    by the Section 13 bitstring (qubit 0 rightmost), over the measured qubits only when ``circuit.measure`` is a subset."""
+    """The target distribution |<b|U|0...0>|^2 keyed by the bitstring (qubit 0 rightmost), over the measured qubits only
+    when ``circuit.measure`` is a subset."""
     u = circuit_unitary(circuit)
     amps = u[:, 0]
     n = circuit.n_qubits
@@ -538,6 +416,23 @@ def ideal_probabilities(circuit: Circuit) -> dict[str, float]:
         key = "".join(str(b) for b in reversed(bits))
         out[key] = out.get(key, 0.0) + p
     return out
+
+
+def verify_operations(
+    ops: Sequence[Operation], target: np.ndarray, qubits: Sequence[int], *, tol: float = BLOCK_TOLERANCE
+) -> float:
+    """max |U_ops - e^{i alpha} target| of ``ops`` on ``qubits`` (the target's first factor the first listed qubit);
+    ``CompileError`` when the operations do not reproduce the target up to a global phase within ``tol``."""
+    local = {q: k for k, q in enumerate(qubits)}
+    n = len(qubits)
+    u = np.eye(2**n, dtype=complex)
+    for op in ops:
+        u = embed(gate_matrix(op), [local[q] for q in op.qubits], n) @ u
+    want = embed(target, list(range(n)), n)
+    phase = native.global_phase(u, want, atol=tol)
+    if phase is None:
+        raise CompileError("the operations do not reproduce their target matrix up to a global phase")
+    return float(np.max(np.abs(u - cmath.exp(1j * phase) * want)))
 
 
 # ---- decompositions ---------------------------------------------------------------------------------------------------------
@@ -566,25 +461,10 @@ def zyz_angles(u: np.ndarray) -> tuple[float, float, float, float]:
         # arg V10 - arg V00 = a and arg V11 - arg V10 = c, each modulo 2 pi with no half-angle branch to choose
         a = cmath.phase(u[1, 0]) - cmath.phase(u[0, 0])
         c = cmath.phase(u[1, 1]) - cmath.phase(u[1, 0])
-    # verify; the global phase comes out of the comparison
-    rec = native.rz(a) @ _ry(b) @ native.rz(c)
-    phase = _global_phase(u, rec)
+    phase = native.global_phase(u, native.rz(a) @ native.r_phi(b, math.pi / 2.0) @ native.rz(c))
     if phase is None:
         raise CompileError("ZYZ decomposition failed to reproduce the matrix")
     return float(a), float(b), float(c), float(phase)
-
-
-def _global_phase(a: np.ndarray, b: np.ndarray, atol: float = 1e-9) -> float | None:
-    """alpha with a = e^{i alpha} b, or None."""
-    idx = np.unravel_index(int(np.argmax(np.abs(b))), b.shape)
-    if abs(b[idx]) < atol:
-        return 0.0 if np.allclose(a, b, atol=atol) else None
-    ratio = a[idx] / b[idx]
-    if abs(abs(ratio) - 1.0) > atol:
-        return None
-    if not np.allclose(a, ratio * b, atol=atol):
-        return None
-    return float(cmath.phase(ratio))
 
 
 def _wrap(angle: float) -> float:
@@ -593,36 +473,10 @@ def _wrap(angle: float) -> float:
     return math.pi if a == -math.pi else a
 
 
-PHYSICAL_RZ_AXIS_RAD = 0.0
-"""The reference phase x of Section 7.7's physical RZ, R(pi, x) R(pi, x - theta/2) = RZ(theta): any x gives the same RZ, so
-the axis is a free convention and 0 keeps the two GPi pulses at phases (0, -theta/2)."""
-
-
-def physical_rz(theta_rad: float, qubit: int, *, axis_rad: float = PHYSICAL_RZ_AXIS_RAD) -> list[Operation]:
-    """Section 7.7's physical RZ: GPi(x) GPi(x - theta/2) = RZ(theta) EXACTLY (verified to 2.8e-16 over four angles and
-    three axes), in time order, so the returned list is [GPi(x - theta/2), GPi(x)].
-
-    The compiler emits a virtual ``rz`` instead by default (no pulse, no time, no error: Section 7.6), which is strictly
-    better whenever the frame can carry it. Two physical pulses are needed only where the frame cannot: a z rotation between
-    two gates whose phases the hardware has already programmed, or a benchmarking sequence that must spend real time."""
-    x = float(axis_rad)
-    return [
-        Operation("gpi", (qubit,), (_wrap(x - 0.5 * float(theta_rad)),)),
-        Operation("gpi", (qubit,), (_wrap(x),)),
-    ]
-
-
-def decompose_single_qubit(
-    u: np.ndarray, qubit: int, *, tol: float = 1e-10, physical_z: bool = False
-) -> list[Operation]:
-    """Native operations (time order, with virtual rz) for the 2 x 2 unitary ``u`` on ``qubit`` (Section 7.2 item 1).
-
-    A pure Z rotation is one rz; a pi/2 or pi equatorial rotation is one GPi2 or GPi pulse plus an rz; anything else is the
-    ZXZXZ form with two GPi2 pulses. Verified against ``u`` up to a global phase before it is returned.
-
-    ``physical_z=True`` replaces every virtual ``rz`` by Section 7.7's two-pulse physical RZ (:func:`physical_rz`), so the
-    block carries no frame update at all: the same unitary in 2 to 6 GPi/GPi2 pulses instead of 1 to 2 plus a frame.
-    """
+def decompose_single_qubit(u: np.ndarray, qubit: int, *, tol: float = 1e-10) -> list[Operation]:
+    """Native operations (time order, with virtual rz) for the 2 x 2 unitary ``u`` on ``qubit``: a pure Z rotation is one
+    rz, a pi/2 or pi equatorial rotation one GPi2 or GPi pulse plus an rz, anything else the ZXZXZ form with two GPi2
+    pulses; verified against ``u`` up to a global phase."""
     a, b, c, _delta = zyz_angles(u)
     ops: list[Operation]
     if abs(math.sin(b / 2.0)) < tol:
@@ -651,12 +505,7 @@ def decompose_single_qubit(
             Operation("rz", (qubit,), (_wrap(alpha),)),
         ]
     ops = [op for op in ops if not (op.name == "rz" and abs(op.params[0]) < tol)]
-    if physical_z:
-        physical: list[Operation] = []
-        for op in ops:
-            physical.extend(physical_rz(op.params[0], qubit) if op.name == "rz" else [op])
-        ops = physical
-    _verify_block(ops, np.asarray(u, dtype=complex), (qubit,), "single-qubit")
+    verify_operations(ops, np.asarray(u, dtype=complex), (qubit,))
     return ops
 
 
@@ -669,7 +518,7 @@ def _xx_ops(chi: float, pair: tuple[int, int]) -> list[Operation]:
 
 
 def _zz_ops(theta: float, pair: tuple[int, int], entangler: Entangler) -> list[Operation]:
-    """ZZ(theta) = exp(-i (theta/2) Z Z): the native zz, or the wrapper W XX(theta/2) W_in on an MS-only device (M4 identity)."""
+    """ZZ(theta) = exp(-i (theta/2) Z Z): the native zz, or the wrapper W XX(theta/2) W_in on an MS-only device."""
     if entangler == "zz":
         return [Operation("zz", pair, (theta,))]
     a, b = pair
@@ -681,8 +530,9 @@ def _zz_ops(theta: float, pair: tuple[int, int], entangler: Entangler) -> list[O
 
 
 def cnot_template(control: int, target: int, *, s: int = 1, v: int = 1) -> list[Operation]:
-    """Maslov's CNOT from one XX and four pulses, time order (Section 7.7): RY(v pi/2)_c; XX(s pi/4); RX(-s pi/2)_c with
-    RX(-v s pi/2)_t; RY(-v pi/2)_c. RY(+-pi/2) = GPi2(+-pi/2), RX(-pi/2) = GPi2(pi), RX(pi/2) = GPi2(0)."""
+    """Maslov's CNOT from one XX and four pulses, time order: RY(v pi/2)_c; XX(s pi/4); RX(-s pi/2)_c with
+    RX(-v s pi/2)_t; RY(-v pi/2)_c; equal to e^{i pi v s/4} CNOT. RY(+-pi/2) = GPi2(+-pi/2), RX(-pi/2) = GPi2(pi),
+    RX(pi/2) = GPi2(0)."""
     if s not in (1, -1) or v not in (1, -1):
         raise ValueError("s and v are signs")
 
@@ -699,11 +549,6 @@ def cnot_template(control: int, target: int, *, s: int = 1, v: int = 1) -> list[
     )
 
 
-def cnot_global_phase(s: int, v: int) -> float:
-    """The template equals e^{i pi v s/4} CNOT (recomputed in Section 7.7; the source prints (-1)^{-vs/4})."""
-    return math.pi * v * s / 4.0
-
-
 def cp_template(theta: float, pair: tuple[int, int], entangler: Entangler) -> list[Operation]:
     """CP(theta) = [RZ(theta/2) (x) RZ(theta/2)] ZZ(-theta/2) up to a global phase (exact): time order ZZ then the rz pair."""
     th = _wrap(theta)
@@ -714,38 +559,14 @@ def cp_template(theta: float, pair: tuple[int, int], entangler: Entangler) -> li
     ]
 
 
-def debnath_cp_template(theta: float, pair: tuple[int, int], entangler: Entangler) -> list[Operation]:
-    """Debnath's CP(theta) as drawn (Section 7.7): the partially entangling XX(|theta|/4) block with the fixed RZ(sgn(theta) pi/2)
-    pair, which equals CP(theta) times RZ((sgn(theta) pi - theta)/2) on both qubits; exact for CZ only."""
-    th = _wrap(theta)
-    a, b = pair
-    half = math.copysign(math.pi / 2.0, th)
-    return _zz_ops(-0.5 * th, pair, entangler) + [
-        Operation("rz", (a,), (half,)),
-        Operation("rz", (b,), (half,)),
-    ]
-
-
-def cp_template_local_defect_rad(theta: float) -> float:
-    """The RZ angle (sgn(theta) pi - theta)/2 on both qubits that Debnath's template carries against CP(theta) (Section 7.7)."""
-    th = _wrap(theta)
-    return 0.5 * (math.copysign(math.pi, th) - th)
-
-
-def cp_template_overlap(theta: float) -> float:
-    """|Tr(CP^dagger T)|/4 of Debnath's template T against CP(theta): cos^2((sgn(theta) pi - theta)/4), 0.854 at pi/2, 0.691 at pi/4."""
-    x = cp_template_local_defect_rad(theta)
-    return math.cos(0.5 * x) ** 2
-
-
-def decompose_two_qubit(op: Operation, *, entangler: Entangler, s: int = 1, v: int = 1) -> list[Operation]:
+def decompose_two_qubit(op: Operation, *, entangler: Entangler) -> list[Operation]:
     """Native operations for a standard two-qubit gate; verified against the target up to a global phase."""
     a, b = op.qubits
     pair = (a, b)
     name = op.name
     if name in ("cnot", "cx"):
         if entangler == "ms":
-            ops = cnot_template(a, b, s=s, v=v)
+            ops = cnot_template(a, b)
         else:
             # CNOT = (I (x) H) CZ (I (x) H) on a zz device
             h = gate_matrix(Operation("h", (b,), ()))
@@ -758,9 +579,9 @@ def decompose_two_qubit(op: Operation, *, entangler: Entangler, s: int = 1, v: i
         ops = cp_template(op.params[0], pair, entangler)
     elif name == "swap":
         ops = (
-            decompose_two_qubit(Operation("cnot", (a, b), ()), entangler=entangler, s=s, v=v)
-            + decompose_two_qubit(Operation("cnot", (b, a), ()), entangler=entangler, s=s, v=v)
-            + decompose_two_qubit(Operation("cnot", (a, b), ()), entangler=entangler, s=s, v=v)
+            decompose_two_qubit(Operation("cnot", (a, b), ()), entangler=entangler)
+            + decompose_two_qubit(Operation("cnot", (b, a), ()), entangler=entangler)
+            + decompose_two_qubit(Operation("cnot", (a, b), ()), entangler=entangler)
         )
     elif name == "rxx":
         ops = _xx_ops(0.5 * op.params[0], pair)
@@ -768,31 +589,16 @@ def decompose_two_qubit(op: Operation, *, entangler: Entangler, s: int = 1, v: i
         ops = _zz_ops(op.params[0], pair, entangler)
     else:
         raise ValueError(f"{name!r} is not a standard two-qubit gate")
-    _verify_block(ops, gate_matrix(op), pair, name)
+    verify_operations(ops, gate_matrix(op), pair)
     return ops
-
-
-def _verify_block(ops: Sequence[Operation], target: np.ndarray, qubits: tuple[int, ...], label: str) -> float:
-    """Section 7.2 item 3: the block's matrix equals the target up to a global phase, else the compiler refuses."""
-    local = {q: k for k, q in enumerate(qubits)}
-    n = len(qubits)
-    u = np.eye(2**n, dtype=complex)
-    for op in ops:
-        mat = gate_matrix(op)
-        u = embed(mat, [local[q] for q in op.qubits], n) @ u
-    want = embed(target, list(range(n)), n)  # the same bit order as u (qubit 0 least significant)
-    phase = _global_phase(u, want, atol=BLOCK_TOLERANCE)
-    if phase is None:
-        raise CompileError(f"the {label} template does not reproduce its target matrix up to a global phase")
-    return float(np.max(np.abs(u - cmath.exp(1j * phase) * want)))
 
 
 # ---- frame propagation and the compiler entry point -------------------------------------------------------------------------
 
 
 def propagate_frames(ops: Sequence[Operation], n_qubits: int) -> tuple[list[Operation], dict[int, float]]:
-    """Absorb every rz into the phases of the later pulses (phi -> phi - theta, time order; Section 7.6) and return the
-    rz-free operations with the residual per-qubit frame, which a computational-basis measurement discards."""
+    """Absorb every rz into the phases of the later pulses (phi -> phi - theta, time order) and return the rz-free
+    operations with the residual per-qubit frame, which a computational-basis measurement discards."""
     frame = {q: 0.0 for q in range(n_qubits)}
     out: list[Operation] = []
     for op in ops:
@@ -825,7 +631,7 @@ def frame_unitary(frame_rad: dict[int, float], n_qubits: int) -> np.ndarray:
 
 @dataclass(frozen=True)
 class CompileReport:
-    """What the compiler did and verified (Section 7.2)."""
+    """What the compiler did and verified."""
 
     circuit: Circuit
     """The compiled circuit: gpi, gpi2, ms, zz and the non-unitary operations only."""
@@ -836,69 +642,53 @@ class CompileReport:
     block_residuals: tuple[float, ...]
     """max |U_block - e^{i alpha} U_target| per compiled block."""
     circuit_residual: float | None
-    """max |RZ(frame) U_compiled - e^{i alpha} U_target| over the whole circuit (None when a mid-circuit operation prevents it)."""
+    """max |RZ(frame) U_compiled - e^{i alpha} U_target| over the whole circuit (None when a mid-circuit operation or more
+    than ten qubits prevent it)."""
     entangler: Entangler
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
 def compile_report(
-    circuit: Circuit,
-    device: Device | None = None,
-    *,
-    entangler: Entangler = "ms",
-    cnot_signs: tuple[int, int] = (1, 1),
-    verify_circuit: bool = True,
+    circuit: Circuit, device: Device | None = None, *, entangler: Entangler = "ms"
 ) -> CompileReport:
-    """Standard gates -> native gates with phase tracking, every block and the whole circuit verified (Section 7.2):
-    the compile step with its report, ``Machine.compile`` (docs/api_implementation_plan.md 2.2).
-
-    ``device`` is accepted for the Appendix E signature (the template choice depends on the entangler, not on the device's
-    hidden values); ``cnot_signs`` = (s, v) of Maslov's template. Native circuits pass through with their rz absorbed.
-    """
-    s, v = cnot_signs
+    """Standard gates -> native gates with phase tracking, every block and the whole circuit verified. ``device`` is not
+    read (the templates depend on the entangler alone); native circuits pass through with their rz absorbed."""
     native_ops: list[Operation] = []
     residuals: list[float] = []
     notes: list[str] = []
     for op in circuit.ops:
-        if op.is_non_unitary or op.name in ("gpi", "gpi2", "ms", "zz", "rz"):
+        if op.is_non_unitary or op.is_native:
             native_ops.append(op)
             continue
-        if op.name not in STANDARD_GATES:
-            raise CompileError(f"unknown gate {op.name!r}")
         if len(op.qubits) == 1:
             block = decompose_single_qubit(gate_matrix(op), op.qubits[0])
         else:
-            block = decompose_two_qubit(op, entangler=entangler, s=s, v=v)
-        residuals.append(_verify_block(block, gate_matrix(op), op.qubits, op.name))
+            block = decompose_two_qubit(op, entangler=entangler)
+        residuals.append(verify_operations(block, gate_matrix(op), op.qubits))
         native_ops.extend(block)
     propagated, frame = propagate_frames(native_ops, circuit.n_qubits)
     compiled = Circuit(circuit.n_qubits, tuple(propagated), circuit.measure, circuit.registers)
     circuit_residual: float | None = None
-    has_mid = any(op.is_non_unitary for op in circuit.ops)
-    if verify_circuit and not has_mid and circuit.n_qubits <= 10:
+    if any(op.is_non_unitary for op in circuit.ops):
+        notes.append(
+            "mid-circuit non-unitary operation: blocks verified, the whole-circuit unitary is undefined"
+        )
+    elif circuit.n_qubits > 10:
+        notes.append("more than 10 qubits: the whole-circuit matrix check is skipped, blocks verified")
+    else:
         target = circuit_unitary(circuit)
         got = frame_unitary(frame, circuit.n_qubits) @ circuit_unitary(compiled)
-        phase = _global_phase(got, target, atol=1e-8)
+        phase = native.global_phase(got, target, atol=1e-8)
         if phase is None:
             raise CompileError(
                 "the compiled circuit does not reproduce the target unitary up to the residual frame"
             )
         circuit_residual = float(np.max(np.abs(got - cmath.exp(1j * phase) * target)))
-    elif has_mid:
-        notes.append(
-            "mid-circuit non-unitary operation: blocks verified, the whole-circuit unitary is undefined"
-        )
-    elif verify_circuit:
-        notes.append("more than 10 qubits: the whole-circuit matrix check is skipped, blocks verified")
-    n_pulses = sum(1 for op in propagated if op.name in ("gpi", "gpi2")) + sum(
-        1 for op in propagated if op.name in ("ms", "zz")
-    )
-    n_ent = sum(1 for op in propagated if op.name in ("ms", "zz"))
     return CompileReport(
         circuit=compiled,
         final_frame_rad=frame,
-        n_pulses=n_pulses,
-        n_entangling=n_ent,
+        n_pulses=sum(1 for op in propagated if op.is_exported_native),
+        n_entangling=sum(1 for op in propagated if op.name in ("ms", "zz")),
         block_residuals=tuple(residuals),
         circuit_residual=circuit_residual,
         entangler=entangler,
@@ -906,6 +696,6 @@ def compile_report(
     )
 
 
-def compile_to_native(circuit: Circuit, device: Device | None = None, **kwargs: object) -> Circuit:
-    """Standard gates -> native gates with phase tracking, verified against target unitaries (Section 7.2; Appendix E)."""
-    return compile_report(circuit, device, **kwargs).circuit  # type: ignore[arg-type]
+def compile_to_native(circuit: Circuit, device: Device | None = None) -> Circuit:
+    """The native circuit of :func:`compile_report` (``device`` is not read)."""
+    return compile_report(circuit, device).circuit

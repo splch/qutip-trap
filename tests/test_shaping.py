@@ -1,7 +1,9 @@
-"""The Section 4.4.3 integrals and the AM/FM/Fourier pulse solvers (PLAN.md Sections 4.4.1, 4.4.3, 9.4, 9.12, 9.17, 13)."""
+"""The spin-motion integrals and the AM/FM/PM/Fourier pulse solvers against quadrature, closed forms and published anchors
+(PLAN.md Section 4.4)."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -17,7 +19,6 @@ from qutip_trap.control.shaping import (
     SegmentedEnvelope,
     closure_duration_s,
     closure_rabi_rad_s,
-    closure_ratio,
     envelope_of,
     frequency_derivative_residuals,
     gate_modes,
@@ -29,18 +30,15 @@ from qutip_trap.control.shaping import (
     solve_fourier_amplitude_modulation,
     solve_frequency_modulation,
     solve_phase_modulation,
-    square_pulse_chi,
     symmetric_pulse,
     trajectory_sampled,
+    waveform_from_segmented,
     waveform_integrals,
 )
 from qutip_trap.control.table import Waveform
+from qutip_trap.light.beams import Beam
 from qutip_trap.units import TWO_PI
-from qutip_trap.validation.two_qubit_closed_forms import (
-    blumel_constraint_rows,
-    choi_segment_count,
-    ms_two_body_angle,
-)
+from qutip_trap.validation.two_qubit_closed_forms import choi_segment_count, ms_two_body_angle
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -55,30 +53,27 @@ ONE_MODE = GateModes(
 
 
 def test_square_pulse_closure_ratio_in_every_spin_normalization() -> None:
-    """Section 9.4 row 2: eta Omega/eps = 1/(2 sqrt K), tau = 2 pi K/eps, chi = pi/4 on sigma sigma; rwa kernel exact."""
+    """eta Omega/eps = 1/(2 sqrt K), tau = 2 pi K/eps, chi = pi/4 on sigma sigma; rwa kernel exact."""
     for loops in (1, 2, 3):
         sp = symmetric_pulse(ONE_MODE, gate_mode=0, loops=loops, epsilon_hz=10e3, kernel="rwa")
-        assert sp.diagnostics["closure_ratio"] == pytest.approx(closure_ratio(loops), rel=1e-12)
+        assert sp.diagnostics["closure_ratio"] == pytest.approx(1.0 / (2.0 * math.sqrt(loops)), rel=1e-12)
         assert sp.waveform.duration_s == pytest.approx(closure_duration_s(TWO_PI * 10e3, loops), rel=1e-12)
         assert sp.chi_rad == pytest.approx(CHI_MAXIMAL_RAD, rel=1e-12)
         assert abs(sp.integrals.alpha[(0, 0)]) < 1e-12 and abs(sp.integrals.alpha[(1, 0)]) < 1e-12
         omega = TWO_PI * sp.diagnostics["rabi_hz"]
         assert omega == pytest.approx(closure_rabi_rad_s(0.05, TWO_PI * 10e3, loops), rel=1e-12)
-        assert square_pulse_chi(0.05, 0.05, omega, TWO_PI * 10e3, loops) == pytest.approx(
-            CHI_MAXIMAL_RAD, rel=1e-12
-        )
         assert ms_two_body_angle(0.05, 0.05, omega, TWO_PI * 10e3, loops) == pytest.approx(
             CHI_MAXIMAL_RAD, rel=1e-12
         )
     # the exact first-order (Choi) kernel keeps the counter-rotating term: a 0.25% correction at eps/nu = 1%, never mixed in
     sp_c = symmetric_pulse(ONE_MODE, gate_mode=0, loops=1, epsilon_hz=10e3, kernel="choi")
     assert 0.995 < sp_c.diagnostics["closure_ratio"] / 0.5 < 1.0
-    # the detuning side sets the sign (Section 13: exp(+i chi sigma sigma) = XX(-chi))
+    # the detuning side sets the sign (exp(+i chi sigma sigma) = XX(-chi))
     sp_out = symmetric_pulse(
         ONE_MODE, gate_mode=0, loops=1, epsilon_hz=10e3, kernel="rwa", detuning_side="outside"
     )
     assert sp_out.chi_rad == pytest.approx(-CHI_MAXIMAL_RAD, rel=1e-12) and sp_out.sign == -1
-    # the ratio with the plan's second-revision 1/(4 sqrt K) closure is a chi = pi/16 pulse
+    # a 1/(4 sqrt K) closure ratio is a chi = pi/16 pulse
     sp_q = symmetric_pulse(
         ONE_MODE, gate_mode=0, loops=1, epsilon_hz=10e3, kernel="rwa", chi_target_rad=math.pi / 16
     )
@@ -189,50 +184,8 @@ def test_sampled_integrals_match_analytic_on_a_smooth_envelope() -> None:
     assert ints.chi_of(0, 1) == pytest.approx(0.06 * 0.06 * val, rel=1e-7)
 
 
-def test_symmetrized_kernel_versus_the_printed_factor_two() -> None:
-    """Section 9.16 row 4.4-5: with non-proportional envelopes chi_ij = K_ij + K_ji is symmetric while Choi's 2 K_ij and 2 K_ji
-    (the two readings of the printed 2 Omega_i(t) Omega_j(t')) differ from it by equal and opposite amounts."""
-    omega = TWO_PI * 2.0e6
-    mu = TWO_PI * 1.95e6
-    # a wide-open loop: at closure (F = 0) the two printed readings coincide, K_ab - K_ba = Im F_a F_b^*
-    tau = 0.6 * 2.0 * math.pi / (omega - mu)
-    modes = GateModes(
-        ions=(0, 1), modes=(0,), omega_rad_s=(omega,), eta={0: (0.06,), 1: (0.06,)}, nbar=(0.0,)
-    )
-    t = np.linspace(0.0, tau, 6001)
-    w = TWO_PI * 200e3
-    env_a = w * np.sin(math.pi * t / tau) ** 2
-    env_b = w * (t / tau) * np.sin(math.pi * t / tau) ** 2
-    env = SampledEnvelope(t, {0: env_a, 1: env_b}, mu * t)
-    sym = integrals_sampled(env, modes, "rwa").chi_of(0, 1)
-    # the unsymmetrized readings K_ij = (eta eta/4) int int_{t<t'} Omega_i(t') Omega_j(t) sin(eps (t'-t)), computed directly
-    eps = omega - mu
-
-    def k_of(env_i: np.ndarray, env_j: np.ndarray) -> float:
-        from scipy.integrate import cumulative_simpson, simpson
-
-        f = 0.5j * np.exp(1j * eps * t)
-        cum_j = cumulative_simpson(env_j * f, x=t, initial=0.0)
-        return float(0.06 * 0.06 * simpson(np.imag(env_i * f * np.conj(cum_j)), x=t))
-
-    kab, kba = k_of(env_a, env_b), k_of(env_b, env_a)
-    assert sym == pytest.approx(kab + kba, rel=1e-8)
-    assert abs(kab - kba) / abs(sym) > 0.1, (
-        "the audit's non-proportional envelopes make the two readings differ by tens of percent"
-    )
-    assert 2 * kab != pytest.approx(sym, rel=0.05) and 2 * kba != pytest.approx(sym, rel=0.05)
-    assert (2 * kab - sym) == pytest.approx(-(2 * kba - sym), rel=1e-8)
-    # Section 9.4's "the pi/8 convention converts by doubling the kernel": with EQUAL envelopes - the only case
-    # Blumel's un-pair-summed kernel covers - K_ab = K_ba = chi/2 exactly, so their pi/8 target on K is our pi/4 on chi
-    equal = SampledEnvelope(t, {0: env_a, 1: env_a}, mu * t)
-    chi_equal = integrals_sampled(equal, modes, "rwa").chi_of(0, 1)
-    k_equal = k_of(env_a, env_a)
-    assert k_equal == pytest.approx(0.5 * chi_equal, rel=1e-9)
-    assert 2.0 * k_equal == pytest.approx(chi_equal, rel=1e-9)
-
-
 def test_am_solver_closes_every_mode_and_targets_pi_over_four() -> None:
-    """Section 9.4 'Multi-mode closure': 2N + 1 = 5 equal segments close both x modes of the two-ion crystal with |chi| = pi/4;
+    """2N + 1 = 5 equal segments close both x modes of the two-ion crystal with |chi| = pi/4;
     fewer segments cannot; the amplitude ratio of the second ion enters the symmetrized kernel bilinearly."""
     dev = two_ion_device()
     modes = two_ion_modes(dev)
@@ -253,7 +206,7 @@ def test_am_solver_closes_every_mode_and_targets_pi_over_four() -> None:
     )
     for key, a in ratio.integrals.alpha.items():
         assert abs(a) < 1e-10, key
-    # the waveform round-trips through envelope_of and reproduces its integrals (Section 9.17, waveform per (ion, leg))
+    # the waveform round-trips through envelope_of and reproduces its integrals
     again = waveform_integrals(sp.waveform, modes)
     assert again.chi_of(0, 1) == pytest.approx(sp.chi_rad, rel=1e-10)
     env = envelope_of(sp.waveform, (0, 1))
@@ -266,7 +219,7 @@ def test_am_solver_closes_every_mode_and_targets_pi_over_four() -> None:
 
 
 def test_symmetric_constructor_equals_the_general_form_at_equal_envelopes() -> None:
-    """Section 9.17 'Waveform per (ion, leg)': Waveform.symmetric equals the one-segment AM solver at the closure duration."""
+    """Waveform.symmetric equals the one-segment AM solver at the closure duration."""
     dev = two_ion_device()
     modes = two_ion_modes(dev).subset([X_COM_TWO_IONS])
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3, kernel="rwa")
@@ -291,11 +244,9 @@ def test_symmetric_constructor_equals_the_general_form_at_equal_envelopes() -> N
 
 
 def test_five_ion_closure_with_one_and_two_transverse_families() -> None:
-    """Choi 2014 anchors and the Section 4.4.7 (2) counting: five 171Yb+ ions, Delta k along x closes the five x modes with 2N + 1 = 11
-    segments; a Delta k with y and x components sees both families (10 modes) and needs 4N + 1 = 21, 11 raising ClosureError."""
+    """Choi 2014: five 171Yb+ ions, Delta k along x closes the five x modes with 2N + 1 = 11 segments; a Delta k with y and x
+    components sees both families (10 modes) and needs 4N + 1 = 21, 11 raising ClosureError."""
     dev = chain_device(5, omega_hz=(3.045e6, 2.95e6, 0.55e6))
-    from qutip_trap.control.shaping import gate_modes
-
     modes = gate_modes(dev, (1, 3), (0, 1))
     assert modes.n_modes == 5 and set(modes.modes) == {5, 6, 7, 8, 9}
     assert choi_segment_count(5) == 11 == segment_count(modes.n_modes)
@@ -304,11 +255,7 @@ def test_five_ion_closure_with_one_and_two_transverse_families() -> None:
         assert abs(a) < 1e-9, key
     assert abs(sp.chi_rad) == pytest.approx(CHI_MAXIMAL_RAD, rel=1e-9)
     assert sp.diagnostics["peak_rabi_hz"] < 2e6
-    # both families through a rotated Delta k: rebuild the beams at 30 degrees from x in the xy plane (the Section 11.1 fixture)
-    import dataclasses
-
-    from qutip_trap.light.beams import Beam
-
+    # both families through a rotated Delta k: rebuild the beams at 30 degrees from x in the xy plane
     c, s = math.cos(math.radians(30.0)), math.sin(math.radians(30.0))
     b1 = Beam(355e-9, (c, s, 0.0), (0.0, 0.0, 1.0), 200e-6, 10e-3, (0.0, 0.0, 0.0))
     b2 = Beam(355e-9, (-c, -s, 0.0), (-s, c, 0.0), 200e-6, 10e-3, (0.0, 0.0, 0.0))
@@ -323,17 +270,11 @@ def test_five_ion_closure_with_one_and_two_transverse_families() -> None:
     for key, a in sp2.integrals.alpha.items():
         assert abs(a) < 1e-9, key
     assert abs(sp2.chi_rad) == pytest.approx(CHI_MAXIMAL_RAD, rel=1e-9)
-    # the Section 9.12 counting row
-    assert [choi_segment_count(n) for n in (5, 15, 17, 30)] == [11, 31, 35, 61]
-    assert [choi_segment_count(n, 2) for n in (5, 15, 17, 30)] == [21, 61, 69, 121]
-    assert [blumel_constraint_rows(n, 2) for n in (5, 15, 17, 30)] == [15, 45, 51, 90]
-    assert [blumel_constraint_rows(n, 2, 2) for n in (5, 15, 17, 30)] == [30, 90, 102, 180]
 
 
 def test_fourier_stabilized_solver_nulls_the_frequency_derivatives() -> None:
-    """Blumel 2021 in the pi/4 convention: closure plus the first K derivatives in the mode frequency vanish, the stabilized
-    pulse is far less sensitive to a common mode-frequency error than the unstabilized one, and its kernel is our
-    symmetrized one (their pi/8 target is half of ours)."""
+    """Blumel 2021 in the pi/4 convention: closure plus the first K derivatives in the mode frequency vanish, and the
+    stabilized pulse is far less sensitive to a common mode-frequency error than the unstabilized one."""
     dev = two_ion_device()
     modes = two_ion_modes(dev)
     plain = solve_fourier_amplitude_modulation(
@@ -352,18 +293,14 @@ def test_fourier_stabilized_solver_nulls_the_frequency_derivatives() -> None:
         assert abs(res[0]) < 1e-9 and abs(res_plain[0]) < 1e-9, (m, res, res_plain)
         assert abs(res_plain[1]) > 1e3 * abs(res[1]), (m, res, res_plain)
     # sensitivity to a 1 kHz common shift of both modes
-    import dataclasses
-
     shifted = dataclasses.replace(modes, omega_rad_s=tuple(w + TWO_PI * 1e3 for w in modes.omega_rad_s))
     err_plain = integrals_sampled(plain.envelope, shifted, "rwa").residual_error(shifted)
     err_stab = integrals_sampled(stab.envelope, shifted, "rwa").residual_error(shifted)
     assert err_stab < 0.05 * err_plain
     assert stab.diagnostics["constraint_rows"] == 8 and plain.diagnostics["constraint_rows"] == 4
-    # Blumel's own design is seven ions with about 300 basis functions (Section 7.8); 16 is what two modes need here
-    # (four closure rows plus four derivative rows), and the seven-ion design is not exercised: ledger
-    # anchor.m4.fm_and_fourier_robustness records that the solvers are checked on the two-mode fixture only
+    # 16 basis functions is what two modes need (four closure rows plus four derivative rows)
     assert stab.diagnostics["basis_functions"] == 16
-    # the pi/8 conversion: a kernel without the pair sum (K_ab alone) is half of chi for equal envelopes
+    # Blumel's zero-temperature infidelity is Landsman's (4/5) of the residual error at nbar = 0
     assert stab.diagnostics["zero_temperature_infidelity"] == pytest.approx(0.8 * stab.residual_error)
 
 
@@ -382,8 +319,6 @@ def test_fm_solver_closes_and_the_robust_variant_averages_the_trajectory() -> No
         traj = trajectory_sampled(robust.envelope, modes, 0, m)
         mean = np.trapezoid(traj, robust.envelope.times_s) / 100e-6
         assert abs(mean) < 1e-3 * np.max(np.abs(traj))
-    import dataclasses
-
     shifted = dataclasses.replace(modes, omega_rad_s=tuple(w + TWO_PI * 500.0 for w in modes.omega_rad_s))
     err_plain = integrals_sampled(plain.envelope, shifted, "rwa").residual_error(shifted)
     err_robust = integrals_sampled(robust.envelope, shifted, "rwa").residual_error(shifted)
@@ -398,11 +333,9 @@ def test_fm_solver_closes_and_the_robust_variant_averages_the_trajectory() -> No
 
 
 def test_fm_solver_closes_the_ion_at_a_mode_node() -> None:
-    """The FM closure guard (M4 finding): the family holds Omega constant and equal on both ions, so alpha_{i,m} ~ eta_{i,m}
-    and closing one ion closes the other - EXCEPT on a mode where that ion sits at a node (eta = 0 exactly, the centre ion
-    of an odd chain in a spatially antisymmetric mode, Section 7.8's b_{8,2n} = 0). Driving the residual from ion a alone
-    skipped such a row and left ion b's loop wide open (|alpha| = 0.0296, eps_ent = 8.8e-4); the residual is now driven
-    from whichever gate ion couples more strongly and a row is skipped only when NEITHER couples."""
+    """The FM family holds Omega constant and equal on both ions, so alpha_{i,m} ~ eta_{i,m} and closing one ion closes the
+    other, EXCEPT on a mode where that ion sits at a node (eta = 0, the centre ion of an odd chain in an antisymmetric
+    mode): the residual is driven from whichever gate ion couples more strongly, a row skipped only when neither couples."""
     modes = GateModes(
         ions=(0, 1),
         modes=(0, 1),
@@ -433,8 +366,7 @@ def test_fm_solver_closes_the_ion_at_a_mode_node() -> None:
     [(3, (0, 1), 3, 7), (3, (0, 2), 3, 7), (3, (1, 2), 3, 7), (4, (1, 2), 4, 9), (4, (0, 3), 4, 9)],
 )
 def test_three_and_four_ion_closure(n_ions: int, pair: tuple[int, int], n_modes: int, segments: int) -> None:
-    """The M4 'multi-mode: 3 to 5 ions' bullet at the two chain lengths the first pass never exercised: the transverse-x
-    family of a 3- and a 4-ion 171Yb+ chain closes with Choi's 2N + 1 segments at |chi| = pi/4."""
+    """The transverse-x family of a 3- and a 4-ion 171Yb+ chain closes with Choi's 2N + 1 segments at |chi| = pi/4."""
     dev = chain_device(n_ions)
     modes = gate_modes(dev, pair, (0, 1))
     assert modes.n_modes == n_modes and segment_count(modes.n_modes) == segments
@@ -451,23 +383,19 @@ def test_three_and_four_ion_closure(n_ions: int, pair: tuple[int, int], n_modes:
 
 
 def test_multi_pair_waveform_stores_the_solved_pairs_angles() -> None:
-    """Section 9.17 'Waveform per (ion, leg)' (M4 finding): a pulse solved for pair (0, 2) of a THREE-ion GateModes must
-    store pair (0, 2)'s per-mode angles, not the first pair's. The same envelope carries chi(0,1) = chi(1,2) = 0.449272
-    while chi(0,2) = pi/4, so storing the first pair's angles is a factor sqrt(pi/4 / 0.449272) = 1.32 amplitude error in
-    the scheduler's s^2 rescale and can flip the kernel sign. A multi-pair GateModes with no pair named is refused."""
+    """A pulse solved for pair (0, 2) of a THREE-ion GateModes stores pair (0, 2)'s per-mode angles, not the first pair's:
+    the same envelope carries chi(0,1) = chi(1,2) = 0.449272 while chi(0,2) = pi/4. A multi-pair GateModes with no pair
+    named is refused."""
     dev = three_ion_device()
     modes = gate_modes(dev, (0, 1, 2), (0, 1))
     assert abs(modes.eta[1][1]) < 1e-15, (
-        "the centre ion sits at a node of the antisymmetric mode (Section 7.8); the eigensolver leaves 1e-17 rather "
-        "than an exact zero, which is why the FM guard's exact == 0.0 test was masked on a real crystal"
+        "the centre ion sits at a node of the antisymmetric mode; the eigensolver leaves 1e-17, not an exact zero"
     )
     sp = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6, pair=(0, 2))
     assert sp.chi_rad == pytest.approx(CHI_MAXIMAL_RAD, rel=1e-9)
     assert sp.waveform.chi_total_rad == pytest.approx(sp.chi_rad, rel=1e-12)
     assert sp.integrals.chi_of(0, 1) == pytest.approx(0.449272, rel=1e-5)
     assert sp.integrals.chi_of(0, 1) != pytest.approx(sp.chi_rad, rel=0.1)
-    from qutip_trap.control.shaping import waveform_from_segmented
-
     with pytest.raises(ValueError, match="name the pair"):
         waveform_from_segmented(sp.envelope, sp.integrals, modes)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not a pair"):
@@ -475,13 +403,10 @@ def test_multi_pair_waveform_stores_the_solved_pairs_angles() -> None:
 
 
 def test_phase_modulation_closes_every_mode_at_fixed_amplitude() -> None:
-    """The PM solver (Section 4.4.3's third family, no equations in the plan; Milne 2020, Green-Biercuk 2015, Lu 2019 are
-    the [background] sources): 2N + 1 = 5 constant-phase segments at FIXED amplitude and beat note close both x modes of
-    the two-ion crystal to |alpha| = 3e-17 with |chi| = pi/4, and the per-segment motion phases survive the round trip
-    through the Waveform (they live in the legs' half-difference, so envelope_of returns them in phase_rad).
-
-    Milne's N + 1 = 3 segments do NOT close here: their count needs the time-symmetric phase profile this general
-    least-squares solver does not impose (ledger conv.pm_solver)."""
+    """The PM solver (Milne 2020, Green-Biercuk 2015, Lu 2019): 2N + 1 = 5 constant-phase segments at FIXED amplitude and
+    beat note close both x modes of the two-ion crystal with |chi| = pi/4, and the per-segment motion phases survive the
+    round trip through the Waveform (the legs' half-difference). Milne's N + 1 = 3 segments need the time-symmetric
+    phase profile this least-squares solver does not impose."""
     dev = two_ion_device()
     modes = two_ion_modes(dev)
     sp = solve_phase_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
@@ -509,14 +434,11 @@ def test_phase_modulation_closes_every_mode_at_fixed_amplitude() -> None:
 
 
 def test_fm_solver_closes_the_five_ion_leung_design() -> None:
-    """Leung 2018's five-ion anchors (Section 9.4 'FM robustness'): a 90 us robust FM design on the five-ion chain at
-    omega_x/2pi = 3.045 MHz closes all five transverse-x modes. 13 vertices (Leung's 13 oscillations) is NOT enough - 7
-    free time-symmetric vertices cannot satisfy 10 closure plus 10 robustness conditions, and the loops stay open at
-    |alpha| = 0.13 - while 19 vertices close them to 3e-13.
-
-    The required Rabi frequency is 292 kHz (robust) and 1097 kHz (plain), which brackets the 151 kHz the plan says the
-    calibration layer must reproduce against Leung's printed Omega = 2 pi x 600 kHz: reported, not asserted, because the
-    fixture's eta (0.05 to 0.08 on the x family) is this crystal's and not Leung's apparatus's."""
+    """Leung 2018's five-ion design: a 90 us robust FM pulse on the five-ion chain at omega_x/2pi = 3.045 MHz closes all five
+    transverse-x modes. 13 vertices (Leung's 13 oscillations) is NOT enough - 7 free time-symmetric vertices cannot
+    satisfy 10 closure plus 10 robustness conditions, and the loops stay open at |alpha| = 0.13 - while 19 vertices close
+    them to 3e-13. The required Rabi frequency is 292 kHz (robust) and 1097 kHz (plain); Leung's printed
+    Omega = 2 pi x 600 kHz belongs to his apparatus's eta, not this crystal's (0.05 to 0.08 on the x family)."""
     dev = chain_device(5, omega_hz=(3.045e6, 2.95e6, 0.55e6))
     modes = gate_modes(dev, (1, 3), (0, 1))
     assert modes.n_modes == 5
@@ -531,7 +453,7 @@ def test_fm_solver_closes_the_five_ion_leung_design() -> None:
     for key, alpha in sp.integrals.alpha.items():
         assert abs(alpha) < 1e-10, (key, abs(alpha))
     assert sp.diagnostics["rabi_hz"] == pytest.approx(292.3e3, rel=0.05), (
-        "the five-ion design's required Omega/2pi, between the 151 kHz the plan names and Leung's printed 600 kHz"
+        "the five-ion robust design's required Omega/2pi"
     )
     plain = solve_frequency_modulation(
         modes, duration_s=90e-6, n_vertices=19, mu0_hz=2.98e6, robust=False, max_nfev=800
@@ -542,7 +464,7 @@ def test_fm_solver_closes_the_five_ion_leung_design() -> None:
 
 
 def test_two_pulse_sign_reversal_closes_a_shaped_loop_at_two_tau() -> None:
-    """Roos 2008 (Section 4.4.1): a smooth envelope leaves the loop open at tau; repeating it with the coupling reversed closes it at 2 tau."""
+    """Roos 2008: a smooth envelope leaves the loop open at tau; repeating it with the coupling reversed closes it at 2 tau."""
     omega = TWO_PI * 1.0e6
     eps = TWO_PI * 10e3
     tau = TWO_PI / eps

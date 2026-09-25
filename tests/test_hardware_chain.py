@@ -1,4 +1,4 @@
-"""The control hardware chain of Section 7.10 (PLAN.md; M7): quantized tone words, the modulator's first-order response with its
+"""The control hardware chain (PLAN.md Section 7.10): quantized tone words, the modulator's first-order response with its
 tail, per-train timing jitter, and the beat-phase reference the response demands."""
 
 from __future__ import annotations
@@ -9,9 +9,12 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap.calibration.entangling import exact_gate_check, gate_space
+from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains, apply_hardware_chain
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, response_phase_rad
+from qutip_trap.control.shaping import gate_modes
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
@@ -19,6 +22,7 @@ from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample
 from tests.fixtures import make_hardware
 from tests.m2_fixtures import single_ion_raman_device
+from tests.m6_fixtures import circuit_fixture
 
 
 def _device():  # type: ignore[no-untyped-def]
@@ -161,7 +165,7 @@ def test_trains_are_contiguous_same_ion_pulses_and_jitter_moves_a_train_rigidly(
 
 
 def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_note() -> None:
-    """phi -> phi + sgn(mu) arctan(2 pi |mu| tau_r) per leg (the M7 finding: 3e-3 leakage without it on the two-ion fixture)."""
+    """phi -> phi + sgn(mu) arctan(2 pi |mu| tau_r) per leg (3e-3 leakage without it on the two-ion fixture)."""
     assert response_phase_rad(3.0e6, 0.0) == 0.0
     assert response_phase_rad(3.0e6, 50e-9) == pytest.approx(math.atan(2 * math.pi * 3e6 * 50e-9))
     assert response_phase_rad(-3.0e6, 50e-9) == pytest.approx(-math.atan(2 * math.pi * 3e6 * 50e-9))
@@ -170,21 +174,8 @@ def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_no
 
 @pytest.mark.slow
 def test_calibrated_gate_survives_the_modulator_response_with_the_phase_reference() -> None:
-    """The M7 headline finding, on a device that actually has a modulator: with ``make_hardware(realistic=True)``'s 50 ns
-    rise time the chain plus the Roos beat-phase reference reaches 0.999923 (leakage 3.32e-5) against 0.999868 (4.49e-5)
-    for an ideal modulator - the plan's 0.99992 against 0.99987.
-
-    Audit E-24: this test used to run ``circuit_fixture(2)``, whose hardware is ``make_hardware()`` with
-    ``aom_rise_s = 0.0``, so ``response_phase_rad`` returned 0 and NO modulator response was applied - it exercised DDS
-    word rounding only, and the 50 ns chain on an entangling gate lived solely in ``check_noise.py`` section 7."""
-    import dataclasses
-
-    from qutip_trap.calibration.entangling import exact_gate_check, gate_space
-    from qutip_trap.calibration.surrogate import surrogate_table
-    from qutip_trap.control.shaping import gate_modes
-    from tests.fixtures import make_hardware
-    from tests.m6_fixtures import circuit_fixture
-
+    """With ``make_hardware(realistic=True)``'s 50 ns rise time the chain plus the Roos beat-phase reference reaches
+    0.999923 (leakage 3.32e-5) against 0.999868 (4.49e-5) for an ideal modulator."""
     fx = circuit_fixture(2)
 
     def check(hardware, chain: bool):  # type: ignore[no-untyped-def]

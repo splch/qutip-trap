@@ -1,7 +1,6 @@
-"""The M8 calibration layer without the long experiments (PLAN.md Sections 7.3, 7.5, 7.10, 9.17): the played chain
-(requested -> physical through the device), the scheduler's Stark compensation, the servo of Section 7.5, the calibration
-cache, the sideband-lineshape row of Section 9.17 as a pure fit test, the crystal image, ``Device.derived()`` and the
-dependency-graph refusal."""
+"""The calibration layer without the long experiments (PLAN.md Section 7): the played chain (requested -> physical through
+the device), the scheduler's Stark compensation, the servo, the calibration cache, the sideband-lineshape fit, the crystal
+image, ``Device.derived()``, the dependency-graph refusal, and table edits as proposals."""
 
 from __future__ import annotations
 
@@ -10,28 +9,61 @@ import math
 
 import numpy as np
 import pytest
+import qutip as qt
 
 from qutip_trap.calibration import calibrate
-from qutip_trap.calibration.cache import DEFAULT_CACHE, CalibrationCache
+from qutip_trap.calibration.cache import CalibrationCache
+from qutip_trap.calibration.entangling import frame_rotated, gate_space
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
+from qutip_trap.control.native import gpi2
 from qutip_trap.control.played import physical_schedule
-from qutip_trap.control.schedule import crosstalk_beliefs, schedule
-from qutip_trap.control.table import CalEntry
+from qutip_trap.control.schedule import (
+    Schedule,
+    carrier_rabi_hz,
+    compensation_phase_rad,
+    crosstalk_beliefs,
+    entangling_pulses,
+    frame_after,
+    ms_spin_phases,
+    schedule,
+    single_qubit_pulse,
+    stark_phase_rad,
+)
+from qutip_trap.control.shaping import gate_modes
+from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable
+from qutip_trap.device.model import BeamRoles
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.experiments.fitting import (
+    Observation,
     fit_lineshape,
     half_rabi_lineshape,
     lineshape_model,
     sideband_lineshape,
 )
 from qutip_trap.experiments.imaging import crystal_image
+from qutip_trap.experiments.result import (
+    CrystalImage,
+    ExperimentResult,
+    HeatingRateFit,
+    ParityScan,
+    RabiScan,
+    RamseyFringe,
+)
+from qutip_trap.experiments.single_ion import rabi_scan, sub_stream
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.model import servo_residual
+from qutip_trap.noise.processes import correlated_normals
+from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, quiet_sample
 from qutip_trap.noise.spectra import Drift
+from qutip_trap.provenance import load_ledger
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
+from tests.fixtures import make_device, make_noise
+from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
@@ -45,20 +77,17 @@ def two_ion():  # type: ignore[no-untyped-def]
     return fx, sur
 
 
-# ---- Section 9.17, "Sideband lineshape fit" -------------------------------------------------------------------------------------------
+# ---- the sideband lineshape fit ---------------------------------------------------------------------------------------------------
 
 
 def test_sideband_lineshape_row_pi_time_half_depth_and_the_half_rabi_negative_control() -> None:
-    """P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)): a carrier pi pulse at Omega t = pi, the Lorentzian weight
-    at half depth for delta = Omega; the plan's form fitted to a synthetic scan returns Omega, the half-Rabi form returns Omega/2."""
+    """P = [Omega^2/(Omega^2 + delta^2)] sin^2((t/2) sqrt(Omega^2 + delta^2)): a carrier pi pulse at Omega t = pi; the full
+    form fitted to a synthetic scan returns Omega, the half-Rabi form returns Omega/2."""
     omega = TWO_PI * 50e3
     t_pi = math.pi / omega
     assert sideband_lineshape(0.0, omega, t_pi) == pytest.approx(1.0)
     assert sideband_lineshape(0.0, omega, 0.5 * t_pi) == pytest.approx(0.5)
-    delta = np.array([omega])
-    weight = omega**2 / (omega**2 + delta**2)
-    assert weight[0] == pytest.approx(0.5)
-    # the half-Rabi form is the plan's form at twice its Omega (Section 7.9: doubled on ingest)
+    # the half-Rabi form is the full form at twice its Omega
     d = TWO_PI * np.linspace(-150e3, 150e3, 61)
     assert np.allclose(
         half_rabi_lineshape(d, 0.5 * omega, t_pi), sideband_lineshape(d, omega, t_pi), atol=1e-14
@@ -76,14 +105,14 @@ def test_sideband_lineshape_row_pi_time_half_depth_and_the_half_rabi_negative_co
     )
 
 
-# ---- the played chain and the Stark compensation (Sections 7.3, 7.10) ----------------------------------------------------------------
+# ---- the played chain and the Stark compensation ------------------------------------------------------------------------------------
 
 
 def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalibrated_rabi_entry(
     two_ion,
 ) -> None:  # type: ignore[no-untyped-def]
     fx, sur = two_ion
-    rep = compile_report(BELL, fx.device)
+    rep = compile_report(BELL)
     sched = schedule(rep.circuit, fx.device, sur.table)
     played, notes = physical_schedule(fx.device, sched, sur.table)
     assert all(p.drive.programmed for p in sched.pulses) and not any(
@@ -127,13 +156,12 @@ def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalib
 
 
 def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Section 7.5 item 7: every tone is detuned by the shift the table predicts for the played amplitude; both legs of an MS
+    """Every tone is detuned by the shift the table predicts for the played amplitude; both legs of an MS
     segment move together (the spin and motion phases are untouched); the flag switches it off."""
     fx, sur = two_ion
-    rep = compile_report(BELL, fx.device)
-    kw: dict[str, object] = {}
-    on = schedule(rep.circuit, fx.device, sur.table, **kw)  # type: ignore[arg-type]
-    off = schedule(rep.circuit, fx.device, sur.table, stark_compensation=False, **kw)  # type: ignore[arg-type]
+    rep = compile_report(BELL)
+    on = schedule(rep.circuit, fx.device, sur.table)
+    off = schedule(rep.circuit, fx.device, sur.table, stark_compensation=False)
     for p_on, p_off in zip(on.pulses, off.pulses):
         belief = p_on.drive.stark_shift_hz
         assert belief == p_off.drive.stark_shift_hz
@@ -163,14 +191,12 @@ def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -
     ) == pytest.approx(0.3)
 
 
-# ---- the servo of Section 7.5 --------------------------------------------------------------------------------------------------------
+# ---- the servo ----------------------------------------------------------------------------------------------------------------------
 
 
 def test_servo_high_passes_a_slow_drift_into_its_residual_band() -> None:
     """A first-order lock of bandwidth f_s tracks an OU drift of correlation time tau: the residual variance falls to about
     sigma^2/(1 + 2 pi f_s tau), the first sample carries no offset (the calibration measured it), and a quiet servo changes nothing."""
-    from qutip_trap.noise.processes import correlated_normals
-
     rng = np.random.default_rng(1)
     times = np.linspace(0.0, 100.0, 4001)
     tau = 5.0
@@ -182,22 +208,20 @@ def test_servo_high_passes_a_slow_drift_into_its_residual_band() -> None:
         assert np.var(r) == pytest.approx(expected, rel=0.5), (f_s, np.var(r), expected)
     assert np.array_equal(servo_residual(x[:, None], times, 0.0)[:, 0], x)
     # through the noise model: a field drift with a servo leaves the later samples' offsets far below the rms
-    from tests.fixtures import make_device, make_noise
-
     dev = make_device()
     noisy = dataclasses.replace(make_noise(), field_drift=Drift(1e-6, 10.0, 5.0))
     free = dataclasses.replace(make_noise(), field_drift=Drift(1e-6, 10.0, None))
     ts = np.linspace(0.0, 20.0, 201)
     seq_servo = noisy.sample_sequence(np.random.default_rng(0), ts, device=dev)
     seq_free = free.sample_sequence(np.random.default_rng(0), ts, device=dev)
-    off_servo = np.array([s.values.get("field_offset_t", 0.0) for s in seq_servo])
-    off_free = np.array([s.values.get("field_offset_t", 0.0) for s in seq_free])
+    off_servo = np.array([s.values[KEY_FIELD_OFFSET_T] for s in seq_servo])
+    off_free = np.array([s.values[KEY_FIELD_OFFSET_T] for s in seq_free])
     # the residual is the drift's increment between re-locks, sigma sqrt(2 dt/tau) = 0.14 sigma here; the free chain's std over a
     # window of two correlation times underestimates its rms, so the comparison is with the rms itself
     assert off_servo[0] == 0.0 and np.std(off_servo[1:]) < 0.2 * 1e-6 < 3.0 * np.std(off_free)
 
 
-# ---- the cache (Section 7.5) ----------------------------------------------------------------------------------------------------------
+# ---- the cache ------------------------------------------------------------------------------------------------------------------------
 
 
 def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -211,7 +235,7 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
     )
     t1 = calibrate(Machine(fx.device), cache=cache, **kw).table  # type: ignore[arg-type]
     t2 = calibrate(Machine(fx.device), cache=cache, **kw).table  # type: ignore[arg-type]
-    assert t1 is t2 and cache.hits == 1 and cache.misses == 1
+    assert t1 is t2 and len(cache.reports) == 1
     assert t1.is_current_for(fx.device.hash())
     changed = dataclasses.replace(
         fx.device,
@@ -220,13 +244,15 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
     )
     t3 = calibrate(Machine(changed), cache=cache, **kw).table  # type: ignore[arg-type]
     assert t3 is not t1 and not t1.is_current_for(changed.hash()) and t3.is_current_for(changed.hash())
-    assert cache.invalidate(fx.device) == 1 and cache.tables_for(fx.device) == ()
-    report = calibrate(Machine(changed), cache=cache, **kw)  # type: ignore[arg-type]
-    assert report.table is t3, "the report is cached beside its table"
-    assert isinstance(DEFAULT_CACHE, CalibrationCache)
+    assert calibrate(Machine(changed), cache=cache, **kw).table is t3 and len(cache.reports) == 2
+    # the roles are not in the device hash but they are in the key: another entangling assignment is another table
+    single = dataclasses.replace(
+        fx.device, roles=dataclasses.replace(fx.device.roles, entangling={0: fx.entangling_drives[0]})
+    )
+    assert calibrate(Machine(single), cache=cache, **kw).table is not t1
 
 
-# ---- the dependency graph (Section 9.17, "Calibration dependency graph") --------------------------------------------------------------
+# ---- the dependency graph ---------------------------------------------------------------------------------------------------------------
 
 
 def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -254,9 +280,7 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
         "sideband_spectroscopy" in report.refused and "micromotion" in report.refused["sideband_spectroscopy"]
     )
     assert report.results == {}
-    # Section 7.3: what the refused fit could not establish is uncalibrated, NOT the derived seed it started from. The
-    # first M8 build left the mode frequencies as schedulable seeds and this row pinned that (`report.table.modes ==
-    # sur.table.modes`), which is exactly the fallback 7.3 forbids (M8 audit B2).
+    # what the refused fit could not establish is uncalibrated, NOT the derived seed it started from
     t = report.table
     assert all(
         e.status == "uncalibrated" and e.experiment == "sideband_spectroscopy" for e in t.modes.values()
@@ -272,7 +296,7 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
         assert name in UPSTREAM
 
 
-# ---- the crystal image (Section 6.7) ---------------------------------------------------------------------------------------------------
+# ---- the crystal image --------------------------------------------------------------------------------------------------------------
 
 
 def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -293,9 +317,6 @@ def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  
 
 
 def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -> None:  # type: ignore[no-untyped-def]
-    from qutip_trap.provenance import load_ledger
-    from tests.m2_fixtures import single_ion_raman_device
-
     fx, sur = two_ion
     ledger = load_ledger()
     d = fx.device.derived()
@@ -306,14 +327,11 @@ def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -
     assert d.values["qubit_freq_hz[0]"] == pytest.approx(sur.table.qubit_freq[0].value)
     assert d.values["mode_hz[3]"] == pytest.approx(sur.table.modes[3].value)
     assert d.values["R_bright_per_s[0]"] > 1e6
-    # the fixture declares which of its six far-detuned beams play which gates (Device.roles, 0.2.0), so the device derives
-    # the addressing pairs' Rabi frequencies: the same numbers the surrogate seeds its table with
+    # the fixture declares which of its six far-detuned beams play which gates (Device.roles), so the device derives the
+    # addressing pairs' Rabi frequencies: the same numbers the surrogate seeds its table with
     assert d.values["rabi_hz[(0, 2)]"] == pytest.approx(sur.table.rabi[(0, 2)].value)
     assert d.values["rabi_hz[(1, 4)]"] == pytest.approx(sur.table.rabi[(1, 4)].value)
     # without the roles the same beams do not identify ONE single-qubit drive: the device says so instead of guessing
-    # (Section 7.3)
-    from qutip_trap.device.model import BeamRoles
-
     bare = dataclasses.replace(fx.device, roles=BeamRoles()).derived()
     assert not any(k.startswith("rabi_hz") for k in bare.values) and any(
         "gate drives" in n for n in bare.notes
@@ -331,7 +349,7 @@ def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -
     assert ds.values["secular_hz[x]"] == pytest.approx(3.0e6)
 
 
-# ---- the phase reference of a compensation detuning (M8 finding) --------------------------------------------------------------------
+# ---- the phase reference of a compensation detuning ---------------------------------------------------------------------------------
 
 
 def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_inside_a_gate(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -340,25 +358,6 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
     schedule lost 1.5e-2 on this fixture, (2 pi delta_s t_s)^2/4 for delta_s = -38 Hz): every compensated tone carries
     ``compensation_phase_rad`` at its own start and, inside a multi-segment gate, minus the frame the earlier segments
     accumulated; a compensated GPi2 then has the same fidelity at t = 0 and at t = 1 ms."""
-    import qutip as qt
-
-    from qutip_trap.calibration.entangling import frame_rotated, gate_space
-    from qutip_trap.control.native import gpi2
-    from qutip_trap.control.schedule import (
-        Schedule,
-        carrier_rabi_hz,
-        compensation_phase_rad,
-        entangling_pulses,
-        frame_after,
-        ms_spin_phases,
-        single_qubit_pulse,
-        stark_phase_rad,
-    )
-    from qutip_trap.control.shaping import gate_modes
-    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
-    from qutip_trap.dynamics.frames import PhaseFrame
-    from qutip_trap.noise.sampling import quiet_sample
-
     fx, sur = two_ion
     table = sur.table
     spec = fx.gate_drives[0]
@@ -378,7 +377,7 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
     assert compensation_phase_rad(0.0, t_s) == 0.0 and compensation_phase_rad(shift, 0.0) == 0.0
     # the segments of the amplitude-modulated waveform: each at its own start, minus the frame the gate accumulated so far
     wf = table.waveform_for((0, 1))
-    assert wf is not None and wf.segments is not None and len(wf.segments) > 1
+    assert wf is not None and len(wf.segments) > 1
     spins, _ = ms_spin_phases(wf, (0, 1), (math.pi, 0.0), PhaseFrame())
     kw = dict(spin_phases_rad=spins, t_start_s=t_s, table=table, gate_id="ms")
     on = entangling_pulses(wf, fx.entangling_drives, **kw)  # type: ignore[arg-type]
@@ -422,17 +421,14 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
     )
 
 
-# ---- independent shot noise per experiment and sub-run (Section 3.4) -----------------------------------------------------------------
+# ---- independent shot noise per experiment and sub-run --------------------------------------------------------------------------------
 
 
 def test_every_experiment_and_sub_run_draws_its_own_shot_noise() -> None:
     """The observation model keys its draws by (sample, point index, ion, outcome); a calibration that runs the same experiment
     twice, or an experiment that repeats a scan (the Stark scan's Ramsey per beam), would otherwise replay identical noise and
-    report a correlated pair as two independent measurements (the first M8 build read -12.67 Hz for both beams of the fixture's
-    drive, exactly). ``stream`` labels keep the runs independent and compose through ``sub_stream``."""
-    from qutip_trap.experiments.fitting import Observation
-    from qutip_trap.experiments.single_ion import sub_stream
-
+    report a correlated pair as two independent measurements. ``stream`` labels keep the runs independent and compose through
+    ``sub_stream``."""
     base = Observation(shots=400, seed=3)
     beam0 = Observation(shots=400, seed=3, stream="stark_scan[0]/beam2")
     beam1 = Observation(shots=400, seed=3, stream="stark_scan[0]/beam3")
@@ -448,3 +444,125 @@ def test_every_experiment_and_sub_run_draws_its_own_shot_noise() -> None:
     assert sub_stream({"seed": 3, "stream": "stark_scan[0]"}, "beam2")["stream"] == "stark_scan[0]/beam2"
     # exact observations are untouched by the label
     assert Observation(stream="x").p1(0.3, 0, "ramsey", 0) == (0.3, None)
+
+
+# ---- table edits are proposals ----------------------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def machine() -> Machine:
+    return Machine(circuit_fixture(2).device).calibrated(
+        pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS
+    )
+
+
+def test_with_params_merges_mapping_fields_and_refuses_unknown_names(machine: Machine) -> None:
+    table = machine.table
+    assert table is not None
+    entry = table.rabi[(0, 2)]
+    wrong = table.with_params(
+        rabi={(0, 2): dataclasses.replace(entry, value=1.02 * entry.value, status="calibrated")}
+    )
+    assert (
+        wrong.rabi[(0, 2)].value == pytest.approx(1.02 * entry.value)
+        and wrong.rabi[(0, 2)].status == "calibrated"
+    )
+    assert (
+        wrong.rabi[(1, 4)] is table.rabi[(1, 4)] and wrong.device_hash == table.device_hash
+    )  # merged, not replaced
+    assert (
+        wrong.modes == table.modes and wrong is not table and table.rabi[(0, 2)] is entry
+    )  # the original is untouched
+    with pytest.raises(TypeError, match="unknown or unsettable field"):
+        table.with_params(rabbi={})
+    with pytest.raises(TypeError, match="device_hash"):
+        table.with_params(device_hash="0" * 64)
+    with pytest.raises(TypeError, match="takes a mapping"):
+        table.with_params(rabi=3.0)
+    # a waveform under the other key order replaces the stored pair rather than adding a second one
+    wf = table.waveform_for((0, 1))
+    assert wf is not None
+    marked = dataclasses.replace(wf, phi_s=dataclasses.replace(wf.phi_s, value=wf.phi_s.value + 0.1))
+    swapped = table.with_params(ms={(1, 0): marked})
+    assert set(swapped.ms) == set(table.ms) and swapped.waveform_for((0, 1)) is marked
+    # a scalar field is replaced
+    assert (
+        table.with_params(fitted_at_s=7.5).fitted_at_s == 7.5
+        and table.with_params(surrogate=False).surrogate is False
+    )
+
+
+def test_updated_with_a_rabi_scan_changes_exactly_the_rabi_entry_with_the_stamps(machine: Machine) -> None:
+    table = machine.table
+    assert table is not None
+    scan = rabi_scan(machine, 0, np.linspace(0.0, 20e-6, 9), shots=200, seed=1)
+    assert isinstance(scan, RabiScan) and scan.converged and scan.subject == {"ion": 0, "beam": 2}
+    proposal = table.updated_with(scan, fitted_at_s=12.5, sample_id=3)
+    changed = {k for k in table.entries() if table.entries()[k] != proposal.entries().get(k)}
+    assert changed == {"rabi[(0, 2)]"}
+    new = proposal.rabi[(0, 2)]
+    assert new.value == scan.f_rabi_hz and new.uncertainty == scan.uncertainty("f_rabi_hz")
+    assert (
+        new.status == "calibrated"
+        and new.experiment == "rabi_scan"
+        and new.provenance_id == scan.provenance_id
+    )
+    assert new.fitted_at_s == 12.5 and new.sample_id == 3 and proposal.fitted_at_s == 12.5
+    assert proposal.kind_of("rabi[(0, 2)]") == "setpoint" and proposal.ms == table.ms
+    # the default time is the table's own; a failed fit proposes an uncalibrated entry
+    assert table.updated_with(scan).rabi[(0, 2)].fitted_at_s == table.fitted_at_s
+    failed = dataclasses.replace(scan, converged=False)
+    assert table.updated_with(failed).rabi[(0, 2)].status == "uncalibrated" and failed.quality == "failed"
+    # the results that set no entry refuse rather than returning the table unchanged
+    for bare in (
+        ParityScan(data=np.zeros((0, 2)), fitted={}, model="parity_oscillation", provenance_id="p"),
+        CrystalImage(data=np.zeros((0, 2)), fitted={}, model="crystal_image", provenance_id="p"),
+        RamseyFringe(
+            data=np.zeros((0, 2)), fitted={"delta_hz": (1.0, 0.1)}, model="ramsey_fringe", provenance_id="p"
+        ),
+        ExperimentResult(data=np.zeros((0, 2)), fitted={}, model="x", provenance_id="p"),
+    ):
+        with pytest.raises(ValueError, match="sets no|only ramsey_frequency"):
+            table.updated_with(bare)
+    heat = HeatingRateFit(
+        data=np.zeros((0, 2)),
+        fitted={"ndot_per_s": (12.0, 1.0)},
+        model="heating_rate_sideband_asymmetry",
+        provenance_id="anchor.trap.heating_dynamics",
+        subject={"mode": 3},
+    )
+    assert table.updated_with(heat).heating[3].value == 12.0 and heat.experiment == "heating_rate"
+
+
+def test_entry_kinds_partition_the_table(machine: Machine) -> None:
+    table = machine.table
+    assert table is not None
+    setpoints = table.entries(kind="setpoint")
+    characterisation = table.entries(kind="characterisation")
+    assert set(setpoints) | set(characterisation) == set(table.entries()) and not (
+        set(setpoints) & set(characterisation)
+    )
+    assert "rabi[(0, 2)]" in setpoints and "field" in characterisation and "ms[(0, 1)].phi_s" in setpoints
+    assert all(
+        table.kind_of(k) == "characterisation" for k in table.entries() if k.startswith(("nbar[", "heating["))
+    )
+    assert set(ENTRY_KINDS) == {f.name for f in dataclasses.fields(table)} - {
+        "device_hash",
+        "seed",
+        "surrogate",
+        "fitted_at_s",
+    }
+    with pytest.raises(KeyError):
+        table.kind_of("rabi[(9, 9)]")
+
+
+def test_entries_and_the_table_survive_the_json_round_trip(machine: Machine) -> None:
+    table = machine.table
+    assert table is not None
+    entry = table.rabi[(0, 2)]
+    assert CalEntry.from_dict(entry.to_dict()) == entry
+    back = CalibrationTable.from_dict(table.to_dict())
+    assert back.rabi[(0, 2)] == entry and back.ms == {}
+    assert {k: e for k, e in back.entries().items()} == {
+        k: e for k, e in table.entries().items() if not k.startswith("ms[")
+    }

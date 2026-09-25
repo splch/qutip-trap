@@ -1,35 +1,30 @@
-"""The played chain: from the pulses the scheduler requests to the fields the ions see (PLAN.md Sections 7.3, 7.5, 7.10; M8).
+"""The played chain: from the pulses the scheduler requests to the fields the ions see (PLAN.md Section 7.3).
 
-Section 7.3 forbids the scheduler the device's true values: every pulse it emits carries the CalibrationTable's beliefs and is
-marked ``Drive.programmed``. Section 7.10 says the rf-power-to-Omega map "is calibrated by the Rabi scan of Section 7.5
-exactly as in the laboratory", which is the statement that a requested Rabi frequency is a number in the table's units: the
-control asks the modulator for the amplitude word that the table says gives Omega_req, and the ion sees
+The scheduler never reads the device's true values: every pulse it emits carries the CalibrationTable's beliefs and is
+marked ``Drive.programmed``. A requested Rabi frequency is a number in the table's units, so the ion sees
 
     Omega_phys = Omega_req x Omega_derived(ion, beams) / Omega_table(ion, beams),
 
-the true rf-power-to-Omega map of the device (its beams and atomic structure, ``light/``) divided by the calibrated one.
-The differential light shift the ion sees is the derived shift of the beams at the played intensity, delta_derived x
-sum_tones (Omega_phys,tone/Omega_derived)^p with p the drive kind's scaling power (Section 4.3.2), whatever the table believes;
-the crosstalk the neighbours see is the derived intensity profile at the played light (the builder adds the sampled pointing
-factors on top). ``physical_schedule`` rewrites every programmed drive this way and leaves drives built from a
-``DerivedDrive`` (the experiments' own, already physical) alone. With a surrogate table (seeds = derived values) the chain is
-the identity, so milestones M2 to M7 see the pulses they specified; with a table fitted by simulated experiments the
-calibration's error becomes the over-rotation, detuning and crosstalk error a laboratory's would.
+the device's true rf-power-to-Omega map divided by the calibrated one; the light shift it sees is the derived shift at the
+played intensity, delta_derived x sum_tones (Omega_phys,tone/Omega_derived)^p with p the drive kind's scaling power; the
+crosstalk its neighbours see is the derived intensity profile. ``physical_schedule`` rewrites every programmed drive this
+way and leaves drives built from a ``DerivedDrive`` alone. With a surrogate table (seeds = derived values) the chain is the
+identity; with a table fitted by simulated experiments the calibration's error becomes the over-rotation, detuning and
+crosstalk error a laboratory's would.
 
-Crosstalk policy: the chain replaces the ratios of the neighbours the pulse LISTS (the machine's model of which ions its beam
-reaches, from the table) by the derived values; it does not add neighbours the table does not carry, and reports the largest
-unlisted derived ratio so that a device model whose global beam drives every ion is never mistaken for an addressed one.
+Crosstalk: the chain replaces the ratios of the neighbours the pulse LISTS by the derived values, adds none the table does
+not carry, and reports the largest unlisted derived ratio.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap.control.pulses import Drive, Pulse, ScaledFn, Tone
+from qutip_trap.control.pulses import Drive, Pulse, ScaledFn
 from qutip_trap.control.schedule import MICROWAVE_BEAM_KEY, Schedule, stark_scaling_power
 from qutip_trap.control.table import CalibrationTable, usable
 
@@ -39,10 +34,10 @@ if TYPE_CHECKING:
 UNLISTED_CROSSTALK_REPORT = 1e-3
 """A derived crosstalk ratio above this on a neighbour the table does not list is reported in the chain's notes."""
 
+Envelope = Callable[[float], float] | np.ndarray | float
 
-def _scale_envelope(
-    env: Callable[[float], float] | np.ndarray | float, factor: float
-) -> Callable[[float], float] | np.ndarray | float:
+
+def _scale_envelope(env: Envelope, factor: float) -> Envelope:
     if factor == 1.0:
         return env
     if callable(env):
@@ -52,13 +47,29 @@ def _scale_envelope(
     return float(env) * factor
 
 
-def _peak_hz(env: Callable[[float], float] | np.ndarray | float, duration_s: float) -> float:
-    if callable(env):
-        grid = np.linspace(0.0, duration_s, 65)
-        return float(np.max(np.abs([float(env(x)) for x in grid])))
-    if isinstance(env, np.ndarray):
-        return float(np.max(np.abs(env)))
-    return abs(float(env))
+@dataclass(frozen=True, eq=False)
+class _PhysicalStarkFn:
+    """tau -> delta_derived sum_tones (|Omega_tone(tau)|/Omega_derived)^p, an array envelope read at its nearest sample
+    (picklable when the envelopes are)."""
+
+    stark_hz: float
+    omega_hz: float
+    power: int
+    envelopes: tuple[Envelope, ...]
+    duration_s: float
+
+    def __call__(self, tau: float) -> float:
+        total = 0.0
+        for e in self.envelopes:
+            if callable(e):
+                val = abs(float(e(tau)))
+            elif isinstance(e, np.ndarray):
+                k = min(int(round(tau / max(self.duration_s, 1e-300) * (len(e) - 1))), len(e) - 1)
+                val = abs(float(e[max(k, 0)]))
+            else:
+                val = abs(float(e))
+            total += (val / self.omega_hz) ** self.power
+        return self.stark_hz * total
 
 
 class _Truth:
@@ -83,8 +94,8 @@ class _Truth:
         return self._rabi[key]
 
     def crosstalk(self, ion: int, beams: tuple[int, ...], kind: str) -> dict[int, complex] | None:
-        """The derived ratios, or None when the device derives no coupling for the addressed ion (a beam geometry whose quadrupole
-        coupling vanishes): the table's beliefs are then kept."""
+        """The derived ratios, or None when the device derives no coupling for the addressed ion (a beam geometry whose
+        quadrupole coupling vanishes): the table's beliefs are then kept."""
         key = (ion, beams, kind)
         if key not in self._crosstalk:
             from qutip_trap.light.raman import crosstalk_ratios
@@ -116,9 +127,8 @@ def physical_drive(
     omega_true, stark_true = truth.rabi_and_stark(ion, drive.beams, drive.kind)
     belief = table.rabi.get(key)
     if usable(belief) and belief is not None and belief.value > 0.0 and omega_true == 0.0:
-        # the table believes the pulse can be driven and the DEVICE derives zero coupling for this beam geometry: playing
-        # the request as physical would deliver a pulse the beams cannot produce, under a note that says there is no
-        # usable entry when there is one. That is the default-value fallback that hides missing physics (M4 finding).
+        # the table can drive the pulse and the device derives zero coupling for this beam geometry: refuse rather than
+        # play a pulse the beams cannot produce
         raise ValueError(
             f"{tag}: the device derives no {drive.kind} coupling for beams {drive.beams} on ion {ion} (Omega = 0), while "
             f"the table carries a usable Rabi entry of {belief.value:.6g} Hz for {key}: the requested Rabi frequency "
@@ -131,44 +141,17 @@ def physical_drive(
         notes.append(
             f"{tag}: no usable Rabi entry for {key} in the table; the requested Rabi frequency is played as the physical one"
         )
-    tones = tuple(
-        Tone(
-            detuning_hz=t.detuning_hz,
-            phase_rad=t.phase_rad,
-            envelope_hz=_scale_envelope(t.envelope_hz, ratio),
-            theta_bessel_rad=t.theta_bessel_rad,
-        )
-        for t in drive.tones
-    )
-    # the physical light shift at the played intensity (Section 4.3.2 scaling with the drive kind's power)
+    tones = tuple(replace(t, envelope_hz=_scale_envelope(t.envelope_hz, ratio)) for t in drive.tones)
+    # the physical light shift at the played intensity
     power = stark_scaling_power(drive.kind)
+    stark: float | Callable[[float], float] = 0.0
     if omega_true > 0.0 and stark_true != 0.0:
         envs = [t.envelope_hz for t in tones]
         constants = [float(e) for e in envs if isinstance(e, (int, float))]
         if len(constants) == len(envs):
-            stark: float | Callable[[float], float] = stark_true * float(
-                sum((abs(e) / omega_true) ** power for e in constants)
-            )
+            stark = stark_true * float(sum((abs(e) / omega_true) ** power for e in constants))
         else:
-
-            def stark_fn(
-                tau: float, _envs: list[Callable[[float], float] | np.ndarray | float] = envs
-            ) -> float:
-                total = 0.0
-                for e in _envs:
-                    if callable(e):
-                        val = abs(float(e(tau)))
-                    elif isinstance(e, np.ndarray):
-                        k = min(int(round(tau / max(duration_s, 1e-300) * (len(e) - 1))), len(e) - 1)
-                        val = abs(float(e[max(k, 0)]))
-                    else:
-                        val = abs(float(e))
-                    total += (val / omega_true) ** power
-                return stark_true * total
-
-            stark = stark_fn
-    else:
-        stark = 0.0
+            stark = _PhysicalStarkFn(stark_true, omega_true, power, tuple(envs), duration_s)
     # crosstalk: the derived ratios of the neighbours the table lists
     derived = truth.crosstalk(ion, drive.beams, drive.kind)
     if derived is None:
@@ -198,10 +181,9 @@ def physical_drive(
 def physical_schedule(
     device: Device, schedule: Schedule, table: CalibrationTable
 ) -> tuple[Schedule, tuple[str, ...]]:
-    """The schedule as the ions see it: every programmed drive converted through the device's derived values (M8)."""
+    """The schedule as the ions see it: every programmed drive converted through the device's derived values."""
     truth = _Truth(device)
     notes: list[str] = []
-    seen: set[str] = set()
     pulses: list[Pulse] = []
     changed = False
     for p in schedule.pulses:
@@ -209,25 +191,14 @@ def physical_schedule(
             pulses.append(p)
             continue
         changed = True
-        tag = p.gate_id or f"pulse@{p.t_start_s:.9g}"
         local: list[str] = []
-        d = physical_drive(device, p.drive, p.duration_s, table, truth, local, tag)
-        for n in local:
-            if n not in seen:
-                seen.add(n)
-                notes.append(n)
+        d = physical_drive(
+            device, p.drive, p.duration_s, table, truth, local, p.gate_id or f"pulse@{p.t_start_s:.9g}"
+        )
+        for note in local:
+            if note not in notes:
+                notes.append(note)
         pulses.append(Pulse(d, p.t_start_s, p.t_end_s, p.gate_id, p.closes_modes))
     if not changed:
         return schedule, ()
-    return (
-        Schedule(
-            tuple(pulses),
-            schedule.idle,
-            schedule.events,
-            dict(schedule.phase_frame),
-            gates=schedule.gates,
-            targets=schedule.targets,
-            t0_s=schedule.t0_s,
-        ),
-        tuple(notes),
-    )
+    return replace(schedule, pulses=tuple(pulses), phase_frame=dict(schedule.phase_frame)), tuple(notes)
