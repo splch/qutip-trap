@@ -1,20 +1,10 @@
-"""Canonical serialization and digest for the frozen data objects (PLAN.md Appendix E, preamble).
+"""Canonical serialization and SHA-256 digest of the frozen data objects: ``Device.hash()`` and the cache keys.
 
-Identity for the calibration cache and the run record is ``Device.hash()``, a canonical serialization
-rather than Python's ``hash()`` (which ``frozen=True`` does not supply for the ndarray, dict and Qobj
-fields these objects carry). The rules, verbatim from Appendix E:
-
-- dataclass fields enumerated in declaration order;
-- floats rounded to 12 significant digits;
-- ndarrays as dtype plus C-order bytes (the shape is included so that reshapes differ);
-- dicts by sorted key;
-- callables by qualified name plus a digest of their source;
-- Qobj fields excluded;
-- fields declared with ``field(metadata={"hash": "exclude"})`` left out: ``Device.roles`` (0.2.0), the operator's
-  assignment of which beams play which part, which is not the apparatus the digest identifies, so every digest taken
-  before roles existed stays valid (``Machine.hash()`` carries the roles instead).
-
-A cross-process test asserts that the same device yields the same digest (tests/test_hashing.py).
+Python's ``hash()`` is no identity here (the records carry ndarrays, dicts and Qobj), so the digest is taken over a
+canonical form: dataclass fields in declaration order, floats to 12 significant digits, ndarrays as dtype,
+shape and C-order bytes, mappings and sets sorted, callables by qualified name plus a digest of their source, Qobj fields
+excluded. A field with ``metadata={"hash": "exclude"}`` is left out (``Device.roles``, which ``Machine.hash()`` carries),
+one with ``metadata={"hash": "skip_default"}`` while it holds its default (``CalEntry.kind``).
 """
 
 from __future__ import annotations
@@ -27,13 +17,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
+import qutip as qt
 
 FLOAT_SIGNIFICANT_DIGITS = 12
-
-
-def _is_qobj(value: object) -> bool:
-    module = type(value).__module__ or ""
-    return module == "qutip" or module.startswith("qutip.")
 
 
 def canonical_float(x: float) -> str:
@@ -48,13 +34,8 @@ def canonical_float(x: float) -> str:
 
 
 def _callable_token(fn: Callable[..., Any]) -> str:
-    """A stable token for a coefficient function: module, qualname and a digest of its source.
-
-    When ``inspect.getsource`` cannot read the source (a function defined in a REPL or an ``exec``, a builtin, a C
-    extension) the qualname alone is NOT a fingerprint: two different lambdas defined interactively share
-    ``<module>.<lambda>`` and would hash equal, so a device carrying one would silently reuse the other's calibration
-    cache entry. Such a callable is therefore keyed by its identity as well, which makes the hash process-local and
-    refuses to pretend otherwise (the caller sees a fresh cache key rather than a wrong hit)."""
+    """Module, qualname and a digest of the source; a callable without readable source (a REPL lambda, a builtin) is
+    keyed by its identity too, since two such callables can share a qualname: the key is then process-local."""
     name = f"{getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', repr(fn))}"
     try:
         src = inspect.getsource(fn)
@@ -90,8 +71,8 @@ def _feed(h: Any, obj: object) -> None:
         h.update(b";")
     elif isinstance(obj, np.generic):
         _feed(h, obj.item())
-    elif _is_qobj(obj):
-        h.update(b"Q;")  # Qobj fields are excluded from identity (Appendix E)
+    elif isinstance(obj, (qt.Qobj, qt.QobjEvo)):
+        h.update(b"Q;")
     elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         h.update(f"D{type(obj).__qualname__}(".encode())
         for f in dataclasses.fields(obj):
@@ -100,8 +81,6 @@ def _feed(h: Any, obj: object) -> None:
                 continue
             value = getattr(obj, f.name)
             if rule == "skip_default" and f.default is not dataclasses.MISSING and value == f.default:
-                # a field added after the record's digests were captured enters the canonical form only when it is set
-                # (docs/api_implementation_plan.md Section 1, "hash stability")
                 continue
             h.update(f"{f.name}=".encode())
             _feed(h, value)

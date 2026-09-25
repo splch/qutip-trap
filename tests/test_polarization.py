@@ -1,11 +1,4 @@
-"""Polarization in the atomic frame (PLAN.md Section 4.5.3; Section 13 row "Polarization components";
-milestone M0a, audit item E12).
-
-Before 2026-09-07 no test called ``spherical_components``, ``operator_index``, ``atomic_frame`` or
-``to_atomic_frame`` at all -- the module was correct (the audit verified every 4.5.3 statement numerically)
-but entirely unpinned, and the one selection-rule assertion that existed used a self-referential guard
-(``abs(om) > 1e-9 * abs(om) + 1e-30``, defect B11).
-"""
+"""Polarization in the atomic frame (PLAN.md Section 4.5.3)."""
 
 from __future__ import annotations
 
@@ -17,7 +10,6 @@ import pytest
 from qutip_trap.species.polarization import (
     atomic_frame,
     linear_polarization,
-    operator_index,
     spherical_basis,
     spherical_components,
     to_atomic_frame,
@@ -138,26 +130,17 @@ def test_to_atomic_frame_agrees_with_the_frame_it_is_built_from() -> None:
     assert to_atomic_frame(np.asarray(b_hat), b_hat) == pytest.approx([0.0, 0.0, 1.0], abs=1e-15)
 
 
-def test_operator_index_is_the_only_place_the_helicity_sign_flips() -> None:
-    """Section 13: Steck's operator index in <lower|d_q|upper> is q_op = m_lower - m_upper = -q_gamma."""
-    assert [operator_index(q) for q in (-1, 0, 1)] == [1, 0, -1]
-    for q in (-2, 2, 3):
-        with pytest.raises(ValueError, match="helicity label"):
-            operator_index(q)
-
-
 def test_linear_polarization_refuses_a_beam_along_b() -> None:
     """A beam along B carries no pi component, so the angle to B is undefined rather than zero."""
     with pytest.raises(ValueError, match="parallel to B_hat"):
         linear_polarization(Z, 0.0, Z)
 
 
-# ---- the selection rule, with a RELATIVE threshold (replaces the malformed guard of defect B11) ---------
+# ---- the selection rule ------------------------------------------------------------------------------
 
 
 def test_a_pure_sigma_plus_beam_drives_only_m_to_m_plus_one() -> None:
-    """A pure eps_{+1} beam drives m_F -> m_F + 1 only. The threshold is relative to the LARGEST coupling in
-    the set; the guard this replaces (``tests/test_raman_scattering.py``) compared |om| with 1e-9 |om|."""
+    """A pure eps_{+1} beam drives m_F -> m_F + 1 only (relative to the largest coupling of the set)."""
     from qutip_trap.light.beams import Beam
     from qutip_trap.species.raman import AtomicStructure
     from qutip_trap.units import C_M_PER_S

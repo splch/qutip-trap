@@ -1,18 +1,13 @@
-"""Polarization in the atomic frame (PLAN.md Section 4.5.3; Section 13 row "Polarization components").
+"""Polarization in the atomic frame (PLAN.md Section 4.5.3).
 
-The quantization axis is B_hat. A beam's laboratory Jones vector eps (complex, unit norm, transverse to k) is
-decomposed as eps = sum_q eps_q e_q with e_{+-1} = -+(x' +- i y')/sqrt 2 and e_0 = z' = B_hat, where x', y'
-complete a right-handed frame with B_hat; eps_q = conj(e_q) . eps, and q = +1, 0, -1 is the HELICITY label:
-the component eps_q drives sigma^+, pi, sigma^- absorption |F m_F> -> |F' m_F + q>. Because d . eps = sum_q
-eps_q T_q with T_q = d . e_q the standard spherical tensor components (T_q raises m by q), Steck's operator
-index in <lower|d_q|upper> is q_op = m_lower - m_upper = -q_gamma (Section 13); the conversion is made in
-one place, :func:`operator_index`.
+The quantization axis is B_hat. A laboratory Jones vector eps (unit norm, transverse to k) is decomposed as
+eps = sum_q eps_q e_q with e_{+-1} = -+(x' +- i y')/sqrt 2 and e_0 = z' = B_hat, eps_q = conj(e_q) . eps; q = +1, 0, -1 is
+the HELICITY label, the component eps_q driving |F m_F> -> |F' m_F + q>. Steck's operator index in <lower|d_q|upper> is
+q_op = m_lower - m_upper = -q_gamma; ``AtomicStructure.dipole_element_c_m`` makes that conversion.
 
-The rotation of the laboratory frame into the B_hat frame is the module's own construction ([background],
-Section 4.5.3): x' is the laboratory x axis projected perpendicular to B_hat (the laboratory y axis when B is
-along x), which fixes the azimuthal phase convention of the sigma components; magnitudes |eps_q| and every
-rate are independent of that choice, the phases of Raman couplings between different m states are not, and
-the drive phase absorbs them.
+x' is the laboratory x axis projected perpendicular to B_hat (the laboratory y axis when B is along x), which fixes the
+azimuthal phase of the sigma components: magnitudes |eps_q| and every rate are independent of that choice, the phases of
+Raman couplings between different m states are not, and the drive phase absorbs them.
 """
 
 from __future__ import annotations
@@ -73,19 +68,9 @@ def to_atomic_frame(v_lab: CVec, b_hat: Vec) -> np.ndarray:
     return np.array([np.dot(x, v), np.dot(y, v), np.dot(z, v)])
 
 
-def operator_index(q_gamma: int) -> int:
-    """Steck's operator index q_op = m_lower - m_upper for the helicity component q_gamma: q_op = -q_gamma."""
-    if q_gamma not in (-1, 0, 1):
-        raise ValueError("a helicity label is -1, 0 or +1")
-    return -q_gamma
-
-
 def linear_polarization(k_hat: Vec, angle_to_b_rad: float, b_hat: Vec) -> np.ndarray:
-    """A real unit polarization transverse to k_hat at the given angle to the projection of B_hat on the transverse plane.
-
-    Convenience for tests and beam construction: angle 0 puts eps along the transverse projection of B (pure
-    pi when k is perpendicular to B); pi/2 puts it perpendicular (equal sigma+ and sigma- components).
-    """
+    """A real unit polarization transverse to k_hat at an angle to B_hat's transverse projection: 0 is along it (pure pi
+    when k is perpendicular to B), pi/2 perpendicular to it (equal sigma+ and sigma- components)."""
     k = _unit(np.asarray(k_hat, dtype=float), "k_hat")
     b = _unit(np.asarray(b_hat, dtype=float), "B_hat")
     b_perp = b - np.dot(b, k) * k

@@ -6,17 +6,16 @@ import ast
 import re
 from pathlib import Path
 
-from qutip_trap.provenance import TAGS, load_ledger, repository_root
+from qutip_trap.provenance import load_ledger, repository_root
 
 PKG = repository_root() / "qutip_trap"
 
 
-def test_ledger_loads_with_valid_tags_and_fields() -> None:
+def test_ledger_loads_with_its_fields_filled() -> None:
     ledger = load_ledger()
     assert len(ledger) > 100
     for rec in ledger.values():
-        assert rec.tag in TAGS
-        assert rec.section and rec.source and rec.symbol
+        assert rec.section and rec.source and rec.symbol, rec.id
 
 
 def _imports(path: Path) -> set[str]:

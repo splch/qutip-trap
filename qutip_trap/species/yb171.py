@@ -1,20 +1,19 @@
-"""171Yb+ species table (PLAN.md Sections 4.5.6, 8.1, 9.12, 9.13, 9.15; Appendix E).
+"""171Yb+ species table (PLAN.md Section 4.5.6).
 
-Every number is a :class:`~qutip_trap.provenance.Cited` constant with its source and provenance tag;
-nothing hyperfine-resolved is typed in (Section 4.5.6: the module "shrinks to a table of cited constants").
-Level energies are NIST ASD 5.12 values in cm^-1; the hyperfine constants, lifetimes and branchings are
-the Run 4 extractions from Olmschenk et al. 2007; g_J of the ground state is the adopted Han et al. 2025
-value. The conversions applied at ingest are those of :mod:`qutip_trap.species.table` only.
+Level energies are NIST ASD 5.12 values in cm^-1; the hyperfine constants, lifetimes and branchings are the primary
+measurements; g_J of the ground state is Han et al. 2025's calculation. Not tabulated: the D5/2 and F7/2 decay
+branchings (Feldker et al. 2018, Tan et al. 2021) and the 1[5/2]5/2 lifetime; every g_J but the ground state's is a
+NIST ASD literal.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-from qutip_trap.provenance import Cited, Tag
+from qutip_trap.provenance import Cited
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
-    MissingConstant,
+    CitedFactory,
     a_hfs_from_two_manifold_splitting,
     energy_hz,
     gamma_hz_from_lifetime,
@@ -24,28 +23,7 @@ from qutip_trap.species.table import (
 
 NAME = "171Yb+"
 _P = "yb171."
-
-
-def _c(
-    suffix: str,
-    value: float,
-    unit: str,
-    source: str,
-    *,
-    tag: Tag = "extracted",
-    uncertainty: float | None = None,
-    note: str = "",
-) -> Cited:
-    return Cited(
-        value=value,
-        unit=unit,
-        source=source,
-        ledger_id=_P + suffix,
-        tag=tag,
-        uncertainty=uncertainty,
-        note=note,
-    )
-
+_c = CitedFactory(_P)
 
 _ENTRIES: tuple[Cited, ...] = (
     _c(
@@ -54,8 +32,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "u",
         "NIST_AWIC",
         uncertainty=2.2e-6,
-        note="relative atomic mass of the neutral atom; Species.mass_u subtracts one electron mass "
-        "(170.93578 u, the ion mass PLAN.md 9.16 row 13-6 pins for the Lamb-Dicke anchor)",
+        note="the neutral atom; the ion mass is 170.93578 u",
     ),
     _c("nuclear_spin", 0.5, "hbar", "Olmschenk2007", tag="verified"),
     _c(
@@ -63,8 +40,7 @@ _ENTRIES: tuple[Cited, ...] = (
         0.49367,
         "mu_N",
         "PLAN_4_5_1",
-        note="used by PLAN.md 4.5.1 and Section 13 for g_I in the 310.87 Hz/G^2 recomputation; the primary "
-        "measurement is not named in the plan",
+        note="the value PLAN.md 4.5.1 uses for g_I; the primary measurement is not named there",
     ),
     _c(
         "S12.hfs_splitting_hz",
@@ -72,9 +48,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Hz",
         "Olmschenk2007",
         tag="verified",
-        note="ZERO-FIELD ground-state splitting, equal to A_hfs for I = J = 1/2; the 12.642815, 12.642819 and "
-        "12.642821 GHz printed elsewhere are second-order-shifted values at 3.0 to 5.3 G and must never be "
-        "stored as zero-field constants (PLAN.md 4.5.6)",
+        note="the ZERO-FIELD splitting (= A for I = J = 1/2); the 12.642815 to 12.642821 GHz printed elsewhere are "
+        "second-order-shifted values at 3 to 5 G",
     ),
     _c(
         "S12.g_J",
@@ -83,9 +58,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Han2025",
         tag="corrected",
         uncertainty=7e-5,
-        note="adopted by PLAN.md 4.5.1 after the 2026-09-04 critique; NIST ASD lists the spectroscopic 1.998 "
-        "and the plan's second revision carried three uncited values (2.00225664, 2.00254, 2.00292), all "
-        "superseded; a theoretical determination with no modern measurement behind it (Section 12)",
+        note="a calculation; no modern measurement exists (NIST ASD lists the spectroscopic 1.998)",
     ),
     _c("P12.energy_cm", 27061.82, "cm^-1", "NIST_ASD_5_12"),
     _c(
@@ -95,12 +68,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Pinnington1997",
         tag="verified",
         uncertainty=0.09e-9,
-        note="gamma/2pi = 19.72 MHz total, 19.62 MHz partial to S1/2 (PLAN.md 9.12 '171Yb+ constants'); the "
-        "19.6 and 21 MHz readings of the same line in earlier revisions are retired. The full locator behind "
-        "PLAN.md 4.5.6's bare 'Pinnington et al.' is Pinnington, Rieger and Kernahan, Phys. Rev. A 56, 2421 "
-        "(1997), which prints 8.07(9) ns for the j = 1/2 level and 6.15(9) ns for j = 3/2 in one abstract "
-        "(audit item E25; the source key Pinnington_via_Olmschenk2007 is retired). Olmschenk et al. 2007's "
-        "own 8.12(2) ns is the tighter modern value and is stored as a cross-check",
+        note="gamma/2pi = 19.72 MHz total, 19.62 MHz partial to S1/2; Olmschenk's tighter 8.12(2) ns is "
+        "P12.lifetime_olmschenk_s",
     ),
     _c(
         "P12.hfs_splitting_hz",
@@ -108,10 +77,10 @@ _ENTRIES: tuple[Cited, ...] = (
         "Hz",
         "Olmschenk2007",
         tag="verified",
-        note="F' = 1 above F' = 0; equals A_hfs for I = J = 1/2; the 2.1 GHz sideband of optical pumping "
-        "(PLAN.md 4.2.6) and the detuning of the dominant detection error (8.1)",
+        note="F' = 1 above F' = 0 (= A for I = J = 1/2): the 2.1 GHz optical-pumping sideband and the detuning of the "
+        "dominant detection error",
     ),
-    _c("P12.g_J", 0.667, "", "NIST_ASD_5_12", note="the Lande value 2/3; no measured g_J in the plan"),
+    _c("P12.g_J", 0.667, "", "NIST_ASD_5_12", note="the Lande value 2/3"),
     _c(
         "P12.lifetime_olmschenk_s",
         8.12e-9,
@@ -119,9 +88,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Olmschenk2007",
         tag="verified",
         uncertainty=0.02e-9,
-        note="the tighter modern P1/2 lifetime (Olmschenk et al., Phys. Rev. A 80, 022502 (2009)), 4.5x "
-        "tighter than Pinnington's 8.07(9) ns and 0.6% above it; a cross-check, because every PLAN.md "
-        "anchor (19.72 MHz, 19.62 MHz partial, 1.752 e a0, 50.83 mW/cm^2) is computed from the 8.07 ns",
+        note="Olmschenk et al., Phys. Rev. A 80, 022502 (2009); a cross-check, 0.6% above the 8.07 ns the plan's "
+        "anchors are computed from",
     ),
     _c(
         "P12.branching_to_D32",
@@ -130,9 +98,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Olmschenk2007",
         tag="verified",
         uncertainty=0.00015,
-        note="measured on 174Yb+, isotope independent; CONDITIONAL on tau(P1/2) = 8.07 ns because the fit "
-        "measures the product gamma*R (PLAN.md 4.5.6); the P1/2 -> D3/2 channel lies at 2.438 um, not at "
-        "the 935.2 nm repump, a conflation that changes the inferred reduced element by 4.2 times",
+        note="measured on 174Yb+, isotope independent; CONDITIONAL on tau(P1/2) = 8.07 ns because the fit measures "
+        "the product gamma R; the channel is at 2.438 um, not at the 935.2 nm repump",
     ),
     _c("D32.energy_cm", 22960.80, "cm^-1", "NIST_ASD_5_12"),
     _c("D32.lifetime_s", 52.7e-3, "s", "Olmschenk2007", tag="verified"),
@@ -155,8 +122,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Taylor1997",
         tag="verified",
         uncertainty=0.3e-3,
-        note="measured in 172Yb+; the 171Yb+ per-F values are 7.1(4) and 7.4(4) ms (Tan et al. 2021), "
-        "consistent, so the isotope difference is below the quoted precision. The 411 nm E2 shelving line",
+        note="measured in 172Yb+; the 171Yb+ per-F values 7.1(4) and 7.4(4) ms (Tan et al. 2021) agree",
     ),
     _c(
         "D52.A_hfs_hz",
@@ -165,8 +131,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Tan2021",
         tag="verified",
         uncertainty=0.001e6,
-        note="INVERTED (A < 0): the printed splitting is -190.104(3) MHz and A = splitting/3 for I = 1/2, "
-        "J = 5/2. Stored as A directly rather than as a splitting because the source prints the sign",
+        note="INVERTED: the printed splitting is -190.104(3) MHz and A = splitting/3 for I = 1/2, J = 5/2",
     ),
     _c("P32.energy_cm", 30392.23, "cm^-1", "NIST_ASD_5_12"),
     _c("P32.g_J", 1.333, "", "NIST_ASD_5_12"),
@@ -177,9 +142,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Pinnington1997",
         tag="verified",
         uncertainty=0.09e-9,
-        note="the fine-structure partner of the 8.07(9) ns P1/2 from the same beam-laser measurement; "
-        "gamma/2pi = 25.883 MHz total. Without this level the Section 4.5.4 intermediate sum has one path "
-        "instead of two, so Omega_R falls as 1/Delta instead of 1/Delta^2 (audit item E4)",
+        note="the fine-structure partner of P1/2 from the same measurement; gamma/2pi = 25.883 MHz",
     ),
     _c(
         "P32.branching_to_D32",
@@ -188,8 +151,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Feldker2018",
         tag="verified",
         uncertainty=0.0001,
-        note="1345.6 nm; Table III. The three printed fractions 0.9875(6)/0.0017(1)/0.0108(5) sum to 1.0000, "
-        "so the S1/2 share is taken as 1 - 0.0017 - 0.0108 = 0.9875 exactly",
+        note="1345.6 nm; the three fractions of Table III sum to 1, so the S1/2 share is 1 - 0.0017 - 0.0108",
     ),
     _c(
         "P32.branching_to_D52",
@@ -198,7 +160,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Feldker2018",
         tag="verified",
         uncertainty=0.0005,
-        note="1650.3 nm; Table III. Theory (Biemont et al. 1998) gives 98.77/0.21/1.02 %",
+        note="1650.3 nm; theory (Biemont et al. 1998) gives 98.77/0.21/1.02 %",
     ),
     _c(
         "P32.A_hfs_hz",
@@ -207,7 +169,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Feldker2018",
         tag="verified",
         uncertainty=1.0e6,
-        note="A > 0 because mu_I(171Yb) > 0 (F' = 2 above F' = 1); stored as A, not as the 2A splitting",
+        note="A > 0 since mu_I > 0 (F' = 2 above F' = 1)",
     ),
     _c(
         "P32.A_hfs_berends_hz",
@@ -216,15 +178,14 @@ _ENTRIES: tuple[Cited, ...] = (
         "Berends1992",
         tag="verified",
         uncertainty=20e6,
-        note="the first measurement, concordant with Feldker et al. 2018's 875.4(10) MHz at 0.1 sigma; a "
-        "cross-check, never the value used",
+        note="the first measurement, concordant at 0.1 sigma; a cross-check",
     ),
     _c(
         "F72.energy_cm",
         21418.75,
         "cm^-1",
         "NIST_ASD_5_12",
-        note="the F7/2 trap state, cleared at 638.6 nm (PLAN.md 4.5.6, 6.7); NIST levels give 638.62 nm",
+        note="the F7/2 trap state, cleared at 638.6 nm",
     ),
     _c("F72.g_J", 1.145, "", "NIST_ASD_5_12"),
     _c(
@@ -234,8 +195,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Lange2021",
         tag="corrected",
         uncertainty=0.50e7,
-        note="3.16(16) yr. The PUBLISHED 1.58(8) yr is superseded: arXiv:2107.11229v2 (14 May 2026) records "
-        "that E_0^2 was used where <E^2> = E_0^2/2 belongs, so the lifetime was low by exactly a factor two",
+        note="3.16(16) yr: the published 1.58(8) yr used E_0^2 where <E^2> = E_0^2/2 belongs (arXiv:2107.11229v2)",
     ),
     _c(
         "F72.A_hfs_hz",
@@ -244,15 +204,14 @@ _ENTRIES: tuple[Cited, ...] = (
         "Taylor1999",
         tag="verified",
         uncertainty=0.5e6,
-        note="splitting 3620(2) MHz and A = splitting/4 for I = 1/2, J = 7/2; A > 0 as for every other 171Yb+ "
-        "level, mu_I being positive",
+        note="splitting 3620(2) MHz and A = splitting/4 for I = 1/2, J = 7/2",
     ),
     _c(
         "bracket_3D32_12.energy_cm",
         33653.86,
         "cm^-1",
         "NIST_ASD_5_12",
-        note="4f13(2F7/2)5d6s 3[3/2]1/2, the 935.2 nm repump target; NIST levels give 935.18 nm",
+        note="4f13(2F7/2)5d6s 3[3/2]1/2, the 935.2 nm repump target",
     ),
     _c(
         "bracket_3D32_12.hfs_splitting_hz",
@@ -261,7 +220,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Olmschenk2007",
         tag="verified",
         uncertainty=1.1e6,
-        note="INVERTED multiplet (F = 0 above F = 1), so A < 0 (PLAN.md 4.5.6)",
+        note="INVERTED (F = 0 above F = 1), so A < 0",
     ),
     _c("bracket_3D32_12.g_J", 1.320, "", "NIST_ASD_5_12"),
     _c(
@@ -271,21 +230,17 @@ _ENTRIES: tuple[Cited, ...] = (
         "Pinnington1994",
         tag="extracted",
         uncertainty=0.5e-9,
-        note="the 935.2 nm repump upper level. NOT primary-verified: the paper's table was not read (APS 403) "
-        "and the digits reach this table by secondary quotation; the 4.2 MHz natural linewidth of the 935 nm "
-        "line quoted in arXiv:2111.11504 corroborates it to 1% (1/(2 pi x 4.2 MHz) = 37.9 ns)",
+        note="read by secondary quotation; the 4.2 MHz linewidth of the 935 nm line (arXiv:2111.11504) corroborates "
+        "it to 1%",
     ),
     _c(
         "bracket_3D32_12.A_297nm_per_s",
         2.61e7,
         "s^-1",
         "SansonettiMartin2005",
-        note="Einstein A of the 297.143 nm 3[3/2]1/2 -> S1/2 line (NIST ASD reference code T7227, no accuracy "
-        "rating). With the 37.7 ns total lifetime this channel carries 0.98397 of the decay, leaving 0.01603 "
-        "for the 935.2 nm branch that closes the repump cycle. The 297 nm line is deliberately NOT tabulated "
-        "as a Transition: it would put a level whose lifetime is not primary-verified into every Section 4.5.4 "
-        "intermediate sum out of S1/2, which the plan specifies as the P1/2 + P3/2 doublet. It is declared "
-        "instead on the level as untabulated_branching, so the branching set still sums to 1",
+        note="Einstein A of the 297.143 nm line to S1/2 (NIST ASD T7227): 0.98397 of the decay, leaving 0.01603 for "
+        "the 935.2 nm branch. Declared on the level as untabulated_branching rather than tabulated, so the S1/2 "
+        "intermediate sums stay the P1/2 + P3/2 doublet",
     ),
     _c(
         "bracket_1D52_52.energy_cm",
@@ -299,24 +254,9 @@ _ENTRIES: tuple[Cited, ...] = (
 
 TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
 
-MISSING: tuple[MissingConstant, ...] = (
-    MissingConstant("1D[5/2]5/2 lifetime and hyperfine A (638.6 nm clear-out)", "not in PLAN.md"),
-    MissingConstant(
-        "D5/2 and F7/2 decay branchings (D5/2 -> S1/2 versus -> F7/2, measured at 17.6(4)/18.4(4)% per F by "
-        "Feldker et al. 2018 and Tan et al. 2021; F7/2 -> S1/2 versus -> D5/2)",
-        "Feldker et al., Phys. Rev. A 97, 032511 (2018); Tan et al., arXiv:2012.14187 -- read the tables before "
-        "entering, and note the two levels then need E2/M1 Transition records",
-    ),
-    MissingConstant(
-        "measured g_J of any 171Yb+ level except the ground state (the seven stored values are rounded NIST "
-        "ASD literals, not measurements)",
-        "NIST ASD forwards g_J to a primary reference; follow the chain or tag them [background] like 40Ca+",
-    ),
-)
-
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 171Yb+, built from :data:`TABLE` alone."""
+    """The ``Species`` record for 171Yb+, built from :data:`TABLE` alone."""
     t = TABLE
     half = Fraction(1, 2)
     nuclear_spin = Fraction(t[_P + "nuclear_spin"].value).limit_denominator(2)
@@ -387,8 +327,7 @@ def species() -> Species:
         g_J=t[_P + "F72.g_J"].value,
         citations=("NIST_ASD_5_12", "Lange2021", "Taylor1999"),
     )
-    # the 297.143 nm 3[3/2]1/2 -> S1/2 channel carries A tau of the decay and is DECLARED rather than
-    # tabulated (see the note on bracket_3D32_12.A_297nm_per_s), so the branchings still sum to 1
+    # the 297.143 nm 3[3/2]1/2 -> S1/2 channel carries A tau of the decay and is declared, not tabulated
     b_297 = t[_P + "bracket_3D32_12.A_297nm_per_s"].value * t[_P + "bracket_3D32_12.lifetime_s"].value
     bracket = Level(
         name="3D[3/2]1/2",
@@ -409,7 +348,6 @@ def species() -> Species:
     s_p = Transition("S1/2", "P1/2", wavelength_vac_m(0.0, e_p12), gamma_p12, 1.0 - b_d, "E1", cites)
     d_p = Transition("D3/2", "P1/2", wavelength_vac_m(e_d32, e_p12), gamma_p12, b_d, "E1", cites)
 
-    # the P3/2 doublet partner (audit item E4): three E1 channels whose branchings sum to 1 exactly
     gamma_p32 = gamma_hz_from_lifetime(t[_P + "P32.lifetime_s"])
     b32_d32 = t[_P + "P32.branching_to_D32"].value
     b32_d52 = t[_P + "P32.branching_to_D52"].value
@@ -419,7 +357,6 @@ def species() -> Species:
     )
     d32_p32 = Transition("D3/2", "P3/2", wavelength_vac_m(e_d32, e_p32), gamma_p32, b32_d32, "E1", p32_cites)
     d52_p32 = Transition("D5/2", "P3/2", wavelength_vac_m(e_d52, e_p32), gamma_p32, b32_d52, "E1", p32_cites)
-    # the 935.2 nm repump line: the designated repump must be a tabulated Transition (audit item E6)
     d32_br = Transition(
         "D3/2",
         "3D[3/2]1/2",

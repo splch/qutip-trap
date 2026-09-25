@@ -1,12 +1,9 @@
-"""88Sr+ species table (PLAN.md Sections 4.5.7, 9.14, 12; Appendix E).
+"""88Sr+ species table (PLAN.md Section 4.5.6).
 
-I = 0 (Lande g_J, [background]). The 674 nm quadrupole record is complete: the D5/2 lifetime 390.8(1.6) ms
-of Letchumanan et al. 2005 (read from the thesis, corroborated by Jiang 2009 and the NIST Sr II compilation),
-the clock frequency fixing lambda_vac = 674.025591 nm (which species() now uses for the 674 nm transition,
-not the 0.01 cm^-1 level energy), and the LS-estimated 9e-5 M1 branch to D3/2. The P-level lifetimes and
-branchings (422, 408, 1092, 1033 nm) are not in PLAN.md; they were added in the M0a fix pass of 2026-09-07
-from Pinnington et al. 1995 and Zhang et al. 2016, so 88Sr+ now has the E1 structure its designated cycling
-and repump lines need (audit items E6, E7, E13b) instead of building on level names alone.
+I = 0 (Lande g_J, [background]). The 674 nm quadrupole line takes its vacuum wavelength from the clock frequency (1.3 ppb),
+not the 0.01 cm^-1 level energy (5.4e-7 away), with Letchumanan et al. 2005's D5/2 lifetime and an LS-estimated 9e-5 M1
+branch to D3/2. The P lifetimes and branchings are Pinnington et al. 1995's and Zhang et al. 2016's. Not tabulated: the
+D3/2 lifetime (about 435 ms, Mannervik et al. 1999).
 """
 
 from __future__ import annotations
@@ -14,10 +11,9 @@ from __future__ import annotations
 from fractions import Fraction
 
 from qutip_trap.provenance import Cited
-from qutip_trap.species._partial import cited_factory
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.table import (
-    MissingConstant,
+    CitedFactory,
     energy_hz,
     gamma_hz_from_lifetime,
     ion_mass_u,
@@ -26,7 +22,7 @@ from qutip_trap.species.table import (
 from qutip_trap.units import C_M_PER_S, lande_g_j
 
 NAME = "88Sr+"
-_c = cited_factory("sr88.")
+_c = CitedFactory("sr88.")
 
 _ENTRIES: tuple[Cited, ...] = (
     _c("mass_atomic_u", 87.9056125, "u", "NIST_AWIC", uncertainty=1.2e-6),
@@ -38,10 +34,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "cm^-1",
         "NIST_ASD_5_12",
         uncertainty=0.01,
-        note="674.0252 nm vacuum from this level energy alone, which is 5.4e-7 relative from the "
-        "674.025591 nm the stored clock frequency gives (an earlier note here claimed 1e-7, a 5x "
-        "overstatement); species() now takes the CLOCK FREQUENCY for the 674 nm wavelength, this energy "
-        "entering only the level record (audit item E13b)",
+        note="674.0252 nm vacuum, 5.4e-7 from the clock-frequency wavelength the 674 nm transition uses",
     ),
     _c("P12.energy_cm", 23715.19, "cm^-1", "NIST_ASD_5_12", uncertainty=0.01, note="421.67 nm vacuum"),
     _c("P32.energy_cm", 24516.65, "cm^-1", "NIST_ASD_5_12", uncertainty=0.01, note="407.89 nm vacuum"),
@@ -52,8 +45,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Letchumanan2005",
         tag="verified",
         uncertainty=0.0016,
-        note="160,000 single-ion shelving periods; corrections total 0.11% of the rate; the thesis Table 5.2 prints an "
-        "uncorrected 390.3 ms (PLAN.md 4.5.7); the superseded 345(33) ms of Gerz 1987 is the negative control",
+        note="160,000 single-ion shelving periods, corrections 0.11% of the rate (the thesis prints an uncorrected "
+        "390.3 ms); Gerz 1987's superseded 345(33) ms is the negative control",
     ),
     _c(
         "D52.A_per_s",
@@ -62,9 +55,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Sansonetti2012",
         tag="verified",
         uncertainty=0.010,
-        note="NIST Sr II compilation (Sansonetti 2012); equals 1/0.3908 s. An earlier note here claimed "
-        "'accuracy AA'; the accuracy grade of this E2 entry was not verified and the claim is withdrawn -- the "
-        "uncertainty carried is the one implied by the D5/2 lifetime",
+        note="NIST Sr II compilation; equals 1/0.3908 s (its accuracy grade not verified)",
     ),
     _c(
         "clock_frequency_hz",
@@ -72,8 +63,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Hz",
         "Sansonetti2012",
         tag="verified",
-        note="the 88Sr II S1/2 - D5/2 clock frequency, giving lambda_vac = 674.025591 nm; NIST's air Ritz value "
-        "673.8392 nm is the 276 ppm trap (PLAN.md 4.5.7)",
+        note="the S1/2 - D5/2 clock frequency: lambda_vac = 674.025591 nm, where NIST's air Ritz 673.8392 nm is 276 "
+        "ppm off",
     ),
     _c(
         "D52.M1_branch_to_D32",
@@ -81,7 +72,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "",
         "PLAN_background",
         tag="background",
-        note="LS-coupling estimate of the D5/2 -> D3/2 M1 channel (2.4e-4 s^-1), no source (PLAN.md 4.5.7)",
+        note="LS-coupling estimate of the D5/2 -> D3/2 M1 channel (2.4e-4 s^-1), no source",
     ),
     _c(
         "P12.lifetime_s",
@@ -90,9 +81,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Pinnington1995",
         tag="extracted",
         uncertainty=0.07e-9,
-        note="gamma/2pi = 21.539 MHz total. NOT primary-verified: IOP blocks automated retrieval, so the "
-        "digits reach this table quoted verbatim by Likforman et al. 2016 and corroborated by the NIST ASD "
-        "A values (1.279e8 + 7.46e6 = 1.3536e8 s^-1 gives 7.388 ns)",
+        note="gamma/2pi = 21.539 MHz; quoted verbatim by Likforman et al. 2016, the NIST ASD A values give 7.388 ns",
     ),
     _c(
         "P32.lifetime_s",
@@ -101,7 +90,7 @@ _ENTRIES: tuple[Cited, ...] = (
         "Pinnington1995",
         tag="extracted",
         uncertainty=0.07e-9,
-        note="gamma/2pi = 24.008 MHz total; same provenance caveat, quoted verbatim by Zhang et al. 2016",
+        note="gamma/2pi = 24.008 MHz; quoted verbatim by Zhang et al. 2016",
     ),
     _c(
         "P12.branching_to_D32",
@@ -110,18 +99,9 @@ _ENTRIES: tuple[Cited, ...] = (
         "Zhang2016",
         tag="verified",
         uncertainty=0.00008,
-        note="1091.8 nm, the designated D3/2 repump; the S1/2 share is 0.94498(8) and the two sum to 1 "
-        "exactly. Likforman et al. 2016's independent 0.9449(5) agrees",
+        note="1091.8 nm, the D3/2 repump; Likforman et al. 2016's 0.9449(5) into S1/2 agrees",
     ),
-    _c(
-        "P32.branching_to_D32",
-        0.0063,
-        "",
-        "Zhang2016",
-        tag="verified",
-        uncertainty=0.0003,
-        note="1004 nm",
-    ),
+    _c("P32.branching_to_D32", 0.0063, "", "Zhang2016", tag="verified", uncertainty=0.0003, note="1004 nm"),
     _c(
         "P32.branching_to_D52",
         0.0531,
@@ -129,10 +109,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Zhang2016",
         tag="verified",
         uncertainty=0.0002,
-        note="1033 nm, the designated D5/2 repump and the only blackbody deshelving channel (PLAN.md 4.5.7). "
-        "The three printed fractions 0.9406(2)/0.0063(3)/0.0531(2) sum to 1.0000, so the S1/2 share is taken "
-        "as 1 - 0.0063 - 0.0531 = 0.9406 exactly. NIST ASD's implied D5/2 fraction 0.0577 (from Gallagher "
-        "1967's A = 8.7(15)e6 s^-1) is 8.7% higher; Zhang's A = 8.010(89)e6 s^-1 supersedes it 17x tighter",
+        note="1033 nm, the D5/2 repump and the only blackbody deshelving channel; the printed 0.9406/0.0063/0.0531 "
+        "sum to 1",
     ),
     _c(
         "D52_P32.A_gallagher_per_s",
@@ -141,9 +119,8 @@ _ENTRIES: tuple[Cited, ...] = (
         "Sansonetti2012",
         tag="contested",
         uncertainty=1.5e6,
-        note="the A(1033 nm) of NIST JPCRD Table 2 (accuracy C+, <=18%, reference 67GAL = Gallagher 1967) that "
-        "validation/scripts/check_sr_lifetime_bbr.py uses for the blackbody deshelving rate; Zhang et al. "
-        "2016's 8.010(89)e6 s^-1 is 8% lower and 17x tighter. Cross-check only",
+        note="A(1033 nm) of NIST JPCRD Table 2 (Gallagher 1967, accuracy C+); Zhang et al. 2016's 8.010(89)e6 s^-1 "
+        "is 8% lower; a cross-check",
     ),
     _c(
         "D52.lifetime_theory_jiang_s",
@@ -152,24 +129,15 @@ _ENTRIES: tuple[Cited, ...] = (
         "Jiang2009",
         tag="verified",
         uncertainty=0.003,
-        note="theory; bracket only",
+        note="theory; a bracket",
     ),
 )
 
 TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
 
-MISSING: tuple[MissingConstant, ...] = (
-    MissingConstant(
-        "D3/2 lifetime (about 435 ms)",
-        "Mannervik et al., Phys. Rev. Lett. 83, 698 (1999), the storage-ring measurement; read the digits "
-        "before entering",
-    ),
-    MissingConstant("measured g_J values (Lande used)", "not in PLAN.md"),
-)
-
 
 def species() -> Species:
-    """The Appendix E ``Species`` record for 88Sr+: complete on the 674 nm quadrupole line, P levels without rates."""
+    """The ``Species`` record for 88Sr+, built from :data:`TABLE` alone."""
     t = TABLE
     half = Fraction(1, 2)
     e_d32 = energy_hz(t["sr88.D32.energy_cm"])
@@ -201,20 +169,16 @@ def species() -> Species:
             p_cites,
         ),
     )
-    # audit item E13b: the 674 nm wavelength comes from the stored clock FREQUENCY (1.3 ppb), not from the
-    # 0.01 cm^-1 level energy, which is 5.4e-7 away. Species.__post_init__ cross-checks the two at 1e-6.
-    lam_clock = C_M_PER_S / t["sr88.clock_frequency_hz"].value
+    # the 674 nm wavelength from the clock frequency; Species.__post_init__ cross-checks it with the level energies at 1e-6
     s_d52 = Transition(
         "S1/2",
         "D5/2",
-        lam_clock,
+        C_M_PER_S / t["sr88.clock_frequency_hz"].value,
         gamma_hz_from_lifetime(t["sr88.D52.lifetime_s"]),
         1.0 - t["sr88.D52.M1_branch_to_D32"].value,
         "E2",
         ("NIST_ASD_5_12", "Letchumanan2005", "Sansonetti2012", "PLAN_background"),
     )
-    # the E1 structure (audit item E7: available() must mean usable, and E6: a designated cycling or repump
-    # line must be a tabulated Transition)
     g_p12 = gamma_hz_from_lifetime(t["sr88.P12.lifetime_s"])
     g_p32 = gamma_hz_from_lifetime(t["sr88.P32.lifetime_s"])
     b12_d32 = t["sr88.P12.branching_to_D32"].value

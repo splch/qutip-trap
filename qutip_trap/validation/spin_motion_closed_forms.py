@@ -1,4 +1,4 @@
-"""Closed forms of Section 4.3 used as test oracles for the Hamiltonian builder (PLAN.md Sections 4.3.1, 4.2.7, 6.2, 9.2).
+"""Closed forms of spin-motion coupling that the Hamiltonian builder is tested against (PLAN.md Section 4.3.1).
 
 All frequencies angular (rad/s) and the plan's (hbar Omega/2) convention: a resonant carrier flops as sin^2(Omega t/2).
 """
@@ -32,18 +32,6 @@ def sideband_rabi_rad_s(omega_rad_s: float, eta: float, n_from: int, n_to: int) 
     return omega_rad_s * abs(displacement_element_analytic(n_to, n_from, 1j * eta))
 
 
-def lamb_dicke_sideband_rabi_rad_s(omega_rad_s: float, eta: float, n_from: int, n_to: int) -> float:
-    """The Lamb-Dicke limits: Omega (carrier), eta Omega sqrt(n) (first red), eta Omega sqrt(n+1) (first blue), else 0."""
-    k = n_to - n_from
-    if k == 0:
-        return omega_rad_s
-    if k == -1:
-        return eta * omega_rad_s * math.sqrt(n_from)
-    if k == 1:
-        return eta * omega_rad_s * math.sqrt(n_from + 1)
-    return 0.0
-
-
 def resonant_transition_amplitude(
     omega_rad_s: float, eta: float, phi_rad: float, n_from: int, n_to: int, t_s: float
 ) -> complex:
@@ -59,12 +47,8 @@ def resonant_transition_amplitude(
 
 
 def carrier_debye_waller(n: int, eta: float) -> float:
+    """e^{-eta^2/2} L_n(eta^2): the carrier matrix element <n|D(i eta)|n> of Fock state n."""
     return float(math.exp(-(eta**2) / 2.0) * eval_genlaguerre(n, 0, eta**2))
-
-
-def thermal_debye_waller(eta: float, nbar: float) -> float:
-    """The thermal average of e^{i eta (a + a^dag)}: exp[-eta^2 (nbar + 1/2)], an identity for a thermal state (Section 9.12)."""
-    return math.exp(-(eta**2) * (nbar + 0.5))
 
 
 def cetina_theta(b_im: float, xi_m: float, kappa_per_m2: float, nbar: float) -> float:

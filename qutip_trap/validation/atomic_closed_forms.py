@@ -1,26 +1,15 @@
-"""Closed forms from the sources that the atomic layer's explicit sums must reproduce (PLAN.md Sections 4.3.2,
-4.5.4, 4.5.5, 9.10, 9.13, 9.15; the tests of milestone M0a).
+"""Closed forms of Ozeri et al. 2007 and Wineland et al. 2003 that the atomic layer's explicit sums must reproduce
+(PLAN.md Section 4.5).
 
-Conventions: ``gamma`` is the ANGULAR P-level decay rate (equal for both fine-structure levels in LS coupling),
-``omega_f`` the angular fine-structure splitting, ``delta`` the plan's detuning omega_L - omega(P1/2) from the
-lower ground state (positive blue), and Ozeri's ``g`` the HALF-convention stretched-state coupling
-g = E |<P3/2 stretched|d . sigma+|S1/2 stretched>| / (2 hbar), i.e. half the plan's single-photon Rabi
-frequency of the stretched cycling line. Ozeri's Omega_R is a half-convention two-photon Rabi frequency
-(tau_pi = pi/(2 Omega_R)), twice which is the plan's Omega_{g1 g2}.
+``gamma`` is the ANGULAR P-level decay rate (one for both fine-structure levels in LS coupling), ``omega_f`` the angular
+fine-structure splitting, ``delta`` the detuning omega_L - omega(P1/2) from the lower ground state (positive blue), and
+Ozeri's ``g`` the HALF-convention stretched-state coupling E |<P3/2 stretched|d . sigma+|S1/2 stretched>|/(2 hbar). Ozeri's
+Omega_R is a half-convention two-photon Rabi frequency (tau_pi = pi/(2 Omega_R)), twice which is the plan's Omega_{g1 g2}.
 """
 
 from __future__ import annotations
 
 import math
-
-import numpy as np
-
-from qutip_trap.units import C_M_PER_S, HBAR_J_S
-
-SQRT2 = math.sqrt(2.0)
-
-
-# ---- Ozeri et al. 2007 (Eqs. 4-6, 12-18) ----------------------------------------------------------------
 
 
 def ozeri_raman_rabi_half(
@@ -62,134 +51,12 @@ def ozeri_p_total(gamma: float, omega_f: float, delta: float) -> float:
     )
 
 
-def ozeri_p_raman(gamma: float, omega_f: float, delta: float) -> float:
-    """P_Raman = (2 pi gamma/3) omega_f/|Delta(Delta - omega_f)|, interior minimum 8 pi gamma/(3 omega_f) at Delta = omega_f/2."""
-    return (2.0 * math.pi * gamma / 3.0) * omega_f / abs(delta * (delta - omega_f))
-
-
-def ozeri_p_rayleigh(gamma: float, omega_f: float, delta: float) -> float:
-    """P_Rayleigh = (pi gamma/omega_f)(3 Delta^2 - 2 Delta omega_f + omega_f^2/3)/|Delta(Delta - omega_f)| (Eq. 16)."""
-    return (
-        (math.pi * gamma / omega_f)
-        * (3.0 * delta**2 - 2.0 * delta * omega_f + omega_f**2 / 3.0)
-        / abs(delta * (delta - omega_f))
-    )
-
-
-def ozeri_p_total_optimum_delta(omega_f: float) -> tuple[float, float]:
-    """The two equally deep minima of P_total: Delta = (sqrt2 - 1) omega_f and -(sqrt2 + 1) omega_f."""
-    return (SQRT2 - 1.0) * omega_f, -(SQRT2 + 1.0) * omega_f
-
-
-def ozeri_epsilon_s_from_power(omega_r_half: float, omega_32: float, w0_m: float, power_w: float) -> float:
-    """Eq. 17 as printed: eps_S = 2 pi |Omega_R| hbar omega_{3/2}^3 w_0^2/(3 c^2 P), with omega_{3/2} = 2 pi c/lambda_{3/2}.
-
-    The plan (Section 9.13) reproduces Ozeri's Table II with this form only with lambda = 2 pi c/omega (the paper's
-    printed c/omega gives 133 mW for 9Be+); the table's own reading of P (per beam) is not reproduced here.
-    """
-    return (
-        2.0 * math.pi * abs(omega_r_half) * HBAR_J_S * omega_32**3 * w0_m**2 / (3.0 * C_M_PER_S**2 * power_w)
-    )
-
-
-def ozeri_gamma_over_g_squared(omega: float, e0_v_per_m: float) -> float:
-    """gamma/g^2 = 4 hbar omega^3/(3 pi eps0 c^3 E^2), the atomic-constant ratio that removes the dipole element."""
-    from qutip_trap.units import EPSILON_0_F_PER_M
-
-    return 4.0 * HBAR_J_S * omega**3 / (3.0 * math.pi * EPSILON_0_F_PER_M * C_M_PER_S**3 * e0_v_per_m**2)
-
-
-# ---- Wineland et al. 2003 (Eqs. 2.13-2.18, Table 1) --------------------------------------------------------
-
-
-def wineland_ratio_function(x: float) -> float:
-    """|x(x - 1)|[1/x^2 + 2/(x - 1)^2] with x = Delta/omega_F: the R_SE/|Omega| ratio to minimize; minimum 2 sqrt2 at sqrt2 - 1."""
-    return abs(x * (x - 1.0)) * (1.0 / x**2 + 2.0 / (x - 1.0) ** 2)
-
-
-def wineland_bracket(x: float) -> float:
-    """1/x^2 + 2/(x - 1)^2 alone: minimizing THIS returns the wrong x = 1/(1 + 2^(1/3)) (negative control)."""
-    return 1.0 / x**2 + 2.0 / (x - 1.0) ** 2
-
-
 def wineland_p_se_clock(gamma: float, omega_f: float) -> float:
-    """P_SE = 2 sqrt2 pi gamma/omega_F for the m_F = 0 clock line at the optimum (8.885766 gamma/omega_F)."""
-    return 2.0 * SQRT2 * math.pi * gamma / omega_f
-
-
-def wineland_p_se_zeeman_22_11(gamma: float, omega_f: float) -> float:
-    """P_SE = (8 pi/sqrt6) gamma/omega_F for the 9Be+ |2,2> <-> |1,1> line (10.260399 gamma/omega_F)."""
-    return 8.0 * math.pi / math.sqrt(6.0) * gamma / omega_f
-
-
-def wineland_delta_over_omega_clock(omega_0: float, omega_f: float) -> float:
-    """|delta_{0<->0}/Omega_{0<->0}| = 4 sqrt2 omega_0/omega_F at the optimum."""
-    return 4.0 * SQRT2 * omega_0 / omega_f
+    """P_SE = 2 sqrt2 pi gamma/omega_F for the m_F = 0 clock line at the optimum detuning (8.885766 gamma/omega_F)."""
+    return 2.0 * math.sqrt(2.0) * math.pi * gamma / omega_f
 
 
 def wineland_clock_light_shift(g_b: float, g_r: float, omega_0: float, delta: float, omega_f: float) -> float:
-    """delta_{0<->0} = -(g_b^2 + g_r^2)(omega_0/3)[1/Delta^2 + 2/(Delta - omega_F)^2] (Eq. 2.17), the differential
-    shift of the clock transition (upper minus lower clock state), first order in omega_0/Delta."""
+    """delta_{0<->0} = -(g_b^2 + g_r^2)(omega_0/3)[1/Delta^2 + 2/(Delta - omega_F)^2] (Eq. 2.17), the differential shift of
+    the clock transition (upper minus lower clock state), first order in omega_0/Delta."""
     return -(g_b**2 + g_r**2) * (omega_0 / 3.0) * (1.0 / delta**2 + 2.0 / (delta - omega_f) ** 2)
-
-
-def wineland_r_se_clock(gamma: float, g_b: float, g_r: float, delta: float, omega_f: float) -> float:
-    """R_SE = gamma (g_b^2 + g_r^2)/3 [1/Delta^2 + 2/(Delta - omega_F)^2] (Eq. 2.18), so delta_{0<->0} = -(omega_0/gamma) R_SE."""
-    return gamma * (g_b**2 + g_r**2) / 3.0 * (1.0 / delta**2 + 2.0 / (delta - omega_f) ** 2)
-
-
-OZERI_PHOTONS_PER_RADIAN_COEFFICIENT = 0.9579
-"""The saturation coefficient of Gamma_total/Delta_St for a FAR-DETUNED clock-qubit Raman drive (Ozeri 2005; PLAN.md:447
-and the 9.10 "Rayleigh amplitudes" row, both [verified]). TRANSCRIBED, not derived here: the coefficient's derivation
-needs Ozeri's four Rayleigh amplitudes at first power in the detuning, and Wineland's Eqs. 2.17-2.18, which the module
-does carry, give exactly 1 (they share one prefactor and one bracket), so 0.9579 is a 4.2 percent correction to that
-identity and not a factor error - see ``wineland_photons_per_stark_radian``."""
-
-
-def ozeri_photons_per_stark_radian(
-    gamma: float, delta_hf: float, coefficient: float = OZERI_PHOTONS_PER_RADIAN_COEFFICIENT
-) -> float:
-    """Gamma_total/Delta_St -> C gamma/Delta_hf: scattered photons per radian of Stark phase, saturated in the detuning.
-
-    Both arguments in the SAME units (angular or ordinary; the ratio is dimensionless). The plan prints
-    0.9579 gamma/Delta_hf = 0.015396 for 9Be+; with the species table's gamma/2pi = 19.4 MHz (Monroe 1995) that product
-    needs Delta_hf/2pi = 1.20702 GHz, which is Langer's clock-point splitting 1.207495843 GHz to 4e-4 and NOT the
-    zero-field |A|(I + 1/2) = 1.250018 GHz (which gives 0.014867). The ledger records the residual.
-    """
-    if delta_hf == 0.0:
-        raise ZeroDivisionError("Delta_hf is the ground-state hyperfine splitting and is nonzero")
-    return coefficient * gamma / delta_hf
-
-
-def wineland_photons_per_stark_radian(gamma: float, omega_0: float) -> float:
-    """R_SE/|delta_{0<->0}| = gamma/omega_0, EXACTLY, for any Delta and any polarization (Wineland Eqs. 2.17-2.18).
-
-    Eq. 2.17 and Eq. 2.18 share the one (g_b^2 + g_r^2)/3 prefactor and the one [1/Delta^2 + 2/(Delta - omega_F)^2]
-    bracket, so their ratio is a pure atomic constant: this is why the clock-qubit shift is polarization independent and
-    therefore UNNULLABLE, unlike the 9Be+ |2,2> <-> |1,1> shift (PLAN.md:685). It is the coefficient-1 reference for
-    Ozeri's 0.9579 above.
-    """
-    return gamma / omega_0
-
-
-# ---- Uys et al. 2010 (Eqs. 4-8) ------------------------------------------------------------------------------
-
-
-def uys_gamma_el(
-    amplitudes_dd: np.ndarray, amplitudes_uu: np.ndarray, omega_r_half: float, gamma: float
-) -> float:
-    """Gamma_el = Omega_R^2 gamma sum_lambda (sum_J A^{dd}_{J,lambda} - sum_J A^{uu}_{J,lambda})^2 with signed real amplitudes
-    summed over the intermediate levels J (axis 1) inside the square and over the incident components lambda (axis 0) outside."""
-    dd = np.asarray(amplitudes_dd, dtype=float).sum(axis=1)
-    uu = np.asarray(amplitudes_uu, dtype=float).sum(axis=1)
-    return float(omega_r_half**2 * gamma * np.sum((dd - uu) ** 2))
-
-
-def uys_gamma_ij(amplitudes: np.ndarray, omega_r_half: float, gamma: float) -> float:
-    """Gamma_ij = Omega_R^2 gamma sum_lambda (sum_J A^{i->j}_{J,lambda})^2."""
-    return float(omega_r_half**2 * gamma * np.sum(np.asarray(amplitudes, dtype=float).sum(axis=1) ** 2))
-
-
-def uys_bounds(gamma_dd: float, gamma_uu: float) -> tuple[float, float]:
-    """0 <= Gamma_el <= 2(Gamma_dd + Gamma_uu): zero for equal amplitudes, the maximum for equal and opposite ones."""
-    return 0.0, 2.0 * (gamma_dd + gamma_uu)

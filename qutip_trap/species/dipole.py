@@ -1,24 +1,15 @@
-"""Electric-dipole matrix elements, decay rates and saturation (PLAN.md Section 4.5.2; Section 13; M0a).
+"""Electric-dipole matrix elements and saturation (PLAN.md Section 4.5.2), in Steck's normalizations.
 
-Normalization stack (Section 13, "Dipole-element normalization stack"), Steck's throughout:
+- The reduced element <J||d||J'> (Brink-Satchler, no 1/sqrt(2j+1)) is fixed by the PARTIAL decay rate of the
+  fine-structure line, Gamma_{J'->J} = omega^3 (2J+1) |<J||d||J'>|^2 / (3 pi eps0 hbar c^3 (2J'+1)).
+- The J-level Wigner-Eckart element <J m|T_q|J' m'> = <J||d||J'> (-1)^{J'-1+m} sqrt(2J+1) (J' 1 J; m' q -m), nonzero for
+  m = m' + q (q = m_lower - m_upper), summing to |<J||d||J'>|^2 over m', q at fixed m.
+- The dipole operator on the UNCOUPLED basis |m_I, m_J> is that element times the identity on I, so elements between
+  field-dressed eigenstates are the same operator sandwiched between eigenvectors.
 
-- the reduced element <J||d||J'> (Brink-Satchler, no 1/sqrt(2j+1)) is fixed by the PARTIAL decay rate of the
-  fine-structure transition, Gamma_{J'->J} = omega^3 (2J+1) |<J||d||J'>|^2 / (3 pi eps0 hbar c^3 (2J'+1)), the
-  total rate out of ANY sublevel of J' into the level J (no second factor 2);
-- the J-level Wigner-Eckart element <J m|T_q|J' m'> = <J||d||J'> (-1)^{J'-1+m} sqrt(2J+1) (J' 1 J; m' q -m),
-  nonzero for m = m' + q (q = m_lower - m_upper), summing to |<J||d||J'>|^2 over m', q at fixed m and to
-  (2J+1)/(2J'+1) |<J||d||J'>|^2 over m, q at fixed m';
-- the hyperfine element factorizes with one 6j symbol (Steck Rb87 Eqs. 35-37), and the two directed hyperfine
-  factors S_FF' (absorption, sums to 1 over F') and b(F'->F) (emission, sums to 1 over F) are built from it;
-- the dipole operator on the UNCOUPLED basis |m_I, m_J> is the J-level element times the identity on I, so
-  elements between field-dressed eigenstates are the same operator sandwiched between eigenvectors (Section
-  4.5.2: at 146 G the mixing is what creates the clock point). The 6j form is the zero-field cross-check
-  (derivation audit row 4.5-4 verified the two agree in the |(J I) F> coupling order).
-
-I_sat = pi h c Gamma_partial/(3 lambda_vac^3) with the ANGULAR partial rate is the two-level value of a
-transition of unit relative strength; the stretched sigma+ cycling element on a J = 1/2 -> 3/2 line is
-sqrt((2J+1)/(2J'+1)) = sqrt(1/2) of the reduced element, so Omega = Gamma sqrt(I/(2 I_sat)) holds there
-and only there (Section 4.5.2).
+I_sat = pi h c Gamma_partial/(3 lambda_vac^3) with the ANGULAR partial rate is the two-level value of a transition of unit
+relative strength; the stretched sigma+ cycling element of a J = 1/2 -> 3/2 line is sqrt((2J+1)/(2J'+1)) = sqrt(1/2) of
+the reduced element, so Omega = Gamma sqrt(I/(2 I_sat)) holds there and only there.
 """
 
 from __future__ import annotations
@@ -28,16 +19,8 @@ from functools import lru_cache
 
 import numpy as np
 
-from qutip_trap.species.wigner import (
-    Half,
-    as_half_integer,
-    clebsch_gordan,
-    m_values,
-    parity_sign,
-    wigner_3j,
-    wigner_6j,
-)
-from qutip_trap.units import C_M_PER_S, EPSILON_0_F_PER_M, H_J_S, HBAR_J_S
+from qutip_trap.species.wigner import Half, as_half_integer, m_values, parity_sign, wigner_3j
+from qutip_trap.units import C_M_PER_S, EPSILON_0_F_PER_M, HBAR_J_S
 
 
 @lru_cache(maxsize=4096)
@@ -63,17 +46,6 @@ def reduced_element_from_partial_rate(
     return math.sqrt(d2)
 
 
-def partial_rate_from_reduced_element(
-    d_c_m: float, omega_rad_s: float, J_lower: Half, J_upper: Half
-) -> float:
-    """The inverse of :func:`reduced_element_from_partial_rate` (rad/s)."""
-    gj = 2.0 * float(as_half_integer(J_lower)) + 1.0
-    gjp = 2.0 * float(as_half_integer(J_upper)) + 1.0
-    return (
-        omega_rad_s**3 * gj * d_c_m**2 / (3.0 * math.pi * EPSILON_0_F_PER_M * HBAR_J_S * C_M_PER_S**3 * gjp)
-    )
-
-
 def wigner_eckart_j(J: Half, m: Half, Jp: Half, mp: Half, q: int) -> float:
     """<J m|T_q|J' m'> / <J||d||J'> = (-1)^{J'-1+m} sqrt(2J+1) (J' 1 J; m' q -m), zero unless m = m' + q."""
     jj, mm, jp, mmp = (as_half_integer(x) for x in (J, m, Jp, mp))
@@ -84,77 +56,16 @@ def wigner_eckart_j(J: Half, m: Half, Jp: Half, mp: Half, q: int) -> float:
     )
 
 
-def hyperfine_reduced_factor(F: Half, Fp: Half, J: Half, Jp: Half, nuclear_spin: Half) -> float:
-    """<F||d||F'> / <J||d||J'> = (-1)^{F'+J+1+I} sqrt((2F'+1)(2J+1)) {J J' 1; F' F I} (Steck Rb87 Eq. 36)."""
-    f, fp, j, jp, ii = (as_half_integer(x) for x in (F, Fp, J, Jp, nuclear_spin))
-    phase = parity_sign(int(fp + j + 1 + ii))
-    return (
-        phase * math.sqrt((2.0 * float(fp) + 1.0) * (2.0 * float(j) + 1.0)) * wigner_6j(j, jp, 1, fp, f, ii)
-    )
-
-
-def hyperfine_element(
-    F: Half, mF: Half, Fp: Half, mFp: Half, q: int, J: Half, Jp: Half, nuclear_spin: Half
-) -> float:
-    """<F mF|d_q|F' mF'> / <J||d||J'> in Steck's factorization, nonzero for mF = mF' + q."""
-    f, mf, fp, mfp = (as_half_integer(x) for x in (F, mF, Fp, mFp))
-    if mf != mfp + q:
-        return 0.0
-    phase = parity_sign(int(fp - 1 + mf))
-    return (
-        hyperfine_reduced_factor(f, fp, J, Jp, nuclear_spin)
-        * phase
-        * math.sqrt(2.0 * float(f) + 1.0)
-        * wigner_3j(fp, 1, f, mfp, q, -mf)
-    )
-
-
-def absorption_strength(F: Half, Fp: Half, J: Half, Jp: Half, nuclear_spin: Half) -> float:
-    """S_FF' = (2F'+1)(2J+1){J J' 1; F' F I}^2, the relative absorption strength, summing to 1 over F'."""
-    f, fp, j, jp, ii = (as_half_integer(x) for x in (F, Fp, J, Jp, nuclear_spin))
-    return (2.0 * float(fp) + 1.0) * (2.0 * float(j) + 1.0) * wigner_6j(j, jp, 1, fp, f, ii) ** 2
-
-
-def emission_branching(Fp: Half, F: Half, J: Half, Jp: Half, nuclear_spin: Half) -> float:
-    """b(F'->F) = (2F+1)(2J'+1){J J' 1; F' F I}^2, the decay branching of F' into F, summing to 1 over F."""
-    f, fp, j, jp, ii = (as_half_integer(x) for x in (F, Fp, J, Jp, nuclear_spin))
-    return (2.0 * float(f) + 1.0) * (2.0 * float(jp) + 1.0) * wigner_6j(j, jp, 1, fp, f, ii) ** 2
-
-
 def dipole_operator_uncoupled(nuclear_spin: Half, J_lower: Half, J_upper: Half, q: int) -> np.ndarray:
     """T_q / <J||d||J'> on the uncoupled bases: rows (m_I, m_J) of the lower level, columns (m_I', m_J') of the upper.
 
     Basis order matches :class:`qutip_trap.species.zeeman.HyperfineZeeman`: m_I outer, m_J inner, both ascending.
-    The operator is the identity on I, so <m_I m_J|T_q|m_I' m_J'> = delta_{m_I m_I'} <J m_J|T_q|J' m_J'>.
     """
     mi = m_values(nuclear_spin)
     mj = m_values(J_lower)
     mjp = m_values(J_upper)
     block = np.array([[wigner_eckart_j(J_lower, m, J_upper, mp, q) for mp in mjp] for m in mj])
     return np.kron(np.eye(len(mi)), block)
-
-
-def coupled_state_vector(nuclear_spin: Half, J: Half, F: Half, mF: Half) -> np.ndarray:
-    """|F mF> on the uncoupled basis in the |(J I) F> coupling order: components <J mJ I mI|F mF> (Section 4.5.6)."""
-    mi = m_values(nuclear_spin)
-    mj = m_values(J)
-    return np.array([clebsch_gordan(J, mj_, nuclear_spin, mi_, F, mF) for mi_ in mi for mj_ in mj])
-
-
-def saturation_intensity_w_m2(partial_rate_rad_s: float, wavelength_vac_m: float) -> float:
-    """I_sat = pi h c Gamma_partial / (3 lambda_vac^3): the cycling two-level value (Section 13)."""
-    return math.pi * H_J_S * C_M_PER_S * partial_rate_rad_s / (3.0 * wavelength_vac_m**3)
-
-
-def saturation_intensity_random_orientation_w_m2(partial_rate_rad_s: float, wavelength_vac_m: float) -> float:
-    """hbar omega^3 Gamma/(4 pi c^2), the widely quoted random-orientation value, exactly 3x the cycling I_sat."""
-    omega = 2.0 * math.pi * C_M_PER_S / wavelength_vac_m
-    return HBAR_J_S * omega**3 * partial_rate_rad_s / (4.0 * math.pi * C_M_PER_S**2)
-
-
-def resonant_cross_section_m2(wavelength_vac_m: float) -> float:
-    """sigma_0 = 3 lambda_vac^2/(2 pi)."""
-    return 3.0 * wavelength_vac_m**2 / (2.0 * math.pi)
 
 
 def field_amplitude_v_per_m(intensity_w_m2: float) -> float:
@@ -168,13 +79,4 @@ def stretched_element_factor(J_lower: Half, J_upper: Half) -> float:
     """|<stretched upper|d_{+1}|stretched lower>| / |<J||d||J'>| = sqrt((2J+1)/(2J'+1)) (1/sqrt 2 on a 1/2 -> 3/2 line)."""
     return math.sqrt(
         (2.0 * float(as_half_integer(J_lower)) + 1.0) / (2.0 * float(as_half_integer(J_upper)) + 1.0)
-    )
-
-
-def rabi_frequency_two_level_rad_s(
-    gamma_partial_rad_s: float, intensity_w_m2: float, wavelength_vac_m: float
-) -> float:
-    """Omega = Gamma sqrt(I/(2 I_sat)) for a closed two-level (stretched cycling) transition, plan convention."""
-    return gamma_partial_rad_s * math.sqrt(
-        intensity_w_m2 / (2.0 * saturation_intensity_w_m2(gamma_partial_rad_s, wavelength_vac_m))
     )

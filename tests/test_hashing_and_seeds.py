@@ -1,15 +1,15 @@
-"""Device.hash() canonical serialization and keyed seeds (PLAN.md Section 3.4; Appendix E preamble)."""
+"""The canonical digest behind Device.hash() and the keyed seeds (PLAN.md Section 3.4)."""
 
 from __future__ import annotations
 
 import dataclasses
 import subprocess
 import sys
-import types
 from pathlib import Path
 
 import numpy as np
 import pytest
+import qutip as qt
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -55,16 +55,14 @@ def test_dict_order_and_array_layout_do_not_matter_but_values_do() -> None:
 
 
 def test_qobj_fields_are_excluded() -> None:
-    fake_qobj_type = types.new_class("Qobj")
-    fake_qobj_type.__module__ = "qutip.core.qobj"
-
     @dataclasses.dataclass(frozen=True)
     class Holder:
         q: object
         n: int
 
-    assert canonical_digest(Holder(fake_qobj_type(), 3)) == canonical_digest(Holder(fake_qobj_type(), 3))
-    assert canonical_digest(Holder(fake_qobj_type(), 3)) != canonical_digest(Holder(fake_qobj_type(), 4))
+    assert canonical_digest(Holder(qt.sigmax(), 3)) == canonical_digest(Holder(qt.sigmaz(), 3))
+    assert canonical_digest(Holder(qt.QobjEvo(qt.sigmax()), 3)) == canonical_digest(Holder(qt.sigmaz(), 3))
+    assert canonical_digest(Holder(qt.sigmax(), 3)) != canonical_digest(Holder(qt.sigmax(), 4))
 
 
 @given(
@@ -78,7 +76,6 @@ def test_digest_is_insertion_order_independent(table: dict[str, float]) -> None:
 
 
 def test_device_hash_is_stable_across_processes() -> None:
-    """Appendix E: a cross-process test asserts that the same device yields the same hash."""
     here = make_device().hash()
     code = "from tests.fixtures import make_device; print(make_device().hash())"
     proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True)

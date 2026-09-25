@@ -1,26 +1,21 @@
-"""Single-photon couplings, Raman couplings, light shifts and scattering from the level structure (PLAN.md
-Sections 4.5.2, 4.5.4, 4.5.5; milestone M0a).
+"""Single-photon couplings, Raman couplings, light shifts and scattering from the level structure (PLAN.md Section 4.5):
+explicit sums over the field-dressed sublevels of every tabulated E1-connected level.
 
-Everything here is an explicit sum over the field-dressed sublevels of every tabulated E1-connected level of a
-:class:`~qutip_trap.species.model.Species` at a :class:`~qutip_trap.device.model.Field`. Conventions:
+- Single-photon Rabi frequency Omega_{ea} = E_0 <e|d . eps|a>/hbar in the (hbar Omega/2) convention, with
+  <e|d . eps|a> = sum_q eps_q <e|T_q|a> over the beam's helicity components about B_hat and
+  <e|T_q|a> = (-1)^q conj(<a|T_{-q}|e>) from the lower-upper element.
+- Detuning Delta_e^{(j)} = omega_j - (omega_e - omega_a) with the DRESSED energies, so the detuning is per ground state,
+  per intermediate state and per beam (one Delta per intermediate level would give zero for the 0 <-> 0 clock shift).
+- Two-photon Rabi frequency Omega_{g1 g2} = sum_e conj(Omega^{(2)}_{e g2}) Omega^{(1)}_{e g1}/(2 Delta_e^{(1)}); light shift
+  delta_g = sum_j sum_e |Omega^{(j)}_{eg}|^2/(4 Delta_e^{(j)}) (red light lowers a level).
+- Kramers-Heisenberg amplitude to (b, q') under beam j: r_{b q'} = sum_e sqrt(Gamma_e) c_{e->b q'} Omega^{(j)}_{ea}/
+  (2 Delta_e^{(j)}), sqrt(Gamma_e) INSIDE the coherent sum over e and c_{e->b q'} the normalized decay amplitude; the rate
+  is Gamma_{a->b} = sum_{q'} |r_{b q'}|^2 (coherent over e, incoherent over the emitted polarization).
+- Differential Rayleigh dephasing Gamma_el = sum_{q'} |r^{(u)}_{u q'} - r^{(d)}_{d q'}|^2 (Uys et al. 2010), entering as
+  (1/2) sqrt(Gamma_el) sigma_z.
 
-- single-photon Rabi frequency Omega_{ea} = E_0 <e|d . eps|a>/hbar in the (hbar Omega/2) convention (Section 13),
-  with <e|d . eps|a> = sum_q eps_q <e|T_q|a> over the helicity components of the beam about B_hat and
-  <e|T_q|a> = (-1)^q conj(<a|T_{-q}|e>) from the lower-upper element of Steck's factorization;
-- detuning Delta_e^{(j)} = omega_j - (omega_e - omega_a) with the DRESSED energies, so the three-index detuning
-  of Section 4.5.6 (per ground state, per intermediate state, per beam) is automatic: a single Delta per
-  intermediate level would return exactly zero for the 0 <-> 0 clock light shift (Section 9.13);
-- two-photon Rabi frequency Omega_{g1 g2} = sum_e conj(Omega^{(2)}_{e g2}) Omega^{(1)}_{e g1}/(2 Delta_e^{(1)}) and
-  light shift delta_g = sum_j sum_e |Omega^{(j)}_{eg}|^2/(4 Delta_e^{(j)}) (Section 4.5.4; red light lowers a level);
-- Kramers-Heisenberg scattering amplitude to (b, q') under beam j: r_{b q'} = sum_e sqrt(Gamma_e) c_{e->b q'}
-  Omega^{(j)}_{ea}/(2 Delta_e^{(j)}), with c_{e->b q'} the normalized decay amplitude (sum_{b q'} |c|^2 = 1) and
-  sqrt(Gamma_e) INSIDE the coherent sum over e, one factor per path (Section 4.5.5, derivation audit 2026-09-04);
-  the rate is Gamma_{a->b} = sum_{q'} |r_{b q'}|^2 (coherent over e, incoherent over the emitted polarization);
-- differential Rayleigh dephasing Gamma_el = sum_{q'} |r^{(u)}_{u q'} - r^{(d)}_{d q'}|^2 (Uys et al. 2010), the
-  square of the DIFFERENCE of the two qubit states' elastic amplitudes, entering as (1/2) sqrt(Gamma_el) sigma_z.
-
-The phases of Raman couplings between different states depend on the eigenvector sign gauge of the dressed
-states and on the azimuthal phase convention of the sigma components; their magnitudes and every rate do not.
+Raman phases between different states depend on the eigenvector sign gauge and the azimuthal phase of the sigma
+components; their magnitudes and every rate do not.
 """
 
 from __future__ import annotations
@@ -30,6 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
+from typing import NamedTuple
 
 import numpy as np
 
@@ -60,19 +56,22 @@ class DressedState:
         return f"{self.level} {self.label}"
 
 
+class Coupling(NamedTuple):
+    """An upper sublevel E1-connected to a lower one: Omega_{ea} and Delta_e, both in rad/s."""
+
+    state: DressedState
+    omega_rad_s: complex
+    detuning_rad_s: float
+
+
 @lru_cache(maxsize=64)
 def _operators(nuclear_spin: float, J_lower: Fraction, J_upper: Fraction) -> dict[int, np.ndarray]:
     return {q: dipole_operator_uncoupled(nuclear_spin, J_lower, J_upper, q) for q in (-1, 0, 1)}
 
 
 def structure_at(species: Species, b_gauss: float, b_hat: Vec) -> AtomicStructure:
-    """The :class:`AtomicStructure` of ``species`` at the field (B_gauss, b_hat), built once per distinct field and SHARED.
-
-    A structure is read-only after construction and memoizes its dipole elements and decay amplitudes, so every caller that
-    re-derives couplings or scattering rates for the same device (the intrinsic budget per pulse, the played chain per drive,
-    the scattering channels per segment, the calibration seeds) reuses the elements instead of recomputing the exact
-    Wigner algebra: 6.6 s of a 27 s two-ion Bell run were that recomputation (performance pass 2026-09-09).
-    """
+    """The :class:`AtomicStructure` of ``species`` at the field (B_gauss, b_hat), built once per distinct field and shared
+    by every caller (its memoized elements are the expensive part)."""
     return _structure_cached(species, float(b_gauss), tuple(float(x) for x in np.asarray(b_hat, dtype=float)))
 
 
@@ -84,9 +83,8 @@ def _structure_cached(species: Species, b_gauss: float, b_hat: tuple[float, ...]
 class AtomicStructure:
     """A species at a static field: dressed spectra, E1 operators and beam couplings (the engine behind the Species API).
 
-    Instances are read-only after construction and memoize the field-independent algebra per instance (reduced elements,
-    the <a|T_q|b> elements between two dressed sublevels, decay amplitudes, total rates and branching totals); obtain them
-    through :func:`structure_at` so that callers share one per (species, field).
+    Read-only after construction; it memoizes the dipole elements between dressed sublevels and the decay amplitudes, so
+    obtain it through :func:`structure_at`, which shares one per (species, field).
     """
 
     def __init__(self, species: Species, b_gauss: float, b_hat: Vec) -> None:
@@ -103,10 +101,8 @@ class AtomicStructure:
             (t.lower, t.upper): t for t in species.transitions if t.multipole == "E1"
         }
         if not self.e1:
-            # Section 4.5.4/4.5.5 are explicit sums over the E1-connected levels: with no E1 record every
-            # coupling, light shift and scattering rate would silently return 0 or {} (defect B7, 88Sr+).
-            # The one legitimate case is an I = 0 optical qubit on the E2 pair itself, which Section 4.5.7
-            # drives without any intermediate sum.
+            # with no E1 record every coupling, light shift and scattering rate would silently be 0; the one legitimate
+            # case is an optical qubit on a tabulated E2 pair, driven without any intermediate sum (Section 4.5.7)
             e2_pairs = {frozenset((t.lower, t.upper)) for t in species.transitions if t.multipole == "E2"}
             qubit_levels = frozenset(parse_state_label(lab)[0] for lab in species.qubit)
             if qubit_levels not in e2_pairs:
@@ -127,19 +123,20 @@ class AtomicStructure:
             self._states_by_level[lv.name] = tuple(per_level)
         self._upper_of: dict[str, list[str]] = {}
         self._lower_of: dict[str, list[str]] = {}
-        for lo, up in self.e1:
+        self._gamma: dict[str, float] = {}  # each E1 line out of a level carries its total rate
+        for (lo, up), tr in self.e1.items():
             self._upper_of.setdefault(lo, []).append(up)
             self._lower_of.setdefault(up, []).append(lo)
-        # the memo tables (performance pass 2026-09-09): keyed by the dressed states' labels, which name one object each
-        # in this structure; a state from ANOTHER structure (a different field) bypasses them by the identity check
+            self._gamma.setdefault(up, tr.gamma_rad_s)
+        self._branching = {
+            up: sum(self.e1[lo, up].branching for lo in los) for up, los in self._lower_of.items()
+        }
+        # memo tables keyed by the dressed states' labels, which name one object each in this structure; a state from
+        # another structure (a different field) bypasses them by the identity check of ``_own``
         self._reduced: dict[tuple[str, str], float] = {}
         self._elements: dict[tuple[str, str, int], complex] = {}
         self._decays: dict[str, dict[tuple[str, int], complex]] = {}
-        self._gamma: dict[str, float] = {}
-        self._branching: dict[str, float] = {}
         self._eps: dict[tuple[complex, ...], np.ndarray] = {}
-
-    # ---- states --------------------------------------------------------------------------------------
 
     def state(self, label: str) -> DressedState:
         """Look up 'S1/2 F=1 mF=0' (quantum numbers in any order, '+1/2' accepted)."""
@@ -163,8 +160,6 @@ class AtomicStructure:
     def _own(self, state: DressedState) -> bool:
         """Whether ``state`` is this structure's own object for its label (the memo tables key by label)."""
         return self._states.get(state.full_label) is state
-
-    # ---- dipole elements -----------------------------------------------------------------------------
 
     def reduced_element_c_m(self, lower: str, upper: str) -> float:
         """|<J||d||J'>| of the tabulated E1 transition lower-upper from its PARTIAL rate (Section 4.5.2)."""
@@ -197,7 +192,7 @@ class AtomicStructure:
         return value
 
     def dipole_element_c_m(self, bra: DressedState, ket: DressedState, q: int) -> complex:
-        """<bra|T_q|ket> in C m in the field-dressed basis, either ordering of lower and upper (Appendix E)."""
+        """<bra|T_q|ket> in C m in the field-dressed basis, either ordering of lower and upper."""
         if (ket.level, bra.level) in self.e1:  # ket lower, bra upper: <b|T_q|a> = (-1)^q conj(<a|T_{-q}|b>)
             return parity_sign(q) * complex(np.conj(self._lower_upper_element(ket, bra, -q)))
         if (bra.level, ket.level) in self.e1:  # bra lower, ket upper
@@ -205,8 +200,6 @@ class AtomicStructure:
         raise KeyError(
             f"{self.species.name}: {bra.level} and {ket.level} are not connected by a tabulated E1 transition"
         )
-
-    # ---- couplings -----------------------------------------------------------------------------------
 
     def field_amplitude(self, beam: Beam, position_m: Sequence[float] | None) -> float:
         pos = np.asarray(beam.pointing_m if position_m is None else position_m, dtype=float)
@@ -239,55 +232,15 @@ class AtomicStructure:
 
     def couplings_from(
         self, a: DressedState, beam: Beam, position_m: Sequence[float] | None = None
-    ) -> list[tuple[DressedState, complex, float]]:
-        """(e, Omega_{ea}, Delta_e) for every upper sublevel E1-connected to a's level."""
-        out: list[tuple[DressedState, complex, float]] = []
-        for up in self.upper_levels_of(a.level):
-            for e in self.states_of(up):
-                omega = self.single_photon_coupling_rad_s(a, e, beam, position_m)
-                out.append((e, omega, self.detuning_rad_s(a, e, beam)))
-        return out
-
-    def nearest_resonance_in_linewidths(
-        self, a: DressedState, beam: Beam, position_m: Sequence[float] | None = None
-    ) -> float:
-        """min_e |Delta_e|/Gamma_e over the intermediate sublevels: how far from resonance the sums are.
-
-        PLAN.md 4.5.6: the second-order sums "have no i gamma/2 in their denominators and are used only far
-        from resonance, the multi-level Bloch solve of Section 4.2.8 taking over within a few linewidths".
-        This is the diagnostic that says which side of that line a call is on; ``inf`` when the beam couples
-        nothing. :meth:`refuse_if_near_resonance` turns it into a refusal.
-        """
-        worst = math.inf
-        for e, _om, delta in self.couplings_from(a, beam, position_m):
-            gamma = self.total_decay_rate_rad_s(e.level)
-            if gamma > 0.0:
-                worst = min(worst, abs(delta) / gamma)
-        return worst
-
-    def refuse_if_near_resonance(
-        self,
-        a: DressedState,
-        beam: Beam,
-        position_m: Sequence[float] | None = None,
-        *,
-        min_linewidths: float = 10.0,
-    ) -> None:
-        """Raise when the beam is within ``min_linewidths`` Gamma_e of any dressed intermediate sublevel.
-
-        Not called by the second-order sums themselves: PLAN.md 4.5.6 requires the residual excited
-        population to be "reported with its size", which ``residual_excited_population`` does, and a hard
-        refusal inside every sum would break the legitimate near-resonant uses of ``couplings_from`` by the
-        Bloch layer. Callers that mean "far from resonance" call this first.
-        """
-        margin = self.nearest_resonance_in_linewidths(a, beam, position_m)
-        if margin < min_linewidths:
-            raise ValueError(
-                f"{self.species.name}: the beam at {beam.wavelength_m * 1e9:.4f} nm is {margin:.3g} "
-                f"linewidths from a dressed intermediate sublevel of {a.full_label}; the second-order sums "
-                f"of Section 4.5.4 have no i gamma/2 and are valid only far from resonance (the multi-level "
-                f"Bloch solve of Section 4.2.8 takes over within a few linewidths)"
+    ) -> list[Coupling]:
+        """Every upper sublevel E1-connected to a's level."""
+        return [
+            Coupling(
+                e, self.single_photon_coupling_rad_s(a, e, beam, position_m), self.detuning_rad_s(a, e, beam)
             )
+            for up in self.upper_levels_of(a.level)
+            for e in self.states_of(up)
+        ]
 
     def light_shift_rad_s(
         self, a: DressedState, beams: Sequence[Beam], position_m: Sequence[float] | None = None
@@ -295,8 +248,8 @@ class AtomicStructure:
         """delta_a = sum_j sum_e |Omega^{(j)}_{ea}|^2 / (4 Delta_e^{(j)}) (Section 4.5.4)."""
         total = 0.0
         for beam in beams:
-            for _e, omega, delta in self.couplings_from(a, beam, position_m):
-                total += abs(omega) ** 2 / (4.0 * delta)
+            for c in self.couplings_from(a, beam, position_m):
+                total += abs(c.omega_rad_s) ** 2 / (4.0 * c.detuning_rad_s)
         return total
 
     def raman_coupling_rad_s(
@@ -308,65 +261,38 @@ class AtomicStructure:
         position_m: Sequence[float] | None = None,
     ) -> complex:
         """Omega_{g1 g2} = sum_e conj(Omega^{(2)}_{e g2}) Omega^{(1)}_{e g1} / (2 Delta_e^{(1)}) over the shared upper sublevels."""
-        c1 = {e.full_label: (om, d) for e, om, d in self.couplings_from(g1, beam1, position_m)}
-        c2 = {e.full_label: om for e, om, _ in self.couplings_from(g2, beam2, position_m)}
+        c2 = {c.state.full_label: c.omega_rad_s for c in self.couplings_from(g2, beam2, position_m)}
         total = 0.0 + 0.0j
-        for key, (om1, d1) in c1.items():
-            om2 = c2.get(key)
+        for c in self.couplings_from(g1, beam1, position_m):
+            om2 = c2.get(c.state.full_label)
             if om2 is not None:
-                total += np.conj(om2) * om1 / (2.0 * d1)
+                total += np.conj(om2) * c.omega_rad_s / (2.0 * c.detuning_rad_s)
         return complex(total)
 
     def residual_excited_population(
         self, a: DressedState, beam: Beam, position_m: Sequence[float] | None = None
     ) -> float:
-        """sum_e |Omega_{ea}|^2/(4 Delta_e^2): the adiabatic-elimination residual the scattering channels use (Section 4.5.4)."""
-        return sum(abs(om) ** 2 / (4.0 * d * d) for _e, om, d in self.couplings_from(a, beam, position_m))
-
-    # ---- decay and scattering ------------------------------------------------------------------------
+        """sum_e |Omega_{ea}|^2/(4 Delta_e^2): the adiabatic-elimination residual excited population (Section 4.5.4)."""
+        return sum(
+            abs(c.omega_rad_s) ** 2 / (4.0 * c.detuning_rad_s * c.detuning_rad_s)
+            for c in self.couplings_from(a, beam, position_m)
+        )
 
     def total_decay_rate_rad_s(self, level: str) -> float:
-        """Gamma_e of a level, from its tabulated transitions (all of which must carry the same total rate)."""
-        cached = self._gamma.get(level)
-        if cached is not None:
-            return cached
-        rates = {tr.label: tr.gamma_rad_s for (_lo, up), tr in self.e1.items() if up == level}
-        if not rates:
-            raise KeyError(f"{self.species.name}: level {level} has no tabulated E1 decay")
-        first = next(iter(rates.values()))
-        disagree = {lab: g for lab, g in rates.items() if not math.isclose(g, first, rel_tol=1e-9)}
-        if disagree:
-            raise ValueError(
-                f"{self.species.name}: the E1 transitions out of {level} disagree on its total decay rate "
-                f"(Section 13: Transition.gamma_hz is the UPPER level's total rate): {rates}"
-            )
-        self._gamma[level] = first
-        return first
+        """Gamma_e (rad/s) of an E1-decaying level: the total rate its tabulated E1 lines carry."""
+        return self._gamma[level]
 
     def tabulated_branching_total(self, level: str) -> float:
-        """sum_lo branching(lo -> level) over the TABULATED E1 channels out of ``level``.
-
-        1 when the E1 decay of ``level`` is fully tabulated; less when a channel is declared on the
-        :class:`~qutip_trap.species.model.Level` as ``untabulated_branching`` (Section 4.5.5): the missing
-        fraction must never be renormalized away, because that is what silently moved 40Ca+ P3/2's 5.9% of
-        D-state leakage into the 393 nm cycling line.
-        """
-        cached = self._branching.get(level)
-        if cached is None:
-            cached = sum(tr.branching for (_lo, up), tr in self.e1.items() if up == level)
-            self._branching[level] = cached
-        return cached
+        """sum_lo branching(lo -> level) over the TABULATED E1 channels out of ``level`` (0 without any): 1 when its decay
+        is fully tabulated, less by the ``Level.untabulated_branching`` it declares, which is never renormalized away."""
+        return self._branching.get(level, 0.0)
 
     def decay_amplitudes(self, e: DressedState) -> dict[tuple[str, int], complex]:
         """sqrt(Gamma_e) c_{e->b q'}: decay amplitudes of e into every lower sublevel b and polarization index q'.
 
-        Section 4.5.5 fixes the normalization through <b|d_q'|e> = sqrt(3 pi eps0 hbar c^3 Gamma_e/omega_e^3)
-        c_{e->b q'}, so |c|^2 is the PARTIAL-RATE fraction and carries omega_{e,b}^3 **per channel**: each raw
-        element is weighted by omega_{e,lo}^(3/2) before the normalization. Without that weight the branching
-        weight per channel is Gamma_partial/omega^3 rather than Gamma_partial, which overstated 171Yb+'s
-        P1/2 -> D3/2 leakage by 118x (see ``dynamics/multilevel.py``, which already carries one omega^3 per line).
-        sum_{b q'} |c|^2 then equals :meth:`tabulated_branching_total` (1 for a fully tabulated level), never
-        an unconditional 1; keys are (b.full_label, q') with q' = m_b - m_e the emitted tensor index.
+        <b|d_q'|e> = sqrt(3 pi eps0 hbar c^3 Gamma_e/omega_e^3) c_{e->b q'} (Section 4.5.5) makes |c|^2 the PARTIAL-RATE
+        fraction, so each raw element carries omega_{e,lo}^(3/2) per channel before the normalization, and
+        sum_{b q'} |c|^2 equals :meth:`tabulated_branching_total`. Keys are (b.full_label, q'), q' = m_b - m_e.
         """
         own = self._own(e)
         if own:
@@ -396,10 +322,11 @@ class AtomicStructure:
     ) -> dict[tuple[str, int], dict[str, complex]]:
         """r_{b q'} split by intermediate level: {(b, q'): {upper level: partial sum over its sublevels}} (units sqrt(1/s))."""
         out: dict[tuple[str, int], dict[str, complex]] = {}
-        for e, omega, delta in self.couplings_from(a, beam, position_m):
-            for key, amp in self.decay_amplitudes(e).items():
+        for c in self.couplings_from(a, beam, position_m):
+            level = c.state.level
+            for key, amp in self.decay_amplitudes(c.state).items():
                 paths = out.setdefault(key, {})
-                paths[e.level] = paths.get(e.level, 0.0 + 0.0j) + amp * omega / (2.0 * delta)
+                paths[level] = paths.get(level, 0.0 + 0.0j) + amp * c.omega_rad_s / (2.0 * c.detuning_rad_s)
         return out
 
     def scattering_amplitudes(

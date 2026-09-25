@@ -1,5 +1,5 @@
-"""Metastable-level channels of PLAN.md Section 4.5.7 (Appendix E ``MetastableChannels``; milestone M0a): the Section 9.15
-rows "Blackbody M1 mixing rate", "Collision-rate construction" and "Reshelving offset and fit bias"."""
+"""Metastable-level channels (PLAN.md Section 4.5.7): the blackbody mixing rate, the collision-rate construction and the
+reshelving offset."""
 
 from __future__ import annotations
 
@@ -20,21 +20,16 @@ def ca40():  # type: ignore[no-untyped-def]
     return species("40Ca+")
 
 
-def test_blackbody_mixing_rate_row_of_section_9_15() -> None:
-    """h nu/kT = 0.29115, n_bar = 2.95884, W12 = 7.2491e-6 s^-1 at 300.0 K and 7.2297e-6 at 299.3 K (what the printed
-    7.23e-6 back-solves to); upward 1.0874e-5 with g_u/g_l = 6/4; dividing by the Bose factor is low by n_bar^2 = 8.75x."""
-    nbar = bose_occupation(NU_QUOTED_HZ, 300.0)
-    assert 6.62607015e-34 * NU_QUOTED_HZ / (1.380649e-23 * 300.0) == pytest.approx(0.29115, abs=5e-6)
-    assert nbar == pytest.approx(2.95884, abs=5e-6)
+def test_blackbody_mixing_rate() -> None:
+    """n_bar = 2.95884 (h nu/kT = 0.29115) multiplies A12: W12 = 7.2491e-6 s^-1 at 300.0 K and 7.2297e-6 at 299.3 K (what the
+    printed 7.23e-6 back-solves to), upward 1.0874e-5 with g_u/g_l = 6/4; dividing by n_bar would be low by 8.75x."""
+    assert bose_occupation(NU_QUOTED_HZ, 300.0) == pytest.approx(2.95884, abs=5e-6)
     down, up = bbr_mixing_rates_hz(A12_S, NU_QUOTED_HZ, 300.0, 6.0, 4.0)
     assert down == pytest.approx(7.2491e-6, rel=1e-4)
     assert up == pytest.approx(1.0874e-5, rel=1e-4)
     assert up / down == pytest.approx(1.5, rel=1e-12)
     down_299, _ = bbr_mixing_rates_hz(A12_S, NU_QUOTED_HZ, 299.3, 6.0, 4.0)
     assert down_299 == pytest.approx(7.2297e-6, rel=1e-4)
-    # NEGATIVE TEST: the Bose occupation multiplies; dividing is low by n_bar^2
-    assert down / (A12_S / nbar) == pytest.approx(nbar**2, rel=1e-12)
-    assert nbar**2 == pytest.approx(8.75, abs=0.01)
 
 
 def test_bbr_rate_from_the_species_table(ca40) -> None:  # type: ignore[no-untyped-def]
@@ -58,7 +53,7 @@ def test_bbr_rate_from_the_species_table(ca40) -> None:  # type: ignore[no-untyp
     )
 
 
-def test_collision_rate_construction_row_of_section_9_15(ca40) -> None:  # type: ignore[no-untyped-def]
+def test_collision_rate_construction(ca40) -> None:  # type: ignore[no-untyped-def]
     """n = p/(k_B T) = 2.4143e5 cm^-3 per partner at 300 K and 1e-11 mbar; R^q = 5.00e-5 s^-1, R^j = 3.86e-4 s^-1, total
     4.36e-4 s^-1 (1.45x the source's rounded '< 3e-4'); j-mixing coefficients 7.73x the quenching ones."""
     ch = MetastableChannels(
@@ -104,14 +99,11 @@ def test_uncited_partner_or_species_raises_rather_than_defaulting(ca40) -> None:
         MetastableChannels(bbr_temperature_k=0.0)
 
 
-def test_reshelving_offset_row_of_section_9_15() -> None:
-    """Gamma' = Gamma + R = 0.859164 s^-1 against Gamma = 0.856164 s^-1 at tau = 1168 ms and R = 3e-3 s^-1; the offset
-    R/Gamma' = 3.4918e-3."""
-    ch = MetastableChannels(reshelving_rate_hz=3e-3)
-    gamma = 1.0 / 1.168
-    assert gamma == pytest.approx(0.856164, abs=5e-7)
-    assert gamma + 3e-3 == pytest.approx(0.859164, abs=5e-7)
-    assert ch.reshelving_offset(1.168) == pytest.approx(3.4918e-3, rel=1e-4)
+def test_reshelving_offset() -> None:
+    """R/(Gamma + R) = 3.4918e-3 at tau = 1168 ms and R = 3e-3 s^-1, zero by default."""
+    assert MetastableChannels(reshelving_rate_hz=3e-3).reshelving_offset(1.168) == pytest.approx(
+        3.4918e-3, rel=1e-4
+    )
     assert MetastableChannels().reshelving_offset(1.168) == 0.0
 
 

@@ -1,9 +1,7 @@
-"""Exact angular-momentum algebra: Wigner 3j and 6j symbols, Clebsch-Gordan coefficients, spin matrices.
+"""Exact angular-momentum algebra: the Wigner 3j symbol and the spin matrices.
 
-The symbols are computed with the Racah closed forms in exact rational arithmetic (``fractions.Fraction``),
-so that every value is correct to the last floating-point digit; ``tests/test_wigner.py`` checks them against
-sympy. Conventions are the standard ones (Edmonds; Steck QAO Appendix): the 3j symbol is related to the
-Clebsch-Gordan coefficient by <j1 m1 j2 m2|J M> = (-1)^{j1 - j2 + M} sqrt(2J + 1) (j1 j2 J; m1 m2 -M).
+The 3j symbol is the Racah closed form in exact rational arithmetic (``fractions.Fraction``), so every value is correct
+to the last floating-point digit; conventions are Edmonds' (Steck QAO Appendix).
 """
 
 from __future__ import annotations
@@ -90,52 +88,6 @@ def _wigner_3j_cached(
 def wigner_3j(j1: Half, j2: Half, j3: Half, m1: Half, m2: Half, m3: Half) -> float:
     """The Wigner 3j symbol (j1 j2 j3; m1 m2 m3), exact to floating-point rounding."""
     return _wigner_3j_cached(*(as_half_integer(x) for x in (j1, j2, j3, m1, m2, m3)))
-
-
-@lru_cache(maxsize=65536)
-def _wigner_6j_cached(
-    j1: Fraction, j2: Fraction, j3: Fraction, j4: Fraction, j5: Fraction, j6: Fraction
-) -> float:
-    triads = ((j1, j2, j3), (j1, j5, j6), (j4, j2, j6), (j4, j5, j3))
-    if not all(_triangle_ok(*t) for t in triads):
-        return 0.0
-    pref2 = Fraction(1)
-    for t in triads:
-        pref2 *= _delta(*t)
-    total = Fraction(0)
-    k_min = max(j1 + j2 + j3, j1 + j5 + j6, j4 + j2 + j6, j4 + j5 + j3)
-    k_max = min(j1 + j2 + j4 + j5, j2 + j3 + j5 + j6, j3 + j1 + j6 + j4)
-    k = k_min
-    while k <= k_max:
-        denom = (
-            _fact(k - j1 - j2 - j3)
-            * _fact(k - j1 - j5 - j6)
-            * _fact(k - j4 - j2 - j6)
-            * _fact(k - j4 - j5 - j3)
-            * _fact(j1 + j2 + j4 + j5 - k)
-            * _fact(j2 + j3 + j5 + j6 - k)
-            * _fact(j3 + j1 + j6 + j4 - k)
-        )
-        total += Fraction((-1) ** int(k) * _fact(k + 1), denom)
-        k += 1
-    if total == 0:
-        return 0.0
-    sign = 1 if total > 0 else -1
-    return _signed_sqrt(pref2 * total * total, sign)
-
-
-def wigner_6j(j1: Half, j2: Half, j3: Half, j4: Half, j5: Half, j6: Half) -> float:
-    """The Wigner 6j symbol {j1 j2 j3; j4 j5 j6}, exact to floating-point rounding."""
-    return _wigner_6j_cached(*(as_half_integer(x) for x in (j1, j2, j3, j4, j5, j6)))
-
-
-def clebsch_gordan(j1: Half, m1: Half, j2: Half, m2: Half, J: Half, M: Half) -> float:
-    """<j1 m1 j2 m2|J M> = (-1)^{j1 - j2 + M} sqrt(2J + 1) (j1 j2 J; m1 m2 -M)."""
-    a, b, c = as_half_integer(j1), as_half_integer(j2), as_half_integer(J)
-    ma, mb, mc = as_half_integer(m1), as_half_integer(m2), as_half_integer(M)
-    if ma + mb != mc:
-        return 0.0
-    return parity_sign(int(a - b + mc)) * float(sqrt(float(2 * c + 1))) * wigner_3j(a, b, c, ma, mb, -mc)
 
 
 def m_values(j: Half) -> tuple[Fraction, ...]:

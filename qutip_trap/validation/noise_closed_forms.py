@@ -1,18 +1,9 @@
-"""Closed forms for the noise channels of Section 6 that the M7 audit found missing (PLAN.md Sections 6.2 to 6.5;
-Section 9.7 rows "Mode-frequency fluctuation", "Intensity noise", "Scattering"; Section 9.16 row 4.4-8).
+"""Closed forms for the noise channels of Section 6 (PLAN.md Section 6).
 
-The forms in ``two_qubit_closed_forms.py`` transcribe the plan's own gate-error expressions; the ones here are the
-four the plan names but does not transcribe, plus one correction to a transcribed one:
-
-- **Hughes's two-term mode-frequency-fluctuation infidelity** (Section 6.2, Section 9.7 row 3). Hughes et al.,
-  arXiv:2510.17286 (2025), Appendix B "Infidelity Due to Mode Frequency Fluctuations", Eq. 33. The plan names the two
-  terms ("thermal spin-motion (2 nbar + 1)|alpha_t|^2 lambda^2 plus a temperature-insensitive gate-angle term") without
-  transcribing the second, so the second is read from the source and re-derived here.
-- **The N-ion intensity-noise amplitude** (Section 6.4, Section 9.16 row 4.4-8). The plan's eps_I first term carries no
-  factor N; the simulator's own Lindblad channel gives A = N Gamma_I t_g eta^2/2 (``anchor.m7.intensity_noise_n_ions``).
-- **Baldwin's laser-phase-noise filter form** and **Kirchmair's carrier-excitation anchor** (Section 6.3).
-- **eps_D = f P_total**, the D-level branch of the scattering error reported beside eps_S (Section 6.5, Section 9.7
-  row 8; Ozeri 2007).
+- Hughes et al.'s two-term mode-frequency-fluctuation infidelity (arXiv:2510.17286, App. B, Eq. 33).
+- The N-ion intensity-noise amplitude A = N Gamma_I t_g eta^2/2 (the plan's eps_I carries no factor N).
+- Baldwin's laser-phase-noise filter form and the published laboratory anchors of Kirchmair, Harty and Egan.
+- eps_D = f P_total, the D-level branch of the scattering error reported beside eps_S (Ozeri 2007).
 """
 
 from __future__ import annotations
@@ -22,21 +13,14 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
-# ---- Hughes: mode-frequency fluctuations (Section 6.2, Section 9.7 row "Mode-frequency fluctuation") ------------------
-#
-# Hughes et al. arXiv:2510.17286 App. B writes the gate in the frame hbar(omega_m - delta) a^dag a as
-# H_g = hbar delta(t) a^dag a + (hbar Omega_g(t)/2) S_alpha (a^dag + a) (their Eq. 1 / Section 4.4.6 of the plan), whose
-# ideal propagator is U_g(t) = exp{(gamma[t] a^dag - gamma*[t] a) S_alpha} exp{-i (theta[t]/2) S_alpha^2} (Eq. 27). A
-# mode-frequency error enters as H_e(t) = hbar eps(t) a^dag a (Eq. 29). Expanding to second order in eps (Eq. 33):
+# Hughes et al. write the gate in the frame hbar(omega_m - delta) a^dag a as H_g = hbar delta(t) a^dag a + (hbar Omega_g(t)/2)
+# S_alpha (a^dag + a), with ideal propagator U_g(t) = exp{(gamma[t] a^dag - gamma*[t] a) S_alpha} exp{-i (theta[t]/2) S_alpha^2}.
+# A mode-frequency error H_e(t) = hbar eps(t) a^dag a gives, to second order in eps (Eq. 33),
 #
 #     I = (2 nbar + 1) |alpha_t|^2 lambda^2_{S_alpha} + (delta_theta^2/4) lambda^2_{S_alpha^2},
-#     alpha_t = int_0^{t_g} eps(t) gamma(t) dt,      delta_theta = 2 int_0^{t_g} eps(t) |gamma(t)|^2 dt.
+#     alpha_t = int_0^{t_g} eps(t) gamma(t) dt,      delta_theta = 2 int_0^{t_g} eps(t) |gamma(t)|^2 dt,
 #
-# The lambda^2 are the VARIANCES of the two spin operators over the input state (the source's own gloss; for the usual
-# |0...0> input <S_alpha> = 0 so lambda^2_{S_alpha} = <S_alpha^2>, which is why the plan's sentence prints it that way).
-# Verified against exact two- and three-ion propagation of the plan's own force model: the ratio of the exact spin
-# infidelity to this form extrapolates to 1.0000 as eps -> 0 with a linear-in-eps remainder
-# (``tests/test_m7_hughes.py``, ``anchor.m7.hughes_two_term``).
+# the lambda^2 being the VARIANCES of the two spin operators over the input state (for |0...0>, <S_alpha> = 0).
 
 
 def hughes_spin_moments(n_ions: int) -> tuple[float, float]:
@@ -114,7 +98,7 @@ def hughes_alpha_t_quadrature(
     t_g_s: float,
     n: int = 20001,
 ) -> float:
-    """|int_0^{t_g} eps(t) gamma(t) dt| by Simpson quadrature, for a time-dependent eps(t) (the general Eq. 33 input)."""
+    """|int_0^{t_g} eps(t) gamma(t) dt| by the trapezoid rule, for a time-dependent eps(t) (the general Eq. 33 input)."""
     t = np.linspace(0.0, t_g_s, int(n))
     vals = np.array([epsilon_of_t(float(x)) * gamma_of_t(float(x)) for x in t], dtype=complex)
     return float(abs(np.trapezoid(vals, t)))
@@ -126,13 +110,13 @@ def hughes_gate_angle_error_quadrature(
     t_g_s: float,
     n: int = 20001,
 ) -> float:
-    """delta_theta = 2 int_0^{t_g} eps(t)|gamma(t)|^2 dt by Simpson quadrature (the general Eq. 33 input)."""
+    """delta_theta = 2 int_0^{t_g} eps(t)|gamma(t)|^2 dt by the trapezoid rule (the general Eq. 33 input)."""
     t = np.linspace(0.0, t_g_s, int(n))
     vals = np.array([epsilon_of_t(float(x)) * abs(gamma_of_t(float(x))) ** 2 for x in t], dtype=float)
     return float(2.0 * np.trapezoid(vals, t))
 
 
-# ---- intensity noise with its factor N (Section 6.4, Section 9.16 row 4.4-8) ------------------------------------------
+# ---- intensity noise with its factor N (Section 6.4)
 
 
 def intensity_noise_error_n_ions(
@@ -140,9 +124,9 @@ def intensity_noise_error_n_ions(
 ) -> float:
     """A(2 nbar + 1) + B with A = N Gamma_I t_g eta^2/2 and B = A x 3(N - 1)/(4K): the plan's eps_I times N.
 
-    Derivation (``anchor.m7.intensity_noise_n_ions``). With c_op = sqrt(2k) H_int on the K-loop force model and
-    Gamma_I = k Omega^2 the carrier-contrast rate, block s of the sigma_alpha basis closes with a residual displacement
-    s x delta_alpha, <|delta_alpha|^2> = f^2 (2 Gamma_I/Omega^2) t_g with f = eta Omega/2; the pair (s, s') decoheres by
+    Derivation: with c_op = sqrt(2k) H_int on the K-loop force model and Gamma_I = k Omega^2 the carrier-contrast rate,
+    block s of the sigma_alpha basis closes with a residual displacement s x delta_alpha, <|delta_alpha|^2> =
+    f^2 (2 Gamma_I/Omega^2) t_g with f = eta Omega/2; the pair (s, s') decoheres by
     exp(-|s - s'|^2 <|delta_alpha|^2>(2 nbar + 1)/2), so
 
         1 - F = (1/2) <(s - s')^2> (2 nbar + 1) f^2 D t_g = Var(sum_i s_i) (2 nbar + 1) (eta^2/2) Gamma_I t_g,
@@ -170,8 +154,7 @@ def intensity_noise_intercept_n_ions(
     """B(N, K) = N Gamma_I t_g eta^2 3(N - 1)/(8K), i.e. A(N) x 3(N - 1)/(4K).
 
     Only a GLOBAL (correlated) intensity-noise operator reproduces this ratio: N independent per-beam operators give
-    A(N) unchanged but halve the ratio to 3(N - 1)/(8K) (``anchor.m7.intensity_noise_n_ions``), so the plan's B term is
-    itself evidence that its eps_I describes one laser shared by the register.
+    A(N) unchanged but halve the ratio to 3(N - 1)/(8K), so the plan's B term describes one laser shared by the register.
     """
     return (
         intensity_noise_amplitude_n_ions(gamma_i_per_s, t_g_s, eta, n_ions)
@@ -181,7 +164,7 @@ def intensity_noise_intercept_n_ions(
     )
 
 
-# ---- laser phase noise (Section 6.3) ----------------------------------------------------------------------------------
+# ---- laser phase noise (Section 6.3)
 
 
 def baldwin_phase_noise_infidelity(
@@ -193,7 +176,7 @@ def baldwin_phase_noise_infidelity(
     coupling_ratio: float = 1.0,
     n: int = 4001,
 ) -> float:
-    """eps = [int S_phi(omega) F(omega) d omega] x (4 g^2/Delta^2)^2, Section 6.3's Baldwin form **[extracted]**.
+    """eps = [int S_phi(omega) F(omega) d omega] x (4 g^2/Delta^2)^2, Section 6.3's Baldwin form.
 
     ``coupling_ratio`` is 4 g^2/Delta^2 (the two-photon Rabi frequency over the single-photon detuning, the factor by
     which a Raman pair converts optical phase noise into beat-note phase noise); the plan prints the scaling as its
@@ -210,27 +193,26 @@ def baldwin_phase_noise_infidelity(
 def kirchmair_carrier_excitation_error() -> float:
     """2 x 10^-3 per gate from incoherent carrier excitation (Kirchmair 2009, attributed there to Benhelm 2008).
 
-    A published laboratory anchor, not a closed form: Section 9's preamble makes it a consistency anchor that the suite
-    reports rather than fails on (Section 6.3's "checked against the Kirchmair anchor" **[corrected minor]**).
+    A published laboratory anchor, not a closed form: a consistency anchor reported rather than failed on.
     """
     return 2.0e-3
 
 
 def kirchmair_rabi_drift_fraction() -> float:
-    """delta Omega/Omega = 1.4 x 10^-2, Kirchmair 2009's slow Rabi-frequency variation (Section 6.4) **[verified]**."""
+    """delta Omega/Omega = 1.4 x 10^-2, Kirchmair 2009's slow Rabi-frequency variation (Section 6.4)."""
     return 1.4e-2
 
 
 def harty_rabi_drift_fraction() -> float:
-    """delta Omega/Omega <= 5 x 10^-4, Harty 2014's amplitude stability (Sections 6.4 and 7.10) **[verified]**."""
+    """delta Omega/Omega <= 5 x 10^-4, Harty 2014's amplitude stability (Sections 6.4 and 7.10)."""
     return 5.0e-4
 
 
-# ---- the D-level scattering branch (Section 6.5, Section 9.7 row "Scattering") ----------------------------------------
+# ---- the D-level scattering branch (Section 6.5)
 
 
 def epsilon_d_from_p_total(branching_fraction: float, p_total: float) -> float:
-    """eps_D = f P_total, the D-level leakage error per pi pulse (Ozeri 2007; Section 9.7 row "Scattering").
+    """eps_D = f P_total, the D-level leakage error per pi pulse (Ozeri 2007).
 
     ``f`` is the excited manifold's branching fraction into the D levels. Section 4.5.5 records that Ozeri's own
     P_Rayleigh silently includes this channel for Ca+, Sr+, Ba+ and Yb+, "overstating the elastic rate by f P_total",
@@ -244,12 +226,12 @@ def epsilon_d_from_p_total(branching_fraction: float, p_total: float) -> float:
 
 
 def egan_xy_n_t2_s() -> tuple[float, float]:
-    """T_2 = 2.84(16) s under microwave (XY)^N decoupling, Egan 2021 (Sections 6.3 and 6.9) **[verified]**."""
+    """T_2 = 2.84(16) s under microwave (XY)^N decoupling, Egan 2021 (Sections 6.3 and 6.9)."""
     return 2.84, 0.16
 
 
 def harty_t2_star_s() -> tuple[float, float]:
-    """T_2* = 50(10) s for an unshielded 43Ca+ clock qubit, Harty 2014 (Sections 6.3 and 6.9) **[verified]**."""
+    """T_2* = 50(10) s for an unshielded 43Ca+ clock qubit, Harty 2014 (Sections 6.3 and 6.9)."""
     return 50.0, 10.0
 
 
