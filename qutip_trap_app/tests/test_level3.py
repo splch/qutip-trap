@@ -1,17 +1,20 @@
-"""Level 3 on demand (Section 14.2 row 3; M11.3): the Hamiltonian record lists what the engine integrates, with matrix elements
-that equal QuTiP's displacement operator; the Fock movie's frames equal the recorded boundary states and the fine zoom by
-causality; the process matrix of the finished pulse is a channel consistent with the run; the recorded coarse trace opens a
-step before any re-simulation; the closure prediction is scored against the record."""
+"""Levels 3 and 4 over the record: the recorded coarse trace opens a step before any re-simulation and the closure
+prediction is scored against it; the Hamiltonian record lists what the engine integrates, with matrix elements that equal
+QuTiP's displacement operator; the Fock heatmaps are the fine zoom's own populations, starting at the recorded boundary
+state; the process matrix of the finished pulse is a channel consistent with the run; the calibration table's readout
+entries reach the readout page and the current device's card."""
 
 from __future__ import annotations
+
+import dataclasses
 
 import numpy as np
 import pytest
 
-from qutip_trap_app import resim
-from qutip_trap_app.codec import from_document, to_document
+from qutip_trap_app import device_layer, resim
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel.dynamics import (
+    FOCK_FRAMES,
     closure_table,
     fock_heatmaps,
     process_view,
@@ -19,7 +22,7 @@ from qutip_trap_app.viewmodel.dynamics import (
     recorded_zoom,
 )
 from qutip_trap_app.viewmodel.learn import score_closure
-from qutip_trap_app.viewmodel.physics import hamiltonian_view
+from qutip_trap_app.viewmodel.physics import detection_key, hamiltonian_view, layer_card_view, readout_view
 
 
 def _ms_step(record: Record) -> int:
@@ -100,39 +103,37 @@ def test_hamiltonian_record_lists_what_the_engine_integrates(bell: tuple[Record,
     assert ham2 is ham and again is record, "cached by key"
     view = hamiltonian_view(record, ham)
     assert len(view.terms) == 2 and view.terms[0].matrix_elements and view.header
-    doc, arrays = to_document(record)
-    back = from_document(Record, doc, arrays)
-    assert back.digest() == record.digest(), "the record round-trips with the Hamiltonian record inside"
 
 
-def test_fock_movie_frames_are_read_off_the_zooms_stored_marginals(bell: tuple[Record, LiveRun]) -> None:
-    """Since 0.4.0 the zoom's fine trace stores the Fock populations at every point (``Traces.mode_marginal``), so the movie
-    is rows of it: one engine call for the zoom when it is not cached yet, none after, and no truncated re-simulation."""
+def test_fock_heatmaps_are_the_zooms_stored_populations(bell: tuple[Record, LiveRun]) -> None:
+    """The fine zoom stores the Fock populations at every point (``Traces.mode_marginal``): the heatmap's frames are rows of
+    them, from the recorded boundary state at the step's start to the pulse's end, with <n> the trace's own; the recorded
+    coarse trace stores none and draws no heatmap."""
     record, live = bell
     step = _ms_step(record)
-    record, movie = resim.fock_movie(record, live, step, n_frames=2)
-    assert movie.times_s.size == 3 and movie.engine_calls <= 1 and "mode_marginal" in movie.method
-    record, z, stats = resim.zoom(record, live, step)
-    assert stats.cached, "the movie computed the zoom"
-    assert z.trace.mode_marginal is not None and set(z.trace.mode_marginal) == set(movie.distributions)
+    assert fock_heatmaps(recorded_zoom(record, step)) == ()
+    record, z, _stats = resim.zoom(record, live, step)
+    assert z.trace.mode_marginal is not None
+    heat = fock_heatmaps(z)
+    assert {h.mode for h in heat} == set(z.trace.mode_marginal) and len(heat) == 2
     resolved = [t.mode for t in record.space.resolved]
-    for m, dist in movie.distributions.items():
-        assert dist.shape == (3, record.space.dims[2 + resolved.index(m)])
-        assert np.allclose(dist.sum(axis=1), 1.0, atol=1e-6)
-        assert np.max(np.abs(dist[0] - z.fock_start[m])) < 1e-12, "frame 0 is the recorded boundary state"
-        assert np.max(np.abs(dist[-1] - z.fock_end[m])) < 1e-9, "the last frame is the pulse's end"
-        k = int(np.argmin(np.abs(z.trace.times_s - movie.times_s[1])))
-        assert abs(movie.nbar[m][1] - z.trace.mode_nbar[m][k]) < 1e-12, (
-            "the mid frame's <n> IS the fine trace's"
+    for h in heat:
+        marginal = z.trace.mode_marginal[h.mode]
+        assert h.values.shape == (FOCK_FRAMES + 1, record.space.dims[2 + resolved.index(h.mode)])
+        assert np.allclose(h.values.sum(axis=1), 1.0, atol=1e-6)
+        assert np.max(np.abs(h.values[0] - z.fock_start[h.mode])) < 1e-12, (
+            "frame 0 is the recorded boundary state"
         )
-        assert np.max(np.abs(dist[1] - z.trace.mode_marginal[m][k])) < 1e-15
-        assert abs(float(dist[1] @ np.arange(dist.shape[1])) - movie.nbar[m][1]) < 1e-8, (
+        assert np.max(np.abs(h.values[-1] - z.fock_end[h.mode])) < 1e-9, "the last frame is the pulse's end"
+        assert h.times_s[0] == z.trace.times_s[0] and h.times_s[-1] == z.trace.times_s[-1]
+        k = int(np.argmin(np.abs(z.trace.times_s - h.times_s[4])))
+        assert np.max(np.abs(h.values[4] - marginal[k])) < 1e-15
+        assert abs(float(h.nbar[4].value or 0.0) - z.trace.mode_nbar[h.mode][k]) < 1e-12, (
+            "the frame's <n> IS the trace's"
+        )
+        assert abs(float(h.values[4] @ np.arange(h.values.shape[1])) - z.trace.mode_nbar[h.mode][k]) < 1e-8, (
             "the marginal's mean is <n>"
         )
-    heat = fock_heatmaps(movie)
-    assert len(heat) == 2 and all(h.values.shape[0] == 3 for h in heat)
-    record2, cached = resim.fock_movie(record, live, step, n_frames=2)
-    assert cached is movie and record2 is record
 
 
 def test_process_matrix_of_the_finished_pulse(bell: tuple[Record, LiveRun]) -> None:
@@ -154,3 +155,25 @@ def test_process_matrix_of_the_finished_pulse(bell: tuple[Record, LiveRun]) -> N
     pv = process_view(pm)
     assert pv.pauli[0].detail == "II" and float(pv.pauli[0].value) > 0.99  # type: ignore[arg-type]
     assert record.process_matrix(pm.key) is pm
+
+
+def test_the_tables_readout_entries_reach_the_readout_page_and_the_device_card(
+    bell: tuple[Record, LiveRun],
+) -> None:
+    """The table keys its detection entries as the core's flat keys (``detection['eps_B']``): the readout page shows the
+    table's threshold, window and both errors, and the current device's card the table's errors beside its estimates,
+    each stale once the table belongs to another device."""
+    record, live = bell
+    layer = device_layer.derive_device_layer(
+        record.job.device.build(), preset_name="yb171_chain", table=live.table, sweeps=False
+    )
+    eps_b = record.table.entries[detection_key("eps_B")].value
+    rows = readout_view(layer, record.table).table
+    assert [r.label for r in rows] == ["table threshold", "table window", "table eps_B", "table eps_D"]
+    assert rows[2].value.value == eps_b and {r.status for r in rows} == {"calibrated"}
+    card_rows = [r for r in layer_card_view(layer, record.table).spam if r.label.startswith("table")]
+    assert [r.label for r in card_rows] == ["table eps_B", "table eps_D"] and card_rows[
+        0
+    ].value.value == eps_b
+    other = dataclasses.replace(record.table, device_hash="another device")
+    assert {r.status for r in readout_view(layer, other).table} == {"stale"}

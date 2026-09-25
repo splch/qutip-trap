@@ -1,14 +1,9 @@
-"""Level 4, the physics pages: view-models over the device layer (PLAN.md Section 14.2 row 4, Section 14.4; M11.3).
-
-Every number a page shows is a :class:`Shown` with its catalogue id, so the provenance coverage test of Section 9.11 covers
-these pages as it covers the levels above. The views are thin: the physics was computed in the worker into
-:class:`~qutip_trap_app.device_layer.DeviceLayer`; here it is arranged for reading, plain label first, with the status a
-learner must discriminate (device parameter, derived, estimate, calibrated, stale).
-"""
+"""Level 4, the physics pages: view-models over the device layer (PLAN.md Section 14.4). The physics was computed in the
+worker into :class:`~qutip_trap_app.device_layer.DeviceLayer`; here it is arranged for reading, plain label first, with the
+status a learner must discriminate."""
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,18 +11,9 @@ import numpy as np
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.knobs import Knob, knob
 from qutip_trap_app.record import HamiltonianRecord, Record, TableRecord
-from qutip_trap_app.viewmodel.catalogue import Shown
-
-TWO_PI = 2.0 * math.pi
-
-
-@dataclass(frozen=True)
-class Row:
-    label: str
-    value: Shown
-    status: str = ""
-    """``device parameter`` (typed into the model), ``derived`` (closed form or small eigenproblem), ``estimate`` (closed-form
-    error scale), ``calibrated`` (from the table), ``stale`` (calibrated for another device)."""
+from qutip_trap_app.viewmodel.catalogue import Row, Shown, vector_text
+from qutip_trap_app.viewmodel.circuit import pair_waveform
+from qutip_trap_app.viewmodel.machine import axis_rows, card_modes, card_rows, estimate_rows, spam_rows
 
 
 @dataclass(frozen=True)
@@ -35,6 +21,11 @@ class KnobRow:
     knob: Knob
     value: float
     is_override: bool
+
+
+def _rows_if(label: str, quantity: str, value: float | None, status: str, detail: str = "") -> list[Row]:
+    """The row of a value the layer may not have: none when it is absent."""
+    return [] if value is None else [Row(label, Shown(quantity, value, detail), status)]
 
 
 def knob_rows(layer: DeviceLayer, page: str) -> tuple[KnobRow, ...]:
@@ -60,7 +51,6 @@ def stale_status(layer: DeviceLayer) -> str:
 
 @dataclass(frozen=True)
 class SpeciesView:
-    name: str
     identity: tuple[Row, ...]
     levels: tuple[tuple[str, tuple[Shown, ...]], ...]
     """Per level: (name, (energy, lifetime, linewidth, A, B, g_J))."""
@@ -74,8 +64,8 @@ class SpeciesView:
     sweep_b_gauss: np.ndarray
     sweep_energies_hz: np.ndarray
     sweep_labels: tuple[str, ...]
-    sweep_level: str
-    notes: tuple[str, ...]
+    qubit_level: str
+    """The fine-structure level holding the qubit pair."""
 
 
 def species_view(layer: DeviceLayer) -> SpeciesView:
@@ -149,7 +139,6 @@ def species_view(layer: DeviceLayer) -> SpeciesView:
         for s in sp.sublevels
     )
     return SpeciesView(
-        name=sp.name,
         identity=identity,
         levels=levels,
         transitions=transitions,
@@ -160,8 +149,7 @@ def species_view(layer: DeviceLayer) -> SpeciesView:
         sweep_b_gauss=sp.sweep.b_gauss,
         sweep_energies_hz=sp.sweep.energies_hz,
         sweep_labels=sp.sweep.labels,
-        sweep_level=sp.sweep.level,
-        notes=sp.notes,
+        qubit_level=sp.qubit[0].split(" ")[0],
     )
 
 
@@ -187,14 +175,9 @@ class TrapView:
 
 def trap_view(layer: DeviceLayer) -> TrapView:
     tr = layer.trap
-    secular: list[Row] = []
-    if tr.omega_hz is not None:
-        for ax, w in zip(("x", "y", "z"), tr.omega_hz):
-            secular.append(
-                Row(
-                    f"secular frequency {ax}", Shown("secular_frequency", w, f"axis {ax}"), "device parameter"
-                )
-            )
+    secular = axis_rows(
+        "secular frequency", "secular_frequency", tr.omega_hz, "device parameter", "axis {ax}"
+    )
     secular.append(Row("radial axis rotation", Shown("axis_angle", tr.axis_angle_rad), "device parameter"))
     rf: list[Row] = []
     if tr.rf_frequency_hz is not None:
@@ -208,7 +191,7 @@ def trap_view(layer: DeviceLayer) -> TrapView:
         and tr.secular_from_mathieu_hz is not None
         and tr.c0 is not None
     ):
-        for k, ax in enumerate(("x", "y", "z")):
+        for k, ax in enumerate("xyz"):
             mathieu.append(
                 (
                     ax,
@@ -223,50 +206,27 @@ def trap_view(layer: DeviceLayer) -> TrapView:
                     Shown("micromotion_c0", tr.c0[k], f"C0 along {ax}"),
                 )
             )
-    fields: list[Row] = []
-    for k, ax in enumerate(("x", "y", "z")):
-        fields.append(
-            Row(
-                f"stray field {ax}",
-                Shown("stray_field", tr.stray_field_v_per_m[k], f"E_dc,{ax}"),
-                "device parameter",
-            )
+    fields = (
+        axis_rows("stray field", "stray_field", tr.stray_field_v_per_m, "device parameter", "E_dc,{ax}")
+        + axis_rows("ion displacement", "ion_displacement", tr.displacement_m, "derived", "u_0 along {ax}")
+        + axis_rows(
+            "excess micromotion",
+            "micromotion_amplitude",
+            tr.micromotion_amplitude_m,
+            "derived",
+            "u_1 along {ax}",
         )
-    if tr.displacement_m is not None:
-        for k, ax in enumerate(("x", "y", "z")):
-            fields.append(
-                Row(
-                    f"ion displacement {ax}",
-                    Shown("ion_displacement", tr.displacement_m[k], f"u_0 along {ax}"),
-                    "derived",
-                )
-            )
-    if tr.micromotion_amplitude_m is not None:
-        for k, ax in enumerate(("x", "y", "z")):
-            fields.append(
-                Row(
-                    f"excess micromotion {ax}",
-                    Shown("micromotion_amplitude", tr.micromotion_amplitude_m[k], f"u_1 along {ax}"),
-                    "derived",
-                )
-            )
-    if tr.residual_field_v_per_m is not None:
-        for k, ax in enumerate(("x", "y", "z")):
-            fields.append(
-                Row(
-                    f"residual field {ax}",
-                    Shown("stray_field", tr.residual_field_v_per_m[k], "stray plus shims at the null"),
-                    "derived",
-                )
-            )
-    if tr.ion_height_m is not None:
-        fields.append(Row("ion height", Shown("ion_height", tr.ion_height_m), "derived"))
-    if tr.trap_depth_ev is not None:
-        fields.append(Row("trap depth", Shown("trap_depth", tr.trap_depth_ev), "derived"))
-    points: list[tuple[str, float, float]] = []
-    if tr.a is not None and tr.q is not None:
-        for k, ax in enumerate(("x", "y", "z")):
-            points.append((ax, abs(tr.q[k]), tr.a[k]))
+        + axis_rows(
+            "residual field",
+            "stray_field",
+            tr.residual_field_v_per_m,
+            "derived",
+            "stray plus shims at the null",
+        )
+    )
+    points = (
+        [] if tr.a is None or tr.q is None else [(ax, abs(tr.q[k]), tr.a[k]) for k, ax in enumerate("xyz")]
+    )
     st = tr.stability
     return TrapView(
         path=tr.path,
@@ -304,12 +264,9 @@ class ModeRow:
 
 @dataclass(frozen=True)
 class CrystalView:
-    n_ions: int
     species: tuple[str, ...]
     positions_m: np.ndarray
-    positions: tuple[Shown, ...]
     modes: tuple[ModeRow, ...]
-    eta: np.ndarray | None
     eta_rows: tuple[tuple[str, tuple[Shown, ...]], ...]
     """Per ion: (label, eta per mode) for the entangling pair's Delta k."""
     delta_k: Shown | None
@@ -352,29 +309,19 @@ def crystal_view(layer: DeviceLayer) -> CrystalView:
                     ),
                 )
             )
-    geometry: list[Row] = []
-    if cr.length_scale_m is not None:
-        geometry.append(Row("Coulomb length scale", Shown("length_scale", cr.length_scale_m), "derived"))
-    if cr.spacing_m is not None:
-        geometry.append(Row("nearest-neighbour spacing", Shown("ion_spacing", cr.spacing_m), "derived"))
-    zig: list[Row] = []
-    if cr.zigzag_ratio is not None:
-        zig.append(Row("radial over axial stiffness", Shown("zigzag_ratio", cr.zigzag_ratio), "derived"))
-    if cr.zigzag_critical is not None:
-        zig.append(Row("buckling threshold", Shown("zigzag_critical", cr.zigzag_critical), "derived"))
+    geometry = _rows_if("Coulomb length scale", "length_scale", cr.length_scale_m, "derived") + _rows_if(
+        "nearest-neighbour spacing", "ion_spacing", cr.spacing_m, "derived"
+    )
+    zig = _rows_if("radial over axial stiffness", "zigzag_ratio", cr.zigzag_ratio, "derived") + _rows_if(
+        "buckling threshold", "zigzag_critical", cr.zigzag_critical, "derived"
+    )
     dk = None
     if cr.delta_k_rad_per_m is not None:
         dk = Shown("delta_k", float(np.linalg.norm(cr.delta_k_rad_per_m)), f"beams {cr.entangling_beams}")
     return CrystalView(
-        n_ions=cr.n_ions,
         species=cr.species,
         positions_m=cr.positions_m,
-        positions=tuple(
-            Shown("ion_position", float(cr.positions_m[i, 2]), f"ion {i}, along the axis")
-            for i in range(cr.n_ions)
-        ),
         modes=modes,
-        eta=cr.eta,
         eta_rows=tuple(eta_rows),
         delta_k=dk,
         c0_applied=cr.c0_applied,
@@ -395,10 +342,8 @@ class BeamRow:
     power: Shown
     waist: Shown
     direction: Shown
-    polarization: Shown
     angle_to_field: Shown
     intensity_at_ions: tuple[Shown, ...]
-    saturation_at_ions: tuple[Shown, ...]
     k_hat: tuple[float, float, float]
     pointing_m: tuple[float, float, float]
 
@@ -407,20 +352,13 @@ class BeamRow:
 class DriveRow:
     ion: int
     role: str
-    kind: str
     beams: tuple[int, ...]
     rabi: Shown
     pi_time: Shown
     stark: Shown
-    delta_k: Shown
-    etas: tuple[Shown, ...]
     residual_excited: Shown
-    raman_rate: Shown
-    rayleigh_rate: Shown
-    leakage_rate: Shown
     dephasing: Shown
     error_per_pi: Shown
-    provenance: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -429,17 +367,12 @@ class LightView:
     drives: tuple[DriveRow, ...]
     crosstalk: tuple[Shown, ...]
     curve_wavelength_m: np.ndarray | None
-    curve_detuning_hz: np.ndarray | None
     curve_error: np.ndarray | None
     curve_rabi_hz: np.ndarray | None
     curve_p12_m: float | None
     curve_p32_m: float | None
     current_wavelength_m: float | None
     notes: tuple[str, ...]
-
-
-def _vec(v: tuple[float, float, float]) -> str:
-    return f"({v[0]:+.3f}, {v[1]:+.3f}, {v[2]:+.3f})"
 
 
 def light_view(layer: DeviceLayer) -> LightView:
@@ -451,22 +384,11 @@ def light_view(layer: DeviceLayer) -> LightView:
             wavelength=Shown("wavelength", b.wavelength_m, f"beam {b.index}"),
             power=Shown("beam_power", b.power_w, f"beam {b.index}"),
             waist=Shown("beam_waist", b.waist_m, f"beam {b.index}"),
-            direction=Shown("beam_direction", _vec(b.k_hat), f"beam {b.index}"),
-            polarization=Shown(
-                "polarization",
-                "(" + ", ".join(f"{z.real:+.2f}{z.imag:+.2f}i" for z in b.polarization) + ")",
-                "laboratory-frame Jones vector",
-            ),
+            direction=Shown("beam_direction", vector_text(b.k_hat), f"beam {b.index}"),
             angle_to_field=Shown("beam_angle_to_field", b.angle_to_field_deg, f"beam {b.index}"),
             intensity_at_ions=tuple(
                 Shown("intensity", float(x), f"beam {b.index} at ion {i}")
                 for i, x in enumerate(b.intensity_at_ions_w_m2)
-            ),
-            saturation_at_ions=()
-            if b.saturation_at_ions is None
-            else tuple(
-                Shown("saturation_parameter", float(x), f"beam {b.index} at ion {i}")
-                for i, x in enumerate(b.saturation_at_ions)
             ),
             k_hat=b.k_hat,
             pointing_m=b.pointing_m,
@@ -477,34 +399,15 @@ def light_view(layer: DeviceLayer) -> LightView:
         DriveRow(
             ion=d.ion,
             role=d.role,
-            kind=d.kind,
             beams=d.beams,
             rabi=Shown("rabi_frequency", d.rabi_hz, f"{d.role}, ion {d.ion}"),
             pi_time=Shown("pi_time", d.pi_time_s),
             stark=Shown("stark_shift", d.stark_hz, "differential light shift of the qubit"),
-            delta_k=Shown("delta_k", float(np.linalg.norm(d.delta_k_rad_per_m))),
-            etas=tuple(
-                Shown("lamb_dicke", e, f"eta_{d.ion},{m}") for m, e in sorted(d.etas.items()) if e != 0.0
-            ),
             residual_excited=Shown("residual_excited", d.residual_excited_population),
-            raman_rate=Shown(
-                "scattering_rate",
-                sum(d.raman_per_s.values()),
-                "Raman spin flips within the qubit pair, summed over the two states",
-            ),
-            rayleigh_rate=Shown(
-                "scattering_rate",
-                sum(d.rayleigh_per_s.values()),
-                "Rayleigh (elastic), summed over the two states",
-            ),
-            leakage_rate=Shown(
-                "scattering_rate", sum(d.leakage_per_s.values()), "Raman leakage out of the qubit pair"
-            ),
             dephasing=Shown("rayleigh_dephasing", d.rayleigh_dephasing_per_s),
             error_per_pi=Shown(
                 "scattering_error", d.error_per_pi_pulse, "per pi pulse at this Rabi frequency"
             ),
-            provenance=d.provenance,
         )
         for d in li.drives
     )
@@ -521,7 +424,6 @@ def light_view(layer: DeviceLayer) -> LightView:
         drives=drives,
         crosstalk=xt,
         curve_wavelength_m=None if sc is None else sc.wavelength_m,
-        curve_detuning_hz=None if sc is None else sc.detuning_from_p12_hz,
         curve_error=None if sc is None else sc.error_per_pi_pulse,
         curve_rabi_hz=None if sc is None else sc.rabi_hz,
         curve_p12_m=None if sc is None else sc.p12_wavelength_m,
@@ -547,7 +449,6 @@ class SpectrumView:
 
 @dataclass(frozen=True)
 class NoiseView:
-    quiet: bool
     spectra: tuple[SpectrumView, ...]
     correlation: Row | None
     heating: tuple[Shown, ...]
@@ -607,7 +508,6 @@ def noise_view(layer: DeviceLayer) -> NoiseView:
         coll.append(Shown("pressure", nz.collisions[0]))
         coll.append(Shown("collision_rate", nz.collisions[1], "Langevin rate per ion"))
     return NoiseView(
-        quiet=nz.quiet,
         spectra=tuple(spectra),
         correlation=corr,
         heating=tuple(
@@ -642,7 +542,6 @@ class DopplerRow:
     rate: Shown
     nbar: Shown
     participation: Shown
-    force_model: Shown | None
 
 
 @dataclass(frozen=True)
@@ -652,7 +551,6 @@ class SidebandView:
     eta: Shown
     omega0: Shown
     orders: tuple[int, ...]
-    durations: tuple[Shown, ...]
     durations_s: tuple[float, ...]
     times_s: np.ndarray
     nbar_after_pulse: np.ndarray
@@ -668,7 +566,6 @@ class PumpView:
     photons: Shown
     time_to_reach: Shown | None
     heating: tuple[Shown, ...]
-    populations_end: tuple[Shown, ...]
     trace_times_s: np.ndarray
     trace_populations: dict[str, np.ndarray]
 
@@ -687,7 +584,6 @@ class CoolingView:
     duration: Shown
     provenance: tuple[str, ...]
     notes: tuple[str, ...]
-    error: str | None
 
 
 def cooling_view(layer: DeviceLayer) -> CoolingView | None:
@@ -706,22 +602,12 @@ def cooling_view(layer: DeviceLayer) -> CoolingView | None:
             "device parameter",
         ),
     ]
-    if co.repump_time_s is not None:
-        recipe.append(
-            Row(
-                "repump time per sideband pulse",
-                Shown("stage_duration", co.repump_time_s, "repump"),
-                "device parameter",
-            )
-        )
-    if co.repump_photons is not None:
-        recipe.append(
-            Row(
-                "repump photons per pulse",
-                Shown("pump_photons", co.repump_photons, "repump"),
-                "device parameter",
-            )
-        )
+    recipe += _rows_if(
+        "repump time per sideband pulse", "stage_duration", co.repump_time_s, "device parameter", "repump"
+    )
+    recipe += _rows_if(
+        "repump photons per pulse", "pump_photons", co.repump_photons, "device parameter", "repump"
+    )
     stages = tuple(
         (
             st.kind,
@@ -743,9 +629,6 @@ def cooling_view(layer: DeviceLayer) -> CoolingView | None:
             rate=Shown("cooling_rate", d.rate_per_s, f"mode {d.mode}"),
             nbar=Shown("doppler_limit", d.nbar, f"mode {d.mode}"),
             participation=Shown("participation", d.participation, f"mode {d.mode}"),
-            force_model=None
-            if d.force_model_nbar is None
-            else Shown("doppler_limit", d.force_model_nbar, "RMP force model, the nu << Gamma cross-check"),
         )
         for d in co.doppler
     )
@@ -756,9 +639,6 @@ def cooling_view(layer: DeviceLayer) -> CoolingView | None:
             eta=Shown("lamb_dicke", sb.eta, f"eta of the cooled ion {sb.ion} on mode {sb.mode}"),
             omega0=Shown("rabi_frequency", sb.omega0_hz, "carrier Rabi frequency of the cooling pair"),
             orders=sb.orders,
-            durations=tuple(
-                Shown("cooling_pulse_duration", t, f"order {k}") for k, t in zip(sb.orders, sb.durations_s)
-            ),
             durations_s=sb.durations_s,
             times_s=sb.times_s,
             nbar_after_pulse=sb.nbar_after_pulse,
@@ -783,9 +663,6 @@ def cooling_view(layer: DeviceLayer) -> CoolingView | None:
             heating=tuple(
                 Shown("recoil_heating", v, f"mode {m}") for m, v in sorted(p.motional_heating_quanta.items())
             ),
-            populations_end=tuple(
-                Shown("pump_population", v, k) for k, v in sorted(p.populations_end.items())
-            ),
             trace_times_s=p.trace_times_s,
             trace_populations=p.trace_populations,
         )
@@ -806,7 +683,6 @@ def cooling_view(layer: DeviceLayer) -> CoolingView | None:
         duration=Shown("stage_duration", co.duration_s, "the whole preparation"),
         provenance=co.provenance,
         notes=co.notes,
-        error=layer.cooling_error,
     )
 
 
@@ -835,7 +711,6 @@ class ReadoutIonView:
     saturation_r_b: np.ndarray | None
     saturation_ceiling_per_s: float | None
     saturation_now: Shown | None
-    provenance: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -938,23 +813,33 @@ def readout_view(layer: DeviceLayer, table: TableRecord | None) -> ReadoutView:
                 saturation_now=None
                 if i.saturation is None
                 else Shown("saturation_parameter", i.saturation, "the detection beam at this ion"),
-                provenance=i.provenance,
             )
         )
     trows: list[Row] = []
     if table is not None:
-        stale = table.device_hash != layer.device_hash
-        status = "stale" if stale else "calibrated"
         for key, label, qid in (
             ("threshold", "table threshold", "threshold"),
             ("window_s", "table window", "detection_window"),
             ("eps_B", "table eps_B", "spam_eps_b"),
             ("eps_D", "table eps_D", "spam_eps_d"),
         ):
-            e = table.entries.get(f"detection[{key}]") or table.entries.get(key)
+            e = table.entries.get(detection_key(key))
             if e is not None:
-                trows.append(Row(label, Shown(qid, e.value, f"{e.status}, {e.experiment}"), status))
+                trows.append(
+                    Row(
+                        label, Shown(qid, e.value, f"{e.status}, {e.experiment}"), _table_status(table, layer)
+                    )
+                )
     return ReadoutView(detector=tuple(detector), ions=tuple(ions), table=tuple(trows), notes=ro.notes)
+
+
+def detection_key(name: str) -> str:
+    """The flat key of a detection entry in ``TableRecord.entries`` (the core's ``detection['eps_B']`` form)."""
+    return f"detection[{name!r}]"
+
+
+def _table_status(table: TableRecord, layer: DeviceLayer) -> str:
+    return "stale" if table.device_hash != layer.device_hash else "calibrated"
 
 
 # ---- gate solutions ---------------------------------------------------------------------------------------------------------------------
@@ -993,55 +878,33 @@ def gate_rows(layer: DeviceLayer, table: TableRecord | None) -> tuple[GateRow, .
                     "derived",
                 )
             )
-        if g.table_chi_m is not None:
-            summary.append(
-                Row(
-                    "entangling angle the table plays",
-                    Shown(
-                        "entangling_angle",
-                        sum(g.table_chi_m.values()),
-                        "the exact spot check's angle, within its tolerance of pi/4 (Section 7.8)",
-                    ),
-                    "calibrated",
-                )
-            )
-        if g.spot_check_amplitude_ratio is not None:
-            summary.append(
-                Row(
-                    "played over closed-form amplitude",
-                    Shown(
-                        "spot_check_amplitude_ratio",
-                        g.spot_check_amplitude_ratio,
-                        "the exact spot check rescaled every segment by this one factor so that the exact angle hits pi/4",
-                    ),
-                    "calibrated",
-                )
-            )
-        if g.surrogate_error is not None:
-            summary.append(
-                Row(
-                    "what the closed form missed",
-                    Shown(
-                        "surrogate_error",
-                        g.surrogate_error,
-                        "exact angle over the closed-form angle at the played amplitude, minus one: the Debye-Waller and "
-                        "beyond-Lamb-Dicke terms of Section 4.4.3",
-                    ),
-                    "calibrated",
-                )
-            )
-        if g.residual_error is not None:
-            summary.append(
-                Row(
-                    "residual entanglement with the motion",
-                    Shown("residual_error", g.residual_error),
-                    "estimate",
-                )
-            )
-        if g.peak_rabi_hz is not None:
-            summary.append(Row("peak Rabi frequency needed", Shown("peak_rabi", g.peak_rabi_hz), "derived"))
-        if g.power_integral_rad2_s is not None:
-            summary.append(Row("power integral", Shown("power_integral", g.power_integral_rad2_s), "derived"))
+        summary += _rows_if(
+            "entangling angle the table plays",
+            "entangling_angle",
+            None if g.table_chi_m is None else sum(g.table_chi_m.values()),
+            "calibrated",
+            "the exact spot check's angle, within its tolerance of pi/4 (Section 7.8)",
+        )
+        summary += _rows_if(
+            "played over closed-form amplitude",
+            "spot_check_amplitude_ratio",
+            g.spot_check_amplitude_ratio,
+            "calibrated",
+            "the exact spot check rescaled every segment by this one factor so that the exact angle hits pi/4",
+        )
+        summary += _rows_if(
+            "what the closed form missed",
+            "surrogate_error",
+            g.surrogate_error,
+            "calibrated",
+            "exact angle over the closed-form angle at the played amplitude, minus one: the Debye-Waller and "
+            "beyond-Lamb-Dicke terms of Section 4.4.3",
+        )
+        summary += _rows_if(
+            "residual entanglement with the motion", "residual_error", g.residual_error, "estimate"
+        )
+        summary += _rows_if("peak Rabi frequency needed", "peak_rabi", g.peak_rabi_hz, "derived")
+        summary += _rows_if("power integral", "power_integral", g.power_integral_rad2_s, "derived")
         chi = tuple(Shown("chi_m", v, f"mode {m}") for m, v in sorted(g.waveform.chi_m.items()))
         alpha = tuple(
             Shown("closure_alpha", abs(v), f"|alpha_{m}| at closure")
@@ -1056,35 +919,25 @@ def gate_rows(layer: DeviceLayer, table: TableRecord | None) -> tuple[GateRow, .
             for k, (m, w) in enumerate(zip(g.modes, g.omega_hz))
         )
         trows: list[Row] = []
-        if table is not None:
-            wf = table.waveforms.get(f"{g.pair[0]},{g.pair[1]}") or table.waveforms.get(
-                f"{g.pair[1]},{g.pair[0]}"
-            )
-            if wf is not None:
-                status = "stale" if table.device_hash != layer.device_hash else "calibrated"
-                trows.append(
-                    Row(
-                        "table: entangling angle",
-                        Shown("entangling_angle", wf.chi_total_rad, f"phi_s {wf.phi_s.status}"),
-                        status,
-                    )
-                )
-                trows.append(Row("table: duration", Shown("gate_duration", wf.duration_s), status))
-                for m, v in sorted(wf.chi_m.items()):
-                    trows.append(Row(f"table: chi mode {m}", Shown("chi_m", v, f"mode {m}"), status))
-                if g.table_chi_closed_form_m is not None:
-                    for m, v in sorted(g.table_chi_closed_form_m.items()):
-                        trows.append(
-                            Row(
-                                f"table: closed-form chi mode {m} at the played amplitude",
-                                Shown(
-                                    "chi_closed_form",
-                                    v,
-                                    f"mode {m}: 2 Im int conj(alpha_a) d alpha_b of the played pulse",
-                                ),
-                                status,
-                            )
-                        )
+        wf = None if table is None else pair_waveform(table, g.pair)
+        if table is not None and wf is not None:
+            status = _table_status(table, layer)
+            trows += [
+                Row(
+                    "table: entangling angle",
+                    Shown("entangling_angle", wf.chi_total_rad, f"phi_s {wf.phi_s.status}"),
+                    status,
+                ),
+                Row("table: duration", Shown("gate_duration", wf.duration_s), status),
+            ]
+            trows += [
+                Row(f"table: chi mode {m}", Shown("chi_m", v, f"mode {m}"), status)
+                for m, v in sorted(wf.chi_m.items())
+            ]
+            for m, v in sorted((g.table_chi_closed_form_m or {}).items()):
+                detail = f"mode {m}: 2 Im int conj(alpha_a) d alpha_b of the played pulse"
+                label = f"table: closed-form chi mode {m} at the played amplitude"
+                trows.append(Row(label, Shown("chi_closed_form", v, detail), status))
         out.append(
             GateRow(
                 pair=g.pair,
@@ -1107,10 +960,7 @@ class TermView:
     index: int
     pulse: str
     ion: int
-    primary_ion: int
     is_crosstalk: bool
-    kind: str
-    beams: tuple[int, ...]
     omega: Shown
     tones: tuple[tuple[Shown, Shown, Shown], ...]
     """Per tone: (detuning from the carrier, phase at the start, peak envelope)."""
@@ -1131,8 +981,6 @@ class CollapseView:
     rate: Shown
     ion: int | None
     mode: int | None
-    time_dependent: bool
-    nnz: int
     active: bool
     note: str
     operator_text: str
@@ -1142,7 +990,6 @@ class CollapseView:
 class HamiltonianView:
     gate_id: str
     header: tuple[Row, ...]
-    dims: tuple[int, ...]
     free_modes: tuple[tuple[int, str, Shown, Shown], ...]
     """Per mode: (index, class, frequency term, sample offset)."""
     qubit_offsets: tuple[Shown, ...]
@@ -1216,10 +1063,7 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
                 index=k,
                 pulse=d.pulse,
                 ion=d.ion,
-                primary_ion=d.primary_ion,
                 is_crosstalk=d.ion != d.primary_ion,
-                kind=d.kind,
-                beams=d.beams,
                 omega=Shown("h_drive_omega", d.omega_peak_hz, f"peak Omega/2pi seen by ion {d.ion}"),
                 tones=tuple(
                     (
@@ -1267,8 +1111,6 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
             ),
             ion=c.ion,
             mode=c.mode,
-            time_dependent=c.time_dependent,
-            nnz=c.operator_nnz,
             active=c.active_in_run,
             note=c.note,
             operator_text=_CHANNEL_OPERATORS.get(c.channel.split("[")[0], c.channel),
@@ -1292,7 +1134,6 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
     return HamiltonianView(
         gate_id=ham.gate_id,
         header=header,
-        dims=ham.dims,
         free_modes=free,
         qubit_offsets=offsets,
         stark=stark,
@@ -1314,76 +1155,31 @@ class LayerCardView:
     spam: tuple[Row, ...]
     gate_errors: tuple[Row, ...]
     device_hash: Shown
-    stale_note: str
     overrides: tuple[Row, ...]
 
 
 def layer_card_view(layer: DeviceLayer, table: TableRecord | None) -> LayerCardView:
+    """The device card of the current (possibly edited) device: Level 0's rows with closed-form estimates, the table's
+    readout errors beside them, and the knob overrides."""
     card = layer.card
-    rows: list[Row] = []
-    if card.trap_omega_hz is not None:
-        for ax, w in zip(("x", "y", "z"), card.trap_omega_hz):
-            rows.append(Row(f"trap frequency {ax}", Shown("secular_frequency", w), "device parameter"))
-    rows.append(Row("magnetic field", Shown("field", card.field_gauss), "device parameter"))
-    for key, value in sorted(card.derived.values.items()):
-        if key.startswith("qubit_freq_hz"):
-            rows.append(
-                Row(
-                    f"qubit frequency {key[len('qubit_freq_hz') :]}",
-                    Shown("qubit_frequency", value),
-                    "derived",
-                )
-            )
-    for m, rate in sorted(card.heating_quanta_per_s.items()):
-        rows.append(Row(f"heating rate, mode {m}", Shown("heating_rate", rate), "derived"))
-    rows.append(
-        Row("detection window", Shown("detection_window", card.detector.window_s), "device parameter")
-    )
-    modes = tuple(Shown("mode_frequency", m.omega_hz, f"{m.family} {m.family_index}") for m in card.modes)
-    spam: list[Row] = []
-    stale = table is not None and table.device_hash != layer.device_hash
-    for key in sorted(card.spam):
-        eb, ed = card.spam[key]
-        if key.endswith(".state_preparation"):
-            spam.append(
-                Row(f"{key.split('.')[0]} preparation error", Shown("prep_error", eb), "derived (recipe)")
-            )
-        else:
-            spam.append(
-                Row(
-                    f"{key} bright read as dark",
-                    Shown("spam_eps_b", eb),
-                    "estimate (exact count distributions)",
-                )
-            )
-            spam.append(
-                Row(
-                    f"{key} dark read as bright",
-                    Shown("spam_eps_d", ed),
-                    "estimate (exact count distributions)",
-                )
-            )
+    spam = spam_rows(card, "estimate (exact count distributions)")
     if table is not None:
-        status = "stale" if stale else "calibrated"
         for key, qid in (("eps_B", "spam_eps_b"), ("eps_D", "spam_eps_d")):
-            e = table.entries.get(f"detection[{key}]") or table.entries.get(key)
+            e = table.entries.get(detection_key(key))
             if e is not None:
-                spam.append(Row(f"table {key}", Shown(qid, e.value, e.experiment), status))
-    errors = tuple(
-        Row(gate, Shown("gate_error_estimate", v), "estimate")
-        for gate, v in sorted(card.gate_error_estimates.items())
-    )
+                spam.append(
+                    Row(f"table {key}", Shown(qid, e.value, e.experiment), _table_status(table, layer))
+                )
     overrides = tuple(
         Row(knob(kid).label, Shown(_knob_quantity(kid), v, knob(kid).term), "override")
         for kid, v in sorted(layer.overrides.items())
     )
     return LayerCardView(
-        rows=tuple(rows),
-        modes=modes,
+        rows=card_rows(card),
+        modes=card_modes(card),
         spam=tuple(spam),
-        gate_errors=errors,
+        gate_errors=estimate_rows(card),
         device_hash=Shown("device_hash", layer.device_hash),
-        stale_note=stale_status(layer),
         overrides=overrides,
     )
 
@@ -1418,41 +1214,3 @@ def _knob_quantity(knob_id: str) -> str:
     if knob_id.endswith(".wavelength_m"):
         return "wavelength"
     return "noise_sample_value"
-
-
-__all__ = [
-    "BeamRow",
-    "CollapseView",
-    "CoolingView",
-    "CrystalView",
-    "DopplerRow",
-    "DriveRow",
-    "GateRow",
-    "HamiltonianView",
-    "KnobRow",
-    "LayerCardView",
-    "LightView",
-    "ModeRow",
-    "NoiseView",
-    "PumpView",
-    "ReadoutIonView",
-    "ReadoutView",
-    "Row",
-    "SidebandView",
-    "SpeciesView",
-    "SpectrumView",
-    "TermView",
-    "TrapView",
-    "cooling_view",
-    "crystal_view",
-    "gate_rows",
-    "hamiltonian_view",
-    "knob_rows",
-    "layer_card_view",
-    "light_view",
-    "noise_view",
-    "readout_view",
-    "species_view",
-    "stale_status",
-    "trap_view",
-]

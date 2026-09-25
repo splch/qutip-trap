@@ -1,18 +1,14 @@
-"""The design system of the screens (DESIGN.md Section 4 "Layout"): one place for every colour, size and shape.
+"""The design system of the screens (DESIGN.md Section 4): one place for every colour, size and shape.
 
-Two colour schemes, light and dark, each a set of Material 3 roles chosen by hand and checked by computation (every text
-on its background at or above 4.5:1, every outline at or above 3:1, in both modes); a restrained type scale; the shapes
-and spacings of the 8 pt grid; and the palettes the charts draw with (the categorical series validated for colour-vision
-deficiency against each mode's card surface, following the dataviz rules). Views take colours from the theme roles
-(``ft.Colors.PRIMARY`` and its kin), which the client resolves per mode; the few colours that have no Material role, the
-status colours of the badges and the series of the charts, come from :func:`status` and :func:`series`, which read the
-page's brightness at render time.
+Two colour schemes, light and dark, of Material 3 roles (every text on its background at 4.5:1 or more, every outline at
+3:1, in both modes), the type scale, the 8 pt grid, and the chart palettes (validated for colour-vision deficiency). Views
+take colours from the roles, which the client resolves per mode; the badge and chart colours, which have no role, come from
+:func:`status` and :func:`series` at render time.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import flet as ft
 
@@ -123,7 +119,6 @@ LIGHT = Tokens(
         "fail": ("#F9DEDC", "#7F1D18"),
         "not checked": ("#E8E8E4", "#4A4A47"),
         "stale": ("#FBECC8", "#6A4700"),
-        "info": ("#DCE7FB", "#10305E"),
     },
     series=("#2B5FC7", "#EB6834", "#1BAF7A", "#EDA100", "#E87BA4", "#4A3AA7"),
     tones={"red": "#D0342C", "blue": "#2B5FC7", "carrier": "#7A7A75", "far": "#B5B5B0"},
@@ -166,45 +161,41 @@ DARK = Tokens(
         "fail": ("#5C1F1A", "#F6BDB9"),
         "not checked": ("#2D2D30", "#C9C9C4"),
         "stale": ("#4A3A12", "#F5D48A"),
-        "info": ("#23457F", "#D9E5FF"),
     },
     series=("#3987E5", "#D95926", "#199E70", "#C98500", "#D55181", "#9085E9"),
     tones={"red": "#E66767", "blue": "#3987E5", "carrier": "#A0A09A", "far": "#5A5A57"},
 )
 
 
-def is_dark(page: Any | None = None) -> bool:
+def is_dark() -> bool:
     """Whether the client renders the dark scheme: the page's own mode when set, else the platform's brightness."""
-    if page is None:
-        try:
-            page = ft.context.page
-        except Exception:  # outside a render (tests, headless use): the light scheme
-            return False
-    mode = getattr(page, "theme_mode", None)
-    if mode == ft.ThemeMode.DARK:
-        return True
-    if mode == ft.ThemeMode.LIGHT:
+    try:
+        page = ft.context.page
+    except Exception:  # outside a render (tests, headless use): the light scheme
         return False
-    return getattr(page, "platform_brightness", None) == ft.Brightness.DARK
+    if page.theme_mode == ft.ThemeMode.DARK:
+        return True
+    if page.theme_mode == ft.ThemeMode.LIGHT:
+        return False
+    return bool(page.platform_brightness == ft.Brightness.DARK)
 
 
-def tokens(page: Any | None = None) -> Tokens:
-    return DARK if is_dark(page) else LIGHT
+def tokens() -> Tokens:
+    return DARK if is_dark() else LIGHT
 
 
-def series(page: Any | None = None) -> tuple[str, ...]:
+def series() -> tuple[str, ...]:
     """The categorical chart colours of the current mode, in their fixed order."""
-    return tokens(page).series
+    return tokens().series
 
 
-def status(kind: str, page: Any | None = None) -> tuple[str, str]:
-    """(background, foreground) of a badge for a status word: pass, fail, not checked, stale or info."""
-    return tokens(page).status[kind]
+def status(kind: str) -> tuple[str, str]:
+    """(background, foreground) of a badge for a status word: pass, fail, not checked or stale."""
+    return tokens().status[kind]
 
 
-def tone_color(role: str, page: Any | None = None) -> str:
-    t = tokens(page)
-    return t.tones.get(role, t.tones["far"])
+def tone_color(role: str) -> str:
+    return tokens().tones[role]
 
 
 # ---- the Flet theme ---------------------------------------------------------------------------------------------------------------------
@@ -398,33 +389,3 @@ def build_theme(dark: bool) -> ft.Theme:
         slider_theme=ft.SliderTheme(track_height=4),
         dropdown_theme=ft.DropdownTheme(text_style=ft.TextStyle(size=13)),
     )
-
-
-__all__ = [
-    "CARD_PADDING",
-    "CODE_FONT",
-    "CODE_FONT_FALLBACK",
-    "CONTENT_MAX_WIDTH",
-    "DARK",
-    "DRAWER_WIDTH",
-    "GAP",
-    "LIGHT",
-    "PAGE_PADDING",
-    "RADIUS_CARD",
-    "RADIUS_TILE",
-    "RAIL_WIDTH",
-    "SIZE_BODY",
-    "SIZE_CAPTION",
-    "SIZE_CARD_TITLE",
-    "SIZE_MICRO",
-    "SIZE_SMALL",
-    "SIZE_TITLE",
-    "SIZE_VALUE",
-    "Tokens",
-    "build_theme",
-    "is_dark",
-    "series",
-    "status",
-    "tokens",
-    "tone_color",
-]

@@ -1,15 +1,11 @@
-"""The circuit builder's model (PLAN.md Section 14.2 row 0; DESIGN.md Sections 5 and 11, R16): the gates a learner can
-place, the layout of a circuit on its wires, the edits, and the OpenQASM 2 text the store keeps.
+"""The circuit builder's model: the gates a learner can place, the layout of a circuit on its wires, the edits, and the
+OpenQASM 2 text the store keeps.
 
-The store's ``circuit_text`` stays the one source of truth (the presets load it, the prediction prompt is keyed to it, the
-worker parses it), so the builder is a structured editor over that text: every render parses it into the IR, every edit
-re-serialises the edited IR to OpenQASM 2 (the worked example is a fixed point of that round trip, so opening the builder
-never rewrites a circuit), and an import of OpenQASM 2 or IonQ JSON keeps the pasted text verbatim until the next edit.
-Angles are radians in the IR and are written as fractions of pi when they are one (``pi/2``, ``-3*pi/4``) and as Python's
-shortest round-trip float otherwise, so the text a physicist reads under Code is the text the parser reads back.
-
-Pure Python: no Flet import (``views/builder.py`` draws what this module lays out) and the core only through
-``qutip_trap_app.core``.
+The store's ``circuit_text`` is the one source of truth, so the builder is a structured editor over that text: every render
+parses it, every edit re-serialises the edited circuit (the worked example is a fixed point of that round trip), and an
+import keeps the pasted text verbatim until the next edit. Angles are radians, written as fractions of pi when they are one
+(``pi/2``, ``-3*pi/4``) and as Python's shortest round-trip float otherwise, so the text under Code is the text the parser
+reads back.
 """
 
 from __future__ import annotations
@@ -312,8 +308,8 @@ def to_openqasm2(circuit: Circuit) -> str:
     ``recool`` has no OpenQASM form and is refused."""
     n = circuit.n_qubits
     lines = [f"{HEADER}qreg q[{n}];"]
-    # a register nothing writes into has no OpenQASM form (a creg of size 0 is refused by the loader): a program that
-    # measures nothing stays a program that measures nothing, and the machine then reads every ion out (the 0.1.0 rule)
+    # a register nothing writes into has no OpenQASM form (the loader refuses a creg of size 0): a program that measures
+    # nothing stays one, and the machine then reads every ion out
     registers = {name: tuple(qubits) for name, qubits in circuit.registers.items() if qubits}
     if _measures_everything(circuit):
         lines.append(f"creg c[{n}];")
@@ -567,11 +563,13 @@ def clear(circuit: Circuit) -> Circuit:
 # ---- words -------------------------------------------------------------------------------------------------------------------------
 
 
+def listed(items: Sequence[str]) -> str:
+    """'a', 'a and b', 'a, b and c'."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
+
+
 def qubits_text(qubits: Sequence[int]) -> str:
-    items = [f"q{q}" for q in qubits]
-    if len(items) == 1:
-        return items[0]
-    return ", ".join(items[:-1]) + f" and {items[-1]}"
+    return listed([f"q{q}" for q in qubits])
 
 
 def describe(op: Operation) -> str:
@@ -591,49 +589,3 @@ def summary(lay: Layout) -> str:
     gates = "1 gate" if n == 1 else f"{n} gates"
     cols = "1 column" if lay.n_columns == 1 else f"{lay.n_columns} columns"
     return f"{gates} in {cols}" if n else "no gates yet"
-
-
-__all__ = [
-    "FAMILY_TITLES",
-    "GATES",
-    "HEADER",
-    "MAX_QUBITS",
-    "MIN_QUBITS",
-    "PALETTE",
-    "CircuitFormat",
-    "Family",
-    "GateSpec",
-    "Layout",
-    "Placed",
-    "add_qubit",
-    "append_gate",
-    "clear",
-    "describe",
-    "detect_format",
-    "empty_circuit",
-    "families",
-    "format_angle",
-    "insert_gate",
-    "insert_index",
-    "layout",
-    "move_gate",
-    "move_to",
-    "neighbours",
-    "new_operation",
-    "palette_group",
-    "parse_angle",
-    "parse_circuit_text",
-    "pi_fraction",
-    "qasm_angle",
-    "qubits_for_move",
-    "qubits_for_new",
-    "qubits_text",
-    "remove_gate",
-    "remove_qubit",
-    "replace_gate",
-    "set_param",
-    "set_qubits",
-    "spec_of",
-    "summary",
-    "to_openqasm2",
-]

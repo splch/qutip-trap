@@ -1,6 +1,6 @@
-"""The circuit builder's model (DESIGN.md Sections 5 and 11, R16): the palette is the compiler's vocabulary, the layout
-packs left without crossing a connector, every edit is a pure function, and the OpenQASM 2 text round-trips, with the
-worked example a fixed point; the session's edit path keeps an undo history and the parse path reads both formats."""
+"""The circuit builder's model: the palette is the compiler's vocabulary, the layout packs left without crossing a
+connector, every edit is a pure function, and the OpenQASM 2 text round-trips, with the worked example a fixed point; the
+session's edit path keeps an undo history and the parse path reads both formats."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from qutip_trap_app.core import Circuit, Operation
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.viewmodel import builder
 from qutip_trap_app.viewmodel.builder import GATES, PALETTE
-from qutip_trap_app.views.state import BELL_QASM, Session, Store
+from qutip_trap_app.views.state import BELL_QASM, UNDO_DEPTH, Session, Store
 
 
 def _bell() -> Circuit:
@@ -229,18 +229,12 @@ def test_the_session_edits_through_one_path_and_undoes() -> None:
     assert store.circuit_text == BELL_QASM and session.undo_circuit() and store.circuit_text == edited
     for k in range(60):
         session.edit_circuit(edited + f"// {k}\n")
-    assert len(store.circuit_undo) == builder_undo_depth()
-
-
-def builder_undo_depth() -> int:
-    from qutip_trap_app.views.state import UNDO_DEPTH
-
-    return UNDO_DEPTH
+    assert len(store.circuit_undo) == UNDO_DEPTH
 
 
 def test_edits_and_the_text_keep_a_subset_measurement() -> None:
     """An imported program measuring some of its qubits, or into named registers, keeps that through every edit and through
-    the text the builder writes (it used to become "measure everything" on the first edit, changing the run's histogram)."""
+    the text the builder writes."""
     c = builder.parse_circuit_text(
         "qreg q[3]; creg c[2]; h q[0]; cx q[0],q[1]; measure q[0] -> c[0]; measure q[1] -> c[1];"
     )

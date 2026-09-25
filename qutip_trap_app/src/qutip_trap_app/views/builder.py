@@ -1,16 +1,10 @@
-"""The circuit builder (DESIGN.md Sections 5 and 11, R16): Level 0's circuit as wires and tiles in place of a text box.
+"""The circuit builder (DESIGN.md Section 5): Level 0's circuit as wires and tiles in place of a text box.
 
-The qubits are horizontal wires labelled q0, q1, ...; each gate is a tile in a column (the layout of ``viewmodel.builder``),
-a two-qubit gate a connector between its two ends (a dot and a ring for CNOT, two dots for CZ, two crosses for SWAP, two
-labelled tiles otherwise). A gate arrives by a tap on the palette (it lands at the end of the selected wire), by a drag
-from the palette onto a wire or onto the gate it should precede, or from the ``+`` at the end of a wire, which lists the
-palette. A placed tile is dragged to move it; a tap selects it and opens the inspector beneath the wires: its qubits as
-dropdowns, its angles as fields that take any OpenQASM 2 expression with quick picks beside them, and earlier, later and
-delete. The OpenQASM 2 text the store keeps, and an import of OpenQASM 2 or IonQ JSON, live behind the Code disclosure.
-
-Colour follows the palette's families (fixed one-qubit gates on the primary container, rotations on the tertiary, two-qubit
-gates on the secondary, the native set outlined) and never carries meaning alone: every tile prints its name. Tiles are
-buttons, so Tab reaches them; every edit goes through ``Session.edit_circuit`` and Undo takes it back.
+Each gate is a tile in a column of the ``viewmodel.builder`` layout, a two-qubit gate a connector between its two ends. A
+gate arrives by a tap on the palette (at the end of the selected wire), by a drag onto a wire or onto the gate it should
+precede, or from the ``+`` at a wire's end; a placed tile is dragged to move it, and a tap opens the inspector (qubits,
+angles, earlier, later, delete). The OpenQASM 2 text and an import live behind the Code disclosure. Every edit goes
+through ``Session.edit_circuit`` and Undo takes it back.
 """
 
 from __future__ import annotations
@@ -30,6 +24,7 @@ from qutip_trap_app.views.common import (
     TWO_COLUMN_MIN_WIDTH,
     content_width,
     details,
+    input_style,
     small_icon_button,
     status_line,
 )
@@ -98,21 +93,11 @@ def _tile_angle(spec: GateSpec, params: Sequence[float]) -> str | None:
     return vm.format_angle(params[spec.shown_param])
 
 
-def _tile_style(spec: GateSpec, *, selected: bool) -> ft.ButtonStyle:
-    bg, fg = FAMILY_COLORS[spec.family]
-    side: ft.BorderSide | None = None
+def _tile_side(spec: GateSpec, selected: bool) -> ft.BorderSide | None:
+    """The selected tile outlined in the primary colour, a native gate in the outline colour."""
     if selected:
-        side = ft.BorderSide(2, ft.Colors.PRIMARY)
-    elif spec.family == "native":
-        side = ft.BorderSide(1, ft.Colors.OUTLINE)
-    return ft.ButtonStyle(
-        bgcolor=bg,
-        color=fg,
-        padding=ft.Padding.all(0),
-        shape=ft.RoundedRectangleBorder(radius=theme.RADIUS_TILE, side=side),
-        overlay_color=ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE),
-        visual_density=ft.VisualDensity.COMPACT,
-    )
+        return ft.BorderSide(2, ft.Colors.PRIMARY)
+    return ft.BorderSide(1, ft.Colors.OUTLINE) if spec.family == "native" else None
 
 
 def tile(
@@ -131,10 +116,8 @@ def tile(
     drag feedback, the inspector's glyph). The family colours the tile; the name printed on it carries the meaning."""
     bg, fg = FAMILY_COLORS[spec.family]
     face = _tile_face(spec, spec.label if label is None else label, _tile_angle(spec, params), fg)
+    side = _tile_side(spec, selected)
     if on_click is None:
-        side = ft.BorderSide(2, ft.Colors.PRIMARY) if selected else None
-        if side is None and spec.family == "native":
-            side = ft.BorderSide(1, ft.Colors.OUTLINE)
         return ft.Container(
             content=face,
             width=width,
@@ -149,7 +132,14 @@ def tile(
     return ft.TextButton(
         content=face,
         on_click=on_click,
-        style=_tile_style(spec, selected=selected),
+        style=ft.ButtonStyle(
+            bgcolor=bg,
+            color=fg,
+            padding=ft.Padding.all(0),
+            shape=ft.RoundedRectangleBorder(radius=theme.RADIUS_TILE, side=side),
+            overlay_color=ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE),
+            visual_density=ft.VisualDensity.COMPACT,
+        ),
         width=width,
         height=height,
         tooltip=tooltip,
@@ -197,14 +187,6 @@ def _signature(spec: GateSpec) -> str:
 
 
 # ---- the grid -----------------------------------------------------------------------------------------------------------------------
-
-
-def _x(column: int) -> float:
-    return column * CELL_W + (CELL_W - TILE_W) / 2.0
-
-
-def _y(wire: int) -> float:
-    return wire * ROW_H + (ROW_H - TILE_H) / 2.0
 
 
 def _positioned(control: ft.Control, left: float, top: float, width: float, height: float) -> ft.Control:
@@ -491,10 +473,8 @@ def _qubit_dropdown(
         options=[ft.DropdownOption(key=str(q), text=f"q{q}") for q in range(n)],
         on_select=on_select,
         width=92,
-        dense=True,
-        text_size=13,
-        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
         key=key,
+        **input_style(),
     )
 
 
@@ -566,9 +546,7 @@ def _inspector(
                 label=name,
                 value=vm.format_angle(op.params[i]) if i < len(op.params) else "",
                 width=104,
-                dense=True,
-                text_size=13,
-                border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
+                **input_style(),
                 on_submit=lambda e, ii=i: set_angle(k, ii, str(e.control.value)),
                 on_blur=lambda e, ii=i: set_angle(k, ii, str(e.control.value)),
                 error=err,
@@ -921,11 +899,11 @@ def CircuitBuilder(store: Store, session: Session) -> ft.Control:
     body.append(status_line(f"{vm.summary(lay)}; tapped gates go on q{cur_wire}"))
     body.append(
         details(
+            store,
+            session,
+            0,
             "level0.code",
             _code_panel(store, session, import_text, set_import_text),
-            store=store,
-            level=0,
-            session=session,
             title="Code",
         )
     )
@@ -978,19 +956,3 @@ def _unreadable(
         spacing=12,
         key="builder",
     )
-
-
-__all__ = [
-    "CELL_W",
-    "DRAG_GROUP",
-    "FAMILY_COLORS",
-    "MIN_COLUMNS",
-    "QUICK_ANGLES",
-    "ROW_H",
-    "TILE_H",
-    "TILE_W",
-    "CircuitBuilder",
-    "builder_toolbar",
-    "tile",
-    "wire_room",
-]

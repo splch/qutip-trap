@@ -1,15 +1,17 @@
-"""Level 4, the physics (PLAN.md Section 14.2 row 4, Section 14.4; DESIGN.md Sections 5 and 10): the species, trap, crystal,
-light, noise, cooling and readout pages and the Hamiltonian builder, every drawn element computed by the worker into the
-device layer. Each page puts its computed drawing first, its numbers as stat tiles, and its tables behind Details; the knobs
-of the page sit behind one tile at the bottom while the stale badge and Recalibrate stay visible under the page tabs.
-A knob change re-derives the analytic layer at once (a "derive" request) and marks the calibration table stale; the one
-primary action while the table is stale is Recalibrate, the user-initiated background job of Section 14.4.
+"""Level 4, the physics (PLAN.md Section 14.4; DESIGN.md Sections 5 and 10): the species, trap, crystal, light, noise,
+cooling and readout pages and the Hamiltonian builder, every drawn element computed by the worker into the device layer.
+Each page puts its computed drawing first, its numbers as stat tiles, and its tables behind Details; the knobs of the page
+sit behind one tile at the bottom while the stale badge and Recalibrate stay visible under the page tabs. A knob change
+re-derives the analytic layer at once and marks the calibration table stale; the one primary action while the table is
+stale is Recalibrate.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, NamedTuple
 
 import flet as ft
 import numpy as np
@@ -17,11 +19,10 @@ import numpy as np
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record, StepRecord, TableRecord
-from qutip_trap_app.viewmodel.catalogue import Shown
-from qutip_trap_app.viewmodel.learn import DEVICE_PAGES
+from qutip_trap_app.resim import hamiltonian_key
+from qutip_trap_app.viewmodel.catalogue import Row, Shown
 from qutip_trap_app.viewmodel.physics import (
     KnobRow,
-    Row,
     cooling_view,
     crystal_view,
     gate_rows,
@@ -38,6 +39,7 @@ from qutip_trap_app.viewmodel.physics import (
 from qutip_trap_app.views import drawing, theme
 from qutip_trap_app.views.common import (
     MUTED,
+    ProgressRows,
     card,
     chip,
     columns,
@@ -45,42 +47,23 @@ from qutip_trap_app.views.common import (
     details,
     fmt_number,
     hint,
+    input_style,
     ions_text,
     kv_rows,
     level_header,
     page_tabs,
     pill,
+    section_title,
     shown,
+    shown_row,
     stat_row,
     stat_tile,
     status_line,
+    tile_row,
     value_cell,
 )
-from qutip_trap_app.views.level0 import ProgressRows
 from qutip_trap_app.views.state import Session, Store
 from qutip_trap_app.views.theme import CODE_FONT, CODE_FONT_FALLBACK
-
-PAGE_TITLES: dict[str, tuple[str, str]] = {
-    "species": ("The atom", "Which two levels are the qubit, and what else is there?"),
-    "trap": ("The trap", "Why does the ion stay put, and how fast does it swing?"),
-    "crystal": ("The crystal", "Where do the ions sit and how do they vibrate together?"),
-    "light": ("The light", "How much light does what to the qubit?"),
-    "noise": ("The noise", "Where do the error rates come from?"),
-    "cooling": ("Cooling and preparation", "How does every shot start cold and in |0>?"),
-    "readout": ("The readout", "How does a photon count become a bit?"),
-    "hamiltonian": ("The equation", "What exactly is the simulator integrating for this pulse?"),
-}
-
-PAGE_WHY: dict[str, str] = {
-    "species": "atomic_structure",
-    "trap": "trap_and_mathieu",
-    "crystal": "mode",
-    "light": "light_coupling",
-    "noise": "noise_as_physics",
-    "cooling": "cooling_ladder",
-    "readout": "readout_rates",
-    "hamiltonian": "hamiltonian",
-}
 
 FORMULA = (
     "H/hbar = sum_m omega_m a_m^dag a_m + sum_i (Delta_i/2) sigma_z^i + sum drives (Omega/2) e^{-i(mu t - phi)} sigma_+ "
@@ -88,9 +71,10 @@ FORMULA = (
 )
 
 
-def _tiles(rows: tuple[Row, ...], index: ProvenanceIndex, *, plain: bool, limit: int = 6) -> ft.Control:
+def _tiles(rows: tuple[Row, ...], index: ProvenanceIndex, *, plain: bool) -> ft.Control:
+    """The first six rows as stat tiles (the rest are behind Details)."""
     return stat_row(
-        [stat_tile(r.value, index, plain=plain, label=r.label, status=r.status) for r in rows[:limit]]
+        [stat_tile(r.value, index, plain=plain, label=r.label, status=r.status) for r in rows[:6]]
     )
 
 
@@ -118,10 +102,6 @@ def _direction(e_hat: tuple[float, float, float]) -> str:
     if abs(e_hat[k]) > 0.999:
         return f"{'+' if e_hat[k] >= 0 else '-'}{letters[k]}"
     return " ".join(f"{v:+.2f}{letters[i]}" for i, v in enumerate(e_hat) if abs(v) > 0.005)
-
-
-def _section_title(text: str) -> ft.Control:
-    return ft.Text(text, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600)
 
 
 def _stale_badge(layer: DeviceLayer) -> ft.Control:
@@ -271,13 +251,13 @@ def KnobPanel(
     return card(
         "Knobs",
         details(
+            store,
+            session,
+            4,
             f"level4.knobs.{page_name}",
             controls,
-            store=store,
-            level=4,
-            session=session,
             title=f"{len(rows)} slider{'s' if len(rows) != 1 else ''} of this page",
-            default_open=bool(layer.overrides) or store.learner.plan(4).chips_expanded,
+            default_open=bool(layer.overrides) or store.learner.plan(4).expanded,
         ),
         why=lambda e: session.select_concept(4, "calibration"),
         info=[
@@ -291,15 +271,27 @@ def KnobPanel(
 # ---- the pages -------------------------------------------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Page:
+    """What a Level 4 page renders from: the store and session, the device layer, the table it is compared with, the
+    provenance index and whether plain labels come first."""
+
+    store: Store
+    session: Session
+    layer: DeviceLayer
+    table: TableRecord | None
+    index: ProvenanceIndex
+    plain: bool
+
+
 def _two_columns(
     store: Store, left: list[ft.Control], right: list[ft.Control], split: tuple[int, int] = (1, 1)
 ) -> ft.Control:
     return columns(store, ft.context.page, 4, left, right, split=split)
 
 
-def _species_page(
-    store: Store, session: Session, layer: DeviceLayer, index: ProvenanceIndex, plain: bool
-) -> list[ft.Control]:
+def _species_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, index, plain = ctx.store, ctx.session, ctx.layer, ctx.index, ctx.plain
     v = species_view(layer)
     levels = [
         (
@@ -310,7 +302,7 @@ def _species_page(
         for name, _s in v.levels
     ]
     transitions = [(t.label, t.lower, t.upper, t.wavelength_m) for t in layer.species.transitions]
-    qubit_level = v.qubit[0].value.value.split(" ")[0] if isinstance(v.qubit[0].value.value, str) else ""
+    qubit_level = v.qubit_level
     level_rows: list[list[ft.Control | str]] = [
         [name, *(value_cell(s, index) for s in cells)] for name, cells in v.levels
     ]
@@ -332,6 +324,9 @@ def _species_page(
                 drawing.level_diagram(levels, transitions, qubit_level),
                 hint(store, 4, "atomic_structure"),
                 details(
+                    store,
+                    session,
+                    4,
                     "level4.species.levels",
                     [
                         _rows_table(v.identity, index),
@@ -340,9 +335,6 @@ def _species_page(
                         ),
                         data_table(["line", "wavelength", "linewidth", "branching", "I_sat"], tr_rows),
                     ],
-                    store=store,
-                    level=4,
-                    session=session,
                     title="Identity, levels and transitions",
                 ),
             ],
@@ -361,8 +353,19 @@ def _species_page(
                     qubit_fan,
                     title=f"{qubit_level} at {layer.species.field_gauss:g} G (to scale within the level)",
                 ),
-                drawing.zeeman_chart(v.sweep_b_gauss, v.sweep_energies_hz, v.sweep_labels),
+                drawing.line_chart(
+                    [
+                        (label, v.sweep_b_gauss, v.sweep_energies_hz[:, j] / 1e6)
+                        for j, label in enumerate(v.sweep_labels)
+                    ],
+                    x_title="B (G)",
+                    y_title="E/h (MHz)",
+                    height=200,
+                ),
                 details(
+                    store,
+                    session,
+                    4,
                     "level4.species.sublevels",
                     [
                         data_table(
@@ -374,9 +377,6 @@ def _species_page(
                             f"no field-independent point of the qubit pair between {v.clock_scan[0]:g} and {v.clock_scan[1]:g} G"
                         ),
                     ],
-                    store=store,
-                    level=4,
-                    session=session,
                     title="Sublevels and clock points",
                 ),
             ],
@@ -389,9 +389,8 @@ def _species_page(
     return [_two_columns(store, [levels_card], [qubit_card])]
 
 
-def _trap_page(
-    store: Store, session: Session, layer: DeviceLayer, index: ProvenanceIndex, plain: bool
-) -> list[ft.Control]:
+def _trap_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, index, plain = ctx.store, ctx.session, ctx.layer, ctx.index, ctx.plain
     v = trap_view(layer)
     mathieu_rows: list[list[ft.Control | str]] = [
         [ax, *(value_cell(s, index) for s in cells)] for ax, *cells in v.mathieu
@@ -416,6 +415,9 @@ def _trap_page(
                 _tiles(v.secular, index, plain=plain),
                 hint(store, 4, "trap_and_mathieu"),
                 details(
+                    store,
+                    session,
+                    4,
                     "level4.trap.mathieu",
                     [
                         status_line(v.mathieu_note),
@@ -425,9 +427,6 @@ def _trap_page(
                         _rows_table(v.rf, index),
                     ]
                     + ([shown(v.stability_edge, index)] if v.stability_edge is not None else []),
-                    store=store,
-                    level=4,
-                    session=session,
                     title="Mathieu parameters and the rf record",
                 ),
             ],
@@ -446,13 +445,7 @@ def _trap_page(
         ft.Column(
             [
                 _tiles(v.fields, index, plain=plain),
-                details(
-                    "level4.trap.fields",
-                    [_rows_table(v.fields, index)],
-                    store=store,
-                    level=4,
-                    session=session,
-                ),
+                details(store, session, 4, "level4.trap.fields", [_rows_table(v.fields, index)]),
             ],
             spacing=12,
         ),
@@ -506,9 +499,7 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         ],
         on_select=lambda e: set_mode(int(e.control.value)),
         width=260,
-        dense=True,
-        text_size=13,
-        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
+        **input_style(),
     )
     mode_tiles = [
         stat_tile(mr.frequency, index, plain=plain, label=f"mode {mr.index}: {mr.family} {mr.family_index}")
@@ -530,6 +521,9 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
                 stat_row(mode_tiles),
                 hint(store, 4, "mode"),
                 details(
+                    store,
+                    session,
+                    4,
                     "level4.crystal.modes",
                     [
                         _rows_table(v.geometry + v.zigzag, index),
@@ -553,9 +547,6 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
                         if eta_rows
                         else status_line("no entangling Raman pair on this device"),
                     ],
-                    store=store,
-                    level=4,
-                    session=session,
                     title="Geometry, mode table and Lamb-Dicke parameters",
                 ),
             ],
@@ -568,6 +559,10 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         + list(v.notes),
         key="crystal",
     )
+
+
+def _crystal_page(ctx: Page) -> list[ft.Control]:
+    return [CrystalPage(ctx.store, ctx.session, ctx.layer, ctx.index)]
 
 
 ROLE_COLORS = {
@@ -583,9 +578,8 @@ def _field_direction(layer: DeviceLayer) -> tuple[float, float, float]:
     return (float(d[0]), float(d[1]), float(d[2]))
 
 
-def _light_page(
-    store: Store, session: Session, layer: DeviceLayer, index: ProvenanceIndex, plain: bool
-) -> list[ft.Control]:
+def _light_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, index, plain = ctx.store, ctx.session, ctx.layer, ctx.index, ctx.plain
     v = light_view(layer)
     beams_geo = []
     for b in v.beams:
@@ -670,6 +664,9 @@ def _light_page(
                 stat_row(drive_tiles),
                 hint(store, 4, "light_coupling"),
                 details(
+                    store,
+                    session,
+                    4,
                     "level4.light.tables",
                     [
                         data_table(
@@ -699,15 +696,8 @@ def _light_page(
                             ],
                             drive_rows,
                         ),
-                        ft.Row(
-                            [shown(x, index) for x in v.crosstalk] or [status_line("no addressing beams")],
-                            wrap=True,
-                            spacing=12,
-                        ),
+                        shown_row(v.crosstalk, index, empty="no addressing beams"),
                     ],
-                    store=store,
-                    level=4,
-                    session=session,
                     title="Beams, drives and crosstalk",
                 ),
             ],
@@ -730,9 +720,8 @@ def _light_page(
     return [_two_columns(store, [beams_card], [scattering_card])]
 
 
-def _noise_page(
-    store: Store, session: Session, layer: DeviceLayer, index: ProvenanceIndex, plain: bool
-) -> list[ft.Control]:
+def _noise_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, index, plain = ctx.store, ctx.session, ctx.layer, ctx.index, ctx.plain
     v = noise_view(layer)
     spectra: list[ft.Control] = []
     zero_names: list[str] = []
@@ -744,7 +733,7 @@ def _noise_page(
             ft.Column(
                 [
                     ft.Row(
-                        [_section_title(f"{sp.name} ({sp.unit})"), shown(sp.level, index)],
+                        [section_title(f"{sp.name} ({sp.unit})"), shown(sp.level, index)],
                         wrap=True,
                         spacing=theme.GAP,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -791,11 +780,11 @@ def _noise_page(
             + (
                 [
                     details(
+                        store,
+                        session,
+                        4,
                         "level4.noise.correlation",
                         [_rows_table((v.correlation,), index)],
-                        store=store,
-                        level=4,
-                        session=session,
                         title="Correlation length",
                     )
                 ]
@@ -813,17 +802,8 @@ def _noise_page(
         ft.Column(
             [
                 data_table(["parameter", "rms", "correlation time", "servo"], drift_rows),
-                ft.Row(
-                    [shown(m, index) for m in v.mains] or [status_line("no mains harmonics declared")],
-                    wrap=True,
-                    spacing=12,
-                ),
-                ft.Row(
-                    [shown(c, index) for c in v.collisions]
-                    or [status_line("no background-gas collisions declared")],
-                    wrap=True,
-                    spacing=12,
-                ),
+                shown_row(v.mains, index, empty="no mains harmonics declared"),
+                shown_row(v.collisions, index, empty="no background-gas collisions declared"),
                 status_line(v.provenance_sentence or "no apparatus named: every rate is zero"),
             ],
             spacing=theme.GAP,
@@ -839,9 +819,8 @@ def _noise_page(
     return [_two_columns(store, [spectra_card], [drifts_card])]
 
 
-def _cooling_page(
-    store: Store, session: Session, layer: DeviceLayer, index: ProvenanceIndex, plain: bool
-) -> list[ft.Control]:
+def _cooling_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, index, plain = ctx.store, ctx.session, ctx.layer, ctx.index, ctx.plain
     v = cooling_view(layer)
     if v is None:
         return [
@@ -851,8 +830,7 @@ def _cooling_page(
             )
         ]
     stage_rows: list[list[ft.Control | str]] = [
-        [kind, prov, ft.Row([shown(s, index, label=False) for s in nbars], wrap=True, spacing=8)]
-        for kind, prov, nbars in v.stages
+        [kind, prov, shown_row(nbars, index, label=False, spacing=8)] for kind, prov, nbars in v.stages
     ]
     doppler_rows: list[list[ft.Control | str]] = [
         [
@@ -873,7 +851,7 @@ def _cooling_page(
                 [
                     ft.Row(
                         [
-                            _section_title(f"mode {sb.mode}, cooled through ion {sb.ion}"),
+                            section_title(f"mode {sb.mode}, cooled through ion {sb.ion}"),
                             shown(sb.eta, index),
                             shown(sb.omega0, index),
                         ],
@@ -888,13 +866,7 @@ def _cooling_page(
                         log_y=True,
                         height=160,
                     ),
-                    stat_row(
-                        [
-                            stat_tile(sb.nbar_start, index, plain=plain),
-                            stat_tile(sb.nbar_end, index, plain=plain),
-                            stat_tile(sb.nbar_final_run, index, plain=plain),
-                        ]
-                    ),
+                    tile_row((sb.nbar_start, sb.nbar_end, sb.nbar_final_run), index, plain=plain),
                     status_line(
                         f"{len(sb.orders)} pulses; orders {sorted(set(sb.orders), reverse=True)}, higher first; "
                         + ", ".join(
@@ -916,7 +888,7 @@ def _cooling_page(
         pump_children.append(
             ft.Column(
                 [
-                    _section_title(f"ion {p.ion}"),
+                    section_title(f"ion {p.ion}"),
                     drawing.line_chart(series, x_title="t (us)", y_title="population", height=150)
                     if series
                     else ft.Container(),
@@ -931,7 +903,7 @@ def _cooling_page(
                             else []
                         )
                     ),
-                    ft.Row([shown(h, index, label=False) for h in p.heating], wrap=True, spacing=8),
+                    shown_row(p.heating, index, label=False, spacing=8),
                 ],
                 spacing=6,
             )
@@ -943,6 +915,9 @@ def _cooling_page(
             + [
                 hint(store, 4, "cooling_ladder"),
                 details(
+                    store,
+                    session,
+                    4,
                     "level4.cooling.stages",
                     [
                         _rows_table(v.recipe, index),
@@ -963,9 +938,6 @@ def _cooling_page(
                         if layer.cooling is not None
                         else ft.Container(),
                     ],
-                    store=store,
-                    level=4,
-                    session=session,
                     title=f"The recipe, the stages and the Doppler stage ({v.doppler_method} rate equations)",
                 ),
             ],
@@ -999,14 +971,9 @@ def _cooling_page(
     return [_two_columns(store, [sideband_card], [pump_card])]
 
 
-def _readout_page(
-    store: Store,
-    session: Session,
-    layer: DeviceLayer,
-    table: TableRecord | None,
-    index: ProvenanceIndex,
-    plain: bool,
-) -> list[ft.Control]:
+def _readout_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, table = ctx.store, ctx.session, ctx.layer, ctx.table
+    index, plain = ctx.index, ctx.plain
     v = readout_view(layer, table)
     ion_cards: list[ft.Control] = []
     for i in v.ions:
@@ -1047,13 +1014,10 @@ def _readout_page(
                             if isinstance(i.threshold_at_window.value, float)
                             else None,
                         ),
-                        stat_row(
-                            [
-                                stat_tile(i.window, index, plain=plain),
-                                stat_tile(i.threshold_at_window, index, plain=plain),
-                                stat_tile(i.eps_at_window[0], index, plain=plain),
-                                stat_tile(i.eps_at_window[1], index, plain=plain),
-                            ]
+                        tile_row(
+                            (i.window, i.threshold_at_window, i.eps_at_window[0], i.eps_at_window[1]),
+                            index,
+                            plain=plain,
                         ),
                         drawing.line_chart(
                             [
@@ -1068,18 +1032,18 @@ def _readout_page(
                         ),
                         hint(store, 4, "readout_rates"),
                         details(
+                            store,
+                            session,
+                            4,
                             f"level4.readout.{i.ion}",
                             [
                                 _rows_table(i.rates, index),
-                                ft.Row([shown(s, index) for s in i.best], wrap=True, spacing=12),
+                                shown_row(i.best, index),
                                 data_table(
                                     ["channel", "bright read as dark", "dark read as bright"], budget_rows
                                 ),
                                 sat_curve,
                             ],
-                            store=store,
-                            level=4,
-                            session=session,
                             title="Rates, the best window, the error budget, the saturation curves",
                         ),
                     ],
@@ -1130,20 +1094,19 @@ def _gates_card(
         children.append(
             ft.Column(
                 [
-                    _section_title(f"pair: {ions_text(g.pair)}"),
+                    section_title(f"pair: {ions_text(g.pair)}"),
                     ft.Text(g.error, size=theme.SIZE_SMALL, color=ft.Colors.ERROR)
                     if g.error
                     else ft.Container(),
                     _tiles(g.summary, index, plain=plain),
                     details(
+                        store,
+                        session,
+                        4,
                         f"level4.gates.{g.pair}",
                         [
                             _rows_table(g.summary, index),
-                            ft.Row(
-                                [shown(c, index) for c in g.chi_m] + [shown(a, index) for a in g.alpha_m],
-                                wrap=True,
-                                spacing=12,
-                            ),
+                            shown_row(g.chi_m + g.alpha_m, index),
                             data_table(["mode", "frequency"] + [f"eta ion {i}" for i in g.pair], mode_rows)
                             if mode_rows
                             else ft.Container(),
@@ -1151,9 +1114,6 @@ def _gates_card(
                             if g.table
                             else status_line("no table entry for this pair yet"),
                         ],
-                        store=store,
-                        level=4,
-                        session=session,
                         title="Per-mode angles, the table's waveform and its closed form",
                     ),
                 ],
@@ -1169,16 +1129,9 @@ def _gates_card(
     )
 
 
-def _hamiltonian_page(
-    store: Store,
-    session: Session,
-    layer: DeviceLayer,
-    table: TableRecord | None,
-    index: ProvenanceIndex,
-    plain: bool,
-) -> list[ft.Control]:
-    from qutip_trap_app.resim import hamiltonian_key
-
+def _hamiltonian_page(ctx: Page) -> list[ft.Control]:
+    store, session, layer, table = ctx.store, ctx.session, ctx.layer, ctx.table
+    index, plain = ctx.index, ctx.plain
     page = ft.context.page
     record: Record | None = None
     ham = None
@@ -1273,7 +1226,7 @@ def _hamiltonian_page(
                 matrices.append(
                     ft.Column(
                         [
-                            _section_title(
+                            section_title(
                                 f"mode {m}: Omega_(n',n)/Omega = |<n'|D(i eta)|n>| (first {n_show} of {d} levels)"
                             ),
                             ft.Row(
@@ -1303,23 +1256,16 @@ def _hamiltonian_page(
                             stat_row(
                                 [
                                     stat_tile(
-                                        _me(table_m, 0, 0, m),
+                                        _me(table_m, r, c, m),
                                         index,
                                         plain=plain,
-                                        label="n' = 0, n = 0 (carrier)",
-                                    ),
-                                    stat_tile(
-                                        _me(table_m, 1, 0, m),
-                                        index,
-                                        plain=plain,
-                                        label="n' = 1, n = 0 (blue sideband)",
-                                    ),
-                                    stat_tile(
-                                        _me(table_m, 0, 1, m),
-                                        index,
-                                        plain=plain,
-                                        label="n' = 0, n = 1 (red sideband)",
-                                    ),
+                                        label=f"n' = {r}, n = {c} ({name})",
+                                    )
+                                    for r, c, name in (
+                                        (0, 0, "carrier"),
+                                        (1, 0, "blue sideband"),
+                                        (0, 1, "red sideband"),
+                                    )
                                 ]
                             ),
                         ],
@@ -1341,25 +1287,25 @@ def _hamiltonian_page(
                         ft.Container(
                             content=ft.Column(
                                 [
-                                    stat_row(
-                                        [
-                                            stat_tile(t.omega, index, plain=plain),
-                                            stat_tile(t.crosstalk_weight, index, plain=plain),
-                                            stat_tile(t.rabi_scale, index, plain=plain),
-                                            stat_tile(t.carrier_factor, index, plain=plain),
-                                            stat_tile(t.debye_waller, index, plain=plain),
-                                            stat_tile(t.nnz, index, plain=plain),
-                                        ]
+                                    tile_row(
+                                        (
+                                            t.omega,
+                                            t.crosstalk_weight,
+                                            t.rabi_scale,
+                                            t.carrier_factor,
+                                            t.debye_waller,
+                                            t.nnz,
+                                        ),
+                                        index,
+                                        plain=plain,
                                     ),
                                     data_table(
                                         ["tone", "detuning mu", "phase at start", "peak Omega/2pi"], tone_rows
                                     )
                                     if tone_rows
                                     else ft.Container(),
-                                    ft.Row([shown(e, index) for e in t.etas], wrap=True, spacing=12),
-                                    ft.Row([shown(f, index) for f in t.frozen], wrap=True, spacing=12)
-                                    if t.frozen
-                                    else ft.Container(),
+                                    shown_row(t.etas, index),
+                                    shown_row(t.frozen, index),
                                     status_line(
                                         "coefficient (hbar Omega(t)/2) e^{-i(mu t - phi(t))}, summed over tones; time-independent operator"
                                     ),
@@ -1438,16 +1384,14 @@ def _hamiltonian_page(
                         _tiles(v.header, index, plain=plain),
                         hint(store, 4, "hamiltonian"),
                         details(
+                            store,
+                            session,
+                            4,
                             "level4.hamiltonian.free",
                             [
                                 data_table(["mode", "class", "omega_m/2pi", "sample offset"], free_rows),
-                                ft.Row(
-                                    [shown(o, index) for o in v.qubit_offsets]
-                                    + [shown(s, index) for s in v.stark],
-                                    wrap=True,
-                                    spacing=12,
-                                ),
-                                ft.Row([shown(c, index) for c in v.caps], wrap=True, spacing=12),
+                                shown_row(v.qubit_offsets + v.stark, index),
+                                shown_row(v.caps, index),
                                 data_table(
                                     ["duration", "omega_max", "pulses", "drive terms", "kernel"], seg_rows
                                 ),
@@ -1457,9 +1401,6 @@ def _hamiltonian_page(
                                     spacing=2,
                                 ),
                             ],
-                            store=store,
-                            level=4,
-                            session=session,
                             title="Free terms, offsets, caps, segments and approximations",
                         ),
                     ],
@@ -1509,7 +1450,14 @@ def _me(table: np.ndarray, r: int, c: int, mode: int) -> Shown:
     return Shown("h_matrix_element", None, f"mode {mode}: n' = {r}, n = {c}")
 
 
-# ---- the current device card (Level 0, Section 14.4) ----------------------------------------------------------------------------------------
+# ---- the current device card (Level 0) ---------------------------------------------------------------------------------
+
+
+def _table(store: Store, layer: DeviceLayer) -> TableRecord | None:
+    """The table the pages compare the layer with: the device's own recalibrated one, else the current record's."""
+    table = store.table_for(layer.device_hash)
+    current = store.record()
+    return current.table if table is None and current is not None else table
 
 
 @ft.component
@@ -1529,11 +1477,7 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
             ),
             key="current-device",
         )
-    table = store.table_for(layer.device_hash)
-    current = store.record()
-    if table is None and current is not None:
-        table = current.table
-    v = layer_card_view(layer, table)
+    v = layer_card_view(layer, _table(store, layer))
     plain = store.learner.plan(0).plain_labels_first
     recalibrating = store.running_of("recalibrate") is not None
     body = ft.Column(
@@ -1544,6 +1488,9 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
             else status_line("no knob changed: the preset as published"),
             _tiles(v.spam + v.gate_errors, index, plain=plain),
             details(
+                store,
+                session,
+                4,
                 "level0.current_device",
                 [
                     _rows_table(v.rows, index),
@@ -1566,9 +1513,6 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
                     else status_line("no gate error estimated"),
                     shown(v.device_hash, index, size=theme.SIZE_SMALL),
                 ],
-                store=store,
-                level=4,
-                session=session,
             ),
         ],
         spacing=12,
@@ -1595,33 +1539,65 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
     )
 
 
-# ---- the page ---------------------------------------------------------------------------------------------------------------------------
+# ---- the pages --------------------------------------------------------------------------------------------------------
+
+PageRenderer = Callable[[Page], list[ft.Control]]
+
+
+class DevicePage(NamedTuple):
+    title: str
+    question: str
+    section: str
+    """The Part II subsection the page's explain drawer opens."""
+    concepts: tuple[str, ...]
+    """The concepts the page's explain drawer carries, in teaching order."""
+    render: PageRenderer
+
+
+# fmt: off
+DEVICE_PAGES: dict[str, DevicePage] = {
+    "species": DevicePage("The atom", "Which two levels are the qubit, and what else is there?", "4.5.1",
+                          ("atomic_structure", "light_coupling"), _species_page),
+    "trap": DevicePage("The trap", "Why does the ion stay put, and how fast does it swing?", "4.1.1",
+                       ("trap_and_mathieu", "lamb_dicke"), _trap_page),
+    "crystal": DevicePage("The crystal", "Where do the ions sit and how do they vibrate together?", "4.1.3",
+                          ("mode", "lamb_dicke", "trap_and_mathieu"), _crystal_page),
+    "light": DevicePage("The light", "How much light does what to the qubit?", "4.5.4",
+                        ("light_coupling", "pulse", "crosstalk"), _light_page),
+    "noise": DevicePage("The noise", "Where do the error rates come from?", "6.1",
+                        ("noise_as_physics", "quantum_jumps"), _noise_page),
+    "cooling": DevicePage("Cooling and preparation", "How does every shot start cold and in |0>?", "4.2",
+                          ("cooling_ladder", "fock_states", "debye_waller"), _cooling_page),
+    "readout": DevicePage("The readout", "How does a photon count become a bit?", "8.1",
+                          ("readout_rates", "spam"), _readout_page),
+    "hamiltonian": DevicePage("The equation", "What exactly is the simulator integrating for this pulse?", "5.7",
+                              ("hamiltonian", "lamb_dicke", "quantum_jumps", "calibration"), _hamiltonian_page),
+}
+# fmt: on
+"""The Level 4 pages by route, in the order of their tabs."""
 
 
 @ft.component
 def Level4Page(store: Store, session: Session, page_name: str, index: ProvenanceIndex) -> ft.Control:
     ft.use_state(store)
     page = ft.context.page
-    name = page_name if page_name in DEVICE_PAGES else "hamiltonian"
-    if store.device_page != name:
-        store.device_page = name
-    ref = store.device_ref()
-    ck = ref.cache_key()
+    device_page = DEVICE_PAGES[page_name]
+    if store.device_page != page_name:
+        store.device_page = page_name
+    ck = store.device_ref().cache_key()
 
     def derive() -> None:
         session.submit_derive()
 
     ft.use_effect(derive, dependencies=[ck])
     layer = store.layers.get(ck)
-    title, question = PAGE_TITLES[name]
-    plain = store.learner.plan(4).plain_labels_first
     nav = page_tabs(
-        [(p, PAGE_TITLES[p][0]) for p in DEVICE_PAGES],
-        name,
+        [(p, d.title) for p, d in DEVICE_PAGES.items()],
+        page_name,
         lambda p: page.navigate(f"/device/{p}"),
         key_prefix="device-page",
     )
-    body: list[ft.Control] = [level_header(title, question), nav]
+    body: list[ft.Control] = [level_header(device_page.title, device_page.question), nav]
     if layer is None:
         failed = next(
             (
@@ -1647,8 +1623,8 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
             )
             return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
         # the device model refused these knob values (a trap without an rf record, an unstable chain, a mode the cooling
-        # beams do not reach, a Lamb-Dicke check failed): the reason is shown here, where the knobs are, and the knobs stay
-        # in reach on the last device that did derive, so the value can be moved back or every knob reset
+        # beams do not reach, a failed Lamb-Dicke check): the reason is shown where the knobs are, and the knobs stay in
+        # reach on the last device that did derive, so the value can be moved back or every knob reset
         reason = failed.error.strip().splitlines()[-1] if failed.error else "the worker failed"
         body.append(
             card(
@@ -1677,45 +1653,16 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
         )
         previous = list(store.layers.values())
         if previous:
-            body.append(KnobPanel(store, session, previous[-1], name, index))
+            body.append(KnobPanel(store, session, previous[-1], page_name, index))
         return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
-    table = store.table_for(layer.device_hash)
-    current = store.record()
-    if table is None and current is not None:
-        table = current.table
     body.append(DeviceStatusStrip(store, session, layer))
-    if name == "species":
-        body += _species_page(store, session, layer, index, plain)
-    elif name == "trap":
-        body += _trap_page(store, session, layer, index, plain)
-    elif name == "crystal":
-        body.append(CrystalPage(store, session, layer, index))
-    elif name == "light":
-        body += _light_page(store, session, layer, index, plain)
-    elif name == "noise":
-        body += _noise_page(store, session, layer, index, plain)
-    elif name == "cooling":
-        body += _cooling_page(store, session, layer, index, plain)
-    elif name == "readout":
-        body += _readout_page(store, session, layer, table, index, plain)
-    else:
-        body += _hamiltonian_page(store, session, layer, table, index, plain)
-    body.append(KnobPanel(store, session, layer, name, index))
+    body += device_page.render(
+        Page(store, session, layer, _table(store, layer), index, store.learner.plan(4).plain_labels_first)
+    )
+    body.append(KnobPanel(store, session, layer, page_name, index))
     body.append(
         status_line(
             f"derived in {layer.wall_time_s:.1f} s" + (f"; {'; '.join(layer.notes)}" if layer.notes else "")
         )
     )
     return ft.Column(body, spacing=16, expand=True, scroll=ft.ScrollMode.AUTO)
-
-
-__all__ = [
-    "FORMULA",
-    "PAGE_TITLES",
-    "PAGE_WHY",
-    "CrystalPage",
-    "CurrentDeviceCard",
-    "DeviceStatusStrip",
-    "KnobPanel",
-    "Level4Page",
-]

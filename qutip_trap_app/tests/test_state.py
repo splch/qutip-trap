@@ -1,6 +1,6 @@
-"""The application state behind the screens (DESIGN.md Sections 3 and 4): the learner persists as a document, a run scores
-the prediction made for it and a new prediction is asked only for a new run, the progress rows keep moving between worker
-events, cancel marks every running job, and the zoom bar's parent route needs no hidden global."""
+"""The application state behind the screens: the learner persists as a document, a run scores the prediction made for it and
+a new prediction is asked only for a new run, the progress rows keep moving between worker events, cancel marks every
+running job, and the zoom bar's parent route needs no hidden global."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel.learn import Attempt, MasteryLog, review_gap_days
 from qutip_trap_app.views.shell import parent_route
 from qutip_trap_app.views.state import (
-    LEARNER_KEY,
     JobStatus,
     Learner,
     Session,
@@ -31,7 +30,7 @@ def index() -> ProvenanceIndex:
 
 def test_learner_round_trips_through_its_document() -> None:
     log = MasteryLog(retention_days=30.0)
-    log.record(Attempt("histogram", "histogram.q1", 1.5, True, unaided=False, score=0.42))
+    log.record(Attempt("histogram", "histogram.q1", 1.5, True, unaided=False))
     log.record(Attempt("histogram", "histogram.q2", 2.5, None, unaided=False))
     learner = Learner(
         knowledge="circuits",
@@ -50,19 +49,21 @@ def test_learner_round_trips_through_its_document() -> None:
         False,
     )
     assert back.log.attempts == log.attempts and back.log.retention_days == 30.0
-    assert back.log.attempts[0].score == 0.42 and back.log.attempts[1].score is None
-    assert LEARNER_KEY.startswith("qutip_trap_app.")
 
 
-def test_learner_document_reports_unknown_values_and_accepts_an_older_document() -> None:
-    with pytest.raises(ValueError, match="prior knowledge"):
-        learner_from_document({"knowledge": "wizard"})
-    with pytest.raises(ValueError, match="depth"):
-        learner_from_document({"depth_override": "video"})
-    with pytest.raises(ValueError, match="retention"):
-        learner_from_document({"retention_days": 0.0})
-    fresh = learner_from_document({})
-    assert fresh.knowledge == "unknown" and not fresh.asked and fresh.log.attempts == []
+def test_learner_document_refuses_unknown_values_and_missing_keys() -> None:
+    doc = learner_document(Learner())
+    assert learner_from_document(doc) == Learner()
+    for key, value, message in (
+        ("knowledge", "wizard", "prior knowledge"),
+        ("depth_override", "video", "depth"),
+        ("theme", "sepia", "theme"),
+        ("retention_days", 0.0, "retention"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            learner_from_document({**doc, key: value})
+    with pytest.raises(KeyError, match="theme"):
+        learner_from_document({k: v for k, v in doc.items() if k != "theme"})
 
 
 def test_set_learner_keeps_the_log_in_step_and_a_skip_counts_as_an_exposure(index: ProvenanceIndex) -> None:
@@ -85,7 +86,7 @@ def test_a_run_scores_its_own_prediction_and_a_new_run_is_predicted_again(
     store.prediction = "ideal"
     store.last_run_text = store.circuit_text  # what submit_run records
     assert not store.prediction_pending(), "not asked again while that run is in flight"
-    store.jobs = {"t1": JobStatus("t1", "run_job", engine="full")}
+    store.jobs = {"t1": JobStatus("t1", "run_job")}
     session.apply_events([Event("result", "t1", "run_job", payload=record)])
     assert store.current == record.key() and store.jobs["t1"].done
     assert store.scored_prediction == "ideal" and store.prediction is None

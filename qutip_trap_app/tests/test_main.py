@@ -1,9 +1,6 @@
-"""The `flet test` navigation and run-flow tests (PLAN.md Section 14.6 "Testing"; Section 9.11 row "Navigation"; M11.4):
-the app's Flet integration test file, in the place the `flet create` layout of M0 puts it (`tests/test_main.py`).
-
-These drive the rendered controls through Flet's ``flet_app`` fixture, which needs the Flutter test host (``flet test``
-provisions it: the Flutter SDK, and on macOS the full Xcode, since the host is a desktop build). ``conftest.py`` skips them
-unless ``QUTIP_TRAP_APP_UI_TESTS=1``; run them with
+"""The `flet test` navigation and run-flow tests (Section 9.11 row "Navigation"): they drive the rendered controls through
+Flet's ``flet_app`` fixture, which needs the Flutter test host (``flet test`` provisions it: the Flutter SDK, and on macOS the
+full Xcode). ``conftest.py`` skips them unless ``QUTIP_TRAP_APP_UI_TESTS=1``; run them with
 
     cd qutip_trap_app && QUTIP_TRAP_APP_UI_TESTS=1 uv run flet test
 

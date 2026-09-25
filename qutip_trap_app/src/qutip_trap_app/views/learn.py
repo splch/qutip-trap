@@ -2,42 +2,40 @@
 
 The tour (the worked example), the faded three-ion GHZ exercise (the same six stops, annotations withheld until asked), the
 free exercise, the discrimination drills generated from the current record, the review tray of due prompts (asked unaided),
-the published experiments of Section 14.5, and the progress log with in-session and delayed unaided accuracy labelled apart.
-Every activity is a route (``/learn/{tab}``), so the browser's history works in the served mode.
+the published experiments, and the progress log with in-session and delayed unaided accuracy labelled apart. Every activity
+is a route (``/learn/{tab}``), so the browser's history works in the served mode.
 """
 
 from __future__ import annotations
 
 import json
-import time
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import flet as ft
 
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
-from qutip_trap_app.viewmodel.drills import Drill, drills_for, score_drill
+from qutip_trap_app.viewmodel.drills import Drill, drills_for
 from qutip_trap_app.viewmodel.learn import (
     BELL_TOUR,
     CONCEPTS,
     FREE_EXERCISE,
-    GHZ_EXERCISE,
-    LEARN_TABS,
     Attempt,
-    Prompt,
+    PriorKnowledge,
     TourStop,
-    due_prompts,
+    now_days,
     review_gap_days,
-    score_choice,
 )
 from qutip_trap_app.views import theme
 from qutip_trap_app.views.common import (
-    HAIRLINE,
     MUTED,
+    PromptView,
     card,
     chip,
     data_table,
     hint,
+    inset,
     level_header,
     page_tabs,
     status_line,
@@ -45,25 +43,28 @@ from qutip_trap_app.views.common import (
 from qutip_trap_app.views.presets import PresetList, PresetPage
 from qutip_trap_app.views.state import Session, Store, learner_document
 
-KNOWLEDGE_LABELS: dict[str, str] = {
-    "newcomer": "New to quantum computing",
-    "circuits": "I know circuits, not the hardware",
-    "physicist": "Physicist; I know the hardware",
-    "unknown": "Not saying (the app assists)",
+
+class KnowledgeOption(NamedTuple):
+    label: str
+    short: str
+    description: str
+    """What the answer to the first-launch question changes, in one short line."""
+
+
+KNOWLEDGE: dict[PriorKnowledge, KnowledgeOption] = {
+    "newcomer": KnowledgeOption(
+        "New to quantum computing", "New", "Plain words first, explanations open, the worked example first"
+    ),
+    "circuits": KnowledgeOption(
+        "I know circuits, not the hardware", "Circuits", "Circuit levels brief, the hardware levels explained"
+    ),
+    "physicist": KnowledgeOption(
+        "Physicist; I know the hardware", "Physicist", "Symbols first, explanations closed, every table open"
+    ),
+    "unknown": KnowledgeOption(
+        "Not saying (the app assists)", "Not saying", "The app assists, as for a newcomer"
+    ),
 }
-KNOWLEDGE_SHORT: dict[str, str] = {
-    "newcomer": "New",
-    "circuits": "Circuits",
-    "physicist": "Physicist",
-    "unknown": "Not saying",
-}
-KNOWLEDGE_DESCRIPTIONS: dict[str, str] = {
-    "newcomer": "Plain words first, explanations open, the worked example first",
-    "circuits": "Circuit levels brief, the hardware levels explained",
-    "physicist": "Symbols first, explanations closed, every table open",
-    "unknown": "The app assists, as for a newcomer",
-}
-"""What each answer to the first-launch question changes (DESIGN.md Section 1), in one short line."""
 
 
 def _fill_route(route: str, key: str | None, gate: str, pulse: str) -> str:
@@ -81,26 +82,10 @@ def _entangling_ids(record: Record | None) -> tuple[str, str]:
         return "ms[2]", "0"
     gate = next((g.gate_id for g in record.schedule.gates), "ms[2]")
     st = next((s for s in record.schedule.steps if s.gate_id == gate), None)
-    pulse = str(st.pulse_indices[0]) if st is not None and st.pulse_indices else "0"
-    return gate, pulse
+    return gate, str(st.pulse_indices[0]) if st is not None and st.pulse_indices else "0"
 
 
-def _day_clock() -> float:
-    return time.time() / 86400.0
-
-
-def _panel(controls: list[ft.Control]) -> ft.Control:
-    """A quiet inset panel for one prompt or drill inside a card."""
-    return ft.Container(
-        content=ft.Column(controls, spacing=8),
-        padding=ft.Padding.all(12),
-        border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
-        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-        border=ft.Border.all(1, HAIRLINE),
-    )
-
-
-# ---- the settings row ------------------------------------------------------------------------------------------------------------------
+# ---- the settings row ------------------------------------------------------------------------------------------------
 
 
 @ft.component
@@ -114,16 +99,13 @@ def SettingsRow(store: Store, session: Session) -> ft.Control:
             knowledge=next(iter(e.control.selected)), asked=True, depth_override=None, explain_open=None
         )
 
-    def set_retention(e: Any) -> None:
-        session.set_learner(retention_days=float(e.control.value))
-
     who = ft.Row(
         [
             ft.Text("Who", size=theme.SIZE_SMALL, color=MUTED),
             ft.SegmentedButton(
                 segments=[
-                    ft.Segment(value=k, label=ft.Text(v, size=theme.SIZE_SMALL), tooltip=KNOWLEDGE_LABELS[k])
-                    for k, v in KNOWLEDGE_SHORT.items()
+                    ft.Segment(value=k, label=ft.Text(o.short, size=theme.SIZE_SMALL), tooltip=o.label)
+                    for k, o in KNOWLEDGE.items()
                 ],
                 selected=[learner.knowledge],
                 on_change=set_knowledge,
@@ -142,7 +124,7 @@ def SettingsRow(store: Store, session: Session) -> ft.Control:
                 divisions=51,
                 value=learner.retention_days,
                 label="{value} days",
-                on_change_end=set_retention,
+                on_change_end=lambda e: session.set_learner(retention_days=float(e.control.value)),
                 width=220,
                 tooltip=(
                     f"the first review is due {lo:.0f} to {hi:.0f} days after a first exposure: the optimal gap is a declining "
@@ -159,10 +141,22 @@ def SettingsRow(store: Store, session: Session) -> ft.Control:
     )
 
 
-# ---- the activities --------------------------------------------------------------------------------------------------------------------
+# ---- the activities --------------------------------------------------------------------------------------------------
+
+
+def _number(k: int) -> ft.Control:
+    return ft.Container(
+        content=ft.Text(str(k), weight=ft.FontWeight.W_700, size=theme.SIZE_SMALL),
+        width=28,
+        height=28,
+        alignment=ft.Alignment.CENTER,
+        border_radius=ft.BorderRadius.all(14),
+        bgcolor=ft.Colors.SECONDARY_CONTAINER,
+    )
 
 
 def _stop_tile(
+    k: int,
     stop: TourStop,
     index: ProvenanceIndex,
     route: str,
@@ -184,20 +178,13 @@ def _stop_tile(
             ),
         )
     return ft.ListTile(
-        leading=ft.Container(
-            content=ft.Text(str(stop.index), weight=ft.FontWeight.W_700, size=theme.SIZE_SMALL),
-            width=28,
-            height=28,
-            alignment=ft.Alignment.CENTER,
-            border_radius=ft.BorderRadius.all(14),
-            bgcolor=ft.Colors.SECONDARY_CONTAINER,
-        ),
+        leading=_number(k),
         title=ft.Text(stop.title, size=theme.SIZE_BODY, weight=ft.FontWeight.W_500),
         subtitle=ft.Text(f"look for: {look_for}", size=theme.SIZE_SMALL, color=MUTED) if look_for else None,
         trailing=ft.Row(trailing, tight=True, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         on_click=(lambda e, r=route: page.navigate(r)) if enabled else None,
         disabled=not enabled,
-        key=f"stop:{stop.index}",
+        key=f"stop:{k}",
     )
 
 
@@ -210,13 +197,14 @@ def TourActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.C
     gate, pulse = _entangling_ids(record)
     stops = [
         _stop_tile(
+            k,
             stop,
             index,
             _fill_route(stop.route, key, gate, pulse),
             key is not None or stop.route.startswith("/device"),
             look_for=stop.look_for,
         )
-        for stop in BELL_TOUR
+        for k, stop in enumerate(BELL_TOUR, 1)
     ]
 
     def start(_e: Any) -> None:
@@ -254,22 +242,21 @@ def GhzActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Co
 
     def reveal(k: int) -> Any:
         def _do(_e: Any) -> None:
-            revealed = set(store.revealed_stops)
-            revealed.symmetric_difference_update({k})
-            store.revealed_stops = revealed
+            store.revealed_stops = store.revealed_stops ^ {k}
 
         return _do
 
     stops = [
         _stop_tile(
+            k,
             stop,
             index,
             _fill_route(stop.route, key, gate, pulse),
             key is not None or stop.route.startswith("/device"),
-            look_for=stop.look_for if stop.index in store.revealed_stops else None,
-            on_reveal=reveal(stop.index),
+            look_for=stop.look_for if k in store.revealed_stops else None,
+            on_reveal=reveal(k),
         )
-        for stop in GHZ_EXERCISE
+        for k, stop in enumerate(BELL_TOUR, 1)
     ]
 
     def load(_e: Any) -> None:
@@ -298,21 +285,11 @@ def GhzActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Co
 
 
 @ft.component
-def FreeActivity(store: Store, session: Session) -> ft.Control:
+def FreeActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     page = ft.context.page
     steps: list[ft.Control] = [
-        ft.ListTile(
-            leading=ft.Container(
-                content=ft.Text(str(k + 1), weight=ft.FontWeight.W_700, size=theme.SIZE_SMALL),
-                width=28,
-                height=28,
-                alignment=ft.Alignment.CENTER,
-                border_radius=ft.BorderRadius.all(14),
-                bgcolor=ft.Colors.SECONDARY_CONTAINER,
-            ),
-            title=ft.Text(text, size=theme.SIZE_BODY),
-        )
-        for k, text in enumerate(FREE_EXERCISE)
+        ft.ListTile(leading=_number(k), title=ft.Text(text, size=theme.SIZE_BODY))
+        for k, text in enumerate(FREE_EXERCISE, 1)
     ]
     return card(
         "Your own circuit: build, predict, run, explain",
@@ -332,27 +309,29 @@ def FreeActivity(store: Store, session: Session) -> ft.Control:
 def DrillView(store: Store, session: Session, drill: Drill) -> ft.Control:
     ft.use_state(store)
     answer = store.drill_answers.get(drill.id, "")
-    checked = drill.id in store.drill_answers and store.drill_answers[drill.id].startswith("checked:")
+    checked = answer.startswith("checked:")
     given = answer.removeprefix("checked:")
 
     def pick(e: Any) -> None:
         store.drill_answers = {**store.drill_answers, drill.id: str(e.control.value)}
 
     def check(_e: Any) -> None:
-        ok = score_drill(drill, given)
         store.drill_answers = {**store.drill_answers, drill.id: f"checked:{given}"}
         # unaided: no explanation stands open beside a drill
-        session.record_attempt(Attempt(drill.concept_id, f"drill:{drill.id}", _day_clock(), ok, unaided=True))
+        session.record_attempt(
+            Attempt(drill.concept_id, f"drill:{drill.id}", now_days(), given == drill.answer, unaided=True)
+        )
 
     feedback: ft.Control = ft.Container()
     if checked:
-        ok = score_drill(drill, given)
         feedback = ft.Text(
-            "that matches the record" if ok else f"the record says: {drill.answer}; check {drill.where}",
+            "that matches the record"
+            if given == drill.answer
+            else f"the record says: {drill.answer}; check {drill.where}",
             size=theme.SIZE_SMALL,
             color=MUTED,
         )
-    return _panel(
+    return inset(
         [
             ft.Text(drill.question, size=theme.SIZE_SMALL + 1, weight=ft.FontWeight.W_500),
             ft.RadioGroup(
@@ -384,8 +363,9 @@ def DrillsActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft
     if record is None:
         body = [status_line("run a job on Level 0: the drills come from its record")]
     else:
-        drills = drills_for(record, index)
-        body = [DrillView(store, session, d) for d in drills] or [status_line("this record offers no drill")]
+        body = [DrillView(store, session, d) for d in drills_for(record, index)] or [
+            status_line("this record offers no drill")
+        ]
 
     def reset(_e: Any) -> None:
         store.drill_answers = {}
@@ -401,72 +381,12 @@ def DrillsActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft
 
 
 @ft.component
-def ReviewPrompt(store: Store, session: Session, prompt: Prompt, concept_id: str) -> ft.Control:
-    """A due prompt asked unaided: no explanation beside it; the attempt is what the mastery log calls evidence."""
+def ReviewActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     ft.use_state(store)
-    answer, set_answer = ft.use_state("")
-    feedback, set_feedback = ft.use_state("")
-
-    def check(_e: Any) -> None:
-        if prompt.kind == "choose":
-            ok = score_choice(prompt, answer)
-            set_feedback("that matches the physics" if ok else f"the physics says: {prompt.answer}")
-            session.record_attempt(Attempt(concept_id, prompt.id, _day_clock(), ok, unaided=True))
-        else:
-            set_feedback(f"compare with the simulator's account: {prompt.rubric or prompt.where}")
-            session.record_attempt(Attempt(concept_id, prompt.id, _day_clock(), None, unaided=True))
-
-    controls: list[ft.Control] = [
-        ft.Text(prompt.question, size=theme.SIZE_SMALL + 1, weight=ft.FontWeight.W_500)
-    ]
-    if prompt.kind == "choose":
-        controls.append(
-            ft.RadioGroup(
-                content=ft.Column([ft.Radio(value=o, label=o) for o in prompt.options], spacing=0),
-                value=answer or None,
-                on_change=lambda e: set_answer(str(e.control.value)),
-            )
-        )
-    else:
-        controls.append(
-            ft.TextField(
-                value=answer,
-                multiline=True,
-                min_lines=2,
-                max_lines=4,
-                dense=True,
-                text_size=theme.SIZE_SMALL + 1,
-                border_radius=ft.BorderRadius.all(theme.RADIUS_TILE),
-                on_change=lambda e: set_answer(str(e.control.value)),
-            )
-        )
-    controls.append(
-        ft.Row(
-            [
-                ft.FilledTonalButton(
-                    content=ft.Text("Answer"), on_click=check, disabled=prompt.kind == "choose" and not answer
-                ),
-                ft.Text(feedback, size=theme.SIZE_SMALL, color=MUTED) if feedback else ft.Container(),
-            ],
-            spacing=10,
-            wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-    )
-    return _panel(controls)
-
-
-@ft.component
-def ReviewActivity(store: Store, session: Session) -> ft.Control:
-    ft.use_state(store)
-    learner = store.learner
-    due = due_prompts(learner.log, _day_clock())
-    concept_of = {c.prompts[0].id: c.id for c in CONCEPTS.values()}
-    body: list[ft.Control] = (
-        [ReviewPrompt(store, session, p, concept_of.get(p.id, "histogram")) for p in due]
-        if due
-        else [status_line("nothing is due: prompts return one review gap after you met them")]
-    )
+    due = store.learner.log.due(now_days())
+    body: list[ft.Control] = [
+        inset([PromptView(session, cid, CONCEPTS[cid].prompts[0], unaided=True)]) for cid in due
+    ] or [status_line("nothing is due: prompts return one review gap after you met them")]
     return card(
         "Review tray",
         ft.Column(body, spacing=theme.GAP),
@@ -477,10 +397,10 @@ def ReviewActivity(store: Store, session: Session) -> ft.Control:
 
 
 @ft.component
-def ProgressActivity(store: Store, session: Session) -> ft.Control:
+def ProgressActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     ft.use_state(store)
     log = store.learner.log
-    now = _day_clock()
+    now = now_days()
     rows: list[list[ft.Control | str]] = []
     for c in CONCEPTS.values():
         attempts = [a for a in log.attempts if a.concept_id == c.id]
@@ -489,16 +409,9 @@ def ProgressActivity(store: Store, session: Session) -> ft.Control:
         s = log.session_accuracy(c.id, now_days=now)
         d = log.delayed_unaided_accuracy(c.id)
         rows.append(
-            [
-                c.title,
-                str(len(attempts)),
-                "-" if s is None else f"{s:.0%}",
-                "-" if d is None else f"{d:.0%}",
-            ]
+            [c.title, str(len(attempts)), "-" if s is None else f"{s:.0%}", "-" if d is None else f"{d:.0%}"]
         )
-
     show_json, set_show_json = ft.use_state(False)
-
     body: list[ft.Control] = [
         data_table(
             ["concept", "attempts", "in session (last day)", "delayed, unaided"],
@@ -537,20 +450,46 @@ def ProgressActivity(store: Store, session: Session) -> ft.Control:
     )
 
 
-# ---- the page --------------------------------------------------------------------------------------------------------------------------
+@ft.component
+def ExperimentsActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
+    return card(
+        "Published experiments",
+        PresetList(store, session, index),
+        why=lambda e: session.select_concept(0, "provenance_tags"),
+        info="each entry of Section 9 runs as an experiment and places the published number beside the simulated one, each with its own chip (Section 14.5)",
+        key="experiments",
+    )
+
+
+class Activity(NamedTuple):
+    label: str
+    render: Callable[[Store, Session, ProvenanceIndex], ft.Control]
+
+
+ACTIVITIES: dict[str, Activity] = {
+    "tour": Activity("Tour", TourActivity),
+    "ghz": Activity("Three ions", GhzActivity),
+    "free": Activity("Your own", FreeActivity),
+    "drills": Activity("Drills", DrillsActivity),
+    "review": Activity("Review", ReviewActivity),
+    "experiments": Activity("Published experiments", ExperimentsActivity),
+    "progress": Activity("Progress", ProgressActivity),
+}
+"""The activities of the Learn view by route tab, in the order of the ladder."""
 
 
 @ft.component
 def LearnPage(
-    store: Store, session: Session, index: ProvenanceIndex, tab: str = "tour", preset_id: str | None = None
+    store: Store, session: Session, index: ProvenanceIndex, tab: str, preset_id: str | None
 ) -> ft.Control:
     ft.use_state(store)
     page = ft.context.page
     if preset_id is not None:
         return PresetPage(store, session, index, preset_id)
-    due_count = len(due_prompts(store.learner.log, _day_clock()))
+    due_count = len(store.learner.log.due(now_days()))
     items = [
-        (t, label + (f" ({due_count})" if t == "review" and due_count else "")) for t, label in LEARN_TABS
+        (t, a.label + (f" ({due_count})" if t == "review" and due_count else ""))
+        for t, a in ACTIVITIES.items()
     ]
     nav = page_tabs(
         items,
@@ -558,38 +497,14 @@ def LearnPage(
         lambda t: page.navigate("/learn" if t == "tour" else f"/learn/{t}"),
         key_prefix="learn-tab",
     )
-    activity: ft.Control
-    if tab == "ghz":
-        activity = GhzActivity(store, session, index)
-    elif tab == "free":
-        activity = FreeActivity(store, session)
-    elif tab == "drills":
-        activity = DrillsActivity(store, session, index)
-    elif tab == "review":
-        activity = ReviewActivity(store, session)
-    elif tab == "experiments":
-        activity = card(
-            "Published experiments",
-            PresetList(store, session, index),
-            why=lambda e: session.select_concept(0, "provenance_tags"),
-            info="each entry of Section 9 runs as an experiment and places the published number beside the simulated one, each with its own chip (Section 14.5)",
-            key="experiments",
-        )
-    elif tab == "progress":
-        activity = ProgressActivity(store, session)
-    else:
-        activity = TourActivity(store, session, index)
     return ft.Column(
         [
             level_header("Learn", "Where to start, what to practise, what to reproduce."),
             SettingsRow(store, session),
             nav,
-            activity,
+            ACTIVITIES[tab].render(store, session, index),
         ],
         spacing=16,
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
-
-
-__all__ = ["KNOWLEDGE_DESCRIPTIONS", "KNOWLEDGE_LABELS", "KNOWLEDGE_SHORT", "LearnPage"]

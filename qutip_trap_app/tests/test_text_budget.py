@@ -3,9 +3,7 @@ buttons, never in the body of a screen.
 
 A static check over the view modules: every literal string handed to ``ft.Text`` or to the ``status_line`` helper outside the
 drawer's own components must be short (a label, a title, a question, a status line under twelve words), and the ``card``
-helper takes no subtitle. Tooltips and
-``info=`` arguments are where the sentences go, so they are not counted. The check is by the AST, so a rendered Flutter client
-is not needed; the same rule the live review applied by eye is applied by machine to every screen on every commit."""
+helper takes no subtitle. Tooltips and ``info=`` arguments are where the sentences go, so they are not counted."""
 
 from __future__ import annotations
 
@@ -18,21 +16,16 @@ MAX_WORDS = 12
 """R5: a status line stays under twelve words; anything longer is a sentence that belongs in the drawer or a tooltip."""
 
 PROSE_FUNCTIONS = {
-    "ExplainCardView",
+    "_explain_card",
     "ExplainDrawer",
     "SpecificationTile",
+    "PromptView",
     "PredictionCard",
     "ClosurePrediction",
-    "ReviewPrompt",
     "DrillView",
     "empty_state",
 }
 """Where prose is allowed: the drawer's components, the learning layer's prompts (asked in the learner's words), the empty state."""
-
-ALLOWED_TEXTS = {
-    # the one formula shown on the Hamiltonian page (the equation itself, not prose)
-    "H/hbar = sum_m omega_m a_m^dag a_m + sum_i (Delta_i/2) sigma_z^i + sum drives (Omega/2) e^{-i(mu t - phi)} sigma_+ prod_m D_m(i eta) + h.c. + Stark",
-}
 
 
 def _literal_words(node: ast.AST) -> int | None:
@@ -94,10 +87,6 @@ def test_body_text_stays_under_the_budget() -> None:
             owner = owners.get(call.lineno, "")
             if owner in PROSE_FUNCTIONS:
                 continue
-            text = call.args[0]
-            literal = text.value if isinstance(text, ast.Constant) else None
-            if literal in ALLOWED_TEXTS:
-                continue
             if words > MAX_WORDS:
                 offenders.append(f"{path.name}:{call.lineno} ({owner}): {words} words")
     assert counted > 100, "the walk saw the screens"
@@ -120,8 +109,7 @@ def test_cards_have_no_subtitle_parameter() -> None:
 
 
 def test_every_level_page_keeps_its_focal_picture() -> None:
-    """R1's regression guard: the function that builds each level's screen still calls its focal drawing (layout order is
-    the live review's to judge; the AST can only see that the picture is there)."""
+    """R1: the function that builds each level's screen still calls its focal drawing."""
     focal = {
         ("level0.py", "ResultsPanel"): "_histogram_chart",
         ("level1.py", "Level1Page"): "_lanes",

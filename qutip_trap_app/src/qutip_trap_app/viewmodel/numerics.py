@@ -1,10 +1,8 @@
-"""The numerics panel that accompanies every level, and the convergence badge (PLAN.md Section 14.2 "numerics panel";
-Section 14.5 "Convergence badges"; Section 9.11 row "Convergence badge").
+"""The numerics panel of every level and the convergence badge (PLAN.md Section 14.5).
 
-Section 14.1 rule 4: "Every result carries its convergence report. The truncation-boundary population and the
-tolerance-halving check of Section 5.5 are shown with every trace, and a failing check colours the result rather than
-hiding it." The badge here is text first (``pass`` / ``not checked`` / ``fail``) with its reasons, so that the colour a view
-adds never carries the meaning alone. A check that was not run is reported as not run: ``None`` never means passed.
+Every result carries its convergence report, and a failing check colours the result rather than hiding it. The badge is
+text first (``pass`` / ``not checked`` / ``fail``) with its reasons, so colour never carries the meaning alone, and a check
+that was not run is reported as not run: ``None`` never means passed.
 """
 
 from __future__ import annotations
@@ -13,16 +11,15 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-import numpy as np
-
 from qutip_trap_app import core
 from qutip_trap_app.record import ConvergenceRecord, Record, ZoomTrace
 from qutip_trap_app.resim import TruncationCheck
 from qutip_trap_app.viewmodel.catalogue import Shown
+from qutip_trap_app.viewmodel.dynamics import norm_deficit
 
 POLICY_BOUNDARY_MAX: float = core.SolverOptions().boundary_population_max
-"""Section 5.5's default threshold on the truncation-boundary population; the badge judges against the POLICY, and says
-so when a run was made with a looser threshold of its own."""
+"""Section 5.5's default threshold on the truncation-boundary population: the badge judges against the policy, and says so
+when a run was made with a looser threshold of its own."""
 
 BadgeStatus = Literal["pass", "not checked", "fail"]
 
@@ -40,7 +37,6 @@ class Badge:
 class NumericsPanel:
     level: Shown
     dimension: Shown
-    dims: tuple[int, ...]
     caps: tuple[Shown, ...]
     mode_classes: tuple[Shown, ...]
     boundary: tuple[Shown, ...]
@@ -50,13 +46,8 @@ class NumericsPanel:
     samples: Shown
     trajectories: Shown
     branches: Shown
-    dropped_branch_weight: float
-    frozen: tuple[Shown, ...]
-    dropped: Shown
     wall_time: Shown
     norm_deficit: Shown | None
-    workers: int
-    kernel: str
     convergence: ConvergenceRecord | None
     tolerance_check: ConvergenceRecord | None
     truncation_check: TruncationCheck | None
@@ -80,8 +71,7 @@ def convergence_badge(
     if boundary:
         run.append("boundary population against the Section 5.5 policy")
     else:
-        # a replay record integrates nothing and reports no boundary population: the check did not run, and an empty
-        # report must never read as a pass (the module's rule)
+        # a replay record integrates nothing and reports no boundary population: the check did not run
         not_run.append("boundary population against the Section 5.5 policy (no integrated mode)")
     for m, v in sorted(boundary.items()):
         if math.isnan(v):
@@ -203,7 +193,6 @@ def numerics_panel(
         derivation_residual=residual,
         level=Shown("fidelity_level", d.level),
         dimension=Shown("dimension", sp.dimension),
-        dims=sp.dims,
         caps=caps,
         mode_classes=tuple(Shown("mode_class", c, f"mode {m}") for m, c in sorted(sp.mode_class.items())),
         boundary=boundary,
@@ -213,26 +202,8 @@ def numerics_panel(
         samples=Shown("samples", d.samples),
         trajectories=Shown("trajectories", d.trajectories),
         branches=Shown("branches", d.branches),
-        dropped_branch_weight=d.dropped_branch_weight,
-        frozen=tuple(
-            Shown("frozen_contribution", c[0], f"mode {m}: chi loss {c[1]:.3g} rad")
-            for m, c in sorted(d.frozen_contribution.items())
-        ),
-        dropped=Shown(
-            "dropped_contribution",
-            d.dropped_contribution[0],
-            f"sum |chi| {d.dropped_contribution[1]:.3g} rad over modes {sp.dropped}",
-        ),
         wall_time=Shown("wall_time", wall),
-        norm_deficit=None
-        if zoom is None or zoom.trace.final_internal.size == 0
-        else Shown(
-            "norm_deficit",
-            1.0 - float(np.real(np.trace(zoom.trace.final_internal))),
-            "at the zoomed step's end",
-        ),
-        workers=d.workers,
-        kernel=d.kernel,
+        norm_deficit=None if zoom is None else norm_deficit(zoom.trace, "at the zoomed step's end"),
         convergence=d.convergence,
         tolerance_check=tolerance_check,
         truncation_check=truncation_check,
@@ -241,13 +212,3 @@ def numerics_panel(
             record, zoom=zoom, tolerance_check=tolerance_check, truncation_check=truncation_check
         ),
     )
-
-
-__all__ = [
-    "POLICY_BOUNDARY_MAX",
-    "Badge",
-    "BadgeStatus",
-    "NumericsPanel",
-    "convergence_badge",
-    "numerics_panel",
-]

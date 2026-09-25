@@ -1,13 +1,12 @@
-"""The published-experiment presets on screen (PLAN.md Section 14.5; DESIGN.md Section 10): the list in the Learn view, the
-page of one preset with its published numbers beside the simulated ones (each with its own chip), its chart and its method
-behind Details, and the comparison table Level 0 reuses for the circuit presets."""
+"""The published-experiment presets on screen: the list in the Learn view, the page of one preset with its published numbers
+beside the simulated ones (each with its own chip), its chart and its method behind Details, and the comparison table Level 0
+reuses for the circuit presets."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import flet as ft
-import flet_charts as fc
 import numpy as np
 
 from qutip_trap_app.provenance import ProvenanceIndex
@@ -101,54 +100,25 @@ def preset_chart(chart: ChartRecord) -> ft.Control:
     title = ft.Text(chart.title, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600)
     if chart.bars and chart.series:
         s = chart.series[0]
-        groups = [
-            fc.BarChartGroup(
-                x=int(x),
-                rods=[
-                    fc.BarChartRod(
-                        from_y=0.0,
-                        to_y=float(y),
-                        width=14,
-                        color=ft.Colors.PRIMARY,
-                        tooltip=f"{y:.3g}",
-                        border_radius=ft.BorderRadius.only(top_left=3, top_right=3),
-                    )
-                ],
-            )
-            for x, y in zip(s.x, s.y)
-        ]
-        top = float(np.max(s.y)) if s.y.size else 1.0
-        chart_ctl: ft.Control = fc.BarChart(
-            groups=groups,
-            bottom_axis=fc.ChartAxis(
-                title=ft.Text(chart.x_title, size=theme.SIZE_MICRO, color=MUTED), label_size=24
-            ),
-            left_axis=fc.ChartAxis(
-                title=ft.Text(chart.y_title, size=theme.SIZE_MICRO, color=MUTED), label_size=40
-            ),
-            horizontal_grid_lines=fc.ChartGridLines(color=ft.Colors.OUTLINE_VARIANT, width=1),
-            max_y=top * 1.15,
-            min_y=0.0,
+        plot = drawing.bar_chart(
+            [(f"{x:g}", [drawing.Bar(float(y), f"{y:.3g}")]) for x, y in zip(s.x, s.y)],
+            bar_width=14,
             height=200,
-            expand=True,
-            interactive=True,
+            max_y=(float(np.max(s.y)) if s.y.size else 1.0) * 1.15,
+            x_title=chart.x_title,
+            y_title=chart.y_title,
         )
-        return ft.Column([title, chart_ctl], spacing=4)
-    return ft.Column(
-        [
-            title,
-            drawing.line_chart(
-                [(s.label, np.asarray(s.x, dtype=float), np.asarray(s.y, dtype=float)) for s in chart.series],
-                x_title=chart.x_title,
-                y_title=chart.y_title,
-                log_x=chart.log_x,
-                log_y=chart.log_y,
-                markers=list(chart.markers),
-                height=220,
-            ),
-        ],
-        spacing=4,
-    )
+    else:
+        plot = drawing.line_chart(
+            [(s.label, np.asarray(s.x, dtype=float), np.asarray(s.y, dtype=float)) for s in chart.series],
+            x_title=chart.x_title,
+            y_title=chart.y_title,
+            log_x=chart.log_x,
+            log_y=chart.log_y,
+            markers=list(chart.markers),
+            height=220,
+        )
+    return ft.Column([title, plot], spacing=4)
 
 
 @ft.component
@@ -245,7 +215,7 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
         detail_controls.extend(ft.Text(n, size=theme.SIZE_SMALL) for n in result.notes)
         detail_controls.extend(ft.Text(w, size=theme.SIZE_SMALL) for w in why_nots)
         detail_controls.append(status_line(f"computed in {result.wall_time_s:.1f} s"))
-        body.append(details(f"preset.{preset_id}", detail_controls, store=store, level=0, session=session))
+        body.append(details(store, session, 0, f"preset.{preset_id}", detail_controls))
     return ft.Column(
         [
             header,
@@ -271,6 +241,3 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
-
-
-__all__ = ["PresetList", "PresetPage", "comparison_table", "preset_chart"]

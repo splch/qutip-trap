@@ -1,5 +1,5 @@
-"""The learning layer: the concept ladder is well formed, every explanation ends in a retrieval prompt, support tracks
-prior knowledge, the spacing rule is the verified declining-share rule, and the six-click tour is complete."""
+"""The learning layer: every explanation ends in a retrieval prompt, support tracks prior knowledge, the spacing rule is the
+declining-share rule, and the six-click tour climbs the ladder."""
 
 from __future__ import annotations
 
@@ -7,52 +7,42 @@ import math
 
 import pytest
 
-from qutip_trap_app.viewmodel import learn
 from qutip_trap_app.viewmodel.learn import (
     BELL_TOUR,
     CONCEPTS,
+    FREE_EXERCISE,
     Attempt,
     MasteryLog,
     explain,
+    level_concepts,
     plan_for,
-    prerequisites_closure,
     review_gap_days,
-    route_matches,
     score_choice,
-    score_direction,
     score_histogram_prediction,
+    sketch_distribution,
 )
+from qutip_trap_app.views.level4 import DEVICE_PAGES
 
 
-def test_concept_ladder_is_well_formed() -> None:
+def test_concepts_are_well_formed() -> None:
     for c in CONCEPTS.values():
         assert c.prompts, f"{c.id}: every explanation is followed by a retrieval prompt"
         assert c.can_do and c.explain.sentence and c.explain.picture and c.explain.equation
-        for p in c.prerequisites:
-            assert p in CONCEPTS, (c.id, p)
-            assert CONCEPTS[p].level <= c.level, f"{c.id} rests on a deeper concept {p}"
-            assert c.id not in prerequisites_closure(p), f"cycle between {c.id} and {p}"
         for pr in c.prompts:
             if pr.kind == "choose":
                 assert pr.answer in pr.options, pr.id
             elif pr.kind == "free_text":
                 assert pr.rubric, pr.id
-            elif pr.kind in ("predict_histogram", "predict_direction", "predict_closure"):
-                assert pr.checks, pr.id
-                assert pr.where, (
-                    f"{pr.id}: the learner is told where to look in plain words, never the machine reference"
-                )
-            elif pr.kind == "locate":
-                assert pr.answer and route_matches(pr.answer), pr.id
+            else:
                 assert pr.where, f"{pr.id}: the learner is told where to look in plain words, never the route"
+            if pr.kind == "locate":
+                assert pr.answer is not None and pr.answer.removeprefix("/device/") in DEVICE_PAGES, pr.id
     assert {c.level for c in CONCEPTS.values()} == {0, 1, 2, 3, 4}
-    for page, ids in learn.PAGE_CONCEPTS.items():
-        assert ids and all(i in CONCEPTS for i in ids), page
-        assert page in learn.PAGE_SECTIONS and page in learn.DEVICE_PAGES
+    assert all(level_concepts(level) for level in range(4)), "every level's drawer has its concepts"
+    for name, page in DEVICE_PAGES.items():
+        assert page.concepts and all(i in CONCEPTS for i in page.concepts), name
     closure = [p for c in CONCEPTS.values() for p in c.prompts if p.kind == "predict_closure"]
     assert len(closure) == 1 and closure[0].options and closure[0].where
-    kinds = {c.kind for c in CONCEPTS.values()}
-    assert {"fact", "concept", "procedure", "discrimination"} <= kinds
 
 
 def test_explain_cards_deepen_and_end_in_a_prompt() -> None:
@@ -60,18 +50,24 @@ def test_explain_cards_deepen_and_end_in_a_prompt() -> None:
     assert card.deeper == "picture" and card.prompt.id == "loop_closure.q1"
     assert "alpha" not in card.text, "the sentence depth has no symbols"
     eq = explain("loop_closure", "equation")
-    assert eq.deeper is None and "alpha_m" in eq.text and eq.section == "4.4.3"
+    assert eq.deeper is None and "alpha_m" in eq.text and eq.concept.section == "4.4.3"
 
 
 def test_support_tracks_prior_knowledge() -> None:
     novice = plan_for("newcomer", 0)
     expert = plan_for("physicist", 0)
-    unknown = plan_for("unknown", 3)
-    assert novice.explain_open and novice.worked_example_first and novice.explain_depth == "sentence"
-    assert not expert.explain_open and not expert.worked_example_first and expert.explain_depth == "equation"
-    assert unknown.explain_open, "when prior knowledge is unknown the app assists (the asymmetric rule)"
-    assert novice.prompt_before_reveal and expert.prompt_before_reveal, "retrieval is asked of everyone"
-    assert expert.numerics_open and expert.chips_expanded
+    assert novice.explain_open and novice.explain_depth == "sentence" and novice.plain_labels_first
+    assert not novice.expanded, "a newcomer's tables start closed"
+    assert not expert.explain_open and expert.explain_depth == "equation" and not expert.plain_labels_first
+    assert expert.expanded
+    assert plan_for("unknown", 3) == plan_for("newcomer", 3), (
+        "when prior knowledge is unknown the app assists"
+    )
+    circuits = [plan_for("circuits", level) for level in range(5)]
+    assert [p.explain_open for p in circuits] == [False, False, True, True, True], (
+        "the hardware levels explained"
+    )
+    assert [p.expanded for p in circuits] == [False, False, False, True, True]
 
 
 @pytest.mark.parametrize(
@@ -106,6 +102,7 @@ def test_mastery_log_separates_session_from_delayed_accuracy() -> None:
     assert "histogram" in log.due(now_days=gap_hi + 0.2)
     log.record(Attempt("histogram", "histogram.q1", gap_hi + 0.2, False, unaided=True))
     assert log.delayed_unaided_accuracy("histogram") == 0.0
+    assert log.due(now_days=gap_hi + 0.3) == (), "the latest exposure restarts the gap"
     assert gap_lo < gap_hi
 
 
@@ -118,41 +115,12 @@ def test_scoring_is_against_the_record_and_about_the_task() -> None:
     assert not bad.within_error_bars and bad.bars_off == ("00", "11") and bad.total_variation > 0.4
     prompt = CONCEPTS["native_gate"].prompts[0]
     assert score_choice(prompt, "1") and not score_choice(prompt, "2")
-    assert math.isclose(score_direction((0.0, 0.0, 1.0), (0.0, 0.0, -1.0)), math.pi)
-    assert math.isclose(score_direction((1.0, 0.0, 0.0), (1.0, 0.0, 0.0)), 0.0)
-    assert math.isclose(score_direction((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)), math.pi / 2)
+    assert sketch_distribution("uniform", sim, 2) == {"00": 0.25, "01": 0.25, "10": 0.25, "11": 0.25}
+    assert sketch_distribution("zero", sim, 2) == {"00": 1.0} and sketch_distribution("ideal", sim, 2) == sim
 
 
-def test_faded_and_free_exercises_and_the_learn_tabs() -> None:
-    """DESIGN.md Section 3: the faded GHZ exercise keeps the tour's six stops (the view withholds the annotations), the free
-    exercise is build, predict, run, explain; the Learn activities are routes."""
-    assert len(learn.GHZ_EXERCISE) == 6 and [s.index for s in learn.GHZ_EXERCISE] == [1, 2, 3, 4, 5, 6]
-    assert all(
-        a.route == b.route and a.concept_id == b.concept_id for a, b in zip(learn.GHZ_EXERCISE, BELL_TOUR)
-    )
-    assert len(learn.FREE_EXERCISE) == 5 and "predict" in learn.FREE_EXERCISE[1].lower()
-    tabs = [t for t, _ in learn.LEARN_TABS]
-    assert tabs[0] == "tour" and {"ghz", "free", "drills", "review", "experiments", "progress"} <= set(tabs)
-    assert route_matches("/learn/drills") and route_matches("/learn/preset/harty_2014")
-    assert not route_matches("/learn/nowhere")
-    assert (
-        learn.CONCEPTS["provenance_tags"].kind == "discrimination"
-        and learn.CONCEPTS["provenance_tags"].level == 0
-    )
-
-
-def test_six_click_tour_covers_the_ladder() -> None:
-    assert len(BELL_TOUR) == 6
-    assert [s.index for s in BELL_TOUR] == [1, 2, 3, 4, 5, 6]
-    for stop in BELL_TOUR:
-        assert stop.concept_id in CONCEPTS
-        assert route_matches(
-            stop.route.replace("{id}", "j1")
-            .replace("{gate}", "ms[2]")
-            .replace("{pulse}", "4")
-            .replace("{sample}", "0")
-        )
+def test_tour_and_the_free_exercise() -> None:
+    assert len(BELL_TOUR) == 6 and all(stop.concept_id in CONCEPTS for stop in BELL_TOUR)
     levels = [CONCEPTS[s.concept_id].level for s in BELL_TOUR]
-    assert levels == sorted(levels) and levels[0] == 0 and levels[-1] == 4
-    assert not route_matches("/device/nowhere") and route_matches("/learn")
-    assert learn.DEFAULT_RETENTION_DAYS == 90.0
+    assert levels == sorted(levels) and levels[0] == 0 and levels[-1] == 4, "the tour climbs the ladder"
+    assert len(FREE_EXERCISE) == 5 and "predict" in FREE_EXERCISE[1].lower()

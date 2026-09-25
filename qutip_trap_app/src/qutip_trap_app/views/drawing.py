@@ -1,13 +1,11 @@
-"""Computed drawings for Levels 3 and 4 (PLAN.md Section 14.5 "No cartoons"; DESIGN.md Section 4).
+"""Computed drawings and charts (PLAN.md Section 14.5 "No cartoons").
 
 Every element drawn here is a number from a view-model: ion positions from the equilibrium solver, mode arrows from the
 Hessian's eigenvectors, the stability boundary from the monodromy, beams from the configured geometry, levels from the
-species table, loops from the recorded <a_m>(t). The one illustrative choice, a level diagram's vertical spacing, is drawn
-on a compressed scale and labelled "not to scale" by the caller. Drawings use Flet's canvas so that nothing needs an
-image library; heatmaps are rendered to PNG by the small encoder below (zlib plus the PNG chunk format, no Pillow).
-
-Colours follow the app's theme roles (primary, tertiary, error, outline) so both themes read; meaning is never carried by
-colour alone (every marker has a label or a tooltip beside it).
+species table, loops from the recorded trajectories. The one illustrative choice, a level diagram's vertical spacing, is
+drawn on a compressed scale and labelled "not to scale". Drawings use Flet's canvas; heatmaps are rendered to PNG by the
+small encoder below (zlib plus the PNG chunk format). Colours follow the theme roles so both themes read, and meaning is
+never carried by colour alone.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ from __future__ import annotations
 import math
 import struct
 import zlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import flet as ft
@@ -71,19 +69,13 @@ def png_bytes(rgba: np.ndarray) -> bytes:
     )
 
 
-def heatmap_png(
-    values: np.ndarray, *, cell_w: int = 14, cell_h: int = 10, vmax: float | None = None, log: bool = True
-) -> bytes:
-    """Rows are the vertical axis (drawn bottom-up: row 0 at the bottom), columns the horizontal one; log scale over six decades
-    by default, because Fock populations span from 1 to 1e-6 and a linear ramp would show one bright cell."""
+def heatmap_png(values: np.ndarray, *, cell_w: int, cell_h: int) -> bytes:
+    """Rows are the vertical axis (drawn bottom-up: row 0 at the bottom), columns the horizontal one, on a log scale over six
+    decades below the maximum: Fock populations span from 1 to 1e-6 and a linear ramp would show one bright cell."""
     v = np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
-    top = float(vmax if vmax is not None else max(float(np.max(v, initial=0.0)), 1e-300))
-    if log:
-        with np.errstate(divide="ignore"):
-            t = (np.log10(np.clip(v, 1e-300, None)) - (math.log10(top) - 6.0)) / 6.0
-        t = np.clip(t, 0.0, 1.0)
-    else:
-        t = np.clip(v / top, 0.0, 1.0)
+    top = max(float(np.max(v, initial=0.0)), 1e-300)
+    with np.errstate(divide="ignore"):
+        t = np.clip((np.log10(np.clip(v, 1e-300, None)) - (math.log10(top) - 6.0)) / 6.0, 0.0, 1.0)
     rows, cols = t.shape
     img = np.zeros((rows * cell_h, cols * cell_w, 4), dtype=np.uint8)
     for r in range(rows):
@@ -142,7 +134,7 @@ def heatmap(
     legend = ft.Row(
         [
             ft.Image(
-                src=heatmap_png(np.logspace(-6, 0, 12)[None, :], cell_w=12, cell_h=8, log=True),
+                src=heatmap_png(np.logspace(-6, 0, 12)[None, :], cell_w=12, cell_h=8),
                 width=144,
                 height=8,
                 fit=ft.BoxFit.FILL,
@@ -320,13 +312,11 @@ def level_diagram(
     levels: Sequence[tuple[str, float, float | None]],
     transitions: Sequence[tuple[str, str, str, float]],
     qubit_level: str,
-    *,
-    width: float = 420.0,
-    height: float = 300.0,
 ) -> ft.Control:
     """Fine-structure levels as horizontal bars at a compressed energy scale (sqrt of the energy above the ground level, so
     the ground and the optical levels fit one picture; labelled not to scale), the tabulated transitions as arrows with their
     wavelengths, the qubit level marked."""
+    width, height = 420.0, 300.0
     names = [n for n, _e, _t in levels]
     energies = np.asarray([e for _n, e, _t in levels], dtype=float)
     scaled = np.sqrt(np.clip(energies, 0.0, None))
@@ -384,10 +374,9 @@ def level_diagram(
     return cv.Canvas(shapes, width=width, height=height)
 
 
-def sublevel_fan(
-    rows: Sequence[tuple[str, float]], *, width: float = 420.0, height: float = 150.0, title: str = ""
-) -> ft.Control:
+def sublevel_fan(rows: Sequence[tuple[str, float]], *, title: str) -> ft.Control:
     """Zeeman sublevels of one level as bars at their energies relative to the lowest, labelled (to scale within the level)."""
+    width, height = 420.0, 150.0
     if not rows:
         return ft.Container()
     energies = np.asarray([e for _l, e in rows], dtype=float)
@@ -406,59 +395,17 @@ def sublevel_fan(
     return cv.Canvas(shapes, width=width, height=height)
 
 
-def zeeman_chart(
-    b_gauss: np.ndarray, energies_hz: np.ndarray, labels: Sequence[str], *, height: float = 200.0
-) -> ft.Control:
-    """Sublevel energies (relative to the level's zero-field energy) against the field, from the diagonalization."""
-    palette = list(theme.series())
-    series = []
-    for j in range(len(labels)):
-        pts = [
-            fc.LineChartDataPoint(x=float(b), y=float(e) / 1e6) for b, e in zip(b_gauss, energies_hz[:, j])
-        ]
-        series.append(
-            fc.LineChartData(
-                points=pts, stroke_width=2, color=palette[j % len(palette)], rounded_stroke_cap=True
-            )
-        )
-    chart: ft.Control = fc.LineChart(
-        data_series=series,
-        height=height,
-        expand=True,
-        left_axis=fc.ChartAxis(title=_axis_title("E/h (MHz)"), label_size=56),
-        bottom_axis=fc.ChartAxis(title=_axis_title("B (G)"), label_size=24),
-        horizontal_grid_lines=_grid(),
-        interactive=True,
-    )
-    legend = ft.Row(
-        [
-            ft.Row(
-                [
-                    ft.Container(width=12, height=3, bgcolor=palette[j % len(palette)]),
-                    ft.Text(str(label), size=10, color=ft.Colors.ON_SURFACE_VARIANT),
-                ],
-                spacing=4,
-            )
-            for j, label in enumerate(labels)
-        ],
-        wrap=True,
-        spacing=10,
-    )
-    return ft.Column([chart, legend], spacing=4)
-
-
 def crystal_picture(
     positions_m: np.ndarray,
     eigenvector: np.ndarray | None,
     e_hat: tuple[float, float, float] | None,
     *,
     species: Sequence[str] = (),
-    width: float = 520.0,
-    height: float = 170.0,
     title: str = "",
 ) -> ft.Control:
     """The chain to scale along the trap axis (z) with the mode's displacement pattern as arrows: c_{i,m} along e_hat,
     drawn in the z (horizontal) and x (vertical) plane; a y component is written beside the arrow."""
+    width, height = 520.0, 170.0
     pos = np.asarray(positions_m, dtype=float)
     z = pos[:, 2]
     span = float(np.max(z) - np.min(z)) if z.size > 1 else 1e-6
@@ -512,11 +459,9 @@ def stability_diagram(
     a_lower: np.ndarray,
     a_upper: np.ndarray,
     points: Sequence[tuple[str, float, float]],
-    *,
-    width: float = 420.0,
-    height: float = 260.0,
 ) -> ft.Control:
     """The first stability region of the Mathieu equation from the monodromy boundary, with the device's (q, a) per axis."""
+    width, height = 420.0, 260.0
     ok = np.isfinite(a_lower) & np.isfinite(a_upper)
     qs, lo, hi = q[ok], a_lower[ok], a_upper[ok]
     ymin = float(min(np.min(lo), -0.05)) if lo.size else -0.5
@@ -574,12 +519,10 @@ def beam_geometry(
     positions_m: np.ndarray,
     beams: Sequence[tuple[int, tuple[float, float, float], tuple[float, float, float], str, str]],
     field_direction: tuple[float, float, float],
-    *,
-    width: float = 520.0,
-    height: float = 260.0,
 ) -> ft.Control:
     """Top view (z along the chain horizontal, x vertical): ions to scale, each beam as an arrow along k_hat through its
     pointing, the quantization axis B drawn from the origin; a beam with a y component says so."""
+    width, height = 520.0, 260.0
     pos = np.asarray(positions_m, dtype=float)
     span = max(float(np.max(pos[:, 2]) - np.min(pos[:, 2])) if pos.shape[0] > 1 else 1e-6, 1e-6)
     half = 1.6 * span
@@ -773,13 +716,102 @@ def line_chart(
     return ft.Column([chart, ft.Row(legend_items, wrap=True, spacing=10)], spacing=4)
 
 
-def two_histograms(
-    bright: np.ndarray, dark: np.ndarray, threshold: float | None, *, height: float = 200.0
+@dataclass(frozen=True)
+class Bar:
+    """One bar of a group: its height, its tooltip, and whether it is the outlined companion of a filled bar (the target
+    beside the simulated, the start beside the end)."""
+
+    value: float
+    tooltip: str
+    outlined: bool = False
+    color: ft.ColorValue = ft.Colors.PRIMARY
+
+
+def bar_chart(
+    groups: Sequence[tuple[str, Sequence[Bar]]],
+    *,
+    bar_width: float,
+    height: float,
+    width: float | None = None,
+    max_y: float | None = None,
+    y_ticks: Sequence[float] = (),
+    label_every: int = 1,
+    x_title: str = "",
+    y_title: str = "",
+    on_tap: Callable[[int], None] | None = None,
+    interactive: bool = True,
 ) -> ft.Control:
+    """Grouped bars, thin with a rounded data end, on hairline gridlines (the dataviz mark specs); labelled below by group
+    (every ``label_every``-th), on the left at ``y_ticks`` when given; ``on_tap`` receives a tapped group's index."""
+    chart_groups = [
+        fc.BarChartGroup(
+            x=k,
+            rods=[
+                fc.BarChartRod(
+                    from_y=0.0,
+                    to_y=b.value,
+                    width=bar_width,
+                    color=ft.Colors.with_opacity(0.12, b.color) if b.outlined else b.color,
+                    border_side=ft.BorderSide(1.5, b.color) if b.outlined else None,
+                    tooltip=b.tooltip,
+                    border_radius=_cap,
+                )
+                for b in bars
+            ],
+            spacing=2,
+        )
+        for k, (_label, bars) in enumerate(groups)
+    ]
+
+    def on_event(e: fc.BarChartEvent) -> None:
+        if on_tap is not None and e.type == fc.ChartEventType.TAP_UP and e.group_index is not None:
+            on_tap(int(e.group_index))
+
+    chart: ft.Control = fc.BarChart(
+        groups=chart_groups,
+        bottom_axis=fc.ChartAxis(
+            labels=[
+                fc.ChartAxisLabel(
+                    value=k, label=ft.Text(label, size=theme.SIZE_CAPTION, color=ft.Colors.ON_SURFACE_VARIANT)
+                )
+                for k, (label, _bars) in enumerate(groups)
+                if k % label_every == 0
+            ],
+            label_size=24,
+            title=_axis_title(x_title) if x_title else None,
+        ),
+        left_axis=fc.ChartAxis(
+            labels=[
+                fc.ChartAxisLabel(
+                    value=v,
+                    label=ft.Text(f"{v:g}", size=theme.SIZE_MICRO, color=ft.Colors.ON_SURFACE_VARIANT),
+                )
+                for v in y_ticks
+            ],
+            label_size=40,
+            title=_axis_title(y_title) if y_title else None,
+        ),
+        horizontal_grid_lines=fc.ChartGridLines(
+            interval=y_ticks[1] - y_ticks[0] if len(y_ticks) > 1 else None,
+            color=ft.Colors.OUTLINE_VARIANT,
+            width=1,
+        ),
+        max_y=max_y,
+        min_y=0.0,
+        height=height,
+        width=width,
+        expand=width is None,
+        interactive=interactive,
+        on_event=on_event if on_tap is not None else None,
+    )
+    return chart
+
+
+def two_histograms(bright: np.ndarray, dark: np.ndarray, threshold: float | None) -> ft.Control:
     """Bright and dark count distributions side by side per photon number, the threshold named."""
     n = max(bright.size, dark.size)
-    # the last populated photon number of EITHER distribution (the bright one reaches further than the dark one), plus
-    # a margin; at least eight bins so a narrow pair still reads as a histogram
+    # the last populated photon number of either distribution (the bright one reaches further), plus a margin; at least
+    # eight bins so a narrow pair still reads as a histogram
     last = max((int(np.flatnonzero(a > 1e-6).max(initial=-1)) for a in (bright, dark)), default=-1)
     n_show = int(min(n, max(last + 3, 8))) if n else 1
     groups = []
@@ -787,44 +819,14 @@ def two_histograms(
         pb = float(bright[k]) if k < bright.size else 0.0
         pd = float(dark[k]) if k < dark.size else 0.0
         groups.append(
-            fc.BarChartGroup(
-                x=k,
-                rods=[
-                    fc.BarChartRod(
-                        from_y=0.0,
-                        to_y=pb,
-                        width=9,
-                        color=ft.Colors.PRIMARY,
-                        tooltip=f"bright: P({k}) = {pb:.3e}",
-                        border_radius=_cap,
-                    ),
-                    fc.BarChartRod(
-                        from_y=0.0,
-                        to_y=pd,
-                        width=9,
-                        color=ft.Colors.TERTIARY,
-                        tooltip=f"dark: P({k}) = {pd:.3e}",
-                        border_radius=_cap,
-                    ),
+            (
+                str(k),
+                [
+                    Bar(pb, f"bright: P({k}) = {pb:.3e}"),
+                    Bar(pd, f"dark: P({k}) = {pd:.3e}", color=ft.Colors.TERTIARY),
                 ],
-                spacing=1,
             )
         )
-    chart: ft.Control = fc.BarChart(
-        groups=groups,
-        bottom_axis=fc.ChartAxis(
-            labels=[
-                fc.ChartAxisLabel(value=k, label=ft.Text(str(k), size=9, color=ft.Colors.ON_SURFACE_VARIANT))
-                for k in range(0, n_show, max(1, n_show // 10))
-            ],
-            label_size=20,
-        ),
-        left_axis=fc.ChartAxis(label_size=40),
-        horizontal_grid_lines=_grid(),
-        height=height,
-        expand=True,
-        interactive=True,
-    )
     legend = ft.Row(
         [
             ft.Container(width=12, height=12, bgcolor=ft.Colors.PRIMARY, border_radius=3),
@@ -840,92 +842,34 @@ def two_histograms(
         spacing=6,
         wrap=True,
     )
-    return ft.Column([chart, legend], spacing=4)
+    return ft.Column(
+        [bar_chart(groups, bar_width=9, height=200, label_every=max(1, n_show // 10)), legend], spacing=4
+    )
 
 
-def fock_bars(start: np.ndarray, end: np.ndarray, *, height: float = 150.0, n_show: int = 8) -> ft.Control:
+def fock_bars(start: np.ndarray, end: np.ndarray) -> ft.Control:
     """P(n) at the start (outlined) and the end (filled) of a step; a distribution given as an EMPTY array is not known
-    and gets no rods, rather than a row of zeros that would read as a measured vacuum."""
+    and gets no bar, rather than a row of zeros that would read as a measured vacuum."""
     groups = []
-    for k in range(min(n_show, max(start.size, end.size))):
-        rods = []
+    for k in range(min(8, max(start.size, end.size))):
+        bars = []
         if start.size:
             a = float(start[k]) if k < start.size else 0.0
-            rods.append(
-                fc.BarChartRod(
-                    from_y=0.0,
-                    to_y=a,
-                    width=10,
-                    color=ft.Colors.with_opacity(0.12, ft.Colors.TERTIARY),
-                    border_side=ft.BorderSide(1.5, ft.Colors.TERTIARY),
-                    tooltip=f"start: P({k}) = {a:.3e}",
-                    border_radius=_cap,
-                )
-            )
+            bars.append(Bar(a, f"start: P({k}) = {a:.3e}", outlined=True, color=ft.Colors.TERTIARY))
         if end.size:
             b = float(end[k]) if k < end.size else 0.0
-            rods.append(
-                fc.BarChartRod(
-                    from_y=0.0,
-                    to_y=b,
-                    width=10,
-                    color=ft.Colors.PRIMARY,
-                    tooltip=f"end: P({k}) = {b:.3e}",
-                    border_radius=_cap,
-                )
-            )
-        groups.append(fc.BarChartGroup(x=k, rods=rods, spacing=1))
-    chart: ft.Control = fc.BarChart(
-        groups=groups,
-        bottom_axis=fc.ChartAxis(
-            labels=[
-                fc.ChartAxisLabel(value=k, label=ft.Text(str(k), size=9, color=ft.Colors.ON_SURFACE_VARIANT))
-                for k in range(min(n_show, max(start.size, end.size)))
-            ],
-            label_size=20,
-        ),
-        left_axis=fc.ChartAxis(label_size=40),
-        horizontal_grid_lines=_grid(),
-        max_y=1.0,
-        min_y=0.0,
-        height=height,
-        expand=True,
-        interactive=True,
-    )
-    return chart
-
-
-__all__ = [
-    "bloch_disc",
-    "Axes",
-    "PhaseLoop",
-    "beam_geometry",
-    "crystal_picture",
-    "fock_bars",
-    "heatmap",
-    "heatmap_png",
-    "level_diagram",
-    "line_chart",
-    "phase_space",
-    "png_bytes",
-    "sequential_rgb",
-    "stability_diagram",
-    "sublevel_fan",
-    "two_histograms",
-    "zeeman_chart",
-]
+            bars.append(Bar(b, f"end: P({k}) = {b:.3e}"))
+        groups.append((str(k), bars))
+    return bar_chart(groups, bar_width=10, height=150, max_y=1.0)
 
 
 def bloch_disc(
-    ion: int,
-    vector: tuple[float, float, float],
-    *,
-    size: float = 120.0,
-    target: tuple[float, float, float] | None = None,
+    ion: int, vector: tuple[float, float, float], *, target: tuple[float, float, float] | None
 ) -> ft.Control:
-    """One ion's Bloch vector as an arrow in the x-z disc (the equator horizontal, |0> up), the y component written beside
-    it, the arrow's length the vector's (a shrunken arrow is mixture or entanglement, DESIGN.md Section 2); an optional
-    target vector is drawn dashed. Computed from the reduced state: (<X>, <Y>, <Z>) (conv.computational_ordering)."""
+    """One ion's Bloch vector (<X>, <Y>, <Z>) as an arrow in the x-z disc (the equator horizontal, |0> up), the y component
+    written beside it and the arrow as long as the vector (a shrunken arrow is mixture or entanglement); the target vector,
+    when given, dashed."""
+    size = 120.0
     x, y, z = (float(v) for v in vector)
     r = size / 2.0 - 8.0
     cx, cy = size / 2.0, size / 2.0

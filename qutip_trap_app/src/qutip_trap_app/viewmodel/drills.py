@@ -1,12 +1,10 @@
-"""The discrimination drills of the Learn view (DESIGN.md Section 3 "Interleaved discrimination drills"; M11.4).
+"""The discrimination drills of the Learn view, generated from the current run record (DESIGN.md Section 3).
 
-Interleaving helps when the goal is telling similar things apart (verified pooled effect, g = 0.42 for inductive learning),
-so the drills mix four discriminations in immediate succession and are GENERATED from the current run record rather than
-scripted: is this device-card number an estimate, calibrated, measured or a device parameter; what does this number's chip
-say was checked; was this mode resolved, frozen or dropped; does this bar sit inside two error bars of its target. Every
-answer is read from the record or the provenance index, so a drill can never disagree with the screen it is about.
-
-Pure Python: the record, the catalogue and the provenance index, no Flet.
+Interleaving helps when the goal is telling similar things apart (pooled effect g = 0.42 for inductive learning), so the
+drills mix four discriminations in immediate succession: is this device-card number an estimate, calibrated, measured or a
+device parameter; what does this number's chip say was checked; was this mode resolved, frozen or dropped; does this bar sit
+inside two error bars of its target. Every answer is read from the record or the provenance index, so a drill never
+disagrees with the screen it is about.
 """
 
 from __future__ import annotations
@@ -25,6 +23,7 @@ DrillKind = Literal["status", "chip_tag", "mode_class", "bar_within"]
 STATUS_OPTIONS: tuple[str, ...] = ("estimate", "calibrated", "measured", "derived", "device parameter")
 MODE_OPTIONS: tuple[str, ...] = ("resolved", "frozen", "dropped")
 BAR_OPTIONS: tuple[str, ...] = ("inside two error bars", "outside two error bars")
+N_DRILLS = 8
 
 CONCEPT_OF: dict[DrillKind, str] = {
     "status": "calibration",
@@ -46,30 +45,18 @@ class Drill:
     """Where on the screens the answer can be checked, in plain words."""
 
 
-def _status_word(status: str) -> str | None:
-    s = status.lower()
-    for word in STATUS_OPTIONS:
-        if s.startswith(word):
-            return word
-    return None
-
-
 def _value_text(value: object, unit: str) -> str:
-    if isinstance(value, float):
-        return f"{value:.4g} {unit}".strip()
-    return f"{value} {unit}".strip()
+    return (f"{value:.4g} {unit}" if isinstance(value, float) else f"{value} {unit}").strip()
 
 
-def drills_for(
-    record: Record, index: ProvenanceIndex, *, n: int = 8, seed: int | None = None
-) -> tuple[Drill, ...]:
-    """Up to ``n`` drills over ``record``, the four kinds interleaved; the order is fixed by ``seed`` (default: the record's
-    key) so a learner sees the same set on re-render and a different set on another record."""
-    rng = random.Random(record.key() if seed is None else seed)
+def drills_for(record: Record, index: ProvenanceIndex) -> tuple[Drill, ...]:
+    """Up to ``N_DRILLS`` drills over ``record``, the four kinds interleaved, in an order fixed by the record's key (the same
+    set on re-render, another set on another record)."""
+    rng = random.Random(record.key())
     card = device_card_view(record)
     pools: dict[DrillKind, list[Drill]] = {k: [] for k in CONCEPT_OF}
-    for row in list(card.rows) + list(card.spam) + list(card.gate_errors):
-        word = _status_word(row.status)
+    for row in card.rows + card.spam + card.gate_errors:
+        word = next((w for w in STATUS_OPTIONS if row.status.lower().startswith(w)), None)
         if word is None:
             continue
         q = CATALOGUE[row.value.quantity]
@@ -85,7 +72,7 @@ def drills_for(
             )
         )
     seen: set[str] = set()
-    for row in list(card.rows) + list(card.spam):
+    for row in card.rows + card.spam:
         q = CATALOGUE[row.value.quantity]
         if q.ledger_id in seen:
             continue
@@ -103,10 +90,8 @@ def drills_for(
             )
         )
     for m, cls in sorted(record.space.mode_class.items()):
-        if cls not in MODE_OPTIONS:
-            continue
         mode = next((x for x in record.device_card.modes if x.index == m), None)
-        if mode is None:
+        if cls not in MODE_OPTIONS or mode is None:
             continue
         pools["mode_class"].append(
             Drill(
@@ -138,26 +123,9 @@ def drills_for(
     for pool in pools.values():
         rng.shuffle(pool)
     out: list[Drill] = []
-    kinds: list[DrillKind] = ["status", "chip_tag", "mode_class", "bar_within"]
-    # interleave: one of each kind in turn, so confusable discriminations follow each other in immediate succession
-    while len(out) < n and any(pools[k] for k in kinds):
-        for k in kinds:
-            if pools[k] and len(out) < n:
-                out.append(pools[k].pop())
+    # interleaved: one of each kind in turn, so confusable discriminations follow each other in immediate succession
+    while len(out) < N_DRILLS and any(pools.values()):
+        for pool in pools.values():
+            if pool and len(out) < N_DRILLS:
+                out.append(pool.pop())
     return tuple(out)
-
-
-def score_drill(drill: Drill, answer: str) -> bool:
-    return answer == drill.answer
-
-
-__all__ = [
-    "BAR_OPTIONS",
-    "CONCEPT_OF",
-    "MODE_OPTIONS",
-    "STATUS_OPTIONS",
-    "Drill",
-    "DrillKind",
-    "drills_for",
-    "score_drill",
-]

@@ -2,9 +2,8 @@
 
 An observable dataclass (Flet re-renders every component that read it through ``use_state``). Records are immutable and
 replaced whole; the worker's events are applied by :meth:`Session.apply_events`, which the shell polls from an asyncio task
-(``page.run_task``) so that no solver ever runs on the UI loop (Section 14.6). The learner's settings and mastery log stay
-on the learner's device through Flet's ``SharedPreferences`` (browser storage in the served mode, a preferences file in
-the desktop window): the spacing rule of DESIGN.md Section 3 needs them to outlive the session, and nothing is uploaded.
+so that no solver ever runs on the UI loop. The learner's settings and mastery log stay on the learner's device through
+Flet's ``SharedPreferences`` (browser storage in the served mode, a preferences file in the desktop window).
 """
 
 from __future__ import annotations
@@ -13,23 +12,26 @@ import asyncio
 import dataclasses
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, get_args
 
 import flet as ft
 
-from qutip_trap_app.core import Circuit, Operation, SolverOptions
+from qutip_trap_app.core import Circuit, SolverOptions
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
-from qutip_trap_app.record import DeviceRef, JobSpec, Record, TableRecord, job_for_preset
+from qutip_trap_app.record import ConvergenceRecord, DeviceRef, JobSpec, Record, TableRecord, job_for_preset
 from qutip_trap_app.requests import GateRequest
+from qutip_trap_app.resim import TruncationCheck
 from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.builder import CircuitFormat, parse_circuit_text
 from qutip_trap_app.viewmodel.learn import (
     DEFAULT_RETENTION_DAYS,
+    DEPTHS,
     Attempt,
     Depth,
+    LevelPlan,
     MasteryLog,
     PriorKnowledge,
     plan_for,
@@ -39,14 +41,43 @@ from qutip_trap_app.workers import Event, SimulationWorker
 
 Engine = Literal["replay", "full"]
 ThemeChoice = Literal["system", "light", "dark"]
+Request = Literal[
+    "run_job",
+    "replay",
+    "request_run",
+    "verify",
+    "zoom",
+    "tomography",
+    "recheck",
+    "preset",
+    "derive",
+    "recalibrate",
+]
+"""The worker requests the screens submit."""
+
+REQUEST_LABELS: dict[Request, str] = {
+    "replay": "channel replay",
+    "run_job": "full simulation",
+    "request_run": "the requested run",
+    "verify": "verify deeper",
+    "zoom": "re-simulation",
+    "tomography": "process tomography",
+    "recheck": "convergence re-check",
+    "preset": "published experiment",
+    "derive": "deriving the device",
+    "recalibrate": "recalibration",
+}
 
 BELL_QASM = (
     'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg c[2];\nh q[0];\ncx q[0],q[1];\nmeasure q -> c;\n'
 )
-"""The worked example (DESIGN.md Section 3): the two-ion Bell state."""
+"""The worked example: the two-ion Bell state."""
+
+DEVICE_PRESET = "yb171_chain"
+"""The public preset every job runs on (the Level 4 knobs edit it)."""
 
 FAST_OPTIONS = SolverOptions(branch_weight_min=1e-3)
-"""The options every job the app submits uses by default (the Section 9.6 fixture rule's fast setting)."""
+"""The options every job the app submits uses (the Section 9.6 fixture rule's fast setting)."""
 
 UNDO_DEPTH = 30
 """How many circuit edits the builder's Undo can take back."""
@@ -58,15 +89,11 @@ tens of seconds, and an unbounded count typed by hand would run for hours or exh
 LEARNER_KEY = "qutip_trap_app.learner.v1"
 """The SharedPreferences key under which the learner's settings and mastery log are kept on the device."""
 
-KNOWLEDGE_VALUES: tuple[PriorKnowledge, ...] = ("newcomer", "circuits", "physicist", "unknown")
-DEPTH_VALUES: tuple[Depth, ...] = ("sentence", "picture", "equation")
-THEME_VALUES: tuple[ThemeChoice, ...] = ("system", "light", "dark")
-
 
 @dataclass
 class JobStatus:
     ticket: str
-    request: str
+    request: Request
     stage: str = "queued"
     fraction: float | None = None
     message: str = ""
@@ -74,10 +101,9 @@ class JobStatus:
     error: str | None = None
     done: bool = False
     job: JobSpec | None = None
-    engine: Engine = "full"
     target: dict[str, Any] = field(default_factory=dict)
-    """What the request was about (record key, step, sample, branch, device cache key), read back when its result lands.
-    Only this field identifies the target: ``message`` is display text that every progress event overwrites."""
+    """What the request was about (record key, step, sample, branch, device cache key), read back when its result lands;
+    ``message`` is display text that every progress event overwrites."""
 
     @property
     def elapsed_s(self) -> float:
@@ -93,10 +119,10 @@ class Learner:
     depth_override: Depth | None = None
     explain_open: bool | None = None
     theme: ThemeChoice = "system"
-    """The colour scheme the learner chose: the platform's, or light or dark regardless of it (DESIGN.md Section 4)."""
+    """The colour scheme: the platform's, or light or dark regardless of it."""
     log: MasteryLog = field(default_factory=MasteryLog)
 
-    def plan(self, level: int) -> Any:
+    def plan(self, level: int) -> LevelPlan:
         return plan_for(self.knowledge, level)
 
     def depth(self, level: int) -> Depth:
@@ -120,25 +146,23 @@ def learner_document(learner: Learner) -> dict[str, Any]:
 
 
 def learner_from_document(doc: Mapping[str, Any]) -> Learner:
-    """The inverse of :func:`learner_document`. A key that an older document lacks takes the fresh learner's value; a
-    value outside its vocabulary raises, so a corrupt document is reported rather than half-loaded."""
-    knowledge = doc.get("knowledge", "unknown")
-    if knowledge not in KNOWLEDGE_VALUES:
-        raise ValueError(f"unknown prior knowledge {knowledge!r}; expected one of {KNOWLEDGE_VALUES}")
-    depth = doc.get("depth_override")
-    if depth is not None and depth not in DEPTH_VALUES:
-        raise ValueError(f"unknown explanation depth {depth!r}; expected one of {DEPTH_VALUES} or null")
-    theme_choice = doc.get("theme", "system")
-    if theme_choice not in THEME_VALUES:
-        raise ValueError(f"unknown theme {theme_choice!r}; expected one of {THEME_VALUES}")
-    retention = float(doc.get("retention_days", DEFAULT_RETENTION_DAYS))
+    """The inverse of :func:`learner_document`. A missing key or a value outside its vocabulary raises, so a corrupt
+    document is reported rather than half-loaded."""
+    knowledge = doc["knowledge"]
+    if knowledge not in get_args(PriorKnowledge):
+        raise ValueError(f"unknown prior knowledge {knowledge!r}; expected one of {get_args(PriorKnowledge)}")
+    depth = doc["depth_override"]
+    if depth is not None and depth not in DEPTHS:
+        raise ValueError(f"unknown explanation depth {depth!r}; expected one of {DEPTHS} or null")
+    theme_choice = doc["theme"]
+    if theme_choice not in get_args(ThemeChoice):
+        raise ValueError(f"unknown theme {theme_choice!r}; expected one of {get_args(ThemeChoice)}")
+    retention = float(doc["retention_days"])
     if not retention > 0.0:
         raise ValueError(f"the retention target must be positive, not {retention}")
-    explain_open = doc.get("explain_open")
     log = MasteryLog(retention_days=retention)
-    for a in doc.get("attempts", ()):
+    for a in doc["attempts"]:
         correct = a["correct"]
-        score = a.get("score")
         log.record(
             Attempt(
                 str(a["concept_id"]),
@@ -146,16 +170,16 @@ def learner_from_document(doc: Mapping[str, Any]) -> Learner:
                 float(a["t_days"]),
                 None if correct is None else bool(correct),
                 bool(a["unaided"]),
-                None if score is None else float(score),
             )
         )
+    explain_open = doc["explain_open"]
     return Learner(
-        knowledge=cast(PriorKnowledge, knowledge),
+        knowledge=knowledge,
         retention_days=retention,
-        asked=bool(doc.get("asked", False)),
-        depth_override=cast("Depth | None", depth),
+        asked=bool(doc["asked"]),
+        depth_override=depth,
         explain_open=None if explain_open is None else bool(explain_open),
-        theme=cast(ThemeChoice, theme_choice),
+        theme=theme_choice,
         log=log,
     )
 
@@ -169,20 +193,19 @@ class Store:
     current: str | None = None
     jobs: dict[str, JobStatus] = field(default_factory=dict)
     verify_reports: dict[str, VerifyReport] = field(default_factory=dict)
-    zoom_cache: dict[str, Any] = field(default_factory=dict)
     learner: Learner = field(default_factory=Learner)
     learner_loaded: bool = False
     """True once the saved learner was read (or found absent), so the first-launch question is asked once per device."""
     circuit_text: str = BELL_QASM
     circuit_format: CircuitFormat = "openqasm2"
     circuit_undo: tuple[tuple[str, CircuitFormat], ...] = ()
-    """The circuit texts (with their formats) before each edit made in the builder, oldest first (DESIGN.md R16)."""
+    """The circuit texts (with their formats) before each edit made in the builder, oldest first."""
     shots: int = 200
     engine: Engine = "replay"
     prediction: str | None = None
-    """The learner's histogram pick for the NEXT run (a sketch id), "skipped" when declined, None when not yet made."""
+    """The learner's histogram pick for the next run (a sketch id), "skipped" when declined, None when not yet made."""
     scored_prediction: str | None = None
-    """The pick that applied to the current record, scored beside its histogram (DESIGN.md Section 3)."""
+    """The pick that applied to the current record, scored beside its histogram."""
     last_run_text: str | None = None
     """The circuit text of the last submitted run; a prediction is asked again once the text differs from it."""
     numerics_open: bool | None = None
@@ -190,48 +213,45 @@ class Store:
     selected_bar: str | None = None
     selected_shot: int | None = None
     error: str = ""
-    worker_alive: bool = False
     tick: int = 0
     """Bumped by the poll loop when any job progressed (and once a second while one runs), so progress rows re-render."""
-    # ---- Level 4: the device model as the single source of truth (Section 14.4; M11.3) ----
-    preset_name: str = "yb171_chain"
+    # the device model: the Level 4 knobs over the preset, the derived layers and the recalibrated tables
     preset_kwargs: dict[str, Any] = field(default_factory=dict)
     device_overrides: dict[str, float] = field(default_factory=dict)
     """The Level 4 knobs as set (``knobs`` ids); empty is the preset as published."""
     layers: dict[str, DeviceLayer] = field(default_factory=dict)
     """Derived device layers per ``DeviceRef.cache_key()``."""
     tables: dict[str, TableRecord] = field(default_factory=dict)
-    """Recalibrated tables per device hash (the user-initiated job of Section 14.4)."""
+    """Recalibrated tables per device hash."""
     device_page: str = "hamiltonian"
-    # ---- Level 3 selections ----
+    # Level 3 selections
     branch: int = 0
     """The initial-mixture branch Level 3 shows (the sample comes from the route)."""
     closure_predictions: dict[str, str] = field(default_factory=dict)
     """Per ``key:step``, the learner's closure pick before the loops were revealed ("skipped" when declined)."""
-    rechecks: dict[str, Any] = field(default_factory=dict)
+    rechecks: dict[str, tuple[ConvergenceRecord, TruncationCheck]] = field(default_factory=dict)
     """Per ``key:step:sample:branch``, the (tolerance, truncation) re-check pair a Level 3 request produced."""
     hamiltonian_target: tuple[str, int, int, int] | None = None
     """(record key, step, sample, branch) the Hamiltonian page shows; None = the current record's first entangling step."""
     selected_channel: str | None = None
     """A collapse channel opened from a jump marker on Level 3 (highlighted on the Hamiltonian page)."""
     selected_term: int | None = None
-    # ---- M11.4: requests, presets, the explain drawer's selection and the Learn activities ----
+    # requests, presets, the explain drawer's selection and the Learn activities
     preset_results: dict[str, PresetResult] = field(default_factory=dict)
-    """Finished published-experiment presets by id (Section 14.5)."""
     active_preset: str | None = None
-    """The circuit preset the current run was made from (its check-script numbers show beside the histogram), if any."""
+    """The circuit preset the current run was made from (its reference numbers show beside the histogram), if any."""
     last_request: GateRequest | None = None
     """The most recent request made at Level 1 or 2 (accepted or refused), shown where it was made."""
     explain_concept: dict[int, str] = field(default_factory=dict)
-    """Per level, the concept the explain drawer shows (DESIGN.md Section 10 R7); absent = the level's first."""
+    """Per level, the concept the explain drawer shows; absent = the level's first."""
     spec_section: str | None = None
     """The Part II section the drawer's Specification tile shows, when a chip or a why-button chose one."""
     details_open: dict[str, bool] = field(default_factory=dict)
-    """Per Details tile id, whether the learner opened it (None = the plan's default)."""
+    """Per Details tile id, whether the learner opened it (absent = the plan's default)."""
     revealed_stops: set[int] = field(default_factory=set)
     """Stops of the faded GHZ exercise whose annotation the learner asked for."""
     drill_answers: dict[str, str] = field(default_factory=dict)
-    """Per drill id, the answer given (scored against the record, DESIGN.md Section 3)."""
+    """Per drill id, the answer given."""
 
     def record(self) -> Record | None:
         return self.records.get(self.current) if self.current else None
@@ -239,44 +259,49 @@ class Store:
     def running(self) -> list[JobStatus]:
         return [j for j in self.jobs.values() if not j.done]
 
-    def running_of(self, request: str, **target: Any) -> JobStatus | None:
+    def running_of(self, request: Request, **target: Any) -> JobStatus | None:
         """The running job of one request kind whose target carries the given items, if any."""
-        for j in self.jobs.values():
-            if j.done or j.request != request:
-                continue
-            if all(j.target.get(k) == v for k, v in target.items()):
-                return j
-        return None
+        return next(
+            (
+                j
+                for j in self.jobs.values()
+                if not j.done
+                and j.request == request
+                and all(j.target.get(k) == v for k, v in target.items())
+            ),
+            None,
+        )
 
     def device_ref(self, n_ions: int | None = None) -> DeviceRef:
         """The current device as a reference: the preset, its arguments, the overrides, and the hash when a derived layer
-        already knows it (the UI never builds a device; the worker does, Section 14.6)."""
+        already knows it (the UI never builds a device; the worker does)."""
         rec = self.record()
         n = n_ions if n_ions is not None else (rec.device_card.n_ions if rec is not None else 2)
-        ref = DeviceRef("", self.preset_name, int(n), dict(self.preset_kwargs), dict(self.device_overrides))
+        ref = DeviceRef("", DEVICE_PRESET, int(n), dict(self.preset_kwargs), dict(self.device_overrides))
         layer = self.layers.get(ref.cache_key())
-        if layer is not None:
-            ref = dataclasses.replace(ref, hash=layer.device_hash)
-        return ref
+        return ref if layer is None else dataclasses.replace(ref, hash=layer.device_hash)
 
-    def layer(self, n_ions: int | None = None) -> DeviceLayer | None:
-        return self.layers.get(self.device_ref(n_ions).cache_key())
+    def layer(self) -> DeviceLayer | None:
+        return self.layers.get(self.device_ref().cache_key())
 
     def table_for(self, device_hash: str) -> TableRecord | None:
-        """The calibration table that belongs to a device hash: a recalibrated one, else the current record's when it
-        was made on that device."""
+        """The calibration table of a device hash: a recalibrated one, else the current record's when it was made on that
+        device."""
         t = self.tables.get(device_hash)
         if t is not None:
             return t
         rec = self.record()
-        if rec is not None and rec.device_hash == device_hash:
-            return rec.table
-        return None
+        return rec.table if rec is not None and rec.device_hash == device_hash else None
 
     def prediction_pending(self) -> bool:
-        """Whether the next Run is a run the learner has not predicted: nothing submitted yet, or the circuit text changed
-        since the last submission. Predict-then-reveal then happens before every reveal, not only the first."""
+        """Whether the next Run is one the learner has not predicted: nothing submitted yet, or the circuit text changed
+        since the last submission, so predict-then-reveal happens before every reveal."""
         return self.circuit_text != self.last_run_text
+
+
+RESTORE_TIMEOUT_S = 8.0
+HEARTBEAT_S = 1.0
+POLL_S = 0.2
 
 
 class Session:
@@ -292,36 +317,30 @@ class Session:
         self.preferences = preferences
         """A ``flet.SharedPreferences`` service; None in tests and headless use, where the learner lives in memory only."""
         self._last_beat = time.monotonic()
-        # a clicked provenance chip opens the drawer's Specification tile at its section (DESIGN.md Section 10 R8)
+        # a clicked provenance chip opens the drawer's Specification tile at its section
         provenance.on_open_section = self.open_specification
 
     def start(self) -> None:
         self.worker.start()
-        self.store.worker_alive = self.worker.alive
 
     def stop(self) -> None:
         self.worker.stop()
-        self.store.worker_alive = False
 
-    # -- the learner (DESIGN.md Sections 1 and 3) --
+    # ---- the learner ----
 
     def set_learner(self, **changes: Any) -> None:
         """Replace the learner so the store notifies its readers, keep the log's retention target in step, and save."""
         learner = dataclasses.replace(self.store.learner, **changes)
         learner.log.retention_days = learner.retention_days
         self.store.learner = learner
-        self.persist_learner()
+        if self.preferences is not None and self.page is not None:
+            self.page.run_task(self._save_learner, json.dumps(learner_document(learner)))
 
     def record_attempt(self, attempt: Attempt) -> None:
-        """Log one prompt attempt and save. A skip is an attempt with ``correct=None``: it counts as an exposure, so the
-        prompt comes due in the review tray, and never as wrong."""
+        """Log one prompt attempt and save. A skip (``correct=None``) counts as an exposure, so the prompt comes due in the
+        review tray, and never as wrong."""
         self.store.learner.log.record(attempt)
         self.set_learner()
-
-    def persist_learner(self) -> None:
-        if self.preferences is None or self.page is None:
-            return
-        self.page.run_task(self._save_learner, json.dumps(learner_document(self.store.learner)))
 
     async def _save_learner(self, document: str) -> None:
         try:
@@ -331,13 +350,12 @@ class Session:
         ) as exc:  # the settings stay in memory for this session; the failure is shown, not swallowed
             self.store.error = f"the learner settings could not be saved on this device: {exc}"
 
-    async def restore_learner(self, timeout_s: float = 8.0) -> None:
-        """Read the saved learner at start-up. The first-launch question waits for ``learner_loaded``, so it is asked
-        once per device rather than once per launch; the read is bounded so a slow or not-yet-ready storage service can
-        never leave the question permanently gated off (a new device is then asked, and the settings still save)."""
+    async def restore_learner(self) -> None:
+        """Read the saved learner at start-up. The first-launch question waits for ``learner_loaded``, so it is asked once
+        per device; the read is bounded so a slow storage service never leaves the question gated off."""
         try:
             if self.preferences is not None:
-                raw = await asyncio.wait_for(self.preferences.get(LEARNER_KEY), timeout=timeout_s)
+                raw = await asyncio.wait_for(self.preferences.get(LEARNER_KEY), timeout=RESTORE_TIMEOUT_S)
                 if isinstance(raw, str) and raw:
                     self.store.learner = learner_from_document(json.loads(raw))
         except TimeoutError:
@@ -353,20 +371,21 @@ class Session:
         finally:
             self.store.learner_loaded = True
 
-    # -- submitting work --
+    # ---- the circuit (every change to the text goes through here) ----
 
     def parse_circuit(self) -> Circuit:
         return parse_circuit_text(self.store.circuit_text, self.store.circuit_format)
 
-    # -- editing the circuit (the builder of DESIGN.md R16: every change to the text goes through here) --
+    def _set_circuit(self, text: str, fmt: CircuitFormat) -> None:
+        self.store.circuit_text = text
+        self.store.circuit_format = fmt
+        self.store.active_preset = None
 
     def edit_circuit(self, text: str, fmt: CircuitFormat = "openqasm2") -> None:
         """Replace the circuit text (the builder's serialisation, or an imported program), remembering the old one for
         Undo. An edited circuit is nobody's preset, and the last error about the old text no longer applies."""
         self._remember_circuit()
-        self.store.circuit_text = text
-        self.store.circuit_format = fmt
-        self.store.active_preset = None
+        self._set_circuit(text, fmt)
         self.store.error = ""
 
     def undo_circuit(self) -> bool:
@@ -375,9 +394,7 @@ class Session:
             return False
         *rest, (text, fmt) = self.store.circuit_undo
         self.store.circuit_undo = tuple(rest)
-        self.store.circuit_text = text
-        self.store.circuit_format = fmt
-        self.store.active_preset = None
+        self._set_circuit(text, fmt)
         self.store.error = ""
         return True
 
@@ -385,54 +402,14 @@ class Session:
         history = (*self.store.circuit_undo, (self.store.circuit_text, self.store.circuit_format))
         self.store.circuit_undo = history[-UNDO_DEPTH:]
 
-    def build_job(self, *, n_ions: int | None = None, seed: int = 0, label: str = "") -> JobSpec:
-        """The job for the current circuit on the current device (the Level 4 overrides included). Nothing is built here:
-        the device hash is left for the worker to fill unless a derived layer already knows it."""
-        circuit = self.parse_circuit()
-        n = n_ions if n_ions is not None else max(2, circuit.n_qubits)
-        job, _preset = job_for_preset(
-            self.store.preset_name,
-            n,
-            circuit,
-            int(self.store.shots),
-            seed=seed,
-            options=FAST_OPTIONS,
-            detection_records=500,
-            preset_kwargs=self.store.preset_kwargs,
-            overrides=self.store.device_overrides,
-            build=False,
-            label=label,
-        )
-        ref = self.store.device_ref(n)
-        if ref.hash:
-            job = dataclasses.replace(job, device=dataclasses.replace(job.device, hash=ref.hash))
-        return job
-
-    def submit_run(self, *, label: str = "") -> JobStatus | None:
-        try:
-            job = self.build_job(
-                label=label or (f"preset: {self.store.active_preset}" if self.store.active_preset else "")
-            )
-        except Exception as exc:  # a syntax error in the circuit text: shown beside the editor, never a crash
-            self.store.error = f"the circuit could not be read: {exc}"
-            return None
-        self.store.error = ""
-        self.store.last_run_text = self.store.circuit_text
-        request = "replay" if self.store.engine == "replay" else "run_job"
-        ticket = self.worker.submit(request, job=job)
-        status = JobStatus(ticket.id, request, job=job, engine=self.store.engine)
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
-
     def load_circuit_preset(self, preset_id: str) -> PresetSpec:
-        """Put a circuit preset of Section 14.5 (the Bell state, the three-ion GHZ) into the editor: its circuit, shots,
-        device arguments and the full engine; the Results card then shows the check script's numbers beside the run's."""
+        """Put a circuit preset (the Bell state, the three-ion GHZ) into the editor with its shots, device arguments and
+        the full engine; the Results card then shows the reference numbers beside the run's."""
         spec = PRESETS[preset_id]
         if spec.kind != "circuit":
             raise ValueError(f"{preset_id} is an experiment preset; it runs from the Learn view")
         self._remember_circuit()
-        self.store.circuit_text = spec.circuit_text
-        self.store.circuit_format = "openqasm2"
+        self._set_circuit(spec.circuit_text, "openqasm2")
         self.store.shots = int(spec.shots)
         self.store.engine = "full"
         self.store.preset_kwargs = dict(spec.preset_kwargs)
@@ -441,57 +418,111 @@ class Session:
         return spec
 
     def load_bell_example(self) -> None:
-        """The worked example back in the builder, on the published preset (no preset arguments, no active circuit preset)."""
+        """The worked example back in the builder, on the published preset."""
         self._remember_circuit()
-        self.store.circuit_text = BELL_QASM
-        self.store.circuit_format = "openqasm2"
+        self._set_circuit(BELL_QASM, "openqasm2")
         self.store.preset_kwargs = {}
-        self.store.active_preset = None
+
+    # ---- submitting work ----
+
+    def _track(self, status: JobStatus) -> JobStatus:
+        self.store.jobs = {**self.store.jobs, status.ticket: status}
+        return status
+
+    def build_job(self, *, label: str = "") -> JobSpec:
+        """The job for the current circuit on the current device (the Level 4 overrides included). Nothing is built here:
+        the device hash is left for the worker to fill unless a derived layer already knows it."""
+        circuit = self.parse_circuit()
+        n = max(2, circuit.n_qubits)
+        job, _preset = job_for_preset(
+            DEVICE_PRESET,
+            n,
+            circuit,
+            int(self.store.shots),
+            seed=0,
+            options=FAST_OPTIONS,
+            detection_records=500,
+            preset_kwargs=self.store.preset_kwargs,
+            overrides=self.store.device_overrides,
+            build=False,
+            label=label,
+        )
+        ref = self.store.device_ref(n)
+        return (
+            dataclasses.replace(job, device=dataclasses.replace(job.device, hash=ref.hash))
+            if ref.hash
+            else job
+        )
+
+    def submit_run(self) -> JobStatus | None:
+        try:
+            job = self.build_job(
+                label=f"preset: {self.store.active_preset}" if self.store.active_preset else ""
+            )
+        except Exception as exc:  # a syntax error in the circuit text: shown beside the editor, never a crash
+            self.store.error = f"the circuit could not be read: {exc}"
+            return None
+        self.store.error = ""
+        self.store.last_run_text = self.store.circuit_text
+        request: Request = "replay" if self.store.engine == "replay" else "run_job"
+        return self._track(JobStatus(self.worker.submit(request, job=job).id, request, job=job))
 
     def submit_preset(self, preset_id: str) -> JobStatus | None:
-        """Run a published-experiment preset in the worker (Section 14.5); a repeat while one runs is skipped."""
+        """Run a published-experiment preset in the worker; a repeat while one runs is skipped."""
         spec = PRESETS[preset_id]
         if spec.kind != "experiment":
             raise ValueError(f"{preset_id} is a circuit preset: load it into the editor and Run")
         if self.store.running_of("preset", preset_id=preset_id) is not None:
             return None
         ticket = self.worker.submit("preset", preset_id=preset_id)
-        status = JobStatus(ticket.id, "preset", target={"preset_id": preset_id})
-        status.message = spec.title
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
+        return self._track(
+            JobStatus(ticket.id, "preset", message=spec.title, target={"preset_id": preset_id})
+        )
 
     def submit_request(self, request: GateRequest) -> JobStatus | None:
-        """Run an accepted request of Section 14.4 as its own job at the full engine, with the requested gate's process matrix
-        computed when the run finishes (the worker's ``request_run``). A refused request is kept for display and not run."""
+        """Run an accepted Level 1 or 2 request as its own job at the full engine, the requested gate's process matrix
+        computed when the run finishes. A refused request is kept for display and not run."""
         self.store.last_request = request
         if request.job is None:
             return None
         self.store.error = ""
         self.store.active_preset = None
         ticket = self.worker.submit("request_run", job=request.job, step=request.step_index)
-        status = JobStatus(
-            ticket.id,
-            "request_run",
-            job=request.job,
-            engine="full",
-            target={"gate_id": request.gate_id, "kind": request.kind},
+        target = {"gate_id": request.gate_id, "kind": request.kind}
+        return self._track(
+            JobStatus(ticket.id, "request_run", message=request.job.label, job=request.job, target=target)
         )
-        status.message = request.job.label
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
+
+    def submit_verify(self, key: str, shots: int | None = None) -> JobStatus:
+        record = self.store.records[key]
+        ticket = self.worker.submit("verify", key=key, record=record, shots=shots)
+        return self._track(JobStatus(ticket.id, "verify", message=key, job=record.job, target={"key": key}))
+
+    def _submit_step(
+        self, request: Request, key: str, step: int, sample: int, branch: int, **extra: Any
+    ) -> JobStatus:
+        """A request about one gate step of a record (zoom, tomography, re-check)."""
+        target = {"key": key, "step": step, "sample": sample, "branch": branch}
+        ticket = self.worker.submit(request, **target, **extra)
+        return self._track(JobStatus(ticket.id, request, target=target))
+
+    def submit_zoom(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
+        status = self._submit_step("zoom", key, step, sample, branch, n_store=201)
+        status.message = f"{key}:{step}"
         return status
+
+    def submit_tomography(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
+        return self._submit_step("tomography", key, step, sample, branch)
+
+    def submit_recheck(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
+        return self._submit_step("recheck", key, step, sample, branch)
 
     def toggle_details(self, tile_id: str, open_: bool) -> None:
         self.store.details_open = {**self.store.details_open, tile_id: open_}
 
-    def select_concept(self, level: int, concept_id: str | None) -> None:
-        """Open the explain drawer at one concept of the level (DESIGN.md Section 10 R7: one concept at a time)."""
-        chosen = dict(self.store.explain_concept)
-        if concept_id is None:
-            chosen.pop(level, None)
-        else:
-            chosen[level] = concept_id
-        self.store.explain_concept = chosen
+    def select_concept(self, level: int, concept_id: str) -> None:
+        """Open the explain drawer at one concept of the level (one concept at a time)."""
+        self.store.explain_concept = {**self.store.explain_concept, level: concept_id}
         self.set_learner(explain_open=True)
 
     def open_specification(self, section: str) -> None:
@@ -499,54 +530,7 @@ class Session:
         self.store.spec_section = section
         self.set_learner(explain_open=True)
 
-    def submit_verify(self, key: str, shots: int | None = None) -> JobStatus:
-        record = self.store.records[key]
-        ticket = self.worker.submit("verify", key=key, record=record, shots=shots)
-        status = JobStatus(ticket.id, "verify", job=record.job, target={"key": key})
-        status.message = key
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
-
-    def submit_zoom(
-        self, key: str, step: int, sample: int = 0, branch: int = 0, n_store: int = 201
-    ) -> JobStatus:
-        ticket = self.worker.submit("zoom", key=key, step=step, sample=sample, branch=branch, n_store=n_store)
-        status = JobStatus(
-            ticket.id, "zoom", target={"key": key, "step": step, "sample": sample, "branch": branch}
-        )
-        status.message = f"{key}:{step}"
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
-
-    def submit_fock_movie(
-        self, key: str, step: int, sample: int = 0, branch: int = 0, n_frames: int = 8
-    ) -> JobStatus:
-        ticket = self.worker.submit(
-            "fock_movie", key=key, step=step, sample=sample, branch=branch, n_frames=n_frames
-        )
-        status = JobStatus(
-            ticket.id, "fock_movie", target={"key": key, "step": step, "sample": sample, "branch": branch}
-        )
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
-
-    def submit_tomography(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
-        ticket = self.worker.submit("tomography", key=key, step=step, sample=sample, branch=branch)
-        status = JobStatus(
-            ticket.id, "tomography", target={"key": key, "step": step, "sample": sample, "branch": branch}
-        )
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
-
-    def submit_recheck(self, key: str, step: int, sample: int = 0, branch: int = 0) -> JobStatus:
-        ticket = self.worker.submit("recheck", key=key, step=step, sample=sample, branch=branch)
-        status = JobStatus(
-            ticket.id, "recheck", target={"key": key, "step": step, "sample": sample, "branch": branch}
-        )
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
-
-    # -- the device model (Section 14.4) --
+    # ---- the device model ----
 
     def set_knob(self, knob_id: str, value: float | None) -> None:
         """Set (or, with None, reset) one Level 4 knob and re-derive the analytic layer for the new device."""
@@ -562,23 +546,20 @@ class Session:
         self.store.device_overrides = {}
         self.submit_derive()
 
-    def submit_derive(self, n_ions: int | None = None) -> JobStatus | None:
-        """Derive the device layer of the current device (immediate tier in the worker); a repeat for a layer the store
-        already holds is skipped, and so is a duplicate of a running request."""
-        ref = self.store.device_ref(n_ions)
+    def submit_derive(self) -> JobStatus | None:
+        """Derive the device layer of the current device in the worker; a layer the store holds or a derive already running
+        for it is not requested again."""
+        ref = self.store.device_ref()
         ck = ref.cache_key()
         if ck in self.store.layers or self.store.running_of("derive", cache_key=ck) is not None:
             return None
         rec = self.store.record()
-        table_record = rec.table if rec is not None else None
-        ticket = self.worker.submit("derive", device=ref, table_record=table_record)
-        status = JobStatus(ticket.id, "derive", target={"cache_key": ck})
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
+        ticket = self.worker.submit("derive", device=ref, table_record=rec.table if rec is not None else None)
+        return self._track(JobStatus(ticket.id, "derive", target={"cache_key": ck}))
 
     def submit_recalibrate(self) -> JobStatus | None:
-        """The user-initiated recalibration of Section 14.4: the surrogate table for the current device (edited knobs
-        included) and the current circuit's pairs, so that the next Run finds it in the worker's cache."""
+        """The user-initiated recalibration: the surrogate table for the current device (edited knobs included) and the
+        current circuit's pairs, so that the next Run finds it in the worker's cache."""
         try:
             job = self.build_job()
         except Exception as exc:  # a syntax error in the circuit text: shown, never a crash
@@ -588,31 +569,30 @@ class Session:
         if self.store.running_of("recalibrate", cache_key=ck) is not None:
             return None
         ticket = self.worker.submit("recalibrate", job=job)
-        status = JobStatus(ticket.id, "recalibrate", job=job, target={"cache_key": ck})
-        self.store.jobs = {**self.store.jobs, ticket.id: status}
-        return status
+        return self._track(JobStatus(ticket.id, "recalibrate", job=job, target={"cache_key": ck}))
 
     def cancel_all(self) -> None:
-        """Hard cancel of every running job (DESIGN.md Section 4: over ten seconds means progress and cancel). The worker
-        process is terminated and restarted, which loses its live handles and channel library but not the records the
-        screens hold; the jobs are marked cancelled rather than failed."""
+        """Hard cancel of every running job: the worker process is terminated and restarted, which loses its live handles
+        and channel library but not the records the screens hold; the jobs are marked cancelled rather than failed."""
         self.worker.cancel()
+        self._finish_running("cancelled", "cancelled by the user")
+
+    def _finish_running(self, stage: str, error: str) -> None:
         jobs = dict(self.store.jobs)
         for status in jobs.values():
             if not status.done:
-                status.done, status.stage, status.error = True, "cancelled", "cancelled by the user"
+                status.done, status.stage, status.error = True, stage, error
         self.store.jobs = jobs
-        self.store.worker_alive = self.worker.alive
         self.store.tick = self.store.tick + 1
 
-    # -- applying events --
+    # ---- applying events ----
 
     def apply_events(self, events: list[Event]) -> None:
         if not events:
             return
         jobs = dict(self.store.jobs)
-        # published BEFORE the handlers run: a result handler may submit a follow-up job (a finished recalibration re-derives
-        # the layer), and a write-back after the loop would silently drop that job's status from the store
+        # published before the handlers run: a result handler may submit a follow-up job (a finished recalibration
+        # re-derives the layer), and a write-back after the loop would drop that job's status
         self.store.jobs = jobs
         for ev in events:
             status = jobs.get(ev.ticket)
@@ -628,96 +608,89 @@ class Session:
                 self._apply_result(status, ev.payload)
         self.store.tick = self.store.tick + 1
 
+    def _merge(self, status: JobStatus, change: Callable[[Record], Record]) -> None:
+        """A step result lands on the record its ticket was about (the record may have left the session since)."""
+        key = status.target["key"]
+        record = self.store.records.get(key)
+        if record is not None:
+            self.store.records = {**self.store.records, key: change(record)}
+
     def _apply_result(self, status: JobStatus, payload: Any) -> None:
-        if status.request in ("run_job", "replay") and isinstance(payload, Record):
-            key = payload.key()
-            self.store.records = {**self.store.records, key: payload}
-            self.store.current = key
-            self._forget_selections()
-            # the last request was made against an earlier record; gate ids repeat across runs, so its note or refusal
-            # would otherwise show beside this record's gate (a request run keeps it: the note is about that run)
-            self.store.last_request = None
-            # the pick made before this run is scored beside its histogram; the next run gets its own prompt
-            self.store.scored_prediction = self.store.prediction
-            self.store.prediction = None
-            if self.page is not None:
-                self.page.navigate(f"/job/{key}")
-        elif status.request == "request_run" and isinstance(payload, Record):
-            key = payload.key()
-            self.store.records = {**self.store.records, key: payload}
-            self.store.current = key
-            self._forget_selections()
-            self.store.scored_prediction = None
-            if self.page is not None:
-                gate = str(status.target.get("gate_id", ""))
-                self.page.navigate(f"/job/{key}/circuit/{gate}" if gate else f"/job/{key}")
-        elif status.request == "preset" and isinstance(payload, PresetResult):
-            self.store.preset_results = {**self.store.preset_results, payload.preset_id: payload}
-        elif status.request == "verify" and isinstance(payload, dict):
-            report: VerifyReport = payload["report"]
-            key = str(status.target.get("key"))
-            self.store.verify_reports = {**self.store.verify_reports, key: report}
-            deep = payload.get("deep")
-            if isinstance(deep, Record):
-                self.store.records = {**self.store.records, deep.key(): deep}
-        elif status.request == "zoom" and isinstance(payload, dict):
-            key = str(status.target.get("key"))
-            record = self.store.records.get(key)
-            if record is not None:
-                merged = record.with_boundaries(payload["boundaries"]).with_zoom(payload["zoom"])
-                ham = payload.get("hamiltonian")
-                if ham is not None:
-                    merged = merged.with_hamiltonian(ham)
-                self.store.records = {**self.store.records, key: merged}
-        elif status.request == "fock_movie" and isinstance(payload, dict):
-            key = str(status.target.get("key"))
-            record = self.store.records.get(key)
-            if record is not None:
-                merged = record.with_boundaries(payload["boundaries"]).with_fock_movie(payload["movie"])
-                self.store.records = {**self.store.records, key: merged}
-        elif status.request == "tomography" and isinstance(payload, dict):
-            key = str(status.target.get("key"))
-            record = self.store.records.get(key)
-            if record is not None:
-                merged = record.with_boundaries(payload["boundaries"]).with_process_matrix(
-                    payload["process_matrix"]
+        store = self.store
+        match status.request:
+            case "run_job" | "replay" | "request_run":
+                assert isinstance(payload, Record)
+                key = payload.key()
+                store.records = {**store.records, key: payload}
+                store.current = key
+                self._forget_selections()
+                route = f"/job/{key}"
+                if status.request == "request_run":
+                    store.scored_prediction = None
+                    route = f"/job/{key}/circuit/{status.target['gate_id']}"
+                else:
+                    # the last request was made against an earlier record (gate ids repeat across runs); the pick made
+                    # before this run is scored beside its histogram, and the next run gets its own prompt
+                    store.last_request = None
+                    store.scored_prediction = store.prediction
+                    store.prediction = None
+                if self.page is not None:
+                    self.page.navigate(route)
+            case "preset":
+                assert isinstance(payload, PresetResult)
+                store.preset_results = {**store.preset_results, payload.preset_id: payload}
+            case "verify":
+                store.verify_reports = {**store.verify_reports, status.target["key"]: payload["report"]}
+                deep = payload["deep"]
+                if isinstance(deep, Record):
+                    store.records = {**store.records, deep.key(): deep}
+            case "zoom":
+                ham = payload["hamiltonian"]
+
+                def with_zoom(r: Record) -> Record:
+                    merged = r.with_boundaries(payload["boundaries"]).with_zoom(payload["zoom"])
+                    return merged if ham is None else merged.with_hamiltonian(ham)
+
+                self._merge(status, with_zoom)
+            case "tomography":
+                self._merge(
+                    status,
+                    lambda r: r.with_boundaries(payload["boundaries"]).with_process_matrix(
+                        payload["process_matrix"]
+                    ),
                 )
-                self.store.records = {**self.store.records, key: merged}
-        elif status.request == "recheck" and isinstance(payload, dict):
-            key = str(status.target.get("key"))
-            record = self.store.records.get(key)
-            if record is not None:
-                merged = record.with_boundaries(payload["boundaries"])
-                for z in payload["zooms"]:
-                    merged = merged.with_zoom(z)
-                self.store.records = {**self.store.records, key: merged}
-            t = status.target
-            self.store.rechecks = {
-                **self.store.rechecks,
-                f"{key}:{t.get('step')}:{t.get('sample')}:{t.get('branch')}": (
-                    payload["tolerance"],
-                    payload["truncation"],
-                ),
-            }
-        elif status.request == "derive" and isinstance(payload, DeviceLayer):
-            ck = str(status.target.get("cache_key"))
-            self.store.layers = {**self.store.layers, ck: payload}
-        elif status.request == "recalibrate" and isinstance(payload, dict):
-            table: TableRecord = payload["table"]
-            self.store.tables = {**self.store.tables, str(payload["device_hash"]): table}
-            # the layer for this device compared itself with an older table: re-derive so the stale badge clears
-            ck = str(status.target.get("cache_key"))
-            layers = dict(self.store.layers)
-            layers.pop(ck, None)
-            self.store.layers = layers
-            self.submit_derive()
+            case "recheck":
+
+                def with_zooms(r: Record) -> Record:
+                    merged = r.with_boundaries(payload["boundaries"])
+                    for z in payload["zooms"]:
+                        merged = merged.with_zoom(z)
+                    return merged
+
+                self._merge(status, with_zooms)
+                t = status.target
+                store.rechecks = {
+                    **store.rechecks,
+                    f"{t['key']}:{t['step']}:{t['sample']}:{t['branch']}": (
+                        payload["tolerance"],
+                        payload["truncation"],
+                    ),
+                }
+            case "derive":
+                assert isinstance(payload, DeviceLayer)
+                store.layers = {**store.layers, status.target["cache_key"]: payload}
+            case "recalibrate":
+                store.tables = {**store.tables, str(payload["device_hash"]): payload["table"]}
+                # the layer for this device compared itself with an older table: re-derive so the stale badge clears
+                store.layers = {k: v for k, v in store.layers.items() if k != status.target["cache_key"]}
+                self.submit_derive()
+            case _:
+                assert_never(status.request)
 
     def _forget_selections(self) -> None:
-        """A new record is current: the selections that index INTO a record (a bar, a shot, an initial-mixture branch, a
-        Hamiltonian term or collapse channel, the step the Hamiltonian page shows) belonged to the previous one and are
-        dropped, so no screen indexes the new record with the old one's positions and the Hamiltonian page shows this
-        run's equation rather than the previous run's. The per-record caches keyed by record key (re-checks, closure
-        picks) stay."""
+        """A new record is current: the selections that index into a record (a bar, a shot, a branch, a Hamiltonian term or
+        channel, the step the Hamiltonian page shows) belonged to the previous one and are dropped. The per-record caches
+        keyed by record key (re-checks, closure picks) stay."""
         self.store.selected_bar = None
         self.store.selected_shot = None
         self.store.branch = 0
@@ -725,36 +698,28 @@ class Session:
         self.store.selected_channel = None
         self.store.hamiltonian_target = None
 
-    def heartbeat(self, now: float, period_s: float = 1.0) -> bool:
-        """Re-render the progress rows once per ``period_s`` while a job runs, so the elapsed time keeps moving between
-        the worker's events (a long solver step emits none). Returns whether a re-render was requested."""
-        if not self.store.running() or now - self._last_beat < period_s:
+    def heartbeat(self, now: float) -> bool:
+        """Re-render the progress rows once per ``HEARTBEAT_S`` while a job runs, so the elapsed time keeps moving between
+        the worker's events. Returns whether a re-render was requested."""
+        if not self.store.running() or now - self._last_beat < HEARTBEAT_S:
             return False
         self._last_beat = now
         self.store.tick = self.store.tick + 1
         return True
 
     def worker_died(self) -> bool:
-        """The worker process is gone while jobs are still running (a crash in a native library, the OS killing it): those
-        jobs would otherwise stay "running" for ever, since no error event will come. They are marked failed with the
-        reason, the worker is restarted for the next request, and True is returned; False when there is nothing to do."""
-        if self.worker.alive or not self.worker.started:
+        """The worker process is gone while jobs are still running (no error event will come): those jobs are marked failed
+        with the reason and the worker is restarted for the next request. True when there was something to do."""
+        if self.worker.alive or not self.worker.started or not self.store.running():
             return False
-        running = self.store.running()
-        if not running:
-            return False
-        jobs = dict(self.store.jobs)
-        for status in running:
-            status.done, status.stage, status.error = True, "failed", "the worker process died"
-        self.store.jobs = jobs
+        self._finish_running("failed", "the worker process died")
         self.store.error = (
             "the worker process died; its live state is lost (run the job again to re-simulate)"
         )
         self.worker.start()
-        self.store.tick = self.store.tick + 1
         return True
 
-    async def poll_forever(self, interval_s: float = 0.2) -> None:
+    async def poll_forever(self) -> None:
         while True:
             try:
                 self.apply_events(self.worker.poll())
@@ -764,33 +729,4 @@ class Session:
                 Exception
             ) as exc:  # the loop must survive a worker hiccup; the error is shown, not swallowed
                 self.store.error = f"worker: {exc}"
-            alive = self.worker.alive
-            if alive != self.store.worker_alive:
-                self.store.worker_alive = alive
-            await asyncio.sleep(interval_s)
-
-
-def bell_circuit() -> Circuit:
-    return Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-
-
-__all__ = [
-    "BELL_QASM",
-    "DEPTH_VALUES",
-    "FAST_OPTIONS",
-    "KNOWLEDGE_VALUES",
-    "LEARNER_KEY",
-    "MAX_SHOTS",
-    "PRESETS",
-    "THEME_VALUES",
-    "UNDO_DEPTH",
-    "Engine",
-    "JobStatus",
-    "Learner",
-    "Session",
-    "Store",
-    "ThemeChoice",
-    "bell_circuit",
-    "learner_document",
-    "learner_from_document",
-]
+            await asyncio.sleep(POLL_S)
