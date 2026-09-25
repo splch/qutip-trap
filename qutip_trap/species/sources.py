@@ -285,6 +285,6 @@ SOURCES: Final[dict[str, str]] = {
     "Steck": "D. A. Steck, Quantum and Atom Optics, and the alkali D-line data notes: the conventions of Sections 4.5 and 13.",
     "PLAN_4_5_1": "PLAN.md Section 4.5.1, which uses the value without naming a primary source.",
     "PLAN_8_1": "PLAN.md Section 8.1, which carries the value without naming a primary source.",
-    "PLAN_9_13": "PLAN.md Section 9.13, which states the value as a test input without naming a primary source.",
+    "PLAN_9_13": "PLAN.md's validation targets (Section 9), which state the value as a test input without naming a primary source.",
     "PLAN_background": "A PLAN.md convention or textbook statement tagged [background] (no source check).",
 }

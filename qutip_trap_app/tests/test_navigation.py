@@ -1,4 +1,4 @@
-"""Section 9.11 row "Navigation": a Bell-state job is followed from a histogram bar to a Hamiltonian matrix element in at most
+"""A Bell-state job is followed from a histogram bar to a Hamiltonian matrix element in at most
 six clicks. This walks the routing model of the shell (the functions the zoom buttons, the rail, the crumbs and the keyboard
 use) without a Flutter client; ``test_main.py`` drives the same path through the rendered controls under ``flet test``.
 Also the Learn routes, the tour's routes, and the request that a run made from Level 1 lands on its gate."""

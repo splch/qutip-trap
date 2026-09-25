@@ -1,4 +1,4 @@
-"""Section 9.11 row "Coarse-graining identity": populations and Pauli expectations shown at Level 1 after gate k, computed
+"""Populations and Pauli expectations shown at Level 1 after gate k, computed
 from the recorded Level 3 joint state, equal the reduced-density-matrix values to 1e-12. Also the record's own ladder."""
 
 from __future__ import annotations

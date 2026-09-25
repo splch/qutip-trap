@@ -1,4 +1,4 @@
-"""Section 9.11 row "Presets": each Section 9 preset loads, runs and displays the published number beside the simulated one
+"""Each Section 9 preset loads, runs and displays the published number beside the simulated one
 with the correct tag (PLAN.md Section 14.5). The published value's chip is the Section 9 row's tag for
 the source, the simulated value's chip is the anchor of the check that recomputed it, and the verdicts agree with the ledger's
 own judgments (the cases it marks as not first-principles predictions come out as such)."""

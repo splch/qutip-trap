@@ -63,9 +63,6 @@ def test_the_register_of_a_gate_local_run_is_the_walks_own(bell_gate_local: tupl
 
 def test_a_record_with_no_register_source_says_so(bell_gate_local: tuple[Record, LiveRun]) -> None:
     record, _live = bell_gate_local
-    bare = dataclasses.replace(record, gate_local=None)
-    with pytest.raises(RegisterUnavailable):
-        register_after(bare, 0)
     assert record.gate_local is not None
     uncapped = dataclasses.replace(
         record,

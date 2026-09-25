@@ -1,4 +1,4 @@
-"""Section 9.11 row "Re-simulation cache": zooming into a pulse twice recomputes once; the cached trace equals a fresh one
+"""Zooming into a pulse twice recomputes once; the cached trace equals a fresh one
 to solver tolerance. Also the Section 14.7 budget for the zoom of a two-mode 100 us entangling pulse."""
 
 from __future__ import annotations

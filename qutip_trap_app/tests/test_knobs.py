@@ -1,4 +1,4 @@
-"""Section 9.11 row "Downward propagation": changing the rf amplitude at Level 4 changes beta, nu, eta and the recalibrated gate
+"""Changing the rf amplitude at Level 4 changes beta, nu, eta and the recalibrated gate
 durations consistently with Section 4.1 and the pulse solvers; the device card updates without manual steps. Also the knob
 layer's own rules (validation, the explicit-path scaling, the recipe re-derivation) and the device layer's consistency with
 the run record it describes."""
@@ -220,7 +220,7 @@ def test_layer_agrees_with_the_record_it_describes(
 
 
 def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Record, LiveRun]) -> None:
-    """Section 9.11: rf amplitude x1.1 -> beta, nu, eta change as Section 4.1 says; the recalibrated table's waveform closes at
+    """rf amplitude x1.1 -> beta, nu, eta change as Section 4.1 says; the recalibrated table's waveform closes at
     the new modes with a different amplitude; the device card (the layer's) updates without manual steps."""
     record, live = bell
     ref = record.job.device.with_overrides({"trap.rf_amplitude_scale": 1.1, "trap.rf_frequency_hz": 40e6})

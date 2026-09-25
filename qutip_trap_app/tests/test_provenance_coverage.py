@@ -1,4 +1,4 @@
-"""Section 9.11 row "Provenance coverage": every quantity in the view-model catalogue resolves to a tagged Part II item
+"""Every quantity in the view-model catalogue resolves to a tagged Part II item
 (a static test over the catalogue; the build fails on an untagged quantity). Also the Section 14.6 core contract: the
 application imports the core in one module only."""
 

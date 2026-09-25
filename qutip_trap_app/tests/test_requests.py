@@ -1,4 +1,4 @@
-"""Section 9.11 row "Request semantics" (PLAN.md Section 14.4): XX(0.3) requested at Level 1 yields a pulse whose simulated
+"""XX(0.3) requested at Level 1 yields a pulse whose simulated
 unitary is XX(0.3) within the calibration tolerance; a detuning set by hand at Level 2 shows the actual unitary at Level 1.
 
 Both requests are new jobs made from the Bell record (nothing on the record is edited); each runs at the full engine and its

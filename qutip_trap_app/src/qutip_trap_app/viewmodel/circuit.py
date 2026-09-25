@@ -27,7 +27,7 @@ from qutip_trap_app.record import (
 from qutip_trap_app.viewmodel.catalogue import Shown
 
 
-class RegisterUnavailable(KeyError):
+class RegisterUnavailable(LookupError):
     """The record holds nothing the register after a gate can be read from: no recorded trace, no replay register and no
     GATE_LOCAL register. The message names the gap; Level 1 shows it in place of the register."""
 
@@ -234,7 +234,7 @@ def _weights(record: Record, sample_index: int | None, branch: int | None) -> li
         and (branch is None or tr.branch == branch)
     ]
     if not traces:
-        raise RegisterUnavailable("no recorded traces match (a GATE_LOCAL run stores none: see core_gaps)")
+        raise RegisterUnavailable("no recorded traces match (a GATE_LOCAL run stores none)")
     shots = record.diagnostics.shots_per_sample_realized or (1,) * record.n_samples
     weights = []
     for tr in traces:
@@ -271,15 +271,15 @@ def gate_local_register_after(record: Record, gate_index: int) -> np.ndarray:
     (``GateLocalStep.register_after``, the idle intervals' one-qubit channels included)."""
     gl = record.gate_local
     if gl is None:
-        raise RegisterUnavailable("this record stores no GATE_LOCAL steps (see core_gaps)")
+        raise RegisterUnavailable("this record stores no GATE_LOCAL steps")
     tg = _target_by_time(record)[gate_index]
     step = record.step_of_gate(tg.gate_id)
     for st in gl.steps:
         if st.gate_id == step.gate_id:
             if st.register_after is None:
                 raise RegisterUnavailable(
-                    f"the record carries no register after {st.gate_id}: written before 0.4.0, or a register the core does "
-                    "not store (a pure-state ensemble, or above its store cap)"
+                    f"the record carries no register after {st.gate_id}: the core does not store it (a pure-state "
+                    "ensemble, or above its store cap)"
                 )
             return np.asarray(st.register_after, dtype=complex)
     raise RegisterUnavailable(f"no GATE_LOCAL step carries gate {tg.gate_id!r}")

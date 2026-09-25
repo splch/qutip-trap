@@ -1,4 +1,4 @@
-"""The `flet test` navigation and run-flow tests (Section 9.11 row "Navigation"): they drive the rendered controls through
+"""The `flet test` navigation and run-flow tests: they drive the rendered controls through
 Flet's ``flet_app`` fixture, which needs the Flutter test host (``flet test`` provisions it: the Flutter SDK, and on macOS the
 full Xcode). ``conftest.py`` skips them unless ``QUTIP_TRAP_APP_UI_TESTS=1``; run them with
 

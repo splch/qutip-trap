@@ -239,7 +239,7 @@ class ProvenanceIndex:
         return tuple(self.section(n) for n, s in self._sections.items() if s["part_ii"])
 
     def missing(self, ids: Iterable[str]) -> tuple[str, ...]:
-        """The ids the ledger does not carry (Section 9.11's set difference)."""
+        """The ids the ledger does not carry."""
         return tuple(sorted(set(ids) - set(self._records)))
 
 

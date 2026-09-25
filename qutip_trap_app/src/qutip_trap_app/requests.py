@@ -1,4 +1,4 @@
-"""Requests made at Levels 1 and 2 (PLAN.md Section 14.4; Section 9.11 row "Request semantics").
+"""Requests made at Levels 1 and 2 (PLAN.md Section 14.4).
 
 "A change at a shallower level is a request rather than an edit": each request makes a NEW job from the record's job.
 

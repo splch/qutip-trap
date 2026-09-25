@@ -727,7 +727,7 @@ class ReplayGate:
 @dataclass(frozen=True)
 class ReplayRecord:
     """What the channel replay did: which channel each gate was played as, the register after each gate, and the
-    channel-derivation residual the replay reports (Section 9.11 row "Channel derivation")."""
+    channel-derivation residual the replay reports."""
 
     gates: tuple[ReplayGate, ...]
     register_after: np.ndarray

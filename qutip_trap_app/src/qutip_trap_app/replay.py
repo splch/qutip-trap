@@ -1,4 +1,4 @@
-"""The app-side channel replay, Level 0's default engine (PLAN.md Sections 5.4, 6.8; Section 9.11 row "Channel derivation").
+"""The app-side channel replay, Level 0's default engine (PLAN.md Sections 5.4, 6.8).
 
 For every distinct native gate piece a circuit needs (kind, addressed ions, entangling angle) the core's GATE_LOCAL tomography
 extracts the Section 6.8 channel of that gate played once from the prepared motional state. The channel is extracted at

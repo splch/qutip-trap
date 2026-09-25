@@ -1,4 +1,4 @@
-"""Section 9.11 row "Convergence badge": an under-truncated run turns the badge red and fails the halving test; the same
+"""An under-truncated run turns the badge red and fails the halving test; the same
 run at the policy's caps passes."""
 
 from __future__ import annotations

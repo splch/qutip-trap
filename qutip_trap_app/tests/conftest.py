@@ -48,7 +48,7 @@ def bell_gate_local() -> tuple[Record, LiveRun]:
 @pytest.fixture(scope="session")
 def under_truncated() -> tuple[Record, LiveRun]:
     """The same job with the two gate modes capped far below what the pulse populates, and the monitor told not to trip
-    (Section 9.11 row "Convergence badge": an under-truncated run turns the badge red)."""
+    (an under-truncated run turns the badge red)."""
     options = SolverOptions(branch_weight_min=1e-3, boundary_population_max=0.5, margin_check=False)
     job, preset = job_for_preset(
         "yb171_chain", 2, BELL, SHOTS, seed=SEED, options=options, detection_records=500, caps={2: 4, 3: 4}

@@ -1,4 +1,4 @@
-"""Section 9.11 row "Channel derivation": an app-side channel-replay run of a two-ion Bell circuit matches JOINT_EXACT
+"""An app-side channel-replay run of a two-ion Bell circuit matches JOINT_EXACT
 within the channel-derivation residual it reports; a deliberately hotter motional state widens the residual and the
 discrepancy together."""
 
@@ -82,7 +82,7 @@ def test_polarity_and_spam_come_from_the_device_and_table(bell_replay: tuple[Rec
 def test_hotter_motional_state_widens_residual_and_discrepancy_together(
     bell: tuple[Record, LiveRun], bell_replay: tuple[Record, ChannelLibrary]
 ) -> None:
-    """The second half of the Section 9.11 row: three sideband-cooling pulses per order instead of the standard recipe's
+    """Three sideband-cooling pulses per order instead of the standard recipe's
     leave the gate modes hotter; the replay's residual bound grows with (2 nbar + 1) and so does its discrepancy against
     JOINT_EXACT."""
     cold_joint, cold_live = bell
