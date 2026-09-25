@@ -98,8 +98,9 @@ class NoiseModel:
 
     S_E: NoiseSpectrum = field(default_factory=_quiet_field_spectrum)
     """Electric-field noise, the source of heating."""
-    correlation_length_m: float | None = 0.0
-    """Spatial correlation length of the field noise (0 uncorrelated, inf uniform); required once S_E is non-zero."""
+    correlation_length_m: float = 0.0
+    """Spatial correlation length of the field noise: 0 uncorrelated (every mode heats at the single-ion rate), inf uniform
+    (only the centre-of-mass modes of an equal-mass chain), or a length."""
     S_B: NoiseSpectrum | None = None
     mains: Mains | None = None
     laser_phase: NoiseSpectrum | None = None
@@ -130,12 +131,6 @@ class NoiseModel:
 
         if self.S_E.is_zero():
             return {}
-        if self.correlation_length_m is None:
-            raise ValueError(
-                "NoiseModel.correlation_length_m is required once S_E is non-zero: 0 for uncorrelated field noise (every mode "
-                "heats at the single-ion rate), inf for a uniform field (only the centre-of-mass modes of an equal-mass chain), "
-                "or a length (the simulator never defaults to the uniform limit)"
-            )
         s_e = single_sided_from_spectrum(self.S_E)
         rates = heating_rates_per_mode(device.crystal, s_e, float(self.correlation_length_m))
         return {m: float(r) for m, r in enumerate(rates) if r > 0.0}

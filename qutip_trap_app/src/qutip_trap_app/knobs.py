@@ -220,7 +220,7 @@ def current_values(
         "detector.efficiency": float(dev.detector.efficiency),
         "detector.background_cps": float(dev.detector.background_cps),
         "noise.s_e_white": float(dev.noise.S_E.white_level),
-        "noise.correlation_length_m": float(dev.noise.correlation_length_m or 0.0),
+        "noise.correlation_length_m": float(dev.noise.correlation_length_m),
         "noise.s_b_white": float(dev.noise.S_B.white_level) if dev.noise.S_B is not None else 0.0,
         "noise.rabi_drift_rms": float(dev.noise.rabi_drift.rms),
     }
@@ -351,8 +351,6 @@ def apply_overrides(
     noise_changes: dict[str, object] = {}
     if "noise.s_e_white" in ov:
         noise_changes["S_E"] = core.white_spectrum(ov["noise.s_e_white"], noise.S_E.unit)
-        if noise.correlation_length_m is None and "noise.correlation_length_m" not in ov:
-            noise_changes["correlation_length_m"] = 0.0
     if "noise.correlation_length_m" in ov:
         noise_changes["correlation_length_m"] = ov["noise.correlation_length_m"]
     if "noise.s_b_white" in ov:

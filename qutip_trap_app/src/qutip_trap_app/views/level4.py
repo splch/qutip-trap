@@ -777,20 +777,16 @@ def _noise_page(ctx: Page) -> list[ft.Control]:
             spectra
             + rates
             + [hint(store, 4, "noise_as_physics")]
-            + (
-                [
-                    details(
-                        store,
-                        session,
-                        4,
-                        "level4.noise.correlation",
-                        [_rows_table((v.correlation,), index)],
-                        title="Correlation length",
-                    )
-                ]
-                if v.correlation is not None
-                else []
-            ),
+            + [
+                details(
+                    store,
+                    session,
+                    4,
+                    "level4.noise.correlation",
+                    [_rows_table((v.correlation,), index)],
+                    title="Correlation length",
+                )
+            ],
             spacing=12,
         ),
         why=lambda e: session.select_concept(4, "noise_as_physics"),

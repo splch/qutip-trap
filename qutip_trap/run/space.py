@@ -78,7 +78,7 @@ def waveform_contributions(
 ) -> dict[int, ModeContribution]:
     """Per mode of ``modes``: the residual displacement, entangling angle and loop radius of ``waveform`` on ``pair``."""
     ints = waveform_integrals(waveform, modes)
-    excursion = excursion_by_mode(waveform, modes) if waveform.segments is not None else {}
+    excursion = excursion_by_mode(waveform, modes)
     a, b = pair
     out: dict[int, ModeContribution] = {}
     for k, m in enumerate(modes.modes):

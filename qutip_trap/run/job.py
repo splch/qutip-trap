@@ -63,7 +63,6 @@ class RunError(RuntimeError):
 def prepare(
     device: Device,
     space: HilbertSpace,
-    table: CalibrationTable | None,
     *,
     preparation: PreparationRun | None = None,
     levels: Mapping[int, InternalLevels] | None = None,
@@ -71,7 +70,7 @@ def prepare(
     """Doppler -> sideband/EIT -> optical pump (Section 4.2.6): the ``State`` on ``space`` with the resolved modes thermal at
     the recipe's occupations (the pumps' recoil included), the frozen modes' nbar, and every ion's pumped internal state.
     The recipe is the device's or the standard one; ``levels`` are the level maps of ions with d > 2, else derived from the
-    space. ``table`` is not read."""
+    space."""
     run_prep = preparation if preparation is not None else run_preparation(device, recipe_of(device))
     species = device.crystal.species[0]
     lv = levels if levels is not None else level_maps(device, space)
@@ -436,7 +435,7 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
                 eta = max(abs(modes.eta[i][k]) for i in modes.ions)
                 dw += ballance_thermal_error(eta, modes.nbar[k])
         nu_min = min(modes.omega_rad_s)
-        peak = _peak_amplitude_hz(gate.waveform.segments) if gate.waveform.segments is not None else 0.0
+        peak = _peak_amplitude_hz(gate.waveform.segments)
         carrier = (2.0 * math.pi * peak / nu_min) ** 2 if nu_min > 0.0 else 0.0
         lamb_dicke = sideband_lamb_dicke_deficit(modes, selection)
         bessel = roos_bessel_saturation(gate.waveform)
@@ -446,7 +445,7 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
         # Roos's spin-axis tilt psi = (4 Omega/mu) sin(zeta), zeta the beat phase at the gate start (Section 4.4.1): zero
         # when the hardware resets the beat note per gate
         tilt = 0.0
-        if device.hardware.phase_continuous and gate.waveform.segments is not None:
+        if device.hardware.phase_continuous:
             mu0 = gate.waveform.segments[0].detuning_hz.get("blue", 0.0)
             if not callable(mu0) and float(mu0) != 0.0:
                 zeta = (2.0 * math.pi * abs(float(mu0)) * gate.t_start_s) % (2.0 * math.pi)

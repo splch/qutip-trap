@@ -117,7 +117,7 @@ def pair_waveform(record: Record, pair: tuple[int, int]) -> WaveformRecord | Non
 def peak_amplitude_hz(wf: WaveformRecord) -> float:
     """The largest Rabi frequency any segment of the waveform asks of any ion and leg."""
     peak = 0.0
-    for seg in wf.segments or ():
+    for seg in wf.segments:
         for fn in seg.amplitude_hz.values():
             if fn.kind == "constant" and fn.value is not None:
                 peak = max(peak, abs(float(fn.value)))

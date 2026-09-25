@@ -73,7 +73,7 @@ def initial_state(
     if record.diagnostics.level != "JOINT_EXACT":
         raise RecordError(f"a {record.diagnostics.level} run has no joint initial state to re-simulate from")
     sp = space if space is not None else live.space
-    state0 = core.prepare(live.device, sp, live.table, preparation=live.core_record.preparation)
+    state0 = core.prepare(live.device, sp, preparation=live.core_record.preparation)
     br = record.branches[branch]
     total = sum(b.weight for b in record.branches)
     state = sp.initial_state(

@@ -762,7 +762,7 @@ def execute(
             )
         level = _GateLocal(joint_space, opts.caps)
     seeds = SeedSpec(int(seed))
-    state0 = prepare(device, level.prep_space(n_modes), table, preparation=prep_run, levels=levels)
+    state0 = prepare(device, level.prep_space(n_modes), preparation=prep_run, levels=levels)
     level.enumerate(device, sched, state0, opts, notes)
     shifts = _qubit_shifts(device, table, notes)
     # timing (Section 7.5) and the dynamical samples, one per contiguous block of the shot clock (Section 3.4)

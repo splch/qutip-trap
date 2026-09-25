@@ -450,7 +450,7 @@ class SpectrumView:
 @dataclass(frozen=True)
 class NoiseView:
     spectra: tuple[SpectrumView, ...]
-    correlation: Row | None
+    correlation: Row
     heating: tuple[Shown, ...]
     motional_dephasing: tuple[Shown, ...]
     qubit_dephasing: tuple[Shown, ...]
@@ -482,13 +482,7 @@ def noise_view(layer: DeviceLayer) -> NoiseView:
                 is_zero=rec.is_zero,
             )
         )
-    corr = (
-        None
-        if nz.correlation_length_m is None
-        else Row(
-            "correlation length", Shown("correlation_length", nz.correlation_length_m), "device parameter"
-        )
-    )
+    corr = Row("correlation length", Shown("correlation_length", nz.correlation_length_m), "device parameter")
     drifts = tuple(
         (
             d.name,

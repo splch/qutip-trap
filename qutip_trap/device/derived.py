@@ -89,7 +89,6 @@ def derived_quantities(device: Device) -> DerivedQuantities:
     from qutip_trap.light.raman import crosstalk_ratios, derive_optical_drive, derive_raman_drive
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.fluorescence import detection_rates_for_ion
-    from qutip_trap.trap.heating import heating_rate_quanta_per_s, single_sided_from_spectrum
 
     values: dict[str, float] = {}
     prov: dict[str, str] = {}
@@ -133,25 +132,8 @@ def derived_quantities(device: Device) -> DerivedQuantities:
     # the modes and their heating rates (Sections 4.1.3, 4.1.5)
     for m, mode in enumerate(crystal.modes):
         put(f"mode_hz[{m}]", mode.omega_hz, "conv.mode_index")
-    heating = (
-        device.noise.heating_rates_quanta_per_s(device)
-        if device.noise.correlation_length_m is not None
-        else {}
-    )
-    for m, rate in heating.items():
+    for m, rate in device.noise.heating_rates_quanta_per_s(device).items():
         put(f"heating_rate_per_s[{m}]", rate, "conv.electric_field_noise")
-    if not heating and not device.noise.S_E.is_zero():
-        # no correlation length, so no multi-ion projection: the single-ion rate per mode, with the heating layer's S_E
-        # adapter (conv.electric_field_noise_adapter)
-        s_e = single_sided_from_spectrum(device.noise.S_E)
-        for m, mode in enumerate(crystal.modes):
-            w = mode.omega_rad_s
-            ion = int(np.argmax(np.abs(mode.eigenvector)))
-            put(
-                f"heating_rate_per_s[{m}]",
-                heating_rate_quanta_per_s(s_e(w), float(crystal.masses_kg[ion]), w),
-                "conv.electric_field_noise",
-            )
     # the single-qubit drives the beams identify (Section 4.3.2): Rabi frequencies, Stark shifts, crosstalk, Lamb-Dicke parameters
     try:
         drives = default_gate_drives(device)

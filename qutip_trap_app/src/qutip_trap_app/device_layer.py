@@ -402,11 +402,7 @@ class CrystalLayer:
 def crystal_layer(preset: core.DevicePreset) -> CrystalLayer:
     device = preset.device
     crystal = device.crystal
-    heating = (
-        device.noise.heating_rates_quanta_per_s(device)
-        if device.noise.correlation_length_m is not None
-        else {}
-    )
+    heating = device.noise.heating_rates_quanta_per_s(device)
     modes = tuple(
         ModeLayer(
             index=k,
@@ -739,7 +735,7 @@ class NoiseLayer:
     s_e: SpectrumRecord
     s_b: SpectrumRecord | None
     other_spectra: tuple[SpectrumRecord, ...]
-    correlation_length_m: float | None
+    correlation_length_m: float
     heating_quanta_per_s: dict[int, float]
     motional_dephasing_tau_s: dict[int, float]
     qubit_white_dephasing_per_s: dict[int, float]
@@ -805,20 +801,14 @@ def noise_layer(device: core.Device) -> NoiseLayer:
     if noise.collisions is not None:
         rate = core.collision_rate_per_ion(noise.collisions, float(device.crystal.masses_kg[0]))
         collisions = (float(noise.collisions.pressure_pa), float(rate))
-    heating = noise.heating_rates_quanta_per_s(device) if noise.correlation_length_m is not None else {}
+    heating = noise.heating_rates_quanta_per_s(device)
     notes: list[str] = []
-    if noise.correlation_length_m is None and not noise.S_E.is_zero():
-        notes.append(
-            "S_E is non-zero but no correlation length is declared: the multi-ion projection is undefined"
-        )
     return NoiseLayer(
         quiet=bool(noise.is_quiet()),
         s_e=_spectrum_record("S_E", noise.S_E),
         s_b=None if noise.S_B is None else _spectrum_record("S_B", noise.S_B),
         other_spectra=tuple(_spectrum_record(name, spec) for name, spec in others if spec is not None),
-        correlation_length_m=None
-        if noise.correlation_length_m is None
-        else float(noise.correlation_length_m),
+        correlation_length_m=float(noise.correlation_length_m),
         heating_quanta_per_s={int(m): float(v) for m, v in heating.items()},
         motional_dephasing_tau_s={
             int(m): float(v) for m, v in noise.motional_dephasing_tau_s(device).items()
@@ -1280,7 +1270,7 @@ def _pairs_for(preset: core.DevicePreset, table: core.CalibrationTable | None) -
 def _unsolved(pair: tuple[int, int], duration_s: float, error: str) -> GateSolutionLayer:
     """The row of a pair without a solution: the reason, and an empty waveform."""
     blank = CalEntryRecord(0.0, "uncalibrated", "", "")
-    waveform = WaveformRecord(0.0, {}, {}, 0.0, blank, blank, None)
+    waveform = WaveformRecord(0.0, {}, {}, 0.0, blank, blank, ())
     return GateSolutionLayer(pair, (), (), {}, 0.0, duration_s, "", waveform, None, None, None, "", error)
 
 

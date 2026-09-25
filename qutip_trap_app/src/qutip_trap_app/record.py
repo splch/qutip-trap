@@ -306,7 +306,7 @@ class WaveformRecord:
     chi_total_rad: float
     phi_s: CalEntryRecord
     phi_m: CalEntryRecord
-    segments: tuple[SegmentRecord, ...] | None
+    segments: tuple[SegmentRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -1012,18 +1012,16 @@ def _cal_entry(entry: core.CalEntry) -> CalEntryRecord:
 
 
 def waveform_record(wf: core.Waveform) -> WaveformRecord:
-    segments = None
-    if wf.segments is not None:
-        segments = tuple(
-            SegmentRecord(
-                duration_s=float(s.duration_s),
-                amplitude_hz={
-                    f"{ion},{leg}": sampled_fn(v, s.duration_s) for (ion, leg), v in s.amplitude_hz.items()
-                },
-                detuning_hz={str(leg): sampled_fn(v, s.duration_s) for leg, v in s.detuning_hz.items()},
-            )
-            for s in wf.segments
+    segments = tuple(
+        SegmentRecord(
+            duration_s=float(s.duration_s),
+            amplitude_hz={
+                f"{ion},{leg}": sampled_fn(v, s.duration_s) for (ion, leg), v in s.amplitude_hz.items()
+            },
+            detuning_hz={str(leg): sampled_fn(v, s.duration_s) for leg, v in s.detuning_hz.items()},
         )
+        for s in wf.segments
+    )
     return WaveformRecord(
         duration_s=float(wf.duration_s),
         chi_m={int(m): float(v) for m, v in wf.chi_m.items()},

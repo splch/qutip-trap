@@ -39,7 +39,6 @@ from qutip_trap.readout.detection import RecordModel
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import ModeContribution, cap_for, classify, waveform_contributions
-from qutip_trap.trap.heating import heating_rate_quanta_per_s, single_sided_from_two_sided
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
@@ -207,24 +206,13 @@ def surrogate_table(
     nbar_entries = {
         m: _seed(v, "conv.preparation_stage_order", "preparation_model", t0_s) for m, v in occupations.items()
     }
-    heating: dict[int, CalEntry] = {}
-    spec_e = device.noise.S_E
-    # the rate the noise model heats the run at (the correlation length and the spectrum's white level folded in)
-    model_rates: dict[int, float] = {}
-    if not spec_e.is_zero() and device.noise.correlation_length_m is not None:
-        model_rates = device.noise.heating_rates_quanta_per_s(device)
-    for m, mode in enumerate(crystal.modes):
-        w = mode.omega_rad_s
-        if m in model_rates:
-            rate = float(model_rates[m])
-        else:
-            # no correlation length declared: the per-mode two-sided value at the mode frequency
-            s_two = float(np.interp(w, spec_e.omega_rad_s, spec_e.S, left=0.0, right=0.0))
-            ion = int(np.argmax(np.abs(mode.eigenvector)))
-            rate = heating_rate_quanta_per_s(
-                float(single_sided_from_two_sided(s_two)), float(crystal.masses_kg[ion]), w
-            )
-        heating[m] = _seed(rate, "conv.electric_field_noise", "derived_heating_rate", t0_s)
+    # the rate the noise model heats the run at (the correlation length and the spectrum's white level folded in); no rate
+    # without field noise
+    model_rates = device.noise.heating_rates_quanta_per_s(device)
+    heating = {
+        m: _seed(float(model_rates.get(m, 0.0)), "conv.electric_field_noise", "derived_heating_rate", t0_s)
+        for m in range(len(crystal.modes))
+    }
     base = CalibrationTable(
         device_hash=device.hash(),
         seed=int(seed),

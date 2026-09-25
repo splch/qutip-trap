@@ -220,7 +220,7 @@ def closure(record: Record, gate_id: str) -> ClosureView:
             )
         )
     rows: list[tuple[Shown, ...]] = []
-    for s in wf.segments or ():
+    for s in wf.segments:
         row = [Shown("waveform_segment", s.duration_s, "duration")]
         for key, fn in sorted(s.amplitude_hz.items()):
             row.append(Shown("tone_envelope", float(np.max(np.abs(_values(fn)))), f"Omega ion,leg {key}"))
