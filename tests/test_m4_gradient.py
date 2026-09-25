@@ -27,10 +27,9 @@ import pytest
 import qutip as qt
 from scipy.special import jv
 
-from qutip_trap.api import Device, Field, Trap
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.table import CalEntry, Segment, Waveform
-from qutip_trap.device.model import BeamRoles, GradientField
+from qutip_trap.device.model import BeamRoles, Device, Field, GradientField
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import (
@@ -41,6 +40,7 @@ from qutip_trap.light.microwave import (
 from qutip_trap.noise.sampling import NoiseSample, key_qubit_offset_hz, quiet_sample
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import HBAR_J_S, TWO_PI
 from qutip_trap.validation.two_qubit_closed_forms import (
     intrinsic_dynamical_decoupling_ratio,
@@ -334,7 +334,7 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
     ``gradient`` per ion, and the sign still comes only from the detuning side."""
     import dataclasses as dc
 
-    from qutip_trap.api import Circuit, Operation
+    from qutip_trap.control.compiler import Circuit, Operation
     from qutip_trap.control.schedule import GateDrive, ScheduleError, schedule
     from tests.fixtures import make_calibration_table
 

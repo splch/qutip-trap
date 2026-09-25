@@ -1048,37 +1048,3 @@ def sample_camera_image(
         )
         mean += geometry.weights(i) * m.detected_bright_per_s * bright
     return np.asarray(rng.poisson(mean))
-
-
-__all__ = [
-    "Depumping",
-    "CLASS_INDEX",
-    "CameraGeometry",
-    "ClassPath",
-    "CountDistribution",
-    "Detector",
-    "PhotonRecord",
-    "RecordModel",
-    "acton_bright_distribution",
-    "acton_dark_distribution",
-    "apply_detector_nonidealities",
-    "count_anomaly_band",
-    "crain_printed_bright_error",
-    "depumped_model",
-    "first_photon_cutoff_s",
-    "log_poisson_pmf",
-    "mcsolve_records",
-    "neighbourhood_model",
-    "poisson_pmf",
-    "psf_leakage_from_geometry",
-    "sample_camera_image",
-    "sample_spectator_offset_rad_s",
-    "spectator_coherence",
-    "spectator_offset_sigma_rad_s",
-    "crain_spectator_alpha_s",
-    "CRAIN_SPECTATOR_ANCHORS_S",
-    "sample_register_records",
-    "single_jump_count_distribution",
-    "zero_photon_probability",
-    "zero_threshold_errors",
-]

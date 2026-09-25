@@ -73,6 +73,3 @@ class VoltageWaveform:
 
     def excitation(self, species: Species, mode_hz: float) -> TransportBudget:
         raise NotImplementedError(f"VoltageWaveform.excitation is {M12}")
-
-
-__all__ = ["FilterStage", "VoltageWaveform"]

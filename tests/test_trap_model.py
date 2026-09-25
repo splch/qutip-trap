@@ -7,8 +7,9 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import DcElectrodes, Device, Electrodes, RfDrive, Trap, solve_crystal
+from qutip_trap.device.model import Device
 from qutip_trap.species import species
+from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.mathieu import UnstableMathieuError, beta_exact, c0_wronskian
 from qutip_trap.trap.micromotion import (
     MicromotionIndex,
@@ -21,6 +22,9 @@ from qutip_trap.trap.micromotion import (
     sideband_ratio,
     sideband_weights,
 )
+from qutip_trap.trap.model import Trap
+from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
+from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
 from tests.fixtures import make_device, make_trap
 

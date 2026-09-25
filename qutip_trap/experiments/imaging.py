@@ -184,6 +184,3 @@ def crystal_image(machine: Machine | Device, **kw: Any) -> ExperimentResult:
         converged=len(dark_seen) == 0 and not run_state.lost,
         notes=tuple(notes),
     )
-
-
-__all__ = ["crystal_image"]

@@ -476,6 +476,3 @@ def species() -> Species:
         repumps=("D3/2-P1/2", "D5/2-P3/2"),
         shelving="S1/2-P3/2",
     )
-
-
-__all__ = ["MISSING", "NAME", "TABLE", "species"]

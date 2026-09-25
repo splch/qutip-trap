@@ -581,21 +581,3 @@ def apply_drive_kernel(op: qt.Qobj | FactorizedOperator, state: qt.Qobj | np.nda
         arr = np.asarray(state.full())
         return qt.Qobj(data.apply(arr), dims=state.dims, copy=False)
     return data.apply(np.asarray(state))
-
-
-__all__ = [
-    "COST_CSR_NS_PER_NNZ",
-    "COST_CSR_US",
-    "COST_NS_PER_MAC",
-    "COST_STEP_US",
-    "COST_TERM_US",
-    "M9B",
-    "FactorizedOperator",
-    "KernelChoice",
-    "apply_drive_kernel",
-    "factorized_qobj",
-    "is_factorized",
-    "kernel_costs_us",
-    "prefer_factorized",
-    "register_data_type",
-]

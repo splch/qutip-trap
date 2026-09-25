@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Circuit, HilbertSpace, ModeTruncation, Operation, SeedSpec, SolverOptions
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import equal_up_to_global_phase, gpi, gpi2, rz
 from qutip_trap.control.schedule import (
     MICROWAVE_BEAM_KEY,
@@ -17,8 +17,9 @@ from qutip_trap.control.schedule import (
     schedule,
     single_qubit_pulse,
 )
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.frames import PhaseFrame
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample
 from tests.m2_fixtures import microwave_device, single_ion_raman_device, table_with_rabi

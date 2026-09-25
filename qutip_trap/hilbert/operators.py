@@ -378,39 +378,3 @@ def qudit_sigma_z(d: int = 2) -> qt.Qobj:
 def qudit_sigma_phi(phi_rad: float, d: int = 2) -> qt.Qobj:
     """sigma_phi = e^{i phi} sigma_+ + e^{-i phi} sigma_- = cos(phi) X + sin(phi) Y on the qubit pair (Section 4.3.5)."""
     return np.exp(1j * phi_rad) * qudit_sigma_plus(d) + np.exp(-1j * phi_rad) * qudit_sigma_minus(d)
-
-
-__all__ = [
-    "MARGIN_POINTS",
-    "ORACLE_FLOOR",
-    "TABLE_ELEMENT_ERROR",
-    "TABLE_ETA",
-    "TABLE_NORM_LOSS",
-    "analytic_norm_loss",
-    "debye_waller_factor",
-    "debye_waller_rms_fraction",
-    "displaced_thermal_populations",
-    "displacement_element_analytic",
-    "displacement_leakage",
-    "displacement_matrix_analytic",
-    "displacement_operator",
-    "interior_element_error",
-    "interior_tolerance",
-    "oracle_check",
-    "populated_range",
-    "probability_within",
-    "qudit_projector",
-    "qudit_sigma_minus",
-    "qudit_sigma_phi",
-    "qudit_sigma_plus",
-    "qudit_sigma_z",
-    "qudit_transition",
-    "rabi_matrix_element",
-    "rabi_table",
-    "required_margin",
-    "sideband_operators",
-    "sideband_phase_rad",
-    "thermal_debye_waller_approx",
-    "thermal_debye_waller_mean",
-    "thermal_populations",
-]

@@ -428,14 +428,3 @@ class Species:
         st = self._structure(field)
         up, down = self.qubit[1], self.qubit[0]
         return st.rayleigh_dephasing_rate(st.state(up), st.state(down), beam)
-
-
-__all__ = [
-    "Level",
-    "Species",
-    "Transition",
-    "level_j",
-    "level_l",
-    "parse_state_label",
-    "parse_transition_label",
-]

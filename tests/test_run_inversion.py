@@ -13,12 +13,13 @@ import numpy as np
 import pytest
 
 from qutip_trap._compat import QutipTrapDeprecationWarning
-from qutip_trap.api import Circuit, Operation, SolverOptions, run
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Parallel, Physics, Readout, Truncation, to_run_kwargs
 from qutip_trap.readout.discriminate import ThresholdDiscriminator
-from qutip_trap.run.job import LEGACY_DEADLINE, LEGACY_RUN_KEYWORDS, machine_with_run_kwargs
+from qutip_trap.run.job import LEGACY_DEADLINE, LEGACY_RUN_KEYWORDS, machine_with_run_kwargs, run
 from qutip_trap.run.pipeline import execute
 from tests.m6_fixtures import CircuitFixture, circuit_fixture
 

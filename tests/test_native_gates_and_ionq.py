@@ -9,8 +9,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from qutip_trap.api import Circuit, Operation, dump_ionq_json, load_ionq_json
 from qutip_trap.control import native
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.io.ionq import dump_ionq_json, load_ionq_json
 from qutip_trap.run.results import aggregate, bits_from_decimal, bitstring_key, decimal_key
 from tests.fixtures import make_result
 

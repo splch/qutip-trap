@@ -94,6 +94,3 @@ def spectrum_es(
     lw = np.subtract.outer(1j * w, rates_arr).T
     out: np.ndarray = (ampls_arr @ (2 / lw)).real
     return out
-
-
-__all__ = ["spectrum_es", "steady_state_direct"]

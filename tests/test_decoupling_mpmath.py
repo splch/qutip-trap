@@ -24,7 +24,6 @@ import numpy as np
 import pytest
 from mpmath import mp
 
-from qutip_trap.api import decoupling_sequence
 from qutip_trap.noise.decoupling import (
     biercuk_amplitude_mp,
     biercuk_filter_function_mp,
@@ -34,6 +33,7 @@ from qutip_trap.noise.decoupling import (
     cpmg_centres,
     cpmg_centres_mp,
     dc_floor,
+    decoupling_sequence,
     leading_taylor_order_mp,
     udd_centres,
     udd_centres_mp,

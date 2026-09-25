@@ -11,8 +11,9 @@ import numpy as np
 import pytest
 
 import qutip_trap as trap
-from qutip_trap.api import Circuit, Operation, last_record
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.machine import Machine
+from qutip_trap.run.job import last_record
 from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec, submit
 from tests.m6_fixtures import circuit_fixture
 
@@ -161,8 +162,3 @@ def test_a_job_started_twice_and_a_timeout_are_refused(machine: Machine) -> None
     assert job.status() == "cancelled"
     with pytest.raises(JobCancelled):
         job.result(timeout_s=60.0)
-
-
-def test_root_namespace_exports_the_job_names() -> None:
-    assert trap.RunSpec is RunSpec and trap.Job is Job and trap.JobCancelled is JobCancelled
-    assert trap.JobStatus is not None and trap.JobError is not None

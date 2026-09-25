@@ -60,7 +60,7 @@ gates, one addressing pair per ion (2.2 % Rabi crosstalk on the neighbour from t
 detection light, Crain's SNSPD detector, a quiet noise model and near-ideal electronics.
 
 ```python
-from qutip_trap.api import yb171_chain
+from qutip_trap.device.presets import yb171_chain
 
 preset = yb171_chain(2)                 # the DevicePreset of the 0.1.0 surface; preset.machine() is the Machine above
 device = preset.device
@@ -90,7 +90,8 @@ machine so that every later call reads the same one; `calibrate(machine)` return
 ```python
 import numpy as np
 
-from qutip_trap.api import Circuit, Operation, ideal_probabilities, register_fidelity
+from qutip_trap.control.compiler import Circuit, Operation, ideal_probabilities
+from qutip_trap.run.job import register_fidelity
 
 windows = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 pinned = machine.calibrated(pairs=[(0, 1)], detection_records=2000, detection_windows_s=windows)
@@ -132,7 +133,9 @@ the least-significant bit) and `result.to_ionq_v2_probabilities()` the v0.4 enve
 ## A circuit from OpenQASM 2 or IonQ JSON
 
 ```python
-from qutip_trap.api import compile_to_native, dump_ionq_json, load_ionq_json, load_openqasm2
+from qutip_trap.control.compiler import compile_to_native
+from qutip_trap.io.ionq import dump_ionq_json, load_ionq_json
+from qutip_trap.io.openqasm import load_openqasm2
 
 qasm = 'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; h q[0]; cx q[0],q[1]; measure q -> c;'
 circuit = load_openqasm2(qasm)
@@ -152,7 +155,7 @@ laboratory does, with shot noise and readout errors declared; the machine suppli
 roles the drive, and the result is typed (`RabiScan`) with the scan as requested beside the scan the electronics played:
 
 ```python
-from qutip_trap.api import rabi_scan
+from qutip_trap.experiments.single_ion import rabi_scan
 
 durations = tuple(float(t) for t in np.linspace(0.0, 30e-6, 13))
 scan = rabi_scan(pinned, 0, durations, shots=200)
@@ -173,7 +176,7 @@ Single-qubit randomized benchmarking: random Cliffords and the inverse of their 
 r = (1 − p)/2 the error per Clifford (Section 13 of the plan).
 
 ```python
-from qutip_trap.api import randomized_benchmarking
+from qutip_trap.benchmarks.rb import randomized_benchmarking
 
 rb = randomized_benchmarking(fast, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True)
 print(rb.fidelity_form(), "| r per Clifford:", f"{rb.error_per_clifford[0]:.1e} +- {rb.error_per_clifford[1]:.1e}")
@@ -208,7 +211,8 @@ below the Clifford r despite costing 1.56 pulses per gate against 0.83). GHZ fid
 follow the same pattern:
 
 ```python
-from qutip_trap.api import ghz_fidelity, quantum_volume
+from qutip_trap.benchmarks.ghz import ghz_fidelity
+from qutip_trap.benchmarks.volume import quantum_volume
 
 ghz = ghz_fidelity(fast, (0, 1), shots=400, analysis_phases_rad=np.linspace(0.0, np.pi, 4, endpoint=False))
 print("P00, P11:", {k: round(v[0], 4) for k, v in ghz.populations.items()},
@@ -240,7 +244,7 @@ below the protocol's hundred circuits.
 motional state on the exact gate-local space, its Choi matrix, average gate infidelity, depolarizing rate and Pauli twirl.
 
 ```python
-from qutip_trap.api import gate_channel
+from qutip_trap.benchmarks.budget import gate_channel
 
 ch = gate_channel(fast, "gpi2[0]")
 step = ch.steps[0]
@@ -275,7 +279,7 @@ detection through Myerson's PMT chain. It carries no entangling drive, so single
 refused by the scheduler.
 
 ```python
-from qutip_trap.api import ca40_optical
+from qutip_trap.device.presets import ca40_optical
 
 ca = ca40_optical(1)
 ca_derived = ca.device.derived()

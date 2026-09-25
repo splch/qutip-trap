@@ -15,27 +15,20 @@ import numpy as np
 import pytest
 from qutip.settings import available_cpu_count
 
-from qutip_trap.api import (
-    Circuit,
-    HilbertSpace,
-    ModeTruncation,
-    Operation,
-    Pulse,
-    SeedSpec,
-    SolverOptions,
-    last_record,
-    run,
-    white_spectrum,
-)
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
 from qutip_trap.dynamics.tomography import cp_residual
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics
+from qutip_trap.run.job import last_record, run
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     chain_device,

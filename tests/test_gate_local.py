@@ -11,25 +11,17 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import (
-    Circuit,
-    Operation,
-    SolverOptions,
-    gate_steps,
-    last_record,
-    register_fidelity,
-    run,
-    schedule,
-    white_spectrum,
-)
 from qutip_trap.calibration.surrogate import surrogate_table
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.pulses import Pulse
-from qutip_trap.control.schedule import Schedule
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec
+from qutip_trap.control.schedule import Schedule, schedule
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
-from qutip_trap.run.gate_local import clear_gate_local_cache
+from qutip_trap.run.gate_local import clear_gate_local_cache, gate_steps
+from qutip_trap.run.job import last_record, register_fidelity, run
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
 

@@ -132,27 +132,3 @@ class NoiseSample:
 def quiet_sample(sample_id: int = 0, t_s: float = 0.0) -> NoiseSample:
     """The nominal sample: no offsets, unit scales, nothing sampled (what M2's tests run under)."""
     return NoiseSample(sample_id=sample_id, values={}, ou_grids={}, t_s=t_s)
-
-
-__all__ = [
-    "KEY_BRANCH_WEIGHT",
-    "KEY_FIELD_OFFSET_T",
-    "KEY_INTENSITY_TRAJECTORY",
-    "KEY_LASER_OFFSET_HZ",
-    "KEY_LASER_PHASE_TRAJECTORY",
-    "KEY_MAINS_PHASE",
-    "KEY_RABI_SCALE",
-    "KEY_RF_FRACTION",
-    "KEY_RF_FRACTION_TRAJECTORY",
-    "KEY_RF_PHASE",
-    "NoiseSample",
-    "key_beam_offset_m",
-    "key_beam_phase_rad",
-    "key_beam_phase_trajectory_rad",
-    "key_frozen_n",
-    "key_mode_offset_hz",
-    "key_position_offset_m",
-    "key_qubit_offset_hz",
-    "key_qubit_trajectory_hz",
-    "quiet_sample",
-]

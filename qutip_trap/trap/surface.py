@@ -789,24 +789,3 @@ def nizamani_q(
     factor (3.2002 for their own trap) and must never enter omega = q Omega/(2 sqrt 2) or a stability boundary.
     """
     return 2.0 * charge * E_C * v_rf_peak_v / (mass_kg * omega_rf_rad_s**2 * height_m**2)
-
-
-__all__ = [
-    "KAPPA_MAX",
-    "Electrodes",
-    "GaplessPlaneTrap",
-    "depth_optimal_b_over_a",
-    "five_wire_depth_j",
-    "five_wire_escape_height_m",
-    "five_wire_null_height_m",
-    "minimum_norm_dc_voltages",
-    "nizamani_kappa",
-    "nizamani_q",
-    "rectangle_gradient",
-    "rectangle_hessian",
-    "rectangle_potential",
-    "strip_complex_derivative",
-    "strip_derivative_xy",
-    "strip_potential",
-    "two_rail_null",
-]

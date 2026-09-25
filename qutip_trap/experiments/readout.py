@@ -77,6 +77,3 @@ def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **k
         requested=ScanParameters({"windows_s": [float(w) for w in windows], "n_records": (n_records,)}),
         subject={"ion": int(ion)},
     )
-
-
-__all__ = ["detection_histogram"]

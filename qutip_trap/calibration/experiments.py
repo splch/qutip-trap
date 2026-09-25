@@ -287,21 +287,13 @@ def full_calibration(
     """Calibrate ``device`` by simulated experiments in the dependency order of Section 7.5 (module docstring)."""
     from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
-    from qutip_trap.experiments import (
-        crosstalk_scan,
-        crystal_image,
-        detection_histogram,
-        field_scan,
-        heating_rate,
-        micromotion_scan,
-        mode_spectroscopy,
-        ms_phase_scan,
-        ms_scan,
-        parity_scan,
-        rabi_scan,
-        ramsey_frequency,
-        stark_scan,
-    )
+    from qutip_trap.experiments.entangling import ms_phase_scan, ms_scan, parity_scan
+    from qutip_trap.experiments.imaging import crystal_image
+    from qutip_trap.experiments.light import crosstalk_scan, field_scan, stark_scan
+    from qutip_trap.experiments.micromotion import micromotion_scan
+    from qutip_trap.experiments.motion import heating_rate, mode_spectroscopy
+    from qutip_trap.experiments.readout import detection_histogram
+    from qutip_trap.experiments.single_ion import rabi_scan, ramsey_frequency
     from qutip_trap.noise.sampling import quiet_sample
 
     sc = scans or CalibrationScans()
@@ -935,18 +927,3 @@ def _micromotion_beam(device: Device, spec: GateDrive, method: str) -> int:
     from qutip_trap.light.roles import detection_beams
 
     return int(detection_beams(device, 0)[0])
-
-
-__all__ = [
-    "ALIASES",
-    "ORDER",
-    "PRODUCES",
-    "UPSTREAM",
-    "CalibrationError",
-    "CalibrationReport",
-    "CalibrationScans",
-    "frame_shifts",
-    "full_calibration",
-    "refused_table",
-    "upstream_status",
-]

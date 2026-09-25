@@ -307,7 +307,7 @@ def test_five_ion_closure_with_one_and_two_transverse_families() -> None:
     # both families through a rotated Delta k: rebuild the beams at 30 degrees from x in the xy plane (the Section 11.1 fixture)
     import dataclasses
 
-    from qutip_trap.api import Beam
+    from qutip_trap.light.beams import Beam
 
     c, s = math.cos(math.radians(30.0)), math.sin(math.radians(30.0))
     b1 = Beam(355e-9, (c, s, 0.0), (0.0, 0.0, 1.0), 200e-6, 10e-3, (0.0, 0.0, 0.0))

@@ -18,16 +18,16 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import white_spectrum
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import Schedule
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, _pure_branches
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
-from qutip_trap.experiments import ramsey
+from qutip_trap.experiments.single_ion import ramsey
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.machine import as_machine
 from qutip_trap.noise.sampling import quiet_sample
+from qutip_trap.noise.spectra import white_spectrum
 from tests.m2_fixtures import single_ion_raman_device
 
 KX = 1

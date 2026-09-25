@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 from scipy.signal import welch
 
-from qutip_trap.api import Mains, ou_spectrum
 from qutip_trap.noise.processes import (
     MIN_GRID_POINTS,
     TAU_C_OVERSAMPLE,
@@ -24,6 +23,7 @@ from qutip_trap.noise.processes import (
     synthesize,
     time_grid,
 )
+from qutip_trap.noise.spectra import Mains, ou_spectrum
 
 
 def test_the_grid_honours_delta_t_at_most_tau_c_over_ten() -> None:

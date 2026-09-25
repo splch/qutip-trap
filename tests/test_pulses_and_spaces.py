@@ -7,20 +7,14 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    Beam,
-    CombSpec,
-    DecouplingSequence,
-    Drive,
-    HilbertSpace,
-    ModeTruncation,
-    NoiseSpectrum,
-    Pulse,
-    Schedule,
-    SolverOptions,
-    Tone,
-)
-from qutip_trap.hilbert.space import enr_dimension
+from qutip_trap.control.pulses import Drive, Pulse, Tone
+from qutip_trap.control.schedule import Schedule
+from qutip_trap.dynamics.engine import SolverOptions
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation, enr_dimension
+from qutip_trap.light.beams import Beam
+from qutip_trap.light.comb import CombSpec
+from qutip_trap.noise.decoupling import DecouplingSequence
+from qutip_trap.noise.spectra import NoiseSpectrum
 from qutip_trap.readout.fluorescence import saturation_ceiling
 from qutip_trap.trap.heating import heating_rate_quanta_per_s
 from qutip_trap.trap.mathieu import beta_lowest_order, c0_series

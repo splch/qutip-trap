@@ -11,17 +11,19 @@ from __future__ import annotations
 
 import pytest
 
-from qutip_trap.api import Circuit, Operation, SolverOptions, register_fidelity
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.device.presets import (
     CA40_DETECTION_WINDOW_S,
     CA40_TRAP_HZ,
     ca40_optical,
     ca40_optical_recipe,
 )
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.light.roles import gate_beams
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics
 from qutip_trap.prep.recipe import recipe_of, run_preparation, standard_recipe
+from qutip_trap.run.job import register_fidelity
 from qutip_trap.species import species
 
 GPI2 = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))

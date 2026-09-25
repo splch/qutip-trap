@@ -12,10 +12,13 @@ import numpy as np
 import pytest
 
 from qutip_trap._compat import QutipTrapWarning
-from qutip_trap.api import Circuit, Operation, SolverOptions, run, yb171_chain
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.device.presets import yb171_chain
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hilbert.truncation import TruncationWarning, warn_if_boundary_exceeds
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Parallel, Truncation
+from qutip_trap.run.job import run
 from qutip_trap.run.results import Progress
 from qutip_trap.run.space import select_space
 

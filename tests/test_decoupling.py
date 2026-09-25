@@ -9,15 +9,10 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
+from qutip_trap.control.composite import composite_pulse
+from qutip_trap.noise.decoupling import (
     ControlSegment,
     DecouplingSequence,
-    composite_pulse,
-    decoupling_sequence,
-    filter_function,
-    gaussian_spectrum,
-)
-from qutip_trap.noise.decoupling import (
     adjoint,
     amplitude_filter_function,
     chi_integral,
@@ -26,10 +21,13 @@ from qutip_trap.noise.decoupling import (
     control_matrix_time,
     dc_floor,
     dc_polygon,
+    decoupling_sequence,
+    filter_function,
     final_adjoint,
     pulse_adjoint,
     rotation,
 )
+from qutip_trap.noise.spectra import gaussian_spectrum
 from tests.m2_fixtures import microwave_device
 
 TAU = 1.0

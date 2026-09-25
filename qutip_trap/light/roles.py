@@ -71,6 +71,3 @@ def infer_detection_beam(device: Device, *, window: float = RESONANT_WINDOW) -> 
         if rel < window and (best is None or rel < best[0]):
             best = (rel, k)
     return None if best is None else best[1]
-
-
-__all__ = ["RESONANT_WINDOW", "detection_beams", "gate_beams", "infer_detection_beam", "resonant_beams"]

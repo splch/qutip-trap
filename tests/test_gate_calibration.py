@@ -9,7 +9,6 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import ms_scan, parity_scan
 from qutip_trap.calibration.entangling import (
     calibrate_entangling_angle,
     exact_gate_check,
@@ -20,6 +19,7 @@ from qutip_trap.calibration.entangling import (
 from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, solve_amplitude_modulation
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
+from qutip_trap.experiments.entangling import ms_scan, parity_scan
 from qutip_trap.machine import as_machine
 from qutip_trap.validation.two_qubit_closed_forms import (
     ballance_thermal_error,

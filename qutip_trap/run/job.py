@@ -1000,24 +1000,3 @@ def register_fidelity(result: Result, target: np.ndarray | qt.Qobj | None = None
         full[tuple(slice(0, 2) for _ in dims)] = vec.reshape([2] * n_ions)
         ket = qt.Qobj(full.reshape(-1, 1), dims=[dims, [1] * n_ions])
     return float(np.real(qt.expect(rho, ket)))
-
-
-__all__ = [
-    "Branch",
-    "ReadoutStage",
-    "RunError",
-    "RunRecord",
-    "detection_micromotion",
-    "effective_sample_size",
-    "enumerate_branches",
-    "ideal_register_state",
-    "intrinsic_budget",
-    "internal_probabilities",
-    "last_record",
-    "level_maps",
-    "prepare",
-    "readout_stage",
-    "register_fidelity",
-    "run",
-    "to_register_order",
-]

@@ -15,10 +15,9 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import RfDrive
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.micromotion import second_order_doppler_fraction
-from qutip_trap.trap.pseudopotential import DcElectrodes
+from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.trap.surface import Electrodes, five_wire_depth_j, five_wire_null_height_m
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
 from tests.m4_fixtures import two_ion_device

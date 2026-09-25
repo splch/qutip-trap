@@ -7,15 +7,14 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
+from qutip_trap.control.compiler import (
     Circuit,
     Operation,
     circuit_unitary,
+    compile_report,
     ideal_probabilities,
-    load_openqasm2,
 )
-from qutip_trap.control.compiler import compile_report
-from qutip_trap.io.openqasm import OpenQASMError, evaluate, tokenize
+from qutip_trap.io.openqasm import OpenQASMError, evaluate, load_openqasm2, tokenize
 
 BELL = """
 OPENQASM 2.0;

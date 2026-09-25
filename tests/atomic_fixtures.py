@@ -15,7 +15,8 @@ from fractions import Fraction
 
 import numpy as np
 
-from qutip_trap.api import Beam, Field
+from qutip_trap.device.model import Field
+from qutip_trap.light.beams import Beam
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.units import C_M_PER_S, TWO_PI, hz_from_wavenumber_cm, lande_g_j

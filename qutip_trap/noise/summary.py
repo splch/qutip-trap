@@ -174,24 +174,3 @@ def depolarizing_entanglement_infidelity(p: float, n_qubits: int) -> float:
 def over_rotation_twirl_probability(alpha_rad: float) -> float:
     """p_xx = sin^2 alpha for the over-rotation exp(-i alpha XX) (Trout 2018; Section 9.7)."""
     return math.sin(alpha_rad) ** 2
-
-
-__all__ = [
-    "apply_choi",
-    "average_gate_infidelity",
-    "choi_from_kraus",
-    "choi_from_unitary",
-    "depolarizing_choi",
-    "depolarizing_entanglement_infidelity",
-    "depolarizing_kraus",
-    "depolarizing_rate",
-    "entanglement_fidelity",
-    "entanglement_infidelity",
-    "over_rotation_twirl_probability",
-    "pauli_labels",
-    "pauli_string",
-    "pauli_transfer_diagonal",
-    "pauli_twirl",
-    "qiskit_depolarizing_lambda",
-    "rb_error_per_clifford",
-]

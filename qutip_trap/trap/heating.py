@@ -267,24 +267,3 @@ BROWNNUTT_MEDIANS_V2_M2_HZ: dict[Literal["room_temperature", "cryogenic_6k"], fl
 def n_dot_exponent_from_s_e_exponent(alpha: float) -> float:
     """n_dot ~ omega^-(alpha+1) when S_E ~ omega^-alpha (Section 13, "Heating-rate meaning")."""
     return alpha + 1.0
-
-
-__all__ = [
-    "BROWNNUTT_MEDIANS_V2_M2_HZ",
-    "SpectralDensity",
-    "coherence_decay_rate",
-    "correlation_matrix",
-    "heating_rate_quanta_per_s",
-    "heating_rates_per_mode",
-    "johnson_noise_s_e",
-    "micromotion_sideband_heating_rate",
-    "n_dot_exponent_from_s_e_exponent",
-    "patch_potential_s_e",
-    "power_law_s_e",
-    "s_e_from_heating_rate",
-    "single_sided_from_spectrum",
-    "single_sided_from_two_sided",
-    "thermal_collapse_rates",
-    "turchette_micromotion_correction",
-    "two_sided_from_single_sided",
-]

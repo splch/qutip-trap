@@ -17,9 +17,9 @@ import math
 
 import numpy as np
 
-from qutip_trap.api import Beam, Device
 from qutip_trap.control.schedule import GateDrive
-from qutip_trap.device.model import BeamRoles
+from qutip_trap.device.model import BeamRoles, Device
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import beam_for_transition
 from qutip_trap.prep.recipe import PreparationRecipe, magic_angle_polarization, standard_recipe
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD
@@ -106,7 +106,7 @@ def circuit_fixture(
         gate_drives[i] = GateDrive("raman", (k, k + 1))
     det_index = len(beams)
     beams.append(oblique_detection_beam(s_o, 5.0))
-    from qutip_trap.api import Field
+    from qutip_trap.device.model import Field
     from tests.fixtures import make_hardware, make_noise
 
     entangling = {i: GateDrive("raman", (0, 1)) for i in range(n_ions)}

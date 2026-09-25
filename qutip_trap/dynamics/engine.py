@@ -371,20 +371,6 @@ class PulseEngine(Protocol):
     ) -> ChannelSummary: ...
 
 
-__all__ = [
-    "ALLOWED_INTEGRATORS",
-    "MULTISTEP_INTEGRATORS",
-    "ChannelSummary",
-    "LindbladMethod",
-    "MotionalModel",
-    "PulseEngine",
-    "SeedSpec",
-    "SolverOptions",
-    "State",
-    "Traces",
-]
-
-
 # ---- the joint-exact engine of milestone M2 (dissipative paths M7) -------------------------------------------------------------
 
 
@@ -2046,13 +2032,3 @@ class _BoundaryTrip(Exception):
 
 class TruncationLimit(RuntimeError):
     """The cap-raising retries of Section 5.5 were exhausted."""
-
-
-__all__ += [
-    "MARGIN_LEAKAGE_FRACTION",
-    "EngineReport",
-    "JointExactEngine",
-    "SegmentReport",
-    "TruncationLimit",
-    "required_margin_under",
-]

@@ -514,5 +514,3 @@ SOURCES: Final[dict[str, str]] = {
     ),
     "PLAN_background": "PLAN.md convention or textbook statement tagged [background] (no source check in the research runs).",
 }
-
-__all__ = ["SOURCES"]

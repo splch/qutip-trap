@@ -14,10 +14,11 @@ import math
 import numpy as np
 import qutip as qt
 
-from qutip_trap.api import Beam, Detector, Device, Field
+from qutip_trap.device.model import Device, Field
 from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import beam_for_transition
-from qutip_trap.readout.detection import RecordModel
+from qutip_trap.readout.detection import Detector, RecordModel
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, rates_from_detected
 from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
 from qutip_trap.species import species

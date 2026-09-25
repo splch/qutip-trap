@@ -25,7 +25,6 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import CalEntry, Circuit, Operation, RfDrive, SolverOptions, run, schedule, white_spectrum
 from qutip_trap.calibration import EXPERIMENTS
 from qutip_trap.calibration.experiments import (
     ALIASES,
@@ -36,12 +35,17 @@ from qutip_trap.calibration.experiments import (
     full_calibration,
 )
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.schedule import ScheduleError
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.schedule import ScheduleError, schedule
+from qutip_trap.control.table import CalEntry
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.light import stark_scan
 from qutip_trap.experiments.result import ExperimentResult
 from qutip_trap.machine import as_machine
+from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
-from qutip_trap.run.job import RunError, last_record
+from qutip_trap.run.job import RunError, last_record, run
+from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import TWO_PI
 from tests.m6_fixtures import circuit_fixture
 
@@ -316,7 +320,7 @@ def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_
 
     drifted = dataclasses.replace(drifted, crystal=solve_crystal(drifted.trap, drifted.crystal.species))
     beam = 0
-    from qutip_trap.experiments import micromotion_scan
+    from qutip_trap.experiments.micromotion import micromotion_scan
 
     scan = micromotion_scan(
         as_machine(at_t0), 0, beam, {"Ex": (-40.0, 0.0)}, method="sideband_ratio", points=5

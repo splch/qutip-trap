@@ -19,16 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from qutip_trap._compat import deprecated
 from qutip_trap.calibration.cache import DEFAULT_CACHE, CalibrationCache
-from qutip_trap.calibration.experiments import (
-    ALIASES,
-    ORDER,
-    UPSTREAM,
-    CalibrationError,
-    CalibrationReport,
-    CalibrationScans,
-    full_calibration,
-    upstream_status,
-)
+from qutip_trap.calibration.experiments import ALIASES, ORDER, CalibrationReport, full_calibration
 
 if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
@@ -253,21 +244,3 @@ def calibrate_with_report(
         refresh=refresh,
         **kwargs,
     )
-
-
-__all__ = [
-    "ALIASES",
-    "DEFAULT_CACHE",
-    "EXPERIMENTS",
-    "ORDER",
-    "UPSTREAM",
-    "CalibrationCache",
-    "CalibrationError",
-    "CalibrationMethod",
-    "CalibrationReport",
-    "CalibrationScans",
-    "calibrate",
-    "calibrate_with_report",
-    "full_calibration",
-    "upstream_status",
-]

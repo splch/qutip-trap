@@ -62,7 +62,7 @@ PRESETS: dict[str, Callable[..., core.DevicePreset]] = {
     "yb171_chain": core.yb171_chain,
     "ca40_optical": core.ca40_optical,
 }
-"""The device presets a record can name and rebuild (the public presets of ``qutip_trap.api``)."""
+"""The device presets a record can name and rebuild."""
 
 NATIVE_GATE_SET: tuple[str, ...] = ("gpi", "gpi2", "ms", "zz", "rz (virtual)")
 DEFAULT_DETECTION_WINDOWS_S: tuple[float, ...] = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))

@@ -395,33 +395,3 @@ def recoil_kernel_matrix(d: int, eta_em: float, quad: Quadrature1D) -> np.ndarra
             continue
         kernel += p * np.abs(displacement_matrix_analytic(d, -1j * eta_em * float(u))) ** 2
     return kernel
-
-
-__all__ = [
-    "MOMENT_TOLERANCE",
-    "DirectionQuadrature",
-    "PatternQ",
-    "Quadrature1D",
-    "RecoilMode",
-    "VectorChannel",
-    "angular_factor",
-    "derived_angular_factors",
-    "derived_pattern_norms",
-    "direction_quadrature",
-    "emission_lamb_dicke",
-    "free_recoil_energy_j",
-    "marginal",
-    "marginal_quadrature",
-    "minimal_quadrature",
-    "multi_mode_kick",
-    "pattern_density",
-    "recoil_energy_ratio",
-    "recoil_heating_quanta",
-    "recoil_kernel_matrix",
-    "recoil_lamb_dicke",
-    "recoil_projections",
-    "recoil_quanta_per_photon",
-    "recoil_temperature_k",
-    "recoil_velocity_m_per_s",
-    "vector_channels",
-]

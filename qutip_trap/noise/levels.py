@@ -84,6 +84,3 @@ def internal_levels(
         # d > 2: the d - 3 lowest remaining sublevels are resolved and the LAST level is always the SINK
         labels = list(qubit_labels) + [lab for _e, lab in others][: d - 3] + [SINK]
     return InternalLevels(tuple(labels))
-
-
-__all__ = ["SINK", "InternalLevels", "internal_levels"]

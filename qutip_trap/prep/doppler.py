@@ -236,12 +236,3 @@ def optimize_detuning(
     best = float(sol.x)
     result = cache.get(best) or evaluate(best)
     return best, result
-
-
-__all__ = [
-    "FORCE_MODEL_MAX_NU_OVER_GAMMA",
-    "DopplerResult",
-    "doppler_cooling",
-    "optimize_detuning",
-    "with_detuning_offset",
-]

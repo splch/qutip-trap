@@ -108,26 +108,21 @@ _REGISTRY: dict[str, type] = {}
 
 
 def _registry() -> dict[str, type]:
-    """Every dataclass the device tree names, by class name: the Appendix E surface first, then the modules of the classes
-    already found (a name the surface does not export, such as ``Zone``, lives next to one that does)."""
+    """Every dataclass of the loaded package modules, by class name (the presets load every class a device holds)."""
     if _REGISTRY:
         return _REGISTRY
     import sys
 
-    from qutip_trap import api
+    import qutip_trap.device.presets  # noqa: F401
 
-    for name in api.__all__:
-        obj = getattr(api, name)
-        if isinstance(obj, type) and dataclasses.is_dataclass(obj):
-            _REGISTRY.setdefault(name, obj)
-    modules = {obj.__module__ for obj in list(_REGISTRY.values())}
-    for modname in sorted(modules):
-        mod = sys.modules.get(modname)
-        if mod is None:
-            continue
-        for name, obj in vars(mod).items():
-            if isinstance(obj, type) and dataclasses.is_dataclass(obj) and obj.__module__ == modname:
-                _REGISTRY.setdefault(name, obj)
+    for modname, mod in list(sys.modules.items()):
+        if modname.startswith("qutip_trap.") and mod is not None:
+            for name, obj in vars(mod).items():
+                if isinstance(obj, type) and dataclasses.is_dataclass(obj) and obj.__module__ == modname:
+                    if _REGISTRY.setdefault(name, obj) is not obj:
+                        raise TypeError(
+                            f"two dataclasses named {name!r}: {_REGISTRY[name].__module__}, {modname}"
+                        )
     return _REGISTRY
 
 
@@ -511,15 +506,3 @@ def device_schema() -> dict[str, Any]:
         },
         "$defs": defs,
     }
-
-
-__all__ = [
-    "SCHEMA_VERSION",
-    "Node",
-    "decode",
-    "device_from_dict",
-    "device_schema",
-    "device_to_dict",
-    "encode",
-    "parse",
-]

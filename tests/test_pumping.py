@@ -8,7 +8,6 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Trap
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.light.recoil import angular_factor, emission_lamb_dicke
@@ -17,6 +16,7 @@ from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import TWO_PI
 from tests.atomic_fixtures import spin_zero_like
 

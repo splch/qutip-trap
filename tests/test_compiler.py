@@ -9,22 +9,17 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    Circuit,
-    Operation,
-    circuit_unitary,
-    compile_to_native,
-    dump_ionq_json,
-    ideal_probabilities,
-    load_ionq_json,
-)
 from qutip_trap.control import native
 from qutip_trap.control.compiler import (
     CNOT_MATRIX,
+    Circuit,
     CompileError,
+    Operation,
+    circuit_unitary,
     cnot_global_phase,
     cnot_template,
     compile_report,
+    compile_to_native,
     cp_matrix,
     cp_template,
     cp_template_local_defect_rad,
@@ -34,9 +29,11 @@ from qutip_trap.control.compiler import (
     embed,
     frame_unitary,
     gate_matrix,
+    ideal_probabilities,
     propagate_frames,
     zyz_angles,
 )
+from qutip_trap.io.ionq import dump_ionq_json, load_ionq_json
 
 
 def _phase(a: np.ndarray, b: np.ndarray) -> float | None:

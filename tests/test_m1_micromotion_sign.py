@@ -17,14 +17,15 @@ import numpy as np
 import pytest
 from scipy.special import jv
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, Pulse, RfDrive
+from qutip_trap.control.pulses import Pulse
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, micromotion_index
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.run.job import detection_micromotion
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.micromotion import MicromotionIndex, excess_amplitude_m, modulation_index
 from qutip_trap.trap.model import Trap
-from qutip_trap.trap.pseudopotential import DcElectrodes
+from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.units import TWO_PI
 from tests.m2_fixtures import single_ion_raman_device
 

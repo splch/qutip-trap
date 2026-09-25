@@ -11,15 +11,15 @@ import numpy as np
 import pytest
 
 from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable
-from qutip_trap.experiments import (
+from qutip_trap.experiments.result import (
     CrystalImage,
     ExperimentResult,
     HeatingRateFit,
     ParityScan,
     RabiScan,
     RamseyFringe,
-    rabi_scan,
 )
+from qutip_trap.experiments.single_ion import rabi_scan
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.machine import Machine
 from tests.m6_fixtures import CircuitFixture, circuit_fixture

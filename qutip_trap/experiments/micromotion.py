@@ -506,14 +506,3 @@ def micromotion_scan(
         requested=ScanParameters({f"shim[{n}]_v": tuple(shim_ranges_v[n]) for n in names}),
         subject={"ion": int(ion), "beam": int(beam)},
     )
-
-
-__all__ = [
-    "FIELD_SHIMS",
-    "METHODS",
-    "correlation_signal",
-    "device_with_compensation",
-    "micromotion_scan",
-    "periodic_scattering",
-    "signed_beta",
-]

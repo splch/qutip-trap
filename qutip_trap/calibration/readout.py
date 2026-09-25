@@ -165,6 +165,3 @@ def calibrate_detection(
         fitted_model=fitted,
         histogram_errors=(eps_b_lab, eps_d_lab),
     )
-
-
-__all__ = ["DetectionCalibration", "calibrate_detection", "histogram_error_rates"]

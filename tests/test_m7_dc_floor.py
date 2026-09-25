@@ -22,14 +22,16 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import composite_pulse, decoupling_sequence, filter_function, gaussian_spectrum
-from qutip_trap.control.composite import leading_coefficient
+from qutip_trap.control.composite import composite_pulse, leading_coefficient
 from qutip_trap.noise.decoupling import (
     composite_segments,
     dc_floor,
+    decoupling_sequence,
+    filter_function,
     frozen_noise_floor,
     frozen_noise_infidelity,
 )
+from qutip_trap.noise.spectra import gaussian_spectrum
 from tests.m2_fixtures import microwave_device
 
 RABI_HZ = 50e3
@@ -219,12 +221,12 @@ def test_collapse_op_reports_ordinary_rates_not_rates_divided_by_two_pi() -> Non
     FREQUENCIES, so the six construction sites' ``/(2 pi)`` reported a number 6.28 times small. The audit offered a
     rename as an alternative, but Appendix E (PLAN.md:2561) declares the name ``rate_hz`` and the API freeze test
     enforces it, so the PLAN wins: the name stays and only the value is corrected."""
-    from qutip_trap.api import HilbertSpace, ModeTruncation
     from qutip_trap.dynamics.channels import (
         heating_channels,
         motional_dephasing_channels,
         qubit_dephasing_channels,
     )
+    from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
     from qutip_trap.trap.heating import thermal_collapse_rates
 
     space = HilbertSpace((2,), (ModeTruncation(0, 8, (0, 3), 0.1),), None, ())

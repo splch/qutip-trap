@@ -558,22 +558,3 @@ def lock_residual_factor(tooth: int, locked_tooth: int, sideband: Literal["lower
 def amplitude_noise_error(alpha_per_hz: float, omega0_hz: float, t_s: float) -> float:
     """epsilon = (pi^2/2) alpha Omega_0^2 T with Omega_0 an ORDINARY frequency in Hz (rad/s would be (2 pi)^2 too large)."""
     return 0.5 * math.pi**2 * alpha_per_hz * omega0_hz**2 * t_s
-
-
-__all__ = [
-    "FIELD_FWHM_OVER_TAU",
-    "INTENSITY_FWHM_OVER_TAU",
-    "MARGINAL_COUPLING_FACTOR",
-    "SINGULAR_REL_TOL",
-    "SUM_DEPTH_HALF_WIDTHS",
-    "ZETA3_COEFFICIENT",
-    "CombSpec",
-    "amplitude_noise_error",
-    "comb_build_notes",
-    "harmonic_gain",
-    "lock_residual_factor",
-    "pulse_count_map",
-    "rosen_zener_ceiling",
-    "sech",
-    "tau_field_from",
-]

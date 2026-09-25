@@ -317,6 +317,3 @@ MISSING: tuple[MissingConstant, ...] = required_constants_missing(TABLE, REQUIRE
 def species() -> Species:
     """Raises :class:`IncompleteSpeciesTable`."""
     raise IncompleteSpeciesTable(NAME, MISSING)
-
-
-__all__ = ["MISSING", "NAME", "TABLE", "species"]

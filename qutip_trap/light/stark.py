@@ -76,12 +76,3 @@ def intensity_scaled(shift_peak_hz: float, envelope_fraction: float, power: int 
     what the live scheduler path does, and hard-coding 2 here for every kind was a silent factor of f (M2 audit E19).
     """
     return shift_peak_hz * envelope_fraction**power
-
-
-__all__ = [
-    "device_stark_shift_hz",
-    "differential_shift_hz",
-    "intensity_scaled",
-    "level_shifts_hz",
-    "stark_phase_rad",
-]

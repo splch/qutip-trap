@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import pytest
 
-from qutip_trap.api import DevicePreset, yb171_chain
 from qutip_trap.control.schedule import default_gate_drives
 from qutip_trap.device.model import BeamRoles
+from qutip_trap.device.presets import DevicePreset, yb171_chain
 from tests.m6_fixtures import circuit_fixture
 
 

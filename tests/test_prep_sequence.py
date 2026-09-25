@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.prep.pumping import optical_pumping
 from qutip_trap.prep.sequence import (
@@ -224,9 +224,9 @@ def test_prepare_state_refuses_undefined_modes_and_unpumped_ions() -> None:
 
 
 def test_doppler_stage_wraps_the_rate_result() -> None:
-    from qutip_trap.api import Trap
     from qutip_trap.prep.doppler import doppler_cooling
     from qutip_trap.trap.crystal import solve_crystal
+    from qutip_trap.trap.model import Trap
     from tests.bloch_fixtures import (
         TWO_LEVEL_EXCITED_PLUS,
         TWO_LEVEL_GROUND,

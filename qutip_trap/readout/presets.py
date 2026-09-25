@@ -205,15 +205,3 @@ PRESETS: dict[str, ApparatusPreset] = {
         EGAN_YB171,
     )
 }
-
-__all__ = [
-    "BURRELL_CA40_CAMERA",
-    "CHRISTENSEN_BA133",
-    "CRAIN_YB171_SNSPD",
-    "EGAN_YB171",
-    "HARTY_CA43",
-    "MYERSON_CA40_PMT",
-    "NOEK_YB171_PMT",
-    "PRESETS",
-    "ApparatusPreset",
-]

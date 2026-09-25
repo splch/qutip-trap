@@ -19,8 +19,9 @@ import math
 
 import pytest
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, Pulse
+from qutip_trap.control.pulses import Pulse
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.trap.anharmonic import (
     anharmonic_estimate,

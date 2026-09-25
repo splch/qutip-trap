@@ -314,33 +314,3 @@ def lin_perp_lin_pair(
     a = Beam(wavelength_m, (0.0, 0.0, 1.0), (1.0 + 0j, 0j, 0j), waist_m, power_w, (0.0, 0.0, 0.0))
     b = Beam(wavelength_m, (0.0, 0.0, -1.0), (0j, 1.0 + 0j, 0j), waist_m, power_w, (0.0, 0.0, 0.0))
     return PolGradientBeams(a, b, detuning_hz, beat_hz, phase_rad, "jg12_je12")
-
-
-__all__ = [
-    "COS2_THRESHOLD",
-    "ISOTROPIC_ALPHA",
-    "PolarizationGradientLevelC",
-    "UncooledPhaseError",
-    "cooling_rate_per_s",
-    "detailed_balance_populations",
-    "fixed_phase_minimum",
-    "fixed_phase_nbar",
-    "heating_rate_per_s",
-    "joshi_saturation",
-    "lin_perp_lin_pair",
-    "moving_gradient_window",
-    "multi_ion_fit_offset",
-    "phase_averaged_minimum",
-    "phase_averaged_nbar",
-    "polarization_gradient_model",
-    "potentials_rad_s",
-    "pumping_rates_per_s",
-    "recoil_heating_terms",
-    "saturation_bridge",
-    "saturation_for_xi",
-    "static_gradient_mean_nbar",
-    "static_gradient_nbar",
-    "three_axis_lamb_dicke",
-    "xi_depth",
-    "xi_from_d1_sigma_rabi",
-]

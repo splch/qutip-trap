@@ -15,17 +15,12 @@ import warnings
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    CombSpec,
-    HilbertSpace,
-    ModeTruncation,
-    Pulse,
-    Schedule,
-    SeedSpec,
-    SolverOptions,
-)
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.control.pulses import Pulse
+from qutip_trap.control.schedule import Schedule
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.light.comb import CombSpec
 from qutip_trap.light.raman import comb_drive, derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.units import TWO_PI

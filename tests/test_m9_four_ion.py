@@ -36,18 +36,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qutip_trap.api import (
-    Circuit,
-    Operation,
-    SolverOptions,
-    last_record,
-    register_fidelity,
-    run,
-)
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.compiler import compile_to_native
+from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.schedule import schedule as make_schedule
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.options import Numerics
+from qutip_trap.run.job import last_record, register_fidelity, run
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import best_contributions, select_space
 from tests.m6_fixtures import circuit_fixture

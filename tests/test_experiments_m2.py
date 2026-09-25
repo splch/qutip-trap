@@ -6,8 +6,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qutip_trap.api import rabi_scan, ramsey, ramsey_frequency, sideband_spectroscopy
-from qutip_trap.experiments import thermal_rabi_model
+from qutip_trap.experiments.fitting import thermal_rabi_model
+from qutip_trap.experiments.single_ion import rabi_scan, ramsey, ramsey_frequency, sideband_spectroscopy
 from qutip_trap.light.raman import derive_raman_drive
 from qutip_trap.machine import as_machine
 from tests.m2_fixtures import microwave_device, single_ion_raman_device

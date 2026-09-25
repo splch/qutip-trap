@@ -12,13 +12,15 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import Circuit, Operation, SolverOptions, calibrate, register_fidelity, run
-from qutip_trap.calibration import CalibrationScans
-from qutip_trap.calibration.experiments import CalibrationReport
+from qutip_trap.calibration import calibrate
+from qutip_trap.calibration.experiments import CalibrationReport, CalibrationScans
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.table import usable
+from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics
+from qutip_trap.run.job import register_fidelity, run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
@@ -207,7 +209,7 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
 @pytest.mark.slow
 def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_runs(calibrated) -> None:  # type: ignore[no-untyped-def]
     fx, report = calibrated
-    from qutip_trap.calibration import CalibrationCache
+    from qutip_trap.calibration.cache import CalibrationCache
 
     cache = CalibrationCache()
     kw = dict(

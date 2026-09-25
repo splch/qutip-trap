@@ -48,7 +48,7 @@ from qutip_trap.control.composite import CompositePulse
 if TYPE_CHECKING:
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.device.model import Device
-    from qutip_trap.experiments import ExperimentResult
+    from qutip_trap.experiments.result import ExperimentResult
     from qutip_trap.noise.spectra import NoiseSpectrum
 
 M7 = "milestone M7 (noise/decoupling.py, PLAN.md Section 6.9)"
@@ -863,7 +863,7 @@ def filter_function(
     builder's qubit-trajectory hook on a mode-less single-ion space) and returns the sampled 1 - F_av beside the filter-function
     estimate; the result records xi^2 and flags the comparison when it is not small.
     """
-    from qutip_trap.experiments import ExperimentResult
+    from qutip_trap.experiments.result import ExperimentResult
     from qutip_trap.noise.model import GAUSS_PER_TESLA
 
     # ---- the control -------------------------------------------------------------------------------------------------
@@ -1059,42 +1059,3 @@ def _monte_carlo_dephasing(
         vals.append(1.0 - abs(np.trace(u_c.conj().T @ u)) ** 2 / 4.0)
     arr = np.asarray(vals)
     return float(arr.mean()), float(arr.std(ddof=1) / math.sqrt(len(arr))) if len(arr) > 1 else 0.0
-
-
-__all__ = [
-    "ControlSegment",
-    "DecouplingSequence",
-    "KDD_BLOCK",
-    "Quadrature",
-    "Timing",
-    "accumulated_adjoints",
-    "adjoint",
-    "amplitude_filter_function",
-    "biercuk_amplitude_mp",
-    "biercuk_filter_function_mp",
-    "biercuk_taylor_coefficients_mp",
-    "chi_integral",
-    "chi_integral_mp",
-    "composite_segments",
-    "control_matrix",
-    "control_matrix_time",
-    "cpmg_centres",
-    "cpmg_centres_mp",
-    "dc_floor",
-    "dc_polygon",
-    "decoupling_sequence",
-    "dephasing_filter_function",
-    "double_factorial_odd",
-    "filter_function",
-    "final_adjoint",
-    "frozen_noise_floor",
-    "frozen_noise_infidelity",
-    "leading_taylor_order_mp",
-    "pulse_adjoint",
-    "rotation",
-    "schedule_segments",
-    "segment_frequency_integrals",
-    "udd_centres",
-    "udd_centres_mp",
-    "universal_filter_function",
-]

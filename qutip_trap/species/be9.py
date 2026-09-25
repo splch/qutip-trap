@@ -369,6 +369,3 @@ def species() -> Species:
         repumps=(),
         shelving=None,
     )
-
-
-__all__ = ["MISSING", "NAME", "TABLE", "species"]

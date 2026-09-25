@@ -10,16 +10,17 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import Circuit, Operation, SeedSpec, SolverOptions, load_ionq_json
 from qutip_trap.calibration.entangling import calibrate_entangling_angle, gate_space
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import equal_up_to_global_phase, gpi2, rz, xx
 from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.native import zz as native_zz
 from qutip_trap.control.schedule import GateDrive, ScheduleError, ms_spin_phases, schedule
 from qutip_trap.control.shaping import solve_amplitude_modulation
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.frames import PhaseFrame
+from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.noise.sampling import quiet_sample
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,

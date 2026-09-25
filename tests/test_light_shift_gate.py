@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import Beam, Device, Field, Trap
 from qutip_trap.calibration.entangling import calibrate_entangling_angle, exact_gate_check, gate_space
 from qutip_trap.control.native import equal_up_to_global_phase
 from qutip_trap.control.native import zz as native_zz
@@ -17,8 +16,10 @@ from qutip_trap.control.pulses import Drive, Tone
 from qutip_trap.control.schedule import GateDrive
 from qutip_trap.control.shaping import gate_modes, solve_amplitude_modulation
 from qutip_trap.control.table import Waveform
+from qutip_trap.device.model import Device, Field
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.light.beams import Beam
 from qutip_trap.light.raman import (
     derive_light_shift_drive,
     derive_raman_drive,
@@ -27,6 +28,7 @@ from qutip_trap.light.raman import (
 )
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.model import Trap
 from qutip_trap.units import TWO_PI
 from qutip_trap.validation.two_qubit_closed_forms import (
     baldwin_echo_unitary,

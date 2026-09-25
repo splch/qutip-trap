@@ -439,13 +439,3 @@ def surrogate_table(
         nbar=occupations,
         notes=tuple(notes),
     )
-
-
-__all__ = [
-    "CROSSTALK_MIN",
-    "MU_ABOVE_TOP_FRACTION",
-    "SurrogateReport",
-    "spot_check_space",
-    "surrogate_table",
-    "surrogate_waveform",
-]

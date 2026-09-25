@@ -53,18 +53,11 @@ from qutip_trap.control.pulses import Drive, Pulse, as_time_function, fingerprin
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.frames import interaction_picture
 from qutip_trap.dynamics.kernels import KernelChoice, prefer_factorized
-from qutip_trap.dynamics.multilevel import (  # the multi-level mode of Section 4.2.8 (M3a): one builder module
-    ModeSpec,
-    MultiLevelBuild,
-    MultiLevelOptions,
-    assign_frames,
-    build_multilevel,
-)
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.hilbert.operators import debye_waller_factor, qudit_projector, qudit_sigma_plus
 from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.light.comb import comb_build_notes
-from qutip_trap.light.raman import lamb_dicke_parameters, mathieu_or_none
+from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (
     KEY_BRANCH_WEIGHT,
@@ -1356,22 +1349,3 @@ def carrier_debye_waller_frozen(etas: Mapping[int, float], frozen_n: Mapping[int
         e = etas[m]
         out *= float(math.exp(-(e**2) / 2.0) * eval_genlaguerre(int(n), 0, e**2))
     return out
-
-
-__all__ = [
-    "BuilderOptions",
-    "BuiltHamiltonian",
-    "CurvatureSpec",
-    "DriveRecord",
-    "ModeSpec",
-    "MultiLevelBuild",
-    "MultiLevelOptions",
-    "assign_frames",
-    "build_hamiltonian",
-    "build_multilevel",
-    "carrier_debye_waller_frozen",
-    "free_hamiltonian",
-    "lamb_dicke_parameters",
-    "mathieu_or_none",
-    "micromotion_index",
-]

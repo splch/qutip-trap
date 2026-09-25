@@ -28,7 +28,6 @@ import numpy as np
 from scipy.optimize import brentq
 
 from qutip_trap.experiments.fitting import (
-    at_scan_edge,
     sigmas_or_none,
     thermal_rabi_model_fixed_nbar,
     weighted_fit,
@@ -466,6 +465,3 @@ def field_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
 
 def wrap_angle(angle: float) -> float:
     return _wrap(angle)
-
-
-__all__ = ["at_scan_edge", "crosstalk_scan", "field_scan", "stark_scan", "wrap_angle"]

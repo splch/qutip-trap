@@ -10,12 +10,11 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import HilbertSpace, ModeTruncation, SeedSpec, SolverOptions
 from qutip_trap.calibration.entangling import ms_schedule
 from qutip_trap.control import native
 from qutip_trap.control.schedule import GateTarget
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel
+from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.tomography import (
     MotionalBranch,
     apply_kraus_dm,
@@ -37,6 +36,7 @@ from qutip_trap.dynamics.tomography import (
     single_qudit_inputs,
     tp_residual,
 )
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.summary import (
     apply_choi,
@@ -345,9 +345,9 @@ def test_a_dissipative_step_keeps_the_state_route_whatever_the_switch_says() -> 
     resolved mode not."""
     import dataclasses
 
-    from qutip_trap.api import white_spectrum
     from qutip_trap.control.schedule import Schedule, single_qubit_pulse
     from qutip_trap.dynamics.channels import qubit_dephasing_channels
+    from qutip_trap.noise.spectra import white_spectrum
 
     dev = chain_device(2)
     drives = raman_gate_drives(2)

@@ -12,20 +12,15 @@ import numpy as np
 import pytest
 
 from qutip_trap._compat import QutipTrapDeprecationWarning
-from qutip_trap.api import (
-    Circuit,
-    FidelityLevel,
-    Operation,
-    SolverOptions,
-    compile_to_native,
-    run,
-    schedule,
-    yb171_chain,
-)
+from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
+from qutip_trap.control.schedule import schedule
 from qutip_trap.device.model import BeamRoles
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.device.presets import yb171_chain
+from qutip_trap.dynamics.engine import JointExactEngine, SolverOptions
 from qutip_trap.machine import Estimate, Machine
 from qutip_trap.options import Numerics, Physics, Readout, Truncation
+from qutip_trap.run.job import run
+from qutip_trap.run.levels import FidelityLevel
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))

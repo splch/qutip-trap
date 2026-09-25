@@ -48,7 +48,6 @@ from qutip_trap.benchmarks.budget import (
 )
 from qutip_trap.benchmarks.clifford import (
     SINGLE_QUBIT_CLIFFORDS,
-    TwoQubitClifford,
     decompose_two_qubit_clifford,
     random_single_qubit_clifford,
     random_two_qubit_clifford,
@@ -601,18 +600,3 @@ def randomized_benchmarking(
         budget=bud,
         notes=tuple(notes),
     )
-
-
-__all__ = [
-    "RBResult",
-    "RBSequence",
-    "TwoQubitClifford",
-    "fit_decay",
-    "knill_sequences",
-    "marginal_survival",
-    "mean_survival_sigma",
-    "randomized_benchmarking",
-    "rb_model",
-    "single_qubit_sequences",
-    "two_qubit_sequence",
-]

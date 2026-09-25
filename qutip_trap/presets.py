@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 from qutip_trap.device import presets as device_presets
-from qutip_trap.device.presets import DevicePreset
 from qutip_trap.machine import Machine
 
 
@@ -26,6 +25,3 @@ def ca40_optical(n_ions: int = 1, **knobs: Any) -> Machine:
     """The example 40Ca+ optical-qubit chain as a ``Machine``: the 729 nm quadrupole beam for the single-qubit gates, the 397
     and 866 nm cooling and detection light, Myerson's PMT chain, no entangling drive (``device.presets.ca40_optical``)."""
     return device_presets.ca40_optical(n_ions, **knobs).machine()
-
-
-__all__ = ["DevicePreset", "ca40_optical", "yb171_chain"]

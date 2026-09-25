@@ -23,27 +23,19 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.api import (
-    Circuit,
-    HilbertSpace,
-    ModeTruncation,
-    Operation,
-    SeedSpec,
-    SolverOptions,
-    run,
-)
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.compiler import compile_to_native
+from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.schedule import schedule as make_schedule
-from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, evolve
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.hilbert.truncation import TruncationWarning, convergence_report, grown_caps, regrid_state
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.options import Numerics
-from qutip_trap.run.job import RunError
+from qutip_trap.run.job import RunError, run
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import cap_for, cap_requirement, select_space
 from qutip_trap.units import TWO_PI
@@ -675,7 +667,7 @@ def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_hist
     """
     import dataclasses as _dc
 
-    from qutip_trap.api import white_spectrum
+    from qutip_trap.noise.spectra import white_spectrum
     from tests.m4_fixtures import X_COM_TWO_IONS
 
     dev = chain_device(2)

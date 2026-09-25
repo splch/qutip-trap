@@ -475,6 +475,3 @@ def heating_rate(
         chi2=fit.chi2_per_dof,
         subject={"mode": int(mode)},
     )
-
-
-__all__ = ["heating_rate", "mode_spectroscopy", "thermometry"]

@@ -7,12 +7,12 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import CombSpec
 from qutip_trap.light.comb import (
     FIELD_FWHM_OVER_TAU,
     INTENSITY_FWHM_OVER_TAU,
     SUM_DEPTH_HALF_WIDTHS,
     ZETA3_COEFFICIENT,
+    CombSpec,
     amplitude_noise_error,
     harmonic_gain,
     lock_residual_factor,

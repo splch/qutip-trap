@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from qutip_trap.calibration.readout import calibrate_detection, histogram_error_rates
-from qutip_trap.experiments import detection_histogram
+from qutip_trap.experiments.readout import detection_histogram
 from qutip_trap.machine import as_machine
 from qutip_trap.readout.discriminate import BudgetLine, ReadoutBudget
 from qutip_trap.readout.fluorescence import shelf_decay_error

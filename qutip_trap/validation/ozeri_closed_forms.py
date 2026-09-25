@@ -221,19 +221,3 @@ def equal_elastic_rate_detuning(
     if u + v == 0.0:
         raise ValueError("the two amplitude sums never cross: u + v = 0")
     return u * delta_f / (u + v)
-
-
-__all__ = [
-    "MU_B_HZ_PER_TESLA",
-    "Uys2010Be9Anchor",
-    "equal_elastic_rate_detuning",
-    "free_electron_zeeman_splitting_hz",
-    "ozeri_2005_clock_stark_shift",
-    "ozeri_2005_scattering_rate",
-    "ozeri_eq_17_constant_w",
-    "ozeri_epsilon_s_at_power",
-    "ozeri_rate_difference_estimate",
-    "ozeri_table_ii_power_printed_lambda_w",
-    "ozeri_table_ii_power_w",
-    "uys_elastic_rates_two_path",
-]

@@ -13,14 +13,15 @@ import numpy as np
 import pytest
 
 from qutip_trap._compat import QutipTrapDeprecationWarning
-from qutip_trap.api import Circuit, Collisions, NoiseModel, Operation, power_law_spectrum, white_spectrum
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.device.model import Device
 from qutip_trap.device.presets import ca40_optical, quiet_noise_model, yb171_chain
 from qutip_trap.device.serial import parse
-from qutip_trap.experiments import HeatingRateFit
+from qutip_trap.experiments.result import HeatingRateFit
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.machine import Machine
-from qutip_trap.noise.model import DRIFT_UNITS, quiet_drift, quiet_field_spectrum
+from qutip_trap.noise.model import DRIFT_UNITS, NoiseModel, quiet_drift, quiet_field_spectrum
+from qutip_trap.noise.spectra import Collisions, power_law_spectrum, white_spectrum
 from qutip_trap.trap.heating import s_e_from_heating_rate
 
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))

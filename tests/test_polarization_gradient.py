@@ -10,8 +10,8 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.api import PolGradientBeams
 from qutip_trap.dynamics.multilevel import ModeSpec, decay_sum_rule_residual
+from qutip_trap.light.beams import PolGradientBeams
 from qutip_trap.light.bloch import CoolingError
 from qutip_trap.light.recoil import minimal_quadrature
 from qutip_trap.prep.level_c import level_c_relaxation_rate, level_c_steady_state

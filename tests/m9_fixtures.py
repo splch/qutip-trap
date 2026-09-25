@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import math
 
-from qutip_trap.api import Beam, Device, Field
+from qutip_trap.device.model import Device, Field
+from qutip_trap.light.beams import Beam
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
 from tests.fixtures import make_detector, make_hardware, make_noise

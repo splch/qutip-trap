@@ -9,10 +9,10 @@ from fractions import Fraction
 import pytest
 
 from qutip_trap.provenance import TAGS
-from qutip_trap.species import MODULES, IncompleteSpeciesTable, available, species
+from qutip_trap.species import MODULES, available, species
 from qutip_trap.species.model import Level, Species, Transition
 from qutip_trap.species.sources import SOURCES
-from qutip_trap.species.table import a_hfs_from_two_manifold_splitting
+from qutip_trap.species.table import IncompleteSpeciesTable, a_hfs_from_two_manifold_splitting
 from qutip_trap.species.zeeman import MU_B_OVER_H_HZ_PER_G, g_I_steck
 from qutip_trap.units import C_M_PER_S, H_J_S, TWO_PI
 

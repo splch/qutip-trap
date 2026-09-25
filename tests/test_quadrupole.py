@@ -8,7 +8,8 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
-from qutip_trap.api import Beam, Field
+from qutip_trap.device.model import Field
+from qutip_trap.light.beams import Beam
 from qutip_trap.species import species
 from qutip_trap.species.quadrupole import (
     B_TENSORS,

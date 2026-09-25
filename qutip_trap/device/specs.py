@@ -71,6 +71,3 @@ def render_specs(device: Device) -> str:
         lines.append("notes")
         lines.extend(f"  {n}" for n in derived.notes)
     return "\n".join(lines)
-
-
-__all__ = ["FAMILIES", "render_specs"]
