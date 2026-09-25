@@ -61,7 +61,7 @@ def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None
     """Every pulse lies in exactly one gate step, the steps alternate with the dead-time idles, every GateTarget's pulses lie in one
     step, and the entangling gate as played is attached to its step."""
     fx, sur, _kw = two_ion
-    sched = schedule(compile_to_native(BELL, fx.device), fx.device, sur.table)
+    sched = schedule(compile_to_native(BELL), fx.device, sur.table)
     steps = gate_steps(sched)
     gates = [s for s in steps if s.kind == "gate"]
     idles = [s for s in steps if s.kind == "idle"]
@@ -413,7 +413,7 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2), (2, 3)], detection_records=200, detection_windows_s=WINDOWS
     )
-    sched = schedule(compile_to_native(GHZ4, fx.device), fx.device, sur.table, t0_s=0.0)
+    sched = schedule(compile_to_native(GHZ4), fx.device, sur.table, t0_s=0.0)
     nbar0 = {m: 0.0 for m in range(len(fx.device.crystal.modes))}
     best = best_contributions(fx.device, sched.gates, nbar0)
     opts = SolverOptions(freeze_chi_max_rad=0.3)

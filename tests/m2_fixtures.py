@@ -46,7 +46,7 @@ def single_ion_raman_device(
     return Device(
         crystal=solve_crystal(trap, (yb,)),
         trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=counter_propagating_pair(),
         noise=make_noise(),
         detector=make_detector(),
@@ -65,7 +65,7 @@ def two_ion_raman_device(waist_m: float = 20e-6) -> Device:
     return Device(
         crystal=crystal,
         trap=trap,
-        field=Field(5.0, (0.0, 0.0, 1.0), None),
+        field=Field(5.0, (0.0, 0.0, 1.0)),
         beams=(b1, b2),
         noise=make_noise(),
         detector=make_detector(),
@@ -80,7 +80,7 @@ def microwave_device() -> Device:
     return Device(
         crystal=solve_crystal(trap, (yb,)),
         trap=trap,
-        field=Field(5.0, (0.0, 0.0, 1.0), None),
+        field=Field(5.0, (0.0, 0.0, 1.0)),
         beams=(),
         noise=make_noise(),
         detector=make_detector(),

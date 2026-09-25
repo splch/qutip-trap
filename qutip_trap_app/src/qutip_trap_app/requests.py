@@ -250,7 +250,7 @@ def request_detuning(record: Record, gate_id: str, offset_hz: float) -> GateRequ
 
     if not math.isfinite(offset_hz):
         return outcome(None, "the offset must be a finite frequency")
-    if wf is None or wf.segments is None:
+    if wf is None:
         return outcome(
             None, f"the calibration table carries no segmented entangling waveform for ions {pair} to shift"
         )

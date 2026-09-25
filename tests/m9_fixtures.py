@@ -42,7 +42,7 @@ def tilted_pair_device(theta_rad: float = math.radians(6.0), n_ions: int = 2) ->
     return Device(
         crystal=crystal,
         trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=tilted_pair(theta_rad),
         noise=make_noise(),
         detector=make_detector(),

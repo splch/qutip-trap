@@ -286,7 +286,7 @@ def full_calibration(
     results: dict[str, ExperimentResult] = {}
     refused: dict[str, str] = {}
     # the dynamical sample the calibration is fitted under
-    if device.noise.is_quiet(device):
+    if device.noise.is_quiet():
         sample = quiet_sample(0, t0_s)
     else:
         rng = np.random.default_rng([int(seed), 0x_CA1])

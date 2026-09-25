@@ -59,7 +59,7 @@ def make_trap() -> Trap:
 
 
 def make_field() -> Field:
-    return Field(B_gauss=5.0, direction=(0.0, 0.0, 1.0), noise=None)
+    return Field(B_gauss=5.0, direction=(0.0, 0.0, 1.0))
 
 
 def make_noise(s_e_two_sided: float = 0.0, correlation_length_m: float = 0.0) -> NoiseModel:

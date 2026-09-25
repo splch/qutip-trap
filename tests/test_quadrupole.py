@@ -213,7 +213,7 @@ def test_species_api_e2_rabi_frequency_and_lamb_dicke_input() -> None:
     beam = Beam(
         ca.transition("S1/2-D5/2").wavelength_vac_m, tuple(k), tuple(eps), 30e-6, 0.1, (0.0, 0.0, 0.0)
     )
-    field = Field(B_gauss=4.0, direction=B_Z, noise=None)
+    field = Field(B_gauss=4.0, direction=B_Z)
     omega = ca.rabi_frequency_hz("S1/2 mJ=-1/2", "D5/2 mJ=-5/2", beam, field)
     assert abs(omega) * 1e-6 == pytest.approx(1.0918, abs=1e-3)
     assert ca.rabi_frequency_hz("S1/2 mJ=-1/2", "D5/2 mJ=5/2", beam, field) == 0.0

@@ -180,7 +180,7 @@ def yb171_chain(
     dev = Device(
         crystal=crystal,
         trap=trap,
-        field=Field(FIELD_GAUSS, (1.0, 0.0, 0.0), None),
+        field=Field(FIELD_GAUSS, (1.0, 0.0, 0.0)),
         beams=tuple(beams),
         noise=noise if noise is not None else NoiseModel(),
         detector=detector if detector is not None else crain_snspd_detector(),
@@ -448,7 +448,7 @@ def ca40_optical(
     dev = Device(
         crystal=crystal,
         trap=trap,
-        field=Field(FIELD_GAUSS, (1.0, 0.0, 0.0), None),
+        field=Field(FIELD_GAUSS, (1.0, 0.0, 0.0)),
         beams=tuple(beams),
         noise=noise if noise is not None else NoiseModel(),
         detector=detector if detector is not None else myerson_ca40_pmt_detector(),

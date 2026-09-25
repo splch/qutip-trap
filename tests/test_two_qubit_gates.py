@@ -115,7 +115,7 @@ def anchor_device() -> Device:
     return Device(
         crystal=crystal,
         trap=secular_trap((1.0e6, 0.9e6, 0.5e6)),
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=(b1, b2),
         noise=make_noise(),
         detector=make_detector(),

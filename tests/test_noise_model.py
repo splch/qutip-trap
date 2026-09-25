@@ -208,7 +208,7 @@ def test_sample_sequence_draws_drifts_at_the_shot_clock_with_their_correlation_a
     b = np.array([p[1].values[KEY_FIELD_OFFSET_T] for p in pairs])
     c = np.array([p[2].values[KEY_FIELD_OFFSET_T] - 5e-7 for p in pairs])
     assert np.corrcoef(a, b)[0, 1] > 0.99 and abs(np.corrcoef(a, c)[0, 1]) < 0.15
-    assert not noisy.noise.is_quiet(noisy)
+    assert not noisy.noise.is_quiet()
 
 
 def test_sampled_bands_become_per_ion_trajectories_through_the_sensitivities_plus_the_mains() -> None:

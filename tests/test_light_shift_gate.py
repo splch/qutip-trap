@@ -80,7 +80,7 @@ def ca_light_shift_device() -> Device:
     return Device(
         crystal=crystal,
         trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=(b1, b2, CA40_729_E2_BEAM),
         noise=make_noise(),
         detector=make_detector(),
@@ -283,7 +283,7 @@ def gradient_device(*, ratio: float | None = None) -> Device:
     return Device(
         crystal=crystal,
         trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=(),
         noise=make_noise(),
         detector=make_detector(),
@@ -334,7 +334,7 @@ def test_field_sensitivity_vanishes_on_a_clock_transition() -> None:
     """At a clock point d omega_0/dB = 0 and Omega_g vanishes with it, which is why a gradient gate needs a field-sensitive
     qubit (Srinivas et al. drive |F=3,mF=3> <-> |F=2,mF=2> of 25Mg+, not its 212.78 G clock line)."""
     yb = species("171Yb+")
-    field = Field(1e-6, (1.0, 0.0, 0.0), None)
+    field = Field(1e-6, (1.0, 0.0, 0.0))
     assert abs(field_sensitivity_rad_s_per_t(yb, field)) < 1e3, (
         "the 171Yb+ clock line is flat in B at zero field"
     )

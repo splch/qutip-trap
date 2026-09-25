@@ -95,7 +95,7 @@ def spin_zero_like(*, gamma_p12_hz: float = GAMMA_HZ, gamma_p32_hz: float | None
 
 
 def field_z(b_gauss: float = 1.0) -> Field:
-    return Field(B_gauss=b_gauss, direction=(0.0, 0.0, 1.0), noise=None)
+    return Field(B_gauss=b_gauss, direction=(0.0, 0.0, 1.0))
 
 
 def fine_structure_omega(species: Species) -> float:

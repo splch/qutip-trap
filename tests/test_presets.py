@@ -47,7 +47,7 @@ def test_yb171_chain_is_the_validated_fixture_device() -> None:
             gate=preset.gate_drives, entangling=preset.entangling_drives, detection=preset.detection_beam
         )
         assert default_gate_drives(preset.device) == preset.gate_drives
-        assert preset.device.preparation is not None and preset.device.noise.is_quiet(preset.device)
+        assert preset.device.preparation is not None and preset.device.noise.is_quiet()
 
 
 def test_preset_overrides_and_refusals() -> None:

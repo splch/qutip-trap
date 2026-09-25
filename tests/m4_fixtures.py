@@ -75,7 +75,7 @@ def chain_device(n_ions: int, omega_hz: tuple[float, float, float] = (3.0e6, 2.9
     return Device(
         crystal=crystal,
         trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=global_pair_along_x(),
         noise=make_noise(),
         detector=make_detector(),

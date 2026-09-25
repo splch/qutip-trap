@@ -437,7 +437,7 @@ def test_beam_curvature_cetina_forms() -> None:
     dev = Device(
         crystal=solve_crystal(trap, (yb,)),
         trap=trap,
-        field=Field(5.0, (0.0, 0.0, 1.0), None),
+        field=Field(5.0, (0.0, 0.0, 1.0)),
         beams=(),
         noise=make_noise(),
         detector=make_detector(),

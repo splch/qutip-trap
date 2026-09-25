@@ -70,7 +70,7 @@ def test_raman_rabi_frequency_scales_as_the_field_product_and_matches_the_specie
         Beam(355e-9, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), 20e-6, 10e-3, (0.0, 0.0, 0.0)),
         Beam(355e-9, (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), 20e-6, 10e-3, (0.0, 0.0, 0.0)),
     )
-    dev_pi = dev.__class__(**{**dev.__dict__, "beams": pi_pair, "field": Field(5.0, (0.0, 0.0, 1.0), None)})
+    dev_pi = dev.__class__(**{**dev.__dict__, "beams": pi_pair, "field": Field(5.0, (0.0, 0.0, 1.0))})
     assert derive_raman_drive(dev_pi, 0, (0, 1), scattering=False).carrier_rabi_hz < 1e-6 * dd.carrier_rabi_hz
 
 
@@ -125,7 +125,7 @@ def test_microwave_rabi_frequency_closed_form_and_ac_zeeman_sign() -> None:
     """The clock transition |0,0> <-> |1,0> is driven by the pi component of B_1: Omega = mu_B B_1 (g_J - g_I)/(2 hbar) for
     B_1 || B, zero for B_1 perpendicular to B; a pi drive has no spectator coupling; delta_eff = delta - delta_ac."""
     yb = species("171Yb+")
-    field = Field(5.0, (0.0, 0.0, 1.0), None)
+    field = Field(5.0, (0.0, 0.0, 1.0))
     b1 = 1e-6  # tesla
     st = AtomicStructure(yb, field.B_gauss, field.direction)
     lower, upper = yb.qubit

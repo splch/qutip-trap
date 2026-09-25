@@ -1260,7 +1260,7 @@ def branch_loops(
     out: list[BranchLoopRecord] = []
     for g in sched.gates:
         wf = g.waveform
-        if wf.segments is None or len(g.beams) != 2:
+        if len(g.beams) != 2:
             continue
         pair = (int(g.pair[0]), int(g.pair[1]))
         gm = core.gate_modes(device, pair, (int(g.beams[0]), int(g.beams[1])), nbar=nbar)
@@ -1555,7 +1555,7 @@ def shift_detuning(waveform: core.Waveform, offset_hz: float) -> core.Waveform:
     detuning scan of Section 7.5). ``chi_m`` and ``alpha_m`` stay as the table measured them at closure: the scheduler rescales
     by them, so the pulse plays as written with its amplitude unchanged, and the run's branch loops show what the detuned
     loops do (Section 14.4)."""
-    if offset_hz == 0.0 or waveform.segments is None:
+    if offset_hz == 0.0:
         return waveform
 
     def shifted(value: object, sign: float) -> float | Callable[[float], float]:

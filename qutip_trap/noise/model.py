@@ -219,9 +219,8 @@ class NoiseModel:
         }
         return {k: s for k, s in named.items() if s is not None}
 
-    def is_quiet(self, device: Device | None = None) -> bool:
-        """No quasi-static drift, no sampled band and no mains: every dynamical sample is the nominal one (``device`` is
-        not needed)."""
+    def is_quiet(self) -> bool:
+        """No quasi-static drift, no sampled band and no mains: every dynamical sample is the nominal one."""
         if any(not d.quiet for d in self.drifts.values()):
             return False
         if self.mains is not None and any(a != 0.0 for a in self.mains.amplitudes_t.values()):

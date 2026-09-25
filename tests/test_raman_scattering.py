@@ -376,7 +376,7 @@ def test_species_api_end_to_end_on_the_fixture() -> None:
     from qutip_trap.device.model import Field
 
     sp = be9_like()
-    field = Field(B_gauss=1.0, direction=Z_HAT, noise=None)
+    field = Field(B_gauss=1.0, direction=Z_HAT)
     st = AtomicStructure(sp, 1.0, Z_HAT)
     low, high = st.state("S1/2 F=2 mF=0"), st.state("S1/2 F=1 mF=0")
     b, r = lin_perp_lin_pair(

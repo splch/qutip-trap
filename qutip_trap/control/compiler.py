@@ -34,7 +34,7 @@ import numpy as np
 from qutip_trap.control import native
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
+    pass
 
 NATIVE_GATES: Final[dict[str, tuple[int, int]]] = {
     "gpi": (1, 1),
@@ -648,11 +648,9 @@ class CompileReport:
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
-def compile_report(
-    circuit: Circuit, device: Device | None = None, *, entangler: Entangler = "ms"
-) -> CompileReport:
-    """Standard gates -> native gates with phase tracking, every block and the whole circuit verified. ``device`` is not
-    read (the templates depend on the entangler alone); native circuits pass through with their rz absorbed."""
+def compile_report(circuit: Circuit, *, entangler: Entangler = "ms") -> CompileReport:
+    """Standard gates -> native gates with phase tracking, every block and the whole circuit verified; native circuits pass
+    through with their rz absorbed."""
     native_ops: list[Operation] = []
     residuals: list[float] = []
     notes: list[str] = []
@@ -696,6 +694,6 @@ def compile_report(
     )
 
 
-def compile_to_native(circuit: Circuit, device: Device | None = None) -> Circuit:
-    """The native circuit of :func:`compile_report` (``device`` is not read)."""
-    return compile_report(circuit, device).circuit
+def compile_to_native(circuit: Circuit) -> Circuit:
+    """The native circuit of :func:`compile_report`."""
+    return compile_report(circuit).circuit

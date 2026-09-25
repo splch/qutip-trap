@@ -590,7 +590,7 @@ def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(mo
 def bell_schedule():  # type: ignore[no-untyped-def]
     fx = circuit_fixture(2)
     sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
-    sched = make_schedule(compile_to_native(BELL, fx.device), fx.device, sur.table, t0_s=0.0)
+    sched = make_schedule(compile_to_native(BELL), fx.device, sur.table, t0_s=0.0)
     return fx, sur, sched
 
 

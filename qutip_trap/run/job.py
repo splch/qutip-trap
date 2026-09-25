@@ -395,7 +395,7 @@ def roos_bessel_saturation(waveform: Waveform) -> float:
     largest tone amplitude and the smallest tone-to-carrier detuning of the played waveform. Zero for a non-MS waveform."""
     from qutip_trap.published import roos_force_saturation
 
-    if waveform.kind != "ms" or waveform.segments is None:
+    if waveform.kind != "ms":
         return 0.0
     peak = _peak_amplitude_hz(waveform.segments)
     mu_min = math.inf

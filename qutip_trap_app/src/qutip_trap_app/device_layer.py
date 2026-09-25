@@ -812,7 +812,7 @@ def noise_layer(device: core.Device) -> NoiseLayer:
             "S_E is non-zero but no correlation length is declared: the multi-ion projection is undefined"
         )
     return NoiseLayer(
-        quiet=bool(noise.is_quiet(device)),
+        quiet=bool(noise.is_quiet()),
         s_e=_spectrum_record("S_E", noise.S_E),
         s_b=None if noise.S_B is None else _spectrum_record("S_B", noise.S_B),
         other_spectra=tuple(_spectrum_record(name, spec) for name, spec in others if spec is not None),

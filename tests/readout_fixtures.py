@@ -122,7 +122,7 @@ CA_OPTICAL = ReadoutScheme.shelving(1)
 
 
 def field_x(b_gauss: float = 5.0) -> Field:
-    return Field(b_gauss, (1.0, 0.0, 0.0), None)
+    return Field(b_gauss, (1.0, 0.0, 0.0))
 
 
 def bits_to_array(rows: list[tuple[int, ...]]) -> np.ndarray:

@@ -105,7 +105,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
             "explicit choice: pass scattering_channels=True with scattering_recoil='minimal' or 'vector'); pass "
             "internal_levels=2 for the d = 2 estimate path instead"
         )
-    report = compile_report(circuit, device, entangler=physics.entangler)
+    report = compile_report(circuit, entangler=physics.entangler)
     compiled = report.circuit
     table = machine.table
     if table is None:
@@ -789,7 +789,7 @@ def execute(
         else prep_run.duration_s + sched.pulses_end_s + window + float(device.hardware.dead_time_s)
     )
     samples = numerics.parallel.samples
-    quiet = (not physics.noise) or device.noise.is_quiet(device)
+    quiet = (not physics.noise) or device.noise.is_quiet()
     if quiet:
         n_samples = 1
         if samples not in (None, 1):

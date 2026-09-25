@@ -148,7 +148,7 @@ class Machine:
         """Standard gates to native gates with phase tracking, every block and the whole circuit verified (Section 7.2)."""
         from qutip_trap.control.compiler import compile_report
 
-        return compile_report(circuit, self.device, entangler=self.physics.entangler)
+        return compile_report(circuit, entangler=self.physics.entangler)
 
     def schedule(self, circuit: Circuit, *, seed: int = 0) -> Schedule:
         """The compile-calibrate-schedule prefix of ``run``: the pulses with absolute times, the played gates and the

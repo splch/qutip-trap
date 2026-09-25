@@ -206,7 +206,7 @@ def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:
         fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
     )
     ms_circ = Circuit(3, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1, 2))
-    rep = compile_report(ms_circ, fx.device)
+    rep = compile_report(ms_circ)
     plain = schedule(rep.circuit, fx.device, sur.table)
     local = schedule(rep.circuit, fx.device, sur.table, crosstalk_suppression="local")
     neigh = schedule(rep.circuit, fx.device, sur.table, crosstalk_suppression="neighbour")

@@ -186,7 +186,7 @@ def _shift_detuning(waveform: Waveform, offset_hz: float) -> Waveform:
     """Every blue leg + offset, every red leg - offset: the symmetric detuning scan of Section 7.5."""
     from qutip_trap.control.table import Segment
 
-    if offset_hz == 0.0 or waveform.segments is None:
+    if offset_hz == 0.0:
         return waveform
 
     def shift(v: Any, sign: float) -> Any:

@@ -113,7 +113,7 @@ def circuit_fixture(
     dev = Device(
         crystal=crystal,
         trap=trap,
-        field=Field(5.0, (1.0, 0.0, 0.0), None),
+        field=Field(5.0, (1.0, 0.0, 0.0)),
         beams=tuple(beams),
         noise=make_noise(),
         detector=snspd_detector(leakage=leakage),

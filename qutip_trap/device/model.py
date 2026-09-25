@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from qutip_trap.control.schedule import GateDrive
     from qutip_trap.light.beams import Beam
     from qutip_trap.noise.model import NoiseModel
-    from qutip_trap.noise.spectra import NoiseSpectrum
     from qutip_trap.prep.recipe import PreparationRecipe
     from qutip_trap.readout.detection import Detector
     from qutip_trap.trap.crystal import Crystal
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Field:
-    """The static magnetic field at the ions: quantization axis (Section 4.5.3) and noise (Section 6.3).
+    """The static magnetic field at the ions: the quantization axis (Section 4.5.3).
 
     Its direction is the axis in which beam polarizations are decomposed into sigma+, pi and sigma-
     components; its magnitude feeds the Zeeman shifts of every level through the computed sensitivities,
@@ -38,7 +37,6 @@ class Field:
 
     B_gauss: float
     direction: tuple[float, float, float]
-    noise: NoiseSpectrum | None
 
     def __post_init__(self) -> None:
         if self.B_gauss < 0.0:
