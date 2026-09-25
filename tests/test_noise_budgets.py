@@ -35,7 +35,7 @@ from tests.oracles import ballance_dephasing_error, ballance_heating_error
 FAST = Numerics(mesolve_dimension_max=4096)
 
 
-def _gate(loops: int, epsilon_hz: float):  # type: ignore[no-untyped-def]
+def _gate(loops: int, epsilon_hz: float):
     """A K-loop symmetric MS gate closed on the COM alone with the rocking mode frozen: dims 2 x 2 x 12."""
     dev = chain_device(2)
     modes = two_ion_modes(dev)
@@ -47,7 +47,7 @@ def _gate(loops: int, epsilon_hz: float):  # type: ignore[no-untyped-def]
     return dev, wf, space, table
 
 
-def _check(dev, wf, space, table, channels=()):  # type: ignore[no-untyped-def]
+def _check(dev, wf, space, table, channels=()):
     check, _ = exact_gate_check(
         dev, wf, (0, 1), raman_gate_drives(2), table, space=space, channels=channels, options=FAST
     )

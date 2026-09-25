@@ -121,8 +121,8 @@ def test_tone_set_is_cut_at_the_gate_window() -> None:
     assert len(tones) == 1
     all_tones = APB.tones(12.642812e9, None, omega0_hz=1e6, gate_time_s=None)
     assert len(all_tones) == 2 * APB.sum_depth  # the self-beat l = 0 pair is excluded
-    resonant = min(all_tones, key=lambda t: abs(float(t.detuning_hz)))  # type: ignore[arg-type]
-    assert float(resonant.envelope_hz) == pytest.approx(1e6 * APB.pair_weight(158), rel=1e-12)  # type: ignore[arg-type]
+    resonant = min(all_tones, key=lambda t: abs(float(t.detuning_hz)))
+    assert float(resonant.envelope_hz) == pytest.approx(1e6 * APB.pair_weight(158), rel=1e-12)
     guards = APB.guards(12.6428e9, 0.1, 0.1, 108e-6, 1.64e6)
     assert all(guards.values())
     assert not APB.guards(12.6428e9, 0.2233, 40.0, 108e-6, 0.5e6)["lamb_dicke"]
@@ -199,8 +199,8 @@ def test_near_resonant_explicit_far_detuned_folded_never_both() -> None:
     t_g = 100e-6
     assert APB.explicit_orders(NU_Q, t_g) == APB.explicit_orders(NU_Q, t_g / 2.0) == frozenset({158})
     kw = {"couplings_hz": [0.0, 1e6], "resonance_hz": NU_Q}
-    phase_10 = TWO_PI * APB.stark4_hz([0.0, NU_Q], gate_time_s=t_g, **kw)[0] * t_g  # type: ignore[arg-type]
-    phase_20 = TWO_PI * APB.stark4_hz([0.0, NU_Q], gate_time_s=t_g / 2.0, **kw)[0] * t_g  # type: ignore[arg-type]
+    phase_10 = TWO_PI * APB.stark4_hz([0.0, NU_Q], gate_time_s=t_g, **kw)[0] * t_g
+    phase_20 = TWO_PI * APB.stark4_hz([0.0, NU_Q], gate_time_s=t_g / 2.0, **kw)[0] * t_g
     assert abs(phase_20 - phase_10) < 1e-4
 
     # with a window wide enough to move the l = 158 +- 1 neighbours across the cut, the TOTAL phase (folded shift plus the
@@ -239,13 +239,13 @@ def test_aom_offset_is_on_the_same_grid_in_both_paths() -> None:
     assert j == 157
     tones = two_comb.tones(target, None, omega0_hz=1e6, gate_time_s=100e-6)
     assert len(tones) == 1
-    assert float(tones[0].detuning_hz) == pytest.approx(  # type: ignore[arg-type]
+    assert float(tones[0].detuning_hz) == pytest.approx(
         (157 * two_comb.rep_rate_hz + two_comb.aom_offset_hz) - target, abs=1e-6
     )
     assert two_comb.explicit_orders(target, 100e-6) == frozenset({157})
     kw = {"couplings_hz": [0.0, 1e6], "gate_time_s": 100e-6, "resonance_hz": target}
-    with_offset = two_comb.stark4_hz([0.0, target], **kw)[0]  # type: ignore[arg-type]
-    no_offset = CombSpec(80.6e6, 10e-12, "field_sech", 157, 0.0).stark4_hz([0.0, target], **kw)[0]  # type: ignore[arg-type]
+    with_offset = two_comb.stark4_hz([0.0, target], **kw)[0]
+    no_offset = CombSpec(80.6e6, 10e-12, "field_sech", 157, 0.0).stark4_hz([0.0, target], **kw)[0]
     assert with_offset != pytest.approx(no_offset, rel=1e-6), "the AOM offset must move the l-sum grid"
     assert two_comb.beat_notes_hz(np.array([157]))[0] == pytest.approx(157 * two_comb.rep_rate_hz - offset)
 
@@ -272,10 +272,8 @@ def test_a_comb_carrier_pulse_matches_the_single_tone_prediction() -> None:
         drive = comb_drive(dd, comb, omega_q_hz=nu_q, gate_time_s=GATE_TIME_S)
     assert len(drive.tones) == 1, "the 10/t_g cut keeps exactly the resonant beat note at 80 MHz spacing"
     tone = drive.tones[0]
-    assert float(tone.detuning_hz) == pytest.approx(0.0, abs=1.0)  # type: ignore[arg-type]
-    assert float(tone.envelope_hz) == pytest.approx(  # type: ignore[arg-type]
-        dd.carrier_rabi_hz * comb.pair_weight(158), rel=1e-12
-    )
+    assert float(tone.detuning_hz) == pytest.approx(0.0, abs=1.0)
+    assert float(tone.envelope_hz) == pytest.approx(dd.carrier_rabi_hz * comb.pair_weight(158), rel=1e-12)
     # sech(pi l nu_rep tau) at l = 158 is the time-domain sech(omega_q tau/2) = 0.925994 at the zero-field splitting, to
     # the 1e-4 the 158 nu_rep - nu_q mismatch of the 5 G fixture allows
     assert comb.pair_weight(158) == pytest.approx(0.926025, abs=1e-6)
@@ -283,7 +281,7 @@ def test_a_comb_carrier_pulse_matches_the_single_tone_prediction() -> None:
     assert comb.pair_weight(158) == pytest.approx(0.925994, abs=1e-4)
 
     space = HilbertSpace((2,), (ModeTruncation(KX, 12, (0, 3), 0.2),), None, (0, 2))
-    om = TWO_PI * float(tone.envelope_hz)  # type: ignore[arg-type]
+    om = TWO_PI * float(tone.envelope_hz)
     eta = dd.etas[KX]
     t_pi = math.pi / (om * math.exp(-(eta**2) / 2.0))
     pulse = Pulse(drive, 0.0, t_pi, "comb", ())
@@ -323,11 +321,11 @@ def test_the_comb_drives_fold_their_far_detuned_teeth_into_a_static_shift() -> N
             couplings_hz=couplings,
         )
     expected = comb.stark4_hz(levels, couplings_hz=couplings, gate_time_s=GATE_TIME_S, resonance_hz=nu_q)[0]
-    assert float(drive.stark_shift_hz) == pytest.approx(expected, rel=1e-12)  # type: ignore[arg-type]
+    assert float(drive.stark_shift_hz) == pytest.approx(expected, rel=1e-12)
     assert drive.stark_shift_hz != 0.0
     space = HilbertSpace((2,), (), None, (0, 1, 2))
     built = build_hamiltonian(dev, (Pulse(drive, 0.0, 1e-6, "comb", ()),), space, sample=quiet_sample())
-    assert any(f"{float(drive.stark_shift_hz):.6g} Hz" in a for a in built.approximations)  # type: ignore[arg-type]
+    assert any(f"{float(drive.stark_shift_hz):.6g} Hz" in a for a in built.approximations)
 
 
 def test_the_factory_reports_the_guards_it_cannot_evaluate() -> None:
@@ -361,7 +359,7 @@ def test_the_tone_set_and_the_static_shift_share_one_operator_and_one_grid() -> 
         wide = comb_drive(dd, comb, omega_q_hz=nu_q, gate_time_s=10.0 / (1.5 * comb.rep_rate_hz))
         one = comb_drive(dd, comb, omega_q_hz=nu_q, gate_time_s=GATE_TIME_S)
     assert len(wide.tones) == 3, "the l = j and its two neighbours at +-nu_rep"
-    detunings = sorted(float(t.detuning_hz) for t in wide.tones)  # type: ignore[arg-type]
+    detunings = sorted(float(t.detuning_hz) for t in wide.tones)
     assert detunings == pytest.approx([-80e6, 0.0, 80e6], abs=1.0)
     space = HilbertSpace((2,), (ModeTruncation(KX, 6, (0, 2), 0.2),), None, (0, 2))
     built = build_hamiltonian(dev, (Pulse(wide, 0.0, 1e-6, "comb", ()),), space, sample=quiet_sample())

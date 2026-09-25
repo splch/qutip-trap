@@ -184,7 +184,7 @@ def test_a_weak_mode_two_kilohertz_from_a_tone_is_kept() -> None:
     )
     wf0 = Waveform.symmetric(probe, gate_mode=0, epsilon_hz=20e3, duration_s=100e-6, all_modes=False)
     assert wf0.segments is not None
-    mu_tone = abs(float(wf0.segments[0].detuning_hz["blue"]))  # type: ignore[arg-type]
+    mu_tone = abs(float(wf0.segments[0].detuning_hz["blue"]))
     # the contribution pair decides alone: a coupled mode below (1e-6, 1e-4) is dropped, not frozen (|alpha|^2 (2n+1) = 8.1e-35
     # and |chi| = 2.8e-6 a megahertz away)
     for gap_hz, expected in ((2e3, "resolved"), (1.0e6, "dropped")):
@@ -295,15 +295,13 @@ def test_a_dropped_loop_pair_with_a_large_debye_waller_spread_is_frozen(coupled:
     (the three-ion tilt mode at nbar = 0.05, 1, 10) is frozen; the spread threshold is 3e-4 rad, strict, and 2.3e-7 rad drops."""
     kw = dict(coupled=coupled, freeze_alpha_max=FREEZE_ALPHA, freeze_chi_max_rad=FREEZE_CHI)
     for spread in (1.500e-3, 9.256e-3, 6.864e-2):
-        assert classify(_contrib(3.5e-33, 0.0, spread), **kw) == "frozen", spread  # type: ignore[arg-type]
+        assert classify(_contrib(3.5e-33, 0.0, spread), **kw) == "frozen", spread
     # the threshold is 3e-4 rad and the comparison is strict, like the other two thresholds
     assert DW_SPREAD_DROP_MAX == 3e-4
-    assert classify(_contrib(0.0, 0.0, DW_SPREAD_DROP_MAX), **kw) == "frozen"  # type: ignore[arg-type]
-    assert (
-        classify(_contrib(0.0, 0.0, DW_SPREAD_DROP_MAX * (1 - 1e-12)), **kw) == "dropped"  # type: ignore[arg-type]
-    )
+    assert classify(_contrib(0.0, 0.0, DW_SPREAD_DROP_MAX), **kw) == "frozen"
+    assert classify(_contrib(0.0, 0.0, DW_SPREAD_DROP_MAX * (1 - 1e-12)), **kw) == "dropped"
     # a small-eta mode stays dropped: eta = 1e-3 at nbar = 0.05 is a 2.3e-7 rad spread
-    assert classify(_contrib(1e-7, 1e-5, 1e-3**2 * (0.05 * 1.05) ** 0.5), **kw) == "dropped"  # type: ignore[arg-type]
+    assert classify(_contrib(1e-7, 1e-5, 1e-3**2 * (0.05 * 1.05) ** 0.5), **kw) == "dropped"
 
 
 @pytest.mark.parametrize("coupled", [True, False])
@@ -338,9 +336,9 @@ def test_the_drop_thresholds_are_the_plan_s_numbers_and_the_boundary_is_strict()
     """The drop thresholds are 1e-6 and 1e-4 and strict: a mode exactly at one is frozen."""
     assert (DROP_ALPHA_MAX, DROP_CHI_MAX_RAD) == (1e-6, 1e-4)
     kw = dict(coupled=True, freeze_alpha_max=FREEZE_ALPHA, freeze_chi_max_rad=FREEZE_CHI)
-    assert classify(_contrib(DROP_ALPHA_MAX, 0.0), **kw) == "frozen"  # type: ignore[arg-type]
-    assert classify(_contrib(0.0, DROP_CHI_MAX_RAD), **kw) == "frozen"  # type: ignore[arg-type]
-    assert classify(_contrib(DROP_ALPHA_MAX * (1 - 1e-12), 0.0), **kw) == "dropped"  # type: ignore[arg-type]
+    assert classify(_contrib(DROP_ALPHA_MAX, 0.0), **kw) == "frozen"
+    assert classify(_contrib(0.0, DROP_CHI_MAX_RAD), **kw) == "frozen"
+    assert classify(_contrib(DROP_ALPHA_MAX * (1 - 1e-12), 0.0), **kw) == "dropped"
 
 
 # ---- the frozen spectators' off-resonant excitation bound (Section 5.2) ------------------------------------------------------------
@@ -486,13 +484,13 @@ def test_enr_regrid_grows_the_excitation_cap_and_keeps_the_state() -> None:
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     dev = chain_device(2)
     rabi, stark = derived_seeds(dev, raman_gate_drives(2))
     return dev, rabi, stark
 
 
-def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_the_range(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_the_range(two_ion) -> None:
     """Section 5.5: a cap with less margin than its eta needs is regrown and the report gives the populated range and the margin
     reached; ``margin_check=False`` keeps the cap, and the register populations of both agree to 1e-6."""
     dev, rabi, _stark = two_ion
@@ -527,7 +525,7 @@ def test_margin_policy_grows_a_cap_whose_margin_is_below_the_table_and_reports_t
     assert np.max(np.abs(p_on - p_off)) < 1e-6
 
 
-def test_schedule_start_time_is_where_the_state_is_given(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_schedule_start_time_is_where_the_state_is_given(two_ion) -> None:
     """With ``Schedule.t0_s`` the evolution starts at t0 and the Fock coherence turns by -omega tau (to 1e-6 rad); without it
     the evolution starts at 0 and turns it by a further -omega t0 (to 1e-5 rad)."""
     dev, _rabi, _stark = two_ion
@@ -678,7 +676,7 @@ def test_frozen_spectator_run_reproduces_the_joint_run_within_the_reported_bound
 
 
 @pytest.fixture(scope="module")
-def carrier_pair():  # type: ignore[no-untyped-def]
+def carrier_pair():
     """A pi/2 carrier on an internal-state-only space (every mode frozen), so the propagator cache of Section 11.3 item 5 is
     live, plus a second device that differs ONLY in beam 0's wavelength: every eta changes, no mode frequency does."""
     dev = chain_device(2)
@@ -696,7 +694,7 @@ def carrier_pair():  # type: ignore[no-untyped-def]
     return dev, changed, sched, space
 
 
-def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_devices(carrier_pair) -> None:  # type: ignore[no-untyped-def]
+def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_devices(carrier_pair) -> None:
     """Two devices differing only in beam 0's wavelength have different fingerprints, so one engine solves each propagator:
     P(|10>) = 0.4950194835 and 0.4948647699 to 5e-10, the second equal to a fresh engine's to 1e-12."""
     dev, changed, sched, space = carrier_pair
@@ -737,7 +735,7 @@ def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_de
 # ---- the Section 11.5 guards decide on the declaration, before anything is allocated ----------------------------------------
 
 
-def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(monkeypatch) -> None:
     """Section 11.5: declaring a space beyond the guards (eight ions and eight modes at d = 16, or two ions and five) allocates
     no joint identity and ``within_budget`` refuses it."""
 
@@ -761,14 +759,14 @@ def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(mo
 
 
 @pytest.fixture(scope="module")
-def bell_schedule():  # type: ignore[no-untyped-def]
+def bell_schedule():
     fx = yb171_chain(2)
     sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=WINDOWS)
     sched = make_schedule(compile_to_native(BELL), fx.device, sur.table, t0_s=0.0)
     return fx, sur, sched
 
 
-def test_the_selection_reports_the_guard_verdict_of_its_declaration(bell_schedule) -> None:  # type: ignore[no-untyped-def]
+def test_the_selection_reports_the_guard_verdict_of_its_declaration(bell_schedule) -> None:
     """``select_space`` evaluates the Section 11.5 guards on the declaration and reports them."""
     fx, _sur, sched = bell_schedule
     inside = select_space(fx.device, sched, Numerics(), nbar={})
@@ -781,11 +779,11 @@ def test_the_selection_reports_the_guard_verdict_of_its_declaration(bell_schedul
 
 
 @pytest.mark.slow
-def test_the_non_zero_guard_routes_a_run_to_gate_local(bell_schedule) -> None:  # type: ignore[no-untyped-def]
+def test_the_non_zero_guard_routes_a_run_to_gate_local(bell_schedule) -> None:
     """Section 11.5: an ``nnz_max`` below the Bell run's drive-operator non-zero estimate reroutes it to GATE_LOCAL with an
     approximation naming the count."""
     fx, sur, _sched = bell_schedule
-    joint = run(BELL, fx.device, 20, level="auto", table=sur.table)  # type: ignore[arg-type]
+    joint = run(BELL, fx.device, 20, level="auto", table=sur.table)
     assert joint.diagnostics.level == "JOINT_EXACT"
     _ok, dim, nnz = within_budget(joint.diagnostics.space, Numerics())
     assert nnz > dim, "the non-zero estimate N 2^N prod d_m^2 exceeds the dimension for this fixture"
@@ -818,7 +816,7 @@ def test_cap_requirement_and_the_mode_dimension_ceiling() -> None:
         Numerics(mode_dimension_max=1)
 
 
-def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_schedule) -> None:  # type: ignore[no-untyped-def]
+def test_select_space_reads_mode_dimension_max_warns_and_names_the_clamp(bell_schedule) -> None:
     """A clamp by ``mode_dimension_max`` warns once per clamped mode with both dimensions and leaves a note per mode; a roomy
     ceiling is silent."""
     fx, _sur, sched = bell_schedule
@@ -958,12 +956,12 @@ def test_convergence_regime_of_the_frozen_spectator_fixture() -> None:
 
 
 @pytest.mark.slow
-def test_run_reports_the_section_5_5_tolerance_convergence_when_asked(bell_schedule) -> None:  # type: ignore[no-untyped-def]
+def test_run_reports_the_section_5_5_tolerance_convergence_when_asked(bell_schedule) -> None:
     """With ``convergence_check`` the run repeats at atol and rtol /10 and reports the register-population change on
     ``Diagnostics.convergence`` (None when not asked) with a note."""
     fx, sur, _sched = bell_schedule
     kw = dict(table=sur.table, seed=5)
-    plain = run(BELL, fx.device, 20, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
+    plain = run(BELL, fx.device, 20, level="JOINT_EXACT", **kw)
     assert plain.diagnostics.convergence is None
     checked = run(
         BELL,
@@ -988,7 +986,7 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked(bell_sched
 @pytest.mark.slow
 def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within_the_guards(
     bell_schedule,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """Section 11.3: the Bell schedule gives the same register (1e-7) with the y modes as two factors or one ENR group, and
     through the run an ENR group of 37752 dimensions is refused and one that must grow to 16016 stops the run."""
     fx, sur, sched = bell_schedule
@@ -1032,7 +1030,7 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
             level="JOINT_EXACT",
             **kw,
             numerics=Numerics(enr_group=((y_rock, y_com), 10)),
-        )  # type: ignore[arg-type]
+        )
     with pytest.raises((TruncationLimit, RunError), match="16016"):
         run(
             BELL,
@@ -1041,7 +1039,7 @@ def test_an_enr_group_evolves_as_one_factor_and_run_refuses_the_hot_group_within
             level="JOINT_EXACT",
             **kw,
             numerics=Numerics(enr_group=((y_rock, y_com), 2)),
-        )  # type: ignore[arg-type]
+        )
 
 
 def test_every_joint_operator_and_state_of_an_enr_space_carries_the_spaces_dims() -> None:
@@ -1207,7 +1205,7 @@ def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_hist
         space,
         quiet_sample(),
         SeedSpec(0),
-        Numerics(lindblad_method="mesolve", **base),  # type: ignore[arg-type]
+        Numerics(lindblad_method="mesolve", **base),
     )
     p_ref = np.real(np.diag(np.asarray(ref.final.internal.full())))
     for improved in (True, False):
@@ -1223,7 +1221,7 @@ def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_hist
                 lindblad_method="mcsolve",
                 ntraj=ntraj,
                 improved_sampling=improved,
-                **base,  # type: ignore[arg-type]
+                **base,
             ),
         )
         rep = eng.last_report

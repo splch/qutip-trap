@@ -570,11 +570,11 @@ def detection_model(s0: float, b_gauss: float, delta_rad_s: float = 0.0, **kw: o
         (1.0, 0.0, 0.0),
         pol,
         power_w=power,
-        waist_m=waist,  # type: ignore[arg-type]
+        waist_m=waist,
     )
     return BlochModel(
         st, [beam], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"), **kw
-    )  # type: ignore[arg-type]
+    )
 
 
 def yb_detection_beam(s_o: float, b_gauss: float = 5.0, detuning_rad_s: float = 0.0) -> Beam:
@@ -591,7 +591,7 @@ def yb_detection_beam(s_o: float, b_gauss: float = 5.0, detuning_rad_s: float = 
         (0.0, 1.0, 0.0),
         pol,
         power_w=power,
-        waist_m=waist,  # type: ignore[arg-type]
+        waist_m=waist,
     )
 
 

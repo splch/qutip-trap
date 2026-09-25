@@ -43,15 +43,15 @@ MIXED_TRAP_HZ = (30e6, 31e6, 3e6)
 """The coolant's single-ion frequencies: strong radial confinement, so the radial modes decouple by species."""
 
 
-def _sigma_plus_along(st, k_hat, omega, delta, waist_m=2e-3):  # type: ignore[no-untyped-def]
+def _sigma_plus_along(st, k_hat, omega, delta, waist_m=2e-3):
     """A sigma+ beam along B = k_hat with Rabi frequency ``omega`` on the fixture's closed line (wide: one intensity)."""
     _m, _z, e_plus = spherical_basis(k_hat)
     pol = tuple(complex(x) for x in e_plus)
-    power = power_for_rabi(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, omega, waist_m, pol, k_hat)  # type: ignore[arg-type]
+    power = power_for_rabi(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, omega, waist_m, pol, k_hat)
     omega_l = (
         TWO_PI * (st.state(TWO_LEVEL_EXCITED_PLUS).energy_hz - st.state(TWO_LEVEL_GROUND).energy_hz) + delta
     )
-    return Beam(TWO_PI * C_M_PER_S / omega_l, k_hat, pol, waist_m, power, (0.0, 0.0, 0.0))  # type: ignore[arg-type]
+    return Beam(TWO_PI * C_M_PER_S / omega_l, k_hat, pol, waist_m, power, (0.0, 0.0, 0.0))
 
 
 # ---- the mixed crystal's mode structure --------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def _mixed_frequencies(masses_u: Sequence[float], reference_hz: tuple[float, flo
     )
 
 
-def _coolant_weights(crystal) -> dict[int, float]:  # type: ignore[no-untyped-def]
+def _coolant_weights(crystal) -> dict[int, float]:
     """c_{0,m}^2 per mode: the coolant ion's participation, which is the level-A objective's weight W_m."""
     out: dict[int, float] = {}
     for k, mode in enumerate(crystal.modes):
@@ -130,7 +130,7 @@ def _coolant_weights(crystal) -> dict[int, float]:  # type: ignore[no-untyped-de
     return out
 
 
-def _mixed_pair(coolant_mass_u: float, qubit_mass_u: float, freqs_hz: tuple[float, float, float]):  # type: ignore[no-untyped-def]
+def _mixed_pair(coolant_mass_u: float, qubit_mass_u: float, freqs_hz: tuple[float, float, float]):
     """(crystal, coolant structure, cooling beam) for a two-ion crystal whose ion 0 is the coolant."""
     coolant = two_level_atom(mass_kg=coolant_mass_u * U_KG)
     qubit = two_level_atom(mass_kg=qubit_mass_u * U_KG)

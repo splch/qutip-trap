@@ -280,7 +280,7 @@ def test_reversed_bits_puts_qubit_zero_leftmost_and_is_its_own_inverse() -> None
         and np.array_equal(back.bitstrings, result.bitstrings)
     )
     with pytest.raises(ValueError, match="bit order"):
-        dataclasses.replace(result, bit_order="little")  # type: ignore[arg-type]
+        dataclasses.replace(result, bit_order="little")
 
 
 def test_from_ionq_v1_shots_closes_the_round_trip() -> None:
@@ -376,7 +376,7 @@ def test_dump_job_writes_the_v0_4_body_and_load_job_reads_v0_3_and_v0_4() -> Non
     assert load_job(json.dumps(body)).circuit == circuit
     assert load_ionq_json(dump_ionq_json(circuit)) == circuit and load_ionq_json(body) == circuit
     with pytest.raises(ValueError, match=r"no key \['target'\]"):
-        dump_job(circuit, backend="simulator", noise={"target": 1})  # type: ignore[dict-item]
+        dump_job(circuit, backend="simulator", noise={"target": 1})
     with pytest.raises(ValueError, match="'model'"):
         dump_job(circuit, backend="simulator", noise={"seed": 1})
     with pytest.raises(ValueError, match="settings.error_mitigation has no key"):

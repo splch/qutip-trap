@@ -124,7 +124,7 @@ def test_segmented_integrals_match_direct_quadrature(kernel: str, phi_m: float) 
     env = SegmentedEnvelope(
         (7e-6, 5e-6, 9e-6), {0: (2.0e5, -1.3e5, 0.9e5), 1: (2.0e5, -1.3e5, 0.9e5)}, TWO_PI * 1.42e6, phi_m
     )
-    ints = integrals_segmented(env, modes, kernel)  # type: ignore[arg-type]
+    ints = integrals_segmented(env, modes, kernel)
     alpha, chi = _direct_alpha_chi(env, modes, kernel)
     assert ints.alpha[(0, 0)] == pytest.approx(alpha, rel=1e-9, abs=1e-14)
     assert ints.chi_of(0, 1) == pytest.approx(chi, rel=1e-9)
@@ -224,7 +224,7 @@ def test_symmetric_constructor_equals_the_general_form_at_equal_envelopes() -> N
     seg_wf = wf.segments[0]
     seg_am = am.waveform.segments[0]
     for key in seg_wf.amplitude_hz:
-        assert float(seg_wf.amplitude_hz[key]) == pytest.approx(float(seg_am.amplitude_hz[key]), rel=1e-9)  # type: ignore[arg-type]
+        assert float(seg_wf.amplitude_hz[key]) == pytest.approx(float(seg_am.amplitude_hz[key]), rel=1e-9)
     assert wf.chi_total_rad == pytest.approx(am.chi_rad, rel=1e-9)
     assert wf.ions == (0, 1) and wf.kind == "ms"
     # legs: blue at +(omega_g - eps), red at the negative; phases phi_s -/+ phi_m with the default phi_m = 0
@@ -323,7 +323,7 @@ def test_fm_solver_closes_and_the_robust_variant_averages_the_trajectory() -> No
     # the waveform plays a callable detuning per leg and a constant amplitude
     seg = robust.waveform.segments[0]
     assert callable(seg.detuning_hz["blue"]) and callable(seg.detuning_hz["red"])
-    assert seg.detuning_hz["blue"](0.0) == pytest.approx(-seg.detuning_hz["red"](0.0))  # type: ignore[operator]
+    assert seg.detuning_hz["blue"](0.0) == pytest.approx(-seg.detuning_hz["red"](0.0))
     env = envelope_of(robust.waveform, (0, 1))
     assert isinstance(env, SampledEnvelope)
     assert integrals_sampled(env, modes, "rwa").chi_of(0, 1) == pytest.approx(robust.chi_rad, rel=1e-5)
@@ -393,9 +393,9 @@ def test_multi_pair_waveform_stores_the_solved_pairs_angles() -> None:
     assert sp.integrals.chi_of(0, 1) == pytest.approx(0.449272, rel=1e-5)
     assert sp.integrals.chi_of(0, 1) != pytest.approx(sp.chi_rad, rel=0.1)
     with pytest.raises(ValueError, match="name the pair"):
-        waveform_from_segmented(sp.envelope, sp.integrals, modes)  # type: ignore[arg-type]
+        waveform_from_segmented(sp.envelope, sp.integrals, modes)
     with pytest.raises(ValueError, match="not a pair"):
-        waveform_from_segmented(sp.envelope, sp.integrals, modes, pair=(0, 7))  # type: ignore[arg-type]
+        waveform_from_segmented(sp.envelope, sp.integrals, modes, pair=(0, 7))
 
 
 def test_phase_modulation_closes_every_mode_at_fixed_amplitude() -> None:

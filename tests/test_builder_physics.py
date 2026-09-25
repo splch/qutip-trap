@@ -58,7 +58,7 @@ WX = TWO_PI * 3.0e6
 
 
 @pytest.fixture(scope="module")
-def raman():  # type: ignore[no-untyped-def]
+def raman():
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     space = HilbertSpace((2,), (ModeTruncation(KX, 12, (0, 3), 0.2),), None, (0, 2))
@@ -78,7 +78,7 @@ def _run(
     channels=(),
     store_times=(),
     sopts=None,
-):  # type: ignore[no-untyped-def]
+):
     pulse = Pulse(drive, 0.0, t, "p", ())
     state = space.initial_state([0], fock={KX: n0} if thermal is None else None, thermal=thermal)
     eng = JointExactEngine(
@@ -99,7 +99,7 @@ def _run(
     return tr, eng
 
 
-def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # type: ignore[no-untyped-def]
+def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -131,7 +131,7 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     assert tr3.expectations["P1[0]"][-1] == pytest.approx(math.sin(0.5 * om2 * t_pi / 2) ** 2, abs=2e-5)
 
 
-def test_blue_and_red_sideband_flopping_and_the_sideband_phase(raman) -> None:  # type: ignore[no-untyped-def]
+def test_blue_and_red_sideband_flopping_and_the_sideband_phase(raman) -> None:
     """Blue and red sidebands flop at Omega eta e^{-eta^2/2} within three times the carrier's light shift (Omega/(2 eta
     omega))^2 of the two-level form, the amplitude carrying phi + pi/2 (Wineland Eq. 21) to 2e-3."""
     dev, dd, space = raman
@@ -162,7 +162,7 @@ def test_blue_and_red_sideband_flopping_and_the_sideband_phase(raman) -> None:  
     assert om01 / (eta * om) == pytest.approx(rabi_matrix_element(0, 1, eta) / eta, rel=1e-12)
 
 
-def test_rwa_option_is_the_exact_jaynes_cummings_model_and_the_detuned_two_level_propagator(raman) -> None:  # type: ignore[no-untyped-def]
+def test_rwa_option_is_the_exact_jaynes_cummings_model_and_the_detuned_two_level_propagator(raman) -> None:
     """In the rwa interaction picture the single sideband term reproduces the detuned two-level form with frequency
     sqrt(Omega_{n'n}^2 + Delta^2) to 1e-9 (Wineland Eq. 21) and reports the approximation."""
     dev, dd, space = raman
@@ -187,7 +187,7 @@ def test_rwa_option_is_the_exact_jaynes_cummings_model_and_the_detuned_two_level
         assert rep is not None and any("rwa keeps 1 sideband" in a for a in rep.approximations)
 
 
-def test_interaction_picture_equals_the_schroedinger_picture(raman) -> None:  # type: ignore[no-untyped-def]
+def test_interaction_picture_equals_the_schroedinger_picture(raman) -> None:
     """The two pictures agree to 2e-8 in the final state, and the k_max = 2 truncation to 1e-4 with its dropped weight noted."""
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
@@ -208,7 +208,7 @@ def test_interaction_picture_equals_the_schroedinger_picture(raman) -> None:  # 
         BuilderOptions(rwa=True)
 
 
-def test_lamb_dicke_expansion_is_an_approximation_of_order_eta_squared(raman) -> None:  # type: ignore[no-untyped-def]
+def test_lamb_dicke_expansion_is_an_approximation_of_order_eta_squared(raman) -> None:
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
@@ -265,7 +265,7 @@ def test_micromotion_j0_factor_and_modulated_drive() -> None:
         )
 
 
-def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman) -> None:  # type: ignore[no-untyped-def]
+def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman) -> None:
     """Section 5.2: a frozen mode multiplies Omega by e^{-eta^2/2} L_n(eta^2) for the sampled Fock state (to 1e-9), drawn
     reproducibly from the keyed seeds when the sample has none."""
     dev, dd, _ = raman
@@ -290,7 +290,7 @@ def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman
     assert eng.last_report.frozen_n[KX] == n_a
 
 
-def test_thermal_carrier_flopping_matches_the_fock_sum(raman) -> None:  # type: ignore[no-untyped-def]
+def test_thermal_carrier_flopping_matches_the_fock_sum(raman) -> None:
     """Carrier flopping on a resolved mode at nbar = 1.5 is sum_n P_n sin^2(Omega_n t/2) to 2e-5 (Section 4.2.7)."""
     dev, dd, _ = raman
     om = TWO_PI * dd.carrier_rabi_hz
@@ -303,7 +303,7 @@ def test_thermal_carrier_flopping_matches_the_fock_sum(raman) -> None:  # type: 
     assert tr.boundary_population[KX] < 1e-6
 
 
-def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type: ignore[no-untyped-def]
+def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:
     """A Stark-only pulse and the qubit shifts turn a superposition by -2 pi (delta_St + Delta) t to 1e-6 rad, and an idle by
     the qubit shifts alone."""
     dev = microwave_device()
@@ -335,7 +335,7 @@ def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type:
     assert np.angle(psi2[1] / psi2[0]) == pytest.approx(-TWO_PI * 100.0 * t, abs=1e-6)
 
 
-def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: ignore[no-untyped-def]
+def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:
     """An idle with the heating pair heats at Gamma quanta/s and with sqrt(gamma/2) sigma_z decays the coherence at gamma,
     both to 1e-3."""
     dev, _, _ = raman
@@ -361,7 +361,7 @@ def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: igno
     assert abs(rho[0, 1]) == pytest.approx(0.5 * math.exp(-5e3 * t), rel=1e-3)
 
 
-def test_boundary_monitor_grows_the_cap(raman) -> None:  # type: ignore[no-untyped-def]
+def test_boundary_monitor_grows_the_cap(raman) -> None:
     """Section 5.5: a cap too low for a blue sideband trips the boundary monitor, the run repeats with the cap raised until the
     boundary is below the threshold, and every retry is named in the notes."""
     dev, dd, _ = raman
@@ -491,7 +491,7 @@ def test_evolve_ladder_records_the_integrator_and_never_uses_multistep() -> None
 DOWN = np.array([1.0, 0.0], dtype=complex)
 
 
-def _carrier_state(dev, dd, sample) -> np.ndarray:  # type: ignore[no-untyped-def]
+def _carrier_state(dev, dd, sample) -> np.ndarray:
     """|psi> after a pi/2 carrier pulse from |0> with every mode frozen at n = 0, the pulse length read back from the builder's
     own Rabi frequency so that only the AXIS is under test."""
     space = HilbertSpace((2,), (), None, tuple(range(len(dev.crystal.modes))))
@@ -538,7 +538,7 @@ def test_beam_path_phase_sign_is_delta_phi() -> None:
     assert any("Delta phi = -0.4" in a for a in built.approximations)
 
 
-def _sigma_plus_phase(built, space, ion: int) -> float:  # type: ignore[no-untyped-def]
+def _sigma_plus_phase(built, space, ion: int) -> float:
     """arg <...1_ion...| H(0) |0, 0>: the optical phase on that ion's sigma_+ coefficient."""
     h0 = built.H(0.0)
     levels = [0] * space.n_ions

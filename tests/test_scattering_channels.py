@@ -30,7 +30,7 @@ from qutip_trap.species import species
 from tests.fixtures import single_ion_raman_device
 
 
-def _pulse(dev, duration_s=50e-6, scale=1.0):  # type: ignore[no-untyped-def]
+def _pulse(dev, duration_s=50e-6, scale=1.0):
     der = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     drive = square_drive(der, include_stark=False, rabi_scale=scale)
     return Pulse(drive, 0.0, duration_s, "p", ()), der
@@ -40,7 +40,7 @@ def test_recoil_nodes_are_exact_in_the_first_and_second_moments_for_every_patter
     b_hat = (0.3, 0.4, math.sqrt(1 - 0.25))
     for q in (-1, 0, 1):
         for recoil in ("minimal", "vector"):
-            nodes = recoil_nodes(q, b_hat, ScatteringOptions(recoil=recoil))  # type: ignore[arg-type]
+            nodes = recoil_nodes(q, b_hat, ScatteringOptions(recoil=recoil))
             w = np.array([n.weight for n in nodes])
             k = np.array([n.k_hat for n in nodes])
             assert w.sum() == pytest.approx(1.0, abs=1e-12)
@@ -66,7 +66,7 @@ def test_operator_rates_sum_to_the_amplitude_budget_at_the_played_intensity() ->
     lower, upper = dev.crystal.species[0].qubit
     for level, label in ((0, lower), (1, upper)):
         st = space.initial_state([level])
-        total = sum(float(qt.expect(o.op.dag() * o.op, st.joint).real) for o in ops)  # type: ignore[union-attr]
+        total = sum(float(qt.expect(o.op.dag() * o.op, st.joint).real) for o in ops)
         expected = 3.0 * (budget.rayleigh_per_s[label] + budget.raman_spin_flip_per_s[label])
         assert total == pytest.approx(expected, rel=1e-9)
     est = scattering_estimates(dev, pulse)
@@ -167,8 +167,8 @@ def test_engine_builds_the_channels_per_segment_and_a_shaped_pulse_gets_a_time_d
     space = HilbertSpace((2,), (ModeTruncation(1, 8, (0, 2), 0.25),), None, (0, 2))
     ops, _ = scattering_channels(dev, shaped, space, options=ScatteringOptions(recoil="off"))
     assert all(o.time_dependent for o in ops)
-    mid = ops[0].op(10e-6)  # type: ignore[operator]
-    start = ops[0].op(0.0)  # type: ignore[operator]
+    mid = ops[0].op(10e-6)
+    start = ops[0].op(0.0)
     assert mid.norm() > 100 * max(start.norm(), 1e-30)
     eng = JointExactEngine(
         device_channels=True, hardware_chain=False, scattering_channels=True, scattering_recoil="off"

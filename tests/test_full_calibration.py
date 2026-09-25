@@ -63,7 +63,7 @@ SCANS = CalibrationScans(
 
 
 @pytest.fixture(scope="module")
-def calibrated():  # type: ignore[no-untyped-def]
+def calibrated():
     fx = yb171_chain(2)
     report = calibrate(
         Machine(fx.device),
@@ -90,7 +90,7 @@ sigma, with opposite signs, so it is scatter and not a bias."""
 
 @pytest.mark.slow
 @pytest.mark.timeout(3600)
-def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncertainty(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncertainty(calibrated) -> None:
     """Every calibrated entry agrees with the device's derived value within SIGMA of its reported uncertainty (SIGMA_STARK for
     the light shifts), the waveform closes at chi = pi/4 to 1e-9 and the heating entries stay zero seeds on the quiet device."""
     fx, report = calibrated
@@ -177,7 +177,7 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
 
 
 @pytest.mark.slow
-def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity(calibrated) -> None:
     """A Bell circuit from the calibrated table has 1 - F inside the intrinsic budget plus the fits' own over-rotation and frame
     terms, above the surrogate table's and within 5e-3 of it, with P_00 + P_11 > 0.98."""
     fx, report = calibrated
@@ -185,8 +185,8 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
         keep_final_state=True,
         numerics=Numerics(branch_weight_min=1e-3),
     )
-    res = run(BELL, fx.device, 1000, table=report.table, **kw)  # type: ignore[arg-type]
-    ref = run(BELL, fx.device, 1000, table=report.surrogate.table, **kw)  # type: ignore[arg-type]
+    res = run(BELL, fx.device, 1000, table=report.table, **kw)
+    ref = run(BELL, fx.device, 1000, table=report.surrogate.table, **kw)
     fid, fid_ref = register_fidelity(res), register_fidelity(ref)
     budget = res.diagnostics.intrinsic_budget["total"]
     # the calibration's contribution: the over-rotation (sigma_Omega/Omega x pi/2)^2 per carrier pulse and the residual frame offset
@@ -211,7 +211,7 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
 
 
 @pytest.mark.slow
-def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_runs(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_runs(calibrated) -> None:
     fx, report = calibrated
     cache = CalibrationCache()
     kw = dict(
@@ -226,8 +226,8 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
         detection_windows_s=(20e-6,),
         cache=cache,
     )
-    t1 = calibrate(Machine(fx.device), **kw).table  # type: ignore[arg-type]
-    t2 = calibrate(Machine(fx.device), **kw).table  # type: ignore[arg-type]
+    t1 = calibrate(Machine(fx.device), **kw).table
+    t2 = calibrate(Machine(fx.device), **kw).table
     assert t1 is t2 and len(cache.reports) == 1
     assert t1.field.experiment == "field_scan" and t1.field.status == "calibrated"
     assert all(e.status == "seed" for e in t1.rabi.values()), (
@@ -247,7 +247,7 @@ def test_calibrate_entry_point_caches_the_full_table_and_a_stale_table_still_run
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     fx = yb171_chain(2)
     sur = two_ion_surrogate(1000)
     return fx, sur
@@ -256,11 +256,11 @@ def two_ion():  # type: ignore[no-untyped-def]
 # ---- the Stark scan's fringe branch ----------------------------------------------------------------------------------------
 
 
-def _exact_fringe(shift_hz: float):  # type: ignore[no-untyped-def]
+def _exact_fringe(shift_hz: float):
     """A ``ramsey`` replacement returning the EXACT fringe frequency |detuning - shift| of a qubit light-shifted by
     ``shift_hz``, which is what the fit sees (its sign is unobservable in a cosine)."""
 
-    def fake(device, ion, delays_s, **kw):  # type: ignore[no-untyped-def]
+    def fake(device, ion, delays_s, **kw):
         detuning = float(kw["detuning_hz"])
         delays = np.array(sorted(float(x) for x in delays_s))
         f = abs(detuning - shift_hz)
@@ -287,7 +287,7 @@ def _exact_fringe(shift_hz: float):  # type: ignore[no-untyped-def]
 )
 def test_stark_scan_resolves_the_fringe_branch_with_two_probe_signs(
     two_ion, monkeypatch, shift_hz, ok
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """Two probe signs recover the light shift delta = (f_minus - f_plus)/2 to 1e-9 while |delta| < probe, and a shift beyond the
     probe saturates at it and is reported."""
     fx, _sur = two_ion
@@ -309,14 +309,14 @@ def test_stark_scan_resolves_the_fringe_branch_with_two_probe_signs(
         assert any("outside the probe" in n for n in res.notes), res.notes
 
 
-def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two_ion, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two_ion, monkeypatch) -> None:
     """Five delays over 2 ms cannot resolve the probe + |delta| fringe of a 1 kHz probe and are refused as above Nyquist, nine
     are accepted, and both return the same shift."""
     fx, _sur = two_ion
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
     kw = dict(probe_hz=1e3, shots=None)
-    coarse = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 5), **kw)  # type: ignore[arg-type]
-    fine = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), **kw)  # type: ignore[arg-type]
+    coarse = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 5), **kw)
+    fine = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), **kw)
     assert not coarse.converged and any("Nyquist" in n for n in coarse.notes), coarse.notes
     assert fine.converged, fine.notes
     # the VALUE is the same either way: the guard is about what the grid can resolve, not about the estimator
@@ -324,7 +324,7 @@ def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two
         assert coarse.fitted[f"stark_shift_hz[{b}]"][0] == pytest.approx(-38.4, abs=1e-9)
 
 
-def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion, monkeypatch) -> None:
     """``stark_scan(mode="beat_note")`` runs without forwarding its ``mode`` to the Ramsey setup (which reads ``mode`` as a mode
     index), and an unknown mode is refused."""
     fx, _sur = two_ion
@@ -342,7 +342,7 @@ def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion,
 
 def test_a_refused_experiment_marks_its_own_entries_uncalibrated_and_the_schedule_then_refuses(
     two_ion,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """An uncalibrated field refuses the micromotion, mode, Rabi, Stark and Ramsey fits, each marks the entry groups it would
     have written uncalibrated, and ``schedule()`` then refuses the table."""
     fx, sur = two_ion
@@ -377,7 +377,7 @@ def test_a_refused_experiment_marks_its_own_entries_uncalibrated_and_the_schedul
         schedule(BELL, fx.device, t)
 
 
-def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated(two_ion) -> None:
     """A group that is a seed because the caller did not ASK for its experiment stays a seed; only the refusal path marks."""
     fx, sur = two_ion
     report = full_calibration(
@@ -392,7 +392,7 @@ def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated
 # ---- an uncalibrated qubit frequency -------------------------------------------------------------------------------------
 
 
-def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:
     """A run on a table whose qubit frequency is uncalibrated is refused rather than put the frame on the true transition."""
     fx, sur = two_ion
     bad = dataclasses.replace(
@@ -409,7 +409,7 @@ def test_run_refuses_an_uncalibrated_qubit_frequency(two_ion) -> None:  # type: 
 # ---- the micromotion loop -------------------------------------------------------------------------------------------------
 
 
-def _rf_two_ion(stray_x_v_per_m: float):  # type: ignore[no-untyped-def]
+def _rf_two_ion(stray_x_v_per_m: float):
     """The two-ion fixture with an rf record and a stray field along x (excess micromotion to compensate)."""
     fx = yb171_chain(2)
     dev = dataclasses.replace(
@@ -423,7 +423,7 @@ def _rf_two_ion(stray_x_v_per_m: float):  # type: ignore[no-untyped-def]
     return fx, dataclasses.replace(dev, crystal=solve_crystal(dev.trap, dev.crystal.species))
 
 
-def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two_ion) -> None:
     """A calibrated shim reaches the device the run evolves (the compensated residual beta < 1e-9), a seed one does not and an
     uncalibrated one is reported."""
     fx, dev = _rf_two_ion(20.0)
@@ -433,7 +433,7 @@ def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two
     # the compensating field is minus the stray one: with it programmed the residual index vanishes
     assert abs(signed_beta(device_with_compensation(dev, {"Ex": -20.0}), 0, dk)) < 1e-9
 
-    def table_with(status: str, value: float):  # type: ignore[no-untyped-def]
+    def table_with(status: str, value: float):
         sur = surrogate_table(
             dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
         )
@@ -449,11 +449,11 @@ def test_the_calibrated_shims_are_programmed_onto_the_device_the_run_evolves(two
     kw = dict(
         numerics=Numerics(branch_weight_min=1e-2),
     )
-    good = run(GPI, dev, 5, table=table_with("calibrated", -20.0), **kw)  # type: ignore[arg-type]
+    good = run(GPI, dev, 5, table=table_with("calibrated", -20.0), **kw)
     assert any("micromotion compensation applied" in n for n in last_record(good).notes)
-    seeded = run(GPI, dev, 5, table=table_with("seed", -20.0), **kw)  # type: ignore[arg-type]
+    seeded = run(GPI, dev, 5, table=table_with("seed", -20.0), **kw)
     assert not any("micromotion compensation applied" in n for n in last_record(seeded).notes)
-    refused = run(GPI, dev, 5, table=table_with("uncalibrated", -20.0), **kw)  # type: ignore[arg-type]
+    refused = run(GPI, dev, 5, table=table_with("uncalibrated", -20.0), **kw)
     assert any("micromotion compensation uncalibrated" in n for n in last_record(refused).notes)
 
 
@@ -488,7 +488,7 @@ def test_a_stale_micromotion_calibration_against_a_drifted_stray_field_leaves_a_
 # ---- the entangling scans' frame and mode beliefs --------------------------------------------------------------------------
 
 
-def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_discard(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_discard(two_ion) -> None:
     """Supplying both ``modes`` and ``mode_frequencies_hz`` is refused, and the table's mode frequencies reach the GateModes the
     entangling scans build (to 1e-12)."""
     fx, sur = two_ion
@@ -515,7 +515,7 @@ def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_d
 
 
 @pytest.mark.slow
-def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_frame_phase(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_frame_phase(two_ion) -> None:
     """A 1 kHz qubit-frequency error on ion 0 moves the phase scan's ion-0 correction by 0.4 to 0.8 of 2 pi delta_f t_gate
     (twice the error, twice the shift to 5 %) and the ion-1 correction by less than 5 % of that."""
     fx, sur = two_ion
@@ -529,12 +529,12 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
         shots=None,
     )
     df = 1e3
-    ref = ms_phase_scan(Machine(fx.device), (0, 1), phases, **kw)  # type: ignore[arg-type]
-    one = ms_phase_scan(Machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: df}, **kw)  # type: ignore[arg-type]
-    two = ms_phase_scan(Machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: 2.0 * df}, **kw)  # type: ignore[arg-type]
+    ref = ms_phase_scan(Machine(fx.device), (0, 1), phases, **kw)
+    one = ms_phase_scan(Machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: df}, **kw)
+    two = ms_phase_scan(Machine(fx.device), (0, 1), phases, qubit_shifts_hz={0: 2.0 * df}, **kw)
     assert ref.converged and one.converged and two.converged, (ref.notes, one.notes, two.notes)
 
-    def delta(res, q: int) -> float:  # type: ignore[no-untyped-def]
+    def delta(res, q: int) -> float:
         return float(res.fitted[f"correction_rad[{q}]"][0] - ref.fitted[f"correction_rad[{q}]"][0])
 
     d0, d0_two, d1 = delta(one, 0), delta(two, 0), delta(one, 1)
@@ -548,7 +548,7 @@ def test_a_wrong_qubit_frequency_shifts_the_ms_phase_scans_correction_by_the_fra
 
 
 @pytest.mark.slow
-def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reason(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reason(two_ion) -> None:
     """Every accepted name (``ORDER`` and ``ALIASES``) leaves a result, a refusal with its upstream reason, or a note saying why
     the scan does not exist on the device."""
     fx, sur = two_ion
@@ -585,7 +585,7 @@ def test_every_advertised_experiment_name_produces_a_result_a_refusal_or_a_reaso
         )
 
 
-def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_device_with_no_entangling_drive_calibrates_and_runs(two_ion) -> None:
     """The 40Ca+ preset, with no entangling drive, gets no entangling seed or waveform and still runs, and a chain whose
     entangling drive covers one ion seeds only that one."""
     preset = ca40_optical()
@@ -650,7 +650,7 @@ def test_the_heating_experiment_runs_end_to_end_on_a_device_with_electric_field_
 # ---- the run-level over-rotation -------------------------------------------------------------------------------------------
 
 
-def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) -> None:
     """A table whose Rabi entry is 5 % high shortens the GPi by 1/1.05 (to 1e-12), and the run's loss lies within 0.8 to 2
     times cos^2(pi/2/1.05) = 5.58e-3."""
     fx, sur = two_ion
@@ -670,7 +670,7 @@ def test_a_five_percent_rabi_error_in_the_table_over_rotates_the_run(two_ion) ->
     )
 
     # the physics: the excited population of ion 0 after the GPi
-    def loss(table) -> float:  # type: ignore[no-untyped-def]
+    def loss(table) -> float:
         res = run(
             GPI,
             fx.device,

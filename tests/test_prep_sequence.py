@@ -49,7 +49,7 @@ def _pump() -> PumpingResult:
     power = 0.5 * line.i_sat_w_m2 * math.pi * waist**2 / 2.0
     beam = beam_for_transition(
         st, "S1/2 F=1 mF=0", "P1/2 F=1 mF=0", 0.0, (1.0, 0.0, 0.0), magic, power_w=power, waist_m=waist
-    )  # type: ignore[arg-type]
+    )
     model = BlochModel(st, [beam], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     return optical_pumping(model, [QUBIT[0]], duration_s=20e-6, samples=2001)
 

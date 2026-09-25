@@ -216,7 +216,7 @@ def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochMode
     power = s0 * YB_LINE.i_sat_w_m2 * math.pi * WAIST**2 / 2.0
     detect = beam_for_transition(
         st, "S1/2 F=1 mF=0", "P1/2 F=0 mF=0", 0.0, (1.0, 0.0, 0.0), MAGIC, power_w=power, waist_m=WAIST
-    )  # type: ignore[arg-type]
+    )
     centroid = TWO_PI * (
         (YB.level("3D[3/2]1/2").energy_hz - YB.level("D3/2").energy_hz)
         - (st.state("3D[3/2]1/2 F=1 mF=0").energy_hz - st.state("D3/2 F=1 mF=0").energy_hz)
@@ -229,7 +229,7 @@ def _repump_935_model(s0: float, s935: float, b_gauss: float = 4.7) -> BlochMode
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=s935 * line935.i_sat_w_m2 * math.pi * WAIST**2 / 2.0,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     return BlochModel(
         st,
@@ -325,7 +325,7 @@ def test_f1_to_f1_linear_light_has_one_dark_state_and_f0_to_f1_none() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=1e-6,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m = BlochModel(st, [pump], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     ds = m.dark_states()
@@ -338,7 +338,7 @@ def test_f1_to_f1_linear_light_has_one_dark_state_and_f0_to_f1_none() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=1e-6,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m2 = BlochModel(st, [repump], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     ds2 = m2.dark_states()
@@ -361,7 +361,7 @@ def test_optical_pumping_into_f0_takes_three_photons_and_leaves_a_small_residual
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=power,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m = BlochModel(st, [pump], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     times = np.linspace(0.0, 30e-6, 6001)  # 5 ns steps resolve the coherent oscillations of the photon rate
@@ -394,7 +394,7 @@ def test_pumping_matches_the_weak_drive_rate_equations() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=power,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m = BlochModel(st, [pump], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     b = m.build
@@ -437,7 +437,7 @@ def test_frame_assignment_flags_two_tones_on_one_transition_as_a_beat() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=1e-6,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     side = beam_for_transition(
         st,
@@ -447,7 +447,7 @@ def test_frame_assignment_flags_two_tones_on_one_transition_as_a_beat() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=1e-6,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     fa = assign_frames(st, [main], ["S1/2", "P1/2"])
     assert fa.static and fa.period_s is None and len(fa.edges) == 1 and fa.edges[0].sets_frame
@@ -504,7 +504,7 @@ def test_floquet_fixed_point_matches_the_secular_static_model() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=power,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     side = beam_for_transition(
         st,
@@ -514,7 +514,7 @@ def test_floquet_fixed_point_matches_the_secular_static_model() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=0.3 * power,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m = BlochModel(st, [main, side], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     assert not m.build.static and isinstance(m.build.H, qt.QobjEvo)
@@ -545,7 +545,7 @@ def test_polarization_modulation_makes_the_liouvillian_periodic_and_still_solves
         MAGIC,
         power_w=power,
         waist_m=WAIST,
-        modulation=mod,  # type: ignore[arg-type]
+        modulation=mod,
     )
     m = BlochModel(st, [beam], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="renormalize"))
     assert not m.build.static
@@ -592,7 +592,7 @@ def test_sink_policy_preserves_the_trace_and_measures_the_leak() -> None:
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=power,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m = BlochModel(st, [beam], levels=("S1/2", "P1/2"), options=MultiLevelOptions(leak="sink"))
     assert m.build.labels[-1] == SINK and decay_sum_rule_residual(m.build) < 1e-12
@@ -622,7 +622,7 @@ def test_include_policy_pulls_the_decay_target_in_and_the_ion_goes_dark_without_
         (1.0, 0.0, 0.0),
         MAGIC,
         power_w=power,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     m = BlochModel(st, [beam])
     assert m.build.levels == ("S1/2", "D3/2", "D5/2", "P1/2", "P3/2") and m.build.n_internal == 36
@@ -660,7 +660,7 @@ def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
             (1.0, 0.0, 0.0),
             pol,
             power_w=0.3 * t397.i_sat_w_m2 * math.pi * WAIST**2 / 2.0,
-            waist_m=WAIST,  # type: ignore[arg-type]
+            waist_m=WAIST,
         )
         b2 = beam_for_transition(
             st,
@@ -670,7 +670,7 @@ def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
             (1.0, 0.0, 0.0),
             pol,
             power_w=3.0 * t866.i_sat_w_m2 * math.pi * WAIST**2 / 2.0,
-            waist_m=WAIST,  # type: ignore[arg-type]
+            waist_m=WAIST,
         )
         return BlochModel(st, [b1, b2], levels=("S1/2", "P1/2", "D3/2"))
 
@@ -707,7 +707,7 @@ def test_ca40_pi_only_repump_leaves_the_m_three_halves_states_as_traps() -> None
         (1.0, 0.0, 0.0),
         poly,
         power_w=0.5 * t397.i_sat_w_m2 * math.pi * WAIST**2 / 2.0,
-        waist_m=WAIST,  # type: ignore[arg-type]
+        waist_m=WAIST,
     )
     b2 = beam_for_transition(
         st,

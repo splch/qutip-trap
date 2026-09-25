@@ -33,14 +33,14 @@ SERIAL = Numerics(branch_weight_min=1e-3, map="serial")
 
 
 @pytest.fixture(scope="module")
-def machine():  # type: ignore[no-untyped-def]
+def machine():
     preset = yb171_chain(2)
     pinned = preset.machine().calibrated(pairs=[(0, 1)], detection_records=2000, detection_windows_s=WINDOWS)
     return preset, dataclasses.replace(pinned, numerics=FAST)
 
 
 @pytest.fixture(scope="module")
-def bell(machine):  # type: ignore[no-untyped-def]
+def bell(machine):
     _preset, m = machine
     return m.run(BELL, 400, seed=0)
 
@@ -53,15 +53,15 @@ def test_the_preset_bridges_to_a_machine_on_its_device() -> None:
     assert (m.physics, m.numerics, m.readout) == (Physics(), Numerics(), Readout())
 
 
-def test_calibrated_pins_a_table_for_the_device(machine) -> None:  # type: ignore[no-untyped-def]
+def test_calibrated_pins_a_table_for_the_device(machine) -> None:
     preset, m = machine
     assert m.table is not None and m.table.device_hash == preset.device.hash() and m.table.surrogate
     assert (0, 2) in m.table.rabi and m.table.waveform_for((0, 1)) is not None
     with pytest.raises(ValueError, match="closed_form"):
-        m.calibrated("guess")  # type: ignore[arg-type]
+        m.calibrated("guess")
 
 
-def test_machine_run_equals_run_field_for_field(machine, bell) -> None:  # type: ignore[no-untyped-def]
+def test_machine_run_equals_run_field_for_field(machine, bell) -> None:
     preset, m = machine
     reference = run(BELL, preset.device, 400, table=m.table, numerics=FAST, seed=0)
     assert reference.machine_hash == bell.machine_hash
@@ -85,7 +85,7 @@ def test_machine_run_equals_run_field_for_field(machine, bell) -> None:  # type:
         assert getattr(bell.diagnostics, f.name) == getattr(reference.diagnostics, f.name), f.name
 
 
-def test_schedule_equals_the_scheduler_on_the_same_table(machine) -> None:  # type: ignore[no-untyped-def]
+def test_schedule_equals_the_scheduler_on_the_same_table(machine) -> None:
     preset, m = machine
     mine = m.schedule(BELL)
     theirs = schedule(compile_to_native(BELL), preset.device, m.table)
@@ -98,16 +98,16 @@ def test_schedule_equals_the_scheduler_on_the_same_table(machine) -> None:  # ty
     assert m.compile(BELL).n_entangling == 1
 
 
-def test_a_forced_level_reaches_the_diagnostics(machine) -> None:  # type: ignore[no-untyped-def]
+def test_a_forced_level_reaches_the_diagnostics(machine) -> None:
     _preset, m = machine
-    deeper = dataclasses.replace(m, level="GATE_LOCAL")  # type: ignore[arg-type]  (strings are accepted)
+    deeper = dataclasses.replace(m, level="GATE_LOCAL")  # strings are accepted
     assert deeper.level is FidelityLevel.GATE_LOCAL
     res = deeper.run(ONE, 20)
     assert res.diagnostics.level == "GATE_LOCAL" and res.diagnostics.gate_local is not None
     assert res.diagnostics.level_reason.startswith("GATE_LOCAL forced by the caller")
 
 
-def test_estimate_matches_the_diagnostics_of_the_run_that_follows(machine, bell) -> None:  # type: ignore[no-untyped-def]
+def test_estimate_matches_the_diagnostics_of_the_run_that_follows(machine, bell) -> None:
     _preset, m = machine
     est = m.estimate(BELL)
     assert isinstance(est, Estimate)
@@ -121,7 +121,7 @@ def test_estimate_matches_the_diagnostics_of_the_run_that_follows(machine, bell)
     assert forced.level is FidelityLevel.GATE_LOCAL and "would choose JOINT_EXACT" in forced.reason
 
 
-def test_hash_changes_when_and_only_when_device_table_or_policy_change(machine) -> None:  # type: ignore[no-untyped-def]
+def test_hash_changes_when_and_only_when_device_table_or_policy_change(machine) -> None:
     preset, m = machine
     h = m.hash()
     assert len(h) == 64 and h == m.hash() == dataclasses.replace(m, name="another label").hash()
@@ -139,14 +139,14 @@ def test_hash_changes_when_and_only_when_device_table_or_policy_change(machine) 
     assert Machine(preset.device).hash() == Machine(preset.device).hash()
 
 
-def test_the_engine_is_configured_from_the_machine(machine) -> None:  # type: ignore[no-untyped-def]
+def test_the_engine_is_configured_from_the_machine(machine) -> None:
     _preset, m = machine
     engine = m.engine
     assert isinstance(engine, JointExactEngine) and engine.table is m.table and engine.device_channels
     assert dataclasses.replace(m, physics=Physics(noise=False)).engine.device_channels is False
 
 
-def test_specs_reports_the_derived_quantities_the_roles_the_table_and_the_level(machine) -> None:  # type: ignore[no-untyped-def]
+def test_specs_reports_the_derived_quantities_the_roles_the_table_and_the_level(machine) -> None:
     _preset, m = machine
     text = m.specs()
     assert text.startswith(f"device {m.device.hash()[:12]}") and "rabi_hz[(0, 2)] =" in text
@@ -162,12 +162,12 @@ def test_progress_is_a_frozen_record() -> None:
         1 / 3
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        p.done = 3  # type: ignore[misc]
+        p.done = 3
     with pytest.raises(ValueError):
         Progress("pulse", 7, 6, 0.0)
 
 
-def test_the_callback_sequence_is_monotone_per_stage_and_complete(machine) -> None:  # type: ignore[no-untyped-def]
+def test_the_callback_sequence_is_monotone_per_stage_and_complete(machine) -> None:
     """Under the serial map every stage (pulse, branch, sample, readout) reports monotone, complete progress with rising
     elapsed times, and ``run`` reports the same sequence."""
     _preset, m = machine
@@ -196,7 +196,7 @@ class Abort(RuntimeError):
     pass
 
 
-def test_a_raising_callback_aborts_the_run_and_leaves_the_machine_usable(machine) -> None:  # type: ignore[no-untyped-def]
+def test_a_raising_callback_aborts_the_run_and_leaves_the_machine_usable(machine) -> None:
     _preset, m = machine
 
     def boom(p: Progress) -> None:
@@ -222,7 +222,7 @@ def test_a_boundary_excess_warns_and_a_bounded_one_does_not() -> None:
 # ---- RunSpec: the record of a request ---------------------------------------------------------------------------------------
 
 
-def test_spec_of_a_machine_carries_its_hash_and_policy(machine) -> None:  # type: ignore[no-untyped-def]
+def test_spec_of_a_machine_carries_its_hash_and_policy(machine) -> None:
     _preset, m = machine
     spec = m.spec(BELL, 200, seed=3, label="bell")
     assert spec == RunSpec.of(m, BELL, 200, seed=3, label="bell")
@@ -233,7 +233,7 @@ def test_spec_of_a_machine_carries_its_hash_and_policy(machine) -> None:  # type
         RunSpec(BELL, 0)
 
 
-def test_spec_round_trips_through_json(machine) -> None:  # type: ignore[no-untyped-def]
+def test_spec_round_trips_through_json(machine) -> None:
     _preset, m = machine
     numerics = dataclasses.replace(
         m.numerics,
@@ -276,7 +276,7 @@ def test_spec_round_trips_through_json(machine) -> None:  # type: ignore[no-unty
         RunSpec.from_dict({**d, "schema_version": SPEC_SCHEMA_VERSION + 1})
 
 
-def test_spec_refuses_by_name_what_a_record_cannot_carry(machine) -> None:  # type: ignore[no-untyped-def]
+def test_spec_refuses_by_name_what_a_record_cannot_carry(machine) -> None:
     _preset, m = machine
     space = m.estimate(BELL).space
     with pytest.raises(ValueError, match="Numerics.space"):
@@ -291,7 +291,7 @@ def test_spec_refuses_by_name_what_a_record_cannot_carry(machine) -> None:  # ty
 # ---- Job: the run in a worker process ---------------------------------------------------------------------------------------
 
 
-def test_submit_result_equals_run_and_carries_its_record(machine) -> None:  # type: ignore[no-untyped-def]
+def test_submit_result_equals_run_and_carries_its_record(machine) -> None:
     _preset, m = machine
     job = m.submit(BELL, 200, seed=5, label="bell")
     assert isinstance(job, Job) and job.status() in ("running", "done") and job.spec.label == "bell"
@@ -312,7 +312,7 @@ def test_submit_result_equals_run_and_carries_its_record(machine) -> None:  # ty
     assert job.result() is result, "a finished job returns the same result again"
 
 
-def test_cancel_stops_the_worker_within_one_pulse(machine) -> None:  # type: ignore[no-untyped-def]
+def test_cancel_stops_the_worker_within_one_pulse(machine) -> None:
     """Under the serial map a cancel after the first pulse report stops the worker within one more pulse and 120 s."""
     _preset, m = machine
     job = submit(dataclasses.replace(m, numerics=SERIAL), BELL, 2000, seed=1)
@@ -341,7 +341,7 @@ def test_cancel_stops_the_worker_within_one_pulse(machine) -> None:  # type: ign
         job.result()
 
 
-def test_a_job_started_twice_and_a_timeout_are_refused(machine) -> None:  # type: ignore[no-untyped-def]
+def test_a_job_started_twice_and_a_timeout_are_refused(machine) -> None:
     _preset, m = machine
     job = m.submit(BELL, 200, seed=0)
     with pytest.raises(RuntimeError, match="already started"):

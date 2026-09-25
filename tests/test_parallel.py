@@ -102,7 +102,7 @@ def test_the_environment_caps_the_default_worker_count_but_not_an_explicit_reque
 
 
 @pytest.fixture(scope="module")
-def heating_fixture():  # type: ignore[no-untyped-def]
+def heating_fixture():
     """The two-ion fixture with white electric-field noise (heating channels on the resolved x modes at 2.4e4 quanta/s, about six
     jumps over six 20 us trajectories), a 20 us single-loop pulse on the x-COM, the Bell caps (dimension 440, where the auto rule
     factorizes)."""
@@ -125,7 +125,7 @@ def heating_fixture():  # type: ignore[no-untyped-def]
     return noisy, drives, sched, space, table
 
 
-def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identity(heating_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identity(heating_fixture) -> None:
     """Six keyed plain trajectories of a heated MS pulse in-process and over every CPU give the same register, P1 and joint state
     to 1e-12 and the same jumps, and the report names the map and the worker count."""
     dev, _drives, sched, space, _table = heating_fixture
@@ -134,7 +134,7 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
         # plain trajectories: improved sampling conditions every member on jumping, which needs larger caps than these
-        opts = Numerics(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False)  # type: ignore[arg-type]
+        opts = Numerics(lindblad_method="mcsolve", ntraj=6, map=mp, workers=workers, improved_sampling=False)
         tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(11), opts)
         rep = eng.last_report
         assert (
@@ -158,7 +158,7 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
     )
 
 
-def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> None:
     """The isometry route's eight columns (four and the keyed-tolerance probe's four) over at most four workers reproduce the
     in-process Choi matrix to 1e-10."""
     dev, _drives, sched, space, _table = heating_fixture
@@ -166,7 +166,7 @@ def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> 
     recs = {}
     for mp in ("serial", "parallel"):
         eng = JointExactEngine()
-        opts = Numerics(map=mp, workers=min(N_WORKERS, 8))  # type: ignore[arg-type]
+        opts = Numerics(map=mp, workers=min(N_WORKERS, 8))
         recs[mp] = eng.tomography(dev, sched, space, model, quiet_sample(), SeedSpec(0), opts)
     assert recs["serial"].route == recs["parallel"].route == "isometry"
     # four basis columns plus the four of the keyed tolerance's ten-times-tighter probe on the (only) branch
@@ -184,7 +184,7 @@ def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> 
 
 
 @pytest.fixture(scope="module")
-def carrier_fixture():  # type: ignore[no-untyped-def]
+def carrier_fixture():
     dev = chain_device(2)
     drives = raman_gate_drives(2)
     rabi, _stark = derived_seeds(dev, drives)
@@ -196,7 +196,7 @@ def carrier_fixture():  # type: ignore[no-untyped-def]
     return dev, sched, space
 
 
-def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carrier_fixture) -> None:
     """On an internal-state-only space the segment propagator is integrated once and then served from the cache, every state
     matching the per-state ODE path to 1e-9."""
     dev, sched, space = carrier_fixture
@@ -231,7 +231,7 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
 
 def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(
     carrier_fixture, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """A carrier step's propagator route integrates one propagator per frozen Fock branch as that branch's Kraus operator, the
     state route reuses the cached propagators for the sixteen inputs, and both give the same channel to 1e-12."""
     dev, sched, space = carrier_fixture
@@ -296,16 +296,16 @@ GPI2 = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     fx = yb171_chain(2)
     sur = two_ion_surrogate(1000)
     return fx, sur
 
 
-def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
+def _run_both(circuit, fx, sur, shots, **kw):
     out = {}
     for mp, workers in (("serial", 1), ("parallel", min(N_WORKERS, 6))):
-        opts = Numerics(map=mp, workers=workers, **kw)  # type: ignore[arg-type]
+        opts = Numerics(map=mp, workers=workers, **kw)
         out[mp] = run(
             circuit,
             fx.device,
@@ -318,7 +318,7 @@ def _run_both(circuit, fx, sur, shots, **kw):  # type: ignore[no-untyped-def]
     return out["serial"], out["parallel"]
 
 
-def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two_ion) -> None:
     """The GPi2 circuit's branches over the workers give the in-process bitstrings and register state (1e-12), with the worker
     count and one propagator per frozen Fock tuple reported."""
     fx, sur = two_ion
@@ -340,7 +340,7 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
 
 
 @pytest.mark.slow
-def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_ion) -> None:
     """The Bell circuit (factorized kernel) run serially and in parallel agrees shot by shot and in the register state to
     1e-12."""
     fx, sur = two_ion
@@ -377,7 +377,7 @@ def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heati
     out = {}
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
-        opts = Numerics(lindblad_method="mcsolve", ntraj=4, map=mp, workers=workers, improved_sampling=True)  # type: ignore[arg-type]
+        opts = Numerics(lindblad_method="mcsolve", ntraj=4, map=mp, workers=workers, improved_sampling=True)
         tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(5), opts)
         rep = eng.last_report
         # the members of the weighted mixture: four stochastic ones conditioned on jumping plus the no-jump member

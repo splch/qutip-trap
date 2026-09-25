@@ -173,13 +173,13 @@ def test_free_recoil_energy_regressions() -> None:
 # ---- one ion on one mode: the Kraus kicks ---------------------------------------------------------------------------
 
 
-def _two_level_build(recoil: str, axis: tuple[float, float, float], d: int = 12):  # type: ignore[no-untyped-def]
+def _two_level_build(recoil: str, axis: tuple[float, float, float], d: int = 12):
     st = structure(two_level_atom())
     g = gamma_rad_s()
     nu = 50.0 * g
     beam = sigma_plus_beam(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, 0.3 * g, -nu)
     mode = ModeSpec(nu, MASS_KG, axis, d=d, expected_n_max=2)
-    return build_multilevel(st, [beam], mode=mode, options=MultiLevelOptions(recoil=recoil)), mode  # type: ignore[arg-type]
+    return build_multilevel(st, [beam], mode=mode, options=MultiLevelOptions(recoil=recoil)), mode
 
 
 @pytest.mark.parametrize("recoil", ["minimal", "marginal", "vector"])

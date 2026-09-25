@@ -399,7 +399,7 @@ def polarization_gradient_model(
         )
     if not np.allclose(np.abs(np.dot(k_hat, np.asarray(mode.axis))), 1.0, atol=1e-9):
         raise ValueError("the mode must lie along the beam pair (a 1D model)")
-    options = MultiLevelOptions(leak=leak, recoil="minimal", beam_phases_rad=(2.0 * pair.phase_rad, 0.0))  # type: ignore[arg-type]
+    options = MultiLevelOptions(leak=leak, recoil="minimal", beam_phases_rad=(2.0 * pair.phase_rad, 0.0))
     model = BlochModel(structure, [pair.beam_a, pair.beam_b], levels=levels, mode=mode, options=options)
     b = model.build
     coupling = next(

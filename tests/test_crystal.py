@@ -34,7 +34,7 @@ def _mixed_pair(
     w1 = TWO_PI * omega_z1_hz
     per_ion = np.array([transverse_factor * w1, transverse_factor * w1, w1])
     w = np.vstack([per_ion, per_ion / math.sqrt(m2_u / m1_u)])
-    return build_crystal((MassOnly(m1_u), MassOnly(m2_u)), w)  # type: ignore[arg-type]
+    return build_crystal((MassOnly(m1_u), MassOnly(m2_u)), w)
 
 
 def _two_ion_axial_squared(mu: float) -> tuple[float, float]:
@@ -186,7 +186,7 @@ def test_home_2013_table_i_end_to_end() -> None:
     be, mg = MassOnly(9.0121822), MassOnly(23.985042)
     w_be = TWO_PI * np.array([12.26, 11.19, 2.69]) * 1e6
     w_mg = TWO_PI * np.array([4.82, 3.72, 1.65]) * 1e6
-    cr = build_crystal((be, mg), np.vstack([w_be, w_mg]))  # type: ignore[arg-type]
+    cr = build_crystal((be, mg), np.vstack([w_be, w_mg]))
     assert (cr.positions_m[1, 2] - cr.positions_m[0, 2]) * 1e6 == pytest.approx(4.76, abs=5e-3)
     f = {fam: [m.omega_hz / 1e6 for m in cr.family(fam)] for fam in ("axial", "transverse_1", "transverse_2")}
     assert f["axial"] == pytest.approx([1.90, 4.04], abs=6e-3)
@@ -203,7 +203,7 @@ def test_home_2013_table_i_end_to_end() -> None:
     )
     assert abs(cr.family("transverse_1")[1].eigenvector[1]) == pytest.approx(0.018, abs=5e-4)
     assert abs(cr.family("transverse_2")[1].eigenvector[1]) == pytest.approx(0.020, abs=5e-4)
-    swapped = build_crystal((be, mg), np.vstack([w_be, TWO_PI * np.array([3.72, 4.82, 1.65]) * 1e6]))  # type: ignore[arg-type]
+    swapped = build_crystal((be, mg), np.vstack([w_be, TWO_PI * np.array([3.72, 4.82, 1.65]) * 1e6]))
     assert abs(swapped.family("transverse_1")[1].eigenvector[1]) == pytest.approx(0.017, abs=5e-4)
     assert abs(swapped.family("transverse_2")[1].eigenvector[1]) == pytest.approx(0.022, abs=5e-4)
     dk_z = np.array([0.0, 0.0, math.sqrt(2.0) * TWO_PI / 313e-9])  # a 90 degree Raman crossing
@@ -221,7 +221,7 @@ def test_the_exact_route_approaches_homes_pseudopotential_scaling_and_keeps_the_
     """Be+ at [9.7, 12.9, 4.6] MHz gives Mg+ [1.52, 5.43, 2.82] MHz in the pseudopotential limit (Home 2013 Eqs. 6-19); the
     exact-exponent route at a 1 GHz rf reaches it and preserves sign(omega_x^2 - omega_y^2) across species."""
     trap = dataclasses.replace(secular_trap((9.7e6, 12.9e6, 4.6e6)), rf=RfDrive(0.0, 1.0e9))
-    exact, _axes, _field = trap.single_ion_frequencies_rad_s((MassOnly(9.0121822), MassOnly(23.985042)))  # type: ignore[arg-type]
+    exact, _axes, _field = trap.single_ion_frequencies_rad_s((MassOnly(9.0121822), MassOnly(23.985042)))
     assert exact[1] / TWO_PI / 1e6 == pytest.approx([1.52, 5.43, 2.82], abs=1e-2)
     assert exact[1][0] < exact[1][1]
 
@@ -251,7 +251,7 @@ def test_kielpinski_three_ion_axial_modes_and_parity() -> None:
         cr = build_crystal(
             (MassOnly(9.0), MassOnly(9.0 * mu), MassOnly(9.0)),
             np.vstack([w_out, w_out / math.sqrt(mu), w_out]),
-        )  # type: ignore[arg-type]
+        )
         assert np.array([m.omega_hz for m in cr.family("axial")]) / 10e6 == pytest.approx(closed, abs=1e-6)
         assert abs(cr.family("axial")[1].eigenvector[1]) < 1e-10, "zero impurity amplitude"
         assert cr.uniform_field_weight(cr.mode_index("axial", 1)) < 1e-20 * cr.uniform_field_weight(

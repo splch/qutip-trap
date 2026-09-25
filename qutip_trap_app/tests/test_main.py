@@ -24,27 +24,27 @@ RUN_TIMEOUT_S = 240.0
 async def _wait_for_key(tester: object, key: str, timeout_s: float, step_s: float = 2.0) -> None:
     waited = 0.0
     while waited < timeout_s:
-        finder = await tester.find_by_key(key)  # type: ignore[attr-defined]
+        finder = await tester.find_by_key(key)
         if finder.count > 0:
             return
         await asyncio.sleep(step_s)
-        await tester.pump_and_settle()  # type: ignore[attr-defined]
+        await tester.pump_and_settle()
         waited += step_s
     raise AssertionError(f"control {key!r} did not appear within {timeout_s:.0f} s")
 
 
 async def _answer_first_launch_question(tester: object) -> None:
-    skip = await tester.find_by_key("knowledge-skip")  # type: ignore[attr-defined]
+    skip = await tester.find_by_key("knowledge-skip")
     if skip.count:
-        await tester.tap(skip)  # type: ignore[attr-defined]
-        await tester.pump_and_settle()  # type: ignore[attr-defined]
+        await tester.tap(skip)
+        await tester.pump_and_settle()
 
 
 @pytest.mark.skipif(
     not os.environ.get("QUTIP_TRAP_APP_UI_TESTS"), reason="needs the Flutter test host (flet test)"
 )
 async def test_run_flow_shows_the_histogram(flet_app: object) -> None:
-    tester = flet_app.tester  # type: ignore[attr-defined]
+    tester = flet_app.tester
     await tester.pump_and_settle()
     await _answer_first_launch_question(tester)
     run = await tester.find_by_key("run")
@@ -62,7 +62,7 @@ async def test_run_flow_shows_the_histogram(flet_app: object) -> None:
     not os.environ.get("QUTIP_TRAP_APP_UI_TESTS"), reason="needs the Flutter test host (flet test)"
 )
 async def test_six_clicks_from_the_histogram_to_a_matrix_element(flet_app: object) -> None:
-    tester = flet_app.tester  # type: ignore[attr-defined]
+    tester = flet_app.tester
     await tester.pump_and_settle()
     await _answer_first_launch_question(tester)
     await tester.tap(await tester.find_by_key("run"))
@@ -106,7 +106,7 @@ async def test_six_clicks_from_the_histogram_to_a_matrix_element(flet_app: objec
     not os.environ.get("QUTIP_TRAP_APP_UI_TESTS"), reason="needs the Flutter test host (flet test)"
 )
 async def test_explain_drawer_and_learn_routes(flet_app: object) -> None:
-    tester = flet_app.tester  # type: ignore[attr-defined]
+    tester = flet_app.tester
     await tester.pump_and_settle()
     await _answer_first_launch_question(tester)
     toggle = await tester.find_by_key("explain-toggle")
@@ -115,7 +115,7 @@ async def test_explain_drawer_and_learn_routes(flet_app: object) -> None:
     await tester.pump_and_settle()
     await tester.tap(toggle)
     await tester.pump_and_settle()
-    flet_app.page.navigate("/learn/experiments")  # type: ignore[attr-defined]
+    flet_app.page.navigate("/learn/experiments")
     await tester.pump_and_settle()
     await _wait_for_key(tester, "experiments", 20.0)
     assert (await tester.find_by_key("preset:harty_2014")).count == 1

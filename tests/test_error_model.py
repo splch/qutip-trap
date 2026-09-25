@@ -67,7 +67,7 @@ def test_the_durations_spam_and_rates_come_from_the_schedule_table_recipe_and_no
 ) -> None:
     table = machine.table
     assert table is not None
-    assert model.durations_s["ms[0,1]"] == pytest.approx(table.waveform_for((0, 1)).duration_s)  # type: ignore[union-attr]
+    assert model.durations_s["ms[0,1]"] == pytest.approx(table.waveform_for((0, 1)).duration_s)
     assert model.durations_s["gpi[0]"] == pytest.approx(2.0 * model.durations_s["gpi2[0]"], rel=1e-6)
     assert model.durations_s["measure"] == machine.device.detector.window_s and model.measurement_time_s > 0.0
     assert model.p_meas[0] == (table.detection["eps_D"].value, table.detection["eps_B"].value)

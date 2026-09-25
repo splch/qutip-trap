@@ -125,13 +125,13 @@ def test_mixed_crystal_every_mode_heats_and_the_two_ion_sum_rule_holds() -> None
         w = np.array(
             [[8 * w1, 8 * w1, w1], [8 * w1 / math.sqrt(mu), 8 * w1 / math.sqrt(mu), w1 / math.sqrt(mu)]]
         )
-        cr = build_crystal((MassOnly(25.0), MassOnly(25.0 * mu)), w)  # type: ignore[arg-type]
+        cr = build_crystal((MassOnly(25.0), MassOnly(25.0 * mu)), w)
         rates = heating_rates_per_mode(cr, 1e-13, math.inf)
         axial = [cr.mode_index("axial", k) for k in (0, 1)]
         assert all(rates[k] > 0.05 * rates[axial[0]] for k in axial)
         energy_rate = sum(HBAR_J_S * cr.modes[k].omega_rad_s * rates[k] for k in axial)
         assert energy_rate == pytest.approx(E_C**2 * 1e-13 / 4.0 * np.sum(1.0 / cr.masses_kg), rel=1e-9)
-    equal = build_crystal((MassOnly(25.0), MassOnly(25.0)), np.array([[8 * w1, 8 * w1, w1]] * 2))  # type: ignore[arg-type]
+    equal = build_crystal((MassOnly(25.0), MassOnly(25.0)), np.array([[8 * w1, 8 * w1, w1]] * 2))
     rates_eq = heating_rates_per_mode(equal, 1e-13, math.inf)
     assert rates_eq[equal.mode_index("axial", 1)] < 1e-12 * rates_eq[equal.mode_index("axial", 0)]
 
@@ -145,7 +145,7 @@ def test_parity_rule_for_a_reflection_symmetric_mixed_chain() -> None:
     cr = build_crystal(
         (MassOnly(9.0121822), MassOnly(23.985042), MassOnly(9.0121822)),
         np.vstack([w_be, w_be / math.sqrt(mu), w_be]),
-    )  # type: ignore[arg-type]
+    )
     rates = heating_rates_per_mode(cr, 1e-13, math.inf)
     axial_rates = [rates[cr.mode_index("axial", k)] for k in range(3)]
     assert [k for k, r in enumerate(axial_rates) if r < 1e-15 * max(axial_rates)] == [1]
@@ -160,6 +160,6 @@ def test_heating_rates_need_an_explicit_correlation_length() -> None:
     yb = species("171Yb+")
     cr = solve_crystal(secular_trap((3e6, 3e6, 1e6)), (yb, yb))
     with pytest.raises(TypeError):
-        heating_rates_per_mode(cr, 1e-13)  # type: ignore[call-arg]
+        heating_rates_per_mode(cr, 1e-13)
     with pytest.raises(ValueError):
         heating_rates_per_mode(cr, 1e-13, -1.0)

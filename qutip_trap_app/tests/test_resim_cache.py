@@ -59,10 +59,10 @@ def test_zoom_budget_and_dynamics_view(bell: tuple[Record, LiveRun]) -> None:
     )
     # the integrator runs with normalize_output off (Section 5.3), so the state's norm drifts by the solver tolerance over a
     # 100 us pulse; the Fock distributions carry that drift, the view shows it as the norm deficit, and it is small
-    deficit = float(dyn.norm_deficit.value)  # type: ignore[arg-type]
+    deficit = float(dyn.norm_deficit.value)
     assert 0.0 <= abs(deficit) < 1e-7
     assert all(abs(v.sum() - (1.0 - deficit)) < 1e-12 for v in dyn.fock_end.values())
     assert z.trace.mode_marginal is not None, "the zoom stores the per-time Fock populations"
     panel = numerics_panel(record, zoom=z)
     assert panel.badge.status in ("pass", "not checked")
-    assert all(float(b.value) < 1e-6 for b in panel.boundary)  # type: ignore[arg-type]
+    assert all(float(b.value) < 1e-6 for b in panel.boundary)

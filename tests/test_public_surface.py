@@ -51,7 +51,7 @@ def test_every_public_dataclass_is_frozen_and_takes_exactly_its_fields() -> None
     for cls in _public_dataclasses():
         fields = dataclasses.fields(cls)
         if not (
-            cls.__dataclass_params__.frozen  # type: ignore[attr-defined]
+            cls.__dataclass_params__.frozen
             and all(f.init for f in fields)
             and set(inspect.signature(cls).parameters) == {f.name for f in fields}
         ):
@@ -104,6 +104,6 @@ def _instances() -> list[object]:
 
 @pytest.mark.parametrize("instance", _instances(), ids=lambda x: type(x).__name__)
 def test_fixture_instances_round_trip_through_replace(instance: object) -> None:
-    copy = dataclasses.replace(instance)  # type: ignore[type-var]  (every instance is a dataclass)
+    copy = dataclasses.replace(instance)  # every instance is a dataclass
     assert type(copy) is type(instance)
     assert _equal(copy, instance), type(instance).__name__

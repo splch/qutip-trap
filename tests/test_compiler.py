@@ -111,7 +111,7 @@ def test_maslov_cnot_template_for_all_four_signs_with_its_global_phase(s: int, v
 @pytest.mark.parametrize("entangler", ["ms", "zz"])
 def test_cp_template_is_exact(theta: float, entangler: str) -> None:
     """The compiler's CP equals its target up to a global phase."""
-    ops = cp_template(theta, (0, 1), entangler)  # type: ignore[arg-type]
+    ops = cp_template(theta, (0, 1), entangler)
     got = circuit_unitary(Circuit(2, tuple(ops), (0, 1)))
     assert _phase(got, embed(cp_matrix(theta), (0, 1), 2)) is not None
 
@@ -126,7 +126,7 @@ def test_standard_two_qubit_gates_and_u3_compile_and_verify() -> None:
     ):
         circ = Circuit(2, (op,), (0, 1))
         for ent in ("ms", "zz"):
-            rep = compile_report(circ, entangler=ent)  # type: ignore[arg-type]
+            rep = compile_report(circ, entangler=ent)
             assert rep.circuit.is_exported_native
             assert rep.circuit_residual is not None and rep.circuit_residual < 1e-9
             assert all(r < 1e-9 for r in rep.block_residuals)
@@ -193,7 +193,7 @@ def test_ionq_json_round_trip_of_a_compiled_circuit_and_native_passthrough() -> 
         2, (Operation("rz", (1,), (0.4,)), Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2.0))), (0, 1)
     )
     rep = compile_report(nat)
-    assert rep.circuit.ops == (Operation("ms", (0, 1), (0.0, pytest.approx(-0.4), math.pi / 2.0)),)  # type: ignore[arg-type]
+    assert rep.circuit.ops == (Operation("ms", (0, 1), (0.0, pytest.approx(-0.4), math.pi / 2.0)),)
     assert rep.final_frame_rad == {0: 0.0, 1: pytest.approx(0.4)}
 
 
@@ -239,7 +239,7 @@ def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_de
     with pytest.raises(ValueError, match="outside range"):
         Circuit(2).h(2)
     with pytest.raises(TypeError):
-        Circuit(2).rx(0)  # type: ignore[call-arg]  (the parameter is required)
+        Circuit(2).rx(0)  # the parameter is required
 
 
 def test_measured_registers_and_the_third_positional_argument() -> None:

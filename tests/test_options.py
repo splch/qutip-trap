@@ -29,7 +29,7 @@ from tests.fixtures import make_device, make_space
         (lambda: Readout(povm_samples=0), "povm_samples"),
     ],
 )
-def test_the_objects_refuse_bad_fields(make, match) -> None:  # type: ignore[no-untyped-def]
+def test_the_objects_refuse_bad_fields(make, match) -> None:
     with pytest.raises(ValueError, match=match):
         make()
 

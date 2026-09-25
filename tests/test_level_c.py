@@ -56,7 +56,7 @@ def test_level_c_sideband_floor_is_gamma_over_2nu_squared_times_alpha_over_cos2_
     1e-4 with every recoil discretization, along B (weight 0.4) and at 45 degrees (0.7)."""
     beam, mode, _alpha, cw = sideband_setup(axis, 0.5 * G)
     assert cw == pytest.approx(expected_weight, abs=1e-12)
-    build = BlochModel(ST, [beam], mode=mode, options=MultiLevelOptions(recoil=recoil)).build  # type: ignore[arg-type]
+    build = BlochModel(ST, [beam], mode=mode, options=MultiLevelOptions(recoil=recoil)).build
     assert decay_sum_rule_residual(build) < 1e-12
     lc = level_c_steady_state(build)
     expected = (G / (2.0 * NU)) ** 2 * (cw + 0.25)

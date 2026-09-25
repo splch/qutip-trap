@@ -36,7 +36,7 @@ RABI_HZ = 20661.157  # a 12.1 us pi/2 pulse (Harty)
 def table_with_rabi(entries: dict[tuple[int, int], float], status: str = "calibrated") -> CalibrationTable:
     rabi = {
         k: CalEntry(v, 1.0, status, "rabi_scan", "conv.rabi_frequency", 0.0, 0) for k, v in entries.items()
-    }  # type: ignore[arg-type]
+    }
     return dataclasses.replace(make_calibration_table(), rabi=rabi)
 
 

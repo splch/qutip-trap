@@ -140,7 +140,7 @@ def _ca_beam(lower: str, upper: str, s_o: float, structure: AtomicStructure) -> 
         upper,
         0.0,
         (0.0, 1.0, 0.0),
-        pol,  # type: ignore[arg-type]
+        pol,
         power_w=power,
         waist_m=WAIST_M,
     )
@@ -160,9 +160,9 @@ def test_r_o_counts_the_cycling_line_only() -> None:
     model refuses to guess the detected line."""
     st, beams = _ca_detection_beams()
     opts = MultiLevelOptions(leak="renormalize")
-    detected, model = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="S1/2<-P1/2")  # type: ignore[arg-type]
-    all_lines, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line=ALL_LINES)  # type: ignore[arg-type]
-    repump, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="D3/2<-P1/2")  # type: ignore[arg-type]
+    detected, model = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="S1/2<-P1/2")
+    all_lines, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line=ALL_LINES)
+    repump, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="D3/2<-P1/2")
     g_s = CA.transition("S1/2-P1/2").partial_rate_rad_s
     g_d = CA.transition("D3/2-P1/2").partial_rate_rad_s
     ratio = all_lines.R_bright_per_s / detected.R_bright_per_s
@@ -183,13 +183,13 @@ def test_detection_rates_for_ion_selects_the_species_cycling_line() -> None:
         CA,
         4.0,
         (1.0, 0.0, 0.0),
-        beams,  # type: ignore[arg-type]
+        beams,
         levels=CA_LEVELS,
         options=opts,
     )
-    explicit, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="S1/2<-P1/2")  # type: ignore[arg-type]
+    explicit, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line="S1/2<-P1/2")
     assert rates.R_bright_per_s == pytest.approx(explicit.R_bright_per_s, rel=1e-9)
-    summed, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line=ALL_LINES)  # type: ignore[arg-type]
+    summed, _ = scattering_rate(st, beams, levels=CA_LEVELS, options=opts, line=ALL_LINES)
     assert rates.R_bright_per_s < summed.R_bright_per_s / 1.05
     assert "shelf" in scheme.classes or scheme.kind == "shelving"
 
@@ -213,7 +213,7 @@ def test_micromotion_puts_j0_squared_on_the_carrier_and_j1_squared_on_the_sideba
     beam = yb_detection_beam(0.5)
     st = AtomicStructure(YB, 5.0, (1.0, 0.0, 0.0))
     kw = {"levels": ("S1/2", "P1/2"), "options": MultiLevelOptions(leak="renormalize")}
-    plain, _, _ = detection_rates_for_ion(YB, 5.0, (1.0, 0.0, 0.0), [beam], **kw)  # type: ignore[arg-type]
+    plain, _, _ = detection_rates_for_ion(YB, 5.0, (1.0, 0.0, 0.0), [beam], **kw)
     modulated, _, _ = detection_rates_for_ion(
         YB,
         5.0,
@@ -221,11 +221,11 @@ def test_micromotion_puts_j0_squared_on_the_carrier_and_j1_squared_on_the_sideba
         [beam],
         micromotion_beta=beta,
         omega_rf_rad_s=omega_rf,
-        **kw,  # type: ignore[arg-type]
+        **kw,
     )
 
     def rate_at(offset: float) -> float:
-        r, _ = scattering_rate(st, [shifted_beam(beam, offset)], line="S1/2<-P1/2", **kw)  # type: ignore[arg-type]
+        r, _ = scattering_rate(st, [shifted_beam(beam, offset)], line="S1/2<-P1/2", **kw)
         return r.R_bright_per_s
 
     expected = float(j0(beta)) ** 2 * rate_at(0.0) + float(j1(beta)) ** 2 * (
@@ -242,10 +242,10 @@ def test_micromotion_puts_j0_squared_on_the_carrier_and_j1_squared_on_the_sideba
     assert any("micromotion" in p for p in modulated.provenance)
     zero, _, _ = detection_rates_for_ion(
         YB, 5.0, (1.0, 0.0, 0.0), [beam], micromotion_beta=0.0, omega_rf_rad_s=omega_rf, **kw
-    )  # type: ignore[arg-type]
+    )
     assert zero.R_bright_per_s == pytest.approx(plain.R_bright_per_s, rel=1e-12)
     with pytest.raises(ValueError, match="rf frequency"):
-        detection_rates_for_ion(YB, 5.0, (1.0, 0.0, 0.0), [beam], micromotion_beta=0.3, **kw)  # type: ignore[arg-type]
+        detection_rates_for_ion(YB, 5.0, (1.0, 0.0, 0.0), [beam], micromotion_beta=0.3, **kw)
 
 
 # ---- the efficiency, the apparatus presets and the mean-count curve -------------------------------------------------------------

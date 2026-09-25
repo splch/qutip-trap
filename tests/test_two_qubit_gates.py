@@ -118,7 +118,7 @@ ONE_MODE_OPTIONS = BuilderOptions(frozen_debye_waller=False)
 
 def _run(
     dev: Device, wf: Waveform, space: HilbertSpace, opts: BuilderOptions, internal=(0, 0), nbar=None, store=2
-):  # type: ignore[no-untyped-def]
+):
     # the closed forms carry no light shift: derived Rabi entries, no Stark entry, and an engine without the table
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2), stark_hz={})
     sched = ms_schedule(wf, (0, 1), raman_gate_drives(2), table)
@@ -138,14 +138,14 @@ def _run(
 
 
 @pytest.fixture(scope="module")
-def anchor():  # type: ignore[no-untyped-def]
+def anchor():
     dev = anchor_device()
     modes = gate_modes(dev, (0, 1), (0, 1)).subset([ANCHOR_MODE])
     assert modes.eta[0] == pytest.approx((ETA_ANCHOR,), rel=1e-12)
     return dev, modes
 
 
-def test_ms_closure_anchors_reproduce_through_the_package(anchor) -> None:  # type: ignore[no-untyped-def]
+def test_ms_closure_anchors_reproduce_through_the_package(anchor) -> None:
     """One loop from |dd> at eta = 0.05, nu = 1 MHz, eps = 10 kHz, d_m = 16: concurrence 0.9999 and populations (0.5074, 0, 0,
     0.4926) at eta Omega/eps = 1/2, and 0.3825 with (0.962, 0, 0, 0.038) at 1/4, to 6e-5 and 6e-4."""
     dev, modes = anchor
@@ -169,7 +169,7 @@ def test_ms_closure_anchors_reproduce_through_the_package(anchor) -> None:  # ty
         assert pops[1] < 1e-4 and pops[2] < 1e-4
 
 
-def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -> None:  # type: ignore[no-untyped-def]
+def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -> None:
     """With the tone phases pi apart (Choi's sine convention) the carrier tilts the entangling axis by psi = 2 Omega/mu = 0.2
     rad (Roos 2008) and the closed-loop |dd> gate leaks sin^2(psi) into |du>, |ud> to 10 %."""
     dev, modes = anchor
@@ -195,7 +195,7 @@ def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -
     )
 
 
-def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:  # type: ignore[no-untyped-def]
+def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:
     """In the first-order Lamb-Dicke, RWA interaction picture the state equals the MS propagator D(alpha S) exp(i gamma S^2)
     |dd, 0> to 1e-9 at every stored time and the populations follow Kirchmair's nbar = 0 envelopes to 1e-9."""
     dev, modes = anchor
@@ -226,7 +226,7 @@ def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:  # type: ig
     assert tr.final.motional.nbar[ANCHOR_MODE] < 1e-9
 
 
-def test_thermal_envelopes_and_debye_waller_references(anchor) -> None:  # type: ignore[no-untyped-def]
+def test_thermal_envelopes_and_debye_waller_references(anchor) -> None:
     """The first-order force on a thermal mode (nbar = 1) follows Kirchmair Eq. 14 to 3e-4, and the three thermal Debye-Waller
     references are 2, 3 and 4.25 in units of (pi^2/4) eta^4 at nbar = 1."""
     dev, modes = anchor
@@ -276,7 +276,7 @@ def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
                 ob = w * (tt / tau) * math.sin(math.pi * tt / tau) ** 2
                 return complex(eta * (s1 * oa + s2 * ob) * math.cos(mu * tt) * np.exp(-1j * omega * tt))
 
-            def coef_conj(tt: float, c=coef, **kwargs: object) -> complex:  # type: ignore[no-untyped-def]
+            def coef_conj(tt: float, c=coef, **kwargs: object) -> complex:
                 return complex(np.conj(c(tt)))
 
             h = qt.QobjEvo([[a, coef], [a.dag(), coef_conj]])
@@ -317,7 +317,7 @@ def test_symmetrized_kernel_is_exact_by_block_diagonal_integration() -> None:
     )
 
 
-def test_residual_displacement_conversions_by_direct_integration(anchor) -> None:  # type: ignore[no-untyped-def]
+def test_residual_displacement_conversions_by_direct_integration(anchor) -> None:
     """On an open loop (1.1 loops) of the first-order force the final <n> is eps_ent = sum |alpha|^2 to 1e-3, and 1 - F_ent from
     the four sigma_x inputs is the exact uniform-input form to 2e-4 and eps_ent to 10 %."""
     dev, modes = anchor
@@ -431,7 +431,7 @@ EPSILON_HZ = 10e3
 """The reference pulse's tones sit eps/2pi = 10 kHz inside the sideband, so one loop closes in 100 us."""
 
 
-def _single_mode_fixture():  # type: ignore[no-untyped-def]
+def _single_mode_fixture():
     """(device, drives, the one-mode GateModes of the x-COM, the closed-form pulse, the d_m = 12 space)."""
     device = chain_device(2)
     drives = raman_gate_drives(2)
@@ -453,7 +453,7 @@ def _single_mode_fixture():  # type: ignore[no-untyped-def]
     return device, drives, modes, waveform, space
 
 
-def _exact_play(builder: BuilderOptions):  # type: ignore[no-untyped-def]
+def _exact_play(builder: BuilderOptions):
     """The reference pulse calibrated exactly under ``builder`` and played once from |00> as one scheduled gate with the pair
     scheduler's spin phases: (device, modes, the calibrated waveform, the schedule, the infidelity to MS(0, 0, pi/2)|00>)."""
     device, drives, modes, waveform0, space = _single_mode_fixture()

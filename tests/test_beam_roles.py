@@ -77,7 +77,7 @@ def test_roles_are_validated_against_the_device() -> None:
 
 
 @pytest.mark.parametrize("build", [lambda: yb171_chain(2), lambda: yb171_chain(1), lambda: ca40_optical(1)])
-def test_each_preset_carries_its_drive_maps_as_roles(build) -> None:  # type: ignore[no-untyped-def]
+def test_each_preset_carries_its_drive_maps_as_roles(build) -> None:
     preset = build()
     dev = preset.device
     assert dev.roles == BeamRoles(
@@ -122,13 +122,13 @@ def test_the_level_decision_names_both_numbers_and_both_guards() -> None:
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     preset = yb171_chain(2)
     sur = two_ion_surrogate(2000)
     return preset, sur.table
 
 
-def test_a_bell_run_reports_its_level_and_why(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_bell_run_reports_its_level_and_why(two_ion) -> None:
     preset, table = two_ion
     new = run(BELL, preset.device, 400, table=table, numerics=FAST, seed=3)
     assert new.probabilities["00"] + new.probabilities["11"] > 0.98
@@ -139,7 +139,7 @@ def test_a_bell_run_reports_its_level_and_why(two_ion) -> None:  # type: ignore[
     assert f"joint dimension {new.diagnostics.space.dimension} <= joint_dimension_max = 4096" in reason
 
 
-def test_a_forced_level_reports_the_choice_auto_would_have_made(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_forced_level_reports_the_choice_auto_would_have_made(two_ion) -> None:
     preset, table = two_ion
     forced = run(
         Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,)),

@@ -25,7 +25,7 @@ SUBSET = load_openqasm2(
 SHOTS = 40
 
 
-def _job(circuit: Circuit):  # type: ignore[no-untyped-def]
+def _job(circuit: Circuit):
     # the app never runs fewer than two ions (Session.build_job): a one-qubit circuit lands on the two-ion chain
     return job_for_preset(
         "yb171_chain",
@@ -126,7 +126,7 @@ def test_results_land_after_progress_events(bell: tuple[Record, LiveRun]) -> Non
     record, live = bell
     key = record.key()
     session = Session(Store(), ProvenanceIndex.load())
-    session.worker = _FakeWorker()  # type: ignore[assignment]
+    session.worker = _FakeWorker()
     store = session.store
     store.records = {key: record}
     store.current = key
@@ -175,7 +175,7 @@ def test_a_dead_worker_fails_its_jobs_and_is_restarted() -> None:
         def poll(self, timeout_s: float = 0.0) -> list[Event]:
             return []
 
-    session.worker = _Dead()  # type: ignore[assignment]
+    session.worker = _Dead()
     assert not session.worker_died(), "no running job: nothing to report"
     store.jobs = {"t1": JobStatus("t1", "run_job"), "t0": JobStatus("t0", "zoom", done=True, stage="done")}
     assert session.worker_died()
@@ -239,7 +239,7 @@ def test_knob_overrides_outside_their_range_are_refused(bell: tuple[Record, Live
     with pytest.raises(knobs.KnobError, match="outside the knob's range"):
         knobs.validate({"detector.efficiency": 0.9}, device)
     with pytest.raises(knobs.KnobError, match="not a number"):
-        knobs.validate({"detector.efficiency": "high"}, device)  # type: ignore[dict-item]
+        knobs.validate({"detector.efficiency": "high"}, device)
     with pytest.raises(knobs.KnobError, match="unknown knob"):
         knobs.validate({"nonsense": 1.0}, device)
 

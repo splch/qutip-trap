@@ -46,7 +46,7 @@ from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
 from tests.fixtures import chain_device, single_ion_raman_device
 
 
-def _with(device, **noise_fields):  # type: ignore[no-untyped-def]
+def _with(device, **noise_fields):
     return dataclasses.replace(device, noise=dataclasses.replace(device.noise, **noise_fields))
 
 
@@ -351,18 +351,18 @@ def test_noise_rates_carry_provenance_and_the_model_says_how_many_apparatus() ->
 DURATION_S = 2e-6
 
 
-def _built(dev, sample):  # type: ignore[no-untyped-def]
+def _built(dev, sample):
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     space = HilbertSpace((2,), (), None, tuple(range(len(dev.crystal.modes))))
     pulse = Pulse(square_drive(dd, include_stark=False), 0.0, DURATION_S, "p", ())
     return build_hamiltonian(dev, (pulse,), space, sample=sample), space
 
 
-def _sigma_plus(built, space, t: float) -> complex:  # type: ignore[no-untyped-def]
+def _sigma_plus(built, space, t: float) -> complex:
     return complex(space.internal_ket([1]).dag() * built.H(t) * space.internal_ket([0]))
 
 
-def _grid(values0, values1):  # type: ignore[no-untyped-def]
+def _grid(values0, values1):
     times = np.linspace(0.0, DURATION_S, 65)
     return {
         key_beam_phase_trajectory_rad(0): Trajectory(

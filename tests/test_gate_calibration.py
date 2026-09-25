@@ -150,7 +150,7 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
     assert losses == sorted(losses)
 
 
-def _fock_check(dev, wf, drives, space, state, opts):  # type: ignore[no-untyped-def]
+def _fock_check(dev, wf, drives, space, state, opts):
     """The exact gate from an explicit joint state (a Fock input): populations, chi and leakage as exact_gate_check reads them."""
     sched = ms_schedule(wf, (0, 1), drives, table_with_waveform((0, 1), wf, rabi_hz=RABI, stark_hz=STARK))
     tr = JointExactEngine(builder_options=opts).run_pulses(

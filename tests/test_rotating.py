@@ -144,7 +144,7 @@ def test_phased_sum_equals_its_assembled_matrix_through_the_data_layer() -> None
 
 
 @pytest.fixture(scope="module")
-def ms_fixture():  # type: ignore[no-untyped-def]
+def ms_fixture():
     dev = chain_device(2)
     drives = raman_gate_drives(2)
     rabi, stark = derived_seeds(dev, drives)
@@ -156,7 +156,7 @@ def ms_fixture():  # type: ignore[no-untyped-def]
     return dev, sched, space
 
 
-def test_rotating_frame_of_the_real_hamiltonian_is_theta_dag_v_theta(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_rotating_frame_of_the_real_hamiltonian_is_theta_dag_v_theta(ms_fixture) -> None:
     dev, sched, space = ms_fixture
     pulses = list(sched.pulses)
     for kernel in ("factorized", "assembled"):
@@ -223,7 +223,7 @@ def test_rotating_frame_of_the_real_hamiltonian_is_theta_dag_v_theta(ms_fixture)
 # ---- the engine ----------------------------------------------------------------------------------------------------------------
 
 
-def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, monkeypatch) -> None:
     dev, sched, space = ms_fixture
     # mode 3 starts displaced (alpha = 0.5) so that <a_3> is not zero by the symmetry of the spin-dependent force and the
     # e^{-i omega_3 t} the engine restores on the way back from the frame is actually tested
@@ -265,7 +265,7 @@ def test_engine_rotating_frame_reproduces_the_schrodinger_picture(ms_fixture, mo
     assert traces[True].boundary_population.keys() == traces[False].boundary_population.keys()
 
 
-def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_fixture, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_engine_rotating_frame_on_the_trajectory_path_matches_per_trajectory(ms_fixture, monkeypatch) -> None:
     """With heating on the mcsolve path the frame's collapse operators carry e^{i lambda t}: three seeded trajectories jump alike
     (times to 1e-9) and end in the same ensemble (1e-6) in both pictures."""
     dev, sched, _space = ms_fixture

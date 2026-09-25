@@ -35,7 +35,7 @@ def _col(**kw: object) -> Collisions:
         "outcome_probabilities": dict(OUTCOMES),
     }
     base.update(kw)
-    return Collisions(**base)  # type: ignore[arg-type]
+    return Collisions(**base)
 
 
 def test_langevin_rate_at_1e_11_torr() -> None:

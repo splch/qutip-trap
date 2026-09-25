@@ -52,19 +52,19 @@ DETUNINGS = np.linspace(-3.2e6, 3.2e6, 9)
 
 
 @pytest.fixture(scope="module")
-def single():  # type: ignore[no-untyped-def]
+def single():
     dev = single_ion_raman_device()
     return dev, derive_raman_drive(dev, 0, (0, 1), scattering=False)
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     fx = yb171_chain(2)
     return fx, derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False)
 
 
 @pytest.fixture(scope="module")
-def machine(two_ion) -> Machine:  # type: ignore[no-untyped-def]
+def machine(two_ion) -> Machine:
     fx, _dd = two_ion
     return Machine(fx.device, numerics=FAST).calibrated(
         pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS
@@ -74,7 +74,7 @@ def machine(two_ion) -> Machine:  # type: ignore[no-untyped-def]
 # ---- Rabi, Ramsey and sideband spectroscopy (Sections 4.2.7, 7.9) -------------------------------------------------------------
 
 
-def test_rabi_scan_fits_the_rabi_frequency_and_the_thermal_occupation(single) -> None:  # type: ignore[no-untyped-def]
+def test_rabi_scan_fits_the_rabi_frequency_and_the_thermal_occupation(single) -> None:
     """The thermal Debye-Waller fit of Rabi flopping returns the carrier Rabi frequency to 1e-3, nbar = 0.6 to 0.05 and unit
     contrast, and its model matches the data to 5e-3."""
     dev, dd = single
@@ -89,7 +89,7 @@ def test_rabi_scan_fits_the_rabi_frequency_and_the_thermal_occupation(single) ->
     assert np.max(np.abs(model - res.data[:, 1])) < 5e-3
 
 
-def test_ramsey_fringe_and_ramsey_frequency_recover_the_detuning(single) -> None:  # type: ignore[no-untyped-def]
+def test_ramsey_fringe_and_ramsey_frequency_recover_the_detuning(single) -> None:
     dev, _dd = single
     delays = np.linspace(0.0, 2e-3, 9)
     res = ramsey(Machine(dev), 0, delays, detuning_hz=1000.0, include_stark=False)
@@ -119,7 +119,7 @@ def test_microwave_ramsey_frequency() -> None:
         rabi_scan(Machine(dev), 0, [0.0, 1e-6, 2e-6, 3e-6])
 
 
-def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(single) -> None:  # type: ignore[no-untyped-def]
+def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(single) -> None:
     """From n = 0 the blue sideband, found at 3.0 MHz to 10 kHz, flops above 0.9 while the red one stays below 1e-3."""
     dev, dd = single
     f, eta = dd.carrier_rabi_hz, dd.etas[1]
@@ -134,7 +134,7 @@ def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(sing
     assert blue > 0.9 and red < 1e-3
 
 
-def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequency_and_pi_time(single) -> None:  # type: ignore[no-untyped-def]
+def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequency_and_pi_time(single) -> None:
     """The fitted Omega of a noiseless carrier scan is the derived Omega times the n = 0 Debye-Waller factor e^{-eta^2/2} to
     2e-3 (and within five fit sigmas), and the pi time is pi/Omega."""
     dev, dd = single
@@ -153,7 +153,7 @@ def test_carrier_lineshape_on_the_exact_dynamics_gives_the_derived_rabi_frequenc
 
 def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_every_modes_debye_waller_factor(
     two_ion,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """With nbar fixed from thermometry the fit carries both x modes' Debye-Waller factors and returns the bare derived Omega
     within four sigmas (sigma < 1e-3 Omega) and unit contrast to 0.02."""
     fx, dd = two_ion
@@ -186,9 +186,9 @@ def test_the_machine_supplies_the_laboratory_defaults_and_an_unknown_keyword_rai
     )  # the call's keywords win
     assert _Lab.of(machine, {"options": None}).options is None  # None: the experiment's own defaults
     with pytest.raises(TypeError, match="shot"):
-        rabi_scan(machine, 0, DURATIONS, shot=5)  # type: ignore[call-arg]
+        rabi_scan(machine, 0, DURATIONS, shot=5)
     with pytest.raises(TypeError, match="numerics"):
-        stark_scan(machine, 0, np.linspace(0.0, 2e-3, 9), numerics=FAST)  # type: ignore[call-arg]
+        stark_scan(machine, 0, np.linspace(0.0, 2e-3, 9), numerics=FAST)
 
 
 EXPERIMENTS: dict[str, tuple[Any, type, str]] = {
@@ -213,14 +213,14 @@ EXPERIMENTS: dict[str, tuple[Any, type, str]] = {
 
 
 @pytest.mark.parametrize("name", sorted(EXPERIMENTS))
-def test_an_experiment_returns_its_typed_result_named_for_the_table(name: str, two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_an_experiment_returns_its_typed_result_named_for_the_table(name: str, two_ion) -> None:
     run, kind, experiment = EXPERIMENTS[name]
     res = run(Machine(two_ion[0].device))
     assert isinstance(res, kind) and res.experiment == experiment
     assert res.quality in ("good", "poor", "exact", "failed") and res.created_at
 
 
-def test_realized_equals_requested_on_ideal_hardware_and_moves_when_the_chain_quantises(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_realized_equals_requested_on_ideal_hardware_and_moves_when_the_chain_quantises(two_ion) -> None:
     fx = two_ion[0]
     ideal = rabi_scan(Machine(fx.device), 0, DURATIONS, seed=1)
     assert ideal.requested is not None and ideal.realized is not None
@@ -273,7 +273,7 @@ def test_detection_histogram_and_crystal_image_propose_what_they_measured(machin
     assert image.quality in ("good", "exact", "failed")
 
 
-def test_calibrate_returns_the_report(two_ion, machine: Machine) -> None:  # type: ignore[no-untyped-def]
+def test_calibrate_returns_the_report(two_ion, machine: Machine) -> None:
     scans: dict[str, Any] = {"pairs": [(0, 1)], "detection_records": 300, "detection_windows_s": WINDOWS}
     report = calibrate(Machine(two_ion[0].device, numerics=FAST), **scans)
     assert (
@@ -283,7 +283,7 @@ def test_calibrate_returns_the_report(two_ion, machine: Machine) -> None:  # typ
     assert report.sample.sample_id == 0
     assert all(v == 0.0 for v in report.surrogate_error().values())  # the surrogate against itself
     with pytest.raises(ValueError, match="closed_form"):
-        calibrate(machine, method="guess")  # type: ignore[arg-type]
+        calibrate(machine, method="guess")
     # the machine's t0_s is the calibration's default time
     late = dataclasses.replace(machine, physics=dataclasses.replace(machine.physics, t0_s=3.0))
     assert calibrate(late, **scans).table.fitted_at_s == pytest.approx(3.0)
@@ -293,7 +293,7 @@ def test_calibrate_returns_the_report(two_ion, machine: Machine) -> None:  # typ
 
 
 @pytest.mark.slow
-def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(single) -> None:  # type: ignore[no-untyped-def]
+def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(single) -> None:
     """The sideband ratio P_rsb/P_bsb = nbar/(nbar + 1) (Turchette) returns nbar = 0.3 to 2e-3 at every duration on a thermal
     state, and its shot-noise twin within four sigmas."""
     dev, _dd = single
@@ -308,7 +308,7 @@ def test_thermometry_is_exact_for_a_thermal_state_and_flags_a_non_thermal_one(si
 
 
 @pytest.mark.slow
-def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_uncertainty(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_mode_spectroscopy_recovers_the_mode_frequency_eta_and_nbar_within_its_uncertainty(two_ion) -> None:
     """On the two-ion COM mode the scan recovers the mode frequency (sigma < 450 Hz), |eta| from the sideband Rabi frequency and
     nbar from the sideband ratio, each within four sigmas."""
     fx, dd = two_ion
@@ -368,7 +368,7 @@ def test_sideband_calibrated_eta_carries_c0_and_a_carrier_derived_one_does_not()
 # loaded runner
 @pytest.mark.slow
 @pytest.mark.timeout(3600)
-def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # type: ignore[no-untyped-def]
+def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:
     """Through the engine's heating channels nbar grows linearly with the delay and the fit recovers Gamma_h to 3 % and
     nbar0 = 0.1 to 0.01, and its shot-noise twin Gamma_h within four sigmas."""
     dev, _dd = single
@@ -395,7 +395,7 @@ def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:  # ty
 # ---- the field, Stark and crosstalk scans (Section 7.5 items 7, 8, 9) -------------------------------------------------------
 
 
-def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:  # type: ignore[no-untyped-def]
+def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:
     """The Ramsey-frequency offset from a frame at nu(5.03 G), inverted through nu(B), recovers B = 5 G within four sigmas
     (sigma < 0.01 G; to 2e-5 G without shot noise) with d nu/dB = 3.1 kHz/G."""
     dev, _dd = single
@@ -416,7 +416,7 @@ def test_field_scan_inverts_the_zeeman_shift_for_the_field(single) -> None:  # t
     assert exact.fitted["B_gauss"][0] == pytest.approx(5.0, abs=2e-5)
 
 
-def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> None:
     """One beam on during the Ramsey delay measures that beam's differential light shift and the drive's shift is their sum,
     each equal to the derived one within four sigmas (sigma < 10 Hz)."""
     fx, dd = two_ion
@@ -441,7 +441,7 @@ def test_stark_scan_measures_each_beams_light_shift_and_their_sum(two_ion) -> No
         assert abs(shift - differential_stark_shift_hz(fx.device, 0, (b,))) < 4.0 * s
 
 
-def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> None:
     """The neighbour's Rabi rate under ion 0's beams gives the derived crosstalk ratio within four sigmas and, the wavefront
     being perpendicular to the chain, a zero crosstalk phase."""
     fx, dd = two_ion
@@ -513,7 +513,7 @@ def test_rf_photon_correlation_signal_is_odd_in_beta_and_nulls_the_stray_field()
         [dev.beams[k] for k in idx],
         position_m=tuple(float(x) for x in dev.crystal.positions_m[0]),
     )
-    omega_rf = dev.trap.rf.omega_rad_s  # type: ignore[union-attr]
+    omega_rf = dev.trap.rf.omega_rad_s
     signals = {}
     for beta in (-0.1, 0.1, 0.2):
         times, rates = periodic_scattering(model, idx.index(beam), beta * omega_rf, omega_rf, n_points=24)

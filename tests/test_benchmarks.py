@@ -60,7 +60,7 @@ from tests.fixtures import FAST, make_result, two_ion_surrogate
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     return Machine(yb171_chain(2).device, table=two_ion_surrogate(1000).table, numerics=FAST)
 
 

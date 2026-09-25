@@ -204,7 +204,7 @@ def test_amplitude_filter_function_dc_polygon_crossover_and_dc_floor() -> None:
     assert np.allclose(dc_polygon(prim), [math.pi, 0.0, 0.0])
 
     # the crossover above which the composite pulse hurts: 0.0702926 Omega for SK1, 0.132464 for BB1
-    def cross(segs):  # type: ignore[no-untyped-def]
+    def cross(segs):
         return brentq(
             lambda w: amplitude_filter_function(segs, np.array([w]))[0] - math.sin(w * math.pi / 2) ** 2,
             0.03,
@@ -287,7 +287,7 @@ def test_power_law_spectrum_is_infrared_divergent_for_the_hahn_echo() -> None:
     tau = 1e-3
     div = power_law_spectrum(1e-6, 1.0, 4.0, "u", omega_min_rad_s=1e-4, omega_max_rad_s=1e6)
 
-    def f_of(name: str, n: int):  # type: ignore[no-untyped-def]
+    def f_of(name: str, n: int):
         seq = (
             decoupling_sequence("custom", 0, tau, 0.0, centres=[])
             if n == 0
@@ -403,7 +403,7 @@ def test_dc_floor_order_is_channel_matched_not_the_pulses_own_order() -> None:
     def floor(family: str, quadrature: str) -> float:
         r = filter_function(
             dev, composite_pulse(family, math.pi), quadrature=quadrature, spectrum=spec, rabi_hz=RABI_HZ
-        )  # type: ignore[arg-type]
+        )
         return float(r.fitted["infidelity_dc"][0])
 
     prim_d = floor("primitive", "dephasing")
@@ -463,13 +463,13 @@ def test_reported_dc_floor_matches_the_exact_gaussian_frozen_average(
     dev, spec = microwave_device(), _slow_band()
     pulse = composite_pulse(family, math.pi)
     reported = float(
-        filter_function(dev, pulse, quadrature=quadrature, spectrum=spec, rabi_hz=RABI_HZ).fitted[  # type: ignore[arg-type]
+        filter_function(dev, pulse, quadrature=quadrature, spectrum=spec, rabi_hz=RABI_HZ).fitted[
             "infidelity_dc"
         ][0]
     )
     exact = frozen_noise_floor(
         composite_segments(pulse, 2.0 * math.pi * RABI_HZ), spec.variance(), quadrature
-    )  # type: ignore[arg-type]
+    )
     assert reported == pytest.approx(exact, rel=rel), (family, quadrature, reported, exact)
 
 

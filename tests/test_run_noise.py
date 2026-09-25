@@ -22,13 +22,13 @@ TORR_PA = 133.32236842105263
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     fx = yb171_chain(2)
     sur = two_ion_surrogate(1000)
     return fx, sur
 
 
-def _noisy(device, **fields):  # type: ignore[no-untyped-def]
+def _noisy(device, **fields):
     return dataclasses.replace(device, noise=dataclasses.replace(device.noise, **fields))
 
 
@@ -69,7 +69,7 @@ def test_effective_sample_size_weights_unequal_sample_sizes() -> None:
 
 
 @pytest.mark.slow
-def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample_size(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample_size(two_ion) -> None:
     """Field and Rabi drifts give two samples of 150 contiguous shots at the shot clock with different qubit offsets
     (conv.shot_blocks_per_sample), error bars from n_eff <= shots, and a run the same seed reproduces."""
     fx, sur = two_ion
@@ -79,7 +79,7 @@ def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample
         numerics=Numerics(branch_weight_min=1e-2, samples=2),
         keep_final_state=True,
     )
-    res = run(BELL, dev, 300, **kw)  # type: ignore[arg-type]
+    res = run(BELL, dev, 300, **kw)
     d = res.diagnostics
     assert d.samples == 2 and d.shots_per_sample == 150 and len(res.noise_samples) == 2
     assert res.noise_samples[1].t_s == pytest.approx(150 * d.wall_clock_span_s / 299.0, rel=1e-9)
@@ -91,13 +91,13 @@ def test_quasi_static_drift_gives_several_samples_and_a_reduced_effective_sample
         >= math.sqrt(res.probabilities["00"] * (1 - res.probabilities["00"]) / 300.0) * 0.999
     )
     assert any("dynamical samples" in a for a in d.approximations)
-    again = run(BELL, dev, 300, **kw)  # type: ignore[arg-type]
+    again = run(BELL, dev, 300, **kw)
     assert np.array_equal(again.bitstrings, res.bitstrings)
     assert res.probabilities["00"] + res.probabilities["11"] > 0.97
 
 
 @pytest.mark.slow
-def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_ion) -> None:
     """Uncorrelated field noise heats the resolved modes, the run takes the mcsolve trajectory path and says so, and the
     register fidelity stays within 5e-3 of the quiet run's."""
     fx, sur = two_ion
@@ -108,10 +108,10 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
         numerics=Numerics(branch_weight_min=1e-2, ntraj=3),
         keep_final_state=True,
     )
-    res = run(BELL, dev, 200, **kw)  # type: ignore[arg-type]
+    res = run(BELL, dev, 200, **kw)
     d = res.diagnostics
     assert d.trajectories >= 3 and any(a.startswith("noise:") and "mcsolve" in a for a in d.approximations)
-    quiet = run(BELL, fx.device, 200, **{**kw, "physics": Physics(noise=False)})  # type: ignore[arg-type]
+    quiet = run(BELL, fx.device, 200, **{**kw, "physics": Physics(noise=False)})
     assert abs(register_fidelity(res) - register_fidelity(quiet)) < 5e-3
     rec = last_record(res)
     assert all(t.final.joint is not None for t in rec.traces)
@@ -121,7 +121,7 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
 @pytest.mark.slow
 @pytest.mark.heavy
 @pytest.mark.timeout(3600)
-def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> None:
     fx, sur = two_ion
     # internal_levels = 3 turns the scattering channels on (conv.scattering_channels_at_d_gt_2) and dimension 1287 goes to
     # trajectories; eight per branch keep the test near three minutes, and the bounds are coarse enough for that count
@@ -132,7 +132,7 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
         keep_final_state=True,
         physics=Physics(internal_levels=3),
     )
-    res = run(BELL, fx.device, 200, **kw)  # type: ignore[arg-type]
+    res = run(BELL, fx.device, 200, **kw)
     d = res.diagnostics
     assert d.space.ion_dims == (3, 3) and res.final_state is not None and res.final_state.dims[0] == [3, 3]
     assert any("leakage levels" in a and "SINK" in a for a in d.approximations)
@@ -144,7 +144,7 @@ def test_leakage_levels_extend_the_register_and_the_readout_classes(two_ion) -> 
 
 
 @pytest.mark.slow
-def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:
     """At 3e-6 Torr collisions discard shots, herald cooling-stage kicks with their drawn energy, apply the configured
     reorder to RunState.order by parity and flag lost or dark ions in the heralds; the quiet device has none."""
     fx, sur = two_ion
@@ -159,7 +159,7 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
         table=sur.table,
         numerics=Numerics(branch_weight_min=1e-2),
     )
-    res = run(BELL, dev, 120, **kw)  # type: ignore[arg-type]
+    res = run(BELL, dev, 120, **kw)
     d = res.diagnostics
     assert res.discarded_shots > 0 and res.shots + res.discarded_shots == 120
     assert res.heralds.shape == (res.shots,) and int(np.sum(res.heralds & 1)) > 0
@@ -187,7 +187,7 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
     if res.run_state.dark or res.run_state.lost:
         assert int(np.sum(res.heralds & 2)) > 0
         assert any("nominal crystal" in a for a in d.approximations)
-    quiet = run(BELL, fx.device, 120, **kw)  # type: ignore[arg-type]
+    quiet = run(BELL, fx.device, 120, **kw)
     assert quiet.discarded_shots == 0 and not quiet.run_state.dark and quiet.heralds.sum() == 0
     assert quiet.run_state.order == tuple(range(2))
 

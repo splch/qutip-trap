@@ -40,7 +40,7 @@ MS = math.pi / 2.0
 
 
 @pytest.fixture(scope="module")
-def calibrated():  # type: ignore[no-untyped-def]
+def calibrated():
     """The two-mode AM gate, exactly calibrated to chi = pi/4, with its table, space and drives."""
     dev = chain_device(2)
     modes = two_ion_modes(dev)
@@ -56,7 +56,7 @@ def calibrated():  # type: ignore[no-untyped-def]
     return dev, modes, drives, space, table, run
 
 
-def _run_circuit(dev, table, space, ops, internal=(0, 0), **kw):  # type: ignore[no-untyped-def]
+def _run_circuit(dev, table, space, ops, internal=(0, 0), **kw):
     circ = Circuit(2, tuple(ops), (0, 1))
     sch = schedule(circ, dev, table, **kw)
     eng = JointExactEngine(table=table)
@@ -87,7 +87,7 @@ def _fidelity(
 KET00 = np.array([1.0, 0.0, 0.0, 0.0], dtype=complex)
 
 
-def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> None:
     """MS(phi_0, phi_1, pi/2) on |00> reproduces the native matrix to 1.1 times the spot check's infidelity at three phase pairs
     and overlaps the opposite sign by less than 0.02; a positive kernel plays pi on the second ion."""
     dev, _modes, _drives, space, table, run = calibrated
@@ -109,7 +109,7 @@ def test_ms_reproduces_the_native_matrix_for_arbitrary_phases(calibrated) -> Non
     assert chi_abs == pytest.approx(wf.chi_total_rad)
 
 
-def test_partial_angle_rescales_by_the_s_squared_law(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_partial_angle_rescales_by_the_s_squared_law(calibrated) -> None:
     """MS(0, 0, +-0.6) scales every amplitude by sqrt((theta/2)/chi) to 1e-12, gives P_11 = sin^2(theta/2) to 3e-3 and
     matches the native matrix above 0.995."""
     dev, _modes, _drives, space, table, _run = calibrated
@@ -131,7 +131,7 @@ def test_partial_angle_rescales_by_the_s_squared_law(calibrated) -> None:  # typ
     assert _fidelity(rho_n, native_ms(0.0, 0.0, -theta), KET00, sch_n.phase_frame) > 0.995
 
 
-def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:
     """ZZ(theta) = [GPi2(pi/2) (x) GPi2(pi/2)] XX(theta/2) [GPi2(3 pi/2) (x) GPi2(3 pi/2)] exactly, and the scheduled wrappers,
     ten MS segments and dead times reproduce ZZ(pi/2) to 2.6 times the spot check's infidelity."""
     w = np.kron(gpi2(math.pi / 2), gpi2(math.pi / 2))
@@ -166,7 +166,7 @@ def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:  # typ
     assert ms_start == pytest.approx(max(p.t_end_s for p in wrap) + dev.hardware.dead_time_s)
 
 
-def test_virtual_z_frame_carries_through_ms(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_virtual_z_frame_carries_through_ms(calibrated) -> None:
     """RZ(0.4) on ion 1 then MS(0, 0) plays MS(0, -theta)|00> up to the frame (to three times the spot check's infidelity),
     while MS(0, 0) RZ|00> without the frame overlaps it by cos^2(theta/2)."""
     dev, _modes, _drives, space, table, run = calibrated
@@ -193,7 +193,7 @@ def test_virtual_z_frame_carries_through_ms(calibrated) -> None:  # type: ignore
     assert _fidelity(rho, circuit_order, KET00, sch.phase_frame) > 1.0 - 3 * budget
 
 
-def test_scheduler_refusals_and_table_lookup(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_scheduler_refusals_and_table_lookup(calibrated) -> None:
     dev, modes, drives, _space, table, _run = calibrated
     empty = table_with_waveform((0, 1), Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=20e3))
 
@@ -228,7 +228,7 @@ def test_scheduler_refusals_and_table_lookup(calibrated) -> None:  # type: ignor
         LightShiftCouplings((-1.0, 0.0), 0.0, 1e9)
 
 
-def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:  # type: ignore[no-untyped-def]
+def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:
     dev, _modes, _drives, space, table, run = calibrated
     circ = load_ionq_json(
         {
@@ -254,7 +254,7 @@ def test_ionq_json_ms_schedules_with_the_waveform(calibrated) -> None:  # type: 
 
 
 @pytest.fixture(scope="module")
-def four_ion():  # type: ignore[no-untyped-def]
+def four_ion():
     """A four-ion chain with one calibrated symmetric waveform served for both disjoint pairs (0, 1) and (2, 3)."""
     preset = yb171_chain(4)
     fx = dataclasses.replace(preset, device=dataclasses.replace(preset.device, preparation=None))
@@ -270,14 +270,14 @@ def four_ion():  # type: ignore[no-untyped-def]
     return fx, table
 
 
-def _span(sch, gate_id_prefix: str) -> tuple[float, float]:  # type: ignore[no-untyped-def]
+def _span(sch, gate_id_prefix: str) -> tuple[float, float]:
     ps = [p for p in sch.pulses if (p.gate_id or "").startswith(gate_id_prefix)]
     assert ps, f"no pulses with gate id {gate_id_prefix!r}"
     return min(p.t_start_s for p in ps), max(p.t_end_s for p in ps)
 
 
 @pytest.mark.parametrize("parallel_addressing", [False, True])
-def test_two_ms_gates_on_disjoint_pairs_never_overlap(four_ion, parallel_addressing: bool) -> None:  # type: ignore[no-untyped-def]
+def test_two_ms_gates_on_disjoint_pairs_never_overlap(four_ion, parallel_addressing: bool) -> None:
     """Two MS gates on disjoint pairs run one after the other, separated by exactly the dead time, with or without parallel
     addressing."""
     fx, table = four_ion
@@ -303,7 +303,7 @@ def test_two_ms_gates_on_disjoint_pairs_never_overlap(four_ion, parallel_address
     assert {g.beams for g in sch.gates} == {(0, 1)}
 
 
-def test_parallel_addressing_overlaps_single_qubit_gates_but_the_serial_default_does_not(four_ion) -> None:  # type: ignore[no-untyped-def]
+def test_parallel_addressing_overlaps_single_qubit_gates_but_the_serial_default_does_not(four_ion) -> None:
     """Carrier pulses on distinct ions share one window when the hardware allows parallel addressing and are sequenced by the
     serial default."""
     fx, table = four_ion
@@ -319,7 +319,7 @@ def test_parallel_addressing_overlaps_single_qubit_gates_but_the_serial_default_
     assert a2 == b2, "distinct addressing beams play the two carrier pulses in the same window"
 
 
-def test_a_single_qubit_gate_after_an_ms_still_waits_for_it_under_parallel_addressing(four_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_single_qubit_gate_after_an_ms_still_waits_for_it_under_parallel_addressing(four_ion) -> None:
     """Under parallel addressing a carrier pulse on a gate ion waits for the MS it follows while a spectator's starts at
     t = 0."""
     fx, table = four_ion
@@ -344,7 +344,7 @@ def test_a_single_qubit_gate_after_an_ms_still_waits_for_it_under_parallel_addre
     assert spectator[0] == pytest.approx(0.0)
 
 
-def test_parallel_true_is_refused_when_the_device_model_does_not_allow_it(four_ion) -> None:  # type: ignore[no-untyped-def]
+def test_parallel_true_is_refused_when_the_device_model_does_not_allow_it(four_ion) -> None:
     """``parallel=True`` is refused on hardware without parallel addressing, and ``parallel=False`` is allowed on hardware
     with it."""
     fx, table = four_ion

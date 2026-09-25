@@ -65,7 +65,7 @@ from tests.fixtures import BELL, WINDOWS, make_device, single_ion_raman_device, 
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     fx = yb171_chain(2)
     sur = two_ion_surrogate(1000)
     return fx, sur
@@ -104,7 +104,7 @@ def test_sideband_lineshape_row_pi_time_half_depth_and_the_half_rabi_negative_co
 
 def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalibrated_rabi_entry(
     two_ion,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     fx, sur = two_ion
     rep = compile_report(BELL)
     sched = schedule(rep.circuit, fx.device, sur.table)
@@ -114,8 +114,8 @@ def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalib
     )
     for a, b in zip(sched.pulses, played.pulses):
         for ta, tb in zip(a.drive.tones, b.drive.tones):
-            assert float(tb.envelope_hz) == pytest.approx(float(ta.envelope_hz), rel=1e-12)  # type: ignore[arg-type]
-        assert float(b.drive.stark_shift_hz) == pytest.approx(float(a.drive.stark_shift_hz), rel=1e-9)  # type: ignore[arg-type]
+            assert float(tb.envelope_hz) == pytest.approx(float(ta.envelope_hz), rel=1e-12)
+        assert float(b.drive.stark_shift_hz) == pytest.approx(float(a.drive.stark_shift_hz), rel=1e-9)
         assert b.drive.crosstalk.keys() == a.drive.crosstalk.keys()
     assert not any("no usable Rabi entry" in n for n in notes)
     # a table whose Rabi belief for ion 0 is 1 % low plays 1 % MORE light than requested (Omega_true/Omega_table), and the light
@@ -139,17 +139,17 @@ def test_played_chain_is_the_identity_on_a_surrogate_table_and_scales_a_miscalib
     for a, b in single:
         assert float(b.drive.tones[0].envelope_hz) == pytest.approx(
             float(a.drive.tones[0].envelope_hz) / 0.99, rel=1e-9
-        )  # type: ignore[arg-type]
+        )
         derived = derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False)
         assert float(b.drive.stark_shift_hz) == pytest.approx(
             derived.stark_shift_hz * (float(b.drive.tones[0].envelope_hz) / derived.carrier_rabi_hz), rel=1e-9
-        )  # type: ignore[arg-type]
+        )
         assert abs(b.drive.crosstalk[1]) == pytest.approx(
             abs(crosstalk_ratios(fx.device, 0, fx.gate_drives[0].beams)[1])
         )
 
 
-def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -> None:
     """Every tone is detuned by the table's Stark shift for its amplitude (to 1e-9), both MS legs by the same amount, none with
     stark_compensation=False, and the crosstalk belief carries the table's phase."""
     fx, sur = two_ion
@@ -160,18 +160,18 @@ def test_scheduler_compensates_the_believed_stark_shift_on_every_tone(two_ion) -
         belief = p_on.drive.stark_shift_hz
         assert belief == p_off.drive.stark_shift_hz
         if len(p_on.drive.tones) == 1:
-            shift = float(belief)  # type: ignore[arg-type]
+            shift = float(belief)
             assert shift != 0.0
             assert float(p_on.drive.tones[0].detuning_hz) - float(
                 p_off.drive.tones[0].detuning_hz
-            ) == pytest.approx(shift, rel=1e-9)  # type: ignore[arg-type]
+            ) == pytest.approx(shift, rel=1e-9)
         else:
             shifts = [
                 float(a.detuning_hz) - float(b.detuning_hz)
                 for a, b in zip(p_on.drive.tones, p_off.drive.tones)
-            ]  # type: ignore[arg-type]
+            ]
             assert shifts[0] == pytest.approx(shifts[1], rel=1e-9) and shifts[0] != 0.0
-            assert shifts[0] == pytest.approx(float(belief), rel=1e-9)  # type: ignore[arg-type]
+            assert shifts[0] == pytest.approx(float(belief), rel=1e-9)
     # the crosstalk belief carries a phase when the table has one
     table = dataclasses.replace(
         sur.table,
@@ -218,7 +218,7 @@ def test_servo_high_passes_a_slow_drift_into_its_residual_band() -> None:
 # ---- the cache ------------------------------------------------------------------------------------------------------------------------
 
 
-def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion) -> None:
     fx, _sur = two_ion
     cache = CalibrationCache()
     kw = dict(
@@ -227,8 +227,8 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
         detection_windows_s=(20e-6,),
         spot_check=False,
     )
-    t1 = calibrate(Machine(fx.device), cache=cache, **kw).table  # type: ignore[arg-type]
-    t2 = calibrate(Machine(fx.device), cache=cache, **kw).table  # type: ignore[arg-type]
+    t1 = calibrate(Machine(fx.device), cache=cache, **kw).table
+    t2 = calibrate(Machine(fx.device), cache=cache, **kw).table
     assert t1 is t2 and len(cache.reports) == 1
     assert t1.is_current_for(fx.device.hash())
     changed = dataclasses.replace(
@@ -236,7 +236,7 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
         beams=fx.device.beams[:-1]
         + (dataclasses.replace(fx.device.beams[-1], power_w=fx.device.beams[-1].power_w * 1.1),),
     )
-    t3 = calibrate(Machine(changed), cache=cache, **kw).table  # type: ignore[arg-type]
+    t3 = calibrate(Machine(changed), cache=cache, **kw).table
     assert t3 is not t1 and not t1.is_current_for(changed.hash()) and t3.is_current_for(changed.hash())
     assert calibrate(Machine(changed), cache=cache, **kw).table is t3 and len(cache.reports) == 2
     # the roles are not in the device hash but they are in the key: another entangling assignment is another table
@@ -249,7 +249,7 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
 # ---- the dependency graph ---------------------------------------------------------------------------------------------------------------
 
 
-def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_ion) -> None:
     fx, sur = two_ion
     bad = dataclasses.replace(
         sur.table,
@@ -293,7 +293,7 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
 # ---- the crystal image --------------------------------------------------------------------------------------------------------------
 
 
-def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:
     fx, _sur = two_ion
     img = crystal_image(Machine(fx.device), shots=1)
     assert img.converged and img.fitted["n_bright"][0] == 2.0 and img.fitted["n_dark"][0] == 0.0
@@ -310,7 +310,7 @@ def test_crystal_image_sees_the_nominal_chain_and_a_dark_ion(two_ion) -> None:  
 # ---- Device.derived() -----------------------------------------------------------------------------------------------------------------
 
 
-def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -> None:
     fx, sur = two_ion
     ledger = load_ledger()
     d = fx.device.derived()
@@ -346,7 +346,7 @@ def test_device_derived_reports_the_calibration_seeds_with_ledger_ids(two_ion) -
 # ---- the phase reference of a compensation detuning ---------------------------------------------------------------------------------
 
 
-def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_inside_a_gate(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_inside_a_gate(two_ion) -> None:
     """Every compensated tone carries compensation_phase_rad = 2 pi delta_s t_s at its own start (to 1e-12), minus the frame the
     gate's earlier segments accumulated, so a GPi2 at t = 1 ms keeps its t = 0 fidelity to 1e-6 where the uncorrected axis
     error would exceed 1e-2."""
@@ -372,14 +372,14 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
     assert wf is not None and len(wf.segments) > 1
     spins, _ = ms_spin_phases(wf, (0, 1), (math.pi, 0.0), PhaseFrame())
     kw = dict(spin_phases_rad=spins, t_start_s=t_s, table=table, gate_id="ms")
-    on = entangling_pulses(wf, fx.entangling_drives, **kw)  # type: ignore[arg-type]
-    off = entangling_pulses(wf, fx.entangling_drives, stark_compensation=False, **kw)  # type: ignore[arg-type]
+    on = entangling_pulses(wf, fx.entangling_drives, **kw)
+    off = entangling_pulses(wf, fx.entangling_drives, stark_compensation=False, **kw)
     accumulated = {0: 0.0, 1: 0.0}
     distinct = set()
     for p_on, p_off in zip(on, off):
         ion = p_on.drive.ions[0]
         delta = p_on.drive.stark_shift_hz
-        distinct.add(round(float(delta), 6))  # type: ignore[arg-type]
+        distinct.add(round(float(delta), 6))
         expected = compensation_phase_rad(delta, p_on.t_start_s) - accumulated[ion]
         for a, b in zip(p_on.drive.tones, p_off.drive.tones):
             assert wrapped(float(a.phase_rad) - float(b.phase_rad) - expected) == pytest.approx(

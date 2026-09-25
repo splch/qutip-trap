@@ -45,7 +45,7 @@ FAST = Numerics(branch_weight_min=1e-3)
 
 
 @pytest.fixture(scope="module")
-def two_ion():  # type: ignore[no-untyped-def]
+def two_ion():
     fx = yb171_chain(2)
     sur = two_ion_surrogate(1000)
     kw = dict(
@@ -56,12 +56,12 @@ def two_ion():  # type: ignore[no-untyped-def]
     return fx, sur, kw
 
 
-def _populations(res) -> np.ndarray:  # type: ignore[no-untyped-def]
+def _populations(res) -> np.ndarray:
     assert res.final_state is not None
     return np.real(np.diag(np.asarray(res.final_state.full())))
 
 
-def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None:
     """Every pulse lies in exactly one gate step, the steps alternate with the dead-time idles, every GateTarget's pulses lie in one
     step, and the entangling gate as played is attached to its step."""
     fx, sur, _kw = two_ion
@@ -83,7 +83,7 @@ def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None
     assert steps[-1].t_end_s == pytest.approx(sched.pulses_end_s)
 
 
-def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> None:
     """A GPi2 with crosstalk through GATE_LOCAL (propagator route, every mode frozen) reproduces the JOINT_EXACT register to 1e-7
     with a CPTP map at the crosstalk scale and the reported bound terms, and a second run is served from the caches."""
     fx, sur, kw = two_ion
@@ -94,8 +94,8 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
         **kw,
         "numerics": Numerics(branch_weight_min=1e-9, tomography_dropped_weight_max=0.0),
     }
-    a = run(GPI2, fx.device, 100, level="JOINT_EXACT", **exact)  # type: ignore[arg-type]
-    b = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)  # type: ignore[arg-type]
+    a = run(GPI2, fx.device, 100, level="JOINT_EXACT", **exact)
+    b = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)
     assert a.diagnostics.level == "JOINT_EXACT" and b.diagnostics.level == "GATE_LOCAL"
     assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-7
     gl = b.diagnostics.gate_local
@@ -136,7 +136,7 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
         b.probabilities.keys() <= {"00", "01", "10", "11"}
         and abs(register_fidelity(a) - register_fidelity(b)) < 1e-7
     )
-    c = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)  # type: ignore[arg-type]
+    c = run(GPI2, fx.device, 100, level="GATE_LOCAL", **exact)
     assert c.diagnostics.gate_local is not None and c.diagnostics.gate_local.cache_hits >= 1
     assert c.diagnostics.gate_local.idle_cache_hits == 2 and c.diagnostics.gate_local.engine_runs == 0
     assert [st.cache_hit for st in c.diagnostics.gate_local.steps] == [True, True]
@@ -146,12 +146,12 @@ def test_single_qubit_gate_matches_joint_exact_to_solver_tolerance(two_ion) -> N
 
 
 @pytest.mark.slow
-def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(two_ion) -> None:
     """Section 9.8: the Bell circuit through GATE_LOCAL agrees with JOINT_EXACT within the reported bound, tracks the joint run's
     nbar to 5%, and its MS step is TP to 1e-10 with an infidelity inside the intrinsic budget."""
     fx, sur, kw = two_ion
-    a = run(BELL, fx.device, 300, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
-    b = run(BELL, fx.device, 300, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    a = run(BELL, fx.device, 300, level="JOINT_EXACT", **kw)
+    b = run(BELL, fx.device, 300, level="GATE_LOCAL", **kw)
     pa, pb = _populations(a), _populations(b)
     gl = b.diagnostics.gate_local
     assert gl is not None
@@ -212,13 +212,13 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
         )
 
 
-def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_ion) -> None:
     """With ``register_dm_max_qubits = 1`` the register is a 24-member Kraus-sampled ensemble whose GPi2 histogram matches the
     density matrix's within 0.12."""
     fx, sur, kw = two_ion
     opts = Numerics(branch_weight_min=1e-3, register_dm_max_qubits=1, register_ensemble=24)
-    b = run(GPI2, fx.device, 240, level="GATE_LOCAL", **{**kw, "numerics": opts})  # type: ignore[arg-type]
-    a = run(GPI2, fx.device, 240, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    b = run(GPI2, fx.device, 240, level="GATE_LOCAL", **{**kw, "numerics": opts})
+    a = run(GPI2, fx.device, 240, level="GATE_LOCAL", **kw)
     gl = b.diagnostics.gate_local
     assert gl is not None and gl.register == "ensemble" and gl.ensemble_size == 24
     assert b.final_state is None and any("Kraus sampling" in n for n in b.diagnostics.approximations)
@@ -268,11 +268,11 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
     )
 
 
-def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) -> None:
     """Every step reports the register after it and the channels it applied; a step's channels on the previous register give its
     own to 1e-10, and the last equals the run's recombined register."""
     fx, _sur, kw = two_ion
-    rec = last_record(run(BELL, fx.device, 100, level="GATE_LOCAL", **kw))  # type: ignore[arg-type]
+    rec = last_record(run(BELL, fx.device, 100, level="GATE_LOCAL", **kw))
     assert rec.gate_local is not None
     steps = rec.gate_local.steps
     assert steps and 4 <= REGISTER_STORE_DIM_MAX
@@ -297,7 +297,7 @@ def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) ->
     assert np.max(np.abs(steps[-1].register_after - np.asarray(rec.register_state.full()))) < 1e-10
 
 
-def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:  # type: ignore[no-untyped-def]
+def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:
     """A 400 Hz qubit offset over an idle makes the one-qubit channel the single Kraus operator e^{-i pi delta t sigma_z} (to
     1e-7, one exact segment) with infidelity below 1e-10."""
     fx, _sur, _kw = two_ion
@@ -321,7 +321,7 @@ def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:
     assert rec.summary(ideal).average_gate_infidelity < 1e-10
 
 
-def _compare_levels(a, b):  # type: ignore[no-untyped-def]
+def _compare_levels(a, b):
     """Section 9.8 rows 1 and 2 on a JOINT_EXACT run ``a`` and a GATE_LOCAL run ``b`` of one circuit: the final register
     populations agree within the bound GATE_LOCAL reports plus the initial-mixture weight JOINT_EXACT dropped (no other
     slack), and the tracked occupation after every entangling step is the joint run's branch-weighted reduced state at that
@@ -370,8 +370,8 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
         keep_final_state=True,
         numerics=Numerics(branch_weight_min=1e-2),
     )
-    a = run(ghz, fx.device, 500, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
-    b = run(ghz, fx.device, 500, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    a = run(ghz, fx.device, 500, level="JOINT_EXACT", **kw)
+    b = run(ghz, fx.device, 500, level="GATE_LOCAL", **kw)
     _bound, ms_steps = _compare_levels(a, b)
     assert len(ms_steps) == 2 and all(s.ions in ((0, 1), (1, 2), (0, 1, 2)) for s in ms_steps)
     assert b.probabilities.get("000", 0.0) + b.probabilities.get("111", 0.0) > 0.9
@@ -415,8 +415,8 @@ def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
         numerics=dataclasses.replace(opts, caps={7: 12}),
         seed=3,
     )
-    a = run(GHZ4, fx.device, 200, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
-    b = run(GHZ4, fx.device, 200, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    a = run(GHZ4, fx.device, 200, level="JOINT_EXACT", **kw)
+    b = run(GHZ4, fx.device, 200, level="GATE_LOCAL", **kw)
     assert a.diagnostics.space.dimension == 192
     assert tuple(a.diagnostics.mode_class[m] for m in resolved) == ("resolved",) * len(resolved)
     _bound, ms_steps = _compare_levels(a, b)
@@ -455,7 +455,7 @@ def test_register_marginal_is_the_partial_trace_in_the_requested_factor_order() 
 
 def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_the_walk(
     two_ion, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """Three equal idles cost two channel extractions and four cache hits with one engine per walk, defeating the cache changes
     the register by under 1e-14, and the key ignores the idle's position unless a fast trajectory makes it matter."""
     fx, sur, kw = two_ion
@@ -467,14 +467,14 @@ def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_
     built = 0
     original = EngineSetup.engine
 
-    def counting(self):  # type: ignore[no-untyped-def]
+    def counting(self):
         nonlocal built
         built += 1
         return original(self)
 
     monkeypatch.setattr(EngineSetup, "engine", counting)
     clear_gate_local_cache()
-    a = run(circ, fx.device, 120, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    a = run(circ, fx.device, 120, level="GATE_LOCAL", **kw)
     gl = a.diagnostics.gate_local
     assert gl is not None and built == 1, "one JOINT_EXACT engine per walk"
     idles = [s for s in gl.steps if s.kind == "idle"]
@@ -487,7 +487,7 @@ def test_idle_channels_are_cached_across_equal_dead_times_and_one_engine_serves_
     runs_cached = gl.engine_runs
     monkeypatch.setattr(gate_local, "_idle_key", lambda *args, **kwargs: uuid.uuid4().hex)
     clear_gate_local_cache()
-    b = run(circ, fx.device, 120, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    b = run(circ, fx.device, 120, level="GATE_LOCAL", **kw)
     gl_b = b.diagnostics.gate_local
     assert gl_b is not None and gl_b.idle_cache_hits == 0 and gl_b.engine_runs == runs_cached + 4
     assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-14

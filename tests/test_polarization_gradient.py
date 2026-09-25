@@ -107,7 +107,7 @@ def test_minimal_kernel_weights_have_unit_norm_and_the_printed_coherent_sum_fail
         assert float(np.sum(p)) ** 2 == pytest.approx(coherent, abs=1e-6)
 
 
-def _ca_model(f_mode_hz: float, delta_hz: float, xi_target: float, phase: float = 0.0):  # type: ignore[no-untyped-def]
+def _ca_model(f_mode_hz: float, delta_hz: float, xi_target: float, phase: float = 0.0):
     ca = species("40Ca+")
     st = AtomicStructure(ca, 1e-6, (0.0, 0.0, 1.0))
     line = ca.transition("S1/2-P1/2")

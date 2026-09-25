@@ -16,7 +16,7 @@ NU_QUOTED_HZ = 1.82e12  # Kreuter's rounded frequency of the 3d 2D5/2 - 2D3/2 li
 
 
 @pytest.fixture(scope="module")
-def ca40():  # type: ignore[no-untyped-def]
+def ca40():
     return species("40Ca+")
 
 
@@ -32,7 +32,7 @@ def test_blackbody_mixing_rate() -> None:
     assert down_299 == pytest.approx(7.2297e-6, rel=1e-4)
 
 
-def test_bbr_rate_from_the_species_table(ca40) -> None:  # type: ignore[no-untyped-def]
+def test_bbr_rate_from_the_species_table(ca40) -> None:
     """The 40Ca+ D3/2-D5/2 M1 line at 1.8194 THz gives W12 = 7.249e-6 s^-1 at 300 K, 8.47e-6 of the natural rate (1e-3),
     zero with the channel off, and the D5/2 branchings still sum to one (1e-15)."""
     ch = MetastableChannels(bbr_temperature_k=300.0)
@@ -53,7 +53,7 @@ def test_bbr_rate_from_the_species_table(ca40) -> None:  # type: ignore[no-untyp
     )
 
 
-def test_collision_rate_construction(ca40) -> None:  # type: ignore[no-untyped-def]
+def test_collision_rate_construction(ca40) -> None:
     """At 2e-11 mbar of H2 and N2 (2.4143e5 cm^-3 each at 300 K) the shelf collision rates are R^q = 5.00e-5 and
     R^j = 3.86e-4 s^-1 (2e-3), 1.45 times the source's '< 3e-4', and they scale with the density."""
     ch = MetastableChannels(
@@ -86,7 +86,7 @@ def test_collision_rate_construction(ca40) -> None:  # type: ignore[no-untyped-d
     assert MetastableChannels().collision_rates_hz(ca40) == {"quench": 0.0, "j_mix": 0.0}
 
 
-def test_uncited_partner_or_species_raises_rather_than_defaulting(ca40) -> None:  # type: ignore[no-untyped-def]
+def test_uncited_partner_or_species_raises_rather_than_defaulting(ca40) -> None:
     with pytest.raises(LookupError, match="He"):
         MetastableChannels(pressure_mbar=1e-11, gas_fractions={"He": 1.0}).collision_rates_hz(ca40)
     with pytest.raises(LookupError, match="171Yb"):
@@ -107,7 +107,7 @@ def test_reshelving_offset() -> None:
     assert MetastableChannels().reshelving_offset(1.168) == 0.0
 
 
-def test_shelf_loss_rates_and_effective_lifetime(ca40) -> None:  # type: ignore[no-untyped-def]
+def test_shelf_loss_rates_and_effective_lifetime(ca40) -> None:
     """With every channel on the D5/2 shelf empties at 1/tau + R_q + R_j + W12 and D3/2 sees the upward W12, the
     effective lifetime following to 1e-9."""
     ch = MetastableChannels(

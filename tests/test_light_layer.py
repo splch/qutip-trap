@@ -129,7 +129,7 @@ def test_stark_shift_is_the_differential_light_shift() -> None:
     drive = square_drive(dd, detuning_hz=1e3, phase_rad=0.2)
     assert drive.stark_shift_hz == pytest.approx(dd.stark_shift_hz)
     assert drive.tones[0].detuning_hz == 1e3 and drive.tones[0].phase_rad == 0.2
-    assert float(drive.tones[0].envelope_hz) == pytest.approx(dd.carrier_rabi_hz)  # type: ignore[arg-type]
+    assert float(drive.tones[0].envelope_hz) == pytest.approx(dd.carrier_rabi_hz)
     assert square_drive(dd, include_stark=False).stark_shift_hz == 0.0
 
 

@@ -265,7 +265,7 @@ def test_superoperator_kraus_application_matches_the_per_operator_sum_with_a_per
 
 
 @pytest.fixture(scope="module")
-def one_mode_entangling():  # type: ignore[no-untyped-def]
+def one_mode_entangling():
     """A 10 us single-loop entangling pulse on the two-ion chain with the x-COM resolved at d = 15 and the stretch mode frozen but
     coupled, so the thermal input makes three motional branches at nbar = 0.05 (weight floor 0.02). The cap has headroom on
     both routes: at d = 13 the sixteen-input route's superpositions trip the Section 5.5 margin check one level above the basis
@@ -284,7 +284,7 @@ def one_mode_entangling():  # type: ignore[no-untyped-def]
     return dev, sched, space, model
 
 
-def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_entangling, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_isometry_route_matches_the_state_route_on_a_resolved_space(one_mode_entangling, monkeypatch) -> None:
     """The isometry route (four basis kets per branch) matches the sixteen-input state route on one space to 1e-7 in the Choi
     matrices, outputs, motional states and displacements with a quarter of the runs, its raw Choi CP to 1e-12 and TP to 1e-6."""
     dev, sched, space, model = one_mode_entangling
@@ -410,7 +410,7 @@ def test_keyed_tolerances_follow_the_map_accuracy_and_never_override_a_chosen_to
 
 def test_keyed_tolerance_is_reported_with_its_convergence_change_and_stays_inside_the_map_accuracy(
     one_mode_entangling,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """The default extraction runs at the keyed tolerances (1e-8, 1e-6), reports the dominant branch's change under ten-fold
     tightening (below 2.5e-4), agrees with the engine-tolerance extraction to 1e-4 and reports the tail rule's 2w."""
     dev, sched, space, model = one_mode_entangling

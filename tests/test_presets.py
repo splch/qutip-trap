@@ -147,7 +147,7 @@ def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() 
 @pytest.mark.parametrize(
     "make", [lambda: yb171_chain(2), lambda: ca40_optical(1)], ids=["yb171_chain(2)", "ca40_optical(1)"]
 )
-def test_the_device_round_trip_is_exact(make) -> None:  # type: ignore[no-untyped-def]
+def test_the_device_round_trip_is_exact(make) -> None:
     device = make().device
     record = device.to_dict()
     assert record["schema_version"] == 1 and record["device_hash"] == device.hash() and "device" in record

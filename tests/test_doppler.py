@@ -56,11 +56,11 @@ def sigma_plus_along(
     """A sigma+ beam propagating along B = k_hat (pure helicity about the field) with Rabi frequency ``omega`` on the closed line."""
     _e_minus, _e_zero, e_plus = spherical_basis(k_hat)
     pol = tuple(complex(x) for x in e_plus)
-    power = power_for_rabi(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, omega, waist_m, pol, k_hat)  # type: ignore[arg-type]
+    power = power_for_rabi(st, TWO_LEVEL_GROUND, TWO_LEVEL_EXCITED_PLUS, omega, waist_m, pol, k_hat)
     omega_l = (
         TWO_PI * (st.state(TWO_LEVEL_EXCITED_PLUS).energy_hz - st.state(TWO_LEVEL_GROUND).energy_hz) + delta
     )
-    return Beam(TWO_PI * C_M_PER_S / omega_l, k_hat, pol, waist_m, power, (0.0, 0.0, 0.0))  # type: ignore[arg-type]
+    return Beam(TWO_PI * C_M_PER_S / omega_l, k_hat, pol, waist_m, power, (0.0, 0.0, 0.0))
 
 
 def test_doppler_stage_reproduces_the_rate_framework_limit_on_every_mode_and_the_force_model_cross_check() -> (
@@ -138,7 +138,7 @@ def test_optimum_detuning_of_a_low_frequency_mode_is_minus_half_the_linewidth() 
     st = structure(sp, b_hat=OBLIQUE)
     beams = [sigma_plus_along(st, OBLIQUE, 0.05 * g, -0.5 * g)]
 
-    def evaluate(offset: float):  # type: ignore[no-untyped-def]
+    def evaluate(offset: float):
         return doppler_cooling(st, with_detuning_offset(beams, [0], offset), crystal, weights={0: 1.0})
 
     offset, best = optimize_detuning(evaluate, (-0.8 * g, 0.4 * g), tolerance_rad_s=1e-3 * g)

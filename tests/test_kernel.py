@@ -174,7 +174,7 @@ def test_cost_model_reproduces_the_measured_crossover_of_section_11_1() -> None:
 
 
 @pytest.fixture(scope="module")
-def ms_fixture():  # type: ignore[no-untyped-def]
+def ms_fixture():
     """The two-ion 171Yb+ fixture with a 20 us single-loop symmetric pulse on the x-COM (eps = 50 kHz), the Bell caps."""
     dev = chain_device(2)
     drives = raman_gate_drives(2)
@@ -187,7 +187,7 @@ def ms_fixture():  # type: ignore[no-untyped-def]
     return dev, drives, sched, space, table
 
 
-def test_builder_kernel_option_auto_rule_and_report(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_builder_kernel_option_auto_rule_and_report(ms_fixture) -> None:
     dev, _drives, sched, space, _table = ms_fixture
     pulses = list(sched.pulses)
     built = {
@@ -250,7 +250,7 @@ def test_builder_kernel_option_auto_rule_and_report(ms_fixture) -> None:  # type
 # ---- the engine ------------------------------------------------------------------------------------------------------------------
 
 
-def test_engine_factorized_and_assembled_kernels_give_the_same_entangling_pulse(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_engine_factorized_and_assembled_kernels_give_the_same_entangling_pulse(ms_fixture) -> None:
     """The 20 us MS pulse with the kernel forced each way gives final states equal to 1e-9 and reports that name the kernel;
     ``auto`` picks factorized."""
     dev, _drives, sched, space, _table = ms_fixture
@@ -273,7 +273,7 @@ def test_engine_factorized_and_assembled_kernels_give_the_same_entangling_pulse(
     )
 
 
-def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixture) -> None:
     """With heating a forced-factorized mesolve segment assembles and mcsolve keeps the factorized kernel, whose three seeded
     trajectories match the assembled ones (jumps, states to 1e-8) on a 64-dimensional space with a loose boundary threshold."""
     dev, _drives, sched, _space, _table = ms_fixture
@@ -329,7 +329,7 @@ def test_mesolve_segments_assemble_while_trajectory_segments_factorize(ms_fixtur
     assert (finals["assembled"][2] - finals["factorized"][2]).norm() < 1e-8
 
 
-def test_the_real_builders_qobjevo_pickles_and_mcsolve_runs_it_under_the_parallel_map(ms_fixture) -> None:  # type: ignore[no-untyped-def]
+def test_the_real_builders_qobjevo_pickles_and_mcsolve_runs_it_under_the_parallel_map(ms_fixture) -> None:
     """The real builder's factorized ``QobjEvo`` with filtered envelopes and an intensity trajectory evaluates identically after
     pickling, and ``mcsolve`` under ``map="parallel"`` reproduces the serial trajectories to 1e-14."""
     dev, _drives, sched, space, _table = ms_fixture

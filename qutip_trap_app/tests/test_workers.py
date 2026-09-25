@@ -10,7 +10,7 @@ from qutip_trap_app.workers import Event, SimulationWorker, WorkerError
 
 
 @pytest.fixture(scope="module")
-def worker():  # type: ignore[no-untyped-def]
+def worker():
     w = SimulationWorker()
     w.start()
     yield w

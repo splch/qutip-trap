@@ -43,19 +43,19 @@ WX = TWO_PI * 3.0e6
 
 
 @pytest.fixture(scope="module")
-def raman():  # type: ignore[no-untyped-def]
+def raman():
     dev = single_ion_raman_device()
     dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     space = HilbertSpace((2,), (ModeTruncation(KX, 12, (0, 6), 0.2),), None, (0, 2))
     return dev, dd, space
 
 
-def _run(dev, sched, state, space, opts=None, **engine_kw):  # type: ignore[no-untyped-def]
+def _run(dev, sched, state, space, opts=None, **engine_kw):
     eng = JointExactEngine(store_per_segment=4, hardware_chain=False, **engine_kw)
     return eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(0), opts or Numerics()), eng
 
 
-def _heated(dev):  # type: ignore[no-untyped-def]
+def _heated(dev):
     return dataclasses.replace(
         dev,
         noise=dataclasses.replace(
@@ -64,7 +64,7 @@ def _heated(dev):  # type: ignore[no-untyped-def]
     )
 
 
-def test_idle_and_zero_envelope_segments_are_the_exact_propagator(raman) -> None:  # type: ignore[no-untyped-def]
+def test_idle_and_zero_envelope_segments_are_the_exact_propagator(raman) -> None:
     """A 300 us idle and a zero-envelope Stark probe between two pi/2 pulses integrate as ``exact``, hold P1 to 1e-12 and give
     e^{-iH tau} of the builder's constant Hamiltonian to 1e-10."""
     dev, dd, space = raman
@@ -107,7 +107,7 @@ def test_a_ramsey_scan_with_millisecond_delays_costs_milliseconds() -> None:
     )
 
 
-def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -> None:  # type: ignore[no-untyped-def]
+def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -> None:
     """A heated idle integrates in the frame rotating with H_mot and matches the Schroedinger-picture master equation (state to
     1e-6, P1 and n to 1e-7) while the mode heats."""
     dev, dd, space = raman
@@ -144,7 +144,7 @@ def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -
     )
 
 
-def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(raman) -> None:  # type: ignore[no-untyped-def]
+def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(raman) -> None:
     """A thermal mode under a carrier pulse evolves as sesolve eigen-branches that reproduce the master equation (P1 and state to
     1e-6, n to 1e-5) and drop weight below the threshold with a note; a heated mixture keeps mesolve."""
     dev, dd, space = raman
@@ -188,7 +188,7 @@ def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(rama
     assert eng_c.last_report.method == "mesolve" and eng_c.last_report.trajectories == 1
 
 
-def test_drive_coefficients_are_the_plans_tone_sum(raman) -> None:  # type: ignore[no-untyped-def]
+def test_drive_coefficients_are_the_plans_tone_sum(raman) -> None:
     """The plain and conjugate drive terms carry (1/2) Omega e^{-i(mu t - phi)} times the static factors to 1e-12, and every
     interaction-picture sideband term has the same modulus."""
     dev, dd, space = raman
@@ -206,7 +206,7 @@ def test_drive_coefficients_are_the_plans_tone_sum(raman) -> None:  # type: igno
                 * math.pi
                 * float(tone.envelope_hz)
                 * np.exp(-1j * (2.0 * math.pi * float(tone.detuning_hz) * t - float(tone.phase_rad)))
-            )  # type: ignore[arg-type]
+            )
             ref *= rec.debye_waller * rec.carrier_factor
             if bopts.frame == "schrodinger":
                 assert len(pairs) == 2
@@ -250,7 +250,7 @@ def test_simultaneous_pulses_of_unequal_length_are_integrated_segment_by_segment
 # ---- tolerance convergence and the integrator ladder (Sections 5.3, 5.5) -----------------------------------------------------
 
 
-def _runner(dev, drive, t_end, space, n0=0):  # type: ignore[no-untyped-def]
+def _runner(dev, drive, t_end, space, n0=0):
     """A closure that integrates one pulse under the Numerics it is handed and returns its population traces."""
 
     def run(options: Numerics) -> dict[str, np.ndarray]:
@@ -269,7 +269,7 @@ def _runner(dev, drive, t_end, space, n0=0):  # type: ignore[no-untyped-def]
     return run
 
 
-def test_tolerance_convergence_on_the_carrier_and_sideband_fixtures(raman) -> None:  # type: ignore[no-untyped-def]
+def test_tolerance_convergence_on_the_carrier_and_sideband_fixtures(raman) -> None:
     """Carrier and blue-sideband pi pulses change by less than 1e-6 when the tolerances (1e-10, 1e-8) are tightened ten-fold."""
     dev, dd, _space = raman
     space = HilbertSpace((2,), (ModeTruncation(KX, 12, (0, 3), 0.2),), None, (0, 2))
@@ -287,7 +287,7 @@ def test_tolerance_convergence_on_the_carrier_and_sideband_fixtures(raman) -> No
     assert rep_b.converged and rep_b.max_change < 1e-6, rep_b.summary()
 
 
-def test_convergence_check_rejects_a_mismatched_observable_set_and_a_bad_factor(raman) -> None:  # type: ignore[no-untyped-def]
+def test_convergence_check_rejects_a_mismatched_observable_set_and_a_bad_factor(raman) -> None:
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     run = _runner(dev, square_drive(dd, include_stark=False), math.pi / om, space)

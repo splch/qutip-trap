@@ -60,7 +60,7 @@ X_ROCK = 2
 
 
 @pytest.fixture(scope="module")
-def ca_device():  # type: ignore[no-untyped-def]
+def ca_device():
     dev = ca_light_shift_device()
     ent = {
         i: GateDrive(
@@ -75,7 +75,7 @@ def ca_device():  # type: ignore[no-untyped-def]
     return dev, ent, sq, modes
 
 
-def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:  # type: ignore[no-untyped-def]
+def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:
     """The 398 nm pair shifts S1/2 by -10554.4 Hz and D5/2 by 13.311 Hz (level weights (-1.997481, 0.002519) to 1e-6), the force
     is half their difference (Zhu 2006 Eq. 2) and the static shift 10567.7 Hz; a clock qubit under linear light is refused."""
     dev, _ent, _sq, modes = ca_device
@@ -112,13 +112,13 @@ def test_light_shift_couplings_from_the_atomic_layer(ca_device) -> None:  # type
         derive_light_shift_drive(chain_device(2), 0, (0, 1), scattering=False)
 
 
-def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> None:  # type: ignore[no-untyped-def]
+def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> None:
     """At t = 0 the built Hamiltonian is the free motion plus Omega_LS (w_dn P_0 + w_up P_1) (x) (D + D^dag)/2 on ion 0 to
     1e-9, with no spin-flip term."""
     dev, _ent, _sq, _modes = ca_device
     ls = derive_light_shift_drive(dev, 0, (0, 1), scattering=False)
     omega_ls = TWO_PI * abs(ls.rabi_hz)
-    w_dn, w_up = ls.light_shift.level_weights  # type: ignore[union-attr]
+    w_dn, w_up = ls.light_shift.level_weights
     drive = light_shift_drive(ls, beat_hz=2.98e6, include_stark=False)
     space = HilbertSpace((2, 2), (ModeTruncation(X_COM, 6, (0, 1), 0.2),), None, (0, 1, 2, 4, 5))
     built = build_hamiltonian(
@@ -135,7 +135,7 @@ def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> 
 
 
 @pytest.mark.slow
-def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:  # type: ignore[no-untyped-def]
+def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
     """Two pi/8 light-shift pulses around a pi pulse give ZZ(pi/2) on the optical qubit with fidelity > 0.97 (the opposite
     detuning side < 0.05), and the AM pulse calibrated exactly reaches > 0.99 with leakage < 5e-3."""
     dev, ent, sq, modes = ca_device
@@ -451,7 +451,7 @@ def gradient_waveform(dev: Device, *, chi_rad: float) -> Waveform:
         for leg in ("blue", "red"):
             amp[(ion, leg)] = dd.tone_rabi_hz
             phase[(ion, leg)] = 0.0
-    seg = Segment(50e-6, amp, phase, {"blue": DELTA_HZ, "red": -DELTA_HZ})  # type: ignore[arg-type]
+    seg = Segment(50e-6, amp, phase, {"blue": DELTA_HZ, "red": -DELTA_HZ})
     return Waveform(
         segments=(seg,),
         duration_s=50e-6,
@@ -488,7 +488,7 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
         if pulse.drive.kind != "gradient":
             continue
         assert len(pulse.drive.tones) == 2
-        detunings = sorted(float(t.detuning_hz) for t in pulse.drive.tones)  # type: ignore[arg-type]
+        detunings = sorted(float(t.detuning_hz) for t in pulse.drive.tones)
         assert detunings == pytest.approx([-DELTA_HZ, DELTA_HZ])
     assert [g.kind for g in sched.gates] == ["zz", "zz"]
     # a gradient waveform on a non-gradient entangling drive is refused, and so is MS(...) on a gradient waveform

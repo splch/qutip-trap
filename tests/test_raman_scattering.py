@@ -89,12 +89,12 @@ def lin_perp_lin_pair(
 def sigma_plus_along_z(sp: Species, delta_rad_s: float, **kw: float) -> Beam:
     """A sigma+ beam along B = z: eps = -(x + i y)/sqrt2 = e_{+1}."""
     pol = (-1.0 / math.sqrt(2.0), -1j / math.sqrt(2.0), 0.0)
-    return beam_at_detuning(sp, delta_rad_s, (0.0, 0.0, 1.0), pol, **kw)  # type: ignore[arg-type]
+    return beam_at_detuning(sp, delta_rad_s, (0.0, 0.0, 1.0), pol, **kw)
 
 
 def pi_beam_perp(sp: Species, delta_rad_s: float, **kw: float) -> Beam:
     """A pi-polarized beam along x with eps along B = z."""
-    return beam_at_detuning(sp, delta_rad_s, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), **kw)  # type: ignore[arg-type]
+    return beam_at_detuning(sp, delta_rad_s, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), **kw)
 
 
 def stretched_g_half(sp: Species, beam: Beam, field: Field) -> float:
@@ -139,7 +139,7 @@ def yb() -> Species:
     return species("171Yb+")
 
 
-def _clock_states(st: AtomicStructure):  # type: ignore[no-untyped-def]
+def _clock_states(st: AtomicStructure):
     low = st.state("S1/2 F=2 mF=0")  # F = 2 lies BELOW F = 1 for 9Be+ (negative moment)
     high = st.state("S1/2 F=1 mF=0")
     assert high.energy_hz > low.energy_hz
@@ -309,7 +309,7 @@ def test_ozeri_2005_single_electron_amplitudes() -> None:
     down, up = st.state("S1/2 mJ=-1/2"), st.state("S1/2 mJ=1/2")
     delta = 0.3 * omega_f
 
-    def amplitudes(a, beam, b):  # type: ignore[no-untyped-def]
+    def amplitudes(a, beam, b):
         """Per-path a^(J') = r_J' Delta_J'/(g sqrt gamma); one emitted polarization q' is nonzero per (b, path)."""
         g = stretched_g_half(sp, beam, field_z())
         out: dict[str, float] = {}
@@ -359,7 +359,7 @@ def test_leakage_rates_sum_and_rayleigh_dephasing_vanishes_for_clock_states(be: 
 # ---- the full master equation --------------------------------------------------------------------------------------
 
 
-def _hamiltonian(st: AtomicStructure, beam: Beam):  # type: ignore[no-untyped-def]
+def _hamiltonian(st: AtomicStructure, beam: Beam):
     """Rotating-frame Hamiltonian on the S, P1/2, P3/2 sublevels (rad/s): ground energies E_a - E_ref on the diagonal,
     excited energies E_e - E_ref - omega_L, and (Omega_ea/2)|e><a| + h.c."""
     states = st.states_of("S1/2") + st.states_of("P1/2") + st.states_of("P3/2")
@@ -386,7 +386,7 @@ def _dressed(st: AtomicStructure, beam: Beam, bare_label: str) -> np.ndarray:
     return np.asarray(vec * np.exp(-1j * np.angle(vec[idx[bare_label]])))
 
 
-def _weak_beam(st: AtomicStructure, beam: Beam, a, omega_over_delta: float = 0.02) -> Beam:  # type: ignore[no-untyped-def]
+def _weak_beam(st: AtomicStructure, beam: Beam, a, omega_over_delta: float = 0.02) -> Beam:
     """The beam with its power set so that max_e |Omega_ea| = omega_over_delta x min_e |Delta_e| (perturbative regime)."""
     couplings = st.couplings_from(a, beam)
     omega_max = max(abs(om) for _e, om, _d in couplings)
@@ -397,7 +397,7 @@ def _weak_beam(st: AtomicStructure, beam: Beam, a, omega_over_delta: float = 0.0
     )
 
 
-def _multilevel_mesolve(st: AtomicStructure, beam: Beam, initial: np.ndarray, t_final: float, n: int = 201):  # type: ignore[no-untyped-def]
+def _multilevel_mesolve(st: AtomicStructure, beam: Beam, initial: np.ndarray, t_final: float, n: int = 201):
     """The master equation with one collapse operator per emitted polarization q', coherent over every (e, b) pair."""
     states, idx, h = _hamiltonian(st, beam)
     c_ops = []

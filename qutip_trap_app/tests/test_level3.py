@@ -153,7 +153,7 @@ def test_process_matrix_of_the_finished_pulse(bell: tuple[Record, LiveRun]) -> N
     assert record.results.register_fidelity is not None
     assert 1.0 - record.results.register_fidelity > 0.5 * pm.entanglement_infidelity
     pv = process_view(pm)
-    assert pv.pauli[0].detail == "II" and float(pv.pauli[0].value) > 0.99  # type: ignore[arg-type]
+    assert pv.pauli[0].detail == "II" and float(pv.pauli[0].value) > 0.99
     assert record.process_matrix(pm.key) is pm
 
 

@@ -59,7 +59,7 @@ def _house_surface(mass_kg: float, **trap: object) -> Trap:
         stray_field_v_per_m=(0.0, 0.0, 0.0),
         shim_voltages_v={},
     )
-    return dataclasses.replace(base, **trap)  # type: ignore[arg-type]
+    return dataclasses.replace(base, **trap)
 
 
 def _rod(**rf: float) -> Trap:
@@ -347,7 +347,7 @@ def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_th
 # ---- the trap quantities of Device.derived() ------------------------------------------------------------------------------
 
 
-def _surface_device(stray_x: float = 0.0):  # type: ignore[no-untyped-def]
+def _surface_device(stray_x: float = 0.0):
     base = chain_device(2)
     mass = base.crystal.species[0].mass_u * ATOMIC_MASS_KG
     trap = _house_surface(mass, stray_field_v_per_m=(stray_x, 0.0, 0.0))

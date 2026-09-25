@@ -223,7 +223,7 @@ def test_species_api_e2_rabi_frequency_and_lamb_dicke_input() -> None:
 # ---- the E2 ac Stark shift ------------------------------------------------------------------------------------------
 
 
-def _toy_e2_table(zeeman_lower_hz: float, zeeman_upper_hz: float, omega: float) -> tuple[dict, dict, dict]:  # type: ignore[type-arg]
+def _toy_e2_table(zeeman_lower_hz: float, zeeman_upper_hz: float, omega: float) -> tuple[dict, dict, dict]:
     """Equal couplings on every allowed component, with linear Zeeman ladders on both manifolds."""
     lower = {m: float(m) * zeeman_lower_hz for m in (-HALF, HALF)}
     upper = {Fraction(k, 2): float(Fraction(k, 2)) * zeeman_upper_hz for k in (-5, -3, -1, 1, 3, 5)}

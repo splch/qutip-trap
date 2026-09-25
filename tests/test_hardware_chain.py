@@ -25,13 +25,13 @@ from qutip_trap.options import Numerics
 from tests.fixtures import REALISTIC_HARDWARE, single_ion_raman_device
 
 
-def _device():  # type: ignore[no-untyped-def]
+def _device():
     """The single-ion fixture with the realistic 16-bit / 14-bit / 50 ns chain."""
     dev = single_ion_raman_device()
     return dataclasses.replace(dev, hardware=REALISTIC_HARDWARE)
 
 
-def _pi_schedule(dev):  # type: ignore[no-untyped-def]
+def _pi_schedule(dev):
     der = derive_raman_drive(dev, 0, (0, 1), scattering=False)
     drive = square_drive(der, include_stark=False)
     t_pi = der.pi_time_s()
@@ -177,7 +177,7 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
     against 0.999868 (4.485e-5) for an ideal modulator, to 5e-6 and 0.5 %."""
     fx = yb171_chain(2)
 
-    def check(hardware, chain: bool):  # type: ignore[no-untyped-def]
+    def check(hardware, chain: bool):
         dev = dataclasses.replace(fx.device, hardware=hardware)
         sur = surrogate_table(dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,))
         wf = sur.table.waveform_for((0, 1))
