@@ -466,15 +466,6 @@ class SpaceRecord:
     nbar: dict[int, float]
 
 
-@dataclass(frozen=True)
-class PreparationRecord:
-    nbar: dict[int, float]
-    duration_s: float
-    preparation_error: dict[int, float]
-    provenance: tuple[str, ...]
-    notes: tuple[str, ...]
-
-
 # ---- dynamics: samples, branches, traces -----------------------------------------------------------------------------------------
 
 
