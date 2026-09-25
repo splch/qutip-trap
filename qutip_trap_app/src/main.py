@@ -1,4 +1,4 @@
-"""qutip-trap-app entry point: `flet run` (desktop) or `flet run --web` (served browser mode); PLAN.md Section 14.6."""
+"""qutip-trap-app entry point: `flet run` (desktop) or `flet run --web` (served browser mode)."""
 
 from __future__ import annotations
 

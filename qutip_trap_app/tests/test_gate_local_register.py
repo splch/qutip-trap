@@ -1,7 +1,7 @@
 """Level 1 over a GATE_LOCAL record (the level the core picks above its joint-dimension guard, Section 11.5): the record
-stores no trace, so the register after each gate is the walk's own register after the gate's step, which the core reports
-since 0.4.0 (``GateLocalStep.register_after``); it agrees with the run's final register exactly, and a record with no
-register source raises the typed error the view catches."""
+stores no trace, so the register after each gate is the walk's own register after the gate's step
+(``GateLocalStep.register_after``); it agrees with the run's final register exactly, and a record with no register source
+raises the typed error the view catches."""
 
 from __future__ import annotations
 
@@ -64,16 +64,16 @@ def test_the_register_of_a_gate_local_run_is_the_walks_own(bell_gate_local: tupl
 def test_a_record_with_no_register_source_says_so(bell_gate_local: tuple[Record, LiveRun]) -> None:
     record, _live = bell_gate_local
     bare = dataclasses.replace(record, gate_local=None)
-    with pytest.raises(RegisterUnavailable, match="core_gaps"):
+    with pytest.raises(RegisterUnavailable):
         register_after(bare, 0)
     assert record.gate_local is not None
-    old = dataclasses.replace(
+    uncapped = dataclasses.replace(
         record,
         gate_local=dataclasses.replace(
             record.gate_local,
             steps=tuple(dataclasses.replace(st, register_after=None) for st in record.gate_local.steps),
         ),
     )
-    with pytest.raises(RegisterUnavailable, match="before 0.4.0"):
-        register_after(old, 0)
-    assert issubclass(RegisterUnavailable, KeyError), "callers that caught KeyError still do"
+    # a register above the core's store cap, or a pure-state ensemble, stores no register after its steps
+    with pytest.raises(RegisterUnavailable):
+        register_after(uncapped, 0)

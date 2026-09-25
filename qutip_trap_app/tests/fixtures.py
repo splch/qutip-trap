@@ -8,5 +8,3 @@ BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0,
 FAST = SolverOptions(branch_weight_min=1e-3)
 SHOTS = 200
 SEED = 7
-
-__all__ = ["BELL", "FAST", "SEED", "SHOTS"]

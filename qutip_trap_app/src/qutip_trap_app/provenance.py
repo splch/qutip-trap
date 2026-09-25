@@ -1,51 +1,34 @@
-"""The provenance index: tags, sources and Part II sections behind every displayed quantity (PLAN.md Section 14.5; M11.1).
+"""The provenance index: the tag, source and PLAN.md sections behind every displayed quantity (PLAN.md Section 14.5).
 
-Section 14.5: "Provenance chips on every formula and number, generated from a provenance ledger ... which the core's
-``Device.derived()`` provenance and the app's chips both consume, so the Section 9.11 static test is a set difference over
-ids rather than a hand-maintained index; hovering a chip shows the tag, the source and the corrected form where the plan
-corrects the source." And: "Explain panel. At every level, the Part II subsection that governs what is on screen is shown
-beside it."
-
-The index is GENERATED (``python -m qutip_trap_app.provenance``) from two data files kept beside the plan, the ledger
-``docs/provenance/ledger.yaml`` and ``PLAN.md`` itself, into the asset ``src/qutip_trap_app/provenance_index.json`` that the
-packaged application ships and reads at run time; ``--check`` exits 1 when the asset is stale, the way the core's
-``tools/docs_from_ledger.py --check`` guards the documentation. From the plan it takes every numbered section header with
-its line and the count of provenance tags in its text, so a chip can name the subsection and a reader can see how much of
-it was verified; from the ledger it takes every record verbatim. Nothing in the index is typed by hand.
+The index is built from the ledger ``docs/provenance/ledger.yaml`` (every record) and ``PLAN.md`` (every numbered or appendix
+header with its line, Part II flag, tag counts and own Markdown). A repository checkout builds it from those files on
+first load; a packaged build, which carries no PLAN.md, ships it as ``provenance_index.json``, written by
+``python -m qutip_trap_app.provenance`` before ``flet build``.
 """
 
 from __future__ import annotations
 
-import argparse
-import hashlib
+import functools
 import json
 import re
-import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-TAGS: tuple[str, ...] = (
-    "verified",
-    "corrected",
-    "extracted",
-    "background",
-    "recomputed here",
-    "derived",
-    "contested",
-)
+from qutip_trap_app.core import TAGS as TAGS  # re-exported: the chips' tag order
+from qutip_trap_app.core import load_ledger, repository_root
 
 TAG_MEANING: dict[str, str] = {
-    "verified": "checked against its primary source by independent verifier agents (Appendix D)",
+    "verified": "checked against its primary source",
     "corrected": "a verifier found and fixed an error in the extracted form or in the printed source; the corrected form is shown",
     "extracted": "taken from a primary source with a quote, not independently checked",
-    "background": "standard textbook physics the plan's author supplied without a source check",
-    "recomputed here": "computed on this machine by a committed check script under validation/scripts/",
+    "background": "standard textbook physics supplied without a source check",
+    "recomputed here": "computed by this repository's code and pinned by its tests",
     "derived": "computed by the simulator from cited inputs, so the citation is the inputs' citation plus the formula",
     "contested": "recorded as unresolved between sources",
 }
-"""Appendix D's tag rules, as the chips' hover text states them; a tag records what checking was done, never that a value is final."""
+"""The tags of PLAN.md as the chips' hover text; a tag records what checking was done, never that a value is final."""
 
 TAG_GLYPH: dict[str, str] = {
     "verified": "✓",
@@ -59,48 +42,27 @@ TAG_GLYPH: dict[str, str] = {
 """One glyph per tag beside its word: meaning is never carried by colour alone (WCAG 1.4.1)."""
 
 ASSET_PATH = Path(__file__).resolve().with_name("provenance_index.json")
-"""Where the generated index lives inside the app's ``src/`` tree (shipped by ``flet build``)."""
+"""The index a packaged build ships, inside the package directory that ``flet build`` bundles."""
 
 PART_II_SECTIONS = ("4", "5", "6", "7", "8")
-"""PLAN.md Part II is Sections 4 to 8: "Every numbered subsection below is the specification of one module"."""
+"""PLAN.md Part II, the module specifications."""
 
-TEXT_SECTIONS: tuple[str, ...] | None = None
-"""The top-level sections whose own Markdown the index carries for the explain drawer's Specification tile (Section 14.5
-"Explain panel": the subsection that governs what is on screen is shown beside it); None means every section, which is what
-ships: the governing sections of the screens reach outside Part II (the seed's Section 3.4, the wall time's Section 11.1, the
-provenance tags' Section 14.5), and the packaged app has no PLAN.md to fall back on."""
-
-_HEADER = re.compile(r"^(#{2,4})\s+(?:(\d+(?:\.\d+)*)\.?\s+)(.*\S)\s*$")
-_APPENDIX = re.compile(r"^##\s+(Appendix [A-Z])\.\s+(.*\S)\s*$")
-_TAG = re.compile(
-    r"\*\*\[(verified|corrected|extracted|background|recomputed here|contested|derived)[^\]]*\]\*\*"
-)
-
-
-def repository_root() -> Path:
-    """The checkout root: the parent of the ``qutip_trap_app`` package directory."""
-    return Path(__file__).resolve().parents[3]
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+_HEADER = re.compile(r"^#{2,4}\s+(?:(\d+(?:\.\d+)*)\.?\s+)(.*\S)\s*$")
+_TAG = re.compile(r"\*\*\[(" + "|".join(re.escape(t) for t in TAGS) + r")[^\]]*\]\*\*")
+_CLAUSE_SECTION = re.compile(r"^\s*(?:Sections?\s+)?(\d+(?:\.\d+)*)(?![\w.-])")
 
 
 def _parse_sections(plan_text: str) -> dict[str, dict[str, Any]]:
-    """Every numbered header (and appendix header) of the plan: number -> title, line, depth, tag counts of its own text
-    (up to the next header of any depth), and whether it belongs to Part II."""
+    """Every numbered header of the plan: number -> title, line, whether it is Part II, the tag counts of its
+    own text (up to the next header of any depth) and that text."""
     lines = plan_text.splitlines()
-    heads: list[tuple[str, str, int, int]] = []  # (number, title, line, depth)
+    heads: list[tuple[str, str, int]] = []  # (number, title, line)
     for k, text in enumerate(lines, start=1):
         m = _HEADER.match(text)
         if m:
-            heads.append((m.group(2), m.group(3), k, len(m.group(1))))
-            continue
-        a = _APPENDIX.match(text)
-        if a:
-            heads.append((a.group(1), a.group(2), k, 2))
+            heads.append((m.group(1), m.group(2), k))
     out: dict[str, dict[str, Any]] = {}
-    for i, (number, title, line, depth) in enumerate(heads):
+    for i, (number, title, line) in enumerate(heads):
         end = heads[i + 1][2] - 1 if i + 1 < len(heads) else len(lines)
         body = "\n".join(lines[line:end])
         counts = {t: 0 for t in TAGS}
@@ -109,89 +71,41 @@ def _parse_sections(plan_text: str) -> dict[str, dict[str, Any]]:
         entry: dict[str, Any] = {
             "title": title,
             "line": line,
-            "depth": depth,
             "part_ii": number.split(".")[0] in PART_II_SECTIONS,
             "tags": {t: n for t, n in counts.items() if n},
         }
-        if TEXT_SECTIONS is None or number.split(".")[0] in TEXT_SECTIONS:
-            entry["text"] = body.strip("\n")
+        entry["text"] = body.strip("\n")
         out[number] = entry
     return out
 
 
-def _load_ledger(path: Path) -> dict[str, dict[str, str]]:
-    import yaml
-
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    records: dict[str, dict[str, str]] = {}
-    for item in raw["records"]:
-        rid = str(item["id"])
-        if rid in records:
-            raise ValueError(f"duplicate ledger id {rid!r}")
-        rec = {
-            k: str(item.get(k, ""))
-            for k in ("symbol", "tag", "section", "source", "equation", "corrected_form")
-        }
-        if rec["tag"] not in TAGS:
-            raise ValueError(f"ledger record {rid!r} has unknown tag {rec['tag']!r}")
-        records[rid] = rec
-    return records
-
-
-_SECTION_TOKEN = re.compile(r"(?<![\w.])(\d+(?:\.\d+)*)(?![\w])")
-
-
 def sections_named(section_field: str) -> tuple[str, ...]:
-    """The section numbers a ledger record's ``section`` field names ("13 Frequencies; 5.6" -> ("13", "5.6"))."""
-    seen: list[str] = []
-    for tok in _SECTION_TOKEN.findall(section_field):
-        if tok not in seen and not tok.startswith("0"):
-            seen.append(tok)
-    return tuple(seen)
+    """The section numbers a ledger record's ``section`` field names: the leading number of each ``;``- or ``,``-separated
+    clause ("9.16 row 4.5-7; 4.5.5" -> ("9.16", "4.5.5")), so row numbers, dates and equation numbers are not sections."""
+    out: list[str] = []
+    for clause in re.split(r"[;,]", section_field):
+        m = _CLAUSE_SECTION.match(clause)
+        if m and m.group(1) not in out:
+            out.append(m.group(1))
+    return tuple(out)
 
 
-def generate_index(root: Path | None = None) -> dict[str, Any]:
-    """Build the index from the ledger and the plan under ``root``."""
-    base = root if root is not None else repository_root()
-    ledger_path = base / "docs" / "provenance" / "ledger.yaml"
-    plan_path = base / "PLAN.md"
-    records = _load_ledger(ledger_path)
-    sections = _parse_sections(plan_path.read_text(encoding="utf-8"))
-    for rec in records.values():
-        named = sections_named(rec["section"])
-        rec["sections"] = json.dumps([s for s in named if s in sections])
-    tag_totals = {t: sum(1 for r in records.values() if r["tag"] == t) for t in TAGS}
-    return {
-        "format": "qutip-trap-app/provenance-index/1",
-        "generated_from": {
-            "ledger": "docs/provenance/ledger.yaml",
-            "ledger_sha256": _sha256(ledger_path),
-            "plan": "PLAN.md",
-            "plan_sha256": _sha256(plan_path),
-        },
-        "tags": {t: TAG_MEANING[t] for t in TAGS},
-        "tag_totals": tag_totals,
-        "records": records,
-        "sections": sections,
+@functools.cache
+def generate_index() -> dict[str, Any]:
+    """The index built from this checkout's ledger and PLAN.md (built once per process)."""
+    sections = _parse_sections((repository_root() / "PLAN.md").read_text(encoding="utf-8"))
+    records = {
+        rid: {
+            "tag": r.tag,
+            "section": r.section,
+            "source": r.source,
+            "equation": r.equation,
+            "corrected_form": r.corrected_form,
+            "sections": [s for s in sections_named(r.section) if s in sections],
+        }
+        for rid, r in load_ledger().items()
     }
-
-
-def render_index(index: dict[str, Any]) -> str:
-    return json.dumps(index, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
-
-
-def write_index(path: Path | None = None, root: Path | None = None) -> Path:
-    target = path if path is not None else ASSET_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_index(generate_index(root)), encoding="utf-8")
-    return target
-
-
-def index_is_current(path: Path | None = None, root: Path | None = None) -> bool:
-    target = path if path is not None else ASSET_PATH
-    if not target.exists():
-        return False
-    return target.read_text(encoding="utf-8") == render_index(generate_index(root))
+    return {"records": records, "sections": sections}
 
 
 # ---- run-time lookups ------------------------------------------------------------------------------------------------------------
@@ -204,7 +118,6 @@ class Chip:
 
     id: str
     tag: str
-    symbol: str
     section: str
     source: str
     equation: str
@@ -229,7 +142,6 @@ class SectionInfo:
     number: str
     title: str
     line: int
-    depth: int
     part_ii: bool
     tags: dict[str, int]
 
@@ -242,13 +154,18 @@ class ProvenanceIndex:
     """The loaded index: chips by ledger id, sections by number."""
 
     def __init__(self, data: dict[str, Any]) -> None:
-        self._data = data
         self._records: dict[str, dict[str, Any]] = data["records"]
         self._sections: dict[str, dict[str, Any]] = data["sections"]
         self.on_open_section: Callable[[str], None] | None = None
-        """What a clicked chip does (DESIGN.md Section 10 R8): the session sets it to open the explain drawer's
-        Specification tile at the chip's section; None (tests, headless use) leaves chips as hover-only labels. One index
-        is loaded per page, so the hook is per session."""
+        """What a clicked chip does: the session sets it to open the explain drawer at the chip's section; None (tests,
+        headless use) leaves chips as hover-only labels. One index is loaded per page, so the hook is per session."""
+
+    @classmethod
+    def load(cls) -> ProvenanceIndex:
+        """The index of this checkout's PLAN.md and ledger, or the shipped asset in a packaged build (no PLAN.md)."""
+        if (repository_root() / "PLAN.md").exists():
+            return cls(generate_index())
+        return cls(json.loads(ASSET_PATH.read_text(encoding="utf-8")))
 
     def section_for_chip(self, ledger_id: str) -> str:
         """The section a chip opens: its first Part II section, else the first section it names that has text."""
@@ -260,19 +177,6 @@ class ProvenanceIndex:
             return self.nearest_section_with_text(infos[0].number)
         named = sections_named(self.chip(ledger_id).section)
         return self.nearest_section_with_text(named[0]) if named else "13"
-
-    @classmethod
-    def load(cls, path: Path | None = None) -> ProvenanceIndex:
-        target = path if path is not None else ASSET_PATH
-        if not target.exists():
-            raise FileNotFoundError(
-                f"provenance index {target} missing: run `python -m qutip_trap_app.provenance` from the repository"
-            )
-        return cls(json.loads(target.read_text(encoding="utf-8")))
-
-    @property
-    def ids(self) -> frozenset[str]:
-        return frozenset(self._records)
 
     def has(self, ledger_id: str) -> bool:
         return ledger_id in self._records
@@ -286,25 +190,21 @@ class ProvenanceIndex:
         return Chip(
             id=ledger_id,
             tag=rec["tag"],
-            symbol=rec["symbol"],
             section=rec["section"],
             source=rec["source"],
             equation=rec["equation"],
             corrected_form=rec["corrected_form"],
-            sections=tuple(json.loads(rec.get("sections", "[]"))),
+            sections=tuple(rec["sections"]),
         )
 
     def section(self, number: str) -> SectionInfo:
         s = self._sections.get(number)
         if s is None:
             raise KeyError(f"PLAN.md has no section {number!r}")
-        return SectionInfo(
-            number, s["title"], int(s["line"]), int(s["depth"]), bool(s["part_ii"]), dict(s["tags"])
-        )
+        return SectionInfo(number, s["title"], int(s["line"]), bool(s["part_ii"]), dict(s["tags"]))
 
     def section_text(self, number: str) -> str:
-        """The section's own Markdown (its text up to the next header of any depth), for the explain drawer's Specification
-        tile; empty for a section outside :data:`TEXT_SECTIONS`."""
+        """The section's own Markdown (up to the next header of any depth)."""
         s = self._sections.get(number)
         if s is None:
             raise KeyError(f"PLAN.md has no section {number!r}")
@@ -321,8 +221,7 @@ class ProvenanceIndex:
         return tuple(sorted(out, key=lambda s: s.line))
 
     def nearest_section_with_text(self, number: str) -> str:
-        """``number`` when it carries text, else the nearest enclosing section that does (a chip may name a top-level
-        section such as "13")."""
+        """``number`` when it carries text, else the nearest enclosing section that does (a chip may name "13")."""
         parts = number.split(".")
         while parts:
             n = ".".join(parts)
@@ -340,62 +239,16 @@ class ProvenanceIndex:
         return tuple(self.section(n) for n, s in self._sections.items() if s["part_ii"])
 
     def missing(self, ids: Iterable[str]) -> tuple[str, ...]:
-        """The set difference of Section 9.11: ids the ledger does not carry."""
-        return tuple(sorted(set(ids) - self.ids))
-
-    @property
-    def tag_totals(self) -> dict[str, int]:
-        return dict(self._data["tag_totals"])
-
-    @property
-    def generated_from(self) -> dict[str, str]:
-        return dict(self._data["generated_from"])
+        """The ids the ledger does not carry (Section 9.11's set difference)."""
+        return tuple(sorted(set(ids) - set(self._records)))
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Generate the provenance index asset from the ledger and PLAN.md"
-    )
-    ap.add_argument("--check", action="store_true", help="exit 1 if the asset is stale (CI)")
-    ap.add_argument(
-        "--root", type=Path, default=None, help="repository root (default: derived from this file)"
-    )
-    args = ap.parse_args(argv)
-    if args.check:
-        if index_is_current(root=args.root):
-            print(f"{ASSET_PATH.relative_to(repository_root())} is current")
-            return 0
-        print(
-            f"{ASSET_PATH.relative_to(repository_root())} is STALE: run `python -m qutip_trap_app.provenance`"
-        )
-        return 1
-    target = write_index(root=args.root)
-    idx = ProvenanceIndex.load(target)
-    print(
-        f"wrote {target.relative_to(repository_root())}: {len(idx.ids)} records, {len(idx.part_ii())} Part II sections"
-    )
-    return 0
+def main() -> None:
+    """Write the index asset a packaged build ships."""
+    index = generate_index()
+    ASSET_PATH.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+    print(f"wrote {ASSET_PATH.name}: {len(index['records'])} records, {len(index['sections'])} sections")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
-
-
-__all__ = [
-    "ASSET_PATH",
-    "PART_II_SECTIONS",
-    "TAG_GLYPH",
-    "TEXT_SECTIONS",
-    "TAG_MEANING",
-    "TAGS",
-    "Chip",
-    "ProvenanceIndex",
-    "SectionInfo",
-    "generate_index",
-    "index_is_current",
-    "main",
-    "render_index",
-    "repository_root",
-    "sections_named",
-    "write_index",
-]
+    main()

@@ -1,4 +1,4 @@
-"""The device model in the application state (Section 14.4; M11.3): a knob change submits one derive request and no duplicate;
+"""The device model in the application state (Section 14.4): a knob change submits one derive request and no duplicate;
 the layer lands in the store keyed by the device reference; the job carries the overrides with an empty hash for the worker to
 fill; a recalibration result clears the stale layer; the worker builds an edited device once and reuses it."""
 
@@ -60,9 +60,7 @@ def test_layer_result_and_recalibration_apply(
     store = session.store
     monkeypatch.setattr(session.worker, "submit", lambda request, **payload: _Ticket(len(store.jobs) + 1))
     ref = store.device_ref()
-    layer = device_layer.derive_device_layer(
-        record.job.device.build(), preset_name="yb171_chain", table=live.table, sweeps=False
-    )
+    layer = device_layer.derive_device_layer(record.job.device.build(), table=live.table, sweeps=False)
     store.jobs = {"t1": JobStatus("t1", "derive", target={"cache_key": ref.cache_key()})}
     session.apply_events([Event("result", "t1", "derive", payload=layer)])
     assert store.layer() is layer and store.device_ref().hash == layer.device_hash
@@ -70,7 +68,7 @@ def test_layer_result_and_recalibration_apply(
     assert job.device.hash == layer.device_hash
     # a recalibration for this device drops the layer so it re-derives against the new table
     store.jobs = {**store.jobs, "t2": JobStatus("t2", "recalibrate", target={"cache_key": ref.cache_key()})}
-    payload = {"table": record.table, "device_hash": layer.device_hash, "job": job}
+    payload = {"table": record.table, "device_hash": layer.device_hash}
     session.apply_events([Event("result", "t2", "recalibrate", payload=payload)])
     assert store.tables[layer.device_hash] is record.table
     assert store.layer() is None, "the stale layer is dropped and a fresh derive requested"

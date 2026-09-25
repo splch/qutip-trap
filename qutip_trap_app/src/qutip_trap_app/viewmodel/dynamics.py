@@ -212,7 +212,6 @@ def recorded_zoom(record: Record, step_index: int, sample_index: int = 0, branch
         else np.zeros((0, 0), dtype=complex),
         final_mode_reduced={},
         final_nbar={m: float(np.asarray(v)[keep[-1]]) for m, v in tr.mode_nbar.items()},
-        final_joint=None,
         joint_dims=tr.joint_dims,
     )
     boundary = record.boundary(step_index, sample_index, branch)

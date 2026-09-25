@@ -128,7 +128,7 @@ def test_device_ref_carries_overrides_and_rebuilds_hash_checked() -> None:
 def layer(bell: tuple[Record, LiveRun]) -> device_layer.DeviceLayer:
     record, live = bell
     preset = record.job.device.build()
-    return device_layer.derive_device_layer(preset, preset_name="yb171_chain", table=live.table, sweeps=True)
+    return device_layer.derive_device_layer(preset, table=live.table, sweeps=True)
 
 
 def test_layer_agrees_with_the_record_it_describes(
@@ -140,7 +140,7 @@ def test_layer_agrees_with_the_record_it_describes(
     assert [m.omega_hz for m in layer.crystal.modes] == pytest.approx(
         [m.omega_hz for m in record.device_card.modes]
     )
-    assert np.allclose(layer.crystal.positions_m, record.device_card.positions_m)
+    assert np.allclose(layer.crystal.positions_m, live.device.crystal.positions_m)
     # the closed-form solve (Section 4.4.3) is the surrogate's first step at the same beat-note rule and duration; the table
     # stores the waveform after the exact spot check (Section 7.8) rescaled its amplitude, so the played angle per mode is
     # the closed form's times one common factor, and the layer reports that comparison instead of hiding it
@@ -172,7 +172,7 @@ def test_layer_agrees_with_the_record_it_describes(
     assert seg is not None
     mu_table = next(iter(seg.detuning_hz.values()))
     assert mu_table.value is not None and abs(abs(mu_table.value) - g.mu_hz) < 1.0, (
-        "MU_ABOVE_TOP_FRACTION restated correctly"
+        "the layer solves at the table's beat note"
     )
     assert g.residual_error is not None and g.residual_error < 1e-12
     # the readout page's exact count distributions agree with the table's sampled detection calibration to statistics
@@ -188,7 +188,7 @@ def test_layer_agrees_with_the_record_it_describes(
     )
     # the cooling page's final occupations are the run's preparation occupations
     assert layer.cooling is not None
-    for m, nb in record.preparation.nbar.items():
+    for m, nb in live.core_record.preparation.nbar.items():
         assert layer.cooling.final_nbar[m] == pytest.approx(nb, rel=1e-9)
     sb = layer.cooling.sidebands[0]
     assert sb.nbar_after_pulse[0] == pytest.approx(sb.nbar_start) and sb.nbar_after_pulse[-1] < 0.05
@@ -225,11 +225,9 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
     record, live = bell
     ref = record.job.device.with_overrides({"trap.rf_amplitude_scale": 1.1, "trap.rf_frequency_hz": 40e6})
     preset = ref.build()
-    old_layer = device_layer.derive_device_layer(
-        record.job.device.build(), preset_name="yb171_chain", table=live.table, sweeps=False
-    )
+    old_layer = device_layer.derive_device_layer(record.job.device.build(), table=live.table, sweeps=False)
     stale_layer = device_layer.derive_device_layer(
-        preset, preset_name="yb171_chain", overrides=ref.overrides, table_record=record.table, sweeps=False
+        preset, overrides=ref.overrides, table_record=record.table, sweeps=False
     )
     assert stale_layer.stale and "stale" in stale_status(stale_layer)
     assert (
@@ -248,7 +246,7 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
     assert old_layer.trap.c0 is None and stale_layer.trap.c0 is not None
     for i in g_old.eta:
         for m, a, b, w0, w1 in zip(g_old.modes, g_old.eta[i], g_new.eta[i], g_old.omega_hz, g_new.omega_hz):
-            axis = int(np.argmax(np.abs(stale_layer.card.modes[m].e_hat)))
+            axis = int(np.argmax(np.abs(stale_layer.crystal.modes[m].e_hat)))
             assert b / a == pytest.approx(math.sqrt(w0 / w1) * stale_layer.trap.c0[axis], rel=1e-6)
     assert g_new.residual_error is not None and g_new.residual_error < 1e-12, (
         "the solver closes the loops at the new modes"
@@ -267,7 +265,7 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
         overrides=ref.overrides,
         preset=preset,
     )
-    table = calibrate_for(job, preset)
+    table = calibrate_for(job, preset.device)
     assert table.is_current_for(preset.device.hash()) and not table.is_current_for(record.device_hash)
     wf = table.waveform_for((0, 1))
     assert wf is not None and abs(abs(wf.chi_total_rad) - math.pi / 4) < 2e-3
@@ -276,9 +274,7 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
     assert max(ratios) - min(ratios) < 1e-9 and abs(ratios[0] - 1.0) < 1e-3, (
         "the immediate closed-form solution is what the table re-solves, up to the exact spot check's one amplitude factor"
     )
-    fresh = device_layer.derive_device_layer(
-        preset, preset_name="yb171_chain", overrides=ref.overrides, table=table, sweeps=False
-    )
+    fresh = device_layer.derive_device_layer(preset, overrides=ref.overrides, table=table, sweeps=False)
     assert not fresh.stale and fresh.table_hash == preset.device.hash()
     card = layer_card_view(fresh, None)
     assert card.overrides and any("V_rf" in r.value.detail for r in card.overrides)

@@ -1,5 +1,5 @@
 """Section 9.11 row "Coarse-graining identity": populations and Pauli expectations shown at Level 1 after gate k, computed
-from the recorded Level 3 joint state, equal the reduced-density-matrix values to 1e-12."""
+from the recorded Level 3 joint state, equal the reduced-density-matrix values to 1e-12. Also the record's own ladder."""
 
 from __future__ import annotations
 
@@ -20,6 +20,25 @@ from qutip_trap_app.viewmodel.circuit import (
 )
 
 TOL = 1e-12
+
+
+def test_record_holds_the_ladder(bell: tuple[Record, LiveRun]) -> None:
+    """Section 14.3: job -> compiled circuit -> schedule -> traces -> readout -> results, all present and consistent."""
+    record, live = bell
+    assert record.job.circuit.n_qubits == 2 and record.results.bitstrings.shape == (200, 2)
+    assert record.compiled.native.ops and all(
+        op.name in ("gpi", "gpi2", "ms", "zz") for op in record.compiled.native.ops
+    )
+    assert record.schedule.pulses and record.schedule.steps and record.schedule.targets
+    assert {s.kind for s in record.schedule.steps} == {"gate", "idle"}
+    assert record.diagnostics.level == "JOINT_EXACT" and record.space.dimension == live.space.dimension
+    assert len(record.traces) == record.n_samples * record.n_branches
+    assert record.readout.levels.shape == (200, 2)
+    assert set(record.results.target_probabilities) == {"00", "11"}
+    assert record.results.probabilities["00"] + record.results.probabilities["11"] > 0.98
+    assert record.results.register_fidelity is not None and record.results.register_fidelity > 0.99
+    assert record.device_card.n_ions == 2 and record.device_hash == record.job.device.hash
+    assert record.table.device_hash == record.device_hash and record.table.entries
 
 
 @pytest.fixture(scope="module")

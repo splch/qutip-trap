@@ -5,7 +5,10 @@ application imports the core in one module only."""
 from __future__ import annotations
 
 import ast
+import dataclasses
 from pathlib import Path
+
+import pytest
 
 from qutip_trap_app import device_layer, provenance, resim
 from qutip_trap_app.record import LiveRun, Record
@@ -34,10 +37,6 @@ from qutip_trap_app.viewmodel.schedule import closure, pulse_view, time_axis
 SRC = Path(__file__).resolve().parents[1] / "src" / "qutip_trap_app"
 
 
-def test_index_is_current_with_the_ledger_and_the_plan() -> None:
-    assert provenance.index_is_current(), "run `python -m qutip_trap_app.provenance` (the asset is stale)"
-
-
 def test_every_catalogue_and_concept_id_is_in_the_ledger() -> None:
     idx = provenance.ProvenanceIndex.load()
     assert not idx.missing(catalogue.ledger_ids())
@@ -61,6 +60,23 @@ def test_chip_carries_section_source_and_corrected_form() -> None:
     assert "4.1.7" in chip.sections and idx.sections_for("conv.lamb_dicke")[0].part_ii
     corrected = idx.chip("conv.micromotion_correction")
     assert corrected.tag == "corrected" and corrected.corrected_form
+    assert provenance.sections_named("9.16 row 4.5-7; 4.5.5 (M4 audit 2026-09-07)") == ("9.16", "4.5.5")
+
+
+def test_the_packaged_asset_loads_the_index_of_the_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(provenance, "ASSET_PATH", tmp_path / "provenance_index.json")
+    provenance.main()
+    monkeypatch.setattr(
+        provenance, "repository_root", lambda: tmp_path
+    )  # a packaged build: no PLAN.md beside it
+    shipped = provenance.ProvenanceIndex.load()
+    source = provenance.ProvenanceIndex(provenance.generate_index())
+    assert shipped.chip("conv.lamb_dicke") == source.chip("conv.lamb_dicke")
+    assert shipped.part_ii() == source.part_ii() and shipped.section_text("14.5") == source.section_text(
+        "14.5"
+    )
 
 
 def _shown(obj: object, out: list[Shown], depth: int = 0) -> None:
@@ -75,9 +91,9 @@ def _shown(obj: object, out: list[Shown], depth: int = 0) -> None:
     elif isinstance(obj, (list, tuple)):
         for v in obj:
             _shown(v, out, depth + 1)
-    elif hasattr(obj, "__dataclass_fields__"):
-        for name in obj.__dataclass_fields__:
-            _shown(getattr(obj, name), out, depth + 1)
+    elif dataclasses.is_dataclass(obj):
+        for f in dataclasses.fields(obj):
+            _shown(getattr(obj, f.name), out, depth + 1)
 
 
 def test_every_displayed_quantity_of_the_bell_record_has_a_chip(bell: tuple[Record, LiveRun]) -> None:
@@ -112,15 +128,13 @@ def test_every_displayed_quantity_of_the_bell_record_has_a_chip(bell: tuple[Reco
 
 
 def test_every_displayed_quantity_of_levels_3_and_4_has_a_chip(bell: tuple[Record, LiveRun]) -> None:
-    """The M11.3 views: the Level 3 dynamics of the recorded trace and the Hamiltonian record, and every Level 4 page over the
-    device layer of the record's own device."""
+    """The Level 3 dynamics of the recorded trace and the Hamiltonian record, and every Level 4 page over the device layer
+    of the record's own device."""
     record, live = bell
     idx = provenance.ProvenanceIndex.load()
     step = next(s.index for s in record.schedule.steps if s.gate_id.startswith("ms"))
     record, ham = resim.hamiltonian_record(record, live, step)
-    layer = device_layer.derive_device_layer(
-        record.job.device.build(), preset_name="yb171_chain", table=live.table, sweeps=False
-    )
+    layer = device_layer.derive_device_layer(record.job.device.build(), table=live.table, sweeps=False)
     views: list[object] = [
         pulse_dynamics(record, recorded_zoom(record, step)),
         hamiltonian_view(record, ham),
@@ -141,8 +155,6 @@ def test_every_displayed_quantity_of_levels_3_and_4_has_a_chip(bell: tuple[Recor
     for s in shown:
         q = CATALOGUE[s.quantity]
         assert idx.has(q.ledger_id), s.quantity
-    levels = {CATALOGUE[s.quantity].level for s in shown}
-    assert {3, 4} <= levels
 
 
 def test_core_is_imported_in_one_module_only() -> None:

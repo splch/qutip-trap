@@ -1,7 +1,7 @@
 [project]
 name = "qutip-trap-app"
 version = "0.1.0"
-description = "Zoomable trapped-ion simulator application (PLAN.md Section 14, milestone M11); consumes qutip-trap through its public API only"
+description = "Zoomable trapped-ion simulator application (PLAN.md Section 14) over qutip-trap"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
 authors = [{ name = "Spencer Churchill", email = "25377399+splch@users.noreply.github.com" }]
@@ -13,8 +13,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # Integration testing with `flet test` / pytest. The `test` extra brings in
-    # pytest, pytest-asyncio and the screenshot-comparison dependencies.
+    # `flet test` integration tests: pytest-asyncio and the Flutter test host's client
     "flet[test]>=0.86,<1.0",
 ]
 
@@ -26,7 +25,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# the src layout `flet create` made: src/main.py is the entry point, src/qutip_trap_app/ the package (M11.1)
+# src/main.py is the entry point, src/qutip_trap_app/ the package
 packages = ["src/qutip_trap_app"]
 
 [tool.pytest.ini_options]
@@ -57,6 +56,5 @@ copyright = "Copyright (C) 2026 Spencer Churchill"
 
 [tool.flet.app]
 path = "src"
-# the package is src/qutip_trap_app with src/main.py as the entry point; the tests, the Flutter build tree and the
-# provisioned test host never ship in a bundle (`flet build macos|windows|linux`, PLAN.md Section 14.6 "Packaging")
+# the tests, the Flutter build tree and the provisioned test host never ship in a bundle
 exclude = ["tests", "build", ".flet", "__pycache__"]

@@ -7,10 +7,6 @@ from qutip_trap_app.replay import ChannelLibrary
 from qutip_trap_app.verify import deeper_level, verify_deeper
 
 
-def test_deeper_levels() -> None:
-    assert deeper_level.__doc__
-
-
 def test_verify_replay_against_the_deeper_engine(bell_replay: tuple[Record, ChannelLibrary]) -> None:
     rep, _ = bell_replay
     assert deeper_level(rep) == "auto"

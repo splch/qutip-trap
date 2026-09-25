@@ -1,48 +1,40 @@
-"""On-demand re-simulation of a zoomed pulse, with caching (PLAN.md Sections 14.3, 14.7; Section 9.11 rows
-"Re-simulation cache" and "Convergence badge"; milestone M11.1).
+"""On-demand re-simulation of one gate step of a recorded JOINT_EXACT run, cached on the record (PLAN.md Sections 14.3, 14.7).
 
-Section 14.3: "zooming into a pulse re-simulates that pulse alone from its recorded initial state and its recorded noise
-sample". The core's ``Traces`` hold the joint state only at the end of a whole evolution, so the recorded initial state of
-a pulse is obtained by chaining the engine over the schedule's gate steps (``gate_steps``) from the run's own initial
-state: each step is played as a sub-schedule declared at its own start (``Schedule.t0_s``, the GATE_LOCAL convention of
-Section 5.4), and the state at every step boundary is cached in the record (:class:`BoundaryState`). The engine is built
-exactly as ``run()`` built its own, from the same table, drives, noise switches and seeds, and the engine itself segments a
-schedule at every pulse boundary, so the chained evolution is the run's evolution: the M11.1 prototype found the chained
-final state bitwise equal to the recorded one on the two-ion Bell circuit.
-
-A zoom replays one step with a fine store (``n_store`` points per integration segment) and caches the fine trace under a
-key of (step, sample, branch, stored points, solver-options digest), so zooming twice recomputes once. Two convergence
-re-checks of Section 5.5 / 9.9 run on a zoomed step: tolerances tightened by ten, and every resolved cap raised by two
-(the second re-chains from the initial state on the grown space, since a state cannot be regridded through the public API).
+The core's ``Traces`` hold the joint state only at the end of an evolution, so the state at the start of a step is obtained
+by chaining the engine over the gate steps from the run's own initial state, each step played as a sub-schedule declared at
+its own start; the engine is built as the run built its own (same table, drives, noise and seeds), so the chain reproduces
+the run. A zoom replays one step with ``n_store`` stored points per integration segment and the Fock marginals on, keyed by
+(step, sample, branch, points, solver options). Two convergence re-checks run on a zoomed step (Sections 5.5, 9.9):
+tolerances tightened by ten, and every resolved cap raised by two (re-chained from the initial state on the grown space).
 """
 
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
+import qutip as qt
 
 from qutip_trap_app import core
-from qutip_trap_app.codec import dumps
 from qutip_trap_app.record import (
     BoundaryState,
     CollapseRecord,
     ConvergenceRecord,
     DriveTermRecord,
-    FockMovie,
     HamiltonianRecord,
     LiveRun,
     ProcessMatrixRecord,
+    Progress,
     Record,
     RecordError,
     SegmentSummary,
     ZoomTrace,
-    options_record,
+    embed_on_register,
+    options_digest,
     trace_record,
 )
 
@@ -52,22 +44,27 @@ DEFAULT_ZOOM_POINTS = 201
 CONVERGENCE_TOL = 1e-6
 """Section 5.5: the change in a population under a tolerance tightening or a cap raise that still counts as converged."""
 
+TIGHTEN_FACTOR = 10.0
+CAP_RAISE = 2
 
-# ---- the engine as run() built it ----------------------------------------------------------------------------------------------
+BOUNDARY_JOINT_MAX = 4096
+"""The largest joint dimension whose state a cached boundary keeps (above it only the reduced states are kept)."""
 
 
-def engine_for(record: Record, live: LiveRun, *, store_per_segment: int = 2) -> core.JointExactEngine:
-    """The JOINT_EXACT engine with the knobs ``run()`` gave its own (``run.gate_local.EngineSetup.engine``)."""
-    if record.job.internal_levels != 2:
-        raise RecordError(
-            "M11.1 re-simulates two-level registers only (the leakage level maps are not public)"
-        )
+TWO_PI = 2.0 * math.pi
+
+
+# ---- the engine as the run built it ----------------------------------------------------------------------------------------------
+
+
+def engine_for(live: LiveRun, *, store_per_segment: int = 2) -> core.JointExactEngine:
+    """The JOINT_EXACT engine with the settings the run gave its own."""
     return core.JointExactEngine(
         builder_options=None,
         store_per_segment=int(store_per_segment),
         channels=(),
         qubit_shifts_hz=dict(live.core_record.qubit_shifts_hz),
-        device_channels=bool(record.job.noise),
+        device_channels=True,
         levels_by_ion=None,
         hardware_chain=True,
         table=live.table,
@@ -77,32 +74,22 @@ def engine_for(record: Record, live: LiveRun, *, store_per_segment: int = 2) -> 
 def initial_state(
     record: Record, live: LiveRun, sample_index: int, branch: int, *, space: core.HilbertSpace | None = None
 ) -> tuple[core.State, core.NoiseSample]:
-    """The (sample, branch) initial state and noise sample exactly as ``run()`` prepared them (Section 5.3's Fock sum)."""
-    sp = space if space is not None else live.space
+    """The (sample, branch) initial state and noise sample exactly as the run prepared them (Section 5.3's Fock sum)."""
     if record.diagnostics.level != "JOINT_EXACT":
-        raise RecordError(
-            "a GATE_LOCAL run has no joint initial state to re-simulate from (M11.2 replays its channels)"
-        )
+        raise RecordError(f"a {record.diagnostics.level} run has no joint initial state to re-simulate from")
+    sp = space if space is not None else live.space
     state0 = core.prepare(live.device, sp, live.table, preparation=live.core_record.preparation)
-    branches = record.branches
-    if not branches:
-        raise RecordError("the record has no branches")
-    br = branches[branch]
-    total = sum(b.weight for b in branches)
-    fock_res = {m: n for m, n in br.fock.items() if sp.mode_class(m) in ("resolved", "enr")}
-    thermal_frozen = {m: float(state0.motional.nbar.get(m, 0.0)) for m in sp.frozen}
+    br = record.branches[branch]
+    total = sum(b.weight for b in record.branches)
     state = sp.initial_state(
         list(br.levels),
-        fock=fock_res,
-        thermal=thermal_frozen,
-        provenance=tuple(state0.provenance) + (f"m6.branch[{branch}]",),
+        fock={m: n for m, n in br.fock.items() if sp.mode_class(m) in ("resolved", "enr")},
+        thermal={m: float(state0.motional.nbar.get(m, 0.0)) for m in sp.frozen},
+        provenance=tuple(state0.provenance) + (f"branch[{branch}]",),
     )
-    extra: dict[str, float] = {
-        core.key_frozen_n(m): float(n) for m, n in br.fock.items() if sp.mode_class(m) == "frozen"
-    }
+    extra = {core.key_frozen_n(m): float(n) for m, n in br.fock.items() if sp.mode_class(m) == "frozen"}
     extra[core.KEY_BRANCH_WEIGHT] = float(br.weight / total)
-    sample = record.noise_samples[sample_index].to_core(extra)
-    return state, sample
+    return state, record.noise_samples[sample_index].to_core(extra)
 
 
 def sub_schedule(live: LiveRun, step: core.GateStep) -> core.Schedule:
@@ -121,24 +108,16 @@ def sub_schedule(live: LiveRun, step: core.GateStep) -> core.Schedule:
 
 
 def _boundary(
-    state: core.State,
-    *,
-    step_index: int,
-    sample_index: int,
-    branch: int,
-    t_s: float,
-    cap: int,
-    dims: tuple[int, ...],
+    state: core.State, *, step_index: int, sample_index: int, branch: int, dims: tuple[int, ...]
 ) -> BoundaryState:
     joint: np.ndarray | None = None
-    if state.joint is not None and state.joint.shape[0] <= cap:
+    if state.joint is not None and state.joint.shape[0] <= BOUNDARY_JOINT_MAX:
         arr = np.asarray(state.joint.full(), dtype=complex)
         joint = arr.reshape(-1) if state.joint.isket else arr
     return BoundaryState(
         step_index=step_index,
         sample_index=sample_index,
         branch=branch,
-        t_s=float(t_s),
         joint=joint,
         joint_dims=dims,
         internal=np.asarray(state.internal.full(), dtype=complex),
@@ -148,11 +127,9 @@ def _boundary(
 
 
 def _state_from_boundary(b: BoundaryState, space: core.HilbertSpace) -> core.State:
-    import qutip as qt
-
     if b.joint is None:
         raise RecordError(
-            "the cached boundary state holds no joint ket (above the store cap); recompute the chain"
+            "the cached boundary state holds no joint state (above the store cap); recompute the chain"
         )
     dims = (
         [list(b.joint_dims), [1] * len(b.joint_dims)]
@@ -180,8 +157,6 @@ class _Chain:
     ) -> None:
         self.record = record
         self.live = live
-        self.sample_index = sample_index
-        self.branch = branch
         self.space = space if space is not None else live.space
         self.steps = live.steps
         self.state, self.sample = initial_state(record, live, sample_index, branch, space=self.space)
@@ -189,30 +164,11 @@ class _Chain:
         self.position = 0
         self.engine_calls = 0
 
-    def advance_to(self, step_index: int, engine: core.JointExactEngine, options: core.SolverOptions) -> None:
-        while self.position < step_index:
-            step = self.steps[self.position]
-            tr = engine.run_pulses(
-                self.live.device,
-                sub_schedule(self.live, step),
-                self.state,
-                self.space,
-                self.sample,
-                self.seeds,
-                options,
-            )
-            self.engine_calls += 1
-            self.state = tr.final
-            self.position += 1
-
-    def play(
-        self, step_index: int, engine: core.JointExactEngine, options: core.SolverOptions
-    ) -> core.Traces:
-        if self.position != step_index:
-            raise RecordError(f"chain is at step {self.position}, asked to play step {step_index}")
+    def play(self, engine: core.JointExactEngine, options: core.SolverOptions) -> core.Traces:
+        """Evolve the chain's state through its next step."""
         tr = engine.run_pulses(
             self.live.device,
-            sub_schedule(self.live, self.steps[step_index]),
+            sub_schedule(self.live, self.steps[self.position]),
             self.state,
             self.space,
             self.sample,
@@ -235,55 +191,28 @@ def boundary_states(
         raise IndexError(f"step index {last} outside 0..{len(steps)}")
     if all(record.boundary(k, sample_index, branch) is not None for k in range(last + 1)):
         return record
-    engine = engine_for(record, live)
+    engine = engine_for(live)
     chain = _Chain(record, live, sample_index, branch)
     dims = tuple(int(d) for d in chain.space.dims)
-    cap = record.joint_store_dimension_max
-    new: list[BoundaryState] = []
-    t0 = live.schedule.t0_s if live.schedule.t0_s is not None else record.schedule.t0_s
-    new.append(
-        _boundary(
-            chain.state,
-            step_index=0,
-            sample_index=sample_index,
-            branch=branch,
-            t_s=float(t0),
-            cap=cap,
-            dims=dims,
-        )
-    )
+    new = [_boundary(chain.state, step_index=0, sample_index=sample_index, branch=branch, dims=dims)]
     for k in range(last):
-        chain.advance_to(k + 1, engine, live.options)
+        chain.play(engine, live.options)
         new.append(
-            _boundary(
-                chain.state,
-                step_index=k + 1,
-                sample_index=sample_index,
-                branch=branch,
-                t_s=steps[k].t_end_s,
-                cap=cap,
-                dims=dims,
-            )
+            _boundary(chain.state, step_index=k + 1, sample_index=sample_index, branch=branch, dims=dims)
         )
     return record.with_boundaries(new)
-
-
-def options_digest(options: core.SolverOptions) -> str:
-    return hashlib.sha256(dumps(options_record(options))).hexdigest()[:16]
 
 
 def zoom_key(
     step_index: int, sample_index: int, branch: int, n_store: int, options: core.SolverOptions
 ) -> str:
-    """The cache key of a zoom made with ``options``. A zoom always stores the Fock marginals (0.4.0), so the key is taken
-    over the options WITH ``store_marginals`` on, whatever the caller passes: the run's own options name the same zoom as
-    the options the zoom actually ran with (Level 3 looks its zoom up with the record's options; until this was folded in
-    here the two digests never agreed and the fine zoom was computed but never found)."""
+    """The cache key of a zoom made with ``options``; a zoom always stores the Fock marginals, so the key is taken over the
+    options with ``store_marginals`` on."""
     opts = dataclasses.replace(options, store_marginals=True)
     return f"step{step_index}/s{sample_index}/b{branch}/n{n_store}/{options_digest(opts)}"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ZoomStats:
     """What a zoom cost: engine calls made (0 = served from the cache) and wall time."""
 
@@ -301,30 +230,32 @@ def zoom(
     *,
     n_store: int = DEFAULT_ZOOM_POINTS,
     options: core.SolverOptions | None = None,
-    force: bool = False,
 ) -> tuple[Record, ZoomTrace, ZoomStats]:
-    """Re-simulate one gate step at fine resolution from its recorded initial state; cached in the record by key. The zoom
-    stores the per-time Fock populations of every resolved mode (``core.Traces.mode_marginal``; 0.4.0), so the Fock movie
-    of the step is read off it rather than re-simulated."""
-    opts = options if options is not None else live.options
-    opts = dataclasses.replace(opts, store_marginals=True)
+    """Re-simulate one gate step at fine resolution from its recorded initial state, with the per-time Fock populations of
+    every resolved mode (``core.Traces.mode_marginal``); cached on the record by key."""
+    opts = dataclasses.replace(options if options is not None else live.options, store_marginals=True)
     key = zoom_key(step_index, sample_index, branch, n_store, opts)
     cached = record.zoom(key)
-    if cached is not None and not force:
+    if cached is not None:
         return record, cached, ZoomStats(engine_calls=0, wall_time_s=0.0, cached=True)
     t0 = time.perf_counter()
     rec = boundary_states(record, live, sample_index, branch, up_to=step_index)
     start = rec.boundary(step_index, sample_index, branch)
     assert start is not None
     space = live.space
-    engine = engine_for(rec, live, store_per_segment=n_store)
-    state = _state_from_boundary(start, space)
+    engine = engine_for(live, store_per_segment=n_store)
     _st, sample = initial_state(rec, live, sample_index, branch)
-    step = live.steps[step_index]
     tr = engine.run_pulses(
-        live.device, sub_schedule(live, step), state, space, sample, core.SeedSpec(rec.job.seed), opts
+        live.device,
+        sub_schedule(live, live.steps[step_index]),
+        _state_from_boundary(start, space),
+        space,
+        sample,
+        core.SeedSpec(rec.job.seed),
+        opts,
     )
     report = engine.last_report
+    assert report is not None
     wall = time.perf_counter() - t0
     trace = trace_record(
         tr,
@@ -334,7 +265,6 @@ def zoom(
         weight=rec.branches[branch].weight,
         ion_dims=space.ion_dims,
         joint_dims=space.dims,
-        joint_cap=rec.joint_store_dimension_max,
     )
     z = ZoomTrace(
         key=key,
@@ -346,19 +276,20 @@ def zoom(
         trace=trace,
         fock_end={m: np.real(np.diag(r)).astype(float) for m, r in trace.final_mode_reduced.items()},
         fock_start={m: np.real(np.diag(r)).astype(float) for m, r in start.mode_reduced.items()},
-        integrators=tuple(dict.fromkeys(s.integrator for s in report.segments)) if report is not None else (),
-        method=str(report.method) if report is not None else "",
-        approximations=tuple(report.approximations) if report is not None else (),
+        integrators=tuple(dict.fromkeys(s.integrator for s in report.segments)),
+        method=str(report.method),
+        approximations=tuple(report.approximations),
         wall_time_s=wall,
         engine_dimension=int(space.dimension),
     )
     return rec.with_zoom(z), z, ZoomStats(engine_calls=1, wall_time_s=wall, cached=False)
 
 
-# ---- convergence re-checks (Section 5.5 / 9.9) ---------------------------------------------------------------------------------------
+# ---- convergence re-checks (Sections 5.5, 9.9) ------------------------------------------------------------------------------------
 
 
-def _observables(trace_a: Mapping[str, np.ndarray], trace_b: Mapping[str, np.ndarray]) -> dict[str, float]:
+def _changes(trace_a: Mapping[str, np.ndarray], trace_b: Mapping[str, np.ndarray]) -> dict[str, float]:
+    """max |a - b| per stored observable of two traces of the same step."""
     if set(trace_a) != set(trace_b):
         raise RecordError("the two zooms store different observables")
     out: dict[str, float] = {}
@@ -371,40 +302,30 @@ def _observables(trace_a: Mapping[str, np.ndarray], trace_b: Mapping[str, np.nda
     return out
 
 
-def tightened(options: core.SolverOptions, factor: float = 10.0) -> core.SolverOptions:
-    return dataclasses.replace(options, atol=options.atol / factor, rtol=options.rtol / factor)
-
-
 def tolerance_recheck(
-    record: Record,
-    live: LiveRun,
-    step_index: int,
-    sample_index: int = 0,
-    branch: int = 0,
-    *,
-    n_store: int = DEFAULT_ZOOM_POINTS,
-    factor: float = 10.0,
-    tol: float = CONVERGENCE_TOL,
+    record: Record, live: LiveRun, step_index: int, sample_index: int = 0, branch: int = 0
 ) -> tuple[Record, ConvergenceRecord]:
-    """Section 5.5's tolerance arm on one zoomed step: atol and rtol tightened by ``factor``, the change per observable."""
-    rec, base, _ = zoom(record, live, step_index, sample_index, branch, n_store=n_store)
-    tight = tightened(live.options, factor)
-    rec, fine, _ = zoom(rec, live, step_index, sample_index, branch, n_store=n_store, options=tight)
-    changes = _observables(base.trace.expectations, fine.trace.expectations)
+    """Section 5.5's tolerance arm on one zoomed step: atol and rtol tightened by ten, the change per observable."""
+    rec, base, _ = zoom(record, live, step_index, sample_index, branch)
+    tight = dataclasses.replace(
+        live.options, atol=live.options.atol / TIGHTEN_FACTOR, rtol=live.options.rtol / TIGHTEN_FACTOR
+    )
+    rec, fine, _ = zoom(rec, live, step_index, sample_index, branch, options=tight)
+    changes = _changes(base.trace.expectations, fine.trace.expectations)
     worst = max(changes.values()) if changes else 0.0
     return rec, ConvergenceRecord(
         tolerances=(live.options.atol, live.options.rtol),
         tightened_tolerances=(tight.atol, tight.rtol),
         changes=changes,
-        tol=tol,
-        converged=worst < tol,
+        tol=CONVERGENCE_TOL,
+        converged=worst < CONVERGENCE_TOL,
         max_change=worst,
     )
 
 
 @dataclass(frozen=True)
 class TruncationCheck:
-    """Section 9.9's cap arm on one zoomed step: every resolved cap raised by ``add``, re-chained from the initial state."""
+    """Section 9.9's cap arm on one zoomed step: every resolved cap raised by two, re-chained from the initial state."""
 
     caps: dict[int, int]
     grown_caps: dict[int, int]
@@ -416,108 +337,37 @@ class TruncationCheck:
 
 
 def truncation_recheck(
-    record: Record,
-    live: LiveRun,
-    step_index: int,
-    sample_index: int = 0,
-    branch: int = 0,
-    *,
-    n_store: int = DEFAULT_ZOOM_POINTS,
-    add: int = 2,
-    tol: float = CONVERGENCE_TOL,
+    record: Record, live: LiveRun, step_index: int, sample_index: int = 0, branch: int = 0
 ) -> tuple[Record, TruncationCheck]:
-    rec, base, _ = zoom(record, live, step_index, sample_index, branch, n_store=n_store)
+    rec, base, _ = zoom(record, live, step_index, sample_index, branch)
     space = live.space
     grown = space
     for m in space.resolved:
-        grown = grown.grown(m.mode, add)
+        grown = grown.grown(m.mode, CAP_RAISE)
     if grown.dimension > live.options.joint_dimension_max:
         raise RecordError(
-            f"raising every cap by {add} takes the joint dimension to {grown.dimension}, above joint_dimension_max = "
-            f"{live.options.joint_dimension_max}; the check would need the reduced mode set (Section 9.9)"
+            f"raising every cap by {CAP_RAISE} takes the joint dimension to {grown.dimension}, above "
+            f"joint_dimension_max = {live.options.joint_dimension_max}; the check would need the reduced mode set (Section 9.9)"
         )
     chain = _Chain(rec, live, sample_index, branch, space=grown)
-    coarse = engine_for(rec, live)
-    chain.advance_to(step_index, coarse, live.options)
-    fine = engine_for(rec, live, store_per_segment=n_store)
-    tr = chain.play(step_index, fine, live.options)
-    changes = _observables(base.trace.expectations, {k: v for k, v in tr.expectations.items()})
+    coarse = engine_for(live)
+    while chain.position < step_index:
+        chain.play(coarse, live.options)
+    tr = chain.play(engine_for(live, store_per_segment=DEFAULT_ZOOM_POINTS), live.options)
+    changes = _changes(base.trace.expectations, tr.expectations)
     worst = max(changes.values()) if changes else 0.0
     return rec, TruncationCheck(
         caps={m.mode: m.d for m in space.resolved},
         grown_caps={m.mode: m.d for m in grown.resolved},
         changes=changes,
-        tol=tol,
+        tol=CONVERGENCE_TOL,
         max_change=worst,
-        converged=worst < tol,
+        converged=worst < CONVERGENCE_TOL,
         engine_calls=chain.engine_calls,
     )
 
 
-# ---- Level 3 on demand: Fock movies, the process matrix, the Hamiltonian record (Section 14.2 rows 3 and 4; M11.3) ------------
-
-DEFAULT_FOCK_FRAMES = 8
-"""Frames of a Fock movie after the step's start: the truncation points t_k = t_start + k/K (t_end - t_start)."""
-
-TWO_PI = 2.0 * math.pi
-
-
-def fock_movie_key(
-    step_index: int, sample_index: int, branch: int, n_frames: int, options: core.SolverOptions
-) -> str:
-    return f"fock/step{step_index}/s{sample_index}/b{branch}/k{n_frames}/{options_digest(options)}"
-
-
-def fock_movie(
-    record: Record,
-    live: LiveRun,
-    step_index: int,
-    sample_index: int = 0,
-    branch: int = 0,
-    *,
-    n_frames: int = DEFAULT_FOCK_FRAMES,
-    options: core.SolverOptions | None = None,
-    progress: Callable[[str, float | None, str], None] | None = None,
-) -> tuple[Record, FockMovie]:
-    """Per-time Fock distributions of every resolved mode inside one step, read off the step's zoom (0.4.0), cached by key.
-
-    The zoom's fine trace stores the Fock populations at every one of its points (``core.Traces.mode_marginal``, which the
-    core added in 0.4.0 for exactly this view), so the movie is K + 1 of those rows at the frame times: frame 0 the step's
-    start, frame K its end. Until 0.4.0 the core's traces carried <n_m>(t) only and the movie re-simulated K truncated
-    copies of the pulse (``core.CORE_GAPS`` recorded the gap); the zoom is computed once when it is not cached yet.
-    """
-    if n_frames < 1:
-        raise ValueError("a Fock movie has at least one frame after the start")
-    opts = options if options is not None else live.options
-    key = fock_movie_key(step_index, sample_index, branch, n_frames, opts)
-    cached = record.fock_movie(key)
-    if cached is not None:
-        return record, cached
-    t0 = time.perf_counter()
-    if progress is not None:
-        progress("fock movie", 0.0, "the step's zoom, whose stored Fock populations are the frames")
-    rec, z, stats = zoom(record, live, step_index, sample_index, branch, options=opts)
-    tr = z.trace
-    if tr.mode_marginal is None:
-        raise RecordError(
-            "the zoom carries no Fock populations: re-run the zoom (its options store them since 0.4.0)"
-        )
-    n_points = int(tr.times_s.size)
-    frames = [round(k * (n_points - 1) / n_frames) for k in range(n_frames + 1)]
-    movie = FockMovie(
-        key=key,
-        step_index=step_index,
-        sample_index=sample_index,
-        branch=branch,
-        options_digest=options_digest(opts),
-        times_s=np.asarray([float(tr.times_s[i]) for i in frames], dtype=float),
-        distributions={int(m): np.asarray(dist[frames], dtype=float) for m, dist in tr.mode_marginal.items()},
-        nbar={int(m): np.asarray(tr.mode_nbar[m][frames], dtype=float) for m in tr.mode_marginal},
-        engine_calls=stats.engine_calls,
-        wall_time_s=time.perf_counter() - t0,
-        method="read off the step's zoom: the engine stored the Fock populations at every point (Traces.mode_marginal, 0.4.0)",
-    )
-    return rec.with_fock_movie(movie), movie
+# ---- Level 3 on demand: the Hamiltonian record, the process matrix ---------------------------------------------------
 
 
 def _segments_of(step: core.GateStep) -> list[tuple[float, float, list[core.Pulse]]]:
@@ -531,13 +381,23 @@ def _segments_of(step: core.GateStep) -> list[tuple[float, float, list[core.Puls
     return out
 
 
-def _nnz(op: object) -> int:
-    obj = op(0.0) if callable(op) and not hasattr(op, "to") else op
-    try:
-        return int(obj.to("CSR").data.as_scipy().nnz)  # type: ignore[union-attr]
-    except Exception:  # a Dense operator or another data layer: count the non-zeros of the full matrix
-        arr = np.asarray(obj.full())  # type: ignore[union-attr]
-        return int(np.count_nonzero(arr))
+def _nnz(op: qt.Qobj | qt.QobjEvo) -> int:
+    """Stored non-zeros of an operator in CSR form (a time-dependent one at t = 0)."""
+    q = op(0.0) if isinstance(op, qt.QobjEvo) else op
+    return int(q.to("CSR").data.as_scipy().nnz)
+
+
+def _collapse(c: core.CollapseOp, *, active: bool, note: str) -> CollapseRecord:
+    return CollapseRecord(
+        channel=str(c.channel),
+        rate_hz=float(c.rate_hz),
+        ion=None if c.ion is None else int(c.ion),
+        mode=None if c.mode is None else int(c.mode),
+        time_dependent=bool(c.time_dependent),
+        operator_nnz=_nnz(c.op),
+        active_in_run=active,
+        note=note,
+    )
 
 
 def hamiltonian_key(step_index: int, sample_index: int, branch: int) -> str:
@@ -547,31 +407,25 @@ def hamiltonian_key(step_index: int, sample_index: int, branch: int) -> str:
 def hamiltonian_record(
     record: Record, live: LiveRun, step_index: int, sample_index: int = 0, branch: int = 0
 ) -> tuple[Record, HamiltonianRecord]:
-    """The terms of H(t) and the collapse operators the engine assembled for one step (Section 5.7), listed with their numbers:
-    the builder is called as the engine calls it (same space, sample, frozen Fock states and qubit shifts), on every segment of
-    the step for the summary table and on the first for the term list."""
+    """The terms of H(t) and the collapse operators the engine assembles for one step (Section 5.7), listed with their
+    numbers: the builder is called as the engine calls it (same space, sample, frozen Fock states and qubit shifts), on every
+    segment of the step for the summary table and on the first for the term list."""
     key = hamiltonian_key(step_index, sample_index, branch)
     cached = record.hamiltonian(key)
     if cached is not None:
         return record, cached
-    t0 = time.perf_counter()
     space = live.space
     device = live.device
     _st, sample = initial_state(record, live, sample_index, branch)
     step = live.steps[step_index]
     frozen_n = {m: int(sample.get(core.key_frozen_n(m), 0.0)) for m in space.frozen if m not in space.dropped}
-    segments = _segments_of(step)
+    shifts = dict(live.core_record.qubit_shifts_hz)
     summaries: list[SegmentSummary] = []
     first: core.BuiltHamiltonian | None = None
     first_pulses: list[core.Pulse] = []
-    for a, b, active in segments:
+    for a, b, active in _segments_of(step):
         built = core.build_hamiltonian(
-            device,
-            active,
-            space,
-            sample=sample,
-            qubit_shifts_hz=dict(live.core_record.qubit_shifts_hz),
-            frozen_n=frozen_n,
+            device, active, space, sample=sample, qubit_shifts_hz=shifts, frozen_n=frozen_n
         )
         summaries.append(
             SegmentSummary(
@@ -585,32 +439,17 @@ def hamiltonian_record(
         )
         if first is None:
             first, first_pulses = built, list(active)
-    if first is None:
-        # an idle step: the free Hamiltonian alone
+    if first is None:  # an idle step: the free Hamiltonian alone
         first = core.build_hamiltonian(
-            device,
-            [],
-            space,
-            sample=sample,
-            qubit_shifts_hz=dict(live.core_record.qubit_shifts_hz),
-            frozen_n=frozen_n,
+            device, [], space, sample=sample, qubit_shifts_hz=shifts, frozen_n=frozen_n
         )
     pulse_records = {p.gate_id: p for p in record.schedule.pulses if p.gate_id is not None}
+    resolved_modes = {t.mode for t in space.resolved}
     drives: list[DriveTermRecord] = []
     for r in first.records:
         pr = pulse_records.get(r.pulse or "")
         core_pulse = next((p for p in first_pulses if p.gate_id == r.pulse), None)
         etas = {int(m): float(e) for m, e in r.etas.items()}
-        tables = {
-            m.mode: np.asarray(core.rabi_table(int(m.d), abs(etas.get(m.mode, 0.0))), dtype=float)
-            for m in space.resolved
-        }
-        dw = {
-            m: float(core.debye_waller_factor(int(frozen_n.get(m, 0)), abs(etas.get(m, 0.0))))
-            for m in space.frozen
-            if m not in space.dropped
-        }
-        resolved_modes = {t.mode for t in space.resolved}
         op = space.drive_operator(int(r.ion), {m: e for m, e in etas.items() if m in resolved_modes})
         tones_mu: tuple[float, ...] = ()
         tones_phi: tuple[float, ...] = ()
@@ -641,54 +480,40 @@ def hamiltonian_record(
                 tone_phases_rad=tones_phi,
                 tone_peaks_hz=tones_peak,
                 operator_nnz=_nnz(op),
-                matrix_elements=tables,
-                frozen_debye_waller=dw,
+                matrix_elements={
+                    m.mode: np.asarray(core.rabi_table(int(m.d), abs(etas.get(m.mode, 0.0))), dtype=float)
+                    for m in space.resolved
+                },
+                frozen_debye_waller={
+                    m: float(core.debye_waller_factor(int(frozen_n.get(m, 0)), abs(etas.get(m, 0.0))))
+                    for m in space.frozen
+                    if m not in space.dropped
+                },
             )
         )
-    collapse: list[CollapseRecord] = []
-    noise_active = bool(record.job.noise)
-    for c in device.noise.channels(device, space):
-        collapse.append(
-            CollapseRecord(
-                channel=str(c.channel),
-                rate_hz=float(c.rate_hz),
-                ion=None if c.ion is None else int(c.ion),
-                mode=None if c.mode is None else int(c.mode),
-                time_dependent=bool(c.time_dependent),
-                operator_nnz=_nnz(c.op),
-                active_in_run=noise_active,
-                note="device channel of Section 5.7 (heating, motional dephasing, qubit dephasing)"
-                + ("" if noise_active else "; the run was made with noise=False, so it was not integrated"),
-            )
+    collapse = [
+        _collapse(
+            c,
+            active=True,
+            note="device channel of Section 5.7 (heating, motional dephasing, qubit dephasing)",
         )
-    scattering_on = bool(getattr(live.options, "scattering_channels", False))
+        for c in device.noise.channels(device, space)
+    ]
+    scattering_on = bool(live.options.scattering_channels)
     if first_pulses:
         try:
             ops, notes = core.scattering_channels(device, first_pulses[0], space)
         except Exception as exc:  # a drive kind without scattering (microwave) or a level set the model lacks
             ops, notes = (), (f"scattering channels unavailable: {exc}",)
-        for c in ops:
-            collapse.append(
-                CollapseRecord(
-                    channel=str(c.channel),
-                    rate_hz=float(c.rate_hz),
-                    ion=None if c.ion is None else int(c.ion),
-                    mode=None if c.mode is None else int(c.mode),
-                    time_dependent=bool(c.time_dependent),
-                    operator_nnz=_nnz(c.op),
-                    active_in_run=scattering_on,
-                    note="photon-scattering channel of Section 6.5"
-                    + (
-                        ""
-                        if scattering_on
-                        else "; not integrated in this run (SolverOptions.scattering_channels is off: the per-pulse error is estimated instead)"
-                    ),
-                )
-            )
-        for n in notes:
-            collapse.append(
-                CollapseRecord("scattering note", 0.0, None, None, False, 0, scattering_on, str(n))
-            )
+        note = "photon-scattering channel of Section 6.5" + (
+            ""
+            if scattering_on
+            else "; not integrated in this run (SolverOptions.scattering_channels is off: the per-pulse error is estimated instead)"
+        )
+        collapse += [_collapse(c, active=scattering_on, note=note) for c in ops]
+        collapse += [
+            CollapseRecord("scattering note", 0.0, None, None, False, 0, scattering_on, str(n)) for n in notes
+        ]
     const = next((x for x in first.H.to_list() if not isinstance(x, list)), None)
     stark: dict[int, float] = {}
     for p in first_pulses:
@@ -696,26 +521,21 @@ def hamiltonian_record(
         if pr is not None:
             for ion in pr.ions:
                 stark[int(ion)] = float(pr.stark_shift_hz.at(np.zeros(1), pr.duration_s)[0])
+    n_modes = len(device.crystal.modes)
     ham = HamiltonianRecord(
         key=key,
-        step_index=step_index,
-        sample_index=sample_index,
-        branch=branch,
         gate_id=str(step.gate_id),
         t_start_s=float(step.t_start_s),
         t_end_s=float(step.t_end_s),
         frame=str(first.frame),
         dims=tuple(int(d) for d in space.dims),
         dimension=int(space.dimension),
-        ion_labels=tuple(int(i) for i in space.ion_labels),
         mode_frequencies_hz={int(m): float(w / TWO_PI) for m, w in first.mode_frequencies_rad_s.items()},
-        mode_offsets_hz={
-            m: float(sample.get(core.key_mode_offset_hz(m), 0.0)) for m in range(len(device.crystal.modes))
-        },
+        mode_offsets_hz={m: float(sample.get(core.key_mode_offset_hz(m), 0.0)) for m in range(n_modes)},
         qubit_offsets_hz={
             int(i): float(sample.get(core.key_qubit_offset_hz(int(i)), 0.0)) for i in space.ion_labels
         },
-        mode_classes={m: str(space.mode_class(m)) for m in range(len(device.crystal.modes))},
+        mode_classes={m: str(space.mode_class(m)) for m in range(n_modes)},
         caps={int(m.mode): int(m.d) for m in space.resolved},
         segments=tuple(summaries),
         drives=tuple(drives),
@@ -727,7 +547,6 @@ def hamiltonian_record(
         fingerprint=str(first.fingerprint),
         free_term_nnz=_nnz(const) if const is not None else 0,
         stark_shifts_hz=stark,
-        wall_time_s=time.perf_counter() - t0,
     )
     return record.with_hamiltonian(ham), ham
 
@@ -743,14 +562,10 @@ def process_matrix(
     sample_index: int = 0,
     branch: int = 0,
     *,
-    progress: Callable[[str, float | None, str], None] | None = None,
+    progress: Progress | None = None,
 ) -> tuple[Record, ProcessMatrixRecord]:
-    """Process tomography of one step from its recorded initial motional state (Section 5.4 (a)): the step's channel on the
-    register's product inputs (from the propagated internal basis when the step is unitary, every input propagated and the Choi
-    matrix fit by least squares otherwise; ``TomographyRecord.route``), projected onto CP and TP, summarized against the step's
-    ideal unitary (Section 6.8)."""
-    from qutip_trap_app.viewmodel.circuit import embed_operator
-
+    """Process tomography of one step from its recorded initial motional state (Section 5.4 (a)), projected onto CP and TP
+    and summarized against the step's ideal unitary (Section 6.8)."""
     key = process_matrix_key(step_index, sample_index, branch)
     cached = record.process_matrix(key)
     if cached is not None:
@@ -760,15 +575,13 @@ def process_matrix(
     start = rec.boundary(step_index, sample_index, branch)
     assert start is not None
     space = live.space
-    state = _state_from_boundary(start, space)
     _st, sample = initial_state(rec, live, sample_index, branch)
     step = live.steps[step_index]
     labels = tuple(int(i) for i in space.ion_labels)
     n = len(labels)
     ideal = np.eye(2**n, dtype=complex)
     for tg in step.targets:
-        pos = tuple(labels.index(int(i)) for i in tg.ions)
-        ideal = embed_operator(np.asarray(tg.unitary(), dtype=complex), pos, n) @ ideal
+        ideal = embed_on_register(tg.unitary(), [labels.index(int(i)) for i in tg.ions], n) @ ideal
     n_inputs = int(np.prod([d * d for d in space.ion_dims]))
     if progress is not None:
         progress(
@@ -776,12 +589,11 @@ def process_matrix(
             None,
             f"{n_inputs} input states through the {step.gate_id} pulses at dimension {space.dimension}",
         )
-    engine = engine_for(rec, live)
-    summary = engine.process_tomography(
+    summary = engine_for(live).process_tomography(
         live.device,
         step.pulses,
         space,
-        state.motional,
+        _state_from_boundary(start, space).motional,
         sample,
         core.SeedSpec(rec.job.seed),
         live.options,
@@ -790,9 +602,6 @@ def process_matrix(
     choi = np.asarray(summary.choi, dtype=complex)
     pm = ProcessMatrixRecord(
         key=key,
-        step_index=step_index,
-        sample_index=sample_index,
-        branch=branch,
         gate_id=str(step.gate_id),
         ions=labels,
         choi=choi,
@@ -808,28 +617,3 @@ def process_matrix(
         method="state-based process tomography from the recorded boundary motional state (Section 5.4 (a))",
     )
     return rec.with_process_matrix(pm), pm
-
-
-__all__ = [
-    "CONVERGENCE_TOL",
-    "DEFAULT_FOCK_FRAMES",
-    "DEFAULT_ZOOM_POINTS",
-    "TruncationCheck",
-    "ZoomStats",
-    "boundary_states",
-    "engine_for",
-    "fock_movie",
-    "fock_movie_key",
-    "hamiltonian_key",
-    "hamiltonian_record",
-    "initial_state",
-    "options_digest",
-    "process_matrix",
-    "process_matrix_key",
-    "sub_schedule",
-    "tightened",
-    "tolerance_recheck",
-    "truncation_recheck",
-    "zoom",
-    "zoom_key",
-]

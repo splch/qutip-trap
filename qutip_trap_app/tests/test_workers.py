@@ -17,10 +17,9 @@ def worker():  # type: ignore[no-untyped-def]
     w.stop()
 
 
-def test_ping_and_errors(worker: SimulationWorker) -> None:
-    assert worker.wait(worker.submit("ping"), timeout_s=60.0) == "pong"
+def test_an_unknown_request_is_refused_at_submit(worker: SimulationWorker) -> None:
     with pytest.raises(WorkerError, match="unknown request"):
-        worker.wait(worker.submit("nonsense"), timeout_s=60.0)
+        worker.submit("nonsense")
 
 
 def test_run_job_then_zoom_in_the_worker(worker: SimulationWorker) -> None:

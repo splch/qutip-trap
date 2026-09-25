@@ -310,7 +310,7 @@ CONCEPTS: dict[str, Concept] = {c.id: c for c in (
     _c("provenance_tags", 0, "What the chips say", "provenance tag", ("conv.noise_provenance", "conv.frequencies"), "14.5",
        "Every number wears a small chip that says what checking was done on it: checked against its source, corrected, taken from a source unchecked, or computed here.",
        "Hover any chip: the glyph and word are the tag, the lines under it the source, the equation and the corrected form; click it to read the section.",
-       "Appendix D's tags: verified, corrected, extracted, background, recomputed here, derived, contested; a tag records what checking was done, never that a value is final.",
+       "The provenance tags: verified, corrected, extracted, background, recomputed here, derived, contested; a tag records what checking was done, never that a value is final.",
        "tell a verified number from an extracted or derived one and say what each tag promises",
        Prompt("provenance_tags.q1", "choose", "A chip reads '❝ extracted'. The number was",
               ("taken from a source with a quote, not independently checked", "checked against its source by verifier agents", "computed by this machine"),

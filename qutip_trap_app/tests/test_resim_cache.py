@@ -16,20 +16,21 @@ def _ms_step(record: Record) -> int:
 
 
 def test_zoom_twice_recomputes_once_and_matches_a_fresh_one(bell: tuple[Record, LiveRun]) -> None:
-    record, live = bell
-    step = _ms_step(record)
-    record, z1, s1 = zoom(record, live, step)
+    fresh, live = bell
+    step = _ms_step(fresh)
+    record, z1, s1 = zoom(fresh, live, step)
     assert not s1.cached and s1.engine_calls == 1
+    assert record.zoom(z1.key) is z1 and record.boundary(step, 0, 0) is not None, (
+        "the zoom and its chain are cached"
+    )
     record, z2, s2 = zoom(record, live, step)
     assert s2.cached and s2.engine_calls == 0 and z2 is z1
-    record, z3, s3 = zoom(record, live, step, force=True)
+    _record, z3, s3 = zoom(fresh, live, step)  # the same zoom recomputed from the record without the cache
     assert s3.engine_calls == 1 and z3.key == z1.key
     assert np.array_equal(z1.trace.times_s, z3.trace.times_s)
     for key in z1.trace.expectations:
         assert np.max(np.abs(z1.trace.expectations[key] - z3.trace.expectations[key])) < 1e-10, key
     assert z1.trace.times_s.size > 200 and z1.n_store == 201
-    assert record.zoom(z1.key) is z3, "the forced recomputation replaced the cache entry"
-    assert record.boundary(step, 0, 0) is not None, "the chain up to the pulse is cached too"
 
 
 def test_zoom_budget_and_dynamics_view(bell: tuple[Record, LiveRun]) -> None:
@@ -61,10 +62,7 @@ def test_zoom_budget_and_dynamics_view(bell: tuple[Record, LiveRun]) -> None:
     deficit = float(dyn.norm_deficit.value)  # type: ignore[arg-type]
     assert 0.0 <= abs(deficit) < 1e-7
     assert all(abs(v.sum() - (1.0 - deficit)) < 1e-12 for v in dyn.fock_end.values())
-    assert z.trace.mode_marginal is not None, "the zoom stores the per-time Fock populations (0.4.0)"
-    assert not any("Fock" in u for u in dyn.unavailable), (
-        "the core gap on per-time Fock distributions is closed"
-    )
+    assert z.trace.mode_marginal is not None, "the zoom stores the per-time Fock populations"
     panel = numerics_panel(record, zoom=z)
     assert panel.badge.status in ("pass", "not checked")
     assert all(float(b.value) < 1e-6 for b in panel.boundary)  # type: ignore[arg-type]

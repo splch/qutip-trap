@@ -10,18 +10,9 @@ import numpy as np
 import pytest
 from fixtures import BELL, FAST, SEED, SHOTS
 
-from qutip_trap_app.record import LiveRun, Record, calibrate_for, job_for_preset
-from qutip_trap_app.replay import (
-    ChannelLibrary,
-    conjugate_choi,
-    frame_rotation,
-    hotter_recipe,
-    readout_polarity,
-    replay,
-    rz,
-)
-from qutip_trap_app.replay_record import build_replay_record
-from qutip_trap_app.storage import export_bytes, import_bytes
+from qutip_trap_app.core import rz, standard_recipe, yb171_chain
+from qutip_trap_app.record import DeviceRef, LiveRun, Record, calibrate_for, execute, job_for_preset
+from qutip_trap_app.replay import ChannelLibrary, conjugate_choi, frame_rotation, readout_polarity, replay
 from qutip_trap_app.viewmodel.circuit import bloch_vectors, register_after, timeline
 from qutip_trap_app.viewmodel.machine import histogram
 from qutip_trap_app.viewmodel.numerics import numerics_panel
@@ -32,9 +23,8 @@ def test_frame_rotation_convention() -> None:
     assert np.allclose(u @ u.conj().T, np.eye(2))
     r = frame_rotation((0, 1), {0: 0.3, 1: -0.2})
     assert r.shape == (4, 4) and np.allclose(r, np.kron(rz(0.3), rz(-0.2)))
-    choi = (
-        np.eye(4, dtype=complex) / 4.0
-    )  # the fully depolarizing channel is invariant under any frame rotation
+    # the fully depolarizing channel is invariant under any frame rotation
+    choi = np.eye(4, dtype=complex) / 4.0
     assert np.allclose(conjugate_choi(choi, u), choi)
     choi2 = np.eye(16, dtype=complex) / 16.0
     assert np.allclose(conjugate_choi(choi2, r), choi2)
@@ -48,7 +38,7 @@ def test_replay_matches_joint_exact_within_its_residual(
     assert rep.diagnostics.level == "CHANNEL_REPLAY" and rep.replay is not None and not rep.traces
     # the channels the schedule needed: gpi2 on each ion and the fully entangling ms, each with its frame covariance measured
     kinds = {e.kind for e in library.entries.values()}
-    assert kinds == {"gpi2", "ms"} and library.covariance_checked == {"gpi2", "ms"}
+    assert kinds == {"gpi2", "ms"} and set(library.covariance_by_kind) == {"gpi2", "ms"}
     for e in library.entries.values():
         assert e.covariance_residual is not None and e.covariance_residual < 1e-6, (
             e.key,
@@ -79,36 +69,32 @@ def test_replay_matches_joint_exact_within_its_residual(
     assert any("verify deeper" in x for x in panel.badge.checks_not_run)
 
 
-def test_replay_record_round_trips(bell_replay: tuple[Record, ChannelLibrary]) -> None:
-    rep, _ = bell_replay
-    data, record_id = export_bytes(rep)
-    back = import_bytes(data)
-    assert back.digest() == record_id and back.replay is not None
-    assert np.array_equal(back.replay.register_after, rep.replay.register_after)  # type: ignore[union-attr]
-    assert back.key() == rep.key()
-
-
 def test_polarity_and_spam_come_from_the_device_and_table(bell_replay: tuple[Record, ChannelLibrary]) -> None:
     rep, _ = bell_replay
     preset = rep.job.device.build()
     assert readout_polarity(preset.device) == (1, 1), "171Yb+ direct fluorescence: |1> (F = 1) is bright"
-    assert rep.replay is not None and rep.replay.bright_levels == (1, 1)
-    eps_b, eps_d = rep.replay.spam_used["q0"]
+    eps_b, eps_d = rep.device_card.spam["q0"]
     assert 1e-4 < eps_b < 5e-3 and 1e-4 < eps_d < 5e-3
-    assert rep.readout.mode == "replay" and rep.readout.levels.shape == (SHOTS, 2)
+    assert rep.readout.levels.shape == (SHOTS, 2)
 
 
 @pytest.mark.slow
 def test_hotter_motional_state_widens_residual_and_discrepancy_together(
     bell: tuple[Record, LiveRun], bell_replay: tuple[Record, ChannelLibrary]
 ) -> None:
-    """The second half of the Section 9.11 row: fewer sideband-cooling pulses leave the gate modes hotter; the replay's
-    residual bound grows with (2 nbar + 1) and so does its discrepancy against JOINT_EXACT."""
-    cold_joint, _ = bell
+    """The second half of the Section 9.11 row: three sideband-cooling pulses per order instead of the standard recipe's
+    leave the gate modes hotter; the replay's residual bound grows with (2 nbar + 1) and so does its discrepancy against
+    JOINT_EXACT."""
+    cold_joint, cold_live = bell
     cold_rep, _ = bell_replay
-    base = job_for_preset("yb171_chain", 2, BELL, SHOTS, seed=SEED, options=FAST, detection_records=500)[1]
-    recipe = hotter_recipe(base.device, sideband_pulses_per_order=3, raman_pair=(0, 1))
-    hot_job, hot_preset = job_for_preset(
+    base = standard_recipe(yb171_chain(2).device, raman_pair=(0, 1))
+    assert base.sideband is not None
+    sideband = dataclasses.replace(
+        base.sideband,
+        pulses_per_order={order: min(k, 3) for order, k in base.sideband.pulses_per_order.items()},
+    )
+    hot_preset = yb171_chain(2, recipe=dataclasses.replace(base, sideband=sideband))
+    hot_job, _ = job_for_preset(
         "yb171_chain",
         2,
         BELL,
@@ -116,40 +102,29 @@ def test_hotter_motional_state_widens_residual_and_discrepancy_together(
         seed=SEED,
         options=dataclasses.replace(FAST, branch_weight_min=1e-2),
         detection_records=500,
-        preset_kwargs={},
+        preset=hot_preset,
     )
-    # the hotter device is the same preset with the shortened recipe: rebuild it explicitly and re-point the job at it
-    from qutip_trap_app.core import yb171_chain
-    from qutip_trap_app.record import DeviceRef, execute
-
-    hot_preset = yb171_chain(2, recipe=recipe)
-    hot_job = dataclasses.replace(hot_job, device=DeviceRef(hot_preset.device.hash(), None, 2, {}))
-    hot_table = calibrate_for(hot_job, hot_preset)
+    # the hotter device is passed to execute explicitly: its recipe is not a preset argument the reference could rebuild
+    assert hot_job.device == DeviceRef(hot_preset.device.hash(), "yb171_chain", 2, {})
+    hot_table = calibrate_for(hot_job, hot_preset.device)
     assert max(hot_table.nbar[m].value for m in (2, 3)) > max(
-        cold_joint.preparation.nbar[m] for m in (2, 3)
+        cold_live.core_record.preparation.nbar[m] for m in (2, 3)
     ), "the gate modes are hotter"
     hot_joint, _live = execute(hot_job, hot_preset)
-    library = ChannelLibrary.for_job(hot_job, hot_preset.device, hot_table)
-    outcome = replay(hot_job, hot_preset.device, hot_table, library)
-    hot_rep = build_replay_record(hot_job, hot_preset.device, hot_table, outcome, library)
+    hot_rep = replay(hot_job, hot_preset.device, hot_table, ChannelLibrary())
     assert hot_rep.replay is not None and cold_rep.replay is not None
     assert hot_rep.replay.residual_total > cold_rep.replay.residual_total
     assert hot_joint.results.final_state is not None and hot_rep.results.final_state is not None
+    assert cold_joint.results.final_state is not None and cold_rep.results.final_state is not None
     hot_disc = float(
         np.max(
-            np.abs(
-                np.real(np.diag(hot_joint.results.final_state))
-                - np.real(np.diag(hot_rep.results.final_state))
-            )
+            np.abs(np.diag(hot_joint.results.final_state).real - np.diag(hot_rep.results.final_state).real)
         )
     )
     cold_disc = float(
         np.max(
-            np.abs(
-                np.real(np.diag(cold_joint.results.final_state))
-                - np.real(np.diag(cold_rep.results.final_state))
-            )
+            np.abs(np.diag(cold_joint.results.final_state).real - np.diag(cold_rep.results.final_state).real)
         )
-    )  # type: ignore[arg-type]
+    )
     assert hot_disc > cold_disc
     assert hot_disc <= hot_rep.replay.residual_total, (hot_disc, hot_rep.replay.residual_terms)

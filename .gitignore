@@ -19,6 +19,7 @@ dist/
 qutip_trap_app/.flet/
 qutip_trap_app/build/
 qutip_trap_app/storage/
+qutip_trap_app/src/qutip_trap_app/provenance_index.json
 
 # Editors / OS
 .idea/

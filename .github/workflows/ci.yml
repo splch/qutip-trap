@@ -53,8 +53,6 @@ jobs:
       - run: uv sync --all-packages --extra gui --group dev
       - run: uv run mypy
         working-directory: qutip_trap_app
-      - name: the provenance index is current with the ledger and PLAN.md
-        run: uv run python -m qutip_trap_app.provenance --check
       - run: uv run --package qutip-trap-app pytest qutip_trap_app/tests --timeout 1800 --durations=10
 
   build:

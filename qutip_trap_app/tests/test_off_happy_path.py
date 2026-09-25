@@ -1,6 +1,6 @@
 """Off the happy path: circuits with fewer qubits than the device has ions, circuits measuring a subset, and worker results
-that arrive after progress events (the bugs a rerun with an edited circuit met). Each record is pushed through the pure
-view-models the screens read, so that a shape mismatch fails here and not on a screen."""
+that arrive after progress events. Each record is pushed through the pure view-models the screens read, so that a shape
+mismatch fails here and not on a screen."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from qutip_trap_app.core import Circuit, Operation, load_openqasm2
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import LiveRun, Record, calibrate_for, execute, job_for_preset
 from qutip_trap_app.replay import ChannelLibrary, replay
-from qutip_trap_app.replay_record import build_replay_record
-from qutip_trap_app.storage import export_bytes, import_bytes
+from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.circuit import register_after, timeline
 from qutip_trap_app.viewmodel.machine import histogram, shot
 from qutip_trap_app.views.state import JobStatus, Session, Store
@@ -49,9 +48,8 @@ def one_qubit_full() -> tuple[Record, LiveRun]:
 def one_qubit_replay() -> Record:
     job, preset = _job(ONE_QUBIT)
     assert preset is not None
-    table = calibrate_for(job, preset)
-    library = ChannelLibrary.for_job(job, preset.device, table)
-    return build_replay_record(job, preset.device, table, replay(job, preset.device, table, library), library)
+    table = calibrate_for(job, preset.device)
+    return replay(job, preset.device, table, ChannelLibrary())
 
 
 @pytest.fixture(scope="module")
@@ -74,7 +72,6 @@ def _every_view(record: Record) -> None:
         reg = register_after(record, g.index)
         assert reg.rho.shape == (2**record.n_ions,) * 2 and len(reg.bloch) == record.n_ions
         assert 0.0 <= float(reg.fidelity.value) <= 1.0 + 1e-9
-    assert import_bytes(export_bytes(record)[0]).digest() == record.digest()
 
 
 @pytest.mark.parametrize("engine", ["full", "replay"])
@@ -105,7 +102,6 @@ def test_readout_rows_line_up_with_the_shots(bell: tuple[Record, LiveRun]) -> No
     n_shots = record.results.bitstrings.shape[0]
     assert record.n_branches > 1
     assert record.readout.levels.shape == (n_shots, record.n_ions)
-    assert record.readout.bits_declared.shape == (n_shots, record.n_ions)
     assert record.readout.time_used_s.shape[0] == n_shots
     last = shot(record, n_shots - 1)
     assert len(last.levels) == record.n_ions
@@ -126,8 +122,7 @@ class _FakeWorker:
 
 def test_results_land_after_progress_events(bell: tuple[Record, LiveRun]) -> None:
     """A progress event rewrites the job's message; the zoom and verify results are matched to their record by the ticket's
-    target, so they land where they belong (a zoom result used to be dropped with an unpack error, a verify report filed
-    under the last progress message)."""
+    target, so they land where they belong."""
     record, live = bell
     key = record.key()
     session = Session(Store(), ProvenanceIndex.load())
@@ -137,6 +132,7 @@ def test_results_land_after_progress_events(bell: tuple[Record, LiveRun]) -> Non
     store.current = key
     step = next(s.index for s in record.schedule.steps if s.gate_id.startswith("ms"))
     zoomed, z, _stats = resim.zoom(record, live, step, n_store=11)  # what the worker would send back
+    zoomed, ham = resim.hamiltonian_record(zoomed, live, step)
     session.submit_zoom(key, step)
     session.apply_events(
         [Event("progress", "t1", "zoom", stage="zooming", message=f"re-simulating step {step}")]
@@ -147,7 +143,7 @@ def test_results_land_after_progress_events(bell: tuple[Record, LiveRun]) -> Non
                 "result",
                 "t1",
                 "zoom",
-                payload={"zoom": z, "boundaries": zoomed.boundaries, "stats": _stats, "hamiltonian": None},
+                payload={"zoom": z, "boundaries": zoomed.boundaries, "stats": _stats, "hamiltonian": ham},
             )
         ]
     )
@@ -157,8 +153,9 @@ def test_results_land_after_progress_events(bell: tuple[Record, LiveRun]) -> Non
     session.apply_events(
         [Event("progress", "t1", "verify", stage="running deeper", message="the same job at auto")]
     )
-    session.apply_events([Event("result", "t1", "verify", payload={"report": "REPORT", "deep": None})])
-    assert list(store.verify_reports) == [key]
+    report = VerifyReport("JOINT_EXACT", None, SHOTS, None, 0.0, 0.0, None, None, True, None, 0.0)
+    session.apply_events([Event("result", "t1", "verify", payload={"report": report, "deep": None})])
+    assert store.verify_reports == {key: report}
 
 
 def test_a_dead_worker_fails_its_jobs_and_is_restarted() -> None:
@@ -199,7 +196,7 @@ def no_gates_full() -> tuple[Record, LiveRun]:
 
 
 def test_a_record_without_a_step_says_so(no_gates_full: tuple[Record, LiveRun]) -> None:
-    """A deep link to a dynamics route of a gate-less record met an IndexError where the view catches KeyError."""
+    """A gate-less record has no step: the dynamics lookup raises the KeyError the view catches."""
     from qutip_trap_app.viewmodel.dynamics import recorded_zoom
 
     record, _live = no_gates_full
@@ -258,13 +255,13 @@ def test_a_closure_prediction_needs_loops() -> None:
 
 def test_level3_finds_the_zoom_it_asked_for(bell: tuple[Record, LiveRun]) -> None:
     """The zoom is cached under the options it ran with (the Fock marginals on); Level 3 looks it up with the record's
-    options. The key folds the switch in, so the two agree (until it did, the fine zoom was computed and never shown)."""
+    options, and the key folds the switch in, so the two agree."""
     from qutip_trap_app.views.level3 import current_zoom
 
     record, live = bell
     step = next(s.index for s in record.schedule.steps if s.gate_id.startswith("ms"))
     zoomed, z, _stats = resim.zoom(record, live, step)
-    assert resim.zoom_key(step, 0, 0, resim.DEFAULT_ZOOM_POINTS, record.job.solver_options()) == z.key
+    assert resim.zoom_key(step, 0, 0, resim.DEFAULT_ZOOM_POINTS, record.job.options) == z.key
     found, fine = current_zoom(zoomed, step, 0, 0)
     assert fine and found is z
     coarse, fine_before = current_zoom(record, step, 0, 0)

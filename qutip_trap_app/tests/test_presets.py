@@ -1,5 +1,5 @@
 """Section 9.11 row "Presets": each Section 9 preset loads, runs and displays the published number beside the simulated one
-with the correct tag (PLAN.md Section 14.5; DESIGN.md Section 10). The published value's chip is the Section 9 row's tag for
+with the correct tag (PLAN.md Section 14.5). The published value's chip is the Section 9 row's tag for
 the source, the simulated value's chip is the anchor of the check that recomputed it, and the verdicts agree with the ledger's
 own judgments (the cases it marks as not first-principles predictions come out as such)."""
 
@@ -16,6 +16,16 @@ from qutip_trap_app.viewmodel.catalogue import CATALOGUE
 @pytest.fixture(scope="module")
 def index() -> ProvenanceIndex:
     return ProvenanceIndex.load()
+
+
+@pytest.fixture(scope="module")
+def runs() -> dict[str, tuple[vm.PresetResult, list[str]]]:
+    """Every experiment preset run once, with the progress stages it reported."""
+    out: dict[str, tuple[vm.PresetResult, list[str]]] = {}
+    for pid in sorted(presets.RUNNERS):
+        stages: list[str] = []
+        out[pid] = (presets.run_preset(pid, lambda stage, _f, _m, seen=stages: seen.append(stage)), stages)
+    return out
 
 
 def test_every_preset_is_well_formed_and_tagged(index: ProvenanceIndex) -> None:
@@ -46,10 +56,11 @@ def test_every_preset_is_well_formed_and_tagged(index: ProvenanceIndex) -> None:
 
 
 @pytest.mark.parametrize("preset_id", sorted(presets.RUNNERS))
-def test_experiment_preset_runs_and_compares(preset_id: str) -> None:
+def test_experiment_preset_runs_and_compares(
+    preset_id: str, runs: dict[str, tuple[vm.PresetResult, list[str]]]
+) -> None:
     spec = vm.PRESETS[preset_id]
-    stages: list[str] = []
-    result = presets.run_preset(preset_id, lambda stage, _f, _m: stages.append(stage))
+    result, stages = runs[preset_id]
     assert result.preset_id == preset_id and result.wall_time_s >= 0.0 and stages
     comparisons = vm.compare(spec, result)
     assert len(comparisons) == len(spec.values), "every published value found its simulated number"
@@ -62,22 +73,12 @@ def test_experiment_preset_runs_and_compares(preset_id: str) -> None:
         assert ch.series and all(s.x.size == s.y.size for s in ch.series)
 
 
-def test_the_verdicts_agree_with_the_ledger() -> None:
+def test_the_verdicts_agree_with_the_ledger(runs: dict[str, tuple[vm.PresetResult, list[str]]]) -> None:
     """The anchors' own judgments: Harty, James, Roos, Crain and the Kirchmair contrast agree; Myerson's optimum and
     Kirchmair's fidelity are not first-principles predictions and say so."""
-    by_key = {}
-    for pid in (
-        "harty_2014",
-        "james_1998",
-        "roos_2000",
-        "kirchmair_2009",
-        "myerson_2008",
-        "crain_2019",
-        "monroe_1995",
-    ):
-        result = presets.run_preset(pid)
-        for c in vm.compare(vm.PRESETS[pid], result):
-            by_key[(pid, c.label)] = c
+    by_key = {
+        (pid, c.label): c for pid, (result, _) in runs.items() for c in vm.compare(vm.PRESETS[pid], result)
+    }
     assert by_key[("harty_2014", "error per gate, the paper's own model")].within
     assert abs(by_key[("harty_2014", "error per gate, measured")].simulated.value - 0.77e-6) < 0.15e-6
     assert all(c.within for (pid, _), c in by_key.items() if pid == "james_1998")
@@ -103,7 +104,7 @@ def test_circuit_comparisons_read_the_run() -> None:
         spec, {"00": 0.51, "11": 0.48, "01": 0.005, "10": 0.005}, {"00": 0.025, "11": 0.025}, 0.9975
     )
     labels = {c.label: c for c in comps}
-    assert labels["P(00), the check script's 4000 shots"].within
+    assert labels["P(00), the reference run's 4000 shots"].within
     assert abs(labels["register infidelity 1 - F"].simulated.value - 2.5e-3) < 1e-9
     assert vm.PRESETS["ghz_three"].preset_kwargs == {"address_waist_m": 2.0e-6}
 

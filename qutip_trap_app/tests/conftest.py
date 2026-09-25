@@ -1,8 +1,6 @@
-"""Fixtures for the application's view-model tests (PLAN.md Section 9.11: they run in the app's CI, not the core's).
-
-One two-ion Bell job on the public 171Yb+ preset is executed once per session (about 20 s: the surrogate calibration and
-the run), and every test reads its record. The Flet integration tests (``flet_app`` fixture, ``flet test``) need the Flutter
-client and are skipped unless ``QUTIP_TRAP_APP_UI_TESTS=1``.
+"""Fixtures of the application's tests: one two-ion Bell job on the public 171Yb+ preset, run once per session (about 20 s:
+the surrogate calibration and the run), and its variants. The Flet integration tests (``flet_app`` fixture, ``flet test``)
+need the Flutter client and are skipped unless ``QUTIP_TRAP_APP_UI_TESTS=1``.
 """
 
 from __future__ import annotations
@@ -13,9 +11,8 @@ import pytest
 from fixtures import BELL, FAST, SEED, SHOTS
 
 from qutip_trap_app.core import SolverOptions
-from qutip_trap_app.record import LiveRun, Record, calibrate_for, execute, job_for_preset
+from qutip_trap_app.record import LiveRun, Record, execute, job_for_preset
 from qutip_trap_app.replay import ChannelLibrary, replay
-from qutip_trap_app.replay_record import build_replay_record
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -61,12 +58,8 @@ def under_truncated() -> tuple[Record, LiveRun]:
 
 @pytest.fixture(scope="session")
 def bell_replay(bell: tuple[Record, LiveRun]) -> tuple[Record, ChannelLibrary]:
-    """The same Bell job by the app-side channel replay: the library (gpi2 on each ion, the ms pair, each with its frame
-    covariance measured) and the replay record (about 45 s: the ms tomography twice)."""
-    record, _live = bell
-    job = record.job
-    preset = job.device.build()
-    table = calibrate_for(job, preset)
-    library = ChannelLibrary.for_job(job, preset.device, table)
-    outcome = replay(job, preset.device, table, library)
-    return build_replay_record(job, preset.device, table, outcome, library), library
+    """The same Bell job by the app-side channel replay, on the run's own device and table: the library (gpi2 on each ion
+    and the ms pair, each with its frame covariance measured) and the replay record (about 45 s: the ms tomography twice)."""
+    record, live = bell
+    library = ChannelLibrary()
+    return replay(record.job, live.device, live.table, library), library

@@ -1,24 +1,16 @@
-"""Request semantics of PLAN.md Section 14.4 at Levels 1 and 2 (milestone M11.4; Section 9.11 row "Request semantics").
+"""Requests made at Levels 1 and 2 (PLAN.md Section 14.4; Section 9.11 row "Request semantics").
 
-Section 14.4: "A change at a shallower level is a request rather than an edit: asking for XX(0.3) at Level 1 invokes the pulse
-solver; setting a detuning by hand at Level 2 is applied as written, and the gate at Level 1 then displays its actual unitary,
-not the requested one. Requests the device cannot satisfy are shown with the reason, for example loop closure impossible
-within the power limit or a requested angle outside the calibrated range."
+"A change at a shallower level is a request rather than an edit": each request makes a NEW job from the record's job.
 
-Both requests make a NEW job from the record's job (nothing on the record is edited):
-
-- :func:`request_angle` replaces the native MS gate's angle in the compiled circuit. The scheduler then plays the pair's
-  calibrated waveform rescaled by sqrt(|chi|/|chi_cal|) (the s-squared law of Section 4.4.7 (7), which is the pulse
-  solver's own amplitude law), the job runs at the full engine, and the finished pulse's process matrix is what Level 1
-  shows beside the requested unitary. The request is refused, with the reason, when the angle lies outside the native
-  gate's range or when the rescaled amplitude exceeds the calibrated carrier Rabi frequency of the entangling drive (the
-  power limit).
-- :func:`request_detuning` writes a beat-note offset into the job's ``waveform_overrides``; ``record.calibrate_for`` shifts
-  the pair's waveform (blue legs up, red legs down) and the scheduler plays it as written, amplitude unchanged. The loops
-  then fail to close by what the physics says, and the played gate's process matrix differs from the requested unitary.
+- :func:`request_angle` replaces the native MS gate's angle in the compiled circuit; the scheduler plays the pair's calibrated
+  waveform rescaled by sqrt(|chi|/|chi_cal|) (the pulse solver's s-squared law, Section 4.4.7 (7)). It is refused, with the
+  reason, when the angle lies outside the native gate's range or the rescaled amplitude exceeds the calibrated carrier Rabi
+  frequency of the entangling drive (the power limit).
+- :func:`request_detuning` writes a beat-note offset into ``JobSpec.waveform_overrides``; ``record.calibrate_for`` shifts the
+  pair's waveform (blue legs up, red legs down) and the scheduler plays it as written, amplitude unchanged.
 
 :func:`fitted_ms_angle` reads the entangling angle back from a process matrix: the MS angle whose ideal channel has the
-largest entanglement fidelity with the measured one, so "the simulated unitary is XX(0.3)" is a number, not a feeling.
+largest entanglement fidelity with the measured one.
 """
 
 from __future__ import annotations
@@ -46,7 +38,7 @@ MAX_ANGLE_RAD = math.pi / 2.0
 
 MAX_DETUNING_FRACTION = 0.5
 """A hand-set beat-note offset is accepted up to this fraction of the beat note itself: beyond it a tone crosses the carrier
-and the pulse is no longer the bichromatic drive the waveform was solved as (Section 7.5's scans stay well inside)."""
+and the pulse is no longer the bichromatic drive the waveform was solved as."""
 
 RequestKind = Literal["angle", "detuning"]
 
@@ -63,8 +55,6 @@ class GateRequest:
     gate_id: str
     step_index: int
     pair: tuple[int, int]
-    requested: float
-    """chi in rad (``angle``) or the beat-note offset in Hz (``detuning``)."""
     calibrated_chi_rad: float | None
     scale: float | None
     """The amplitude factor the scheduler applies (``angle``): sqrt(|chi|/|chi_cal|)."""
@@ -156,8 +146,7 @@ def carrier_rabi_hz(record: Record, ion: int) -> float | None:
 def beat_note_hz(record: Record, tg: TargetRecord) -> float | None:
     """|mu| of the gate's first pulse's first tone: the beat note the hand-set offset is measured against."""
     for k in tg.pulse_indices:
-        p = record.schedule.pulses[k]
-        for t in p.tones:
+        for t in record.schedule.pulses[k].tones:
             fn = t.detuning_hz
             if fn.kind == "constant" and fn.value is not None:
                 return abs(float(fn.value))
@@ -166,12 +155,11 @@ def beat_note_hz(record: Record, tg: TargetRecord) -> float | None:
     return None
 
 
-def ms_matrix(phi0_rad: float, phi1_rad: float, theta_rad: float) -> np.ndarray:
-    """MS(phi0, phi1, theta) = cos(theta/2) 1 - i sin(theta/2) GPi(phi0) (x) GPi(phi1) (Section 7.1; conv.native_ms_matrix)."""
-    g0 = np.array([[0.0, np.exp(-1j * phi0_rad)], [np.exp(1j * phi0_rad), 0.0]], dtype=complex)
-    g1 = np.array([[0.0, np.exp(-1j * phi1_rad)], [np.exp(1j * phi1_rad), 0.0]], dtype=complex)
-    g = np.kron(g0, g1)
-    return math.cos(theta_rad / 2.0) * np.eye(4, dtype=complex) - 1j * math.sin(theta_rad / 2.0) * g
+def _entangling_target(record: Record, gate_id: str, native: tuple[str, ...], what: str) -> TargetRecord:
+    tg = target_of(record, gate_id)
+    if tg.native_name not in native or len(tg.ions) != 2:
+        raise RequestError(f"{gate_id} is a {tg.native_name} gate; {what}")
+    return tg
 
 
 # ---- the two requests ------------------------------------------------------------------------------------------------------------
@@ -179,79 +167,46 @@ def ms_matrix(phi0_rad: float, phi1_rad: float, theta_rad: float) -> np.ndarray:
 
 def request_angle(record: Record, gate_id: str, chi_rad: float) -> GateRequest:
     """XX(chi) requested for the native MS gate ``gate_id``: the job that plays it, or the refusal (Section 14.4)."""
-    tg = target_of(record, gate_id)
-    if tg.native_name != "ms" or len(tg.ions) != 2:
-        raise RequestError(f"{gate_id} is a {tg.native_name} gate; an angle is requested of an MS gate")
+    tg = _entangling_target(record, gate_id, ("ms",), "an angle is requested of an MS gate")
     pair = (int(tg.ions[0]), int(tg.ions[1]))
-    step = record.step_of_gate(gate_id)
+    step = record.step_of_gate(gate_id).index
     k = gate_index(gate_id)
     ops = list(record.compiled.native.ops)
     if k >= len(ops) or ops[k].name != "ms":
         raise RequestError(f"{gate_id} does not index an MS operation of the compiled circuit")
     wf = pair_waveform(record, pair)
     chi_cal = None if wf is None else abs(float(wf.chi_total_rad))
-    common = {
-        "kind": "angle",
-        "gate_id": gate_id,
-        "step_index": step.index,
-        "pair": pair,
-        "requested": float(chi_rad),
-        "calibrated_chi_rad": chi_cal,
-    }
+
+    def refused(
+        reason: str, scale: float | None = None, peak: float | None = None, carrier: float | None = None
+    ) -> GateRequest:
+        return GateRequest("angle", gate_id, step, pair, chi_cal, scale, peak, carrier, None, reason, "")
+
     if not math.isfinite(chi_rad) or chi_rad == 0.0:
-        return GateRequest(
-            **common,  # type: ignore[arg-type]
-            scale=None,
-            peak_rabi_hz=None,
-            carrier_rabi_hz=None,
-            job=None,
-            refusal="XX(0) plays no pulse: request a non-zero angle",
-            note="",
-        )
+        return refused("XX(0) plays no pulse: request a non-zero angle")
     if abs(chi_rad) > MAX_ANGLE_RAD + 1e-12:
-        return GateRequest(
-            **common,  # type: ignore[arg-type]
-            scale=None,
-            peak_rabi_hz=None,
-            carrier_rabi_hz=None,
-            job=None,
-            refusal=(
-                f"|chi| = {abs(chi_rad):.4g} rad is outside the calibrated range: the native MS gate spans theta = 2|chi| "
-                f"in [0, pi], so |chi| <= pi/2 (Section 7.6)"
-            ),
-            note="",
+        return refused(
+            f"|chi| = {abs(chi_rad):.4g} rad is outside the calibrated range: the native MS gate spans theta = 2|chi| "
+            f"in [0, pi], so |chi| <= pi/2 (Section 7.6)"
         )
     if wf is None or chi_cal is None or chi_cal <= 0.0:
-        return GateRequest(
-            **common,  # type: ignore[arg-type]
-            scale=None,
-            peak_rabi_hz=None,
-            carrier_rabi_hz=None,
-            job=None,
-            refusal=f"the calibration table carries no entangling waveform for ions {pair}",
-            note="",
-        )
+        return refused(f"the calibration table carries no entangling waveform for ions {pair}")
     scale = math.sqrt(abs(chi_rad) / chi_cal)
     peak_cal = peak_amplitude_hz(wf)
     peak = peak_cal * scale
     carriers = [c for c in (carrier_rabi_hz(record, i) for i in pair) if c is not None]
     # the power limit is the calibrated carrier Rabi frequency of the entangling drive, when the calibrated waveform itself
-    # sits below it; a table whose entangling tones already exceed that entry (the example device: the closure needs more
-    # than the carrier entry) declares no limit the app can apply, and the request says so instead of inventing one
+    # sits below it; a table whose entangling tones already exceed that entry declares no limit the app can apply, and the
+    # request says so instead of inventing one
     carrier = min(carriers) if carriers and min(carriers) >= peak_cal else None
     if carrier is not None and peak > carrier:
-        return GateRequest(
-            **common,  # type: ignore[arg-type]
-            scale=scale,
-            peak_rabi_hz=peak,
-            carrier_rabi_hz=carrier,
-            job=None,
-            refusal=(
-                f"loop closure impossible within the power limit: XX({chi_rad:.4g}) rescales the calibrated waveform by "
-                f"{scale:.3f} to a peak Rabi frequency of {peak / 1e3:.1f} kHz, above the calibrated carrier Rabi frequency "
-                f"{carrier / 1e3:.1f} kHz of the entangling drive"
-            ),
-            note="",
+        return refused(
+            f"loop closure impossible within the power limit: XX({chi_rad:.4g}) rescales the calibrated waveform by "
+            f"{scale:.3f} to a peak Rabi frequency of {peak / 1e3:.1f} kHz, above the calibrated carrier Rabi frequency "
+            f"{carrier / 1e3:.1f} kHz of the entangling drive",
+            scale,
+            peak,
+            carrier,
         )
     phi0, phi1, _theta = ops[k].params
     theta = 2.0 * abs(chi_rad)
@@ -276,72 +231,46 @@ def request_angle(record: Record, gate_id: str, chi_rad: float) -> GateRequest:
         requests=tuple(record.job.requests) + (note,),
         label=f"request: XX({chi_rad:.4g}) on {gate_id}",
     )
-    return GateRequest(
-        **common,  # type: ignore[arg-type]
-        scale=scale,
-        peak_rabi_hz=peak,
-        carrier_rabi_hz=carrier,
-        job=job,
-        refusal=None,
-        note=note,
-    )
+    return GateRequest("angle", gate_id, step, pair, chi_cal, scale, peak, carrier, job, None, note)
 
 
 def request_detuning(record: Record, gate_id: str, offset_hz: float) -> GateRequest:
     """A beat-note offset set by hand at Level 2 for the entangling gate ``gate_id``: the job that plays the pair's waveform
     shifted as written, or the refusal (Section 14.4)."""
-    tg = target_of(record, gate_id)
-    if tg.native_name not in ("ms", "zz") or len(tg.ions) != 2:
-        raise RequestError(
-            f"{gate_id} is a {tg.native_name} gate; a beat-note offset belongs to an entangling gate"
-        )
+    tg = _entangling_target(record, gate_id, ("ms", "zz"), "a beat-note offset belongs to an entangling gate")
     pair = (int(tg.ions[0]), int(tg.ions[1]))
-    step = record.step_of_gate(gate_id)
+    step = record.step_of_gate(gate_id).index
     wf = pair_waveform(record, pair)
     mu = beat_note_hz(record, tg)
-    common = {
-        "kind": "detuning",
-        "gate_id": gate_id,
-        "step_index": step.index,
-        "pair": pair,
-        "requested": float(offset_hz),
-        "calibrated_chi_rad": None if wf is None else abs(float(wf.chi_total_rad)),
-        "scale": 1.0,
-        "peak_rabi_hz": None if wf is None else peak_amplitude_hz(wf),
-        "carrier_rabi_hz": None,
-    }
+    chi_cal = None if wf is None else abs(float(wf.chi_total_rad))
+    peak = None if wf is None else peak_amplitude_hz(wf)
+
+    def outcome(job: JobSpec | None, refusal: str | None, note: str = "") -> GateRequest:
+        return GateRequest("detuning", gate_id, step, pair, chi_cal, 1.0, peak, None, job, refusal, note)
+
     if not math.isfinite(offset_hz):
-        return GateRequest(**common, job=None, refusal="the offset must be a finite frequency", note="")  # type: ignore[arg-type]
+        return outcome(None, "the offset must be a finite frequency")
     if wf is None or wf.segments is None:
-        return GateRequest(
-            **common,  # type: ignore[arg-type]
-            job=None,
-            refusal=f"the calibration table carries no segmented entangling waveform for ions {pair} to shift",
-            note="",
+        return outcome(
+            None, f"the calibration table carries no segmented entangling waveform for ions {pair} to shift"
         )
     if mu is not None and abs(offset_hz) > MAX_DETUNING_FRACTION * mu:
-        return GateRequest(
-            **common,  # type: ignore[arg-type]
-            job=None,
-            refusal=(
-                f"an offset of {offset_hz / 1e3:.2f} kHz is more than half the {mu / 1e3:.2f} kHz beat note: a tone would "
-                "cross the carrier and the pulse would no longer be the bichromatic drive the waveform was solved as"
-            ),
-            note="",
+        return outcome(
+            None,
+            f"an offset of {offset_hz / 1e3:.2f} kHz is more than half the {mu / 1e3:.2f} kHz beat note: a tone would "
+            "cross the carrier and the pulse would no longer be the bichromatic drive the waveform was solved as",
         )
-    key = f"{pair[0]},{pair[1]}"
-    overrides = {**record.job.waveform_overrides, key: float(offset_hz)}
     note = (
         f"beat-note detuning set by hand at Level 2 for {gate_id}: every blue leg +{offset_hz / 1e3:.3g} kHz, every red leg "
         f"-{offset_hz / 1e3:.3g} kHz, amplitude unchanged (applied as written, Section 14.4)"
     )
     job = dataclasses.replace(
         record.job,
-        waveform_overrides=overrides,
+        waveform_overrides={**record.job.waveform_overrides, f"{pair[0]},{pair[1]}": float(offset_hz)},
         requests=tuple(record.job.requests) + (note,),
         label=f"request: {offset_hz / 1e3:+.3g} kHz on {gate_id}",
     )
-    return GateRequest(**common, job=job, refusal=None, note=note)  # type: ignore[arg-type]
+    return outcome(job, None, note)
 
 
 # ---- reading the actual unitary back -----------------------------------------------------------------------------------------------
@@ -357,9 +286,7 @@ def ms_phases_of(unitary: np.ndarray) -> tuple[float, float, float]:
         return 0.0, 0.0, theta
     sum_phase = -float(np.angle(unitary[0, 3] / unitary[0, 0] / (-1j)))
     diff_phase = -float(np.angle(unitary[1, 2] / unitary[1, 1] / (-1j)))
-    phi0 = 0.5 * (sum_phase + diff_phase)
-    phi1 = 0.5 * (sum_phase - diff_phase)
-    return float(phi0), float(phi1), float(theta)
+    return 0.5 * (sum_phase + diff_phase), 0.5 * (sum_phase - diff_phase), float(theta)
 
 
 def fitted_ms_angle(
@@ -370,7 +297,7 @@ def fitted_ms_angle(
     thetas = np.linspace(0.0, math.pi, n_grid)
 
     def fidelity(theta: float) -> float:
-        ideal = core.choi_from_unitary(ms_matrix(phi0_rad, phi1_rad, theta))
+        ideal = core.choi_from_unitary(core.ms(phi0_rad, phi1_rad, theta))
         return 1.0 - float(core.entanglement_infidelity(choi, ideal))
 
     values = np.array([fidelity(float(t)) for t in thetas])
@@ -381,8 +308,7 @@ def fitted_ms_angle(
         denom = y0 - 2.0 * y1 + y2
         if denom < 0.0:
             h = float(thetas[1] - thetas[0])
-            shift = 0.5 * h * (y0 - y2) / denom
-            cand = best_theta + shift
+            cand = best_theta + 0.5 * h * (y0 - y2) / denom
             fc = fidelity(cand)
             if fc > best_f:
                 best_theta, best_f = cand, fc
@@ -397,9 +323,8 @@ def request_outcome(record: Record, gate_id: str, pm: ProcessMatrixRecord) -> Re
         raise RequestError(f"{gate_id} is not an MS gate")
     phi0, phi1, theta = ms_phases_of(np.asarray(tg.unitary, dtype=complex))
     fitted, fid = fitted_ms_angle(np.asarray(pm.choi, dtype=complex), phi0, phi1)
-    key = f"{tg.ions[0]},{tg.ions[1]}"
-    alt = f"{tg.ions[1]},{tg.ions[0]}"
-    hand = record.job.waveform_overrides.get(key, record.job.waveform_overrides.get(alt))
+    overrides = record.job.waveform_overrides
+    hand = overrides.get(f"{tg.ions[0]},{tg.ions[1]}", overrides.get(f"{tg.ions[1]},{tg.ions[0]}"))
     return RequestOutcome(
         gate_id=gate_id,
         requested_theta_rad=theta,
@@ -409,25 +334,3 @@ def request_outcome(record: Record, gate_id: str, pm: ProcessMatrixRecord) -> Re
         requests=tuple(record.job.requests),
         hand_set_detuning_hz=None if hand is None else float(hand),
     )
-
-
-__all__ = [
-    "MAX_ANGLE_RAD",
-    "MAX_DETUNING_FRACTION",
-    "GateRequest",
-    "RequestError",
-    "RequestKind",
-    "RequestOutcome",
-    "beat_note_hz",
-    "carrier_rabi_hz",
-    "fitted_ms_angle",
-    "gate_index",
-    "ms_matrix",
-    "ms_phases_of",
-    "pair_waveform",
-    "peak_amplitude_hz",
-    "request_angle",
-    "request_detuning",
-    "request_outcome",
-    "target_of",
-]

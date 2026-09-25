@@ -37,6 +37,8 @@ jobs:
           pyodide xbuildenv install 314.0.3
           pyodide build /tmp/qutip -o wheels
       - run: uv build --wheel --out-dir wheels
+      # the explain drawer's index of PLAN.md and the provenance ledger, bundled with the app
+      - run: uv run --package qutip-trap-app python -m qutip_trap_app.provenance
       - env:
           PIP_FIND_LINKS: ${{ github.workspace }}/wheels
         run: uv run --project .. --extra gui flet build web --yes --no-rich-output --python-version 3.14 --base-url /qutip-trap/ --route-url-strategy hash --skip-flutter-doctor -o ../site

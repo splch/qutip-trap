@@ -1,15 +1,11 @@
-"""The simulation worker: core calls in a separate process, progress and results streamed back (PLAN.md Section 14.6
-"Layering": "workers.py runs core calls in a ProcessPoolExecutor, streaming progress and partial results through
-page.pubsub; view updates are scheduled with page.run_task, so the UI never blocks on a solver"; milestone M11.2).
+"""The simulation worker: core calls in a separate process, progress and results streamed back (PLAN.md Section 14.6).
 
-One long-lived worker process holds the live state a record cannot carry (the device, the calibration table, the core's
-run record, the channel library) keyed by the record's run key, so that a zoom or a verify-deeper request needs no re-run.
-Requests and results are plain picklable values (the frozen records of ``record.py``); progress events name a stage, a
-fraction where one is known and a message. The UI side drains the event queue from an asyncio task (``page.run_task``) and
-applies results to its own copies of the records. A cancel terminates the process and restarts it: the caches live in the
-records, which the UI keeps, so only the live handles are lost.
-
-The worker is not daemonic, so the core's own parallel maps (Section 11.3 item 9) may spawn their processes inside it.
+One long-lived worker holds the live state a record cannot carry (the device, the calibration table, the core's run record,
+the channel library) keyed by the record's run key, so that a zoom or a verify-deeper request needs no re-run. Requests and
+results are picklable values; progress events name a stage, a fraction where one is known and a message. A cancel terminates
+the process and restarts it: the caches live in the records the UI keeps, so only the live handles are lost. The process is
+not daemonic, so the core's own parallel maps may spawn inside it; under WebAssembly (no processes) a request runs in the
+page's thread when it is submitted.
 """
 
 from __future__ import annotations
@@ -20,10 +16,28 @@ import sys
 import time
 import traceback
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from qutip_trap_app.record import DeviceRef, JobSpec, LiveRun, Record
+from qutip_trap_app import core, resim
+from qutip_trap_app import device_layer as layer_mod
+from qutip_trap_app import presets as presets_mod
+from qutip_trap_app.record import (
+    DeviceRef,
+    JobSpec,
+    LiveRun,
+    Progress,
+    Record,
+    TableRecord,
+    calibrate_for,
+    complete_job,
+    execute,
+    options_digest,
+    table_record,
+)
+from qutip_trap_app.replay import ChannelLibrary, replay
+from qutip_trap_app.verify import verify_deeper
 
 EventKind = Literal["progress", "result", "error"]
 
@@ -54,23 +68,22 @@ IN_PROCESS = sys.platform == "emscripten"
 """WebAssembly has no processes: a request runs in the page's own thread at ``submit`` time, its events read afterwards."""
 
 
-# ---- the worker process ---------------------------------------------------------------------------------------------------------
+# ---- the requests ---------------------------------------------------------------------------------------------------------------
 
 
 @dataclass
 class _LiveState:
     records: dict[str, Record] = field(default_factory=dict)
     lives: dict[str, LiveRun] = field(default_factory=dict)
-    libraries: dict[str, Any] = field(default_factory=dict)
+    libraries: dict[str, ChannelLibrary] = field(default_factory=dict)
     """Channel libraries per (device hash, table seed, options digest)."""
-    presets: dict[str, Any] = field(default_factory=dict)
-    """Built presets per ``DeviceRef.cache_key()`` (a build with the recipe re-derived takes seconds; M11.3)."""
-    tables: dict[str, Any] = field(default_factory=dict)
-    """Recalibrated ``CalibrationTable`` per device hash (Section 14.4's user-initiated job)."""
-    stability: Any = None
+    presets: dict[str, core.DevicePreset] = field(default_factory=dict)
+    """Built presets per ``DeviceRef.cache_key()`` (a build with the recipe re-derived takes seconds)."""
+    tables: dict[str, core.CalibrationTable] = field(default_factory=dict)
+    """The latest calibration table per device hash (the device layer compares its solutions with it)."""
 
 
-def _preset_for(state: _LiveState, ref: DeviceRef, progress: Any) -> Any:
+def _preset_for(state: _LiveState, ref: DeviceRef, progress: Progress) -> core.DevicePreset:
     """The built preset of a device reference, cached by its arguments and overrides; the hash is checked when the
     reference carries one (an empty hash is a request from the UI, which never builds a device itself)."""
     key = ref.cache_key()
@@ -89,377 +102,337 @@ def _preset_for(state: _LiveState, ref: DeviceRef, progress: Any) -> Any:
     return preset
 
 
-def complete_job(job: JobSpec, preset: Any) -> JobSpec:
-    """A job the UI submitted without building a device (empty hash, empty drive maps) completed from the built preset."""
-    import dataclasses
-
-    from qutip_trap_app.record import DriveRef
-
-    out = job
-    if not out.device.hash:
-        out = dataclasses.replace(out, device=dataclasses.replace(out.device, hash=preset.device.hash()))
-    if not out.gate_drives and not out.entangling_drives:
-        out = dataclasses.replace(
-            out,
-            gate_drives={int(i): DriveRef.from_core(d) for i, d in preset.gate_drives.items()},
-            entangling_drives={int(i): DriveRef.from_core(d) for i, d in preset.entangling_drives.items()},
-        )
-    return out
+def _calibrated(
+    state: _LiveState, job: JobSpec, progress: Progress, message: str
+) -> tuple[JobSpec, core.DevicePreset, core.CalibrationTable]:
+    """The job completed from its built device, with the job's calibration table (kept as the device's latest)."""
+    preset = _preset_for(state, job.device, progress)
+    job = complete_job(job, preset)
+    progress("calibrating", None, message)
+    table = calibrate_for(job, preset.device)
+    state.tables[preset.device.hash()] = table
+    return job, preset, table
 
 
-def _core_progress(progress: Any) -> Any:
-    """The core's ``progress`` callback as worker events (0.4.0): each ``Progress`` of ``Machine.run`` (per pulse, branch,
-    sample and readout) becomes a progress event whose stage is the core's and whose fraction is ``done / total``."""
+def _core_progress(progress: Progress) -> Callable[[core.Progress], None]:
+    """The core's ``Progress`` of ``Machine.run`` (per pulse, branch, sample and readout) as worker progress events."""
 
-    def forward(p: Any) -> None:
+    def forward(p: core.Progress) -> None:
         progress(f"running: {p.stage}", p.fraction, f"{p.stage} {p.done} of {p.total}")
 
     return forward
 
 
-def _handle(state: _LiveState, request: str, payload: dict[str, Any], progress: Any) -> Any:
-    from qutip_trap_app import device_layer as layer_mod
-    from qutip_trap_app import record as rec_mod
-    from qutip_trap_app import replay as replay_mod
-    from qutip_trap_app import resim
-    from qutip_trap_app.replay_record import build_replay_record
-    from qutip_trap_app.verify import verify_deeper
+def _live(state: _LiveState, key: str) -> tuple[Record, LiveRun]:
+    record, live = state.records.get(key), state.lives.get(key)
+    if record is None or live is None:
+        raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
+    return record, live
 
-    if request == "run_job":
-        job: JobSpec = payload["job"]
-        preset = _preset_for(state, job.device, progress)
-        job = complete_job(job, preset)
-        progress("calibrating", None, "the surrogate calibration table (cached per device and seed)")
-        table = rec_mod.calibrate_for(job, preset)
-        state.tables[preset.device.hash()] = table
-        progress(
-            "running", None, f"{job.level} run of {job.shots} shots on {preset.device.crystal.n_ions} ions"
-        )
-        record, live = rec_mod.execute(job, preset, progress=_core_progress(progress))
-        key = record.key()
-        state.records[key] = record
-        state.lives[key] = live
-        progress("recording", 1.0, "record built")
-        return record
-    if request == "replay":
-        job = payload["job"]
-        preset = _preset_for(state, job.device, progress)
-        job = complete_job(job, preset)
-        progress("calibrating", None, "the surrogate calibration table (cached per device and seed)")
-        table = rec_mod.calibrate_for(job, preset)
-        lib_key = f"{preset.device.hash()}/{table.seed}/{replay_mod.options_digest(job.solver_options())}"
-        library = state.libraries.get(lib_key)
-        if library is None:
-            library = replay_mod.ChannelLibrary.for_job(job, preset.device, table)
-            state.libraries[lib_key] = library
-        outcome = replay_mod.replay(job, preset.device, table, library, progress=progress)
-        state.tables[preset.device.hash()] = table
-        record = build_replay_record(job, preset.device, table, outcome, library)
-        state.records[record.key()] = record
-        progress("recording", 1.0, "record built")
-        return record
-    if request == "zoom":
-        key = payload["key"]
-        live_opt = state.lives.get(key)
-        record_opt = state.records.get(key)
-        if live_opt is None or record_opt is None:
-            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
-        live, record = live_opt, record_opt
-        step_i, sample_i, branch_i = (
-            int(payload["step"]),
-            int(payload.get("sample", 0)),
-            int(payload.get("branch", 0)),
-        )
-        progress(
-            "zooming",
-            None,
-            f"re-simulating step {step_i} with {payload.get('n_store', resim.DEFAULT_ZOOM_POINTS)} stored points per segment",
-        )
-        record, z, stats = resim.zoom(
-            record,
-            live,
-            step_i,
-            sample_i,
-            branch_i,
-            n_store=int(payload.get("n_store", resim.DEFAULT_ZOOM_POINTS)),
-        )
-        progress("building", 0.9, "listing the Hamiltonian terms and collapse operators of the step")
-        record, ham = resim.hamiltonian_record(record, live, step_i, sample_i, branch_i)
-        state.records[key] = record
-        return {"zoom": z, "boundaries": record.boundaries, "stats": stats, "hamiltonian": ham}
-    if request == "fock_movie":
-        key = payload["key"]
-        live_opt = state.lives.get(key)
-        record_opt = state.records.get(key)
-        if live_opt is None or record_opt is None:
-            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
-        record, movie = resim.fock_movie(
-            record_opt,
-            live_opt,
-            int(payload["step"]),
-            int(payload.get("sample", 0)),
-            int(payload.get("branch", 0)),
-            n_frames=int(payload.get("n_frames", resim.DEFAULT_FOCK_FRAMES)),
-            progress=progress,
-        )
-        state.records[key] = record
-        return {"movie": movie, "boundaries": record.boundaries}
-    if request == "tomography":
-        key = payload["key"]
-        live_opt = state.lives.get(key)
-        record_opt = state.records.get(key)
-        if live_opt is None or record_opt is None:
-            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
-        record, pm = resim.process_matrix(
-            record_opt,
-            live_opt,
-            int(payload["step"]),
-            int(payload.get("sample", 0)),
-            int(payload.get("branch", 0)),
-            progress=progress,
-        )
-        state.records[key] = record
-        return {"process_matrix": pm, "boundaries": record.boundaries}
-    if request == "recheck":
-        key = payload["key"]
-        live_opt = state.lives.get(key)
-        record_opt = state.records.get(key)
-        if live_opt is None or record_opt is None:
-            raise WorkerError(f"no live run for record key {key}: run the job again to re-simulate")
-        step_i, sample_i, branch_i = (
-            int(payload["step"]),
-            int(payload.get("sample", 0)),
-            int(payload.get("branch", 0)),
-        )
-        progress("rechecking", 0.0, "tolerances tightened by ten on the zoomed step")
-        record, tol = resim.tolerance_recheck(record_opt, live_opt, step_i, sample_i, branch_i)
-        progress("rechecking", 0.5, "every resolved cap raised by two, re-chained from the initial state")
-        record, trunc = resim.truncation_recheck(record, live_opt, step_i, sample_i, branch_i)
-        state.records[key] = record
-        return {"tolerance": tol, "truncation": trunc, "zooms": record.zooms, "boundaries": record.boundaries}
-    if request == "derive":
-        ref: DeviceRef = payload["device"]
-        preset = _preset_for(state, ref, progress)
-        if state.stability is None:
-            progress("deriving", 0.1, "the Mathieu stability boundary (once per session)")
-            state.stability = layer_mod.stability_map()
-        table_opt = state.tables.get(preset.device.hash())
-        layer = layer_mod.derive_device_layer(
-            preset,
-            preset_name=str(ref.preset),
-            kwargs=ref.kwargs,
-            overrides=ref.overrides,
-            table=table_opt,
-            table_record=payload.get("table_record"),
-            stability=state.stability,
-            sweeps=bool(payload.get("sweeps", True)),
-            progress=progress,
-        )
-        return layer
-    if request == "recalibrate":
-        job = payload["job"]
-        preset = _preset_for(state, job.device, progress)
-        job = complete_job(job, preset)
-        progress(
-            "calibrating",
-            None,
-            "the surrogate table for the edited device: closed forms, exact spot checks, detection records",
-        )
-        table = rec_mod.calibrate_for(job, preset)
-        state.tables[preset.device.hash()] = table
-        progress("recording", 1.0, "table built")
-        return {"table": rec_mod.table_record(table), "device_hash": preset.device.hash(), "job": job}
-    if request == "verify":
-        key = payload["key"]
-        record_opt = payload.get("record") or state.records.get(key)
-        if record_opt is None:
-            raise WorkerError(f"no record for key {key}")
-        record = record_opt
-        report, deep, deep_live = verify_deeper(
-            record, live=state.lives.get(key), shots=payload.get("shots"), progress=progress
-        )
-        if deep is not None:
-            state.records[deep.key()] = deep
-            if deep_live is not None:
-                state.lives[deep.key()] = deep_live
-        if report.deep_level is None and deep is not None:
+
+def _run_job(state: _LiveState, progress: Progress, *, job: JobSpec) -> Record:
+    job, preset, _table = _calibrated(
+        state, job, progress, "the surrogate calibration table (cached per device and seed)"
+    )
+    progress("running", None, f"{job.level} run of {job.shots} shots on {preset.device.crystal.n_ions} ions")
+    record, live = execute(job, preset, progress=_core_progress(progress))
+    state.records[record.key()] = record
+    state.lives[record.key()] = live
+    progress("recording", 1.0, "record built")
+    return record
+
+
+def _replay(state: _LiveState, progress: Progress, *, job: JobSpec) -> Record:
+    job, preset, table = _calibrated(
+        state, job, progress, "the surrogate calibration table (cached per device and seed)"
+    )
+    library = state.libraries.setdefault(
+        f"{preset.device.hash()}/{table.seed}/{options_digest(job.options)}", ChannelLibrary()
+    )
+    record = replay(job, preset.device, table, library, progress=progress)
+    state.records[record.key()] = record
+    progress("recording", 1.0, "record built")
+    return record
+
+
+def _zoom(
+    state: _LiveState,
+    progress: Progress,
+    *,
+    key: str,
+    step: int,
+    sample: int = 0,
+    branch: int = 0,
+    n_store: int = resim.DEFAULT_ZOOM_POINTS,
+) -> dict[str, Any]:
+    record, live = _live(state, key)
+    progress("zooming", None, f"re-simulating step {step} with {n_store} stored points per segment")
+    record, z, stats = resim.zoom(record, live, step, sample, branch, n_store=n_store)
+    progress("building", 0.9, "listing the Hamiltonian terms and collapse operators of the step")
+    record, ham = resim.hamiltonian_record(record, live, step, sample, branch)
+    state.records[key] = record
+    return {"zoom": z, "boundaries": record.boundaries, "stats": stats, "hamiltonian": ham}
+
+
+def _tomography(
+    state: _LiveState, progress: Progress, *, key: str, step: int, sample: int = 0, branch: int = 0
+) -> dict[str, Any]:
+    record, live = _live(state, key)
+    record, pm = resim.process_matrix(record, live, step, sample, branch, progress=progress)
+    state.records[key] = record
+    return {"process_matrix": pm, "boundaries": record.boundaries}
+
+
+def _recheck(
+    state: _LiveState, progress: Progress, *, key: str, step: int, sample: int = 0, branch: int = 0
+) -> dict[str, Any]:
+    record, live = _live(state, key)
+    progress("rechecking", 0.0, "tolerances tightened by ten on the zoomed step")
+    record, tol = resim.tolerance_recheck(record, live, step, sample, branch)
+    progress("rechecking", 0.5, "every resolved cap raised by two, re-chained from the initial state")
+    record, trunc = resim.truncation_recheck(record, live, step, sample, branch)
+    state.records[key] = record
+    return {"tolerance": tol, "truncation": trunc, "zooms": record.zooms, "boundaries": record.boundaries}
+
+
+def _derive(
+    state: _LiveState,
+    progress: Progress,
+    *,
+    device: DeviceRef,
+    table_record: TableRecord | None = None,
+    sweeps: bool = True,
+) -> layer_mod.DeviceLayer:
+    preset = _preset_for(state, device, progress)
+    return layer_mod.derive_device_layer(
+        preset,
+        overrides=device.overrides,
+        table=state.tables.get(preset.device.hash()),
+        table_record=table_record,
+        sweeps=sweeps,
+        progress=progress,
+    )
+
+
+def _recalibrate(state: _LiveState, progress: Progress, *, job: JobSpec) -> dict[str, Any]:
+    _job, preset, table = _calibrated(
+        state,
+        job,
+        progress,
+        "the surrogate table for the edited device: closed forms, exact spot checks, detection records",
+    )
+    progress("recording", 1.0, "table built")
+    return {"table": table_record(table), "device_hash": preset.device.hash()}
+
+
+def _verify(
+    state: _LiveState, progress: Progress, *, key: str, record: Record | None = None, shots: int | None = None
+) -> dict[str, Any]:
+    shallow = record if record is not None else state.records.get(key)
+    if shallow is None:
+        raise WorkerError(f"no record for key {key}")
+    report, deep, deep_live = verify_deeper(
+        shallow, live=state.lives.get(key), shots=shots, progress=progress
+    )
+    if deep is not None:
+        state.records[deep.key()] = deep
+        if deep_live is not None:
+            state.lives[deep.key()] = deep_live
+        if report.deep_level is None:
             state.records[key] = deep
-        return {"report": report, "deep": deep}
-    if request == "request_run":
-        # Section 14.4: a request made at Level 1 or 2 runs as its own job at the full engine, and the finished pulse's
-        # process matrix is computed at once, so that Level 1 can show the actual unitary beside the requested one
-        job = payload["job"]
-        preset = _preset_for(state, job.device, progress)
-        job = complete_job(job, preset)
-        progress(
-            "calibrating",
-            None,
-            "the surrogate calibration table, with the hand-set detunings applied where requested",
-        )
-        table = rec_mod.calibrate_for(job, preset)
-        state.tables[preset.device.hash()] = table
-        progress("running", None, f"{job.level} run of {job.shots} shots: {job.label or 'the requested job'}")
-        record, live = rec_mod.execute(job, preset, progress=_core_progress(progress))
-        key = record.key()
-        state.lives[key] = live
-        step_i = int(payload.get("step", -1))
-        if step_i >= 0 and record.traces:
-            progress("tomography", 0.8, "the process matrix of the requested gate's step")
-            record, _pm = resim.process_matrix(record, live, step_i, 0, 0, progress=progress)
-        state.records[key] = record
-        progress("recording", 1.0, "record built")
-        return record
-    if request == "preset":
-        from qutip_trap_app import presets as presets_mod
-
-        return presets_mod.run_preset(str(payload["preset_id"]), progress)
-    if request == "ping":
-        return "pong"
-    raise WorkerError(f"unknown request {request!r}")
+    return {"report": report, "deep": deep}
 
 
-def _worker_main(requests: Any, results: Any) -> None:
-    state = _LiveState()
-    while True:
-        item = requests.get()
-        if item is None:
-            return
-        _run(state, results, item)
+def _request_run(state: _LiveState, progress: Progress, *, job: JobSpec, step: int = -1) -> Record:
+    """A request made at Level 1 or 2 runs as its own job at the full engine (Section 14.4), and the requested gate's
+    process matrix is computed at once, so Level 1 can show the actual unitary beside the requested one."""
+    job, preset, _table = _calibrated(
+        state,
+        job,
+        progress,
+        "the surrogate calibration table, with the hand-set detunings applied where requested",
+    )
+    progress("running", None, f"{job.level} run of {job.shots} shots: {job.label or 'the requested job'}")
+    record, live = execute(job, preset, progress=_core_progress(progress))
+    key = record.key()
+    state.lives[key] = live
+    if step >= 0 and record.traces:
+        progress("tomography", 0.8, "the process matrix of the requested gate's step")
+        record, _pm = resim.process_matrix(record, live, step, 0, 0, progress=progress)
+    state.records[key] = record
+    progress("recording", 1.0, "record built")
+    return record
 
 
-def _run(state: _LiveState, results: Any, item: tuple[str, str, dict[str, Any]]) -> None:
+def _preset(_state: _LiveState, progress: Progress, *, preset_id: str) -> Any:
+    return presets_mod.run_preset(preset_id, progress)
+
+
+HANDLERS: dict[str, Callable[..., Any]] = {
+    "run_job": _run_job,
+    "replay": _replay,
+    "zoom": _zoom,
+    "tomography": _tomography,
+    "recheck": _recheck,
+    "derive": _derive,
+    "recalibrate": _recalibrate,
+    "verify": _verify,
+    "request_run": _request_run,
+    "preset": _preset,
+}
+"""The requests the UI names, each resolved to its handler once, at submit time."""
+
+
+# ---- running a request ---------------------------------------------------------------------------------------------------------
+
+_Item = tuple[str, str, Callable[..., Any], dict[str, Any]]
+"""(ticket id, request name, handler, payload)."""
+
+
+def _run(state: _LiveState, results: Any, item: _Item) -> None:
     """One request: its progress events, then its result or its error, on ``results``."""
-    ticket, request, payload = item
+    ticket, request, handler, payload = item
     t0 = time.perf_counter()
 
-    def progress(
-        stage: str,
-        fraction: float | None,
-        message: str,
-        _ticket: str = ticket,
-        _request: str = request,
-        _t0: float = t0,
-    ) -> None:
+    def progress(stage: str, fraction: float | None, message: str) -> None:
         results.put(
             Event(
                 "progress",
-                _ticket,
-                _request,
+                ticket,
+                request,
                 stage=stage,
                 fraction=fraction,
                 message=message,
-                wall_time_s=time.perf_counter() - _t0,
-            )
-        )
-
-    try:
-        value = _handle(state, request, payload, progress)
-        results.put(Event("result", ticket, request, payload=value, wall_time_s=time.perf_counter() - t0))
-    except Exception:
-        results.put(
-            Event(
-                "error",
-                ticket,
-                request,
-                message=traceback.format_exc(),
                 wall_time_s=time.perf_counter() - t0,
             )
         )
 
+    try:
+        value = handler(state, progress, **payload)
+        results.put(Event("result", ticket, request, payload=value, wall_time_s=time.perf_counter() - t0))
+    except Exception:
+        results.put(
+            Event(
+                "error", ticket, request, message=traceback.format_exc(), wall_time_s=time.perf_counter() - t0
+            )
+        )
 
-# ---- the UI-side handle -----------------------------------------------------------------------------------------------------------
+
+def _worker_main(requests: Any, results: Any) -> None:
+    state = _LiveState()
+    while (item := requests.get()) is not None:
+        _run(state, results, item)
 
 
-class SimulationWorker:
-    """One worker process; submit requests, poll events, or wait for one ticket (in-process under WebAssembly)."""
+class _ProcessTransport:
+    """The worker in a spawned, non-daemonic process."""
 
     def __init__(self) -> None:
-        self._ctx = mp.get_context("spawn")
-        self._requests: Any = None
-        self._results: Any = None
-        self._process: Any = None
-        self._buffer: list[Event] = []
-        self._state: _LiveState | None = None
-
-    @property
-    def alive(self) -> bool:
-        if IN_PROCESS:
-            return self._state is not None
-        return self._process is not None and bool(self._process.is_alive())
-
-    @property
-    def started(self) -> bool:
-        """Whether a worker process was started and not deliberately stopped; with ``alive`` False this means it died."""
-        return self._process is not None or self._state is not None
-
-    def start(self) -> None:
-        if self.alive:
-            return
-        if IN_PROCESS:
-            self._state, self._results = _LiveState(), queue.Queue()
-            return
-        self._requests = self._ctx.Queue()
-        self._results = self._ctx.Queue()
-        self._process = self._ctx.Process(
+        ctx = mp.get_context("spawn")
+        self.requests: Any = ctx.Queue()
+        self.results: Any = ctx.Queue()
+        self.process = ctx.Process(
             target=_worker_main,
-            args=(self._requests, self._results),
+            args=(self.requests, self.results),
             daemon=False,
             name="qutip-trap-app-worker",
         )
-        self._process.start()
+        self.process.start()
+
+    @property
+    def alive(self) -> bool:
+        return bool(self.process.is_alive())
+
+    def put(self, item: _Item) -> None:
+        self.requests.put(item)
+
+    def stop(self, timeout_s: float) -> None:
+        if self.alive:
+            self.requests.put(None)
+        self.process.join(timeout_s)
+        self.kill()
+
+    def kill(self) -> None:
+        if self.process.is_alive():
+            self.process.terminate()
+            self.process.join(2.0)
+
+
+class _InProcessTransport:
+    """The worker in the page's own thread: a request runs when it is submitted, its events wait in a queue."""
+
+    alive = True
+
+    def __init__(self) -> None:
+        self.state = _LiveState()
+        self.results: Any = queue.Queue()
+
+    def put(self, item: _Item) -> None:
+        _run(self.state, self.results, item)
+
+    def stop(self, timeout_s: float) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+
+class SimulationWorker:
+    """One worker; submit requests, poll events, or wait for one ticket."""
+
+    def __init__(self) -> None:
+        self._transport: _ProcessTransport | _InProcessTransport | None = None
+        self._buffer: list[Event] = []
+
+    @property
+    def alive(self) -> bool:
+        return self._transport is not None and self._transport.alive
+
+    @property
+    def started(self) -> bool:
+        """Whether a worker was started and not deliberately stopped; with ``alive`` False this means it died."""
+        return self._transport is not None
+
+    def start(self) -> None:
+        if not self.alive:
+            self._transport = _InProcessTransport() if IN_PROCESS else _ProcessTransport()
 
     def stop(self, timeout_s: float = 5.0) -> None:
-        self._state = None
-        if self._process is None:
-            self._results = None
-            return
-        try:
-            if self.alive and self._requests is not None:
-                self._requests.put(None)
-            self._process.join(timeout_s)
-            if self._process.is_alive():
-                self._process.terminate()
-                self._process.join(2.0)
-        finally:
-            self._process = None
-            self._requests = None
-            self._results = None
+        if self._transport is not None:
+            self._transport.stop(timeout_s)
+        self._transport = None
 
     def cancel(self) -> None:
-        """Hard cancel: terminate the process and start a fresh one (the live handles are lost; the records' caches are not)."""
-        if self._process is not None and self._process.is_alive():
-            self._process.terminate()
-            self._process.join(2.0)
-        self._process = None
-        self._state = None
+        """Hard cancel: terminate the worker and start a fresh one (the live handles are lost; the records' caches are not)."""
+        if self._transport is not None:
+            self._transport.kill()
+        self._transport = None
         self._buffer.clear()
         self.start()
 
     def submit(self, request: str, **payload: Any) -> Ticket:
-        if not self.alive:
-            self.start()
+        handler = HANDLERS.get(request)
+        if handler is None:
+            raise WorkerError(f"unknown request {request!r}; known: {sorted(HANDLERS)}")
+        self.start()
+        assert self._transport is not None
         ticket = Ticket(uuid.uuid4().hex[:12], request)
-        if IN_PROCESS:
-            assert self._state is not None
-            _run(self._state, self._results, (ticket.id, request, payload))
-            return ticket
-        assert self._requests is not None
-        self._requests.put((ticket.id, request, payload))
+        self._transport.put((ticket.id, request, handler, payload))
         return ticket
 
     def poll(self, timeout_s: float = 0.0) -> list[Event]:
         """Every event that has arrived (a first blocking wait of ``timeout_s`` when nothing is buffered)."""
         out: list[Event] = list(self._buffer)
         self._buffer.clear()
-        if self._results is None:
+        if self._transport is None:
             return out
         block = timeout_s > 0.0 and not out
         while True:
             try:
                 ev: Event = (
-                    self._results.get(timeout=timeout_s if block else 0.0)
+                    self._transport.results.get(timeout=timeout_s)
                     if block
-                    else self._results.get_nowait()
+                    else self._transport.results.get_nowait()
                 )
             except queue.Empty:
                 break
@@ -485,6 +458,3 @@ class SimulationWorker:
             if not self.alive:
                 raise WorkerError("the worker process died")
         raise WorkerError(f"request {ticket.kind} timed out after {timeout_s:g} s")
-
-
-__all__ = ["Event", "EventKind", "SimulationWorker", "Ticket", "WorkerError", "complete_job"]

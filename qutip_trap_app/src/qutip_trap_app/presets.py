@@ -1,27 +1,24 @@
-"""Running the published-experiment presets (PLAN.md Section 14.5 "Presets from the validation suite"; milestone M11.4).
-
-Each function computes, through the core contract of :mod:`qutip_trap_app.core`, the numbers a Section 9 entry pins and the
-curve that puts them in context, and returns a picklable :class:`~qutip_trap_app.viewmodel.presets.PresetResult`; the
-worker runs them (``"preset"`` request) and the Learn view places every published number beside its simulated one with the
-two chips (``viewmodel.presets.compare``). Nothing here is a physics claim: every formula is the core's, cited to its section.
-"""
+"""The published-experiment presets (PLAN.md Section 14.5): each runner computes, through the core, the numbers a Section 9
+entry pins and the curve that puts them in context, and returns a picklable ``PresetResult`` that the Learn view places
+beside the published values (``viewmodel.presets.compare``). Every formula is the core's."""
 
 from __future__ import annotations
 
 import math
 import time
 from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
 
 from qutip_trap_app import core
+from qutip_trap_app.record import Progress
 from qutip_trap_app.viewmodel.presets import PRESETS, ChartRecord, PresetResult, PresetSpec, SeriesRecord
 
-Progress = Callable[[str, float | None, str], None] | None
-TWO_PI = 2.0 * math.pi
+TWO_PI = core.TWO_PI
 
 
-def _progress(progress: Progress, stage: str, fraction: float | None, message: str) -> None:
+def _progress(progress: Progress | None, stage: str, fraction: float | None, message: str) -> None:
     if progress is not None:
         progress(stage, fraction, message)
 
@@ -29,7 +26,7 @@ def _progress(progress: Progress, stage: str, fraction: float | None, message: s
 # ---- Section 9.2: Harty 2014 -------------------------------------------------------------------------------------------------------
 
 
-def harty_2014(progress: Progress = None, *, n_sets: int = 16, seed: int = 3) -> PresetResult:
+def harty_2014(progress: Progress | None = None, *, n_sets: int = 16, seed: int = 3) -> PresetResult:
     """Microwave randomized benchmarking with the paper's own error model (Section 4.3.3; ``qutip_trap.validation.harty_rb``)."""
     t0 = time.perf_counter()
     p = core.HartyParameters()
@@ -86,7 +83,7 @@ def harty_2014(progress: Progress = None, *, n_sets: int = 16, seed: int = 3) ->
 # ---- Section 9.1: James 1998 -------------------------------------------------------------------------------------------------------
 
 
-def james_1998(progress: Progress = None, *, n_max: int = 10) -> PresetResult:
+def james_1998(progress: Progress | None = None, *, n_max: int = 10) -> PresetResult:
     """Equilibrium positions and axial mode eigenvalues of N equal ions (Sections 4.1.2, 4.1.3; ``trap.crystal``)."""
     t0 = time.perf_counter()
     simulated: dict[str, float] = {}
@@ -138,7 +135,7 @@ def james_1998(progress: Progress = None, *, n_max: int = 10) -> PresetResult:
 # ---- Section 9.3: Monroe 1995 ------------------------------------------------------------------------------------------------------
 
 
-def monroe_1995(progress: Progress = None) -> PresetResult:
+def monroe_1995(progress: Progress | None = None) -> PresetResult:
     """9Be+ Doppler cooling at Monroe's parameters: the force model and the rate framework (Sections 4.2.1, 4.2.2)."""
     t0 = time.perf_counter()
     gamma = TWO_PI * 19.4e6
@@ -192,7 +189,7 @@ def monroe_1995(progress: Progress = None) -> PresetResult:
 # ---- Section 9.3: Roos 2000 --------------------------------------------------------------------------------------------------------
 
 
-def roos_2000(progress: Progress = None) -> PresetResult:
+def roos_2000(progress: Progress | None = None) -> PresetResult:
     """The Lamb-Dicke parameters of 40Ca+ on its 729 nm and 393 nm lines at 2 pi x 1 MHz (Section 4.1.7)."""
     t0 = time.perf_counter()
     ca = core.species("40Ca+")
@@ -246,7 +243,7 @@ def roos_2000(progress: Progress = None) -> PresetResult:
 # ---- Section 9.4: Kirchmair 2009 ---------------------------------------------------------------------------------------------------
 
 
-def kirchmair_2009(progress: Progress = None) -> PresetResult:
+def kirchmair_2009(progress: Progress | None = None) -> PresetResult:
     """Kirchmair's single-loop MS gate on a thermal mode: the populations of Eq. 14 and the Debye-Waller parity contrast
     (Sections 4.4.1, 4.4.7)."""
     t0 = time.perf_counter()
@@ -316,31 +313,28 @@ def kirchmair_2009(progress: Progress = None) -> PresetResult:
 
 
 def _threshold_scan(
-    model: object, windows_s: np.ndarray, progress: Progress, what: str, *, dark_start: str = "dark"
+    model: core.RecordModel,
+    windows_s: np.ndarray,
+    progress: Progress | None,
+    what: str,
+    *,
+    dark_start: Literal["bright", "dark", "shelf"] = "dark",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     eps = np.zeros(windows_s.size)
     n_c = np.zeros(windows_s.size)
     for k, w in enumerate(windows_s):
         _progress(progress, "scanning", 0.1 + 0.8 * k / windows_s.size, f"{what}: window {w * 1e6:.0f} us")
-        opt = core.optimize_threshold(model, [float(w)], dark_start=dark_start)  # type: ignore[arg-type]
+        opt = core.optimize_threshold(model, [float(w)], dark_start=dark_start)
         eps[k] = 0.5 * (opt.best.eps_B + opt.best.eps_D)
         n_c[k] = opt.best.n_c
     return windows_s, eps, n_c
 
 
-def myerson_2008(progress: Progress = None) -> PresetResult:
+def myerson_2008(progress: Progress | None = None) -> PresetResult:
     """Myerson's 40Ca+ PMT readout: the error at the paper's operating point and the exact chain's own optimum (Sections 8.2, 8.3)."""
     t0 = time.perf_counter()
     preset = core.MYERSON_CA40_PMT
-    det = core.Detector(
-        kind="pmt",
-        efficiency=preset.efficiency,
-        background_cps=preset.background_per_s,
-        psf_leakage={},
-        dead_time_s=None,
-        afterpulse_prob=None,
-        window_s=420e-6,
-    )
+    det = core.myerson_ca40_pmt_detector(window_s=420e-6)
     model = core.RecordModel.from_rates(preset.rates(), det)
     # the dark state is the shelved D5/2 level (lifetime 1.168 s), which decays to bright during the window: the "shelf" class
     pb = model.count_distribution("bright", 420e-6)
@@ -382,20 +376,11 @@ def myerson_2008(progress: Progress = None) -> PresetResult:
     )
 
 
-def crain_2019(progress: Progress = None) -> PresetResult:
+def crain_2019(progress: Progress | None = None) -> PresetResult:
     """Crain's 171Yb+ SNSPD readout from the measured rates: the threshold error against the window (Section 8.3)."""
     t0 = time.perf_counter()
     preset = core.CRAIN_YB171_SNSPD
-    det = core.Detector(
-        kind="snspd",
-        efficiency=preset.efficiency,
-        background_cps=preset.background_per_s,
-        psf_leakage={},
-        dead_time_s=None,
-        afterpulse_prob=None,
-        window_s=22e-6,
-        numerical_aperture=0.6,
-    )
+    det = core.crain_snspd_detector(window_s=22e-6)
     model = core.RecordModel.from_rates(preset.rates(), det)
     windows = np.geomspace(5e-6, 80e-6, 32)
     w, eps, n_c = _threshold_scan(model, windows, progress, "Crain")
@@ -427,7 +412,7 @@ def crain_2019(progress: Progress = None) -> PresetResult:
     )
 
 
-RUNNERS: dict[str, Callable[[Progress], PresetResult]] = {
+RUNNERS: dict[str, Callable[[Progress | None], PresetResult]] = {
     "harty_2014": harty_2014,
     "james_1998": james_1998,
     "monroe_1995": monroe_1995,
@@ -436,10 +421,10 @@ RUNNERS: dict[str, Callable[[Progress], PresetResult]] = {
     "myerson_2008": myerson_2008,
     "crain_2019": crain_2019,
 }
-"""One runner per experiment preset of ``viewmodel.presets.PRESETS`` (the circuit presets run through the machine itself)."""
+"""One runner per experiment preset of ``viewmodel.presets.PRESETS`` (the circuit presets run through the machine)."""
 
 
-def run_preset(preset_id: str, progress: Progress = None) -> PresetResult:
+def run_preset(preset_id: str, progress: Progress | None = None) -> PresetResult:
     spec: PresetSpec | None = PRESETS.get(preset_id)
     if spec is None:
         raise KeyError(f"unknown preset {preset_id!r}; known: {sorted(PRESETS)}")
@@ -448,16 +433,3 @@ def run_preset(preset_id: str, progress: Progress = None) -> PresetResult:
             f"{preset_id} is a circuit preset: it runs through Level 0's Run, not as an experiment"
         )
     return RUNNERS[preset_id](progress)
-
-
-__all__ = [
-    "RUNNERS",
-    "crain_2019",
-    "harty_2014",
-    "james_1998",
-    "kirchmair_2009",
-    "monroe_1995",
-    "myerson_2008",
-    "roos_2000",
-    "run_preset",
-]
