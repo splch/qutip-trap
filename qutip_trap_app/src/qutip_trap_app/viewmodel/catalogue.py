@@ -215,7 +215,7 @@ _ROWS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
     ("doppler_limit", "Where the stage's cooling stops", "nbar = A_+/(A_- - A_+)", "quanta", 4, "4.2.1", "anchor.m3a.doppler_limit"),
     ("stage_duration", "How long a preparation stage lasts", "t_stage", "s", 4, "4.2.6", "conv.preparation_stage_order"),
     ("pump_photons", "Photons scattered while pumping the ion into |0>", "N_photons", "", 4, "4.2.6", "anchor.m3.optical_pumping_recoil"),
-    ("recoil_heating", "Vibration quanta added by the pumping photons", "Delta n", "quanta", 4, "4.2.8", "anchor.m3.repump_recoil_per_cycle"),
+    ("recoil_heating", "Vibration quanta added by the pumping photons", "Delta n", "quanta", 4, "4.2.8", "anchor.m3.optical_pumping_recoil"),
     ("participation", "Share of the mode's motion the cooled ions carry", "W_k = sum_j c_{j,k}^2", "", 4, "4.1.7", "conv.level_a_rates_participation"),
     # Level 4, the readout page
     ("scatter_rate_bright", "Photons per second a bright ion scatters", "R_o", "1/s", 4, "8.1", "conv.saturation_ceiling"),

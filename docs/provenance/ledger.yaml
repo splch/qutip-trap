@@ -634,12 +634,6 @@ records:
     section: "4.2.7; 9.3"
     source: "Turchette 2000; Rasmusson et al. 2021; qutip_trap.prep.sideband"
     equation: "at eta = 1.5, nbar = 8 the exact sideband ratio equals (nbar/(nbar + 1))^k to 1.6e-15 for k = 1, 2 and three pulse durations; a double-thermal state shows a duration-dependent ratio; Rasmusson's time-averaged red-sideband signal is (1/2) sum_{n >= m} p(n) and stepping m returns the populations to 1e-14; the blue-sideband flopping inverts by NNLS to 2e-3"
-  - id: anchor.m3.repump_recoil_per_cycle
-    symbol: "Delta nbar = t s Gamma^3 eta^2/(4 Delta_HF^2)"
-    tag: recomputed here
-    section: "4.2.8"
-    source: "Che et al. 2017 Eq. 6"
-    equation: "0.031117 for Che's 25Mg+ (t = 10 us, s = 1, Gamma = 2 pi x 41.3 MHz, eta = 0.3, Delta_HF = 2 pi x 1.789 GHz), 0.0049524 with ordinary Hz fed in (low by exactly 2 pi); R_sc = s Gamma^3/(8 Delta^2) = 1.7287e4 s^-1 times t times 2 eta^2 reproduces it"
   - id: anchor.m3.optical_pumping_recoil
     symbol: "171Yb+ pump: photons, error, recoil quanta per mode; spin-zero Zeeman pump: 3 photons"
     tag: recomputed here

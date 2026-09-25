@@ -1,7 +1,7 @@
 """The run record: every screen is a view of one of these frozen dataclasses of plain values and arrays (PLAN.md Section 14.3).
 
 A job runs once (:func:`execute`); what re-simulation computes later (boundary states, zooms, Hamiltonian listings, process
-matrices, Fock movies) is cached on the record by key. Conventions are the core's: bitstring keys read qubit 0 rightmost,
+matrices) is cached on the record by key. Conventions are the core's: bitstring keys read qubit 0 rightmost,
 reduced internal states are in register order (ion 0 the first tensor factor), a mode index is a position in
 ``Crystal.modes``, and frequencies are in Hz.
 """

@@ -217,7 +217,7 @@ class ReadoutStage:
     """Neighbour distance -> (Delta R_d, Delta R_b) the leaked resonant light of one bright neighbour drives: the
     depumping half of Wineland's crosstalk mechanism (Section 8.5), bounded by I_ion/I_sat = 3 lambda^2/(8 pi^2 x^2)."""
     crosstalk_discrepancy: float | None = None
-    """max |register confusion - product POVM| at the configured crosstalk (Sections 9.5, 9.17); None at zero crosstalk
+    """max |register confusion - product POVM| at the configured crosstalk (Section 9.5); None at zero crosstalk
     or when no POVM was built."""
     micromotion: dict[int, tuple[float, float]] = field(default_factory=dict)
     """Per ion, (beta, Omega_rf) of the detection beam when Section 8.8's J_0^2/J_1^2 factor was applied."""

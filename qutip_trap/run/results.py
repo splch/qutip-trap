@@ -1,7 +1,6 @@
 """Results, diagnostics and the persistent machine state (PLAN.md Sections 3.4, 6.7, 8.6).
 
-Bit order (Section 13, row "Result bit order"; the one sentence, stated in the same words on docs/conventions.md):
-in every bitstring key qubit 0 is the least-significant bit, the rightmost character, so "101" on three qubits is
+Bit order (Section 13, row "Result bit order"): in every bitstring key qubit 0 is the least-significant bit, the rightmost character, so "101" on three qubits is
 qubit0 = 1, qubit1 = 0, qubit2 = 1 and the IonQ v1 decimal key "5"; ``Result.bit_order`` says so explicitly and the
 exporters convert. IonQ's v2 result strings run the other way, q[0] first (``qutip_trap.io.ionq``); PennyLane
 reverses to big-endian on its side; Qiskit does not (Section 8.6).

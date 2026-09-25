@@ -1066,7 +1066,7 @@ def execute(
         approximations.append(
             f"readout crosstalk: the register-wide confusion at the configured PSF leakage {stage.leakage} differs from the "
             f"product POVM by at most {stage.crosstalk_discrepancy:.4f} in a per-ion declared-bright probability (the "
-            "bounded, reported discrepancy of Sections 9.5 and 9.17)"
+            "bounded, reported discrepancy of Section 9.5)"
         )
     for i, (beta, omega_rf) in sorted(stage.micromotion.items()):
         approximations.append(

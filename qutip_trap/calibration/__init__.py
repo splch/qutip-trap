@@ -9,22 +9,17 @@ device parameter changes.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from qutip_trap.calibration.experiments import CalibrationReport, full_calibration
-
-if TYPE_CHECKING:
-    from qutip_trap.machine import Machine
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, TypeVar, cast
-
 from qutip_trap.hashing import canonical_digest
 
 if TYPE_CHECKING:
     from qutip_trap.calibration.surrogate import SurrogateReport
     from qutip_trap.control.schedule import GateDrive
     from qutip_trap.device.model import Device, ResolvedRoles
+    from qutip_trap.machine import Machine
 
 
 _R = TypeVar("_R")
@@ -68,8 +63,6 @@ class CalibrationCache:
 
 
 DEFAULT_CACHE = CalibrationCache()
-
-
 """The process-wide cache ``calibrate`` and ``run`` share."""
 
 

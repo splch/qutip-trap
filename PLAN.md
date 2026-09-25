@@ -1164,7 +1164,7 @@ Wall time is the number of right-hand-side evaluations times the cost of one app
 
 ### 11.4 Interactive budgets for the application
 
-The budgets of Section 14.7 follow from Section 11.1. Re-simulating one trajectory of a zoomed 100 µs entangling pulse with its recorded noise sample takes under a second up to about dimension 864 and about 2 s at 2048 in the rotating frame; anything that needs an ensemble (a representative jump record, a process matrix from 16 tomography inputs) and recalibration by simulated experiment run as background jobs with progress, the record's stored traces shown at once and stale badges until they finish. The re-derivation of modes, η, pulse-solver solutions and closed-form channel estimates after a device change is immediate, with pulse re-solves of at most about 10 s per pair in the background. App-side channel replay of a 20-qubit, 100-gate circuit takes seconds.
+The budgets of Section 14.7 follow from Section 11.1. Re-simulating one trajectory of a zoomed 100 µs entangling pulse with its recorded noise sample takes under a second up to about dimension 864 and about 2 s at 2048 in the rotating frame; anything that needs an ensemble (a representative jump record, a process matrix from 16 tomography inputs) and recalibration run as background jobs with progress, the record's stored traces shown at once and stale badges until they finish. The re-derivation of modes, η, pulse-solver solutions and closed-form channel estimates after a device change is immediate, with pulse re-solves of at most about 10 s per pair in the background. App-side channel replay of a 20-qubit, 100-gate circuit takes seconds.
 
 ### 11.5 Memory
 
@@ -1314,7 +1314,7 @@ The run record is the single data structure the levels read: job (device hash, s
 
 ### 14.4 Knobs propagate downward
 
-The device model at Level 4 is the single source of truth. A change there (a trap voltage, a beam power, a detection window) re-derives the analytic layer immediately (mode structure, η, pulse-solver solutions, the closed-form gate-channel estimates, the device card's estimated columns) and invalidates the calibration table, whose regeneration by simulated experiment (Section 7.5) runs only as a user-initiated background job; dependent views show a stale badge until it completes, and the device card states which of its numbers are analytic estimates and which are calibrated. A change at a shallower level is a request rather than an edit: asking for XX(0.3) at Level 1 invokes the pulse solver; a detuning set by hand at Level 2 is applied as written, and the gate at Level 1 then shows its actual unitary, not the requested one. Requests the device cannot satisfy are shown with the reason (loop closure impossible within the power limit, an angle outside the calibrated range). No level floats free of the device model.
+The device model at Level 4 is the single source of truth. A change there (a trap voltage, a beam power, a detection window) re-derives the analytic layer immediately (mode structure, η, pulse-solver solutions, the closed-form gate-channel estimates, the device card's estimated columns) and invalidates the calibration table, whose regeneration (the surrogate calibration of Section 7.5) runs only as a user-initiated background job; dependent views show a stale badge until it completes, and the device card states which of its numbers are analytic estimates and which are calibrated. A change at a shallower level is a request rather than an edit: asking for XX(0.3) at Level 1 invokes the pulse solver; a detuning set by hand at Level 2 is applied as written, and the gate at Level 1 then shows its actual unitary, not the requested one. Requests the device cannot satisfy are shown with the reason (loop closure impossible within the power limit, an angle outside the calibrated range). No level floats free of the device model.
 
 ### 14.5 Correctness affordances
 
@@ -1343,7 +1343,7 @@ The device model at Level 4 is the single source of truth. A change there (a tra
 |---|---|---|
 | Zoom into a pulse: one trajectory of a 100 µs entangling pulse with the recorded noise sample and jump record | ≤ 1 s at joint dimension ≤ 256; ≤ 10 s at ≤ 864 | Section 11.1: 0.8 s and 1.2 s per 100 µs gate |
 | Zoom into a pulse: jump ensemble and process matrix | background job with progress (tens to hundreds of trajectories; 16 tomography inputs) | Section 5.4 |
-| Level 4 parameter change: recalibration by simulated experiment | user-initiated background job, stale badge until it completes | Section 11.1: about twelve minutes for the two-ion device |
+| Level 4 parameter change: recalibration by the surrogate | user-initiated background job, stale badge until it completes | Section 7.5: closed-form waveforms with exact spot checks, seconds for the two-ion device |
 | Zoom into a pulse at larger dimension | recorded traces at once; re-simulation as a background job with progress | Sections 11.1, 11.2 |
 | Level 0 or 1 run by channel replay, 20 qubits, 100 gates | seconds | density matrix to 12 qubits, sampling beyond |
 | Level 4 parameter change: re-derivation of modes and η | immediate | closed forms and small eigenproblems |

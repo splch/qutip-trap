@@ -49,7 +49,7 @@ class Numerics:
     store_marginals: bool = False
     """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal``."""
     convergence_check: bool = False
-    """``run()`` repeats its evolution with atol and rtol tightened by ten and reports the change as
+    """``Machine.run`` repeats its evolution with atol and rtol tightened by ten and reports the change as
     ``Diagnostics.convergence`` (Section 5.5); off by default because it triples the cost."""
     # the truncation (Sections 5.1, 5.2, 5.5, 11.5)
     joint_dimension_max: int = 4096
