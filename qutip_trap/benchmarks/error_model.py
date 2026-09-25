@@ -1,22 +1,19 @@
-"""The inverse direction: the phenomenological error model of a simulated device (docs/api_implementation_plan.md 2.6;
-docs/api_proposal.md Sections 1 item 8 and 4.8). Every vendor emulator surveyed takes numbers like IonQ's ``r_1q``/``r_2q``,
-Quantinuum's ``p1``/``p2``/``p_meas`` or the QDK estimator's gate times and error rates, and none derives them from
-physics; ``error_model(machine)`` emits them from the machine: per native gate kind the average gate infidelity of its
-GATE_LOCAL channel (``gate_channel``, Section 6.8) reduced to the gate's own qubits, the SPAM errors from the detection
-calibration and the preparation recipe, the durations from the schedule, the dephasing and heating rates from the noise
-model, each in the naming discipline that survived three vendor API generations: ``p_*`` a probability, ``*_rate`` per
-second, ``*_ratio`` a fraction of another probability, ``*_scale`` a multiplier.
+"""The phenomenological error model of a simulated device, in the vocabularies of the vendor emulators (IonQ's
+``r_1q``/``r_2q``, Quantinuum's ``p1``/``p2``/``p_meas``, the QDK resource estimator's gate times and error rates), derived
+from the machine rather than assumed: per native gate kind the average gate infidelity of its GATE_LOCAL channel reduced to
+the gate's own qubits (``gate_channel``), the SPAM errors from the detection calibration and the preparation recipe, the
+durations from the schedule, the dephasing and heating rates from the noise model.
 
-Conversions (stated once, here, and repeated on each exporter):
+Conversions (repeated on each exporter):
 
-- the channel's ``infidelity_on`` is the AVERAGE gate infidelity r = 1 - F_avg; the ledger's ``conv.depolarizing_normalization``
-  writes the depolarizing channel with the entanglement infidelity eps as its rate, r = d eps/(d + 1);
-- IonQ's noise model is the maximally-mixed weight lambda: Lambda(rho) = (1 - lambda) rho + lambda 1/d, F_avg = 1 - lambda (1 - 1/d),
-  so ``r_1q = 2 r`` (F_avg = 1 - r_1q/2) and ``r_2q = 4 r/3`` (F_avg = 1 - 3 r_2q/4), i.e. lambda = eps 4^n/(4^n - 1);
-- Quantinuum's ``p1``/``p2`` are taken as the same depolarizing weights, ``p_meas`` as (P(read 1 | prepared 0), P(read 0 |
-  prepared 1)) = (eps_D, eps_B) with |0> the dark state, ``p_init`` the preparation error, the dephasing rate per second;
-- the QDK resource estimator takes gate times as unit-suffixed strings (``"5 µs"``) and error rates as probabilities per
-  gate; the idle error rate is the white dephasing probability over one single-qubit gate time, 1 - exp(-gamma t).
+- ``infidelity_on`` is the average gate infidelity r = 1 - F_avg; the depolarizing channel with entanglement infidelity
+  eps has r = d eps/(d + 1) (``conv.depolarizing_normalization``);
+- IonQ's noise model is the maximally-mixed weight lambda of (1 - lambda) rho + lambda 1/d, F_avg = 1 - lambda (1 - 1/d),
+  so ``r_1q = 2 r`` and ``r_2q = 4 r/3`` (lambda = eps 4^n/(4^n - 1));
+- Quantinuum's ``p1``/``p2`` are the same weights, ``p_meas`` = (P(read 1 | 0 prepared), P(read 0 | 1 prepared)) =
+  (eps_D, eps_B) with |0> the dark state, ``p_init`` the preparation error, the dephasing rate per second;
+- the QDK estimator takes gate times as unit-suffixed strings (``"5 µs"``) and error rates as probabilities per gate; the
+  idle error rate is the white dephasing probability over one single-qubit gate time, 1 - exp(-gamma t).
 """
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -49,13 +46,12 @@ def qdk_time(seconds: float) -> str:
 
 @dataclass(frozen=True)
 class ErrorModel:
-    """The phenomenological summary of one machine (``error_model``): per native gate kind the average gate infidelity
-    ``infidelity[kind]`` (r = 1 - F_avg, the channel reduced to the gate's qubits, the crosstalk neighbours traced out) and
-    its duration ``durations_s[kind]``; the depolarizing weights ``p_1q`` (mean over the single-qubit kinds of 2 r) and
-    ``p_2q`` (mean over the entangling kinds of 4 r/3; None without a pair); per qubit ``p_meas`` = (eps_D, eps_B), the
-    probabilities of reading 1 when |0> (dark) was prepared and 0 when |1> (bright) was, and ``p_init`` the preparation
-    error; the white qubit dephasing rate and the heating rate per mode from the noise model (1/s and quanta/s; empty when
-    the model has none); the machine hash the numbers belong to. The exporters state their conversions."""
+    """The phenomenological summary of one machine (``error_model``): per native gate kind the average gate infidelity r
+    (the channel reduced to the gate's qubits, the crosstalk neighbours traced out) and its duration (the detection window
+    under ``"measure"``); the depolarizing weights ``p_1q`` (the mean over the single-qubit kinds of 2 r) and ``p_2q`` (over
+    the entangling kinds of 4 r/3; None without a pair); per qubit ``p_meas`` = (eps_D, eps_B) and the preparation error
+    ``p_init``; the white qubit dephasing rate (1/s) and the heating rate per mode (quanta/s) of the noise model (empty when
+    it has none); the machine hash the numbers belong to."""
 
     infidelity: dict[str, float]
     durations_s: dict[str, float]
@@ -82,14 +78,17 @@ class ErrorModel:
     @property
     def t_1q_s(self) -> float:
         """The mean single-qubit gate duration (s)."""
-        return float(
-            sum(self.durations_s[k] for k in self.single_qubit_kinds) / max(1, len(self.single_qubit_kinds))
-        )
+        kinds = self.single_qubit_kinds
+        return float(sum(self.durations_s[k] for k in kinds) / max(1, len(kinds)))
 
     @property
     def t_2q_s(self) -> float | None:
         kinds = self.two_qubit_kinds
         return None if not kinds else float(sum(self.durations_s[k] for k in kinds) / len(kinds))
+
+    @property
+    def measurement_time_s(self) -> float:
+        return float(self.durations_s.get("measure", 0.0))
 
     @property
     def p_meas_mean(self) -> tuple[float, float]:
@@ -100,29 +99,22 @@ class ErrorModel:
 
     @property
     def dephasing_rate_mean_per_s(self) -> float:
-        return (
-            float(sum(self.dephasing_rate_per_s.values()) / len(self.dephasing_rate_per_s))
-            if self.dephasing_rate_per_s
-            else 0.0
-        )
+        rates = self.dephasing_rate_per_s
+        return float(sum(rates.values()) / len(rates)) if rates else 0.0
 
     def to_ionq_noise(self) -> dict[str, float]:
-        """IonQ's noise model parameters ``{"r_1q", "r_2q"}``: the maximally-mixed weight of a depolarizing channel after
-        each ideal gate, with F_avg = 1 - r_1q/2 on one qubit and 1 - 3 r_2q/4 on two, so r_1q = 2 r and r_2q = 4 r/3 for the
-        average gate infidelity r (equivalently lambda = eps 4^n/(4^n - 1) for the entanglement infidelity eps of
-        ``conv.depolarizing_normalization``). ``r_2q`` is left out when the machine has no entangling pair."""
+        """IonQ's noise model ``{"r_1q", "r_2q"}``: the maximally-mixed weights after each ideal gate, F_avg = 1 - r_1q/2 on
+        one qubit and 1 - 3 r_2q/4 on two, so r_1q = 2 r and r_2q = 4 r/3; ``r_2q`` is left out without an entangling pair."""
         out = {"r_1q": float(self.p_1q)}
         if self.p_2q is not None:
             out["r_2q"] = float(self.p_2q)
         return out
 
     def to_quantinuum_error_params(self) -> dict[str, Any]:
-        """Quantinuum's ``UserErrorParams`` vocabulary: ``p1`` and ``p2`` the depolarizing weights of ``to_ionq_noise`` (the
-        same convention, F_avg = 1 - p (1 - 1/d)), ``p_meas`` = (P(1 | 0 prepared), P(0 | 1 prepared)) averaged over the
-        qubits, ``p_init`` the mean preparation error, ``linear_dephasing_rate`` the mean white qubit dephasing rate in 1/s
-        and ``quadratic_dephasing_rate`` 0.0 (the simulator's white dephasing is a linear rate; a quadratic term would be a
-        drift, which the noise model samples rather than summarises). The field names follow the vendor survey of
-        docs/api_proposal.md; the units are the ones stated here."""
+        """Quantinuum's ``UserErrorParams``: ``p1``/``p2`` the weights of ``to_ionq_noise`` (F_avg = 1 - p (1 - 1/d)),
+        ``p_meas`` = (P(1 | 0 prepared), P(0 | 1 prepared)) averaged over the qubits, ``p_init`` the mean preparation
+        error, ``linear_dephasing_rate`` the mean white dephasing rate in 1/s and ``quadratic_dephasing_rate`` 0 (a
+        quadratic term would be a drift, which the noise model samples rather than summarises)."""
         return {
             "p1": float(self.p_1q),
             "p2": None if self.p_2q is None else float(self.p_2q),
@@ -133,13 +125,11 @@ class ErrorModel:
         }
 
     def to_qdk_qubit_params(self) -> dict[str, Any]:
-        """The QDK resource estimator's gate-based ``qubitParams``: the gate and measurement times as the estimator's
-        unit-suffixed strings (``qdk_time``: ``"5 µs"``, matching ``QDK_TIME_PATTERN``), the one- and two-qubit and T-gate
-        error rates as the depolarizing weights of ``to_ionq_noise`` (the T gate is a single-qubit gate here), the
-        measurement error rate as the mean of the two readout errors, and ``idleErrorRate`` the white dephasing
-        probability over one single-qubit gate time, 1 - exp(-gamma t_1q). The measurement time is the detection window."""
+        """The QDK resource estimator's gate-based ``qubitParams``: the gate and measurement (detection window) times as
+        unit-suffixed strings (``qdk_time``), the one- and two-qubit and T-gate error rates as the weights of
+        ``to_ionq_noise`` (the T gate a single-qubit gate here), the measurement error rate as the mean of the two readout
+        errors and ``idleErrorRate`` = 1 - exp(-gamma t_1q), the white dephasing probability over one single-qubit gate."""
         p01, p10 = self.p_meas_mean
-        t_2q = self.t_2q_s
         out: dict[str, Any] = {
             "name": "qutip-trap",
             "instructionSet": "GateBased",
@@ -151,43 +141,35 @@ class ErrorModel:
             "tGateErrorRate": float(self.p_1q),
             "idleErrorRate": float(1.0 - math.exp(-self.dephasing_rate_mean_per_s * self.t_1q_s)),
         }
+        t_2q = self.t_2q_s
         if t_2q is not None and self.p_2q is not None:
             out["twoQubitGateTime"] = qdk_time(t_2q)
             out["twoQubitGateErrorRate"] = float(self.p_2q)
         return out
 
-    @property
-    def measurement_time_s(self) -> float:
-        return float(self.durations_s.get("measure", 0.0))
-
 
 def error_model(machine: Machine, *, qubits: Sequence[int] | None = None) -> ErrorModel:
-    """The ``ErrorModel`` of ``machine``: one GATE_LOCAL tomography per
-    single-qubit kind and qubit (``gpi[i]``, ``gpi2[i]``) and per adjacent pair of the machine's entangler (``ms[i,j]`` or
-    ``zz[i,j]``), through ``gate_channel`` (cached per machine hash and kind); the SPAM from the machine's table (the cached
-    closed-form surrogate when none is pinned) and the preparation recipe; the durations from ``Machine.schedule`` of a
-    one-gate circuit per kind, the detection window as the measurement time. ``qubits`` restricts the characterised ions
-    (default: all)."""
-    from dataclasses import replace
-
+    """The ``ErrorModel`` of ``machine``: one GATE_LOCAL tomography per single-qubit kind and qubit (``gpi[i]``, ``gpi2[i]``)
+    and per adjacent pair of the machine's entangler (``ms[i,j]`` or ``zz[i,j]``) through ``gate_channel``; the SPAM from
+    the machine's table (the closed-form surrogate when none is pinned) and the preparation recipe; the durations from
+    ``Machine.schedule`` of a one-gate circuit per kind. ``qubits`` restricts the characterised ions (default: all)."""
     from qutip_trap.benchmarks.budget import gate_channel, kind_of, one_gate_circuit
     from qutip_trap.calibration import calibrate
     from qutip_trap.prep.recipe import recipe_of, run_preparation
 
-    m = machine
-    device = m.device
+    device = machine.device
     n = device.crystal.n_ions
     qs = tuple(range(n)) if qubits is None else tuple(int(q) for q in qubits)
     if any(q < 0 or q >= n for q in qs) or len(set(qs)) != len(qs):
         raise ValueError("qubits are distinct ions of the device")
-    entangler = m.physics.entangler
+    entangler = machine.physics.entangler
+    pairs = list(zip(qs, qs[1:]))
     kinds: list[tuple[str, tuple[int, ...]]] = [
         (kind_of(name, (q,)), (q,)) for q in qs for name in SINGLE_QUBIT_KINDS
     ]
-    pairs = [(a, b) for a, b in zip(qs, qs[1:])]
-    kinds.extend((kind_of(entangler, pair), pair) for pair in pairs)
-    table = m.table if m.table is not None else calibrate(m, pairs=pairs).table
-    pinned = replace(m, table=table)
+    kinds += [(kind_of(entangler, pair), pair) for pair in pairs]
+    table = machine.table if machine.table is not None else calibrate(machine, pairs=pairs).table
+    pinned = replace(machine, table=table)
     infidelity: dict[str, float] = {}
     durations: dict[str, float] = {}
     notes: list[str] = []
@@ -196,8 +178,7 @@ def error_model(machine: Machine, *, qubits: Sequence[int] | None = None) -> Err
         infidelity[kind] = channel.infidelity_on(ions)
         sched = pinned.schedule(one_gate_circuit(kind, n))
         starts = [p.t_start_s for p in sched.pulses]
-        ends = [p.t_end_s for p in sched.pulses]
-        durations[kind] = float(max(ends) - min(starts)) if sched.pulses else 0.0
+        durations[kind] = float(max(p.t_end_s for p in sched.pulses) - min(starts)) if sched.pulses else 0.0
         notes.extend(x for x in channel.notes if x not in notes)
     durations["measure"] = float(device.detector.window_s)
     single = [2.0 * infidelity[k] for k, ions in kinds if len(ions) == 1]
@@ -208,13 +189,6 @@ def error_model(machine: Machine, *, qubits: Sequence[int] | None = None) -> Err
     if "eps_B" not in detection or "eps_D" not in detection:
         notes.append("the table carries no detection calibration: p_meas is reported as zero")
     prep = run_preparation(device, recipe_of(device))
-    provenance = {
-        "infidelity": "conv.depolarizing_normalization",
-        "p_1q": "conv.depolarizing_normalization",
-        "p_2q": "conv.depolarizing_normalization",
-        "p_meas": "conv.readout_figure_of_merit",
-        "p_init": "conv.readout_figure_of_merit",
-    }
     return ErrorModel(
         infidelity=infidelity,
         durations_s=durations,
@@ -231,6 +205,12 @@ def error_model(machine: Machine, *, qubits: Sequence[int] | None = None) -> Err
         machine_hash=pinned.hash(),
         qubits=qs,
         entangler=entangler,
-        provenance=provenance,
+        provenance={
+            "infidelity": "conv.depolarizing_normalization",
+            "p_1q": "conv.depolarizing_normalization",
+            "p_2q": "conv.depolarizing_normalization",
+            "p_meas": "conv.readout_figure_of_merit",
+            "p_init": "conv.readout_figure_of_merit",
+        },
         notes=tuple(notes),
     )

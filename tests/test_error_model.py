@@ -1,7 +1,7 @@
-"""docs/api_implementation_plan.md 2.6: ``Machine.error_model`` emits the vendors' phenomenology from the simulated device.
-IonQ's ``r_1q`` is recomputed from the gate channels' average infidelity by the stated formula, the RB budget's ``r_channel``
-is the sum the error model's per-kind infidelities give, the QDK strings match the estimator's form, and the exporters carry
-the fields the proposal names."""
+"""``Machine.error_model`` emits the vendors' phenomenology from the simulated device: IonQ's ``r_1q`` is recomputed from the
+gate channels' average infidelity by the stated formula, the RB budget composes the same cached per-kind infidelities, the
+durations, SPAM and rates come from the schedule, table, recipe and noise model, and the QDK strings match the estimator's
+form."""
 
 from __future__ import annotations
 
@@ -22,21 +22,16 @@ from qutip_trap.benchmarks.error_model import (
 from qutip_trap.benchmarks.rb import randomized_benchmarking
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Truncation
-from tests.m6_fixtures import CircuitFixture, circuit_fixture
+from tests.m6_fixtures import circuit_fixture
 
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 
 
 @pytest.fixture(scope="module")
-def fx() -> CircuitFixture:
-    return circuit_fixture(2)
-
-
-@pytest.fixture(scope="module")
-def machine(fx: CircuitFixture) -> Machine:
-    return Machine(fx.device, numerics=Numerics(truncation=Truncation(branch_weight_min=1e-3))).calibrated(
-        pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS
-    )
+def machine() -> Machine:
+    return Machine(
+        circuit_fixture(2).device, numerics=Numerics(truncation=Truncation(branch_weight_min=1e-3))
+    ).calibrated(pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS)
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +52,9 @@ def test_ionq_r_1q_is_twice_the_mean_single_qubit_average_infidelity_of_the_chan
     assert 0.0 < model.p_1q < 1e-2 and model.p_2q is not None and 0.0 < model.p_2q < 1e-1
     assert model.machine_hash == machine.hash() and model.entangler == "ms" and model.qubits == (0, 1)
     assert model.provenance["p_1q"] == "conv.depolarizing_normalization"
+    assert gate_channel(machine, kinds[0]) is gate_channel(machine, kinds[0]), (
+        "the channels are cached per machine and kind"
+    )
 
 
 def test_the_rb_budget_composes_the_same_per_kind_infidelities(machine: Machine, model: ErrorModel) -> None:
@@ -71,11 +69,11 @@ def test_the_rb_budget_composes_the_same_per_kind_infidelities(machine: Machine,
 def test_the_durations_spam_and_rates_come_from_the_schedule_table_recipe_and_noise_model(
     machine: Machine, model: ErrorModel
 ) -> None:
-    assert model.durations_s["ms[0,1]"] == pytest.approx(machine.table.waveform_for((0, 1)).duration_s)  # type: ignore[union-attr]
-    assert model.durations_s["gpi[0]"] == pytest.approx(2.0 * model.durations_s["gpi2[0]"], rel=1e-6)
-    assert model.durations_s["measure"] == machine.device.detector.window_s and model.measurement_time_s > 0.0
     table = machine.table
     assert table is not None
+    assert model.durations_s["ms[0,1]"] == pytest.approx(table.waveform_for((0, 1)).duration_s)  # type: ignore[union-attr]
+    assert model.durations_s["gpi[0]"] == pytest.approx(2.0 * model.durations_s["gpi2[0]"], rel=1e-6)
+    assert model.durations_s["measure"] == machine.device.detector.window_s and model.measurement_time_s > 0.0
     assert model.p_meas[0] == (table.detection["eps_D"].value, table.detection["eps_B"].value)
     assert 0.0 <= model.p_init[0] < 1e-3 and model.p_init.keys() == {0, 1}
     assert model.dephasing_rate_per_s == {} and model.heating_rate_per_s == {}  # the fixture is quiet
@@ -97,11 +95,11 @@ def test_the_exporters_carry_the_vendors_fields_and_the_qdk_strings_match_the_es
     assert k["idleErrorRate"] == pytest.approx(
         1.0 - math.exp(-model.dephasing_rate_mean_per_s * model.t_1q_s)
     )
-    assert (
-        qdk_time(5e-6) == "5 µs"
-        and qdk_time(2.5e-3) == "2.5 ms"
-        and qdk_time(3.0) == "3 s"
-        and qdk_time(4e-9) == "4 ns"
+    assert (qdk_time(5e-6), qdk_time(2.5e-3), qdk_time(3.0), qdk_time(4e-9)) == (
+        "5 µs",
+        "2.5 ms",
+        "3 s",
+        "4 ns",
     )
     assert re.fullmatch(QDK_TIME_PATTERN.pattern, qdk_time(1.23456789e-6))
     with pytest.raises(ValueError):

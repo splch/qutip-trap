@@ -15,7 +15,6 @@ dependencies = [
 [project.optional-dependencies]
 # Flet 0.86 is the announced last line before 1.0; review the pin when 1.0 ships.
 gui = ["flet[all]>=0.86,<1.0", "flet-charts>=0.86,<1.0"]
-plot = ["matplotlib>=3.10"]
 qiskit = ["qiskit>=2.0,<3"]
 
 [dependency-groups]

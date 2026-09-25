@@ -16,7 +16,7 @@ Python 3.13 and [uv](https://docs.astral.sh/uv/). The package is not on PyPI yet
 uv add git+https://github.com/splch/qutip-trap
 ```
 
-Extras: `qiskit` (a Qiskit `BackendV2`), `gui` (the Flet application), `plot` (matplotlib).
+Extras: `qiskit` (a Qiskit `BackendV2`), `gui` (the Flet application).
 
 ## Quickstart
 

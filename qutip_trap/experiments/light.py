@@ -1,36 +1,34 @@
-"""Light-and-field experiments: the Stark scan, the crosstalk scan and the field scan (PLAN.md Section 7.5 items 7, 8, 9; M8).
+"""Light-and-field experiments: the Stark scan, the crosstalk scan and the field scan (PLAN.md Section 7.5 items 7, 8, 9).
 
 - ``stark_scan``: a Ramsey experiment with ONE beam of the gate drive on during the delay (the other blocked, so no
-  two-photon coupling exists): the fringe shift is that beam's differential light shift, the drive's is the sum over its
-  beams, per (ion, beam) as item 7 asks. The fringe fit returns |delta - probe|, so the scan is run at BOTH probe signs and
-  the shift is the half-difference (``ramsey_frequency``'s estimator); the sum of the two fringes and the delay grid's
-  Nyquist frequency bound the range the estimator is valid on. The alternative both-beams-on measurement with the beat note detuned far from the
-  carrier at both signs (the light shift even in the detuning, the coupling shift Omega^2/(2 delta) odd) is kept as
-  ``mode="beat_note"``.
-- ``crosstalk_scan``: drive ion i on its carrier with the light its addressing beams put on the neighbours (the derived
-  intensity profile) and fit every neighbour's Rabi flopping: the rate ratio is epsilon_ij (item 8); the phase of the
-  crosstalk axis relative to the neighbour's own frame comes from a pi/2 - crosstalk pulse - pi/2(phi) sequence on the
-  neighbour, compared with the same sequence on ideal matrices.
-- ``field_scan``: the Ramsey-frequency experiment on the qubit transition with the frame at the transition frequency of a
-  SEED field, inverted through the exact hyperfine-Zeeman diagonalization nu(B) of the atomic layer (Section 4.5.1) for B and
-  its uncertainty sigma_nu/|d nu/dB| (item 9, "run first because every other fit reads the Zeeman sensitivities"); a
-  clock qubit at 5 G has d nu/dB = 2 x 310.87 B = 3.1 kHz/G, a transition at an exact clock point cannot fix the field and
-  the entry is left uncalibrated with a note.
+  two-photon coupling exists): the fringe shift is that beam's differential light shift, the drive's the sum over its
+  beams. The fringe fit returns |delta - probe|, so the scan runs at both probe signs and the shift is the half-difference
+  (``ramsey_frequency``'s estimator). ``mode="beat_note"`` instead keeps both beams on with the beat note detuned far from
+  the carrier at both signs: the light shift is even in the detuning, the coupling shift Omega^2/(2 delta) odd.
+- ``crosstalk_scan``: drive ion i on its carrier with the light its beams put on the neighbours and fit every neighbour's
+  Rabi flopping: the rate ratio is epsilon_ij. The crosstalk axis on each neighbour comes from a pi/2 - crosstalk pi -
+  pi/2(phi) sequence compared with the same sequence on ideal matrices.
+- ``field_scan``: the Ramsey-frequency experiment with the frame at the transition frequency of a seed field, inverted
+  through the atomic layer's exact nu(B) for B with uncertainty sigma_nu/|d nu/dB| (2 x 310.87 B = 3.1 kHz/G for the
+  171Yb+ clock qubit at 5 G); a transition at a clock point cannot fix the field and is left uncalibrated.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from dataclasses import replace
+from typing import TYPE_CHECKING, Literal, Unpack
 
 import numpy as np
 from scipy.optimize import brentq
 
 from qutip_trap.experiments.fitting import (
+    fit_fringe,
     sigmas_or_none,
-    thermal_rabi_model_fixed_nbar,
+    thermal_rabi_model,
     weighted_fit,
+    wrap_angle,
 )
 from qutip_trap.experiments.result import (
     CrosstalkScan,
@@ -41,15 +39,21 @@ from qutip_trap.experiments.result import (
     realized_drive,
     requested_drive,
 )
-from qutip_trap.experiments.single_ion import _observation, _run, _setup, ramsey, ramsey_frequency, sub_stream
-from qutip_trap.machine import Machine, laboratory_kwargs
+from qutip_trap.experiments.single_ion import (
+    _check_lab,
+    _Lab,
+    _LabOptions,
+    _Probe,
+    _run,
+    _setup,
+    ramsey,
+    ramsey_frequency,
+    sub_stream,
+)
 
 if TYPE_CHECKING:
+    from qutip_trap.control.pulses import Pulse
     from qutip_trap.machine import Machine
-
-
-def _wrap(angle: float) -> float:
-    return float((angle + math.pi) % (2.0 * math.pi) - math.pi)
 
 
 def _nyquist_hz(delays_s: Sequence[float]) -> float | None:
@@ -61,31 +65,33 @@ def _nyquist_hz(delays_s: Sequence[float]) -> float | None:
     return 0.5 / step if step > 0.0 else None
 
 
-def stark_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """The differential light shift of ``ion``'s gate beams (Section 7.5 item 7), per (ion, beam) as the plan asks.
+def stark_scan(
+    machine: Machine,
+    ion: int,
+    delays_s: Sequence[float],
+    *,
+    mode: Literal["per_beam", "beat_note"] = "per_beam",
+    probe_hz: float = 1e3,
+    rabi_hz_belief: float | None = None,
+    **kw: Unpack[_LabOptions],
+) -> ExperimentResult:
+    """The differential light shift of ``ion``'s gate beams per (ion, beam) (Section 7.5 item 7).
 
-    ``mode="per_beam"`` (default): a Ramsey experiment with ONE beam of the drive on during the delay at a time (the other
-    blocked), so that no two-photon coupling exists and the fringe shift is that beam's differential light shift alone, run at
-    BOTH probe signs so the branch of the fitted |fringe| is resolved (delta = (f_minus - f_plus)/2, exact while
-    |delta| < probe, with f_plus + f_minus = 2 probe as the out-of-range detector and the delay grid's Nyquist frequency as
-    the upper guard); the drive's shift is the sum over its beams (linear in intensity). ``mode="beat_note"``: both beams on with the beat note
-    detuned by ``stark_detuning_hz`` (default the highest mode frequency plus ten Rabi frequencies) at both signs; the light
-    shift is the even part of the two fringe shifts and the odd part is the off-resonant coupling shift Omega^2/(2 delta), a
-    check of the Rabi frequency (the delays must then resolve a fringe at probe minus that shift). ``probe_hz`` the Ramsey probe
-    (default 1 kHz, below the Nyquist frequency of nine delays over 2 ms; the fringe runs at probe minus the shift), ``rabi_hz_belief`` the table's Rabi frequency for the pi/2 pulses.
-    Data rows (beam or sign, delay_s, P1); fitted stark_shift_hz (the drive's total), stark_shift_hz[beam] per beam
-    (per_beam), coupling_shift_hz and coupling_shift_expected_hz (beat_note).
-    """
-    device, kw = laboratory_kwargs(machine, kw)
+    ``mode="per_beam"``: a Ramsey scan per beam with that beam alone on during the delay, at both probe signs: delta =
+    (f_minus - f_plus)/2, exact while |delta| < probe, with f_plus + f_minus = 2 probe and the delay grid's Nyquist
+    frequency as the range guards; the drive's shift is the sum over its beams. ``mode="beat_note"``: both beams on, the
+    beat note detuned by the highest mode frequency plus ten Rabi frequencies at both signs; the light shift is the even
+    part of the two fringe shifts and the odd part the coupling shift Omega^2/(2 delta). ``probe_hz`` is the Ramsey probe,
+    ``rabi_hz_belief`` the table's Rabi frequency for the pi/2 pulses. Data rows (beam or sign, delay_s, P1); fitted
+    stark_shift_hz (the drive's total) and, per beam, stark_shift_hz[b], fringe_plus_hz[b], fringe_minus_hz[b]
+    (per_beam), or coupling_shift_hz, coupling_shift_expected_hz and stark_detuning_hz (beat_note)."""
     from qutip_trap.control.pulses import Drive, Pulse, Tone
     from qutip_trap.control.schedule import default_gate_drives
-    from qutip_trap.light.raman import (
-        derive_optical_drive,
-        derive_raman_drive,
-        differential_stark_shift_hz,
-    )
+    from qutip_trap.light.raman import derive_optical_drive, derive_raman_drive, differential_stark_shift_hz
 
-    gate_drive = kw.get("gate_drive") or default_gate_drives(device)[ion]
+    _check_lab(kw)
+    device = machine.device
+    gate_drive = default_gate_drives(device)[ion]
     if gate_drive.kind == "raman":
         derived = derive_raman_drive(
             device, ion, (gate_drive.beams[0], gate_drive.beams[1]), scattering=False
@@ -97,31 +103,42 @@ def stark_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any)
             "the Stark scan measures the light shift of laser beams; a microwave drive has none to scan"
         )
     omega = derived.carrier_rabi_hz
-    belief = float(kw.get("rabi_hz_belief") or omega)
-    probe = abs(float(kw.get("probe_hz", 1e3)))
-    mode = kw.get("mode", "per_beam")
+    belief = float(rabi_hz_belief or omega)
+    probe = abs(float(probe_hz))
     rows: list[np.ndarray] = []
     sigmas: list[np.ndarray | None] = []
     notes: list[str] = []
     fitted: dict[str, tuple[float, float]] = {}
     converged = True
 
-    # ``mode`` is this experiment's own switch; ``_setup`` reads a ``mode`` keyword as a driven mode INDEX, so it must not
-    # reach the Ramsey sub-runs (``mode="beat_note"`` raised int('beat_note') before this)
-    base_kw = {k: v for k, v in kw.items() if k != "mode"}
+    def probe_drive(detuning_hz: float, envelope_hz: float, stark_hz: float) -> Drive:
+        tone = Tone(detuning_hz=detuning_hz, phase_rad=0.0, envelope_hz=envelope_hz)
+        return Drive(
+            kind=derived.kind,
+            ions=(ion,),
+            tones=(tone,),
+            beams=derived.beams,
+            stark_shift_hz=stark_hz,
+            crosstalk={},
+        )
 
-    def run_with(label: float, delay_pulses: Any, tag: str, detuning_hz: float) -> tuple[float, float, bool]:
-        # every sub-run draws its own shot noise (the two beams' Ramseys are separate experiments)
+    def fringe(
+        label: float, drive: Drive, gate_id: str, tag: str, detuning_hz: float
+    ) -> tuple[float, float, bool]:
+        """|fringe frequency|, its sigma and convergence of a Ramsey scan with ``drive`` on during the delay; each sub-run
+        draws its own shot noise."""
+
+        def delay_pulses(t0: float, t1: float) -> list[Pulse]:
+            return [Pulse(drive, t0, t1, gate_id, ())]
+
         res = ramsey(
-            Machine(device),
+            machine,
             ion,
             delays_s,
-            **{
-                **sub_stream(base_kw, tag),
-                "detuning_hz": detuning_hz,
-                "delay_pulses": delay_pulses,
-                "rabi_hz_belief": belief,
-            },
+            detuning_hz=detuning_hz,
+            delay_pulses=delay_pulses,
+            rabi_hz_belief=belief,
+            **sub_stream(kw, tag),
         )
         f, s_f = res.fitted.get("delta_hz", (math.nan, 0.0))
         rows.append(np.column_stack([np.full(len(res.data), label), res.data]))
@@ -132,27 +149,13 @@ def stark_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any)
         total, var = 0.0, 0.0
         nyquist = _nyquist_hz(delays_s)
         for b in derived.beams:
-            shift_b = float(differential_stark_shift_hz(device, ion, (b,)))
-
-            def delay_pulses(t0: float, t1: float, _b: int = b, _shift: float = shift_b) -> list[Pulse]:
-                # one beam on: no two-photon coupling (a zero envelope), the beam's own light shift on the qubit
-                drive = Drive(
-                    kind=derived.kind,
-                    ions=(ion,),
-                    tones=(Tone(detuning_hz=0.0, phase_rad=0.0, envelope_hz=0.0),),
-                    beams=derived.beams,
-                    stark_shift_hz=_shift,
-                    crosstalk={},
-                )
-                return [Pulse(drive, t0, t1, f"stark_probe[beam {_b}]", ())]
-
-            # the branch of |fringe| is resolved by the two probe signs exactly as ``ramsey_frequency`` resolves a qubit
-            # offset: the fringe runs at |probe - delta| for the + probe and at |probe + delta| for the -, so the
-            # half-DIFFERENCE is delta with its sign and the SUM is 2 probe only while |delta| < probe. A single probe sign
-            # loses the sign of (delta - probe) and aliases a shift above the probe onto one below it (delta = 1.5 probe
-            # was written as 0.5 probe with converged=True).
-            f_p, s_p, ok_p = run_with(float(b), delay_pulses, f"beam{b}/plus", +probe)
-            f_m, s_m, ok_m = run_with(float(b), delay_pulses, f"beam{b}/minus", -probe)
+            # one beam on: no two-photon coupling (a zero envelope), the beam's own light shift on the qubit
+            drive = probe_drive(0.0, 0.0, float(differential_stark_shift_hz(device, ion, (b,))))
+            gate_id = f"stark_probe[beam {b}]"
+            # the fringe runs at |probe - delta| for the + probe and |probe + delta| for the -, so the half-difference is
+            # delta with its sign and the sum is 2 probe only while |delta| < probe
+            f_p, s_p, ok_p = fringe(float(b), drive, gate_id, f"beam{b}/plus", +probe)
+            f_m, s_m, ok_m = fringe(float(b), drive, gate_id, f"beam{b}/minus", -probe)
             shift = 0.5 * (f_m - f_p)
             s_shift = 0.5 * math.hypot(s_p, s_m)
             fitted[f"stark_shift_hz[{b}]"] = (shift, s_shift)
@@ -178,32 +181,22 @@ def stark_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any)
             converged = converged and ok
         fitted["stark_shift_hz"] = (total, math.sqrt(var))
     elif mode == "beat_note":
-        far = kw.get("stark_detuning_hz")
-        if far is None:
-            far = max(m.omega_hz for m in device.crystal.modes) + 10.0 * belief
-        far = abs(float(far))
-        fringes: dict[int, tuple[float, float, bool]] = {}
-        for sign in (+1, -1):
-
-            def delay_pulses_beat(t0: float, t1: float, _sign: int = sign) -> list[Pulse]:
-                drive = Drive(
-                    kind=derived.kind,
-                    ions=(ion,),
-                    tones=(Tone(detuning_hz=_sign * far, phase_rad=0.0, envelope_hz=float(omega)),),
-                    beams=derived.beams,
-                    stark_shift_hz=float(derived.stark_shift_hz),
-                    crosstalk={},
-                )
-                return [Pulse(drive, t0, t1, f"stark_probe[{_sign:+d}]", ())]
-
-            fringes[sign] = run_with(float(sign), delay_pulses_beat, f"sign{sign:+d}", +probe)
+        far = abs(float(max(m.omega_hz for m in device.crystal.modes) + 10.0 * belief))
+        fringes = {
+            sign: fringe(
+                float(sign),
+                probe_drive(sign * far, float(omega), float(derived.stark_shift_hz)),
+                f"stark_probe[{sign:+d}]",
+                f"sign{sign:+d}",
+                +probe,
+            )
+            for sign in (+1, -1)
+        }
         shift_p = probe - fringes[+1][0]
         shift_m = probe - fringes[-1][0]
-        fitted["stark_shift_hz"] = (
-            0.5 * (shift_p + shift_m),
-            0.5 * math.hypot(fringes[+1][1], fringes[-1][1]),
-        )
-        fitted["coupling_shift_hz"] = (0.5 * (shift_p - shift_m), fitted["stark_shift_hz"][1])
+        s_total = 0.5 * math.hypot(fringes[+1][1], fringes[-1][1])
+        fitted["stark_shift_hz"] = (0.5 * (shift_p + shift_m), s_total)
+        fitted["coupling_shift_hz"] = (0.5 * (shift_p - shift_m), s_total)
         fitted["coupling_shift_expected_hz"] = (belief**2 / (2.0 * far), 0.0)
         fitted["stark_detuning_hz"] = (far, 0.0)
         converged = fringes[+1][2] and fringes[-1][2] and max(abs(shift_p), abs(shift_m)) < probe
@@ -230,69 +223,56 @@ def stark_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any)
 def _rabi_rate_fit(
     ts: np.ndarray, p1: np.ndarray, sigma: np.ndarray | None, eta: float, nbar: float, guess_hz: float
 ) -> tuple[float, float, bool]:
+    """(f, sigma, converged) of the thermal Debye-Waller Rabi curve with nbar fixed: p = (f_hz, A, B)."""
+
+    def model(p: np.ndarray, t: np.ndarray) -> np.ndarray:
+        return np.asarray(thermal_rabi_model(np.array([p[0], nbar, p[1]]), t, eta) + float(p[2]))
+
     fit = weighted_fit(
-        lambda p, t: thermal_rabi_model_fixed_nbar(p, t, eta, nbar),
-        [guess_hz, 1.0, 0.0],
-        ts,
-        p1,
-        sigma=sigma,
-        bounds=([0.0, 0.0, -0.5], [np.inf, 1.5, 0.5]),
+        model, [guess_hz, 1.0, 0.0], ts, p1, sigma=sigma, bounds=([0.0, 0.0, -0.5], [np.inf, 1.5, 0.5])
     )
     f, s = fit.value(0)
     return f, s, fit.converged and f > 0.0
 
 
 def _ideal_phase_response(alpha_rad: float, axis_rad: float, phases: np.ndarray) -> np.ndarray:
-    """P1 of |0> after GPi2(0), a rotation by ``alpha`` about the equatorial axis at ``axis``, and GPi2(phi): the neighbour's
-    Ramsey signal under a crosstalk rotation, on ideal matrices."""
-    from qutip_trap.control.native import gpi2
+    """P1 of |0> after GPi2(0), a rotation by ``alpha`` about the equatorial axis at ``axis`` and GPi2(phi): the
+    neighbour's Ramsey signal under a crosstalk rotation, on ideal matrices."""
+    from qutip_trap.control.native import PAULI_X, PAULI_Y, gpi2
 
-    x = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-    y = np.array([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
-    gen = math.cos(axis_rad) * x + math.sin(axis_rad) * y
+    gen = math.cos(axis_rad) * PAULI_X + math.sin(axis_rad) * PAULI_Y
     rot = math.cos(alpha_rad / 2.0) * np.eye(2) - 1j * math.sin(alpha_rad / 2.0) * gen
-    ket0 = np.array([1.0, 0.0], dtype=complex)
-    mid = rot @ (gpi2(0.0) @ ket0)
+    mid = rot @ (gpi2(0.0) @ np.array([1.0, 0.0], dtype=complex))
     return np.array([abs((gpi2(float(phi)) @ mid)[1]) ** 2 for phi in phases])
 
 
-def _fit_phase(phases: np.ndarray, signal: np.ndarray, sigma: np.ndarray | None) -> tuple[float, float, bool]:
-    def model(p: np.ndarray, x: np.ndarray) -> np.ndarray:
-        return np.asarray(float(p[0]) * np.cos(np.asarray(x) + float(p[1])) + float(p[2]))
-
-    c0 = 0.5 * float(signal.max() - signal.min())
-    best: tuple[float, float, bool, float] | None = None
-    for phi_guess in np.linspace(-math.pi, math.pi, 8, endpoint=False):
-        fit = weighted_fit(model, [c0, phi_guess, float(signal.mean())], phases, signal, sigma=sigma)
-        phi0 = float(fit.params[1]) + (math.pi if fit.params[0] < 0.0 else 0.0)
-        cand = (_wrap(phi0), float(fit.errors[1]), fit.converged, fit.chi2_per_dof)
-        if best is None or cand[3] < best[3]:
-            best = cand
-    assert best is not None
-    return best[0], best[1], best[2]
-
-
-def crosstalk_scan(machine: Machine, ion: int, durations_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """Drive ``ion`` on its carrier and fit the Rabi rate on every neighbour the light reaches (Section 7.5 item 8): epsilon_ij =
-    f_j/f_i; with ``phase=True`` (default) the crosstalk axis on each neighbour from a pi/2 - crosstalk pulse - pi/2(phi) scan.
-
-    ``nbar`` the mode occupations (the fixed-nbar Rabi model), ``rabi_hz_belief`` the table's Rabi frequency of ``ion``
-    (the pi/2 pulses and the phase-pulse duration), ``analysis_phases_rad`` (default 8 phases), ``phase_duration_s`` (default
-    a pi/2 crosstalk rotation from the fitted rate). Data rows (t, P1 of every ion...); fitted rate_hz (the driven ion),
-    eps[j], rate_hz[j], phase_total_rad[j] (the axis relative to j's frame), phase_rad[j] (minus the geometric phase
-    Delta k . (x_j - x_i) the beam's wavefront gives, i.e. arg epsilon_ij).
-    """
-    device, kw = laboratory_kwargs(machine, kw)
+def crosstalk_scan(
+    machine: Machine,
+    ion: int,
+    durations_s: Sequence[float],
+    *,
+    analysis_phases_rad: Sequence[float] | np.ndarray | None = None,
+    rabi_hz_belief: float | None = None,
+    **kw: Unpack[_LabOptions],
+) -> ExperimentResult:
+    """Drive ``ion`` on its carrier and fit the Rabi rate on every neighbour its light reaches (Section 7.5 item 8):
+    epsilon_ij = f_j/f_i, the rates fitted with nbar fixed at ``nbar``. The crosstalk axis on each neighbour comes from
+    pi/2 - crosstalk pi - pi/2(phi) over ``analysis_phases_rad`` (default eight), the pi/2 pulses at the neighbour's own
+    Rabi frequency (``rabi_hz_belief`` is not read). Data rows (t, P1 of the driven ion and each neighbour); fitted rate_hz
+    and per neighbour j rate_hz[j], eps[j], phase_total_rad[j] (the axis in j's frame) and phase_rad[j] (minus the
+    geometric phase Delta k . (x_j - x_i), i.e. arg epsilon_ij)."""
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.light.raman import lamb_dicke_parameters
 
-    setup = _setup(device, ion, {**kw, "crosstalk": True})
-    obs = _observation(device, kw)
+    del rabi_hz_belief
+    lab = _Lab.of(machine, kw)
+    device = lab.device
+    setup = _setup(lab, ion, _Probe(crosstalk=True))
     neighbours = sorted(setup.drive.crosstalk)
     ts = np.array(sorted(float(t) for t in durations_s))
     if ts.size < 4 or ts[0] < 0.0:
         raise ValueError("durations_s: at least four non-negative durations")
-    notes: list[str] = []
+    subject = {"ion": int(ion), "beam": setup.gate_drive.table_key_beam}
     if not neighbours:
         return CrosstalkScan(
             data=np.zeros((0, 2)),
@@ -300,124 +280,140 @@ def crosstalk_scan(machine: Machine, ion: int, durations_s: Sequence[float], **k
             model="crosstalk_rabi_rates",
             provenance_id="conv.crosstalk_ratio",
             notes=("the device derives no light on any neighbour under this drive",),
-            subject={"ion": int(ion), "beam": setup.gate_drive.table_key_beam},
+            subject=subject,
         )
     t_max = float(ts[-1])
     pulse = Pulse(setup.drive, 0.0, t_max, "crosstalk_scan", ())
-    avg = _run(device, ion, [pulse], setup, kw, store_times=[t for t in ts if 0.0 < t < t_max])
-    n = device.crystal.n_ions
+    avg = _run(lab, ion, [pulse], setup, store_times=[t for t in ts if 0.0 < t < t_max])
     curves: dict[int, tuple[np.ndarray, np.ndarray | None]] = {}
-    for q in [ion] + neighbours:
+    for q in [ion, *neighbours]:
         exact = np.interp(ts, avg.times_s, avg.p1(q))
-        meas = [obs.p1(float(p), q, "crosstalk_scan", k) for k, p in enumerate(exact)]
+        meas = [lab.obs.p1(float(p), q, "crosstalk_scan", k) for k, p in enumerate(exact)]
         curves[q] = (np.array([m[0] for m in meas]), sigmas_or_none([m[1] for m in meas]))
     driven = setup.driven_mode
-    nbar_m = setup.nbar.get(driven, 0.0) if driven is not None else 0.0
-    f_i, s_i, ok_i = _rabi_rate_fit(
-        ts, curves[ion][0], curves[ion][1], setup.eta_driven, nbar_m, setup.rabi_hz
-    )
+    nbar_m = lab.nbar.get(driven, 0.0) if driven is not None else 0.0
+    f_i, s_i, ok_i = _rabi_rate_fit(ts, *curves[ion], setup.eta_driven, nbar_m, setup.rabi_hz)
     fitted: dict[str, tuple[float, float]] = {"rate_hz": (f_i, s_i)}
     converged = ok_i
     delta_k = setup.drive.delta_k(device.beams)
+    phases = np.asarray(
+        np.linspace(0.0, 2.0 * math.pi, 8, endpoint=False)
+        if analysis_phases_rad is None
+        else analysis_phases_rad
+    )
+    positions = np.asarray(device.crystal.positions_m)
+    dead = float(device.hardware.dead_time_s)
     for j in neighbours:
         eta_j = (
             abs(lamb_dicke_parameters(device, j, delta_k)[0].get(driven, 0.0)) if driven is not None else 0.0
         )
         guess = abs(setup.drive.crosstalk[j]) * setup.rabi_hz
-        f_j, s_j, ok_j = _rabi_rate_fit(ts, curves[j][0], curves[j][1], eta_j, nbar_m, guess)
+        f_j, s_j, ok_j = _rabi_rate_fit(ts, *curves[j], eta_j, nbar_m, guess)
         eps = f_j / f_i if f_i > 0.0 else math.nan
         s_eps = eps * math.hypot(s_j / max(f_j, 1e-300), s_i / max(f_i, 1e-300)) if f_j > 0.0 else math.nan
         fitted[f"rate_hz[{j}]"] = (f_j, s_j)
         fitted[f"eps[{j}]"] = (eps, s_eps)
         converged = converged and ok_j and math.isfinite(eps)
-        if kw.get("phase", True) and ok_j and f_j > 0.0:
-            # a PI rotation about the crosstalk axis reflects the neighbour's Bloch vector across it (a pi/2 one would map the
-            # equatorial state onto the pole for an axis parallel to the preparation pulse's and give no fringe)
-            t_x = float(kw.get("phase_duration_s") or 0.5 / f_j)
-            phases = np.asarray(
-                kw.get("analysis_phases_rad", np.linspace(0.0, 2.0 * math.pi, 8, endpoint=False))
+        if not (ok_j and f_j > 0.0):
+            continue
+        # a PI rotation about the crosstalk axis reflects the neighbour's Bloch vector across it (a pi/2 one maps the
+        # equatorial state onto the pole for an axis parallel to the preparation pulse's and gives no fringe)
+        t_x = 0.5 / f_j
+        own = _setup(lab, j, _Probe(), setup.space)
+        t_h = 0.25 / own.rabi_hz
+        signal: list[float] = []
+        sig: list[float | None] = []
+        for k, phi in enumerate(phases):
+            drive3 = replace(own.drive, tones=(replace(own.drive.tones[0], phase_rad=float(phi)),))
+            pulses = [
+                Pulse(own.drive, 0.0, t_h, "xt_phase_1", ()),
+                Pulse(setup.drive, t_h + dead, t_h + dead + t_x, "xt_phase_x", ()),
+                Pulse(drive3, t_h + 2.0 * dead + t_x, 2.0 * t_h + 2.0 * dead + t_x, "xt_phase_2", ()),
+            ]
+            idle = ((t_h, t_h + dead), (t_h + dead + t_x, t_h + 2.0 * dead + t_x)) if dead > 0.0 else ()
+            p, s = lab.obs.p1(
+                _run(lab, ion, pulses, setup, idle=idle).final_p1(j), j, f"crosstalk_phase[{j}]", k
             )
-            own = _setup(device, j, {**kw, "crosstalk": False, "space": setup.space})
-            belief_j = float(kw.get("rabi_hz_belief_neighbour", own.rabi_hz))
-            t_h = 0.25 / belief_j
-            dead = float(device.hardware.dead_time_s)
-            signal: list[float] = []
-            sig: list[float | None] = []
-            for k, phi in enumerate(phases):
-                from dataclasses import replace as dc_replace
-
-                p1 = Pulse(own.drive, 0.0, t_h, "xt_phase_1", ())
-                px = Pulse(setup.drive, t_h + dead, t_h + dead + t_x, "xt_phase_x", ())
-                drive3 = dc_replace(own.drive, tones=(dc_replace(own.drive.tones[0], phase_rad=float(phi)),))
-                p3 = Pulse(drive3, t_h + 2.0 * dead + t_x, 2.0 * t_h + 2.0 * dead + t_x, "xt_phase_2", ())
-                idle = ((t_h, t_h + dead), (t_h + dead + t_x, t_h + 2.0 * dead + t_x)) if dead > 0.0 else ()
-                res = _run(device, ion, [p1, px, p3], setup, {**kw, "idle": idle})
-                p, s = obs.p1(res.final_p1(j), j, f"crosstalk_phase[{j}]", k)
-                signal.append(p)
-                sig.append(s)
-            phi_meas, s_phi, ok_phi = _fit_phase(phases, np.array(signal), sigmas_or_none(sig))
-            alpha = 2.0 * math.pi * f_j * t_x
-            phi_ideal0, _s0, _ok0 = _fit_phase(phases, _ideal_phase_response(alpha, 0.0, phases), None)
-            phi_ideal1, _s1, _ok1 = _fit_phase(phases, _ideal_phase_response(alpha, 0.1, phases), None)
-            response = (
-                _wrap(phi_ideal1 - phi_ideal0) / 0.1
-            )  # d phi_0 / d axis: +-2 for a pi rotation (the reflection doubles it)
-            # the fringe phase carries twice the axis angle, so the axis is defined modulo pi: wrap the phase difference first
-            axis = _wrap(_wrap(phi_meas - phi_ideal0) / response) if abs(response) > 0.1 else math.nan
-            geometric = float(
-                np.dot(
-                    delta_k,
-                    np.asarray(device.crystal.positions_m[j]) - np.asarray(device.crystal.positions_m[ion]),
-                )
-            )
-            fitted[f"phase_total_rad[{j}]"] = (axis, s_phi)
-            fitted[f"phase_rad[{j}]"] = (_wrap(axis - geometric), s_phi)
-            converged = converged and ok_phi and math.isfinite(axis)
-    data = np.column_stack([ts] + [curves[q][0] for q in [ion] + neighbours])
-    sig_all = [curves[q][1] for q in [ion] + neighbours]
+            signal.append(p)
+            sig.append(s)
+        measured = fit_fringe(phases, np.array(signal), sigmas_or_none(sig), 1)
+        alpha = 2.0 * math.pi * f_j * t_x
+        ideal0 = fit_fringe(phases, _ideal_phase_response(alpha, 0.0, phases), None, 1).phase_rad[0]
+        ideal1 = fit_fringe(phases, _ideal_phase_response(alpha, 0.1, phases), None, 1).phase_rad[0]
+        response = (
+            wrap_angle(ideal1 - ideal0) / 0.1
+        )  # d phi_0/d axis: +-2 for a pi rotation (the reflection doubles it)
+        # the fringe phase carries twice the axis angle, so the axis is defined modulo pi: wrap the phase difference first
+        axis = (
+            wrap_angle(wrap_angle(measured.phase_rad[0] - ideal0) / response)
+            if abs(response) > 0.1
+            else math.nan
+        )
+        geometric = float(np.dot(delta_k, positions[j] - positions[ion]))
+        fitted[f"phase_total_rad[{j}]"] = (axis, measured.phase_rad[1])
+        fitted[f"phase_rad[{j}]"] = (wrap_angle(axis - geometric), measured.phase_rad[1])
+        converged = converged and measured.converged and math.isfinite(axis)
+    sig_all = [curves[q][1] for q in [ion, *neighbours]]
     return CrosstalkScan(
-        data=data,
+        data=np.column_stack([ts] + [curves[q][0] for q in [ion, *neighbours]]),
         fitted=fitted,
         model="crosstalk_rabi_rates",
         provenance_id="conv.crosstalk_ratio",
         converged=converged,
-        notes=tuple(notes) + (f"ions in data columns: {[ion] + neighbours} of {n}",),
+        notes=(f"ions in data columns: {[ion, *neighbours]} of {device.crystal.n_ions}",),
         sigma=None
         if any(s is None for s in sig_all)
         else np.column_stack([s for s in sig_all if s is not None]),
         requested=ScanParameters({"durations_s": ts, **requested_drive(setup.drive, t_max)}),
         realized=ScanParameters({"durations_s": ts, **realized_drive(device, setup.drive, t_max)}),
-        subject={"ion": int(ion), "beam": setup.gate_drive.table_key_beam},
+        subject=subject,
     )
 
 
-def field_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
-    """B from the qubit transition frequency (Section 7.5 item 9): the Ramsey-frequency experiment with the frame at nu(B_seed),
-    inverted through nu(B) of the atomic layer. ``b_seed_gauss`` (default the device's field: the table's seed), ``probe_hz``,
-    ``sigma_max_gauss`` above which the entry is uncalibrated (default 0.05 G), ``sensitivity_min_hz_per_g`` below which the
-    transition cannot fix the field (default 10 Hz/G). Fitted B_gauss, qubit_freq_hz (at the measured field), dnu_dB_hz_per_g,
-    qubit_offset_hz (the measured transition minus the seed frame)."""
-    device, kw = laboratory_kwargs(machine, kw)
+def field_scan(
+    machine: Machine,
+    ion: int,
+    delays_s: Sequence[float],
+    *,
+    b_seed_gauss: float | None = None,
+    probe_hz: float = 1e3,
+    rabi_hz_belief: float | None = None,
+    include_stark: bool = True,
+    **kw: Unpack[_LabOptions],
+) -> ExperimentResult:
+    """B from the qubit transition frequency (Section 7.5 item 9): ``ramsey_frequency`` with the frame at nu(B_seed)
+    (``b_seed_gauss``, default the device's field), inverted through the atomic layer's nu(B); uncalibrated when |d nu/dB|
+    is below 10 Hz/G (a clock point) or sigma_B above 0.05 G. Fitted B_gauss, qubit_freq_hz (at the measured field),
+    qubit_offset_hz (from the seed frame), dnu_dB_hz_per_g and b_seed_gauss."""
+    _check_lab(kw)
+    device = machine.device
     sp = device.crystal.species[ion]
     lower, upper = sp.qubit
-    b_seed = float(kw.get("b_seed_gauss", device.field.B_gauss))
+    b_seed = float(device.field.B_gauss if b_seed_gauss is None else b_seed_gauss)
     f_seed, d1_seed, _d2 = sp.transition_frequency_hz(lower, upper, b_seed)
     f_true, _d1t, _d2t = sp.transition_frequency_hz(lower, upper, device.field.B_gauss)
-    shifts = {int(k): float(v) for k, v in dict(kw.get("qubit_shifts_hz", {})).items()}
+    shifts = {int(k): float(v) for k, v in (kw.get("qubit_shifts_hz") or {}).items()}
     shifts[ion] = shifts.get(ion, 0.0) + (f_true - f_seed)
+    seeded: _LabOptions = {**kw, "qubit_shifts_hz": shifts}
     res = ramsey_frequency(
-        Machine(device), ion, delays_s, **{**kw, "qubit_shifts_hz": shifts, "frame_hz": f_seed}
+        machine,
+        ion,
+        delays_s,
+        probe_hz=probe_hz,
+        frame_hz=f_seed,
+        rabi_hz_belief=rabi_hz_belief,
+        include_stark=include_stark,
+        **seeded,
     )
     x, s_x = res.fitted["qubit_offset_hz"]
     f_meas = f_seed + x
     notes = list(res.notes)
-    sens_min = float(kw.get("sensitivity_min_hz_per_g", 10.0))
     converged = res.converged and math.isfinite(x)
     b_fit, s_b, d1 = b_seed, math.inf, d1_seed
-    if abs(d1_seed) < sens_min:
+    if abs(d1_seed) < 10.0:
         notes.append(
-            f"|d nu/dB| = {abs(d1_seed):.3g} Hz/G at the seed field: the qubit transition cannot fix the field (a clock point); "
-            "use a field-sensitive transition"
+            f"|d nu/dB| = {abs(d1_seed):.3g} Hz/G at the seed field: the qubit transition cannot fix the field (a clock "
+            "point); use a field-sensitive transition"
         )
         converged = False
     elif converged:
@@ -435,20 +431,18 @@ def field_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any)
         except ValueError as exc:
             notes.append(f"field inversion failed: {exc}")
             converged = False
-    s_max = float(kw.get("sigma_max_gauss", 0.05))
-    if converged and s_b > s_max:
-        notes.append(f"field uncertainty {s_b:.3g} G exceeds {s_max:.3g} G")
+    if converged and s_b > 0.05:
+        notes.append(f"field uncertainty {s_b:.3g} G exceeds 0.05 G")
         converged = False
-    fitted = {
-        "B_gauss": (b_fit, s_b if math.isfinite(s_b) else 0.0),
-        "qubit_freq_hz": (f_meas, s_x),
-        "qubit_offset_hz": (x, s_x),
-        "dnu_dB_hz_per_g": (d1, 0.0),
-        "b_seed_gauss": (b_seed, 0.0),
-    }
     return FieldScan(
         data=res.data,
-        fitted=fitted,
+        fitted={
+            "B_gauss": (b_fit, s_b if math.isfinite(s_b) else 0.0),
+            "qubit_freq_hz": (f_meas, s_x),
+            "qubit_offset_hz": (x, s_x),
+            "dnu_dB_hz_per_g": (d1, 0.0),
+            "b_seed_gauss": (b_seed, 0.0),
+        },
         model="ramsey_frequency_zeeman_inversion",
         provenance_id="conv.curvature_naming",
         converged=converged,
@@ -458,7 +452,3 @@ def field_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any)
         chi2=res.chi2,
         subject={"ion": int(ion)},
     )
-
-
-def wrap_angle(angle: float) -> float:
-    return _wrap(angle)
