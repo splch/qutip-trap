@@ -42,10 +42,9 @@ from qutip_trap.experiments.result import (
     requested_drive,
 )
 from qutip_trap.experiments.single_ion import _observation, _run, _setup, ramsey, ramsey_frequency, sub_stream
-from qutip_trap.machine import as_machine, laboratory_kwargs
+from qutip_trap.machine import Machine, laboratory_kwargs
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 
@@ -62,7 +61,7 @@ def _nyquist_hz(delays_s: Sequence[float]) -> float | None:
     return 0.5 / step if step > 0.0 else None
 
 
-def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
+def stark_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """The differential light shift of ``ion``'s gate beams (Section 7.5 item 7), per (ion, beam) as the plan asks.
 
     ``mode="per_beam"`` (default): a Ramsey experiment with ONE beam of the drive on during the delay at a time (the other
@@ -77,7 +76,7 @@ def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
     Data rows (beam or sign, delay_s, P1); fitted stark_shift_hz (the drive's total), stark_shift_hz[beam] per beam
     (per_beam), coupling_shift_hz and coupling_shift_expected_hz (beat_note).
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=stark_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.control.pulses import Drive, Pulse, Tone
     from qutip_trap.control.schedule import default_gate_drives
     from qutip_trap.light.raman import (
@@ -114,7 +113,7 @@ def stark_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
     def run_with(label: float, delay_pulses: Any, tag: str, detuning_hz: float) -> tuple[float, float, bool]:
         # every sub-run draws its own shot noise (the two beams' Ramseys are separate experiments)
         res = ramsey(
-            as_machine(device),
+            Machine(device),
             ion,
             delays_s,
             **{
@@ -273,9 +272,7 @@ def _fit_phase(phases: np.ndarray, signal: np.ndarray, sigma: np.ndarray | None)
     return best[0], best[1], best[2]
 
 
-def crosstalk_scan(
-    machine: Machine | Device, ion: int, durations_s: Sequence[float], **kw: Any
-) -> ExperimentResult:
+def crosstalk_scan(machine: Machine, ion: int, durations_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """Drive ``ion`` on its carrier and fit the Rabi rate on every neighbour the light reaches (Section 7.5 item 8): epsilon_ij =
     f_j/f_i; with ``phase=True`` (default) the crosstalk axis on each neighbour from a pi/2 - crosstalk pulse - pi/2(phi) scan.
 
@@ -285,7 +282,7 @@ def crosstalk_scan(
     eps[j], rate_hz[j], phase_total_rad[j] (the axis relative to j's frame), phase_rad[j] (minus the geometric phase
     Delta k . (x_j - x_i) the beam's wavefront gives, i.e. arg epsilon_ij).
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=crosstalk_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.light.raman import lamb_dicke_parameters
 
@@ -394,13 +391,13 @@ def crosstalk_scan(
     )
 
 
-def field_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
+def field_scan(machine: Machine, ion: int, delays_s: Sequence[float], **kw: Any) -> ExperimentResult:
     """B from the qubit transition frequency (Section 7.5 item 9): the Ramsey-frequency experiment with the frame at nu(B_seed),
     inverted through nu(B) of the atomic layer. ``b_seed_gauss`` (default the device's field: the table's seed), ``probe_hz``,
     ``sigma_max_gauss`` above which the entry is uncalibrated (default 0.05 G), ``sensitivity_min_hz_per_g`` below which the
     transition cannot fix the field (default 10 Hz/G). Fitted B_gauss, qubit_freq_hz (at the measured field), dnu_dB_hz_per_g,
     qubit_offset_hz (the measured transition minus the seed frame)."""
-    device, kw = laboratory_kwargs(machine, kw, caller=field_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     sp = device.crystal.species[ion]
     lower, upper = sp.qubit
     b_seed = float(kw.get("b_seed_gauss", device.field.B_gauss))
@@ -409,7 +406,7 @@ def field_scan(machine: Machine | Device, ion: int, delays_s: Sequence[float], *
     shifts = {int(k): float(v) for k, v in dict(kw.get("qubit_shifts_hz", {})).items()}
     shifts[ion] = shifts.get(ion, 0.0) + (f_true - f_seed)
     res = ramsey_frequency(
-        as_machine(device), ion, delays_s, **{**kw, "qubit_shifts_hz": shifts, "frame_hz": f_seed}
+        Machine(device), ion, delays_s, **{**kw, "qubit_shifts_hz": shifts, "frame_hz": f_seed}
     )
     x, s_x = res.fitted["qubit_offset_hz"]
     f_meas = f_seed + x

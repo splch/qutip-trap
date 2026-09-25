@@ -105,7 +105,7 @@ def _rms_unit(density_unit: str) -> str:
 
 def quiet_field_spectrum() -> NoiseSpectrum:
     """The zero electric-field spectrum ``NoiseModel()`` carries: a five-point zero band over +-2 pi x 10^7 rad/s in
-    (V/m)^2/(rad/s), the record ``quiet_noise_model()`` built since 0.1.0 (the same arrays, so the digests agree)."""
+    (V/m)^2/(rad/s)."""
     omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
     return NoiseSpectrum(omega_rad_s=omega, S=np.zeros(5), unit="(V/m)^2/(rad/s)")
 
@@ -123,9 +123,7 @@ class NoiseModel:
     per dynamical sample, the collision model and the grid oversampling of the sampled bands. Section 6.1 routes each by
     its correlation time into a Lindblad operator, a per-sample parameter or a sampled time series.
 
-    Every default means "off" (0.3.0; docs/api_proposal.md Section 4.6, after Perceval's ``NoiseModel()``): ``NoiseModel()``
-    is the quiet model, field for field the ``quiet_noise_model()`` of the presets, so a channel is on exactly when its
-    input was set; ``summary()`` lists the channels that follow from what was set, with units, and ``from_experiments``
+    Every default means "off": ``NoiseModel()`` is the quiet model, so a channel is on exactly when its input was set; ``summary()`` lists the channels that follow from what was set, with units, and ``from_experiments``
     turns a measured heating rate into the field spectrum it implies."""
 
     S_E: NoiseSpectrum = field(default_factory=lambda: quiet_field_spectrum())

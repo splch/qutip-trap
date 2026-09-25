@@ -195,7 +195,7 @@ def monroe_1995(progress: Progress = None) -> PresetResult:
 def roos_2000(progress: Progress = None) -> PresetResult:
     """The Lamb-Dicke parameters of 40Ca+ on its 729 nm and 393 nm lines at 2 pi x 1 MHz (Section 4.1.7)."""
     t0 = time.perf_counter()
-    ca = core.species_by_name("40Ca+")
+    ca = core.species("40Ca+")
     mass_kg = ca.mass_u * core.ATOMIC_MASS_KG
     omega = TWO_PI * 1e6
     _progress(progress, "computing", 0.5, "k x0 for the quadrupole and the dipole line")

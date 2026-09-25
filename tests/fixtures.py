@@ -7,18 +7,22 @@ frequencies follow the realizable Section 11.1 fixture (x-COM 3.000, x-rocking 2
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
+from qutip_trap.control.compiler import Circuit
 from qutip_trap.control.hardware import HardwareChain
 from qutip_trap.control.table import CalEntry, CalibrationTable
 from qutip_trap.device.model import Device, Field
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
+from qutip_trap.machine import Machine
 from qutip_trap.noise.model import NoiseModel
 from qutip_trap.noise.spectra import Drift, NoiseSpectrum
 from qutip_trap.readout.detection import Detector
-from qutip_trap.run.results import Diagnostics, Result, RunState
+from qutip_trap.run.results import Diagnostics, Progress, Result, RunState
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import Crystal, Mode
 from qutip_trap.trap.model import Trap
@@ -223,4 +227,20 @@ def make_result(bitstrings: np.ndarray) -> Result:
         spam={},
         final_state=None,
         diagnostics=make_diagnostics(),
+    )
+
+
+def run(
+    circuit: Circuit,
+    device: Device,
+    shots: int,
+    *,
+    seed: int = 0,
+    keep_final_state: bool = False,
+    progress: Callable[[Progress], None] | None = None,
+    **machine: Any,
+) -> Result:
+    """``Machine(device, **machine).run(circuit, shots, ...)``: a run on a bare device with the machine's fields as keywords."""
+    return Machine(device, **machine).run(
+        circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=progress
     )

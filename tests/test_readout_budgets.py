@@ -10,7 +10,7 @@ import pytest
 
 from qutip_trap.calibration.readout import calibrate_detection, histogram_error_rates
 from qutip_trap.experiments.readout import detection_histogram
-from qutip_trap.machine import as_machine
+from qutip_trap.machine import Machine
 from qutip_trap.readout.discriminate import BudgetLine, ReadoutBudget
 from qutip_trap.readout.fluorescence import shelf_decay_error
 from qutip_trap.readout.presets import (
@@ -189,7 +189,7 @@ def test_detection_histogram_experiment_runs_the_bloch_model_of_the_device_beams
     """The experiment finds the 369.5 nm beam of the device, solves the rates at the ion's position and returns histograms, the
     threshold, the window and the fitted rates; the scattered rate is the Bloch solve's, below Gamma/4."""
     dev = yb_readout_device(2, s_o=2.45)
-    res = detection_histogram(as_machine(dev), 0, 2000, windows_s=tuple(np.linspace(10e-6, 60e-6, 6)), seed=0)
+    res = detection_histogram(Machine(dev), 0, 2000, windows_s=tuple(np.linspace(10e-6, 60e-6, 6)), seed=0)
     assert res.model == "detection_histogram" and res.data.shape[0] == 2
     assert res.data[0].sum() == 2000 and res.data[1].sum() == 2000
     fitted = res.fitted
@@ -202,7 +202,7 @@ def test_detection_histogram_experiment_runs_the_bloch_model_of_the_device_beams
     )
     assert fitted["threshold"][0] >= 0.5 and 10e-6 <= fitted["window_s"][0] <= 60e-6
     with pytest.raises(ValueError):
-        detection_histogram(as_machine(_no_detection_device()), 0, 500)
+        detection_histogram(Machine(_no_detection_device()), 0, 500)
 
 
 def _no_detection_device():  # type: ignore[no-untyped-def]

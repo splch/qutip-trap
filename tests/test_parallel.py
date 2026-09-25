@@ -28,7 +28,8 @@ from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics
-from qutip_trap.run.job import last_record, run
+from qutip_trap.run.job import last_record
+from tests.fixtures import run
 from tests.m4_fixtures import (
     X_COM_TWO_IONS,
     chain_device,

@@ -16,7 +16,8 @@ from qutip_trap.control.schedule import schedule
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.noise.spectra import Collisions, Drift, white_spectrum
 from qutip_trap.options import Numerics, Physics
-from qutip_trap.run.job import effective_sample_size, last_record, register_fidelity, run
+from qutip_trap.run.job import effective_sample_size, last_record, register_fidelity
+from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))

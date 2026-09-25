@@ -10,11 +10,10 @@ from qutip_trap.experiments.result import DetectionHistogram, ExperimentResult, 
 from qutip_trap.machine import laboratory_kwargs
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 
-def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
+def detection_histogram(machine: Machine, ion: int, n_records: int, **kw: Any) -> ExperimentResult:
     """Section 7.5 item 5 (M5): histogram bright and dark photon counts on the simulated readout model of ion ``ion`` and
     choose the threshold and window minimizing the average error.
 
@@ -25,7 +24,7 @@ def detection_histogram(machine: Machine | Device, ion: int, n_records: int, **k
     readout stage of ``run`` applies it. ``data`` holds the bright and dark histograms at the chosen window
     (rows) and ``fitted`` the threshold, window, eps_B, eps_D and the fitted rates with their uncertainties.
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=detection_histogram)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.calibration.readout import calibrate_detection
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel

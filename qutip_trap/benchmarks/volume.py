@@ -30,7 +30,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -43,11 +43,10 @@ from qutip_trap.benchmarks.budget import (
 from qutip_trap.control.compiler import Circuit, Operation, decompose_single_qubit, ideal_probabilities
 from qutip_trap.control.two_qubit import canonical_operations, haar_random_unitary, kak_decomposition
 from qutip_trap.dynamics.engine import SeedSpec
-from qutip_trap.run.job import last_record, machine_with_run_kwargs, register_fidelity
+from qutip_trap.run.job import last_record, register_fidelity
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 HEAVY_OUTPUT_THRESHOLD = 2.0 / 3.0
@@ -206,7 +205,7 @@ class QVResult:
 
 
 def quantum_volume(
-    machine: Machine | Device,
+    machine: Machine,
     qubits: Sequence[int],
     *,
     n_circuits: int = 4,
@@ -214,18 +213,10 @@ def quantum_volume(
     depth: int | None = None,
     seed: int = 0,
     budget: bool = True,
-    **run_kwargs: Any,
 ) -> QVResult:
     """The quantum-volume style run of the module docstring on ``qubits`` (two or more), depth = width by default, every
-    circuit a ``Machine.run``; ``machine`` carries the table, the level and the option objects (a bare ``Device`` is wrapped
-    in a default machine), and the 0.1.0 ``run_kwargs`` are still accepted with a deprecation warning each."""
-    m = machine_with_run_kwargs(
-        machine,
-        run_kwargs,
-        caller="qutip_trap.benchmarks.volume.quantum_volume",
-        stacklevel=2,
-        call_keywords=True,
-    )
+    circuit a ``Machine.run``; ``machine`` carries the table, the level and the option objects."""
+    m = machine
     device = m.device
     qs = tuple(int(q) for q in qubits)
     if len(qs) < 2 or len(set(qs)) != len(qs):

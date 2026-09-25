@@ -1,5 +1,4 @@
-"""docs/api_implementation_plan.md 2.5: ``NoiseModel()`` is the quiet model (digest for digest the ``quiet_noise_model()`` of
-0.1.0, now deprecated), ``summary`` lists the channels that follow from what was set and nothing else, ``from_experiments``
+"""``NoiseModel()`` is the quiet model, ``summary`` lists the channels that follow from what was set and nothing else, ``from_experiments``
 inverts a heating-rate fit into the field spectrum it implies, ``Device.to_dict``/``from_dict`` round-trip both presets exactly,
 and ``Device.specs`` renders the derived quantities with their provenance ids."""
 
@@ -12,14 +11,12 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.device.model import Device
-from qutip_trap.device.presets import ca40_optical, quiet_noise_model, yb171_chain
+from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.device.serial import parse
 from qutip_trap.experiments.result import HeatingRateFit
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.machine import Machine
 from qutip_trap.noise.model import DRIFT_UNITS, NoiseModel, quiet_drift, quiet_field_spectrum
 from qutip_trap.noise.spectra import Collisions, power_law_spectrum, white_spectrum
 from qutip_trap.trap.heating import s_e_from_heating_rate
@@ -27,32 +24,14 @@ from qutip_trap.trap.heating import s_e_from_heating_rate
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
 
 
-def test_the_default_noise_model_is_the_quiet_model_field_for_field_and_digest_for_digest() -> None:
+def test_the_default_noise_model_is_quiet() -> None:
     quiet = NoiseModel()
-    with pytest.warns(QutipTrapDeprecationWarning, match="Call NoiseModel\\(\\) instead"):
-        legacy = quiet_noise_model()
-    assert canonical_digest(quiet) == canonical_digest(legacy)
-    for f in dataclasses.fields(NoiseModel):
-        a, b = getattr(quiet, f.name), getattr(legacy, f.name)
-        assert canonical_digest(a) == canonical_digest(b), f.name
     assert quiet.is_quiet() and quiet.S_E.is_zero() and quiet.correlation_length_m == 0.0
     assert all(d.quiet for d in quiet.drifts.values()) and quiet.collisions is None and quiet.mains is None
     assert (
         canonical_digest(quiet_field_spectrum()) == canonical_digest(quiet.S_E) and quiet_drift().rms == 0.0
     )
-    # the preset devices are built on NoiseModel(): their 7a26a27 digests are the ones tests/test_beam_roles.py pins
-    assert yb171_chain(2).device.hash().startswith("8d3bf1aa")
     assert canonical_digest(yb171_chain(2).device.noise) == canonical_digest(NoiseModel())
-
-
-def test_a_run_on_the_default_model_equals_a_run_on_the_deprecated_helper() -> None:
-    preset = yb171_chain(1)
-    with pytest.warns(QutipTrapDeprecationWarning):
-        legacy_device = dataclasses.replace(preset.device, noise=quiet_noise_model())
-    assert legacy_device.hash() == preset.device.hash()
-    a = Machine(preset.device).run(ONE, 30, seed=2)
-    b = Machine(legacy_device).run(ONE, 30, seed=2)
-    assert np.array_equal(a.bitstrings, b.bitstrings) and a.counts == b.counts and a.spam == b.spam
 
 
 def test_summary_lists_heating_when_the_field_spectrum_is_set_and_nothing_when_it_is_not() -> None:

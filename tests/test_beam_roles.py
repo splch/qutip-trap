@@ -6,12 +6,10 @@ decision reports the numbers it compared."""
 from __future__ import annotations
 
 import dataclasses
-import sys
 
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import (
@@ -27,22 +25,9 @@ from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
 from qutip_trap.options import Numerics, Truncation
-from qutip_trap.run.job import run
 from qutip_trap.run.levels import FidelityLevel, decide_level, resolve_level
-from tests.fixtures import make_device
+from tests.fixtures import make_device, run
 from tests.m6_fixtures import circuit_fixture
-
-DIGESTS_AT_7A26A27 = {
-    "yb171_chain(1)": "323cdc28efc6ada6e2f29d3c389049f6292699938053b92298382fdbff826773",
-    "yb171_chain(2)": "8d3bf1aab769b279070718fe3157b7b97919dae07d6782c530570d8c90d2197a",
-    "yb171_chain(3)": "f26f062127a95a90f413cdada84027a0a7509f8e9f17694e1eca434460df1235",
-    "yb171_chain(3, address_waist_m=2e-6)": "701fd2991d5fad9110f948c2a3387f364080d1b75b79d1255ea207f24c4dee81",
-    "yb171_chain(2, phase_continuous=True)": "de9335590ef56777fc3b4936756acf9bc0da4b09daa6e70379f6b94ab08f376f",
-    "ca40_optical(1)": "dd3b4113b3cdca513d1aebe87ef8198d2df0b7894db28fa3476efe6a03a9bbca",
-    "ca40_optical(2, reset_beam=True)": "0b5a89cf36fae548aee1dcd7edec43b605f8337742c987f84622a521658de14b",
-}
-"""``Device.hash()`` of every preset at commit 7a26a27 (v0.1.0), captured before ``Device.roles`` existed: the digest
-identifies the apparatus, and the roles the presets now carry do not move it (the risk of Section 9 of the plan)."""
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
@@ -113,31 +98,6 @@ def test_each_preset_carries_its_old_drive_maps_as_roles(build) -> None:  # type
     # the declared detection beam is the one the wavelengths pick, and the readout's set contains it
     assert infer_detection_beam(dev) == preset.detection_beam
     assert preset.detection_beam in detection_beams(dev, 0)
-    assert not hasattr(preset, "run_kwargs"), "deprecated in 0.2.0, removed in 0.4.0 (docs/deprecations.md)"
-
-
-@pytest.mark.skipif(
-    sys.platform != "darwin",
-    reason="the pins are the reference machine's: ndarray fields (positions, mode eigenvectors, axes) enter the digest as raw "
-    "float64 bytes, so another LAPACK's round-off moves it (Linux CI); rounding arrays like floats would make it portable",
-)
-def test_preset_device_digests_are_unchanged_from_7a26a27() -> None:
-    """A moved device hash would invalidate every cached table and every stored record (plan Section 9); the roles a preset
-    now carries stay out of the digest, so these are the v0.1.0 digests. Pinned on the reference machine only: the digest
-    rounds floats to 12 significant digits but hashes ndarray fields as bytes, and the crystal's positions and eigenvectors
-    differ in the last bits between LAPACK implementations (measured: Linux CI fails, macOS matches)."""
-    builders = {
-        "yb171_chain(1)": lambda: yb171_chain(1),
-        "yb171_chain(2)": lambda: yb171_chain(2),
-        "yb171_chain(3)": lambda: yb171_chain(3),
-        "yb171_chain(3, address_waist_m=2e-6)": lambda: yb171_chain(3, address_waist_m=2e-6),
-        "yb171_chain(2, phase_continuous=True)": lambda: yb171_chain(2, phase_continuous=True),
-        "ca40_optical(1)": lambda: ca40_optical(1),
-        "ca40_optical(2, reset_beam=True)": lambda: ca40_optical(2, reset_beam=True),
-    }
-    assert set(builders) == set(DIGESTS_AT_7A26A27)
-    got = {name: build().device.hash() for name, build in builders.items()}
-    assert got == DIGESTS_AT_7A26A27
 
 
 def test_roles_do_not_enter_the_device_digest_but_are_hashable_on_their_own() -> None:
@@ -188,24 +148,9 @@ def two_ion():  # type: ignore[no-untyped-def]
     return preset, sur.table
 
 
-def test_run_without_drive_keywords_reproduces_the_bell_histogram_bit_for_bit(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """docs/examples.md's run (roles from the device) against the 0.1.0 call form (the preset's maps as keyword arguments)."""
+def test_a_bell_run_reports_its_level_and_why(two_ion) -> None:  # type: ignore[no-untyped-def]
     preset, table = two_ion
     new = run(BELL, preset.device, 400, table=table, numerics=FAST, seed=3)
-    with pytest.warns(
-        QutipTrapDeprecationWarning
-    ):  # options, gate_drives and entangling_drives: three rewrites (2.1)
-        old = run(
-            BELL,
-            preset.device,
-            400,
-            table=table,
-            options=SolverOptions(branch_weight_min=1e-3),
-            seed=3,
-            gate_drives=preset.gate_drives,
-            entangling_drives=preset.entangling_drives,
-        )
-    assert np.array_equal(new.bitstrings, old.bitstrings) and new.counts == old.counts
     assert new.probabilities["00"] + new.probabilities["11"] > 0.98
     # 1.2: the diagnostics say which level ran and why, with the dimension and the non-zeros against the guards
     assert new.diagnostics.level == "JOINT_EXACT" == FidelityLevel.JOINT_EXACT

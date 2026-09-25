@@ -58,11 +58,10 @@ from qutip_trap.control.compiler import Circuit, Operation, decompose_single_qub
 from qutip_trap.dynamics.engine import SeedSpec
 from qutip_trap.experiments.fitting import weighted_fit
 from qutip_trap.noise.summary import depolarizing_entanglement_infidelity, rb_error_per_clifford
-from qutip_trap.run.job import last_record, machine_with_run_kwargs
+from qutip_trap.run.job import last_record
 from qutip_trap.run.results import Result
 
 if TYPE_CHECKING:
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 
@@ -362,7 +361,7 @@ def mean_survival_sigma(values: np.ndarray, sigma: np.ndarray, n_sequences: int,
 
 
 def randomized_benchmarking(
-    machine: Machine | Device,
+    machine: Machine,
     qubits: Sequence[int],
     lengths: Sequence[int],
     *,
@@ -373,7 +372,6 @@ def randomized_benchmarking(
     fix_offset: bool | None = None,
     variant: str = "clifford",
     pair: bool | None = None,
-    **run_kwargs: Any,
 ) -> RBResult:
     """Randomized benchmarking of one qubit (or several at once, simultaneous RB) or of a pair, through ``Machine.run``.
 
@@ -381,20 +379,12 @@ def randomized_benchmarking(
     counts L (the closing pi/2 not counted); every (length, sequence) is one ``run`` of ``shots`` with its own keyed seed.
     ``pair`` selects the protocol on exactly two qubits: ``pair=True`` (the default there) the 11520-element two-qubit
     Clifford group, ``pair=False`` simultaneous single-qubit RB; ``pair=True`` on any other qubit count is an error.
-    ``machine`` carries the table, the level and the option objects (a bare ``Device`` is wrapped in a default machine;
-    docs/api_implementation_plan.md 2.2); the 0.1.0 ``run_kwargs`` (``table``, ``options``, ``level``, ``noise``, ...) are
-    still accepted, each rewritten onto the machine with a deprecation warning.
+    ``machine`` carries the table, the level and the option objects.
     ``budget=True`` adds the Section 6.8 channels of the native gate kinds used (one GATE_LOCAL tomography per kind, cached
     per device) and the predictions composed from them. ``fix_offset`` pins the fit's B at 1/2^n (always pinned for the
     Knill-style variant, whose published form is B p^L + 1/2).
     """
-    mach = machine_with_run_kwargs(
-        machine,
-        run_kwargs,
-        caller="qutip_trap.benchmarks.rb.randomized_benchmarking",
-        stacklevel=2,
-        call_keywords=True,
-    )
+    mach = machine
     device = mach.device
     qs = tuple(int(q) for q in qubits)
     if not qs or len(set(qs)) != len(qs):

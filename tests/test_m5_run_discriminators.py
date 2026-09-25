@@ -19,7 +19,8 @@ from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import AdaptiveML, FirstPhoton, ThresholdDiscriminator, TimeResolvedML
-from qutip_trap.run.job import last_record, run
+from qutip_trap.run.job import last_record
+from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))

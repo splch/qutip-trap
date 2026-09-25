@@ -1,26 +1,20 @@
-"""docs/api_implementation_plan.md 2.2 and 2.3: the laboratory runs on machines. Every experiment, the calibration and the
-benchmarks accept a ``Machine`` (a ``Device`` is wrapped in a default machine); the drive keywords are deprecated in favour
-of the device's roles; every experiment returns its typed subclass whose attributes equal ``value(key)``; ``requested`` and
-``realized`` differ when the hardware chain quantises and agree otherwise; ``calibrate(machine, method=)`` returns the report
-and ``calibrate(device)`` the table; ``calibrate_with_report`` and ``compile_with_report`` warn."""
+"""The laboratory runs on machines: every experiment returns its typed result whose attributes equal ``value(key)``;
+``requested`` and ``realized`` differ when the hardware chain quantises and agree otherwise; ``calibrate(machine)`` returns
+the report."""
 
 from __future__ import annotations
 
 import dataclasses
-import re
-import warnings
 from typing import Any
 
 import numpy as np
 import pytest
 
-from qutip_trap._compat import QutipTrapDeprecationWarning
 from qutip_trap.benchmarks.budget import gate_channel, kind_of
 from qutip_trap.benchmarks.rb import randomized_benchmarking
-from qutip_trap.calibration import calibrate, calibrate_with_report
+from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.experiments import CalibrationReport
-from qutip_trap.control.compiler import Circuit, Operation, compile_report, compile_with_report
-from qutip_trap.control.table import CalibrationTable
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.device.presets import ideal_hardware
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.experiments.imaging import crystal_image
@@ -38,7 +32,7 @@ from qutip_trap.experiments.result import (
     ThermometryResult,
 )
 from qutip_trap.experiments.single_ion import rabi_scan, ramsey, sideband_spectroscopy
-from qutip_trap.machine import DRIVE_KEYWORDS, Machine, as_machine, laboratory_kwargs
+from qutip_trap.machine import Machine, laboratory_kwargs
 from qutip_trap.options import Numerics, Truncation
 from tests.m6_fixtures import CircuitFixture, circuit_fixture
 
@@ -60,13 +54,6 @@ def machine(fx: CircuitFixture) -> Machine:
         pairs=[(0, 1)], detection_records=300, detection_windows_s=WINDOWS
     )
 
-
-def same_result(a: ExperimentResult, b: ExperimentResult) -> None:
-    assert type(a) is type(b) and a.fitted == b.fitted and a.model == b.model and a.converged == b.converged
-    assert np.array_equal(a.data, b.data) and a.subject == b.subject and a.requested == b.requested
-
-
-# ---- 2.2: the machine equals the device with the drive keyword ---------------------------------------------------------------
 
 EXPERIMENTS: dict[str, Any] = {
     "rabi_scan": lambda m, **kw: rabi_scan(m, 0, DURATIONS, shots=200, seed=1, **kw),
@@ -97,20 +84,8 @@ KINDS = {
 
 
 @pytest.mark.parametrize("name", sorted(EXPERIMENTS))
-def test_an_experiment_on_the_machine_equals_the_device_with_the_drive_keyword(
-    name: str, fx: CircuitFixture
-) -> None:
+def test_an_experiment_on_the_machine_returns_its_typed_result(name: str, fx: CircuitFixture) -> None:
     on_machine = EXPERIMENTS[name](Machine(fx.device))
-    # the 0.1.0 shape warns twice since 0.4.0: for the drive keyword (0.3.0) and for the bare Device (0.4.0)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        on_device = EXPERIMENTS[name](fx.device, gate_drive=fx.gate_drives[0])
-    messages = [str(w.message) for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)]
-    assert any(re.search(f"'gate_drive' argument of qutip_trap.experiments.*{name}", m) for m in messages), (
-        messages
-    )
-    assert any("bare Device" in m for m in messages), messages
-    same_result(on_machine, on_device)
     assert isinstance(on_machine, KINDS[name]) and RESULT_TYPES[name] is KINDS[name]
     # every typed attribute equals value(key) where the fit produced the key
     for key in on_machine.fitted:
@@ -130,23 +105,14 @@ def test_the_result_table_names_every_experiment_of_the_calibration_order() -> N
 
 
 def test_the_machine_supplies_table_options_and_builder_as_defaults(machine: Machine) -> None:
-    device, kw = laboratory_kwargs(machine, {"shots": 5}, caller=rabi_scan)
+    device, kw = laboratory_kwargs(machine, {"shots": 5})
     assert device is machine.device and kw["shots"] == 5
     assert kw["table"] is machine.table and kw["options"] == machine.numerics.to_solver_options(
         machine.physics
     )
     assert "builder_options" not in kw  # the machine's builder is None: nothing to supply
-    _device, given = laboratory_kwargs(
-        machine, {"table": None, "options": SolverOptions(atol=1e-12)}, caller=rabi_scan
-    )
+    _device, given = laboratory_kwargs(machine, {"table": None, "options": SolverOptions(atol=1e-12)})
     assert given["table"] is None and given["options"].atol == 1e-12  # the call's own keywords win
-    with pytest.warns(QutipTrapDeprecationWarning, match="bare Device as the first argument"):
-        bare, kw2 = laboratory_kwargs(machine.device, {}, caller=rabi_scan)
-    assert bare is machine.device and kw2 == {}
-    assert as_machine(machine) is machine and as_machine(machine.device) == Machine(machine.device)
-    with pytest.warns(QutipTrapDeprecationWarning, match="'gate_drives' argument"):
-        laboratory_kwargs(machine, {"gate_drives": {}}, caller=rabi_scan)
-    assert set(DRIVE_KEYWORDS) == {"gate_drive", "gate_drives", "entangling_drives"}
 
 
 # ---- 2.3: requested and realized -------------------------------------------------------------------------------------------------
@@ -211,9 +177,7 @@ def test_detection_histogram_and_crystal_image_are_typed(machine: Machine) -> No
 # ---- 2.2: calibrate on machines, the deprecated names ------------------------------------------------------------------------------
 
 
-def test_calibrate_returns_the_report_on_a_machine_and_the_table_on_a_device(
-    fx: CircuitFixture, machine: Machine
-) -> None:
+def test_calibrate_returns_the_report(fx: CircuitFixture, machine: Machine) -> None:
     scans: dict[str, Any] = {"pairs": [(0, 1)], "detection_records": 300, "detection_windows_s": WINDOWS}
     report = calibrate(Machine(fx.device, numerics=FAST), **scans)
     assert (
@@ -222,25 +186,6 @@ def test_calibrate_returns_the_report_on_a_machine_and_the_table_on_a_device(
     assert report.results == {} and report.refused == {} and report.surrogate.table == report.table
     assert report.sample.sample_id == 0
     assert all(v == 0.0 for v in report.surrogate_error().values())  # the surrogate against itself
-    # a bare Device keeps its 0.1.0 result, the table, and warns since 0.4.0 (docs/deprecations.md)
-    with pytest.warns(
-        QutipTrapDeprecationWarning, match="bare Device as the first argument of qutip_trap.calibration"
-    ):
-        table = calibrate(fx.device, **scans)
-    assert isinstance(table, CalibrationTable) and table == machine.table
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        assert calibrate(fx.device, surrogate=True, **scans) == table
-    messages = [str(w.message) for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)]
-    assert any("'surrogate' argument of qutip_trap.calibration.calibrate" in m for m in messages), messages
-    assert any("bare Device" in m for m in messages), messages
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        legacy = calibrate_with_report(fx.device, **scans)
-    assert any("calibrate_with_report is deprecated" in str(w.message) for w in caught), [
-        str(w.message) for w in caught
-    ]
-    assert legacy.table == table
     with pytest.raises(ValueError, match="closed_form"):
         calibrate(machine, method="guess")  # type: ignore[arg-type]
     # the machine's t0_s is the calibration's default time
@@ -248,47 +193,13 @@ def test_calibrate_returns_the_report_on_a_machine_and_the_table_on_a_device(
     assert calibrate(late, **scans).table.fitted_at_s == pytest.approx(3.0)
 
 
-def test_compile_with_report_is_the_deprecated_name_of_machine_compile(machine: Machine) -> None:
-    with pytest.warns(QutipTrapDeprecationWarning, match="Machine\\(device\\).compile"):
-        old = compile_with_report(BELL, machine.device)
-    new = machine.compile(BELL)
-    assert old.circuit == new.circuit == compile_report(BELL, machine.device).circuit
-    assert old.n_entangling == new.n_entangling == 1
-
-
 # ---- 2.2: the benchmarks on machines -------------------------------------------------------------------------------------------------
 
 
-def test_benchmarks_take_a_machine_and_rewrite_the_run_kwargs(fx: CircuitFixture, machine: Machine) -> None:
+def test_benchmarks_take_a_machine(machine: Machine) -> None:
     kind = kind_of("gpi2", (0,))
     ch = gate_channel(machine, kind)
     assert ch.kind == kind and ch.level == "GATE_LOCAL" and gate_channel(machine, kind) is ch
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        legacy = gate_channel(
-            as_machine(fx.device), kind, table=machine.table, options=SolverOptions(branch_weight_min=1e-3)
-        )
-    texts = [str(w.message) for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)]
-    assert len(texts) == 2 and all("qutip_trap.benchmarks.budget.gate_channel" in t for t in texts)
-    assert legacy is ch  # the same machine hash, the same cached channel
-    rb = randomized_benchmarking(machine, (0,), (1, 2), n_sequences=1, shots=20, budget=False)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        old = randomized_benchmarking(
-            as_machine(fx.device),
-            (0,),
-            (1, 2),
-            n_sequences=1,
-            shots=20,
-            budget=False,
-            table=machine.table,
-            options=SolverOptions(branch_weight_min=1e-3),
-        )
-    ours = sorted(
-        str(w.message).split("'")[1] for w in caught if issubclass(w.category, QutipTrapDeprecationWarning)
-    )
-    assert ours == ["options", "table"]
-    assert np.array_equal(rb.survival, old.survival) and rb.error_per_clifford == old.error_per_clifford
     with pytest.raises(TypeError, match="unexpected keyword"):
         randomized_benchmarking(machine, (0,), (1,), n_sequences=1, shots=5, budget=False, shotz=1)
     with pytest.raises(ValueError, match="pair=True"):

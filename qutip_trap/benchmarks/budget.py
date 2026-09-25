@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -39,12 +39,11 @@ from qutip_trap.noise.summary import (
     entanglement_infidelity,
 )
 from qutip_trap.run.gate_local import gate_steps
-from qutip_trap.run.job import last_record, machine_with_run_kwargs
+from qutip_trap.run.job import last_record
 from qutip_trap.run.results import Diagnostics, Result
 
 if TYPE_CHECKING:
     from qutip_trap.control.schedule import Schedule
-    from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
 
 FULL_MS_RAD = math.pi / 2.0
@@ -270,21 +269,13 @@ def one_gate_circuit(kind: str, n_qubits: int) -> Circuit:
     return Circuit(n_qubits, (op,), ions)
 
 
-def gate_channel(machine: Machine | Device, kind: str, **run_kwargs: Any) -> GateChannel:
-    """The channel of one native gate kind by GATE_LOCAL tomography (module docstring item 2) on ``machine`` (a bare
-    ``Device`` is wrapped in a default machine; the 0.1.0 ``run_kwargs`` are rewritten onto it with a warning each), cached
-    per ``Machine.hash()`` (the device with its roles, the table and the option objects) and kind within the process."""
+def gate_channel(machine: Machine, kind: str) -> GateChannel:
+    """The channel of one native gate kind by GATE_LOCAL tomography (module docstring item 2) on ``machine``, cached per ``Machine.hash()`` (the device with its roles, the table and the option objects) and kind within the process."""
     from dataclasses import replace
 
     from qutip_trap.run.levels import FidelityLevel
 
-    m = machine_with_run_kwargs(
-        machine,
-        run_kwargs,
-        caller="qutip_trap.benchmarks.budget.gate_channel",
-        stacklevel=2,
-        call_keywords=True,
-    )
+    m = machine
     local = replace(m, level=FidelityLevel.GATE_LOCAL)
     device = local.device
     key: tuple[object, ...] = (local.hash(), kind)
@@ -397,17 +388,11 @@ def spam_of(result: Result, qubits: Sequence[int]) -> dict[str, tuple[float, flo
 
 
 def channels_for(
-    machine: Machine | Device, kinds: Sequence[str], qubits: Sequence[int], **run_kwargs: Any
+    machine: Machine, kinds: Sequence[str], qubits: Sequence[int]
 ) -> tuple[dict[str, GateChannel], dict[str, float]]:
     """The Section 6.8 channels of every kind and their average infidelity reduced to ``qubits`` (``gate_channel`` per
     kind on ``machine``)."""
-    m = machine_with_run_kwargs(
-        machine,
-        run_kwargs,
-        caller="qutip_trap.benchmarks.budget.channels_for",
-        stacklevel=2,
-        call_keywords=True,
-    )
+    m = machine
     channels: dict[str, GateChannel] = {}
     infidelity: dict[str, float] = {}
     for kind in sorted(set(kinds)):

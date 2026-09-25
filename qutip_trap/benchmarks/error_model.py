@@ -161,8 +161,8 @@ class ErrorModel:
         return float(self.durations_s.get("measure", 0.0))
 
 
-def error_model(machine: Machine | Any, *, qubits: Sequence[int] | None = None) -> ErrorModel:
-    """The ``ErrorModel`` of ``machine`` (a ``Device`` is wrapped in a default machine): one GATE_LOCAL tomography per
+def error_model(machine: Machine, *, qubits: Sequence[int] | None = None) -> ErrorModel:
+    """The ``ErrorModel`` of ``machine``: one GATE_LOCAL tomography per
     single-qubit kind and qubit (``gpi[i]``, ``gpi2[i]``) and per adjacent pair of the machine's entangler (``ms[i,j]`` or
     ``zz[i,j]``), through ``gate_channel`` (cached per machine hash and kind); the SPAM from the machine's table (the cached
     closed-form surrogate when none is pinned) and the preparation recipe; the durations from ``Machine.schedule`` of a
@@ -172,10 +172,9 @@ def error_model(machine: Machine | Any, *, qubits: Sequence[int] | None = None) 
 
     from qutip_trap.benchmarks.budget import gate_channel, kind_of, one_gate_circuit
     from qutip_trap.calibration import calibrate
-    from qutip_trap.machine import as_machine
     from qutip_trap.prep.recipe import recipe_of, run_preparation
 
-    m = as_machine(machine)
+    m = machine
     device = m.device
     n = device.crystal.n_ions
     qs = tuple(range(n)) if qubits is None else tuple(int(q) for q in qubits)

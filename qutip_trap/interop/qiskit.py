@@ -1,25 +1,19 @@
-"""A Qiskit ``BackendV2`` over a :class:`qutip_trap.machine.Machine`: the gate-model SDKs' door into the simulator (PLAN.md
-Section 1.4 names the importers and the ``run`` entry point; this is the same door with Qiskit on the other side;
-docs/api_implementation_plan.md 2.7).
+"""A Qiskit ``BackendV2`` over a :class:`qutip_trap.machine.Machine`.
 
     from qiskit import QuantumCircuit, transpile
     from qutip_trap.interop.qiskit import QutipTrapProvider
 
-    backend = QutipTrapProvider().get_backend("yb171_chain", n_ions=2)      # a backend on presets.yb171_chain(2)
+    backend = QutipTrapProvider().get_backend("yb171_chain", n_ions=2)
     bell = QuantumCircuit(2); bell.h(0); bell.cx(0, 1); bell.measure_all()
     job = backend.run(transpile(bell, backend), shots=2000)
     job.result().get_counts()          # {'00': ..., '11': ..., '01': ..., '10': ...}
-    job.results[0].diagnostics.level   # the qutip-trap Result behind every experiment, with its diagnostics
+    job.results[0].diagnostics.level   # the qutip-trap Result behind every experiment
 
-The circuit crosses as OpenQASM 2 text (``qiskit.qasm2.dumps`` -> :func:`load_openqasm2`), so the ``Target`` advertises
-exactly the gates the importer and the Section 7.7 compiler accept, and ``transpile(circuit, backend)`` rewrites anything
-else into them. Bit order needs no conversion: qutip-trap's bitstrings and Qiskit's both put qubit 0 in the
-least-significant (rightmost) position, provided qubit i is measured into clbit i, as ``measure_all`` does (the importer
-flattens classical registers in declaration order). Run options: ``shots``, ``seed``, ``level`` and ``table`` per call, and
-the option objects ``physics``, ``numerics`` and ``readout`` (objects or mappings) as per-call overrides of the machine's,
-Aer's convention; the 0.1.0 keywords of ``run`` (``options=SolverOptions(...)``, ``readout="full"``, ``noise=False``, ...)
-are still accepted and rewritten onto the machine with a deprecation warning each. The simulation is ``Machine.run``
-(Section 3.4 is synchronous), so the job comes back finished.
+The circuit crosses as OpenQASM 2 text, so the ``Target`` advertises exactly the gates the importer and the compiler
+accept. Bit order needs no conversion: both put qubit 0 in the least-significant (rightmost) position, provided qubit i
+is measured into clbit i, as ``measure_all`` does. Run options: ``shots``, ``seed``, ``level``, ``table`` and the option
+objects ``physics``, ``numerics``, ``readout`` as per-call overrides of the machine's. The simulation is synchronous, so the
+job comes back finished.
 """
 
 from __future__ import annotations
@@ -59,12 +53,10 @@ from qiskit.result.models import ExperimentResult, ExperimentResultData
 from qiskit.transpiler import Target
 
 from qutip_trap import __version__
-from qutip_trap._compat import message, warn
 from qutip_trap.control.table import CalibrationTable
-from qutip_trap.device.presets import DevicePreset, ca40_optical, yb171_chain
+from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.io.openqasm import load_openqasm2
 from qutip_trap.machine import Machine
-from qutip_trap.run.job import machine_with_run_kwargs
 from qutip_trap.run.results import Result
 
 PRESETS: dict[str, Any] = {"yb171_chain": yb171_chain, "ca40_optical": ca40_optical}
@@ -108,24 +100,13 @@ class QutipTrapJob(JobV1):
 
 
 class QutipTrapBackend(BackendV2):
-    """A ``Machine`` as a Qiskit backend (0.3.0). ``table`` pins a calibration on the machine (else the machine's own, or
-    the closed-form surrogate cached per device); ``run_options`` are defaults for every ``run`` (``physics``, ``numerics``,
-    ``readout``, ``level``, ``seed``, ``shots``, and the 0.1.0 keywords of ``run`` with a warning each). A ``DevicePreset`` is
-    accepted for one release and wrapped with a warning: pass ``preset.machine()``."""
+    """A ``Machine`` as a Qiskit backend. ``table`` pins a calibration on the machine (else the machine's own, or the
+    closed-form surrogate cached per device); ``run_options`` are defaults for every ``run`` (``shots``, ``seed``,
+    ``table``, ``level``, ``physics``, ``numerics``, ``readout``)."""
 
     def __init__(
-        self, machine: Machine | DevicePreset, *, table: CalibrationTable | None = None, **run_options: Any
+        self, machine: Machine, *, table: CalibrationTable | None = None, **run_options: Any
     ) -> None:
-        if isinstance(machine, DevicePreset):
-            warn(
-                message(
-                    "a DevicePreset as the first argument of QutipTrapBackend",
-                    "v0.5",
-                    "Pass preset.machine() (a Machine) instead.",
-                ),
-                stacklevel=2,
-            )
-            machine = machine.machine()
         if table is not None:
             machine = replace(machine, table=table)
         label = machine.name or machine.device.hash()[:12]
@@ -155,25 +136,12 @@ class QutipTrapBackend(BackendV2):
         kwargs = {**self.run_options, **options}
         shots = int(kwargs.pop("shots", self.options.shots))
         seed = int(kwargs.pop("seed", self.options.seed))
-        level = kwargs.pop("level", None)
-        table = kwargs.pop("table", None)
-        physics = kwargs.pop("physics", None)
-        numerics = kwargs.pop("numerics", None)
-        readout = kwargs.pop("readout", None)
-        if isinstance(readout, str):  # the 0.1.0 string form shares the name of the object
-            kwargs["readout"] = readout
-            readout = None
-        machine = machine_with_run_kwargs(
-            self.machine,
-            kwargs,
-            caller="qutip_trap.interop.qiskit.QutipTrapBackend.run",
-            stacklevel=2,
-            table=table,
-            level=level,
-            physics=physics,
-            numerics=numerics,
-            readout=readout,
-        )
+        overrides = {
+            k: kwargs.pop(k) for k in ("table", "level", "physics", "numerics", "readout") if k in kwargs
+        }
+        if kwargs:
+            raise TypeError(f"QutipTrapBackend.run() got unexpected keyword argument(s) {sorted(kwargs)}")
+        machine = replace(self.machine, **{k: v for k, v in overrides.items() if v is not None})
         results = [machine.run(load_openqasm2(dumps(c)), shots, seed=seed) for c in circuits]
         job_id = str(uuid.uuid4())
         experiments = [_experiment(c, r) for c, r in zip(circuits, results)]

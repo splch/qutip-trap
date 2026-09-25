@@ -43,7 +43,6 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 import numpy as np
 
-from qutip_trap._compat import deprecated
 from qutip_trap.control import native
 
 if TYPE_CHECKING:
@@ -910,21 +909,3 @@ def compile_report(
 def compile_to_native(circuit: Circuit, device: Device | None = None, **kwargs: object) -> Circuit:
     """Standard gates -> native gates with phase tracking, verified against target unitaries (Section 7.2; Appendix E)."""
     return compile_report(circuit, device, **kwargs).circuit  # type: ignore[arg-type]
-
-
-@deprecated(
-    deadline="v0.5", fix="Call Machine(device).compile(circuit) instead; it returns the same CompileReport."
-)
-def compile_with_report(
-    circuit: Circuit,
-    device: Device | None = None,
-    *,
-    entangler: Entangler = "ms",
-    cnot_signs: tuple[int, int] = (1, 1),
-    verify_circuit: bool = True,
-) -> CompileReport:
-    """The 0.1.0 name of the compile step with its report; deprecated in 0.3.0 (docs/api_implementation_plan.md 2.2) in
-    favour of ``Machine.compile``, which returns the same ``CompileReport``."""
-    return compile_report(
-        circuit, device, entangler=entangler, cnot_signs=cnot_signs, verify_circuit=verify_circuit
-    )

@@ -9,7 +9,7 @@ import pytest
 from qutip_trap.experiments.fitting import thermal_rabi_model
 from qutip_trap.experiments.single_ion import rabi_scan, ramsey, ramsey_frequency, sideband_spectroscopy
 from qutip_trap.light.raman import derive_raman_drive
-from qutip_trap.machine import as_machine
+from qutip_trap.machine import Machine
 from tests.m2_fixtures import microwave_device, single_ion_raman_device
 
 
@@ -25,7 +25,7 @@ def test_rabi_scan_fits_the_rabi_frequency_and_the_thermal_occupation(raman) -> 
     dev, dd = raman
     f = dd.carrier_rabi_hz
     ts = np.linspace(0.0, 1.2 / f, 13)
-    res = rabi_scan(as_machine(dev), 0, ts, nbar={1: 0.6}, include_stark=False)
+    res = rabi_scan(Machine(dev), 0, ts, nbar={1: 0.6}, include_stark=False)
     assert res.data.shape == (13, 2) and res.model == "thermal_debye_waller_rabi"
     assert res.fitted["f_rabi_hz"][0] == pytest.approx(f, rel=1e-3)
     assert res.fitted["nbar"][0] == pytest.approx(0.6, abs=0.05)
@@ -37,11 +37,11 @@ def test_rabi_scan_fits_the_rabi_frequency_and_the_thermal_occupation(raman) -> 
 def test_ramsey_fringe_and_ramsey_frequency_recover_the_detuning(raman) -> None:  # type: ignore[no-untyped-def]
     dev, _ = raman
     delays = np.linspace(0.0, 2e-3, 9)
-    res = ramsey(as_machine(dev), 0, delays, detuning_hz=1000.0, include_stark=False)
+    res = ramsey(Machine(dev), 0, delays, detuning_hz=1000.0, include_stark=False)
     assert res.fitted["delta_hz"][0] == pytest.approx(1000.0, abs=1e-3)
     assert res.fitted["contrast"][0] == pytest.approx(0.5, abs=1e-3)
     freq = ramsey_frequency(
-        as_machine(dev), 0, delays, include_stark=False, probe_hz=1000.0, qubit_shifts_hz={0: 37.0}
+        Machine(dev), 0, delays, include_stark=False, probe_hz=1000.0, qubit_shifts_hz={0: 37.0}
     )
     assert freq.fitted["qubit_offset_hz"][0] == pytest.approx(37.0, abs=0.05)
     assert freq.model == "ramsey_two_probe"
@@ -50,7 +50,7 @@ def test_ramsey_fringe_and_ramsey_frequency_recover_the_detuning(raman) -> None:
 def test_microwave_ramsey_frequency() -> None:
     dev = microwave_device()
     freq = ramsey_frequency(
-        as_machine(dev),
+        Machine(dev),
         0,
         np.linspace(0.0, 2e-3, 9),
         rabi_hz=2e4,
@@ -61,7 +61,7 @@ def test_microwave_ramsey_frequency() -> None:
     assert freq.fitted["qubit_offset_hz"][0] == pytest.approx(-12.5, abs=0.05)
     assert freq.fitted["qubit_freq_hz"][0] == pytest.approx(1.0e9 - 12.5, abs=0.05)
     with pytest.raises(ValueError, match="rabi_hz"):
-        rabi_scan(as_machine(dev), 0, [0.0, 1e-6, 2e-6, 3e-6])
+        rabi_scan(Machine(dev), 0, [0.0, 1e-6, 2e-6, 3e-6])
 
 
 def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(raman) -> None:  # type: ignore[no-untyped-def]
@@ -71,7 +71,7 @@ def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(rama
     mus = np.concatenate(
         [np.linspace(-3.02e6, -2.98e6, 5), np.linspace(-1e4, 1e4, 3), np.linspace(2.98e6, 3.02e6, 5)]
     )
-    res = sideband_spectroscopy(as_machine(dev), 0, mus, duration_s=0.5 / (f * eta), include_stark=False)
+    res = sideband_spectroscopy(Machine(dev), 0, mus, duration_s=0.5 / (f * eta), include_stark=False)
     assert res.fitted["blue_sideband_hz"][0] == pytest.approx(3.0e6, abs=1e4)
     assert res.fitted["carrier_hz"][0] == pytest.approx(0.0, abs=1e4)
     blue = res.data[np.argmin(np.abs(res.data[:, 0] - 3.0e6)), 1]

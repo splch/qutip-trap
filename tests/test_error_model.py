@@ -108,7 +108,7 @@ def test_the_exporters_carry_the_vendors_fields_and_the_qdk_strings_match_the_es
         qdk_time(-1.0)
 
 
-def test_a_device_is_wrapped_and_qubits_can_be_restricted(fx: CircuitFixture, machine: Machine) -> None:
+def test_qubits_can_be_restricted(machine: Machine) -> None:
     one = error_model(machine, qubits=(1,))
     assert (
         one.qubits == (1,)
@@ -119,5 +119,3 @@ def test_a_device_is_wrapped_and_qubits_can_be_restricted(fx: CircuitFixture, ma
     assert "twoQubitGateTime" not in one.to_qdk_qubit_params()
     with pytest.raises(ValueError, match="distinct ions"):
         error_model(machine, qubits=(0, 0))
-    bare = error_model(fx.device, qubits=(0,))
-    assert bare.single_qubit_kinds == ("gpi[0]", "gpi2[0]") and bare.machine_hash != machine.hash()

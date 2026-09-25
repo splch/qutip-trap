@@ -25,7 +25,7 @@ from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.experiments.single_ion import ramsey
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
-from qutip_trap.machine import as_machine
+from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from tests.m2_fixtures import single_ion_raman_device
@@ -98,7 +98,7 @@ def test_a_ramsey_scan_with_millisecond_delays_costs_milliseconds() -> None:
 
     fx = circuit_fixture(2)
     t0 = time.perf_counter()
-    res = ramsey(as_machine(fx.device), 0, [0.0, 0.5e-3, 1e-3], nbar={2: 0.0185, 3: 0.0154}, detuning_hz=1e3)
+    res = ramsey(Machine(fx.device), 0, [0.0, 0.5e-3, 1e-3], nbar={2: 0.0185, 3: 0.0154}, detuning_hz=1e3)
     assert time.perf_counter() - t0 < 5.0
     p1 = res.data[:, 1]
     assert p1[0] > 0.99 and p1[1] < 0.02 and p1[2] > 0.99, (

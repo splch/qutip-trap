@@ -338,63 +338,11 @@ class Machine:
         return "\n".join(lines)
 
 
-def as_machine(machine: Machine | Device) -> Machine:
-    """``machine`` itself, or a ``Device`` wrapped in a default ``Machine``: the first argument of every experiment,
-    calibration and benchmark since 0.3.0 (docs/api_implementation_plan.md 2.2). The laboratory's entry points warn on a
-    bare Device since 0.4.0 (``warn_bare_device``); this function is the fix they name and never warns itself."""
-    from qutip_trap.device.model import Device as _Device
-
-    return Machine(machine) if isinstance(machine, _Device) else machine
-
-
-BARE_DEVICE_DEADLINE = "v0.6"
-"""The first release that may refuse a bare ``Device`` where the laboratory takes a machine (deprecated in 0.4.0)."""
-
-
-def warn_bare_device(what: str, *, stacklevel: int = 2) -> None:
-    """The 0.4.0 deprecation of a bare ``Device`` as the first argument of an experiment, of ``calibrate`` or of a benchmark
-    (docs/deprecations.md): one warning attributed ``stacklevel`` frames above this function's caller, naming the fix."""
-    from qutip_trap._compat import message, warn
-
-    warn(
-        message(
-            f"a bare Device as the first argument of {what}",
-            BARE_DEVICE_DEADLINE,
-            "Wrap it: Machine(device) or as_machine(device); the machine supplies the table and the option objects.",
-        ),
-        stacklevel=stacklevel + 1,
-    )
-
-
-DRIVE_KEYWORDS: dict[str, str] = {
-    "gate_drive": "Declare the drive on the device: dataclasses.replace(device, roles=BeamRoles(gate={ion: drive})).",
-    "gate_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(gate=...)).",
-    "entangling_drives": "Declare the drives on the device: dataclasses.replace(device, roles=BeamRoles(entangling=...)).",
-}
-"""The drive keywords of the laboratory deprecated in 0.3.0 (``Device.roles`` names the drives), with their fix sentences."""
-
-
-def laboratory_kwargs(
-    machine: Machine | Device, kw: Mapping[str, Any], *, caller: object, stacklevel: int = 2
-) -> tuple[Device, dict[str, Any]]:
-    """The device and the keyword arguments an experiment reads for a call on ``machine`` (docs/api_implementation_plan.md
-    2.2). A ``Machine`` supplies the defaults of ``table`` (its pinned table), ``options``
-    (``numerics.to_solver_options(physics)``) and ``builder_options`` (``physics.builder``), each only where the call did
-    not pass the keyword; a ``Device`` supplies nothing, the 0.1.0 behaviour. The drive keywords of ``DRIVE_KEYWORDS`` are
-    deprecated (the device's roles name the drives): each warns, attributed ``stacklevel`` frames above ``caller``'s
-    frame, and is kept for the experiment to read. A bare ``Device`` warns (0.4.0; ``warn_bare_device``) and supplies
-    nothing, the 0.1.0 behaviour."""
-    from qutip_trap._compat import message, warn
-    from qutip_trap.device.model import Device as _Device
-
+def laboratory_kwargs(machine: Machine, kw: Mapping[str, Any]) -> tuple[Device, dict[str, Any]]:
+    """The device and the keyword arguments an experiment reads for a call on ``machine``: the machine supplies ``table``
+    (its pinned table), ``options`` (``numerics.to_solver_options(physics)``) and ``builder_options`` (``physics.builder``)
+    wherever the call did not pass them."""
     out = dict(kw)
-    what = getattr(caller, "__module__", "") + "." + getattr(caller, "__qualname__", str(caller))
-    for key, fix in DRIVE_KEYWORDS.items():
-        if key in out:
-            warn(message(f"the {key!r} argument of {what}", "v0.5", fix), stacklevel=stacklevel + 1)
-    if isinstance(machine, _Device):
-        warn_bare_device(what, stacklevel=stacklevel + 1)
-        return machine, out
     if machine.table is not None:
         out.setdefault("table", machine.table)
     out.setdefault("options", machine.numerics.to_solver_options(machine.physics))

@@ -148,7 +148,7 @@ def _shift_detuning(waveform: Any, offset_hz: float) -> Any:
 
 
 def ms_scan(
-    machine: Machine | Device,
+    machine: Machine,
     pair: tuple[int, int],
     amplitudes: Sequence[float],
     detunings_hz: Sequence[float],
@@ -164,7 +164,7 @@ def ms_scan(
     at, which is the FITTED closure offset whenever the parabola converged (one extra amplitude scan is run there when the
     scanned grid does not already carry it), so the table may apply the two together.
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=ms_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.calibration.entangling import exact_gate_check
     from qutip_trap.control.shaping import scaled
 
@@ -328,13 +328,13 @@ def _analysis_beliefs(
 
 
 def parity_scan(
-    machine: Machine | Device, pair: tuple[int, int], analysis_phases_rad: Sequence[float], **kw: Any
+    machine: Machine, pair: tuple[int, int], analysis_phases_rad: Sequence[float], **kw: Any
 ) -> ExperimentResult:
     """Parity after the gate and a pi/2 analysis pulse of phase phi on both ions (Section 7.9); data columns (phi, parity, P00, P11);
     fitted: contrast C, phase phi_0 and offset of Pi(phi) = C cos(2 phi + phi_0) + B, and the Bell-fidelity bound (P_00 + P_11 + C)/2
     with the populations read without the analysis pulse. The analysis pulses are played by the single-qubit drives
     (``gate_drives``) at the table's Rabi frequencies with the table's Stark shifts compensated."""
-    device, kw = laboratory_kwargs(machine, kw, caller=parity_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.calibration.entangling import exact_gate_check, parity_after_analysis_pulse
 
     waveform, ent, sq, table, _modes, space = _entangling_setup(device, pair, kw)
@@ -468,7 +468,7 @@ def _fit_periodic(
 
 
 def ms_phase_scan(
-    machine: Machine | Device, pair: tuple[int, int], spin_phases_rad: Sequence[float], **kw: Any
+    machine: Machine, pair: tuple[int, int], spin_phases_rad: Sequence[float], **kw: Any
 ) -> ExperimentResult:
     """Section 7.5 step 3: the MS gate's spin phases scanned against a fixed analysis pulse of the single-qubit drives.
 
@@ -479,7 +479,7 @@ def ms_phase_scan(
     ion's leg phases (``control.shaping.phase_shifted``) so that the re-measured offsets vanish; ``contrast_00``/``contrast_01``.
     Data rows (input, spin phase, parity).
     """
-    device, kw = laboratory_kwargs(machine, kw, caller=ms_phase_scan)
+    device, kw = laboratory_kwargs(machine, kw)
     from qutip_trap.calibration.entangling import parity_after_analysis_pulse
 
     waveform, ent, sq, table, _modes, space = _entangling_setup(device, pair, kw)
