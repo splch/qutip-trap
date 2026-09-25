@@ -13,6 +13,7 @@ from qutip_trap.trap.mathieu import (
     UnstableMathieuError,
     beta_exact,
     beta_lowest_order,
+    c0_series,
     c0_wronskian,
     floquet_coefficients,
     is_stable,
@@ -65,7 +66,7 @@ def test_c0_wronskian_anchors_and_series(q: float, expected: float) -> None:
     c0 = c0_wronskian(0.0, q)
     assert c0 == pytest.approx(expected, abs=1e-6)
     assert c0 == pytest.approx(c0_wronskian(0.0, -q), abs=1e-12)
-    assert abs(c0 - (1.0 + 3.0 * q * q / 16.0)) < 0.25 * q**4
+    assert abs(c0 - c0_series(q)) < 0.25 * q**4
     assert c0_wronskian(0.01, 0.0) == 1.0
 
 

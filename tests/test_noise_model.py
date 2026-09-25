@@ -12,6 +12,7 @@ import qutip as qt
 
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.channels import (
     heating_channels,
     motional_dephasing_channels,
@@ -20,8 +21,9 @@ from qutip_trap.dynamics.channels import (
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
+from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.raman import derive_raman_drive, square_drive
-from qutip_trap.noise.model import NoiseModel
+from qutip_trap.noise.model import NoiseModel, quiet_drift
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
     KEY_MAINS_PHASE,
@@ -37,7 +39,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_trajectory_hz,
     quiet_sample,
 )
-from qutip_trap.noise.spectra import Drift, Mains, ou_spectrum, white_spectrum
+from qutip_trap.noise.spectra import Collisions, Drift, Mains, ou_spectrum, power_law_spectrum, white_spectrum
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate, thermal_collapse_rates
 from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
 from tests.fixtures import single_ion_raman_device, two_ion_device
@@ -150,6 +152,55 @@ def test_collapse_operators_report_ordinary_rates_not_rates_divided_by_two_pi() 
     assert md.rate_hz == pytest.approx(2.0 / 8e-3, rel=1e-12)
     (qd,) = qubit_dephasing_channels(space, {0: 1.0 / 1.5})
     assert qd.rate_hz == pytest.approx(1.0 / 1.5, rel=1e-12)
+
+
+# ---- the quiet default and the summary -------------------------------------------------------------------------------
+
+
+def test_the_default_noise_model_is_quiet() -> None:
+    quiet = NoiseModel()
+    assert quiet.is_quiet() and quiet.S_E.is_zero() and quiet.correlation_length_m == 0.0
+    assert all(d.quiet for d in quiet.drifts.values()) and quiet.collisions is None and quiet.mains is None
+    assert quiet.summary(yb171_chain(1).device) == {} and quiet.apparatus() == ()
+    assert canonical_digest(yb171_chain(2).device.noise) == canonical_digest(NoiseModel())
+
+
+def test_summary_lists_heating_when_the_field_spectrum_is_set_and_nothing_when_it_is_not() -> None:
+    device = yb171_chain(2).device
+    s_e = power_law_spectrum(
+        level_at_ref=1e-12,
+        omega_ref_rad_s=2 * math.pi * 1e6,
+        alpha=1.0,
+        unit="(V/m)^2/(rad/s)",
+        omega_min_rad_s=2 * math.pi * 1e3,
+        omega_max_rad_s=2 * math.pi * 1e7,
+    )
+    noisy = NoiseModel(S_E=s_e, correlation_length_m=0.0)
+    summary = noisy.summary(device)
+    heating = {k: v for k, v in summary.items() if k.startswith("heating_rate_per_s[")}
+    assert heating and all(unit == "quanta/s" and value > 0.0 for value, unit in heating.values())
+    assert heating.keys() == {f"heating_rate_per_s[{m}]" for m in noisy.heating_rates_quanta_per_s(device)}
+    assert not any(k.startswith(("qubit_dephasing", "collision", "intensity")) for k in summary)
+    # a drift and a collision model add their rows with the units the module documents
+    drifting = dataclasses.replace(
+        noisy,
+        rabi_drift=dataclasses.replace(quiet_drift(), rms=0.01),
+        field_drift=dataclasses.replace(quiet_drift(), rms=1e-9),
+        collisions=Collisions(
+            pressure_pa=1e-9,
+            gas={"H2": 1.0},
+            outcome_probabilities={"heating_kick": 0.9, "reorder": 0.05, "loss": 0.04, "dark_ion": 0.01},
+        ),
+        laser_intensity=white_spectrum(1e-12, "1/(rad/s)"),
+    )
+    more = drifting.summary(device)
+    assert more["rabi_drift_rms"] == (0.01, "1") and more["field_drift_rms"] == (1e-9, "T")
+    assert more["intensity_noise_density"] == (1e-12, "1/(rad/s)")
+    assert {k for k in more if k.startswith("collision_rate_per_ion[")} == {
+        "collision_rate_per_ion[0]",
+        "collision_rate_per_ion[1]",
+    }
+    assert all(more[f"collision_rate_per_ion[{i}]"][1] == "1/s" for i in range(2))
 
 
 # ---- dynamical samples -------------------------------------------------------------------------------------------------------

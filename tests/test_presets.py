@@ -1,12 +1,15 @@
-"""The example devices of ``device/presets.py`` (PLAN.md Section 3.2): the 171Yb+ chain's beams and drive maps, and the
-40Ca+ optical qubit running the pipeline on a second species."""
+"""The example devices of ``device/presets.py`` (PLAN.md Section 3.2): the 171Yb+ chain's beams and drive maps, the 40Ca+
+optical qubit running the pipeline on a second species, and the ``Device`` record (``to_dict``/``from_dict``, ``specs``)."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import GateDrive
+from qutip_trap.device.model import Device
 from qutip_trap.device.presets import (
     CA40_DETECTION_WINDOW_S,
     CA40_TRAP_HZ,
@@ -15,6 +18,7 @@ from qutip_trap.device.presets import (
     ca40_optical_recipe,
     yb171_chain,
 )
+from qutip_trap.device.serial import parse
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.light.roles import gate_beams
 from qutip_trap.machine import Machine
@@ -144,3 +148,52 @@ def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() 
             .run(bell, 10)
         )
     assert excinfo.type is not AssertionError
+
+
+# ---- the Device record ------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "make", [lambda: yb171_chain(2), lambda: ca40_optical(1)], ids=["yb171_chain(2)", "ca40_optical(1)"]
+)
+def test_the_device_round_trip_is_exact(make) -> None:  # type: ignore[no-untyped-def]
+    device = make().device
+    record = device.to_dict()
+    assert record["schema_version"] == 1 and record["device_hash"] == device.hash() and "device" in record
+    text = json.dumps(record)  # standard JSON: no NaN or Infinity tokens
+    back = Device.from_dict(json.loads(text))
+    assert back.hash() == device.hash() and json.dumps(back.to_dict()) == text
+    assert (
+        back.hardware.amplifier_bandwidth_hz == device.hardware.amplifier_bandwidth_hz
+    )  # inf survives as "inf"
+    assert back.roles == device.roles and back.beams[0].polarization == device.beams[0].polarization
+
+
+def test_the_record_refuses_what_it_cannot_carry() -> None:
+    device = yb171_chain(1).device
+    with pytest.raises(ValueError, match="schema version 1"):
+        Device.from_dict({**device.to_dict(), "schema_version": 2})
+    bad = device.to_dict()
+    bad["device"]["detector"]["colour"] = "blue"
+    with pytest.raises(ValueError, match="unknown fields \\['colour'\\]"):
+        Device.from_dict(bad)
+    with pytest.raises(ValueError, match="no JSON form for the annotation"):
+        parse("set[int]")
+    assert (
+        parse("tuple[float, ...]").variadic and parse("dict[tuple[int, int], float]").args[0].kind == "tuple"
+    )
+
+
+def test_specs_renders_the_derived_quantities_with_their_provenance_ids() -> None:
+    preset = yb171_chain(2)
+    text = preset.device.specs()
+    derived = preset.device.derived()
+    assert text.startswith(f"device {preset.device.hash()[:12]}") and "crystal: 2 ion(s) of 171Yb+" in text
+    for key, value in list(derived.values.items())[:5]:
+        assert f"{key} = {value:.6g}  [{derived.provenance[key]}]" in text
+    assert all(f"[{pid}]" in text for pid in set(derived.provenance.values()))
+    assert "noise channels: none (the noise model is quiet)" in text
+    machine_text = preset.machine().specs()
+    assert (
+        machine_text.startswith(text) and "gate drives = " in machine_text and "level = auto" in machine_text
+    )

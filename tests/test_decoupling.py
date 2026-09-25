@@ -222,12 +222,20 @@ def test_amplitude_filter_function_dc_polygon_crossover_and_dc_floor() -> None:
 
 
 def test_sequence_record_feasibility_and_refusals() -> None:
+    """The record's feasibility, single-axis test and roll-off moments A_k = sum_j (-1)^j delta_j^k (j from 1, as in
+    Biercuk's pulse sum), and the factory's refusals."""
     s = decoupling_sequence("udd", 3, TAU, 0.05)
     assert s.n_pulses == 3 and s.feasible() and s.deltas[1] == pytest.approx(0.5)
     with pytest.raises(ValueError):
         decoupling_sequence("cpmg", 8, TAU, 0.2)  # pulses overlap
     with pytest.raises(ValueError):
         decoupling_sequence("kdd", 10, TAU, 0.01)
+    cpmg2 = DecouplingSequence("cpmg", 2, 1e-3, 1e-6, (0.25, 0.75), (0.0, 0.0))
+    assert cpmg2.is_single_axis() and cpmg2.feasible()
+    a1, a2 = cpmg2.moments()
+    assert a1 == pytest.approx(-0.25 + 0.75) and a2 == pytest.approx(-(0.25**2) + 0.75**2)
+    assert not DecouplingSequence("cpmg", 2, 1e-3, 0.6e-3, (0.25, 0.75), (0.0, 0.0)).feasible()
+    assert not DecouplingSequence("xy4", 2, 1e-3, 1e-6, (0.25, 0.75), (0.0, math.pi / 2)).is_single_axis()
 
 
 # ---- filter_function on a device ------------------------------------------------------------------------------------------

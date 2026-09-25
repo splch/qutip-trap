@@ -10,10 +10,12 @@ import pytest
 
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import equal_up_to_global_phase, gpi, gpi2, rz
+from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import (
     MICROWAVE_BEAM_KEY,
     GateDrive,
     PhaseFrame,
+    Schedule,
     ScheduleError,
     default_gate_drives,
     schedule,
@@ -136,6 +138,19 @@ def test_scheduler_refusals_and_drive_inference() -> None:
     assert pulse.duration_s == pytest.approx(0.5 / RABI_HZ) and pulse.t_start_s == 1e-3
     with pytest.raises(ValueError):
         single_qubit_pulse(0, -math.pi, 0.0, GateDrive("microwave", ()), RABI_HZ, 0.0)
+
+
+def test_schedule_refuses_overlapping_pulses_on_one_ion() -> None:
+    """Pulses on distinct ions may overlap in time; two on one ion, or a pulse that ends before it starts, are refused."""
+    tone = Tone(0.0, 0.0, 1e6)
+    d0 = Drive("microwave", (0,), (tone,), (), 0.0, {})
+    d1 = Drive("microwave", (1,), (tone,), (), 0.0, {})
+    p0 = Pulse(d0, 0.0, 10e-6, "g0", ())
+    Schedule((p0, Pulse(d1, 5e-6, 15e-6, "g1", ())), (), (), {0: 0.0, 1: 0.0})
+    with pytest.raises(ValueError, match="overlap"):
+        Schedule((p0, Pulse(d0, 5e-6, 15e-6, "g2", ())), (), (), {0: 0.0})
+    with pytest.raises(ValueError):
+        Pulse(d0, 1.0, 0.5, None, ())
 
 
 def test_raman_gpi2_reproduces_the_matrix_within_the_debye_waller_budget() -> None:

@@ -32,7 +32,6 @@ LEE = CombSpec(120e6, 14e-12, "field_sech", 105, 0.0)
 APB = CombSpec(80e6, 10e-12, "field_sech", 158, 0.0)
 NU_Q = 12.642812118466e9
 """The 171Yb+ zero-field clock splitting: the APB operating point's qubit frequency."""
-"""The 3 MHz x mode of the single-ion fixture."""
 GATE_TIME_S = 100e-6
 """The explicit-tone cut is 10/t_g, about 100 kHz for a 100 us gate: far inside the 80 MHz tooth gap."""
 
@@ -51,6 +50,19 @@ def test_pair_weight_uses_the_half_argument() -> None:
     assert LEE.pair_weight(105) == pytest.approx(0.863911, abs=1e-6)
     assert 1.0 / math.cosh(2 * math.pi * 105 * 120e6 * 14e-12) == pytest.approx(0.595332, abs=1e-6)
     assert 0.03 < LEE.pair_weight(105) / _pair_sum_exact(LEE, 105, 200_000) - 1.0 < 0.07
+
+
+def test_comb_spec_chain_and_i_sat_travel_together() -> None:
+    """Chain II carries its own I_sat and chain I refuses one; the pair weight is 1 at l = 0 and the order -1 beat note of an
+    80 MHz comb offset by 12 MHz sits at 68 MHz."""
+    CombSpec(80.0e6, 10e-12, "field_sech", 158, 12.0e6, chain="II", i_sat_w_m2=1500.0)
+    with pytest.raises(ValueError):
+        CombSpec(80.0e6, 10e-12, "field_sech", 158, 12.0e6, chain="I", i_sat_w_m2=1500.0)
+    with pytest.raises(ValueError):
+        CombSpec(80.0e6, 10e-12, "field_sech", 158, 12.0e6, chain="II")
+    comb = CombSpec(80.0e6, 10e-12, "field_sech", 158, 12.0e6)
+    assert comb.pair_weight(0) == 1.0
+    assert comb.beat_note_hz(-1) == pytest.approx(68.0e6)
 
 
 def test_pulse_width_conventions() -> None:
