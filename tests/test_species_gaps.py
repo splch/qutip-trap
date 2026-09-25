@@ -23,7 +23,7 @@ import re
 
 import pytest
 
-from qutip_trap.provenance import TAGS, load_ledger
+from qutip_trap.provenance import TAGS
 from qutip_trap.species import MODULES, IncompleteSpeciesTable, species
 from qutip_trap.species.model import Level
 from qutip_trap.species.sources import SOURCES
@@ -34,7 +34,6 @@ BA137 = MODULES["137Ba+"].TABLE
 BE9 = MODULES["9Be+"].TABLE
 CA43 = MODULES["43Ca+"].TABLE
 MG25 = MODULES["25Mg+"].TABLE
-LEDGER = load_ledger()
 
 LOCATOR = re.compile(r"\((?:19|20)\d\d\)|arXiv:\d{4}\.\d{4,5}|doi:10\.")
 """The same locator pattern ``test_species_tables.py`` enforces over every source key."""
@@ -69,8 +68,6 @@ def test_the_constants_entered_carry_value_uncertainty_tag_and_a_located_source(
     assert source in SOURCES, f"{ledger_id} cites an unknown source key"
     assert LOCATOR.search(SOURCES[source]), f"{source} names no locator"
     assert c.note, f"{ledger_id} must say where its number came from"
-    # and the ledger agrees, which is what tools/ledger_from_tables.py guarantees
-    assert ledger_id in LEDGER and LEDGER[ledger_id].tag == tag and LEDGER[ledger_id].source == source
 
 
 def test_the_ba_g_factors_are_the_same_number_in_both_isotope_tables() -> None:

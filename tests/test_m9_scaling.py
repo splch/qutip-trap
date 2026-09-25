@@ -267,7 +267,6 @@ def test_convergence_report_runs_all_three_arms_of_section_9_9() -> None:
     assert grown_caps(space, 2).dimension == 128
 
 
-@pytest.mark.convergence
 def test_convergence_regime_of_the_bell_circuit(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Section 9.9 on the Section 9.6 Bell circuit: tightening and loosening the tolerances by ten and raising every resolved
     cap by two move the reported probabilities by less than the stated test tolerance. The cap arm regrids the prepared state
@@ -312,7 +311,6 @@ def test_convergence_regime_of_the_bell_circuit(monkeypatch) -> None:  # type: i
     assert rep.grown_modes == (2, 3)
 
 
-@pytest.mark.convergence
 @pytest.mark.slow
 def test_convergence_regime_of_the_frozen_spectator_fixture() -> None:
     """Section 9.9 on the frozen-spectator fixture of ``tests/m9_fixtures.py`` (the tilted Raman pair, y-COM 120 kHz below the
@@ -538,6 +536,32 @@ def test_a_programming_error_is_not_recorded_as_an_integrator_failure() -> None:
         evolve(H, psi0, times, options=SolverOptions(integrators=("diag", "dop853")))
 
 
+def _two_tone(t: float, Om: float, mu: float, tag: tuple[int, int] = (0, 0)) -> float:
+    return Om * np.cos(mu * t)
+
+
+def _ms_hamiltonian(nmodes: int, d_m: int) -> qt.QobjEvo:
+    """The two-ion bichromatic MS Hamiltonian of the Section 11.1 timing fixture: CSR drive operators, one coefficient
+    object per term (the tag keeps QobjEvo from merging them)."""
+    omega = [TWO_PI * 3.0e6, TWO_PI * 2.8284e6, TWO_PI * 2.9e6][:nmodes]
+    eta = [(0.080, 0.080), (0.0824, -0.0824), (0.047, 0.047)][:nmodes]
+    eps = TWO_PI * 10e3
+    a = qt.destroy(d_m)
+    ions, modes = [qt.qeye(2)] * 2, [qt.qeye(d_m)] * nmodes
+    h0 = sum(
+        w * qt.tensor(*ions, *[a.dag() * a if k == m else modes[k] for k in range(nmodes)])
+        for m, w in enumerate(omega)
+    )
+    terms: list[object] = [h0.to("CSR")]
+    args = {"Om": eps / (2 * eta[0][0]), "mu": omega[0] - eps}
+    for i in range(2):
+        spin = [qt.sigmap() if k == i else qt.qeye(2) for k in range(2)]
+        v = qt.tensor(*spin, *[(1j * eta[m][i] * (a + a.dag())).expm() for m in range(nmodes)]).to("CSR")
+        for j, op in enumerate((v, v.dag())):
+            terms.append([op, qt.coefficient(_two_tone, args={**args, "tag": (i, j)})])
+    return qt.QobjEvo(terms)
+
+
 @pytest.mark.slow
 def test_the_ladder_escalates_when_a_rung_fails_and_records_the_retry() -> None:
     """Audit E11: no test ever triggered an escalation, so nothing checked that a failing rung is recorded and the next rung
@@ -551,14 +575,8 @@ def test_the_ladder_escalates_when_a_rung_fails_and_records_the_retry() -> None:
     more than 500 and succeeds at 1000. A ladder ``("tsit5", "dop853")`` at nsteps = 2000 therefore aborts on its first rung
     with the integrator's own ``IntegratorException`` and finishes on its second, with a factor two of margin on each side;
     the step counts are set by the integrators' arithmetic, not by the hardware."""
-    import sys
-    from pathlib import Path
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation" / "scripts"))
-    from bench_ms_timing_v5 import build  # type: ignore[import-not-found]
-
     nmodes, d_m = 2, 8
-    H = build(nmodes, d_m, "csr")[0]
+    H = _ms_hamiltonian(nmodes, d_m)
     psi0 = qt.tensor(qt.basis(2, 0), qt.basis(2, 0), *[qt.basis(d_m, 0)] * nmodes)
     times = np.linspace(0.0, 20e-6, 3)
     opts = SolverOptions(nsteps=2000, integrators=("tsit5", "dop853"))
@@ -611,7 +629,6 @@ def test_resolve_level_is_what_run_uses_and_its_estimate_path_works() -> None:
     assert resolve_level(dev, native, SolverOptions(joint_dimension_max=64), space=big) == "GATE_LOCAL"
 
 
-@pytest.mark.convergence
 @pytest.mark.slow
 def test_run_reports_the_section_5_5_tolerance_convergence_when_asked() -> None:
     """Section 5.5's second bullet through ``run()``: ``SolverOptions.convergence_check`` repeats the evolution with atol and
@@ -642,7 +659,6 @@ def test_run_reports_the_section_5_5_tolerance_convergence_when_asked() -> None:
 # ---- 9.9: mcsolve with and without improved_sampling against the mesolve histogram -----------------------------------------
 
 
-@pytest.mark.convergence
 @pytest.mark.slow
 def test_mcsolve_with_and_without_improved_sampling_converge_to_the_mesolve_histogram() -> None:
     """The last clause of Section 9.9: "shots drawn from ``mcsolve`` with and without ``improved_sampling`` converge to the

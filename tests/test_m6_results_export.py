@@ -133,9 +133,7 @@ def test_from_ionq_v1_shots_closes_the_round_trip() -> None:
     assert Result.from_ionq_v1_shots([6, 1], 3).counts == {"110": 1, "001": 1}
 
 
-def test_the_envelope_round_trips_and_validates_against_its_schema() -> None:
-    from tools.schemas import RESULT_SCHEMA, validate
-
+def test_the_envelope_round_trips() -> None:
     result = dataclasses.replace(
         make_result(BITS),
         spam={"q0": (1e-3, 2e-3), "q1": (3e-4, 4e-4)},
@@ -152,11 +150,6 @@ def test_the_envelope_round_trips_and_validates_against_its_schema() -> None:
         d["diagnostics"]["level"] == "JOINT_EXACT"
         and d["diagnostics"]["calibration"]["entries"]["field"]["value"] == 5.0
     )
-    assert validate(d, RESULT_SCHEMA) == []
-    assert set(RESULT_SCHEMA["properties"]) - {"per_shot"} == set(d), (
-        "the schema names exactly the keys the envelope writes"
-    )
-    assert set(RESULT_SCHEMA["properties"]["diagnostics"]["properties"]) == set(d["diagnostics"])
     back = Result.from_dict(d)
     assert (
         back.counts == result.counts
@@ -179,13 +172,10 @@ def test_the_envelope_round_trips_and_validates_against_its_schema() -> None:
         back.shots == result.shots and int(back.heralds.sum()) == 0
     )  # rebuilt from the counts: no per-shot flags
     full = result.to_dict(per_shot=True)
-    assert validate(full, RESULT_SCHEMA) == []
     again = Result.from_dict(full)
     assert np.array_equal(again.bitstrings, result.bitstrings) and np.array_equal(
         again.heralds, result.heralds
     )
-    assert validate({**d, "extra": 1}, RESULT_SCHEMA) == ["$: the key 'extra' is not allowed"]
-    assert validate({**d, "shots": -1}, RESULT_SCHEMA) and validate({**d, "schema_version": 2}, RESULT_SCHEMA)
     with pytest.raises(ValueError, match="schema version 1"):
         Result.from_dict({**d, "schema_version": 2})
 

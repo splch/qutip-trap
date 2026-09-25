@@ -1,9 +1,0 @@
-alpha[pi   , axis z (along B)] = 0.200000  (pattern norm 1.000000)
-alpha[pi   , axis x (perp to B)] = 0.400000  (pattern norm 1.000000)
-alpha[sigma, axis z (along B)] = 0.400000  (pattern norm 1.000000)
-alpha[sigma, axis x (perp to B)] = 0.300000  (pattern norm 1.000000)
-alpha[iso  , axis z (along B)] = 0.333333  (pattern norm 1.000000)
-alpha[iso  , axis x (perp to B)] = 0.333333  (pattern norm 1.000000)
-171Yb+, 369.5 nm detection/cooling photon, 3 MHz mode: x0 = 3.139 nm, k x0 = 0.0534, (k x0)^2 = 2.849e-03, recoil quanta per photon at alpha=2/5: 1.14e-03; x1e4 photons: 11.4
-171Yb+, 355 nm Raman photon, 3 MHz mode: x0 = 3.139 nm, k x0 = 0.0556, (k x0)^2 = 3.086e-03, recoil quanta per photon at alpha=2/5: 1.23e-03; x1e4 photons: 12.3
-counter-rotating Raman shift |Omega|^2/(2 omega0) for Omega/2pi = 1 MHz, omega0/2pi = 12.6428 GHz: 39.5 Hz

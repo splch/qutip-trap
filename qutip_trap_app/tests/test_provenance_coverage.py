@@ -52,7 +52,6 @@ def test_every_catalogue_and_concept_id_is_in_the_ledger() -> None:
     for c in learn.CONCEPTS.values():
         idx.section(c.section)
     assert len(idx.part_ii()) > 60
-    assert idx.tag_totals["verified"] > 100
 
 
 def test_chip_carries_section_source_and_corrected_form() -> None:

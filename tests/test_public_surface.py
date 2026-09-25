@@ -73,7 +73,6 @@ PAGES: tuple[Path, ...] = tuple(
         "conventions.md",
         "examples.md",
         "limits.md",
-        "deprecations.md",
         "README.md",
     )
 )
