@@ -12,7 +12,7 @@ records:
     section: "13; 5.6"
     source: "RMP 2003 (Leibfried et al.)"
     equation: "internal frequencies angular in rad/s; public API in Hz, converted at the boundary with an explicit 2 pi"
-    corrected_form: "papers quote gamma = 2 pi x 19.6 MHz, gamma/2pi = 60 MHz and 19.7 MHz for gamma/2pi interchangeably; the public boundary types are qutip_trap.units.Hz and RadPerS (rad_s_from_hz, hz_from_rad_s), and internal signatures carry the unit in the name (_hz, _rad_s, _hz_per_g, _per_s)"
+    corrected_form: "papers quote gamma = 2 pi x 19.6 MHz, gamma/2pi = 60 MHz and 19.7 MHz for gamma/2pi interchangeably; names carry the unit (_hz, _rad_s, _hz_per_g, _per_s)"
   - id: conv.mathieu_sign
     symbol: "a - 2q cos 2xi"
     tag: verified
@@ -62,13 +62,6 @@ records:
     source: "RMP 2003; Monroe 2020; Lee 2005"
     equation: "H = (hbar Omega/2) sigma_+ e^{...} + h.c., carrier pi pulse at Omega t = pi"
     corrected_form: "Wineland 1998, Monroe 1995 and Blumel 2021 use P = sin^2(Omega t), half the usual Rabi frequency"
-  - id: conv.detuning
-    symbol: "delta = omega_drive - omega_transition"
-    tag: verified
-    section: "13"
-    source: "RMP 2003"
-    equation: "delta from the carrier, red negative; mu = beat-note detuning from the carrier; delta_{i,m} = mu_i - omega_m always two-indexed"
-    corrected_form: "Landsman's delta measured from a mode; Mount's dimensionless delta"
   - id: conv.effective_wavevector
     symbol: "Delta k = k_1 - k_2"
     tag: corrected
@@ -371,20 +364,6 @@ records:
     source: "Monroe 1995; Wineland 1998; Ozeri 2007; qutip_trap.light.raman"
     equation: "the code stores Omega (the hbar Omega/2 convention) and two ingest maps: g = Omega/2 for Monroe 1995, Wineland 1998, Ozeri and Section 4.5.5's g_{b,r} = E<d>/(2 hbar); g = Omega for the Lee comb chain (g_0 = gamma sqrt(I/2 I_sat)); Monroe's Omega = g_1 g_2/Delta is Omega_1 Omega_2/(2 Delta) in this convention"
     corrected_form: "one symbol g means Omega/2 in two formulas and Omega in a third, inside two-photon formulas that differ by exactly that factor 2"
-  - id: conv.mcsolve_weight_attributes
-    symbol: "deterministic_weights, runs_weights"
-    tag: corrected
-    section: "5.3; 3.4"
-    source: "QuTiP 5.3.1 McResult"
-    equation: "with improved_sampling=True mcsolve evolves one deterministic no-jump member (McResult.deterministic_trajectories, weight McResult.deterministic_weights[0]) and gives the stochastic trajectories the residual weights McResult.runs_weights; shots are drawn from that weighted mixture"
-    corrected_form: "no attribute deterministic_weight_info exists in QuTiP 5.3.1"
-  - id: conv.appendix_e_signatures
-    symbol: "interface signatures"
-    tag: corrected
-    section: "3.3"
-    source: "qutip_trap"
-    equation: "Drive.delta_k is a method taking the device's beams (a Drive stores beam indices); MetastableChannels.bbr_rate_hz takes the Species that owns the line; DecouplingSequence.rounded_to_clock returns (sequence, residual moments); CombSpec.pair_order_max = None derives the Stark-sum depth from the envelope"
-    corrected_form: "a Drive stores beam indices, not wavevectors, so its Delta k needs the device's beams"
   - id: anchor.ca40.lamb_dicke_729
     symbol: "eta_729(40Ca+, 1 MHz)"
     tag: recomputed here
@@ -399,13 +378,6 @@ records:
     source: "qutip_trap.species.model"
     equation: "every upper level reached by at least one E1 transition must have its tabulated branchings plus its declared Level.untabulated_branching sum to 1 within 1e-9, and sum_{b q'} |c|^2 then equals the TABULATED total, never an unconditional 1"
     corrected_form: "an incomplete branching set is never renormalized to unity over the tabulated channels (that would put all of 40Ca+ P3/2's decay into the 393 nm line and lose its 5.9 % D-state leakage); Level.untabulated_branching declares the remainder (171Yb+ 3D[3/2]1/2 for the 297.143 nm channel)"
-  - id: anchor.ca40.i_sat_chain
-    symbol: "Gamma -> |<J||d||J'>| -> I_sat"
-    tag: corrected
-    section: "4.5.2; 4.5.7; 13"
-    source: "Hettrich et al. 2015; Ramm et al. 2013; Meir et al. 2020; Gerritsma et al. 2008; qutip_trap.species.ca40"
-    equation: "Gamma -> reduced element -> I_sat for 40Ca+ with the quoted 21.57 and 23.4 MHz read as partial rates: 2.045 e a0 / 45.11 mW/cm^2 (397 nm) and 2.972 / 50.25 (393 nm) at the air wavelengths 396.85 and 393.37 nm"
-    corrected_form: "the 397 nm pair comes out of the table (tau(P1/2) = 6.904(26) ns times the S1/2 branching 0.93565(7) gives 21.5691 MHz, hence 2.0455 e a0 / 45.069 mW/cm^2 at the vacuum 396.959 nm); the 393 nm pair does not (tau(P3/2) = 6.639(42) ns times 0.93469 gives 22.4071 MHz and 2.9097 / 48.074 at vacuum, 2.1 % and 4.2 % below the unsourced 23.4 MHz reading, anchor.ca40.p32_linewidth_readings)"
   - id: conv.ca40_linewidth_reading
     symbol: "21.57 MHz = gamma_PS/2pi (PARTIAL)"
     tag: corrected
@@ -413,41 +385,6 @@ records:
     source: "Hettrich et al., Phys. Rev. Lett. 115, 143003 (2015); Meir et al., Phys. Rev. A 101, 012509 (2020); qutip_trap.species.ca40"
     equation: "Hettrich's Table: <S1/2||d||P1/2> = 2.8928(43) e a0, tau(4p 2P1/2) = 6.904(26) ns, branching 0.93572(25), gamma_PS = 2 pi x 21.57(8) MHz and gamma_PD = 2 pi x 1.482(8) MHz, so the TOTAL is 23.05 MHz"
     corrected_form: "the quoted 21.57 and 23.4 MHz are partial rates into S1/2 (Hettrich prints gamma_PS = 2 pi x 21.57(8) MHz beside gamma_PD = 2 pi x 1.482(8) MHz, and a total of 21.57 MHz would mean tau(P1/2) = 7.379 ns, which no measurement supports); the totals come from the measured lifetimes (6.904(26) ns, 23.0526 MHz; 6.639(42) ns, 23.9727 MHz), with Ramm's branching the partial rate 21.5691 MHz reproduces Hettrich's gamma_PS to 4e-5, and the quoted linewidths remain only as contested cross-checks"
-  - id: anchor.ca40.p32_linewidth_readings
-    symbol: "gamma(4p 2P3/2)/2pi of 40Ca+"
-    tag: contested
-    section: "4.5.6; 12"
-    source: "Meir, Sinhal, Safronova, Willitsch, Phys. Rev. A 101, 012509 (2020); Jin and Church, Phys. Rev. Lett. 70, 3213 (1993); Gerritsma et al., Eur. Phys. J. D 50, 13 (2008); qutip_trap.species.ca40"
-    equation: "the 23.4 MHz quoted for the 393 nm line has no source; Meir et al. 2020 tau = 6.639(42) ns -> 23.9727 MHz total and 22.4071 MHz partial into S1/2 (share 0.93469); Jin and Church 1993 tau = 6.924(19) ns -> 22.9860 total and 21.4848 partial"
-    corrected_form: "23.4 MHz matches none of the four (2.4 % below Meir's total, 4.4 % above his partial; the two lifetimes are 6 sigma apart); the table adopts Meir's lifetime and does not reproduce the 2.972 e a0 / 50.25 mW/cm^2 anchors, which are pinned only as closed forms at 23.4 MHz and the air 393.37 nm (2.9722 / 50.246) beside the table's 2.9097 / 48.074 at the vacuum wavelength"
-  - id: conv.ca40_branching
-    symbol: "b(P1/2 -> S1/2), b(P3/2 -> S1/2)"
-    tag: corrected
-    section: "4.5.6; 8.1; 12"
-    source: "Ramm et al., Phys. Rev. Lett. 111, 023004 (2013); Gerritsma et al., Eur. Phys. J. D 50, 13 (2008); qutip_trap.species.ca40"
-    equation: "Ramm et al. 2013's measured 0.93565(7)/0.06435(7) for the P1/2 split and Gerritsma et al. 2008's 0.93469/0.0587/0.00661 for the P3/2 split into S1/2/D5/2/D3/2"
-    corrected_form: "not the rounded 0.941/0.940, Ozeri's f^-1 = 17 (a 43Ca+ value) or a '6 % branch to D3/2' (6.8 % low): Ramm's value makes the 397 nm partial rate reproduce Hettrich's gamma_PS (23.0526 x 0.93565 = 21.5691 MHz against 21.57(8)), where 0.94 would give 21.6694 MHz"
-  - id: conv.be9_p32_hyperfine
-    symbol: "A(2p 2P3/2), B(2p 2P3/2) of 9Be+"
-    tag: contested
-    section: "4.5.6"
-    source: "Puchalski and Pachucki, Phys. Rev. A 79, 032510 (2009); Bollinger et al., Phys. Rev. A 31, 2711 (1985); qutip_trap.species.be9"
-    equation: "the record uses the THEORY values A = -1.026(3) MHz and B = -2.29940(3) MHz, tagged background; no measurement of either exists"
-    corrected_form: "two unresolved tensions: the theory A is 1.7x larger than Bollinger 1985's bound |A(2P3/2)| < 0.6 MHz, and the theory B is negative while Q(9Be) = +0.0529(4) b is positive (sign(B) = sign(Q) for a single p3/2 electron); neither affects any anchor (a 1 MHz splitting against THz detunings), and the values are never read as measured; the circulating -1.03(3) / -2.30(9) MHz pair has invented uncertainties"
-  - id: conv.be9_linewidth
-    symbol: "Gamma(2p)/2pi of 9Be+"
-    tag: contested
-    section: "4.2.1; 4.3.2; 4.5.6"
-    source: "NIST ASD (Yan, Tambasco, Drake 1998); Monroe et al. 1995; Ozeri 2007 Table I; Andersen et al. 1969; qutip_trap.species.be9"
-    equation: "four readings spanning 9 %: 17.97 MHz (NIST ASD A_ki 1.1292e8 and 1.1285e8 s^-1, accuracy grade AAA <= 0.3 %, theory), 19.4 MHz (Monroe et al. 1995), 19.6 MHz (Ozeri Table I) and 19.64 MHz (Andersen, Jessen, Soerensen 1969, beam-foil); the record uses Monroe's 19.4 MHz, which the 9Be+ anchors assume (P_SE = 8.706e-4)"
-    corrected_form: "the spread is far outside every stated accuracy: the ASD value implies tau = 8.86 ns and f = 0.498 (the textbook ~0.5 for a Li-like ion) while 19.4 and 19.6 MHz need f = 0.543, and no primary derivation of the trapped-ion '19.4 MHz / 8.2 ns' is known"
-  - id: conv.mg25_no_measured_g_j
-    symbol: "g_I/g_J, not g_J"
-    tag: corrected
-    section: "4.5.1; 13"
-    source: "Itano and Wineland, Phys. Rev. A 24, 1364 (1981); Brewer et al., Phys. Rev. A 100, 013409 (2019); qutip_trap.species.mg25"
-    equation: "no measured absolute g_J of the 25Mg+ ground state exists: both measurements servo the field to the electronic transition and determine only the ratio g_I/g_J = 9.299484(75)e-5 (Itano and Wineland 1981) or 9.299308313(60)e-5 (Brewer et al. 2019), which the table stores"
-    corrected_form: "9Be+'s measured g_J = 2.00226 is not a 25Mg+ value (g_J = 2.000 moves the 212.78 G clock point to 213.025 G), and g_J is not back-solved from the ratio and a tabulated mu_I (the two shielding conventions give 2.0045 or fail the 9Be+ cross-check at 4e-4), so the 25Mg+ table stays incomplete"
   - id: conv.mu_i_shielding_convention
     symbol: "mu_I corrected versus uncorrected"
     tag: corrected
@@ -455,13 +392,6 @@ records:
     source: "Stone INDC(NDS)-0794; Dickopf et al., Nature 632, 757 (2024); Hanley et al., arXiv:2105.10352"
     equation: "the tables carry mu_I in three conventions, each declared per table: 9Be+ -1.177432 mu_N diamagnetically corrected (Dickopf 2024's g_I gives -1.1774316344; the uncorrected NMR value is -1.17449(2), 0.25 % away), 25Mg+ -0.85545 mu_N uncorrected (Alder and Yu 1951 via Stone; Stone's corrected recommendation is -0.85533(3)), 43Ca+ -1.315350(9) mu_N free-ion (Hanley et al. 2021; Stone's bare-nucleus value is -1.31733(6))"
     corrected_form: "the 43Ca+ value is the free-ion moment Hanley et al. print to 9e-6, the moment a trapped-ion Breit-Rabi Hamiltonian takes, not a fitted constant; mixing the conventions between species is a 0.2 to 0.25 % error in g_I"
-  - id: anchor.m0a.ozeri_table_ii
-    symbol: "eps_S x P_0 = 2 pi |Omega_R| hbar omega_{3/2}^3 w_0^2/(3 c^2)"
-    tag: contested
-    section: "4.3.2; 4.5.5"
-    source: "Ozeri 2007 Eq. 17; qutip_trap.validation.ozeri_closed_forms"
-    equation: "the invariant of Eq. 17 is eps_S x P = 3.365441e-7 W for 9Be+ at w_0 = 20 um, Omega_R/2pi = 0.25 MHz and lambda_{3/2} = 313.0 nm, so eps_S = 0.337e-4 needs P_0 = 9.986 mW"
-    corrected_form: "eps_S = 0.337e-4 needs P_0 = 9.986 mW by Eq. 17, not the 3.37 mW paired with it (a factor 2.9633); the form eps_S = P_Raman = 2 pi |Omega_R| (gamma/g^2), with gamma/g^2 = 4 hbar omega^3/(3 pi eps0 c^3 E^2) and the Gaussian peak E^2 = 4P/(pi eps0 c w_0^2), reproduces Eq. 17 exactly; the 25Mg+, 43Ca+, 67Zn+ and 111Cd+ rows lack lambda_{3/2}, gamma and omega_f and are not checked"
   - id: conv.e2_ac_stark_shift
     symbol: "delta_St = -sum_{c != driven} |Omega_c|^2/(4 Delta_c)"
     tag: contested
@@ -532,13 +462,6 @@ records:
     source: "Kielpinski 2000 Eqs. 11-16; qutip_trap.trap.crystal"
     equation: "0.7811, 1.7321, 1.8881 at mu = 24/9 and 1.1093, 1.7321, 3.5454 at 9/24 from both the closed forms and the mass-weighted Hessian (1e-6); zeta_2 = sqrt 3 with zero impurity amplitude for all mu; zeta_3(17/3) = sqrt 3; zeta_3(7.3) = 1.7034 < zeta_2; gaps 1.560 and 6.228 MHz at f_z = 10 MHz"
     corrected_form: "mode order is not monotonic in mu, so modes are identified by eigenvector structure, not by index"
-  - id: anchor.trap.depth_optima
-    symbol: "b/a optima, kappa_max"
-    tag: recomputed here
-    section: "4.1.6; 9.1"
-    source: "House 2008 Eq. 29; Nizamani 2012; qutip_trap.trap.surface"
-    equation: "depth maximal at b/a = 1.1914879 = cbrt(54 - 6 sqrt 33)/6 + cbrt(54 + 6 sqrt 33)/6 for fixed a; at fixed ion height b/a = 3.676 with kappa = 0.022542 = (5 sqrt 5 - 11)/8 for c = b, and 4.902 with 0.020038 = 8/9 of it for c = b/2; Nizamani's kappa equals House's Eq. 29 for c = b"
-    corrected_form: "the c = b/2 branch extrapolates a formula House derived for c = b only: the House formula applied to unequal rails is 8 to 40% off the numerical saddle at Nizamani's design point"
   - id: anchor.trap.heating_dynamics
     symbol: "n_bar(t), coherence decay"
     tag: recomputed here
@@ -580,7 +503,7 @@ records:
     section: "5.2; 7.10"
     source: "qutip_trap.dynamics.hamiltonian"
     equation: "the beat-note phase is mu t in ABSOLUTE time for a phase-continuous tone (mu tau under phase_mode='reset'; the FM integral int mu dtau for a detuning schedule); envelopes, phases and detunings are callables of the time since the pulse start, a constant is a square pulse, an array is uniformly sampled over the pulse and cubic-spline interpolated; the static factors are rabi_scale x eps_ij x J_0(beta) x prod_frozen e^{-eta^2/2} L_n(eta^2)"
-    corrected_form: "coefficients are QuTiP 5.3 f(t, **kwargs) callables carrying a shared evaluation counter, never strings (Section 5.2)"
+    corrected_form: "coefficients are QuTiP 5.3 f(t, **kwargs) callables, never strings (Section 5.2)"
   - id: conv.frozen_spectator_shot_sample
     symbol: "n_m per shot"
     tag: derived
@@ -615,7 +538,7 @@ records:
     section: "5.2; 5.3"
     source: "qutip_trap.dynamics.hamiltonian"
     equation: "Schroedinger-motion and sideband-decomposed interaction pictures agree to 1.5e-8 for a blue-sideband pulse at n_max = 11; k_max = 2 to 1e-4 with the dropped weight reported; the interaction picture holds the right-hand-side evaluations near 1000 for k_max = 1, 3 and all 21 sidebands (scipy's DOP853 on the same operators: 1058) while the Schroedinger picture needs 27 steps per mode period under QuTiP's dop853 wrapper (12 under scipy's solve_ivp DOP853 at the same tolerances)"
-    corrected_form: "the 14 to 45 steps per period measured with solve_ivp bracket the QuTiP figure; the engine reports steps per period of the highest mode, not of the top Fock component"
+    corrected_form: "the 14 to 45 steps per period measured with solve_ivp bracket the QuTiP figure, counted per period of the highest mode, not of the top Fock component"
   - id: anchor.m2.micromotion_carrier_factor
     symbol: "J_0(beta)"
     tag: recomputed here
@@ -627,7 +550,7 @@ records:
     symbol: "EPG"
     tag: recomputed here
     section: "4.3.3; 9.2"
-    source: "Harty et al. 2014 (arXiv:1403.1524) main text and supplement; qutip_trap.validation.harty_rb"
+    source: "Harty et al. 2014 (arXiv:1403.1524) main text and supplement; qutip_trap.published"
     equation: "Pauli (two pi/2 pulses about +-x, +-y; +-z as a delay plus a frame rotation by pi; +-I as delays) then Clifford (one pi/2 about +-x, +-y) per computational gate, 14 us dead time after every pulse, 2000 gates, final pi/2 pulses into |down> or |up>; 12.1 us pulses, +4.5 Hz and a constant 5e-4 Rabi error give 0.77(11)e-6 over sets of 32 sequences (paper 0.81(14)e-6), the Rabi error alone 0.31e-6 (paper 0.3e-6), the detuning alone 0.59e-6 with the -1.0 Hz ac Zeeman shift applied during pulses only and 0.80e-6 with 5.5 Hz everywhere (paper 0.7e-6)"
     corrected_form: "the paper leaves the identity timing ambiguous ('delays of the same duration (12 us) as the pi/2-pulses'); one delay per replaced pi/2 pulse (two slots each followed by the dead time) reproduces the budget, a single delay gives 0.53e-6; delta_eff = delta - delta_ac = +5.5 Hz (Section 9.2)"
   - id: anchor.m2.mount_pd6
@@ -651,18 +574,11 @@ records:
     source: "Noek 2013; Crain 2019; qutip_trap.light.bloch"
     equation: "from the slowest Liouvillian eigenvalue and the stationary weights: at s_o = 0.1, B = 1 G, R_d = 9.9734 Hz (Noek's (2/3)(1/3) form with s = s_o/3: 9.9208; Crain's 1/3: 14.881), R_b = 0.60939 Hz (Noek's (2/3) form 0.60634), R_b/R_d = 0.0611 (3/49 = 0.06122); at Crain's s_o = 2.45 and the fluorescence-optimal 4.7 G, R_d = 248.9 Hz (Noek 243.1, Crain 364.6) and R_b = 14.93 Hz (14.86), the slow mode separated from the fast ones by 3e3 to 3e4"
     corrected_form: "the angular algebra settles the Noek-Crain factor 2 in Noek's favour; R_d depends on the field through the bright-manifold redistribution (346.9 Hz at 1 G, near Crain's measured 341(13) Hz where the fluorescence is only 0.24 of its optimum), so the measured triple constrains the apparatus, not the prefactor"
-  - id: anchor.m3a.optical_pumping
-    symbol: "P(F=0)(t), photons scattered"
-    tag: recomputed here
-    section: "4.2.6; 8.1"
-    source: "qutip_trap.prep.pumping"
-    equation: "171Yb+ pumped on F = 1 -> F' = 1 at s_o = 0.5, 5 G, magic-angle polarization, by the exact exponential of the 64-dimensional Liouvillian: 99 percent in |0,0> at 2.6 us, 3.00 photons scattered on average (1/3 branching into |0> per excitation), residual F = 1 population 2e-6 from the 12.6 GHz off-resonant F = 0 -> F' = 1 excitation; at s_o = 0.02 the level-C curve agrees with the weak-drive rate equations built from the Lorentzian excitation rates and the channel branchings to 0.01"
-    corrected_form: "the photon count needs the coherent oscillations of the photon rate resolved (5 ns sampling): a 100 ns grid aliases them to 2.83 photons"
   - id: anchor.m3a.doppler_limit
     symbol: "nbar_D = (Gamma/4 nu)(1 + alpha/cos^2 theta_L) at Delta = -Gamma/2"
     tag: recomputed here
     section: "4.2.1; 4.2.8; 9.3"
-    source: "Itano-Wineland 1982; qutip_trap.prep.rates"
+    source: "Itano-Wineland 1982; qutip_trap.prep.doppler"
     equation: "two-level fixture, sigma+ along B, nu = Gamma/20, Omega = Gamma/20: level A (W(Delta -+ nu) coefficients) nbar_D = 6.5426 against (Gamma/4 nu)(1 + 2/5) = 7.0 and its zero-point-offset form 6.5; level C on the two populated states with 70 Fock levels 6.531 (boundary population 1.6e-5); the argmin over Delta on a 0.025 Gamma grid is -0.500 Gamma"
     corrected_form: "Itano and Wineland's E_K = 7 hbar Gamma/40 for alpha = 2/5 is the (1 + alpha)/4 form; the 1/2 is the zero-point offset (349.5 against 350 at Gamma/nu = 1e3)"
   - id: anchor.m3a.phonon_rate_equation
@@ -671,48 +587,27 @@ records:
     section: "4.2.3; 9.3"
     source: "Cirac 1992 Eqs. 29-32; qutip_trap.prep.level_c"
     equation: "mesolve on {sqrt(eta^2 A_+) a^dag, sqrt(eta^2 A_-) a} with A_+ = 3e4, A_- = 4e5 s^-1, eta = 0.1, n_0 = 5, 40 Fock levels reproduces the closed form to 3.73e-13 in <n> over 3 ms; the birth-death generator has zero column sums and the geometric stationary distribution (A_+/A_-)^n; A_- <= A_+ raises CoolingError rather than returning a negative occupation"
-  - id: anchor.m3a.yb171_repump_level_gap
-    symbol: "tau(3D[3/2]1/2), branching to S1/2"
-    tag: contested
-    section: "4.2.6; 4.5.6; 8.1"
-    source: "Olmschenk et al. 2007 (arXiv:0708.0657); qutip_trap.species.yb171 (MISSING)"
-    equation: "Olmschenk 2007 prints no lifetime or branching for the 935 nm upper level (its Sec. II says the ion 'quickly returns' to S1/2 and cites Bell et al., PRA 44, R20 (1991)), so the D3/2 -> 3D[3/2]1/2 -> S1/2 repump cycle cannot be closed from cited constants; the 171Yb+ detection model folds the 0.501 percent D3/2 branch back into the S line (leak = renormalize, a 0.5 percent effect on the saturation denominator) or routes it to a sink state that fills at Gamma_D P_e (leak = sink, trace preserved, about 200 photons before the ion is dark without a repump)"
-    corrected_form: "the D manifold and the repump beams of Section 8.1 need that constant cited; the two-tone 935 nm repump (3.07 GHz sideband) is otherwise the Floquet-fallback case the builder handles"
-  - id: conv.comb_sum_depth
-    symbol: "l_max = ceil(8/(pi nu_rep tau))"
-    tag: corrected
-    section: "4.3.7"
-    source: "Lee et al. 2016; Mizrahi et al. 2014; qutip_trap.light.comb"
-    equation: "the sech^2 fourth-order weight has half-width 1/(pi nu_rep tau) in the tooth separation l (189.470 at 120 MHz and 14 ps, 397.887 at 80 MHz and 10 ps) and its tail beyond k half-widths is about 4 e^{-2k} of the sum, so CombSpec.pair_order_max = None derives the depth as eight half-widths: 1516 at the Lee point and 3184 at the Mizrahi one; 'sum to |k| >~ 1000' follows from the envelope, and an explicit pair_order_max is an override validated against the derived depth"
-    corrected_form: "a literal depth of 1200 with a floor of 1000 is 2.6x too shallow at 80 MHz and 10 ps (nu_q = 12.642812118466 GHz), where the sum does not converge (79673.08 against the converged 79680.65 Hz); five half-widths leave 1.7e-5 at the Lee point, above the 1e-6 doubling tolerance, hence eight"
-  - id: anchor.m2.wineland_eight_term_stark
-    symbol: "Wineland 2003 Eq. 2.11, its Eq. 2.12 limit and its polarization null"
-    tag: contested
-    section: "4.3.2; 9.2; 12"
-    source: "Wineland et al. 2003 Eqs. 2.11-2.12; qutip_trap.validation.atomic_closed_forms"
-    equation: "the eight-term |2,2> <-> |1,1> differential shift is not transcribed (Wineland Eqs. 2.5-2.9 and 2.11-2.12 are not, and Eq. 2.14's rationals 2/3, 1/3, 1, 1/6, 1/2, 5/6 lack their channel assignment), and no numbers for it are invented. Asserted against the derived AtomicStructure sum on the 9Be+ fixture: the |2,2> <-> |1,1> differential shift changes sign between pure sigma+ and pure sigma- and has a polarization null (root-found at a monotone crossing), while the clock shift keeps its sign over a 41-point ellipticity scan and is unnullable; the mechanism is the three-index detuning, since the summed line strength out of each member of either pair is identical beam by beam to 1e-12, so one Delta per intermediate level would return zero for either"
-    corrected_form: "the eight-term shift and the Eq. 2.12 limit need the source (Section 12)"
   - id: conv.large_mode_atol_floor
     symbol: "atol = 1e-8 above d_m ~ 100, only when atol is the default"
     tag: corrected
     section: "5.3; 5.5; 9.9"
     source: "qutip_trap.dynamics.evolve"
-    equation: "the keying of Section 5.3 relaxes atol to LARGE_MODE_ATOL = 1e-8 above LARGE_MODE_DIMENSION = 100 when and only when the caller left SolverOptions.atol at its 1e-10 default; a deliberately tightened or loosened atol is used as given. dynamics.evolve.convergence_check(run, options) is the named-observable companion to hilbert.truncation.halving_test: it runs a closure at both tolerance pairs and reports max_t |delta p| per observable with a summary string, and it is applied to the Section 9.2 carrier and blue-sideband fixtures (both converge below 1e-6)"
+    equation: "the keying of Section 5.3 relaxes atol to LARGE_MODE_ATOL = 1e-8 above LARGE_MODE_DIMENSION = 100 when and only when the caller left Numerics.atol at its 1e-10 default; a deliberately tightened or loosened atol is used as given. dynamics.evolve.convergence_check(run, numerics) runs a closure at both tolerance pairs and reports max_t |delta p| per observable with a summary string, and it is applied to the Section 9.2 carrier and blue-sideband fixtures (both converge below 1e-6)"
     corrected_form: "max(atol, 1e-8) would clamp a deliberately tightened atol back to 1e-8 in a Section 5.5 convergence run and report a spuriously small change; the d_m = 121, 151 and 201 cases integrate on the first rung at the keyed 1e-8, and a stiff abort at d_m = 121 with atol 1e-10 does not reproduce on a one-mode detuned spin-dependent force"
   - id: conv.level_a_rates_participation
     symbol: "heating_{i,m} = c_{i,m}^2 [S_i(+nu) + 2D_i], cooling_{i,m} = c_{i,m}^2 [S_i(-nu) + 2D_i]"
     tag: derived
     section: "4.2; 4.2.2; 4.2.8; 13"
-    source: "qutip_trap.prep.rates"
+    source: "qutip_trap.prep.doppler"
     equation: "per illuminated ion and mode the phonon rates come from the dipole-force spectrum of the ion's internal steady state under all its beams (exact in the saturation) plus the per-channel emission diffusion, with the mass-weighted participation folded into the zero-point length x0_eff = |c| sqrt(hbar/(2 m_i omega)); the mode rate carries W_k = sum_i c_{i,k}^2 and nbar = sum heating/(sum cooling - sum heating) is participation independent when the ions see one intensity (a two-ion COM mode: nbar equal to the single ion's to 1e-6, the rate halved when one ion is illuminated)"
-    corrected_form: "the W(Delta -+ nu) closed form with each beam shifted in turn is the weak-drive alternative, refused above Omega/Gamma = 0.1 (Section 4.2.8 vii); a mode whose projection on every cooling beam is below (k_hat . e_m)^2 = 1e-2 raises UncooledModeError instead of returning a steady state (Section 4.2)"
+    corrected_form: "the W(Delta -+ nu) closed form with each beam shifted in turn is the weak-drive alternative, refused above Omega/Gamma = 0.1 (Section 4.2.8); a mode whose projection on every cooling beam is below (k_hat . e_m)^2 = 1e-2 raises UncooledModeError instead of returning a steady state (Section 4.2)"
   - id: conv.preparation_stage_order
     symbol: "Doppler -> sideband/EIT/PGC -> final pump"
     tag: corrected
     section: "4.2.6; 7.3"
     source: "qutip_trap.prep.sequence"
     equation: "PreparationSequence refuses a sequence that does not start with Doppler cooling, a sub-Doppler stage with no Doppler precooling before it, and a pump followed by a cooling stage with no later pump; the hand-off State takes each mode's nbar from the LAST stage that addressed it and each ion's internal state from its last pump (or an explicit state for an unpumped coolant/qubit)"
-    corrected_form: "not the reverse order (pump first); run.prepare takes the recipe the Device carries"
+    corrected_form: "not the reverse order (pump first); run.job.prepare takes the recipe the Device carries"
   - id: anchor.m3.doppler_rate_framework
     symbol: "nbar_D = (Gamma/4 nu)(1 + alpha/cos^2 theta_L) - 1/2"
     tag: recomputed here
@@ -743,7 +638,7 @@ records:
     symbol: "Delta nbar = t s Gamma^3 eta^2/(4 Delta_HF^2)"
     tag: recomputed here
     section: "4.2.8"
-    source: "Che et al. 2017; qutip_trap.prep.closed_forms"
+    source: "Che et al. 2017 Eq. 6"
     equation: "0.031117 for Che's 25Mg+ (t = 10 us, s = 1, Gamma = 2 pi x 41.3 MHz, eta = 0.3, Delta_HF = 2 pi x 1.789 GHz), 0.0049524 with ordinary Hz fed in (low by exactly 2 pi); R_sc = s Gamma^3/(8 Delta^2) = 1.7287e4 s^-1 times t times 2 eta^2 reproduces it"
   - id: anchor.m3.optical_pumping_recoil
     symbol: "171Yb+ pump: photons, error, recoil quanta per mode; spin-zero Zeeman pump: 3 photons"
@@ -753,26 +648,12 @@ records:
     equation: "F = 1 -> F' = 1 at s_o = 0.5 and 5 G from the uniform F = 1 mixture: 3.0006 photons, 99.99 percent in |0,0> at 5.25 us, error 2.48e-6 (the steady state), recoil heating 8.55e-3 quanta on a 1 MHz mode along B (eta_em = 0.0925) and 2.85e-3 / 2.95e-3 on the 3.0 / 2.9 MHz modes with the ion's participation and one alpha per emitted polarization; sigma+ light on S1/2 -> P1/2 of a spin-zero ion pumps |-1/2> into |+1/2> with exactly 3.0000 photons (pi branching 1/3) and error 2e-12"
     corrected_form: "the two-tone 9Be+ pump into |2,2> (F = 2 and F = 1 tones on one line) is the periodic-frame case of the builder, not a static solve"
   - id: conv.validity_assertions
-    symbol: "eta^2(2n+1) << 1, Omega << Gamma, W << nu and << Gamma_min, Gamma' and gamma' << nu, Gamma > omega_R, s_aux << 1, |delta_aux| << Gamma_10 + Gamma_12"
+    symbol: "eta^2(2n+1) << 1, Omega << Gamma, W << nu and << Gamma_min, Gamma > omega_R"
     tag: corrected
     section: "4.2.8"
     source: "qutip_trap.prep.validity"
-    equation: "the seven Section 4.2.8 (vii) conditions raise ValidityError at run time: assert_weak_drive on lorentzian_scattering_rate, stenholm_coefficients and eit_rate_coefficients (Omega/Gamma above 0.1, bloch.WEAK_DRIVE_MAX), assert_resolved_linewidth on sideband_floor (Gamma/nu above 0.1), assert_lamb_dicke on every level-A mode (eta^2 (2 nbar + 1) above 0.25), assert_adiabatic on every level-A mode (W above 0.1 nu or 0.1 min Gamma), EffectiveTwoLevel.assert_resolved (max(Gamma', gamma') above nu/5), assert_three_level_valid inside effective_two_level, and assert_doppler_recoil_limit inside doppler_cooling (Gamma <= omega_R = hbar k^2/2m)"
-    corrected_form: "every guard takes an explicit escape keyword (allow_saturation, allow_unresolved, allow_strong_coupling, allow_fast_cooling, allow_invalid, allow_recoil_limited) for a source's own out-of-regime fixture: Marzoli's Fig. 3 (delta_aux = -Gamma_10), Morigi's EIT fixture (Omega_g 17 against gamma 20 MHz), Lechner's probe (Omega_pi/gamma = 0.29) and the 7/12 and 13/20 sideband-floor normalizations at Gamma/nu = 2"
-  - id: conv.doppler_optimizes_detuning_only
-    symbol: "optimize_detuning over Delta; s and k_hat fixed"
-    tag: contested
-    section: "4.2.1"
-    source: "qutip_trap.prep.doppler"
-    equation: "only a common frequency offset of one beam group is optimized over the participation-weighted mean of the per-mode nbar; s and k_hat are inputs. The Doppler-limit nbar is nearly s independent, (Gamma/4 nu)(1 + alpha/cos^2 theta_L) sqrt(1 + s) to the force model's accuracy, but the rate that sets the stage duration depends on s and is not optimized; a three-beam geometry choice is Itano and Wineland's three_beam_optimum"
-    corrected_form: "the optimization over (Delta, s, k_hat) that Section 4.2.1 names is restricted to Delta; the three-beam apportionment closed form is available separately (anchor.m3.itano_three_beam_optimum)"
-  - id: anchor.m3.itano_three_beam_optimum
-    symbol: "gamma_si/gamma_tot = sqrt(f_si)/sum_j sqrt(f_sj); hbar Gamma/4 per mode"
-    tag: derived
-    section: "4.2.8; 9.3"
-    source: "Itano and Wineland, Phys. Rev. A 25, 35 (1982) Eqs. 20-26; qutip_trap.prep.closed_forms"
-    equation: "axis i takes friction from its own beam only (proportional to gamma_si) and the emission recoil from all three (f_si gamma_tot), so E_i is proportional to 1 + f_si gamma_tot/gamma_si and minimizing sum_i E_i at fixed sum_i gamma_si gives gamma_si proportional to sqrt(f_si); at that optimum E_i = (hbar Gamma/4)(1 + sqrt(f_si) sum_j sqrt(f_sj)). For an isotropic pattern (f_si = 1/3, the Cartesian sum rule of Section 4.2.8) the shares are 1/3 each and E_i = hbar Gamma/2 per mode, whose kinetic half is EXACTLY Itano's hbar Gamma/4 per mode, the same number as the single-beam (1 + alpha)/4 form at alpha = 1. For the sigma pattern along z (f = 3/10, 3/10, 2/5) the shares are (0.3169873, 0.3169873, 0.3660254) and the optimum total is 5.9856 hbar Gamma/4 against the uniform split's 6"
-    corrected_form: "one beam along x leaves <n_y> growing linearly: an unaddressed axis has heating = cooling = 2D exactly, so W_m = 0, no steady state exists (CoolingError) and <n>(t) = n_0 + 2D t; UncooledModeError is the same statement as a refusal"
+    equation: "the Section 4.2.8 conditions raise ValidityError at run time: assert_weak_drive on lorentzian_scattering_rate, stenholm_coefficients and eit_rate_coefficients (Omega/Gamma above 0.1), assert_lamb_dicke on every level-A mode (eta^2 (2 nbar + 1) above 0.25), assert_adiabatic on every level-A mode (W above 0.1 nu or 0.1 min Gamma), and assert_doppler_recoil_limit inside doppler_cooling (Gamma <= omega_R = hbar k^2/2m)"
+    corrected_form: "every guard but assert_adiabatic takes an explicit escape keyword (allow_saturation, allow_strong_coupling, allow_recoil_limited) for a source's own out-of-regime fixture: Morigi's EIT fixture (Omega_g 17 against gamma 20 MHz) and Lechner's probe (Omega_pi/gamma = 0.29)"
   - id: conv.spin_motion_phases
     symbol: "phi_s, phi_m"
     tag: verified
@@ -780,13 +661,6 @@ records:
     source: "Haljan 2005; Lee 2005 (opposite sign, converted at ingest)"
     equation: "phi_s = (phi_b + phi_r)/2, phi_m = (phi_b - phi_r)/2 of the two tone phases; the bichromatic force acts about phi_s + pi/2 in the same-Delta-k geometry (i eta(a + a^dag) carries an i), so MS(phi_0, phi_1, theta) sets phi_s,i = phi_i - pi/2 (qutip_trap.control.schedule)"
     corrected_form: "Lee writes phi_S = -(half-sum); a '+phi' force axis would be a quarter-turn error"
-  - id: conv.motion_phase_default
-    symbol: "phi_m = 0"
-    tag: recomputed here
-    section: "4.4.1; 4.4.3; 9.4"
-    source: "Roos 2008 (psi = (4 Omega_Roos/delta) sin zeta); qutip_trap.control.shaping"
-    equation: "the played waveforms default to equal tone phases (phi_b = phi_r, the force Omega cos(mu t)); the carrier Omega cos(mu t - phi_m) rotates the spin at F(t) = (2 Omega/mu)[sin(mu t - phi_m) + sin phi_m], whose mean tilts the force axis by psi = (2 Omega/mu) sin phi_m"
-    corrected_form: "the sine beat-note convention of Section 4.4.3 (phi_b - phi_r = pi, force zero at t = 0) is for the closed forms only: played literally at Omega/mu = 0.1 it tilts the axis by 0.202 rad and leaks sin^2 psi = 3.8 % into |du>, |ud> (concurrence 0.9597 against 0.9999 with equal phases); the kernels carry phi_m explicitly, and Choi's sin(mu t) e^{i omega t} is their phi_m = pi/2 case"
   - id: conv.light_shift_force
     symbol: "Omega_LS"
     tag: derived
@@ -805,16 +679,9 @@ records:
     symbol: "eps_ent"
     tag: verified
     section: "4.4.7; 9.4"
-    source: "Landsman 2019; Leung 2018; Zhu 2006; qutip_trap.validation.two_qubit_closed_forms"
+    source: "Landsman 2019; Leung 2018; Zhu 2006"
     equation: "an open loop (1.3 loops) with the first-order force: the final mode energy equals sum_j |alpha_j|^2, 1 - F_ent = eps_ent to first order, the average gate infidelity is (4/5) eps_ent, and the |dd> state infidelity equals eps_ent"
     corrected_form: "Zhu's printed sum beta (|alpha_j|^2 + |alpha_n|^2)/4 is one quarter of the direct integration for the |dd> input with Choi's alpha, consistent only if Zhu's alpha is twice Choi's (his Eq. 8 is inconsistent with his Eq. 7 by that factor); it is not a distinct fidelity measure"
-  - id: anchor.m4.baldwin_echo
-    symbol: "diag(1, i, i, 1)"
-    tag: recomputed here
-    section: "4.4.4; 9.4"
-    source: "Baldwin et al. 2021 Eq. 1; qutip_trap.validation.two_qubit_closed_forms"
-    equation: "the printed H = eta Omega sum_j (-1)^j (1 + sigma_z^j)(a e^{i delta t} + h.c.) integrated through R_x(pi) U R_-x(pi) U at 8 pi (eta Omega/delta)^2 = pi/4 gives diag(1, -i, -i, 1) up to a global phase for tones above the mode (the conjugate of the printed diag(1, i, i, 1), whose sign the detuning side sets); off-diagonal elements vanish; Phi_loop = 2 pi (eta Omega/delta)^2 on S^2 per loop"
-    corrected_form: "the printed H fixes only |Phi|: the printed diag(1, i, i, 1) belongs to the other detuning side"
   - id: anchor.m4.fm_and_fourier_robustness
     symbol: "d alpha/d delta_1"
     tag: recomputed here
@@ -829,27 +696,6 @@ records:
     source: "Milne et al., PRApplied 13, 024022 (2020); Green and Biercuk, PRL 114, 120502 (2015); Lu et al., Nature 572, 363 (2019)"
     equation: "no source of Section 4.4.3 gives a PM solver (AM: Zhu, Choi; FM: Leung; AMFM: Blumel), so the family implemented is the piecewise-constant per-segment motion phase at fixed amplitude and beat note, alpha_{i,m} = i eta_{i,m} Omega sum_k e^{i phi_k} F_k^{(m)} with the same symmetrized double integral and the phases inside, solved by least squares like the FM vertices and scaled to |chi| = chi_target; the three sources above are its provenance"
     corrected_form: "SegmentedEnvelope carries an optional per-segment phase offset in the two legs' half-difference (the spin phase, the half-sum, never moves); Milne's N + 1 phase segments need a time-symmetric profile this solver does not impose (at 3 segments |alpha| ~ 1e-2 on the two-ion fixture, where Choi's 2N + 1 = 5 close both modes to 3e-17), and the motion phase is the modulation parameter, so Roos's spin-axis tilt is intrinsic (1.8e-2 leakage against 4.7e-4 for FM and 4.7e-7 for Fourier AM)"
-  - id: conv.gradient_drive
-    symbol: "Device.gradient, kind = 'gradient'"
-    tag: derived
-    section: "4.4.5; 9.4"
-    source: "Srinivas et al., Nature 597, 209 (2021) Eq. 1; qutip_trap.light.microwave; qutip_trap.dynamics.hamiltonian"
-    equation: "the near-field microwave-gradient drive is device-level: GradientField carries the electrodes' oscillating gradient amplitude d(B_g . B_hat)/dr (T/m), its frequency omega_g, its axis, the two microwave tones' field amplitude B_1 and the gradient's phase; derive_gradient_drive returns Omega_mu = (B_x/2 hbar)<dn|mu_x|up> from the magnetic-dipole coupling, d omega_0/dB from the hyperfine-Zeeman diagonalization, and the per-(ion, mode) force w_{i,m} = (1/2)(d omega_0/dB) grad(B)(r_hat . e_hat_m) c_{i,m} sqrt(hbar/(2 m_i omega_m)) from the mode's mass-weighted pattern; the builder's 'gradient' branch adds sum_{i,m} w_{i,m} sigma_z^i (a_m + a_m^dag) cos(omega_g t + phi_g) beside the two microwave tones (BuilderOptions.gradient_form = 'bare', the default, so that J_2(4 Omega_mu/delta) and the J_0 = 0 decoupling emerge from the exact dynamics) or the eliminated (w_{i,m}/2) J_2 sigma_z^i (a_m e^{i(omega_g + 2 delta) t} + h.c.) alone ('dressed', recorded in approximations)"
-    corrected_form: "r_0 with the total two-ion mass is right: on an antisymmetric mode w_{i,m} = +-2 Omega_g exactly with Omega_g = (r_0/4) grad(B)(d omega_0/dB) and r_0 = sqrt(hbar/(2 M_total omega_m)); a gradient gate needs a field-sensitive qubit (d omega_0/dB vanishes at a clock point, so Srinivas's |3,3> <-> |2,2> of 25Mg+), and the linear AM closure algebra does not apply because the force is a Bessel function of the tone amplitude (Omega_g J_2(4 Omega_mu/delta)): Srinivas's Walsh sign modulation is the applicable family, played through the sigma_z spin-echo path, and the closure solvers do not cover it"
-  - id: conv.no_stark_imbalance
-    symbol: "xi = (delta eta^2/|eps|)(phi/pi)"
-    tag: contested
-    section: "4.4.1"
-    source: "Kirchmair 2009; qutip_trap.control.shaping"
-    equation: "the solvers accept an imbalance that splits the two legs' amplitudes, and no caller passes a non-zero value: the compensation law xi = (delta eta^2/|eps|)(phi/pi), the differential shift delta_ac^(C) = 2(Omega_r^2 - Omega_b^2)/delta = -8 Omega^2 xi/delta, the delta^(SB) = (eps/2) xi n term that breaks thermal-state operation and the third-tone alternative are not implemented"
-    corrected_form: "the imbalance is carried by the two legs' amplitudes, not a CalibrationTable entry, and the closed forms ignore it (one amplitude per ion and segment), so a waveform with imbalance != 0 carries the balanced pulse's chi_m and alpha_m"
-  - id: conv.solvers_read_the_device_modes
-    symbol: "gate_modes(mode_frequencies_hz=...), CalibrationTable.lamb_dicke"
-    tag: contested
-    section: "7.3; 7.9"
-    source: "qutip_trap.calibration.surrogate; qutip_trap.run.space"
-    equation: "Section 7.3's contract is that the solvers work at what the calibration table says, never at the device's hidden truth; every production caller builds GateModes from the device's crystal instead: gate_modes has a mode_frequencies_hz override no caller passes, CalibrationTable.lamb_dicke is written by the sideband experiment and read by no solver, and gate_modes has no eta override"
-    corrected_form: "not wired: threading the table's beliefs into the surrogate and the resolved-mode selection would change what the full calibration converges to and which mode classes are selected"
   - id: anchor.m4.kirchmair_ca40
     symbol: "F = 0.993(1), 0.971(2), parity 0.964"
     tag: recomputed here
@@ -862,7 +708,7 @@ records:
     tag: recomputed here
     section: "4.4.3; 9.4"
     source: "qutip_trap.calibration.entangling"
-    equation: "every solution is verified by exact integration of the full Hamiltonian through the PulseEngine; on the two-ion fixture: FM (dims [2,2,11,10]) exact chi/surrogate = 0.9847 with leakage 4.7e-4, stabilized Fourier AM (dims [2,2,10,10]) 0.9831 with leakage 4.7e-7, PM (dims [2,2,11,12]) 0.9528 with leakage 1.8e-2; boundary populations below 1e-15 throughout"
+    equation: "every solution is verified by exact integration of the full Hamiltonian through the JOINT_EXACT engine; on the two-ion fixture: FM (dims [2,2,11,10]) exact chi/surrogate = 0.9847 with leakage 4.7e-4, stabilized Fourier AM (dims [2,2,10,10]) 0.9831 with leakage 4.7e-7, PM (dims [2,2,11,12]) 0.9528 with leakage 1.8e-2; boundary populations below 1e-15 throughout"
     corrected_form: "the PM family's leakage is an order of magnitude above the others' because its motion phase is its modulation parameter and Roos's spin-axis tilt cannot be tuned away (conv.pm_solver)"
   - id: conv.readout_polarity_scheme
     symbol: "ReadoutScheme"
@@ -899,13 +745,6 @@ records:
     source: "Noek 2013 Eq. 4 with ṗ_1 = R_b p_0 - R_d p_1"
     equation: "the calibration fit for (εR_o, R_d, R_b) from bright-prepared records; equals the exact chain's mean when only R_d and R_b act"
     corrected_form: "the fit is degenerate at bin-time windows (tens of us: R_b unconstrained, the least-squares returned 1e4 Hz); it needs windows long against 1/R_d and 1/R_b, as Noek's 60 ms, so calibrate_detection draws a separate long record set for the fit"
-  - id: anchor.m5.yb171_rate_object
-    symbol: "R_o, R_d, R_b"
-    tag: recomputed here
-    section: "8.1; 8.8; 9.5"
-    source: "Noek 2013; qutip_trap.readout.fluorescence"
-    equation: "the Bloch solve through rates_from_bloch: R_o/closed = 0.9948 (s_o = 0.1, 1 G) and 0.9969 (2.45, 4.7 G) with the ceiling 1/4 asserted; R_d and R_b within 0.5 to 2.4 % of Noek's prefactors; R_b/R_d = 0.0611 and 0.0600 against 3/49 = 0.0612 and the measured 0.048 (30 % band)"
-    corrected_form: "R_o = 0.0880 Gamma is at Noek's s = 0.815, i.e. s_o = 2.45 (the two saturation parameters of Section 8.8 are not aliases); at s_o = 0.815 the form gives 0.0383 Gamma"
   - id: anchor.m5.crain_corrections_and_operating_point
     symbol: "eps_B(11 us), eps at t*"
     tag: recomputed here
@@ -960,14 +799,14 @@ records:
     tag: corrected
     section: "5.2; 11.3; 5.5"
     source: "qutip_trap.run.space"
-    equation: "per mode, from the Section 4.4.3 integrals of every played waveform with the prepared occupations: dropped when |alpha|^2 (2 nbar + 1) < 1e-6 and |chi| < 1e-4; frozen when |alpha|^2 (2 nbar + 1) < SolverOptions.freeze_alpha_max (1e-4) and |chi| < freeze_chi_max_rad (0.05); resolved otherwise, with the cap from the loop radius eta Omega/epsilon, the occupation and the Section 5.1.1 margin; a frozen mode's chi is absorbed by the exact spot check on the reduced space (the frozen run is calibrated to the same angle) and reported; modes only carrier pulses touch are frozen"
+    equation: "per mode, from the Section 4.4.3 integrals of every played waveform with the prepared occupations: dropped when |alpha|^2 (2 nbar + 1) < 1e-6 and |chi| < 1e-4; frozen when |alpha|^2 (2 nbar + 1) < Numerics.freeze_alpha_max (1e-4) and |chi| < freeze_chi_max_rad (0.05); resolved otherwise, with the cap from the loop radius eta Omega/epsilon, the occupation and the Section 5.1.1 margin; a frozen mode's chi is absorbed by the exact spot check on the reduced space (the frozen run is calibrated to the same angle) and reported; modes only carrier pulses touch are frozen"
     corrected_form: "no source gives a value for the freezing tolerance of the residual displacement: 1e-4 is a default, an approximation of the truncation kind reported per run"
   - id: conv.fock_sum_branches
     symbol: "rho(0) = sum_b w_b |b><b|"
     tag: background
     section: "5.3; 5.7; 3.4"
     source: "qutip_trap.run.job"
-    equation: "the prepared state is diagonal in the computational and Fock bases (pumped populations per ion, thermal weights per carried mode, the frozen modes' Fock states included), so its branches are evolved as pure states with sesolve and recombined with their weights, exact up to the branches below SolverOptions.branch_weight_min (1e-6) whose total weight is reported and renormalized; Diagnostics.trajectories counts the branches"
+    equation: "the prepared state is diagonal in the computational and Fock bases (pumped populations per ion, thermal weights per carried mode, the frozen modes' Fock states included), so its branches are evolved as pure states with sesolve and recombined with their weights, exact up to the branches below Numerics.branch_weight_min (1e-6) whose total weight is reported and renormalized; Diagnostics.trajectories counts the branches"
     corrected_form: "a joint-space mesolve at dimension 400 would need a 1.6e5 x 1.6e5 Liouvillian with about 6e7 non-zeros per drive operator; Lindblad channels take the trajectory path"
   - id: conv.terminal_measurement_event
     symbol: "ScheduledEvent('measure', ions, t_end, t_end + window)"
@@ -983,7 +822,7 @@ records:
     equation: "with HardwareChain.phase_continuous = False every leg of an entangling waveform carries the phase offset 2 pi mu_leg t_g (red and blue opposite, the spin phase unchanged, the virtual-Z frame intact), so the beat note starts at zero phase at the gate start as it did in the t = 0 calibration; with phase-continuous tones the start phase zeta = 2 pi mu t_g is part of the gate and the tilt sin^2[(4 Omega-bar/mu) sin zeta] is reported in the intrinsic budget"
     corrected_form: "the builder's per-pulse phase_mode='reset' resets at every segment of a multi-segment waveform (0.2-cycle jumps at the segment edges of an AM pulse open the loops: leakage 0.31); on the two-ion fixture the same calibrated gate has fidelity 0.99995 at zeta = 0 or pi and 0.98903 at zeta = +-pi/2, so a gate started 21.27 beat cycles into a circuit under continuous tones is not the gate that was calibrated"
   - id: anchor.m6.bell_state
-    symbol: "two-ion Bell circuit through run() (Section 9.6 row 1)"
+    symbol: "two-ion Bell circuit through Machine.run (Section 9.6 row 1)"
     tag: recomputed here
     section: "9.6; 3.4; 8.6"
     source: "the two-ion 171Yb+ example device, qutip_trap.device.presets (global 355 nm pair at 100.93 kHz, 2.5 um addressing pairs with eps = 0.0220, oblique 369.5 nm cooling and detection beam, Crain SNSPD)"
@@ -996,13 +835,6 @@ records:
     source: "one-way random-effects decomposition; qutip_trap.run.job"
     equation: "with S samples of M_s shots and per-sample frequencies p_s, the pooled estimate is p_hat = sum M_s p_s / sum M_s and Var(p_hat) = Var(p_s)/S, where Var(p_s) = sigma^2_between + p(1 - p)/M is the TOTAL per-sample variance; Var(p_s) is estimated by the shot-count-weighted sample variance sum_s M_s (p_s - p_hat)^2 / [(S - 1) sum_s M_s], which reduces to var(p_s, ddof=1)/S for equal M_s, and n_eff = p(1 - p)/Var(p_hat), the minimum over the bitstrings seen, capped at the shot count"
     corrected_form: "adding the within-sample binomial term mean[p_s(1 - p_s)/M_s]/S to var(p_s, ddof=1)/S counts it twice (error bars up to sqrt(2) too large: n_eff/shots = 0.547 at S = 8 on i.i.d. Bernoulli shots, where 1.0 is correct)"
-  - id: conv.dropped_mode_has_no_dynamics
-    symbol: "HilbertSpace.dropped"
-    tag: corrected
-    section: "5.2; 11.3; 9.8"
-    source: "qutip_trap.run.space; qutip_trap.dynamics.space"
-    equation: "the class follows the contribution pair alone - dropped when |alpha_m|^2 (2 n_m + 1) < 1e-6 AND |chi_m| < 1e-4, whatever couples to the mode; the coupling test (|eta| > 1e-12 for some drive) decides only the modes NO entangling gate touches (no contribution): frozen when a carrier pulse couples to them, dropped when nothing does. A dropped mode has no tensor factor (like a frozen one) and additionally no Debye-Waller factor and no Fock branch, so it evolves freely and is not modelled at all, which is what makes SpaceSelection.dropped_contribution the loss nothing absorbs"
-    corrected_form: "the drop test is not intersected with the coupling test (which would leave 'dropped' unreachable and report a three-ion GHZ tilt mode with |alpha|^2 (2n+1) = 3.5e-33 as frozen), and a dropped mode is not a frozen one (no Debye-Waller factor, no Fock branch)"
   - id: conv.shot_blocks_per_sample
     symbol: "sample k owns shots [sum_{j<k} M_j, sum_{j<=k} M_j)"
     tag: corrected
@@ -1010,19 +842,12 @@ records:
     source: "qutip_trap.run.pipeline"
     equation: "shots are allocated in CONTIGUOUS BLOCKS, M_k = shots // S + 1 for the first shots % S samples, and sample k is drawn at the shot clock t0 + (sum_{j<k} M_j) T_rep; Diagnostics.shots_per_sample_realized reports the realized block sizes and Result.sample_of_shot the shot -> sample map Section 8.6 asks for"
     corrected_form: "not round-robin: one quasi-static draw per contiguous block of the shot clock is what the hardware does, and round-robin would give every sample the same mean shot time, so a drift over the sample times would produce no between-sample spread"
-  - id: conv.improved_sampling_single_segment
-    symbol: "mcsolve improved_sampling; deterministic_weights"
-    tag: corrected
-    section: "3.4; 5.3; 9.9"
-    source: "QuTiP 5.3.1 McResult; qutip_trap.dynamics.engine"
-    equation: "with improved_sampling=True QuTiP evolves the no-jump trajectory once as a deterministic member of weight p_no-jump and gives the ntraj stochastic trajectories the residual weight, so the engine's per-member weights are res.deterministic_weights for res.deterministic_trajectories and res.runs_weights for res.trajectories; drawing uniformly from the stored trajectories instead biases every per-shot observable by p_no-jump. The engine uses it when the trajectory path is entered exactly ONCE in a schedule (SolverOptions.improved_sampling, default True); a multi-segment schedule keeps uniform-weight trajectories and says so in the run's notes"
-    corrected_form: "the weights are McResult.deterministic_weights (one per initial state) and runs_weights (per stochastic trajectory, matched to the keyed seeds through res.seeds); the single-segment restriction is this engine's: applied per segment the no-jump/jump split gives 2^n weighted pure members that cannot be merged on the trajectory path, and pruning them at branch_weight_min would discard the jump weight (per-segment jump probability 1e-5 on the two-ion fixture); a per-segment keyed resampling to ntraj members would be the bounded fix and is not implemented"
   - id: conv.trajectory_count_two_phases
     symbol: "target_tol -> n_est -> replay of n_est keyed seeds"
     tag: corrected
     section: "3.4; 5.4"
     source: "qutip_trap.dynamics.engine; QuTiP 5.3.1 mcsolve target_tol"
-    equation: "phase one runs mcsolve with target_tol on the population e_ops already assembled (SolverOptions.e_ops_for_target_tol gates it, SolverOptions.trajectory_target_tol sets the tolerance), under a SERIAL map so the firing point is reproducible, with ntraj as its cap and TARGET_TOL_MIN_TRAJECTORIES = 8 as its floor; phase two replays a keyed seed list of the estimated length"
+    equation: "phase one runs mcsolve with target_tol on the population e_ops already assembled (Numerics.trajectory_target_tol sets the tolerance), under a SERIAL map so the firing point is reproducible, with ntraj as its cap and TARGET_TOL_MIN_TRAJECTORIES = 8 as its floor; phase two replays a keyed seed list of the estimated length"
     corrected_form: "trajectory_target_tol defaults to None (the fixed ntraj with its keyed seed list) because QuTiP 5.3.1's target_tol accepts a zero-variance first batch (on a damped two-level system 26 trajectories at tol 0.1 and 604 at 0.02, but 2 at 0.005 and 0.001), and its firing point depends on scheduling, which the fixed-seed replay repairs"
   - id: anchor.m6.section_11_1_native_identity
     symbol: "the Section 11.1 pulse against MS(0, 0, pi/2)"
@@ -1036,13 +861,13 @@ records:
     tag: background
     section: "4.2.6; 3.4"
     source: "qutip_trap.prep.recipe; qutip_trap.device.presets"
-    equation: "standard_recipe builds a recipe only for a SINGLE-SPECIES crystal (prep/recipe.py _structure) whose qubit's lower level is an F = 0 hyperfine state (its pump is the F = I + 1/2 -> F' = I + 1/2 line of the cycling transition); every other qubit - optical, Zeeman, and any mixed-species crystal - needs an explicit Device.preparation, which run() honours. device/presets.ca40_optical_recipe is the worked example for a 40Ca+ optical qubit: 397 nm Doppler cooling at -Gamma/2 along the oblique path with the 866 nm D3/2 repump, no sideband stage, and a pump into S1/2 mJ = -1/2 by 397 nm sigma- light along B with the same repump (the I = 0 analogue of the 171Yb+ F = 1 -> F' = 1 pump)"
+    equation: "standard_recipe builds a recipe only for a SINGLE-SPECIES crystal (prep/recipe.py _structure) whose qubit's lower level is an F = 0 hyperfine state (its pump is the F = I + 1/2 -> F' = I + 1/2 line of the cycling transition); every other qubit - optical, Zeeman, and any mixed-species crystal - needs an explicit Device.preparation, which a run honours. device/presets.ca40_optical_recipe is the worked example for a 40Ca+ optical qubit: 397 nm Doppler cooling at -Gamma/2 along the oblique path with the 866 nm D3/2 repump, no sideband stage, and a pump into S1/2 mJ = -1/2 by 397 nm sigma- light along B with the same repump (the I = 0 analogue of the 171Yb+ F = 1 -> F' = 1 pump)"
     corrected_form: "standard_recipe covers only a single-species crystal with an F = 0 qubit level; an optical, Zeeman or mixed-species qubit needs an explicit Device.preparation (ca40_optical_recipe is the worked example)"
   - id: conv.noise_routing
     symbol: "route (b) Lindblad / (c) quasi-static / (d) sampled / (e) events"
     tag: verified
     section: "6.1; 5.5; 13"
-    source: "qutip_trap.noise.model; qutip_trap.noise.processes"
+    source: "qutip_trap.noise.model; qutip_trap.noise.sampling"
     equation: "a NoiseSpectrum's tabulated band is synthesized per dynamical sample on a fixed grid (x(t) = sum_k sqrt(S(omega_k) d omega_k/pi)[a_k cos + b_k sin], <x^2> = (1/pi) int S d omega); its white_level is a Lindblad rate; Drift records are OU chains over the shot clock; collisions are Poisson events per shot"
     corrected_form: "no heuristic on a spectrum's shape decides its route: the two fields declare the split; a grid that cannot resolve the band refuses with the remedy (declare the band above it as white_level)"
   - id: conv.qubit_dephasing_from_field_noise
@@ -1066,53 +891,11 @@ records:
     source: "Uys 2010 Eqs. 6-8; Ozeri 2007; Joshi 2020; qutip_trap.noise.scattering"
     equation: "one operator per (emitted polarization, direction node): Rayleigh diagonal over the resolved levels (Gamma_el/4 dissipator prefactor automatically), one Raman operator per (a, b), the out-of-manifold rates summed into the SINK at d > 2 and reported at d = 2; the absorbed beam's e^{+i k_b x} multiplies the emission kick; six axis directions about B with weights alpha_par/2 and alpha_perp/2 are exact in the first and second moments for every dipole pattern and every mode axis; rates scale with the played intensity as (Omega/Omega_nom)^p, p the Stark scaling power"
     corrected_form: "the absorption factor in an eliminated jump operator is this construction's own (Section 13's 'never both in a collapse operator' rule is for the explicit multi-level builder); the recoil quanta per photon eta_abs^2 + alpha eta_em^2 are the test"
-  - id: anchor.m7.intensity_noise_factor_two
-    symbol: "the factor N of the intensity-noise infidelity"
-    tag: corrected
-    section: "4.4.7; 6.4"
-    source: "qutip_trap.validation.noise_closed_forms"
-    equation: "the measured A/(Gamma_I t_g eta^2/2) is N (1.00, 2.00, 3.01, 2.00, 2.00, 3.00 at (N, K) = (1,1), (2,1), (3,1), (2,2), (2,3), (3,2)), not a factor 2: A is exact at N = 1 with the carrier-contrast Gamma_I"
-    corrected_form: "superseded by anchor.m7.intensity_noise_n_ions, which carries the derivation and the measurements"
-  - id: conv.dc_floor_detuning_normalization
-    symbol: "eps_d = 2 beta_d/Omega, so the detuning moment is 4 <beta_d^2>"
-    tag: corrected
-    section: "6.9; 4.3.5; 13"
-    source: "Mount 2015; Kabytayev 2014; qutip_trap.noise.decoupling"
-    equation: "leading_coefficient fits c-hat against Mount's R = exp[-(i/2) theta (1 + eps_a)(sigma_phi + eps_d sigma_z)]. Matching that against Section 6.9's H_0 = beta . sigma (no 1/2 on the Pauli vector) gives eps_a = beta_a/Omega but eps_d = 2 beta_d/Omega, because beta_d is HALF the splitting fluctuation while eps_d scales the whole splitting. Measured: the exact frozen average of a primitive pi pulse is 4(beta_d/Omega)^2 and sin^2(pi beta_a/2 Omega) -> (pi^2/4)(beta_a/Omega)^2"
-    corrected_form: "pairing c-hat_d with <beta_d^2>/Omega^2 under-reports every detuning dc floor by 4^(m+1) (exact-to-reported 4.0000 at m = 0 for the primitive, SK1, BB1 and SCROFULOUS, converging to 16 for CORPSE at m = 1); the pinned floors (SK1 5.87365e-6 at var = 2.07e9/pi, Omega = 1.5e6) are the c-hat arithmetic and are unchanged"
-  - id: conv.dc_floor_decoupling_sequences
-    symbol: "infidelity_dc = <1 - F> over a Gaussian frozen beta (Gauss-Hermite), not c-hat (2m+1)!! rel^{m+1}"
-    tag: derived
-    section: "6.9"
-    source: "qutip_trap.noise.decoupling (frozen_noise_floor)"
-    equation: "for a DecouplingSequence or Schedule no source supplies a c-hat, and c-hat (2m+1)!! rel^{m+1} is only the leading term of the exact Gaussian average of 1 - (1/4)|Tr U_c^dag U|^2 under a constant beta, so the average itself is reported (Gauss-Hermite), the larger of it and the filter-function estimate at every point; it reproduces the composite-pulse c-hat floors to 5e-4 relative (2e-3 for SCROFULOUS, whose O(beta^4) remainder is the library's largest); on a 300 Hz Gaussian band with 4 us pi pulses over 200 us: free induction 0.1237 against a first-order 0.1386, Hahn 2.30e-5 against 1.26e-3, CPMG-2 8.91e-6 against 9.03e-6, CPMG-4 8.93e-6 against 1.29e-6"
-    corrected_form: "the first-order estimate alone reports spuriously low infidelities for the band that dominates a real trap (CPMG-4 is 7x low)"
-  - id: anchor.m7.intensity_noise_n_ions
-    symbol: "A = N Gamma_I t_g eta^2/2, B = A x 3(N - 1)/(4K)"
-    tag: contested
-    section: "4.4.7; 6.4; 9.7"
-    source: "Bermudez 2017, re-derived (force model, d = 40, k = 2e-6, eta = 0.1, mesolve atol 1e-12); qutip_trap.validation.noise_closed_forms"
-    equation: "in the sigma_alpha eigenbasis block s closes with a residual displacement s x delta_alpha, <|delta_alpha|^2> = f^2 (2 Gamma_I/Omega^2) t_g with f = eta Omega/2; the pair (s, s') decoheres by exp(-|s - s'|^2 <|delta_alpha|^2>(2 nbar + 1)/2), so 1 - F = Var(sum_i s_i)(2 nbar + 1)(eta^2/2) Gamma_I t_g and Var = N for |0...0>. Measured A/(Gamma_I t_g eta^2/2) = 1.00002, 2.00035, 3.00622, 2.00003, 1.99998, 3.00038 at (N, K) = (1,1), (2,1), (3,1), (2,2), (2,3), (3,2), and B/[Gamma_I t_g eta^2 3(N - 1)/(8K)] = 1.99939, 2.99441, 1.99989, 2.00005, 2.99922: a factor N in both terms; B/A = 3(N-1)/(4K) exactly (0.74964, 1.49411, 0.37497, 0.25001, 0.74971)"
-    corrected_form: "the Gamma_I convention is settled: A = Gamma_I t_g eta^2/2 is exact at N = 1 with Gamma_I the carrier-contrast rate k Omega^2, and an N-ion drive multiplies both terms by N (Var(sum s_i) = N, Hughes's lambda^2_{S_alpha}); only a global intensity-noise operator gives B/A = 3(N-1)/(4K), while N independent per-beam operators leave A(N) unchanged and halve the ratio to 3(N-1)/(8K), so the B term describes one laser shared by the register"
-  - id: anchor.m7.hughes_two_term
-    symbol: "I = (2 nbar + 1)|alpha_t|^2 Var(S_alpha) + (delta_theta^2/4) Var(S_alpha^2)"
-    tag: extracted
-    section: "9.7; 6.2"
-    source: "Hughes et al., arXiv:2510.17286 (2025), Appendix B Eq. 33"
-    equation: "alpha_t = int_0^{t_g} eps(t) gamma(t) dt and delta_theta = 2 int_0^{t_g} eps(t)|gamma(t)|^2 dt with H_e = hbar eps(t) a^dag a (Eq. 29) and U_g = exp{(gamma a^dag - gamma* a) S_alpha} exp{-i (theta/2) S_alpha^2} (Eq. 27); for a constant fractional offset on a symmetric K-loop gate |alpha_t| = (pi sqrt K/2)(eps/delta) and delta_theta = (pi/2)(eps/delta), the second K-independent; exact two- and three-ion propagation of the force model gives an exact-to-closed-form ratio extrapolating to 1.0000 with a linear-in-eps remainder (0.990568, 0.995311, 0.997671, 0.998873 at eps/delta = 4e-3, 2e-3, 1e-3, 5e-4 for N = 2, K = 1, nbar = 0 -> 1.000076), at every (N, K, nbar) in {(2,1,0), (2,1,1), (2,2,0), (3,1,0), (3,1,2), (2,3,0)}"
-    corrected_form: "lambda^2_{S_alpha} and lambda^2_{S_alpha^2} are the variances of the two spin operators over the input state, not the bare moments: the second is <S^4> - <S^2>^2 = 2N(N - 1), and reading it as <S^4> = 3N^2 - 2N overshoots by 2 at N = 2 and 1.75 at N = 3"
-  - id: conv.beam_phase_spectrum
-    symbol: "NoiseModel.beam_phase_noise -> phi_j(t) per beam; eps = [int S_phi F] (4 g^2/Delta^2)^2"
-    tag: extracted
-    section: "6.3; 7.10"
-    source: "Baldwin 2021; qutip_trap.noise.model; qutip_trap.dynamics.hamiltonian"
-    equation: "each beam gets its own realization of the same declared spectrum, so a Raman pair's beat note sees phi_2(t) - phi_1(t) with twice one beam's variance (measured 2.00 x sigma^2 over 120 seeds) and a co-propagating pair (one shared path, declared as one beam) sees none; the builder reads the sampled Delta phi(t) (phi_2 - phi_1 for a Raman or light-shift pair, -phi_1 for a single beam) and multiplies the beat note by e^{-i Delta phi(t)}, so constant trajectories reproduce the quasi-static build to 1e-12 and a common-mode path drift cancels; the Baldwin form's (4 g^2/Delta^2) enters squared, so halving the two-photon-to-detuning ratio drops eps by exactly 4"
-    corrected_form: "per-beam phase trajectories make route (d) of Section 6.1 reachable for the phase-sensitive Raman geometries of Section 6.3; Kirchmair's 2e-3 per gate from incoherent carrier excitation and the Rabi-drift anchors (Kirchmair 1.4e-2, Harty 5e-4) are consistency anchors in qutip_trap.validation.noise_closed_forms"
   - id: conv.trajectory_grid_tau_c
     symbol: "grid_oversample = 10 pi, i.e. dt = tau_c,min/10"
     tag: corrected
     section: "5.5; 6.1"
-    source: "qutip_trap.noise.processes (TAU_C_OVERSAMPLE)"
+    source: "qutip_trap.noise.sampling (TAU_C_OVERSAMPLE)"
     equation: "the shortest correlation time a tabulated band carries is that of its fastest component, tau_c,min = 1/omega_max, so the rule reads dt <= 1/(10 omega_max); time_grid sets dt = pi/(omega_max x oversample), which meets it at oversample >= 10 pi = 31.4159"
     corrected_form: "an oversample of 4 gives dt = 0.785/omega_max, 7.9x coarser than the rule; the generator is the spectral method (valid for any tabulated S and validated by the periodogram), not an exact Ornstein-Uhlenbeck update"
   - id: conv.collision_outcomes
@@ -1123,12 +906,12 @@ records:
     equation: "<E_kick> = k_B T (m_gas/m_ion) x kick_scale_multiplier with the partial-pressure-weighted gas mass, drawn from an exponential (maximum entropy at fixed mean) or a Maxwell chi^2_3 of the same mean; <delta nbar> = <E_kick>/(hbar omega_m) on the mode it heats most (the softest); Section 6.7 states the scale, not its O(1) coefficient (the elastic head-on transfer fraction is 4 m_g/m_i and the momentum-kick estimate 3 m_g k_B T/(2 m_i), both of this order), so the coefficient is 1 and kick_scale_multiplier is the device's handle"
     corrected_form: "the scale gives 7.4e4 quanta of a 1 MHz mode for H2 at 300 K on 171Yb+, above 'tens to thousands' (reached at a few MHz for a lighter ion or a heavier gas ratio), and the formula is implemented rather than tuned; a kick after the preparation discards the shot instead of adding its nbar, and a reorder permutes RunState.order and discards the shot without re-deriving b_{i,m}, eta_{i,m} or the pair sign, both declared in Diagnostics.approximations"
   - id: conv.scattering_channels_at_d_gt_2
-    symbol: "internal_levels > 2 => SolverOptions.scattering_channels = True, scattering_recoil = 'off' unless 'vector' was asked for"
+    symbol: "Physics.internal_levels > 2 => the scattering channels on, scattering_recoil = 'off' unless 'vector' was asked for"
     tag: corrected
     section: "4.5.5; 6.5"
-    source: "qutip_trap.run.job"
-    equation: "run(..., internal_levels = d > 2) turns the flag on and records it in the run's notes; internal_levels = 2 keeps the d = 2 per-pulse estimate path of Section 4.3.2. The automatic switch turns on the register operators (leakage into the SINK, spin flips, the differential Rayleigh operator) WITHOUT the recoil displacements: Section 4.5.5's d > 2 requirement is about leakage, and the recoil-dressed operators (one per emission direction, per pulse, per branch) cost 30 to 50x more on the two-ion fixture, so they remain an explicit choice (scattering_channels=True with scattering_recoil='minimal' or 'vector'); a caller who set scattering_recoil='vector' keeps it"
-    corrected_form: "an explicit scattering_channels=False is overridden rather than refused at d > 2, because a d > 2 register without leakage simulation carries a SINK level nothing can populate"
+    source: "qutip_trap.run.pipeline"
+    equation: "Physics(internal_levels=d > 2) turns the channels on and records it in the run's notes; internal_levels = 2 keeps the d = 2 per-pulse estimate path of Section 4.3.2. The automatic switch turns on the register operators (leakage into the SINK, spin flips, the differential Rayleigh operator) WITHOUT the recoil displacements: Section 4.5.5's d > 2 requirement is about leakage, and the recoil-dressed operators (one per emission direction, per pulse, per branch) cost 30 to 50x more on the two-ion fixture, so they remain an explicit choice (Physics(scattering='channels', scattering_recoil='minimal' or 'vector')); a caller who set scattering_recoil='vector' keeps it"
+    corrected_form: "an explicit Physics(scattering='estimate') is overridden rather than refused at d > 2, because a d > 2 register without leakage simulation carries a SINK level nothing can populate"
   - id: conv.noise_provenance
     symbol: "NoiseSpectrum.provenance, Drift.provenance, NoiseModel.provenance_sentence()"
     tag: extracted
@@ -1154,13 +937,13 @@ records:
     tag: corrected
     section: "7.5"
     source: "qutip_trap.calibration.experiments (ORDER, UPSTREAM)"
-    equation: "calibrate(surrogate=False) runs the experiments in this order and never reorders; a downstream fit refuses to run while an entry group it reads is uncalibrated and its own entries (the groups PRODUCES names for it) become uncalibrated under its name, with the reason in CalibrationReport.refused; a group whose experiment was refused is not established even when it carries no entry to mark, and a group that is a seed because the caller did not ASK for its experiment stays a seed; seed entries (the derived values) are legitimate upstream inputs (the bootstrap)"
+    equation: "calibrate(machine, method='experiments') runs the experiments in this order and never reorders; a downstream fit refuses to run while an entry group it reads is uncalibrated and its own entries (the groups PRODUCES names for it) become uncalibrated under its name, with the reason in CalibrationReport.refused; a group whose experiment was refused is not established even when it carries no entry to mark, and a group that is a seed because the caller did not ASK for its experiment stays a seed; seed entries (the derived values) are legitimate upstream inputs (the bootstrap)"
     corrected_form: "a refused experiment's entries become uncalibrated, never schedulable seeds: with micromotion['beta[2]'] uncalibrated a seed fallback would leave the mode frequencies at the derived values, the fallback Section 7.3 forbids, and a Bell circuit would still schedule from that table"
   - id: conv.played_chain
     symbol: "Omega_phys = Omega_req x Omega_derived/Omega_table"
     tag: background
     section: "7.3; 7.10; 7.5"
-    source: "qutip_trap.control.played"
+    source: "qutip_trap.control.hardware (physical_schedule)"
     equation: "every pulse the scheduler emits carries the table's beliefs (Drive.programmed); the engine converts a requested Rabi frequency through the device's derived map divided by the calibrated one, the light shift to the derived shift at the played intensity (delta_derived sum_tones (Omega_phys/Omega_derived)^p), the crosstalk to the derived ratios of the listed neighbours; the identity for a surrogate table (seeds = derived values). The conversion applies to the kinds whose rf-power-to-Omega map the light layer derives from the beams and the atomic structure (raman, optical_E1, optical_E2); a microwave, light-shift (Section 4.4.4) or microwave-gradient drive is played exactly as requested, so a miscalibrated table produces no over-rotation, detuning or crosstalk error for it, although Section 7.10 exempts nothing and a light-shift drive's Omega is derivable from the beams (open)"
     corrected_form: "playing the table's Rabi frequency, Stark shift and crosstalk as the physics would make a miscalibrated entry error-free by construction"
   - id: conv.stark_compensation
@@ -1177,26 +960,13 @@ records:
     source: "qutip_trap.noise.model (servo_residual; Drift.servo_bandwidth_hz)"
     equation: "a Drift with a servo bandwidth is high-passed into its residual band over the shot clock: the residual variance of an OU drift of correlation time tau is sigma^2/(1 + 2 pi f_s tau) in the continuous limit and the drift's increment sigma^2 (2 dt/tau) for a lock re-armed every sample; the first sample carries no offset (the calibration measured it)"
     corrected_form: "sampling the raw quasi-static drift against a once-computed table would double-count the slow band a laboratory servos away"
-  - id: conv.calibration_cache
-    symbol: "key = (Device.hash(), seed, surrogate, experiments, t0, digest(kwargs))"
-    tag: background
-    section: "7.5; 3.3"
-    source: "qutip_trap.calibration.cache"
-    equation: "tables are cached per device configuration and noise seed; a table whose device_hash differs from the device it is asked for is never returned, so a changed parameter invalidates the old configuration's tables and the new one has none until calibrate runs (run(table=None) builds the surrogate)"
   - id: anchor.m8.compensation_phase_reference
     symbol: "1 - F of a compensated GPi2 at t_start = 0, 1 ms, 2 ms"
     tag: recomputed here
     section: "7.5; 7.10"
     source: "qutip_trap.control.schedule on the two-ion 171Yb+ circuit fixture, JOINT_EXACT"
     equation: "with the tone phase referenced to t = 0: 2.9e-5, 1.45e-2, 5.7e-2 for delta_s = -38.4 Hz, i.e. sin^2(pi delta_s t_start) / 2 = (2 pi delta_s t_start)^2/4 for small angles (0.24 and 0.48 rad); with compensation_phase_rad: 2.9e-5 at every start. A five-segment MS gate 500 us into a schedule with the per-gate beat reset the fixture's hardware uses: 1.3e-4 as at t = 0 (4.8e-4 with the beat note left running, Roos's tilt, Section 7.10)"
-    corrected_form: "without the phase reference the Bell circuit through run() reads 4.196e-3 (2.333e-3 with it) and the three-ion GHZ circuit 5.25e-2"
-  - id: anchor.m8.full_calibration_two_ion
-    symbol: "calibrate(surrogate=False) on the two-ion 171Yb+ fixture"
-    tag: recomputed here
-    section: "7.5"
-    source: "qutip_trap.calibration.experiments on the two-ion 171Yb+ fixture (reduced scans: 400 shots per point)"
-    equation: "every entry the experiments fit (field, qubit frequencies, mode frequencies, occupations, Rabi frequencies, light shifts, crosstalk ratios and phases, the entangling waveform's closure and phase alignment, detection) agrees with the device's derived truth within two of its reported standard errors (the realized deviations are all at or below 1.02 sigma); a Bell circuit run from the fitted table reaches a register infidelity inside the intrinsic budget plus the calibration's own contribution (the per-pulse over-rotation (sigma_Omega/Omega x pi/2)^2 and the residual frame offset (2 pi sigma_f t_gate)^2, with no slack factor) and strictly above the surrogate-table run's"
-    corrected_form: "a 4-sigma bound per entry and a fidelity bound of budget + 3 x cal + 2e-3 with no lower bound would pass a substantially worse calibration and equally one whose errors had disappeared (a table played as the physics)"
+    corrected_form: "without the phase reference the Bell circuit through Machine.run reads 4.196e-3 (2.333e-3 with it) and the three-ion GHZ circuit 5.25e-2"
   - id: anchor.m9a.tomography_projection
     symbol: "Dykstra onto CP and TP"
     tag: recomputed here
@@ -1240,26 +1010,26 @@ records:
     equation: "the guards of Section 11.5 are evaluated on the declared space before anything is allocated: HilbertSpace.check() asserts shape == prod(dims) arithmetically and forms the joint identity only below IDENTITY_CHECK_MAX_DIMENSION = 65536, so a HilbertSpace is a declaration (every operator on it lazy and cached), select_space evaluates within_budget on it (SpaceSelection.budget), and an explicit level='JOINT_EXACT' above the guards is refused with the dimension, the non-zeros and the two knobs named (joint_dimension_max, nnz_max)"
     corrected_form: "evaluating the guard after allocation forms an O(D)-non-zero identity first (64 MB at dimension 4194304; about 86 GB for the eight-ion eight-mode case), and an explicit JOINT_EXACT above the guards built a 37752-dimensional ENR space that took 20 GB and an hour before QobjEvo rejected its term"
   - id: conv.mode_dimension_max
-    symbol: "SolverOptions.mode_dimension_max"
+    symbol: "Numerics.mode_dimension_max"
     tag: corrected
     section: "5.1.1; 5.2; 5.3; 5.5"
     source: "qutip_trap.run.space; qutip_trap.run.gate_local"
     equation: "the cap rule takes the populated range of the thermal mode displaced by the loop radius at the boundary threshold, plus the Section 5.1.1 margin for the mode's eta, clamped to mode_dimension_max (default 64)"
     corrected_form: "a clamp never narrows the declared expected occupation range (which would run the Section 5.1.1 oracle and the Section 5.5 margin check over less than the physics): it emits a SpaceSelection.notes entry naming the mode, the d the rule asked for and the clamped range; a Doppler-cooled nbar ~ 20 mode at eta = 0.1 needs d = 156 for a boundary population below 1e-4"
   - id: conv.boundary_threshold_is_branch_scaled_on_both_sides
-    symbol: "SolverOptions.boundary_population_max"
+    symbol: "Numerics.boundary_population_max"
     tag: corrected
     section: "5.5"
     source: "qutip_trap.dynamics.engine; qutip_trap.run.space; qutip_trap.run.gate_local; qutip_trap.calibration.surrogate"
     equation: "Section 5.5's one threshold: the population in the top two Fock levels above 1e-6 'of the population the pulse moves' repeats the run with the cap raised"
     corrected_form: "the boundary trip and the margin check both read the branch-scaled threshold min(boundary_population_max / w, 0.5) on a Fock branch of weight w, one threshold on the mixture's population (what the pulse moves), and the initial cap, the monitor and the surrogate's spot-check space all take the run's boundary_population_max"
   - id: conv.section_9_9_convergence_regime
-    symbol: "SolverOptions.convergence_check, Diagnostics.convergence, hilbert.truncation.convergence_report"
+    symbol: "Numerics.convergence_check, Diagnostics.convergence"
     tag: corrected
     section: "5.5; 9.9; 14.5"
-    source: "qutip_trap.dynamics.truncation (convergence_report); qutip_trap.dynamics.evolve"
+    source: "qutip_trap.dynamics.evolve"
     equation: "Section 9.9: tightening tolerances by 10x (and, for the integrator ladder, loosening by 10x and comparing) and raising truncation caps by 2 changes reported probabilities by less than the stated test tolerance, for every validation case"
-    corrected_form: "the run level carries the first arm (SolverOptions.convergence_check repeats the evolution at atol/10, rtol/10 and reports the change in the register populations as Diagnostics.convergence; off by default because it triples a run's cost), and hilbert.truncation.convergence_report runs all three arms of one case: tolerances/10, tolerances x10, and every resolved cap and the ENR excitation cap + 2 at unchanged tolerances (a mode whose growth would cross the dimension ceiling is left)"
+    corrected_form: "the run level carries the first arm (Numerics.convergence_check repeats the evolution at atol/10, rtol/10 and reports the change in the register populations as Diagnostics.convergence; off by default because it triples a run's cost), and the test suite's convergence harness runs all three arms of one case: tolerances/10, tolerances x10, and every resolved cap and the ENR excitation cap + 2 at unchanged tolerances (a mode whose growth would cross the dimension ceiling is left)"
   - id: conv.gate_local_residual_bound_pre_step
     symbol: "GateLocalStep.residual_bound"
     tag: corrected
@@ -1267,13 +1037,6 @@ records:
     source: "qutip_trap.run.gate_local"
     equation: "Section 9.8: the residual-displacement bound sum_m |alpha_m|^2 (2 nbar_m + 1) that GATE_LOCAL reports and the JOINT_EXACT comparison is held to"
     corrected_form: "2 nbar_m + 1 is evaluated at the occupation the tracked model had when the step started, not at the step's output, which would make the bound depend on the gate's own heating"
-  - id: conv.gate_local_discrepancy_has_no_fudge
-    symbol: "max |p_JOINT_EXACT - p_GATE_LOCAL|"
-    tag: corrected
-    section: "9.8"
-    source: "qutip_trap.run.gate_local"
-    equation: "Section 9.8 row 1: final probabilities agree within the residual-displacement bound GATE_LOCAL reports; disagreement above it fails"
-    corrected_form: "the comparison holds to discrepancy_bound + dropped_branch_weight exactly, the second term being the weight of the initial-mixture branches JOINT_EXACT did not evolve; there is no further slack"
   - id: conv.four_ion_gate_local_fixture
     symbol: "the four-ion GATE_LOCAL-against-JOINT_EXACT circuit"
     tag: recomputed here
@@ -1287,7 +1050,7 @@ records:
     section: "5.2; 11.3; 9.8"
     source: "qutip_trap.run.space (DW_SPREAD_DROP_MAX)"
     equation: "a mode is dropped when |alpha_m(tau)|^2 (2 nbar_m + 1) < 1e-6 AND |chi_m(tau)| < 1e-4 AND max_i eta_{i,m}^2 sqrt(nbar_m (nbar_m + 1)) < 3e-4 rad; otherwise, below the freeze pair, it is frozen"
-    corrected_form: "a strengthening of the drop pair: a pulse that closes a mode's loop exactly leaves the pair at ~1e-33 however strongly the mode couples, but dropping the mode removes its exact Debye-Waller factor, whose mean the calibration absorbs and whose shot-to-shot spread eta^2 sqrt(nbar(nbar + 1)) it does not (1.5e-3 rad at nbar = 0.05 for the three-ion tilt mode, eta = 0.0809); the 3e-4 rad threshold matches the 1e-6 of the alpha^2 test, and the summed spread of the dropped modes is reported as SpaceSelection.dropped_dw_spread_rad"
+    corrected_form: "a strengthening of the drop pair: a pulse that closes a mode's loop exactly leaves the pair at ~1e-33 however strongly the mode couples, but dropping the mode removes its exact Debye-Waller factor, whose mean the calibration absorbs and whose shot-to-shot spread eta^2 sqrt(nbar(nbar + 1)) it does not (1.5e-3 rad at nbar = 0.05 for the three-ion tilt mode, eta = 0.0809); the 3e-4 rad threshold matches the 1e-6 of the alpha^2 test, and the summed spread of the dropped modes is reported in the selection's notes"
   - id: conv.rb_error_rate
     symbol: "r = (1 - p)(2^n - 1)/2^n"
     tag: corrected
@@ -1302,19 +1065,6 @@ records:
     source: "Sackett et al. 2000; Leibfried et al. 2005; Wright et al. 2019; qutip_trap.benchmarks.ghz"
     equation: "P_0 = P(0...0) and P_1 = P(1...1) from the GHZ circuit H, CNOT chain; on fresh shots the parity <prod_q Z_q> after GPi2(phi) on every qubit oscillates as C cos(N phi + phi_0) with C = 2 |rho_{0...0, 1...1}| (only the sigma_+^{ox N} term carries e^{i N phi}), fitted from at least four phases over one period 2 pi/N; since P_0 and P_1 are the diagonal elements, (P_0 + P_1 + C)/2 = max_theta <GHZ_theta| rho |GHZ_theta> with |GHZ_theta> = (|0...0> + e^{i theta}|1...1>)/sqrt 2, an equality with the phase-optimised fidelity; the simulator reports GHZResult.register_fidelity_max_phase (what the bound estimates) and GHZResult.register_fidelity (against the fixed-phase target) beside it, with the shot-noise uncertainties of P_0, P_1 and C combined in quadrature"
     corrected_form: "(P_0 + P_1 + C)/2 is an upper bound on the fixed-phase fidelity, not a lower one (the three-ion run: bound 0.9935 against the fixed-phase 0.98520; for the ideal three-ion |GHZ_theta> at theta = 0.7 the bound is 1 and the fixed-phase fidelity cos^2(theta/2) = 0.882421); the 'lower bound' of Wright 2019 concerns an imperfect analysis pulse degrading the measured contrast; phi_0 carries N pi/2 from GPi2's axis and the compiled frames, so only the contrast enters the bound"
-  - id: conv.heavy_output_criterion
-    symbol: "mean(h_U) - 2 sqrt(h(1 - h)/n_c) > 2/3 over n_c >= 100 circuits"
-    tag: corrected
-    section: "7.9"
-    source: "Cross, Bishop, Sheldon, Nation and Gambetta, PRA 100, 032328 (2019), Appendix C Eq. (32); qutip_trap.benchmarks.volume"
-    equation: "square circuits of width n and depth d = n, every layer a uniform random permutation and a Haar-random SU(4) (Mezzadri's QR construction) on each of the floor(n/2) pairs, adjacent local unitaries merged per qubit; the heavy outputs are the strings whose ideal probability exceeds the median of the ideal distribution; h_U is the measured fraction of shots on them; the width passes when the mean of h_U over circuits clears 2/3 by two sigma and the run has at least the protocol's 100 circuits, the confidence being Appendix C Eq. (32), [n_h - z sqrt(n_h (n_s - n_h/n_c))]/(n_c n_s) > 2/3 with z = 2, which with h = n_h/(n_c n_s) reduces identically to mean - 2 sigma > 2/3 with the per-circuit binomial sigma = sqrt(h(1 - h)/n_c); the standard error of the mean is reported beside it (QVResult.standard_error_of_the_mean) and is never the criterion, and QVResult.threshold_cleared carries the confidence half alone, so a run below 100 circuits says so and clears no quantum volume; under a depolarizing composition h_pred = h_ideal (1 - eps) + eps/2"
-  - id: anchor.m10.simultaneous_rb_crosstalk
-    symbol: "marginal r_q and the joint layer decay under independent sequences on both ions"
-    tag: recomputed here
-    section: "6.6; 7.9; 13"
-    source: "qutip_trap.benchmarks.rb (pair=False)"
-    equation: "both ions driven by independent Clifford sequences (2000 shots, two sequences, m = 1, 128, 512). Per-qubit MARGINAL survival (Gambetta et al. 2012) 0.9995, 0.9495, 0.938 on ion 0 and 0.998, 0.96375, 0.79925 on ion 1, giving marginal p 0.999738 and 0.999227 and r_q = (1 - p_q)/2 = 1.31e-4 and 3.87e-4, mean 2.588(94)e-4 against 1.97e-5 for the ion benchmarked alone -- a factor 13 that single-ion RB cannot see. The per-qubit composition (each kind's GATE_LOCAL channel reduced to THAT ONE qubit, so the neighbour's crosstalk rotation counts) is r_channel.q0 = 2.853e-4 and r_channel.q1 = 2.858e-4, mean 2.855e-4, which the measured mean matches to 9 %. The same run's JOINT survival P(00) = 0.9975, 0.91425, 0.75225 fits p = 0.999078(86), so (1 - p)(2^n - 1)/2^n = 6.91(7)e-4 per LAYER of two Cliffords -- 35x the isolated r -- against the layer composition r_channel_joint_layer = 6.853e-4, which it matches to 0.9 %"
-    corrected_form: "the joint decay's (1 - p)(2^n - 1)/2^n is an error per layer of n Cliffords, so it matches the layer composition (to 0.9 %), not twice the per-Clifford one: simultaneous RB is no evidence of crosstalk errors adding in amplitude; the ions' gates cost 13x more under simultaneous operation than alone (35x per layer), and the two marginals differ by a factor 3 although their compositions agree to 0.2 %, so coherent cancellation within a sequence is ion-dependent on this chain"
   - id: anchor.m10.ghz_fidelity
     symbol: "(P_0 + P_1 + C)/2 against <GHZ| rho |GHZ>"
     tag: recomputed here
@@ -1336,47 +1086,6 @@ records:
     source: "Kabytayev et al. 2014 Sec. II B; Cummins et al. 2003 Eq. 7; Merrill and Brown Eqs. 10-11; qutip_trap.control.composite"
     equation: "for a single-qubit unitary error the internal measure is F_K = (1/4)|Tr(U_id^dag U)|^2, the normalization the composite-pulse library and the Section 6.9 filter functions are built to, which floors at 1/2 for a fully wrong qubit gate; F_C = |Tr(U_id^dag U)|/2 = sqrt(F_K) and F_avg = (2 F_C^2 + 1)/3 = (2 F_K + 1)/3 are conversions, so 1 - F_K = 2(1 - F_C) and 1 - F_avg = (4/3)(1 - F_C) at leading order, and every ingested coefficient is tagged with the measure it was quoted in; at small spectral-norm distance E, 1 - F_C ~ E^2/2 and 1 - F_K ~ E^2; kept separate from conv.rb_error_rate (a decay base) and conv.depolarizing_normalization (a channel rate): this is a unitary overlap"
     corrected_form: "Low, Yoder and Chuang's F = ||U V^dag|| is identically 1 for a qubit under its own Eq. 2 norm and Brown, Harrow and Chuang's 1 - ||V^dag U|| identically 0 for unitaries; both are replaced by F_K"
-  - id: conv.bermudez_pauli_mapping
-    symbol: "eps -> Pauli channels, three variants"
-    tag: background
-    section: "6.8; 4.4.7"
-    source: "Bermudez et al., PRX 7, 041061 (2017), the fault-tolerance section; qutip_trap.noise.summary"
-    equation: "the three-variant mapping of eps onto Pauli channels that Sections 6.8 and 4.4.7 name has no formulas in this specification, so it is not implemented; qutip_trap.noise.summary provides the entanglement and average gate infidelity of a simulated channel, its Pauli twirl (itself a mapping onto a Pauli channel, p_Q from the Pauli transfer-matrix diagonal) and the depolarizing rate of conv.depolarizing_normalization; implementing the three variants needs the source"
-  - id: conv.simultaneous_rb_units
-    symbol: "r_q = (1 - p_q)/2 per qubit; (1 - p)(2^n - 1)/2^n per layer"
-    tag: corrected
-    section: "7.9; 6.6; 13"
-    source: "Gambetta et al., PRL 109, 240504 (2012); Magesan 2011; qutip_trap.benchmarks.rb"
-    equation: "simultaneous RB draws INDEPENDENT single-qubit Clifford sequences on several ions and plays them interleaved, so the group is the product C1 x ... x C1 and Section 13's n-qubit Clifford formula does not describe the joint decay. Every benchmarked qubit's own MARGINAL survival P(qubit q reads its target bit) is therefore fitted to A p_q^m + B and reported as r_q = (1 - p_q)/2 (RBResult.marginal_error_per_clifford), one Clifford on ONE qubit the unit -- the unit of the r that qubit measures alone and of the per-qubit composition budget.predicted['r_channel.q{i}'] = (Cliffords per sequence) x sum_kinds (pieces per Clifford) x (the kind's GATE_LOCAL channel reduced to THAT ONE qubit) -- and RBResult.error_per_clifford is their mean. The JOINT survival is fitted too and its (1 - p)(2^n - 1)/2^n kept as RBResult.joint_error_per_layer, the error per LAYER of n Cliffords, which equals sum_q r_q to first order (0.2 % at r_q = 2e-5, 3 % at 3.4e-4 over m up to 512) and is compared with r_channel_joint_layer, the same composition over one layer with the channels reduced to ALL benchmarked qubits"
-    corrected_form: "the joint decay's (1 - p)(2^n - 1)/2^n is an error per layer of n Cliffords, never an error per Clifford beside a per-Clifford budget; two independent qubits at r_q = r_channel = 3.426e-4 reproduce the joint fit p = 0.999080 to 3.5 % in (1 - p), so the composition predicts the simultaneous decay; simultaneous RB runs on any number of ions"
-  - id: anchor.species.ba_g_factors
-    symbol: "g_J(6s 2S1/2) = 2.00249192(3); g_J(5d 2D3/2) = 0.7993278(3); g_J(5d 2D5/2) = 1.20036739(24)"
-    tag: extracted
-    section: "4.5.6"
-    source: "Marx, Tommaseo, Werth, Eur. Phys. J. D 4, 279 (1998); Knoell et al., Phys. Rev. A 54, 1199 (1996); Arnold et al., Phys. Rev. Lett. 124, 193001 (2020), arXiv:1906.09150; NIST ASD ver. 5.12 Ba II Lande column; qutip_trap.species.ba137; qutip_trap.species.ba133"
-    equation: "the three Ba+ S and D g factors are measured: g_J(6s 2S1/2) = 2.00249192(3) (Marx et al. 1998, Penning trap on 138Ba+ and 135Ba+; read in Arnold et al. 2020, hence extracted), stored in both isotope tables since g_J is isotope-independent to 3e-8; g_J(5d 2D3/2) = 0.7993278(3) (Knoell et al. 1996, extracted); g_J(5d 2D5/2) = 1.20036739(24) (Arnold et al. 2020, the measured ratio 0.59943681(12) times g_S, reproduced to 2.1e-9); 137Ba+'s clock qubit then reproduces taylor_c2 = (g_J - g_I)^2 mu_B^2/(2 h^2 nu_0) = 488.81912 Hz/G^2 at nu_0 = 8 037 741 667.69 Hz to 1e-9, which nothing published pins; the qubit pair, cycling line, repumps and shelving line of ba137.species() are this package's choice"
-    corrected_form: "NIST ASD's Lande column for Ba II returns 0.79, 1.12 and 1.32 and nothing for 6s 2S1/2: its 1.12 for D5/2 is ASD's own error (6.7 % from the measured 1.20036739(24), Hoffman et al. 2013's 1.200372(4)(7) and the LS Lande 1.2005); both ASD readings stay as contested cross-checks nothing consumes, and the 6p levels take the LS Lande 0.665894 and 1.334106 (background)"
-  - id: conv.be9_g_j_provenance
-    symbol: "g_J(2s 2S1/2) of 9Be+ = 2.00226239(31)"
-    tag: verified
-    section: "4.5.6; 4.5.1"
-    source: "Shiga, Itano, Bollinger, Phys. Rev. A 84, 012510 (2011), arXiv:1106.5760, Sec. I; Wineland, Bollinger, Itano, Phys. Rev. Lett. 50, 628 (1983); Mohr, Taylor, Newell, Rev. Mod. Phys. 80, 633 (2008); Dickopf et al., Nature 632, 757 (2024); qutip_trap.species.be9"
-    equation: "g_J = 2.00226239(31) is measured: Wineland, Bollinger and Itano 1983 compared the cyclotron frequency with a hyperfine-Zeeman transition frequency at the same field (their printed 2.00226206(42)), and Shiga et al. 2011 Sec. I re-reduce it with CODATA 2006's proton-electron mass ratio (their abstract gives only the ratio g_I'/g_J)"
-    corrected_form: "the circulating 2.0022621287(24) is a calculation (Dickopf et al. 2024, printed negative in their sign convention), stored as be9.S12.g_J_theory (background) and not a replacement: the two agree to 2.61e-7 (0.84 sigma), and swapping them moves the 119.446 G clock point by 1.56e-5 G and 0.0093 Hz, against 0.135 G and 81 Hz for g_J = 2.000; Dickopf et al. is Nature 632, 757-761 (2024), not 673"
-  - id: anchor.ca40.gamma_dependent_repins
-    symbol: "the 40Ca+ numbers that moved with Gamma(P1/2), Gamma(P3/2) and b(P1/2 -> D3/2)"
-    tag: recomputed here
-    section: "4.2.1; 4.2.6; 4.4.4; 8.1; 9.3"
-    source: "qutip_trap.species.ca40; qutip_trap.device.presets"
-    equation: "the measured lifetimes set three inputs, Gamma(P1/2)/2pi = 23.052570 MHz, Gamma(P3/2)/2pi = 23.972728 MHz and b(P1/2 -> D3/2) = 0.06435 (conv.ca40_branching), whose partial rates are 397 nm 21.5691 MHz, 866 nm 1.4834, 393 nm 22.4071, 854 nm 1.40720 and 850 nm 0.158460 MHz"
-    corrected_form: "the pins that follow: tau(P1/2) = 6.904 ns and tau(P3/2) = 6.639 ns; 397 nm 2.0455 e a0 / 45.069 mW/cm^2 and 393 nm 2.9097 / 48.074 at vacuum; Roos 2000's Doppler fixture (397 nm at -20 MHz, s = 1 and 3) eight-state nbar_z 4.02 and nbar_y 9.41, two-level 3.90 and 9.08, both short of the measured 6.5(1.0) and 16(2); the ca40_optical preset's Doppler nbar 12.90/8.88/9.11 with the Lamb-Dicke guard at 0.141 on the 2.0 MHz axial (0.559, refused, at 1.0 MHz), preparation error 1.06e-5, R_o 3.49e6 /s at (2, 10), eps_B 3.4e-4 and eps_D 1.8e-3 (the 1.168 s shelf against the window); the 398.5 nm light-shift pair's Omega_LS/2pi = 5283.84 Hz and static shift 10567.69 Hz; the 729 nm E2 quantities, the Lamb-Dicke parameters and Myerson's measured apparatus rates are unmoved. nbar and R_o fall as Gamma rises because the fixed B = 5 G and the magic-angle linear polarization put the 397/866 cycle in the coherent dark-state regime, controlled by the Zeeman splitting in linewidths"
-  - id: conv.worker_memory_cap
-    symbol: "workers <= floor(0.5 x physical memory / max(parent peak RSS, 512 MB))"
-    tag: corrected
-    section: "11.3; 11.5; 9.9"
-    source: "qutip_trap.dynamics.parallel (memory_worker_cap, worker_count); QuTiP 5.3.1 parallel map (the multiprocessing fork context)"
-    equation: "QuTiP's parallel map forks its workers, so each starts as a copy-on-write image of the parent and Python's reference counting dirties every page a worker touches: a parent of P bytes can turn N workers into up to N x P. worker_count returns min(requested or available_cpu_count, floor(MEMORY_FRACTION_FOR_WORKERS x physical memory / max(peak RSS, MIN_PARENT_BYTES))) with MEMORY_FRACTION_FOR_WORKERS = 0.5 and MIN_PARENT_BYTES = 512 MB: a 3 GB parent on a 48 GB machine gets 8 workers, a 6 GB one 4, a fresh process every CPU; the engine's mcsolve num_cpus and every map_tasks caller read worker_count, and EngineReport.workers and Diagnostics.workers state the count used"
-    corrected_form: "workers = None does not mean every CPU whatever the parent's size: forked from multi-gigabyte pytest parents, 18 workers exhausted memory; the 1-versus-N-worker identity of Section 9.9 is unaffected (the count is bookkeeping, and the reports state the count used)"
   - id: published.harty_2014_epg
     symbol: "EPG (Harty 2014)"
     tag: verified
