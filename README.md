@@ -27,12 +27,12 @@ machine = trap.presets.yb171_chain(2)        # a two-ion 171Yb+ chain with 355 n
 bell = trap.Circuit(2).h(0).cnot(0, 1)       # every qubit is measured unless .measured(...) narrows it
 result = machine.run(bell, shots=2000)       # compile, calibrate, schedule, prepare, evolve, read out
 
-print(result.counts)                         # {'00': 994, '11': 1003, '01': 1, '10': 2}
+print(result.counts)                         # about 1000 each of '00' and '11', a few of '01' and '10'
 print(result.diagnostics.level)              # JOINT_EXACT
 print(result.diagnostics.approximations)     # what the run approximated, in words
 ```
 
-A two-ion Bell circuit takes a few seconds on a laptop, calibration included. A `Machine` is an immutable record of a `Device`, its calibration table, the option objects `Physics`, `Numerics` and `Readout`, and a `FidelityLevel`; variants come from `dataclasses.replace(machine, physics=trap.Physics(noise=False))`. Small crystals run `JOINT_EXACT` on the full joint space, and larger ones switch to `GATE_LOCAL`, where each gate is exact on the ions it addresses and the modes they couple to.
+A two-ion Bell circuit takes a few seconds on a laptop, calibration included. A `Machine` is a frozen record of a `Device`, its calibration table, the option objects `Physics`, `Numerics` and `Readout`, and a `FidelityLevel`; variants come from `dataclasses.replace(machine, physics=trap.Physics(noise=False))`. Small crystals run `JOINT_EXACT` on the full joint space, and larger ones switch to `GATE_LOCAL`, where each gate is exact on the ions it addresses and the modes they couple to.
 
 ### From Qiskit
 
@@ -45,12 +45,12 @@ bell = QuantumCircuit(2); bell.h(0); bell.cx(0, 1); bell.measure_all()
 counts = backend.run(transpile(bell, backend), shots=2000).result().get_counts()
 ```
 
-Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a `Result` exports to IonQ's v1 and v0.4 formats.
+Circuits also load from OpenQASM 2 and IonQ JSON (`trap.Circuit.from_openqasm`, `trap.Circuit.from_ionq`), and a `Result` exports to IonQ's v1 and v0.4 formats.
 
 ## What is in the box
 
-- **The ladder.** `qutip_trap` is the machine; `qutip_trap.circuit` (IR and verified compiler), `qutip_trap.schedule` (pulses and the calibration table), `qutip_trap.dynamics` (Hamiltonian builder and engine) and `qutip_trap.physics` (species, trap, beams, noise, detector, device) are the rungs below it, each importable on its own.
-- **The laboratory.** `qutip_trap.experiments` runs Rabi, Ramsey, sideband, thermometry, heating-rate, MS and parity scans on the machine through the same engine; `qutip_trap.calibration` fits them into a table; `qutip_trap.benchmarks` runs randomized benchmarking, GHZ fidelity and quantum volume with the simulator's own error budget beside each number.
+- **The machine and the levels below it.** `Machine.run` takes a circuit to counts; `Machine.compile`, `Machine.schedule`, `Machine.engine` and `Machine.device` open the verified compiler, the pulse schedule with its calibration table, the Hamiltonian builder with the JOINT_EXACT engine, and the physical records (species, trap and crystal, beams, noise, detector, preparation), each importable on its own.
+- **The laboratory.** `qutip_trap.experiments` runs Rabi, Ramsey, sideband, thermometry, heating-rate, Stark, crosstalk, field, micromotion, detection, MS and parity scans on the machine through the same engine; `qutip_trap.calibration` fits them into a table or builds the closed-form surrogate; `qutip_trap.benchmarks` runs randomized benchmarking, GHZ fidelity and quantum volume with the simulator's own error budget beside each number.
 - **The error model.** `machine.error_model()` derives per-gate infidelities, durations and SPAM errors from the simulation and exports them in IonQ's, Quantinuum's and the QDK estimator's vocabularies.
 - **Devices.** Two example machines, `yb171_chain` (hyperfine qubit, Raman gates) and `ca40_optical` (optical qubit on the 729 nm line), with atomic data for 171Yb+, 40Ca+, 43Ca+, 137Ba+, 9Be+ and 88Sr+. The example numbers are a realizable laboratory configuration, not a published apparatus.
 - **The app.** [`qutip_trap_app`](qutip_trap_app/README.md) shows one run at five zoom levels, from the histogram down to the Hamiltonian terms being integrated.
@@ -58,15 +58,17 @@ Circuits also load from OpenQASM 2 and IonQ JSON through `qutip_trap.io`, and a 
 ## Documentation
 
 - [PLAN.md](PLAN.md) is the specification: the scope and what the simulator does not do (Section 1.3), the physics (Part II), the numerics, noise, control and readout with the governing equations in one place (Part III, Section 5.7), the validation targets (Section 9), the open physics (Section 12) and one convention per quantity (Section 13).
-- [docs/examples.md](docs/examples.md): runnable examples from a device to the benchmarks, executed by the test suite.
-- [docs/machine.md](docs/machine.md), [docs/circuit.md](docs/circuit.md), [docs/schedule.md](docs/schedule.md), [docs/dynamics.md](docs/dynamics.md), [docs/physics.md](docs/physics.md), [docs/laboratory.md](docs/laboratory.md), [docs/experimental.md](docs/experimental.md): the ladder, one page per rung with every public name on it, the laboratory and the experimental namespace (0.4.0).
+- [docs/api.md](docs/api.md): the public API, module by module.
+- [docs/examples.md](docs/examples.md): a runnable tour from a device to the error model, executed by the test suite.
+- [docs/provenance/ledger.yaml](docs/provenance/ledger.yaml): the provenance record every derived number and every provenance chip names.
+
 ## Development
 
 ```sh
 git clone https://github.com/splch/qutip-trap && cd qutip-trap
 uv sync --group dev
-uv run pytest -n 4 --dist loadscope -m "not slow"
-uv run ruff check . && uv run mypy
+uv run pytest -n 4 --dist loadscope -m "not slow and not heavy"
+uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-CI runs the fast tier (`-m "not slow"`) on every push and pull request, and the whole suite, slow tests included, on a nightly schedule and on manual dispatch.
+CI runs the fast tier on every push and pull request, and the whole suite, the slow tier and the heavy tests included, on a nightly schedule and on manual dispatch. The app has its own commands in its README.
