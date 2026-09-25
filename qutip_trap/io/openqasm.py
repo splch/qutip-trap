@@ -27,8 +27,6 @@ if TYPE_CHECKING:
 
 
 QELIB_NAMES: Final[dict[str, str]] = {"cnot": "cx"}
-
-
 """IR gate name -> qelib1.inc name where the two differ."""
 
 
@@ -38,20 +36,13 @@ NATIVE_DECLARATIONS: Final[dict[str, str]] = {
     "ms": "gate ms(phi0, phi1, theta) a, b { rz(-phi0) a; rz(-phi1) b; rxx(theta) a, b; rz(phi0) a; rz(phi1) b; }",
     "zz": "gate zz(theta) a, b { rzz(theta) a, b; }",
 }
-
-
 """The native gates as qelib1.inc definitions (radians), each equal to ``control.native``'s matrix up to a global phase:
 GPi(phi) = U3(pi, phi, pi - phi) exactly, GPi2(phi) = U3(pi/2, phi - pi/2, pi/2 - phi) exactly, MS(phi0, phi1, theta) =
 [RZ(phi0) (x) RZ(phi1)] RXX(theta) [RZ(-phi0) (x) RZ(-phi1)] since GPi(phi) = RZ(phi) X RZ(-phi), and ZZ(theta) = rzz(theta)
 up to e^{i theta/2}; ``tests/test_openqasm.py`` checks each against the matrix."""
 
 
-def loads(text: str) -> Circuit:
-    """OpenQASM 2 text -> ``Circuit`` (``qutip_trap.io.openqasm.load_openqasm2``)."""
-    return load_openqasm2(text)
-
-
-def dumps(circuit: Circuit, *, declare_native: bool = True) -> str:
+def dump_openqasm2(circuit: Circuit, *, declare_native: bool = True) -> str:
     """``Circuit`` -> OpenQASM 2 text (module docstring): the header, the native declarations the circuit needs, one
     ``qreg``, one ``creg`` per register, the operations in order, and the terminal measurements into their registers."""
     lines = ["OPENQASM 2.0;", 'include "qelib1.inc";']

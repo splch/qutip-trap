@@ -214,9 +214,9 @@ class Circuit:
 
     def to_openqasm(self, *, declare_native: bool = True) -> str:
         """OpenQASM 2 text, the native gates declared as qelib1.inc definitions unless told not to."""
-        from qutip_trap.io.openqasm import dumps
+        from qutip_trap.io.openqasm import dump_openqasm2
 
-        return dumps(self, declare_native=declare_native)
+        return dump_openqasm2(self, declare_native=declare_native)
 
     def to_ionq(self) -> dict[str, Any]:
         """The IonQ ``input`` object; the circuit must be native (compile first)."""

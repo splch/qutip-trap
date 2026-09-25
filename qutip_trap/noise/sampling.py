@@ -15,20 +15,14 @@ import numpy as np
 from qutip_trap.noise.spectra import Mains, NoiseSpectrum
 
 MAX_GRID_POINTS = 400_001
-
-
 """The largest grid one trajectory may hold (a 1 ms shot at 2.5 ns steps)."""
 
 
 MIN_GRID_POINTS = 65
-
-
 """Every grid has at least this many points, so a slow process is still a smooth curve over the shot."""
 
 
 TAU_C_OVERSAMPLE = 10.0 * math.pi
-
-
 """Points per half period of omega_max that meet Delta t <= tau_c/10 for the band's fastest component (tau_c = 1/omega_max):
 ``time_grid``'s dt = pi/(omega_max x oversample) meets it at oversample >= 10 pi."""
 
@@ -98,8 +92,6 @@ def _check_resolves(times_s: np.ndarray, omega_max_rad_s: float) -> None:
 
 
 _SYNTH_BLOCK_ELEMENTS = 1 << 20
-
-
 """Complex elements per block of the (times x bins) phase table, so a long grid never forms the whole matrix."""
 
 
@@ -181,7 +173,6 @@ def correlated_normals(rng: np.random.Generator, times_s: np.ndarray, tau_s: flo
 
 KEY_RABI_SCALE = "rabi_scale"
 """Multiplies every drive's Rabi frequency."""
-"""The trap rf phase at t = 0 for an unlocked drive's micromotion modulation; absent = the J_0 average."""
 KEY_MAINS_PHASE = "mains_phase_rad"
 """The line-trigger phase of the mains pickup: uniform when free-running, 0 when line-triggered."""
 KEY_LASER_OFFSET_HZ = "laser_offset_hz"

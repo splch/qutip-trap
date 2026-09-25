@@ -21,7 +21,7 @@ Job bodies (the v0.4 ``CircuitJobCreationPayload``): ``dump_job`` writes ``{"typ
 "shots": ..., "input": {...}}`` plus the optional ``name``, ``metadata``, ``noise`` (``{"model": ..., "seed": ...}``),
 ``settings`` (``compilation``, ``error_mitigation``) and ``dry_run``; the spec sets ``additionalProperties: false`` on the
 body, the input and the settings, so every key is checked here. ``load_job`` reads a v0.4 body or a v0.3 one (``target``
-for ``backend``). ``loads`` and ``dumps`` are the circuit importer and exporter shaped like ``json``.
+for ``backend``).
 """
 
 from __future__ import annotations
@@ -173,17 +173,6 @@ def _check_keys(obj: Mapping[str, Any], allowed: frozenset[str], what: str) -> N
         raise ValueError(
             f"{what} has no key {unknown} (the v0.4 schema sets additionalProperties: false); allowed: {sorted(allowed)}"
         )
-
-
-def loads(obj: str | Mapping[str, Any]) -> Circuit:
-    """IonQ circuit JSON (a job body or its ``input``), as text or as a mapping -> ``Circuit`` (``load_ionq_json``)."""
-    data = json.loads(obj) if isinstance(obj, str) else dict(obj)
-    return load_ionq_json(data)
-
-
-def dumps(circuit: Circuit, *, indent: int | None = None) -> str:
-    """``Circuit`` -> the IonQ ``input`` object as JSON text (``dump_ionq_json``)."""
-    return json.dumps(dump_ionq_json(circuit), indent=indent)
 
 
 def load_job(obj: str | Mapping[str, Any]) -> IonQJob:

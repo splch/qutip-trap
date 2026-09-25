@@ -54,9 +54,9 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 
 **`qutip_trap.control.native`**: the exact native matrices in radians, `gpi`, `gpi2`, `ms`, `zz`, `rz`, `r_phi`, `xx`, with `rad_from_turns`, `turns_from_rad` and `equal_up_to_global_phase`.
 
-**`qutip_trap.io.openqasm`**: `loads(text)` and `dumps(circuit, *, declare_native=True)` for OpenQASM 2; `NATIVE_DECLARATIONS`, `QELIB_NAMES`, `OpenQASMError`.
+**`qutip_trap.io.openqasm`**: `load_openqasm2(text)` and `dump_openqasm2(circuit, *, declare_native=True)`; `NATIVE_DECLARATIONS`, `QELIB_NAMES`, `OpenQASMError`.
 
-**`qutip_trap.io.ionq`**: `loads(obj)` and `dumps(circuit)` for IonQ's circuit JSON; `load_job(obj)` (an `IonQJob`) and `dump_job(circuit, *, backend, shots=100, ...)` for a v0.3 or v0.4 job body; `JOB_TYPE`, `JOB_KEYS`, `NOISE_KEYS`, `SETTINGS_KEYS`.
+**`qutip_trap.io.ionq`**: `load_ionq_json(obj)` and `dump_ionq_json(circuit)` for IonQ's circuit JSON; `load_job(obj)` (an `IonQJob`) and `dump_job(circuit, *, backend, shots=100, ...)` for a v0.3 or v0.4 job body; `JOB_TYPE`, `JOB_KEYS`, `NOISE_KEYS`, `SETTINGS_KEYS`.
 
 **`qutip_trap.interop.qiskit`** (the `qiskit` extra): `QutipTrapProvider` (`get_backend(name="yb171_chain", **knobs)`, `backends()`), `QutipTrapBackend(machine)`, a Qiskit `BackendV2`, and its `QutipTrapJob`.
 

@@ -48,8 +48,6 @@ from qutip_trap.species.polarization import atomic_frame
 from qutip_trap.species.raman import structure_at
 
 SINK = "SINK"
-
-
 """The label of the collecting level: every scattering final state outside the resolved sublevels."""
 
 

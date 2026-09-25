@@ -59,8 +59,6 @@ Envelope = Callable[[float], float] | np.ndarray | float
 
 
 UNLISTED_CROSSTALK_REPORT = 1e-3
-
-
 """A derived crosstalk ratio above this on a neighbour the table does not list is reported in the chain's notes."""
 
 
