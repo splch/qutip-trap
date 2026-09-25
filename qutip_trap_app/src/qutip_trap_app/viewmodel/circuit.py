@@ -2,15 +2,13 @@
 Section 14.2).
 
 The register after gate k is the reduced internal density matrix at the gate's end, read from the recorded traces and
-weighted over the initial mixture's branches and the run's samples; :func:`register_from_joint` computes the same quantity
-from a joint Level 3 state by partial trace. The register order has ion 0 as the FIRST tensor factor
+weighted over the initial mixture's branches and the run's samples. The register order has ion 0 as the FIRST tensor factor
 (``conv.computational_ordering``); bitstring keys read qubit 0 rightmost.
 """
 
 from __future__ import annotations
 
 import itertools
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -41,19 +39,6 @@ PAULI: dict[str, np.ndarray] = {
 
 
 # ---- linear algebra on the register ----------------------------------------------------------------------------------
-
-
-def register_from_joint(joint: np.ndarray, joint_dims: tuple[int, ...], n_ions: int) -> np.ndarray:
-    """The reduced register density matrix (register order) of a joint ket or density matrix over ion and mode factors."""
-    dims = list(joint_dims)
-    d_int = int(np.prod(dims[:n_ions]))
-    d_mot = int(np.prod(dims[n_ions:])) if len(dims) > n_ions else 1
-    arr = np.asarray(joint, dtype=complex)
-    if arr.ndim == 1 or (arr.ndim == 2 and arr.shape[1] == 1):
-        psi = arr.reshape(d_int, d_mot)
-        return np.asarray(psi @ psi.conj().T)
-    rho = arr.reshape(d_int, d_mot, d_int, d_mot)
-    return np.asarray(np.einsum("iaja->ij", rho))
 
 
 def embed_operator(op: np.ndarray, ions: tuple[int, ...], n_ions: int) -> np.ndarray:
@@ -347,12 +332,3 @@ def compile_report(record: Record) -> tuple[Shown, ...]:
     if c.circuit_residual is not None:
         out.append(Shown("compile_residual", c.circuit_residual, "whole circuit"))
     return tuple(out)
-
-
-def infidelity_budget_check(record: Record) -> tuple[float | None, float, bool]:
-    """(1 - register fidelity, the closed-form budget total, inside?) for the run (Section 9.6)."""
-    fid = record.results.register_fidelity
-    budget = float(record.diagnostics.intrinsic_budget.get("total", math.nan))
-    if fid is None:
-        return None, budget, False
-    return 1.0 - fid, budget, (1.0 - fid) <= budget

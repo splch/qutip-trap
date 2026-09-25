@@ -105,13 +105,6 @@ class DeviceRef:
             )
         return preset
 
-    def with_overrides(self, overrides: Mapping[str, float]) -> DeviceRef:
-        """The same preset with other overrides; the hash is recomputed by rebuilding (the only way to know it)."""
-        ref = DeviceRef(
-            "", self.preset, self.n_ions, dict(self.kwargs), {k: float(v) for k, v in overrides.items()}
-        )
-        return dataclasses.replace(ref, hash=ref.build(check=False).device.hash())
-
     def cache_key(self) -> str:
         """What identifies the built preset (the worker caches built presets by it)."""
         return f"{self.preset}/{self.n_ions}/{sorted(self.kwargs.items())}/{sorted(self.overrides.items())}"

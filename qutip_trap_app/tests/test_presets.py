@@ -52,7 +52,7 @@ def test_every_preset_is_well_formed_and_tagged(index: ProvenanceIndex) -> None:
                 assert pub.startswith("published.") and index.chip(pub).tag == "verified", v.key
             assert v.expect_agreement or v.why_not, f"{spec.id}.{v.key}: a non-prediction says why"
     assert {p.kind for p in vm.PRESETS.values()} == {"experiment", "circuit"}
-    assert len(vm.experiment_presets()) == 7 and len(vm.circuit_presets()) == 2
+    assert sum(p.kind == "experiment" for p in vm.PRESETS.values()) == 7 and len(vm.circuit_presets()) == 2
 
 
 @pytest.mark.parametrize("preset_id", sorted(presets.RUNNERS))

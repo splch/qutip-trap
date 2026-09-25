@@ -66,10 +66,6 @@ class GateRequest:
     refusal: str | None
     note: str
 
-    @property
-    def accepted(self) -> bool:
-        return self.job is not None
-
 
 @dataclass(frozen=True)
 class RequestOutcome:

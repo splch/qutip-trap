@@ -288,10 +288,6 @@ PRESETS: dict[str, PresetSpec] = {p.id: p for p in (
 """The presets the app ships, in the order the Learn view lists them (Sections 9.1 to 9.6)."""
 
 
-def experiment_presets() -> tuple[PresetSpec, ...]:
-    return tuple(p for p in PRESETS.values() if p.kind == "experiment")
-
-
 def circuit_presets() -> tuple[PresetSpec, ...]:
     return tuple(p for p in PRESETS.values() if p.kind == "circuit")
 

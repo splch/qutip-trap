@@ -178,9 +178,6 @@ class ProvenanceIndex:
         named = sections_named(self.chip(ledger_id).section)
         return self.nearest_section_with_text(named[0]) if named else "13"
 
-    def has(self, ledger_id: str) -> bool:
-        return ledger_id in self._records
-
     def chip(self, ledger_id: str) -> Chip:
         rec = self._records.get(ledger_id)
         if rec is None:

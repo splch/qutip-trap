@@ -32,7 +32,7 @@ def test_requests_are_formed_or_refused_with_a_reason(bell: tuple[Record, LiveRu
     record, _live = bell
     gate = _ms_gate(record)
     ok = rq.request_angle(record, gate, CHI_REQUEST)
-    assert ok.accepted and ok.job is not None and ok.refusal is None
+    assert ok.job is not None and ok.refusal is None
     assert ok.calibrated_chi_rad is not None and abs(ok.calibrated_chi_rad - math.pi / 4.0) < 2e-4, (
         "the table's angle is the exact spot check's, within its tolerance of pi/4 (Section 7.8)"
     )
@@ -46,19 +46,19 @@ def test_requests_are_formed_or_refused_with_a_reason(bell: tuple[Record, LiveRu
     )
     # refusals carry their reason (Section 14.4: "shown with the reason")
     zero = rq.request_angle(record, gate, 0.0)
-    assert not zero.accepted and zero.refusal and "no pulse" in zero.refusal
+    assert zero.job is None and zero.refusal and "no pulse" in zero.refusal
     wide = rq.request_angle(record, gate, 2.0)
-    assert not wide.accepted and wide.refusal and "calibrated range" in wide.refusal
+    assert wide.job is None and wide.refusal and "calibrated range" in wide.refusal
     with pytest.raises(rq.RequestError):
         rq.request_angle(record, next(g.gate_id for g in timeline(record) if g.name.value == "gpi2"), 0.3)
     det = rq.request_detuning(record, gate, 5e3)
-    assert det.accepted and det.job is not None and det.job.waveform_overrides
+    assert det.job is not None and det.job.waveform_overrides
     key = next(iter(det.job.waveform_overrides))
     assert set(int(x) for x in key.split(",")) == set(det.pair) and det.job.waveform_overrides[key] == 5e3
     huge = rq.request_detuning(record, gate, 5e6)
-    assert not huge.accepted and huge.refusal and "half" in huge.refusal
+    assert huge.job is None and huge.refusal and "half" in huge.refusal
     negative = rq.request_angle(record, gate, -CHI_REQUEST)
-    assert negative.accepted and negative.job is not None
+    assert negative.job is not None
     assert math.isclose(negative.job.circuit.ops[k].params[1], op.params[1] + math.pi), (
         "a negative chi flips phi_1 by pi"
     )
@@ -81,11 +81,11 @@ def test_power_limit_is_the_carrier_or_declared_absent(bell: tuple[Record, LiveR
     if peak <= min(carriers):
         limit = abs(wf.chi_total_rad) * (min(carriers) / peak) ** 2
         if limit < math.pi / 2.0:
-            assert not widest.accepted and widest.refusal and "power limit" in widest.refusal
+            assert widest.job is None and widest.refusal and "power limit" in widest.refusal
         else:
-            assert widest.accepted and widest.carrier_rabi_hz == min(carriers)
+            assert widest.job is not None and widest.carrier_rabi_hz == min(carriers)
     else:
-        assert widest.accepted and widest.carrier_rabi_hz is None
+        assert widest.job is not None and widest.carrier_rabi_hz is None
         assert "no power limit" in widest.note
 
 

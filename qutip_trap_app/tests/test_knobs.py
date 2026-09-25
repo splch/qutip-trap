@@ -5,6 +5,7 @@ the run record it describes."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -116,8 +117,8 @@ def test_device_ref_carries_overrides_and_rebuilds_hash_checked() -> None:
     ref = DeviceRef("", "yb171_chain", 2, {}, {"detector.window_s": 3e-5, "field.b_gauss": 6.0})
     preset = ref.build(check=False)
     assert preset.device.detector.window_s == 3e-5 and preset.device.field.B_gauss == 6.0
-    ref2 = ref.with_overrides(ref.overrides)
-    assert ref2.hash == preset.device.hash() and ref2.build().device.hash() == ref2.hash
+    ref2 = dataclasses.replace(ref, hash=preset.device.hash())
+    assert ref2.build().device.hash() == ref2.hash
     assert ref2.cache_key() != DeviceRef("", "yb171_chain", 2, {}, {}).cache_key()
     circuit = core.Circuit(2, (core.Operation("h", (0,), ()),), (0, 1))
     job, built = job_for_preset("yb171_chain", 2, circuit, 10, overrides={"field.b_gauss": 6.0}, build=False)
@@ -223,8 +224,10 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
     """rf amplitude x1.1 -> beta, nu, eta change as Section 4.1 says; the recalibrated table's waveform closes at
     the new modes with a different amplitude; the device card (the layer's) updates without manual steps."""
     record, live = bell
-    ref = record.job.device.with_overrides({"trap.rf_amplitude_scale": 1.1, "trap.rf_frequency_hz": 40e6})
-    preset = ref.build()
+    ref = dataclasses.replace(
+        record.job.device, overrides={"trap.rf_amplitude_scale": 1.1, "trap.rf_frequency_hz": 40e6}
+    )
+    preset = ref.build(check=False)
     old_layer = device_layer.derive_device_layer(record.job.device.build(), table=live.table, sweeps=False)
     stale_layer = device_layer.derive_device_layer(
         preset, overrides=ref.overrides, table_record=record.table, sweeps=False

@@ -10,16 +10,27 @@ from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.resim import boundary_states
 from qutip_trap_app.viewmodel.circuit import (
     bloch_vectors,
-    infidelity_budget_check,
     pauli_expectations,
     phase_register,
     populations,
     register_after,
-    register_from_joint,
     timeline,
 )
 
 TOL = 1e-12
+
+
+def register_from_joint(joint: np.ndarray, joint_dims: tuple[int, ...], n_ions: int) -> np.ndarray:
+    """The oracle: the reduced register density matrix (register order) of a joint ket or density matrix over ion and mode factors."""
+    dims = list(joint_dims)
+    d_int = int(np.prod(dims[:n_ions]))
+    d_mot = int(np.prod(dims[n_ions:])) if len(dims) > n_ions else 1
+    arr = np.asarray(joint, dtype=complex)
+    if arr.ndim == 1 or (arr.ndim == 2 and arr.shape[1] == 1):
+        psi = arr.reshape(d_int, d_mot)
+        return np.asarray(psi @ psi.conj().T)
+    rho = arr.reshape(d_int, d_mot, d_int, d_mot)
+    return np.asarray(np.einsum("iaja->ij", rho))
 
 
 def test_record_holds_the_ladder(bell: tuple[Record, LiveRun]) -> None:
@@ -102,7 +113,8 @@ def test_bell_physics_reads_correctly_from_the_record(chained: tuple[Record, Liv
     assert abs(float(final.fidelity.value) - record.results.register_fidelity) < 1e-6, (
         "the view's target state (the gate targets with their frames) agrees with the core's ideal_register_state"
     )
-    infid, budget, inside = infidelity_budget_check(record)
-    assert infid is not None and inside and infid < budget
+    assert 1.0 - record.results.register_fidelity < record.diagnostics.intrinsic_budget["total"], (
+        "inside the closed-form budget (Section 9.6)"
+    )
     frame = phase_register(record)
     assert set(frame.final_frame) == {0, 1}

@@ -118,7 +118,7 @@ def test_every_displayed_quantity_of_the_bell_record_has_a_chip(bell: tuple[Reco
     assert len(shown) > 80
     for s in shown:
         q = CATALOGUE[s.quantity]
-        assert idx.has(q.ledger_id), s.quantity
+        assert idx.chip(q.ledger_id), s.quantity
     # the drills are generated from the same record and answer from it (DESIGN.md Section 3)
     drills = drills_for(record, idx)
     assert len(drills) >= 4 and len({d.kind for d in drills}) == 4, "four discriminations, interleaved"
@@ -154,7 +154,7 @@ def test_every_displayed_quantity_of_levels_3_and_4_has_a_chip(bell: tuple[Recor
     assert len(shown) > 200
     for s in shown:
         q = CATALOGUE[s.quantity]
-        assert idx.has(q.ledger_id), s.quantity
+        assert idx.chip(q.ledger_id), s.quantity
 
 
 def test_core_is_imported_in_one_module_only() -> None:
