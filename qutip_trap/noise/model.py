@@ -1,35 +1,20 @@
-"""The ``NoiseModel`` record and its two products: collapse operators and dynamical samples (PLAN.md Sections 4.1.5, 6.1
-to 6.7, 7.5; Section 13; Appendix E; milestone M7).
+"""The ``NoiseModel``: spectra, drifts and collisions, turned into collapse operators and dynamical samples (PLAN.md
+Section 6).
 
-Section 6.1 routes every physical noise by its correlation time: white noise is a Lindblad operator (route b,
-``channels``), noise slow compared with a shot is a quasi-static parameter drawn once per dynamical sample (route c,
-the ``Drift`` records), anything in between is a sampled time series on a fixed grid (route d, the tabulated band of a
-``NoiseSpectrum``), and background-gas collisions are discrete events (route e, ``noise/collisions.py``, drawn per shot
-by the run). Nothing here is phenomenological: every rate is derived from a spectrum through the Section 13
-normalizations, and every offset from a drift's rms through the atomic and crystal layers.
+Each noise is routed by its correlation time: a white density is a Lindblad operator (``channels``), a slow
+parameter a quasi-static offset drawn once per dynamical sample (the ``Drift`` records), anything in between a
+trajectory on a fixed grid (the tabulated band of a ``NoiseSpectrum``), and collisions discrete events drawn per shot.
 
-Units of the ``Drift`` fields: ``rf_amplitude_drift`` fractional dV/V (every rf-derived, i.e. transverse, mode moves by
-omega_m dV/V, Section 6.2); ``mode_drift_differential`` Hz per mode; ``rabi_drift`` fractional; ``beam_phase_drift`` rad
-per beam; ``field_drift`` tesla (converted to per-ion transition offsets through the exact hyperfine-Zeeman
-diagonalization at the shifted field, Section 6.3); ``stray_field_drift`` V/m (an equal displacement e E/(m omega^2) of
-every ion along each axis, which moves the beams' intensity at the ions); ``pointing_drift`` metres per beam in the plane
-transverse to the beam; ``laser_frequency_drift`` Hz (an optical qubit's laser against the transition; a Raman beat note
-is rf-referenced and does not see it).
-
-Spectra: ``S_E`` (V/m)^2/(rad/s) two-sided -> heating through the mode-projected multi-ion formula with the configured
-correlation length (Section 4.1.5, never the uniform limit by default); ``S_B`` T^2/(rad/s) -> per-ion transition-frequency
-trajectories through the computed sensitivities d nu/dB and d^2 nu/dB^2, and its white level to the qubit dephasing
-operator L = sqrt(gamma_phi/2) sigma_z with gamma_phi = 2 pi^2 (d nu/dB)^2 S_B,white (Section 13: H_deph = b sigma_z with
-b = pi delta nu, S_b = S_delta/4, and L = sqrt(gamma/2) sigma_z decays the coherence at gamma = 2 S_b(0)); ``mains``
-(tesla per harmonic with a per-shot trigger phase) added to the same trajectory; ``laser_phase`` rad^2/(rad/s) -> phi_L(t)
-on single-photon optical drives; ``laser_intensity`` (dI/I)^2/(rad/s) -> a fractional intensity trajectory on every laser
-drive and, from its white level, the intensity-noise channel sqrt(D) H_drive(t) (Section 6.4); ``rf_amplitude_noise``
-(dV/V)^2/(rad/s) -> a common-mode fractional trajectory of the transverse mode frequencies and, from its white level, the
-motional dephasing operator a^dag a sqrt(2/tau) with 2/tau = omega_m^2 S_V,white (Section 13 row "Motional dephasing
-operator": the coherence of |n> + |n'> decays at (n - n')^2/tau); ``rf_phase_noise`` is recorded and not yet applied
-(the Omega_rf +- omega_t sideband-heating term of Section 4.1.5 needs the uncompensated stray field's rf gradient, which
-the explicit-frequency trap record does not carry); ``rabi_amplitude`` (rad/s)^2/(rad/s) is consumed by the filter
-functions of ``noise/decoupling.py`` only.
+Units: ``S_E`` (V/m)^2/(rad/s), heating through the mode-projected formula with ``correlation_length_m``; ``S_B``
+T^2/(rad/s), per-ion transition trajectories through d nu/dB and d^2 nu/dB^2, its white level the dephasing operator
+L = sqrt(gamma_phi/2) sigma_z with gamma_phi = 2 pi^2 (d nu/dB)^2 S_B,white; ``mains`` T per harmonic; ``laser_phase``
+rad^2/(rad/s) on single-photon optical drives; ``laser_intensity`` (dI/I)^2/(rad/s), its white level the intensity-noise
+channel; ``rf_amplitude_noise`` (dV/V)^2/(rad/s) on the transverse modes, its white level the motional dephasing operator
+with 2/tau = omega_m^2 S_V,white; ``rf_phase_noise`` is recorded and not applied; ``rabi_amplitude`` (rad/s)^2/(rad/s) is
+read by ``noise/decoupling.py``; ``beam_phase_noise`` rad^2/(rad/s) per beam. Drifts: ``rf_amplitude_drift`` and
+``rabi_drift`` fractional, ``mode_drift_differential`` Hz per mode, ``beam_phase_drift`` rad per beam, ``field_drift`` T
+(exact transition offsets at the shifted field), ``stray_field_drift`` V/m (a displacement e E/(m omega^2) of every ion),
+``pointing_drift`` m per beam transverse to it, ``laser_frequency_drift`` Hz (not seen by an rf-referenced Raman beat note).
 """
 
 from __future__ import annotations
@@ -37,8 +22,8 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -77,22 +62,18 @@ if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace
 
 RF_DERIVED_FAMILIES = ("transverse_1", "transverse_2")
-"""The mode families whose frequencies follow the rf amplitude (omega_sec proportional to V_rf, Section 6.2)."""
+"""The mode families whose frequencies follow the rf amplitude."""
 
 GAUSS_PER_TESLA = 1.0e4
 
 
-DRIFT_UNITS: dict[str, str] = {
-    "rf_amplitude_drift": "1",
-    "mode_drift_differential": "Hz",
-    "rabi_drift": "1",
-    "beam_phase_drift": "rad",
-    "field_drift": "T",
-    "stray_field_drift": "V/m",
-    "pointing_drift": "m",
-    "laser_frequency_drift": "Hz",
-}
-"""The unit of each ``Drift`` field's rms (the module docstring), as ``summary`` reports it."""
+class _DriftField(NamedTuple):
+    """One ``Drift`` field of a ``NoiseModel``: its name, the record, the unit of its rms and its draws per sample."""
+
+    name: str
+    drift: Drift
+    unit: str
+    draws: int
 
 
 def _rms_unit(density_unit: str) -> str:
@@ -103,35 +84,26 @@ def _rms_unit(density_unit: str) -> str:
     return f"sqrt({density_unit} x rad/s)"
 
 
-def quiet_field_spectrum() -> NoiseSpectrum:
-    """The zero electric-field spectrum ``NoiseModel()`` carries: a five-point zero band over +-2 pi x 10^7 rad/s in
-    (V/m)^2/(rad/s)."""
-    omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
-    return NoiseSpectrum(omega_rad_s=omega, S=np.zeros(5), unit="(V/m)^2/(rad/s)")
-
-
 def quiet_drift() -> Drift:
     """A drift of zero rms (tau_s = 1 s, no servo): the default of every ``Drift`` field of ``NoiseModel``."""
     return Drift(rms=0.0, tau_s=1.0, servo_bandwidth_hz=None)
 
 
+def _quiet_field_spectrum() -> NoiseSpectrum:
+    """The zero electric-field spectrum: a five-point zero band over +-2 pi x 10^7 rad/s."""
+    omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
+    return NoiseSpectrum(omega_rad_s=omega, S=np.zeros(5), unit="(V/m)^2/(rad/s)")
+
+
 @dataclass(frozen=True)
 class NoiseModel:
-    """The noise of a device as spectra, drifts and event rates, never as phenomenological error rates (Sections 4.1.5, 6.1 to
-    6.7): the electric-field spectrum ``S_E`` with its correlation length, the optional magnetic, laser, rf and amplitude
-    spectra (two-sided in angular frequency; units in the module docstring), the quasi-static ``Drift`` records drawn once
-    per dynamical sample, the collision model and the grid oversampling of the sampled bands. Section 6.1 routes each by
-    its correlation time into a Lindblad operator, a per-sample parameter or a sampled time series.
+    """The noise of a device as spectra, drifts and event rates, never as phenomenological error rates (units in the module
+    docstring). Every default means off: ``NoiseModel()`` is the quiet model."""
 
-    Every default means "off": ``NoiseModel()`` is the quiet model, so a channel is on exactly when its input was set; ``summary()`` lists the channels that follow from what was set, with units, and ``from_experiments``
-    turns a measured heating rate into the field spectrum it implies."""
-
-    S_E: NoiseSpectrum = field(default_factory=lambda: quiet_field_spectrum())
-    """Electric-field noise (heating, Section 6.2); stored two-sided like every NoiseSpectrum. Default: the zero spectrum
-    (no heating), so that ``NoiseModel()`` is the quiet model (0.3.0; docs/api_implementation_plan.md 2.5)."""
+    S_E: NoiseSpectrum = field(default_factory=_quiet_field_spectrum)
+    """Electric-field noise, the source of heating."""
     correlation_length_m: float | None = 0.0
-    """Spatial correlation length of the field noise (0 uncorrelated, inf uniform); REQUIRED once S_E is non-zero (Section 4.1.5).
-    Default 0.0 beside the zero spectrum."""
+    """Spatial correlation length of the field noise (0 uncorrelated, inf uniform); required once S_E is non-zero."""
     S_B: NoiseSpectrum | None = None
     mains: Mains | None = None
     laser_phase: NoiseSpectrum | None = None
@@ -139,37 +111,25 @@ class NoiseModel:
     rf_amplitude_noise: NoiseSpectrum | None = None
     rf_phase_noise: NoiseSpectrum | None = None
     rf_amplitude_drift: Drift = field(default_factory=lambda: quiet_drift())
-    """Common-mode fractional drift of every rf-derived mode of a family; default: no drift."""
     mode_drift_differential: Drift = field(default_factory=lambda: quiet_drift())
     rabi_drift: Drift = field(default_factory=lambda: quiet_drift())
     beam_phase_drift: Drift = field(default_factory=lambda: quiet_drift())
     field_drift: Drift = field(default_factory=lambda: quiet_drift())
     stray_field_drift: Drift = field(default_factory=lambda: quiet_drift())
     pointing_drift: Drift = field(default_factory=lambda: quiet_drift())
-    """Beam pointing, which moves crosstalk and Rabi rate together (Section 6.6); default: no drift."""
     rabi_amplitude: NoiseSpectrum | None = None
-    """Two-sided S_a(omega) of the ADDITIVE amplitude noise in rad/s (Section 6.9); Omega is taken from the pulse
-    at use and never folded as Omega^2 into a device PSD."""
+    """The additive amplitude noise S_a in rad/s; Omega is taken from the pulse at use."""
     collisions: Collisions | None = None
     laser_frequency_drift: Drift | None = None
-    """Hz: the gate laser's frequency against the transition (optical qubits); None = none (M7 extension, defaulted)."""
     beam_phase_noise: NoiseSpectrum | None = None
-    """rad^2/(rad/s), two-sided: the SAMPLED band of each beam's optical path phase, drawn independently per beam
-    (Section 6.3's route (d) for laser phase noise; Section 7.10's user-supplied beat-note phase spectrum). A Raman
-    pair's beat note sees phi_2(t) - phi_1(t), twice one beam's variance for independent paths and zero for a
-    co-propagating pair; the quasi-static counterpart is ``beam_phase_drift``. None = no sampled beam phase."""
+    """The sampled band of each beam's optical path phase, drawn independently per beam."""
     grid_oversample: float = TAU_C_OVERSAMPLE
-    """Points per half period of the highest sampled frequency on a trajectory grid (Section 5.5).
+    """Points per half period of the highest sampled frequency on a trajectory grid."""
 
-    The default 10 pi is Section 5.5's ``Delta t <= tau_c/10`` for the fastest tabulated component (tau_c,min =
-    1/omega_max); the previous default of 4 was 7.9x coarser than the rule (``conv.trajectory_grid_tau_c``)."""
-    extra: dict[str, float] = field(default_factory=dict)
-    """Free-form documented device numbers (a measured T2 to compare with, a quoted heating rate with its provenance)."""
-
-    # ---- route (b): Lindblad rates from the white parts and S_E -------------------------------------------------------------
+    # ---- Lindblad rates from the white parts and S_E -----------------------------------------------------------------
 
     def heating_rates_quanta_per_s(self, device: Device) -> dict[int, float]:
-        """Gamma_h per crystal mode from S_E with the configured correlation length (Section 4.1.5, Kielpinski/Brownnutt)."""
+        """Gamma_h per crystal mode from S_E with the configured correlation length (Kielpinski, Brownnutt)."""
         from qutip_trap.trap.heating import heating_rates_per_mode, single_sided_from_spectrum
 
         if self.S_E.is_zero():
@@ -178,16 +138,14 @@ class NoiseModel:
             raise ValueError(
                 "NoiseModel.correlation_length_m is required once S_E is non-zero: 0 for uncorrelated field noise (every mode "
                 "heats at the single-ion rate), inf for a uniform field (only the centre-of-mass modes of an equal-mass chain), "
-                "or a length (Section 4.1.5: the simulator never defaults to the uniform limit)"
+                "or a length (the simulator never defaults to the uniform limit)"
             )
-        # the record itself, not its arrays: S_E.value folds onto |omega|, is zero above the tabulated band and adds
-        # white_level once, so S_E = 2 S^(2) needs no second white term here (Section 13; trap/heating.py)
         s_e = single_sided_from_spectrum(self.S_E)
         rates = heating_rates_per_mode(device.crystal, s_e, float(self.correlation_length_m))
         return {m: float(r) for m, r in enumerate(rates) if r > 0.0}
 
     def motional_dephasing_tau_s(self, device: Device) -> dict[int, float]:
-        """tau per rf-derived mode from the white rf-amplitude noise: 2/tau = omega_m^2 S_V,white (Section 6.2, 13)."""
+        """tau per rf-derived mode from the white rf-amplitude noise: 2/tau = omega_m^2 S_V,white."""
         if self.rf_amplitude_noise is None or self.rf_amplitude_noise.white_level <= 0.0:
             return {}
         out: dict[int, float] = {}
@@ -197,13 +155,9 @@ class NoiseModel:
                 out[m] = 2.0 / d
         return out
 
-    def field_spectrum(self, device: Device) -> NoiseSpectrum | None:
-        """S_B of the model, else the Field record's own spectrum (the M0 slot), else None."""
-        return self.S_B if self.S_B is not None else device.field.noise
-
     def qubit_white_dephasing_per_s(self, device: Device) -> dict[int, float]:
-        """gamma_phi = 2 pi^2 (d nu/dB)^2 S_B,white per ion, the white-field dephasing rate = 1/T2 of the white component."""
-        spec = self.field_spectrum(device)
+        """gamma_phi = 2 pi^2 (d nu/dB)^2 S_B,white per ion, 1/T2 of the white component."""
+        spec = self.S_B
         if spec is None or spec.white_level <= 0.0:
             return {}
         out: dict[int, float] = {}
@@ -221,9 +175,8 @@ class NoiseModel:
         return 0.0 if self.laser_intensity is None else float(self.laser_intensity.white_level)
 
     def channels(self, device: Device, space: HilbertSpace) -> tuple[CollapseOp, ...]:
-        """The state-independent collapse operators of Section 5.7 on ``space`` (Section 13 normalizations): heating per
-        carried mode, motional dephasing per rf-derived mode, white qubit dephasing per ion. The pulse-dependent operators
-        (scattering with recoil and leakage, the intensity-noise channel) are assembled per segment by the engine."""
+        """The state-independent collapse operators on ``space``: heating per carried mode, motional dephasing per rf-derived
+        mode, white qubit dephasing per ion. The pulse-dependent ones are built per segment by the engine."""
         from qutip_trap.dynamics.channels import (
             heating_channels,
             motional_dephasing_channels,
@@ -236,87 +189,72 @@ class NoiseModel:
         out.extend(qubit_dephasing_channels(space, self.qubit_white_dephasing_per_s(device)))
         return tuple(out)
 
-    # ---- routes (c) and (d): dynamical samples ---------------------------------------------------------------------------
+    # ---- dynamical samples ---------------------------------------------------------------------------------------------
+
+    def _drift_fields(self, n_modes: int = 0, n_beams: int = 0) -> list[_DriftField]:
+        """Every Drift field in declaration order, with the unit of its rms and its draws per sample."""
+        out = [
+            _DriftField("rf_amplitude_drift", self.rf_amplitude_drift, "1", 1),
+            _DriftField("mode_drift_differential", self.mode_drift_differential, "Hz", max(n_modes, 1)),
+            _DriftField("rabi_drift", self.rabi_drift, "1", 1),
+            _DriftField("beam_phase_drift", self.beam_phase_drift, "rad", max(n_beams, 1)),
+            _DriftField("field_drift", self.field_drift, "T", 1),
+            _DriftField("stray_field_drift", self.stray_field_drift, "V/m", 3),
+            _DriftField("pointing_drift", self.pointing_drift, "m", max(2 * n_beams, 1)),
+        ]
+        if self.laser_frequency_drift is not None:
+            out.append(_DriftField("laser_frequency_drift", self.laser_frequency_drift, "Hz", 1))
+        return out
 
     @property
     def drifts(self) -> dict[str, Drift]:
-        out = {
-            "rf_amplitude_drift": self.rf_amplitude_drift,
-            "mode_drift_differential": self.mode_drift_differential,
-            "rabi_drift": self.rabi_drift,
-            "beam_phase_drift": self.beam_phase_drift,
-            "field_drift": self.field_drift,
-            "stray_field_drift": self.stray_field_drift,
-            "pointing_drift": self.pointing_drift,
-        }
-        if self.laser_frequency_drift is not None:
-            out["laser_frequency_drift"] = self.laser_frequency_drift
-        return out
+        return {f.name: f.drift for f in self._drift_fields()}
 
-    def sampled_spectra(self, device: Device | None) -> dict[str, NoiseSpectrum]:
-        """The spectra whose tabulated bands are synthesized per sample."""
-        out: dict[str, NoiseSpectrum] = {}
-        s_b = self.S_B if device is None else self.field_spectrum(device)
-        if s_b is not None and not bool(np.all(np.asarray(s_b.S) == 0.0)):
-            out["S_B"] = s_b
-        for name in ("laser_phase", "laser_intensity", "rf_amplitude_noise", "beam_phase_noise"):
-            spec = getattr(self, name)
-            if spec is not None and not bool(np.all(np.asarray(spec.S) == 0.0)):
-                out[name] = spec
-        return out
+    def sampled_spectra(self) -> dict[str, NoiseSpectrum]:
+        """The spectra whose tabulated bands are synthesized per sample, by field name."""
+        named = {
+            "S_B": _band(self.S_B),
+            "laser_phase": _band(self.laser_phase),
+            "laser_intensity": _band(self.laser_intensity),
+            "rf_amplitude_noise": _band(self.rf_amplitude_noise),
+            "beam_phase_noise": _band(self.beam_phase_noise),
+        }
+        return {k: s for k, s in named.items() if s is not None}
 
     def is_quiet(self, device: Device | None = None) -> bool:
-        """No quasi-static drift, no sampled band and no mains: every dynamical sample equals the nominal one."""
+        """No quasi-static drift, no sampled band and no mains: every dynamical sample is the nominal one (``device`` is
+        not needed)."""
         if any(not d.quiet for d in self.drifts.values()):
             return False
         if self.mains is not None and any(a != 0.0 for a in self.mains.amplitudes_t.values()):
             return False
-        return not self.sampled_spectra(device)
+        return not self.sampled_spectra()
+
+    def _rates(self) -> list[NoiseSpectrum | Drift]:
+        """Every non-quiet spectrum and drift: the rates a noise budget is assembled from."""
+        spectra = (
+            self.S_E,
+            self.S_B,
+            self.laser_phase,
+            self.laser_intensity,
+            self.rf_amplitude_noise,
+            self.rf_phase_noise,
+            self.rabi_amplitude,
+            self.beam_phase_noise,
+        )
+        rates: list[NoiseSpectrum | Drift] = [s for s in spectra if s is not None and not s.is_zero()]
+        return rates + [d for d in self.drifts.values() if not d.quiet]
 
     def apparatus(self) -> tuple[str, ...]:
-        """Every apparatus tag declared by a non-quiet rate of this model, sorted and de-duplicated (Section 6.1).
-
-        A rate that is zero contributes nothing to a budget, so it contributes no apparatus either; a non-zero rate with
-        no ``provenance`` is what ``provenance_sentence`` reports as undeclared.
-        """
-        tags: set[str] = set()
-        for spec in (
-            self.S_E,
-            self.S_B,
-            self.laser_phase,
-            self.laser_intensity,
-            self.rf_amplitude_noise,
-            self.rf_phase_noise,
-            self.rabi_amplitude,
-            self.beam_phase_noise,
-        ):
-            if spec is not None and not spec.is_zero():
-                tags.update(spec.provenance)
-        for drift in self.drifts.values():
-            if not drift.quiet:
-                tags.update(drift.provenance)
-        return tuple(sorted(tags))
+        """Every apparatus tag declared by a non-quiet rate, sorted and de-duplicated (Section 6.1)."""
+        return tuple(sorted({tag for rate in self._rates() for tag in rate.provenance}))
 
     def undeclared_rate_count(self) -> int:
-        """How many non-quiet rates carry no apparatus tag (Section 6.1's provenance requirement)."""
-        n = 0
-        for spec in (
-            self.S_E,
-            self.S_B,
-            self.laser_phase,
-            self.laser_intensity,
-            self.rf_amplitude_noise,
-            self.rf_phase_noise,
-            self.rabi_amplitude,
-            self.beam_phase_noise,
-        ):
-            if spec is not None and not spec.is_zero() and not spec.provenance:
-                n += 1
-        return n + sum(1 for d in self.drifts.values() if not d.quiet and not d.provenance)
+        """How many non-quiet rates carry no apparatus tag."""
+        return sum(1 for rate in self._rates() if not rate.provenance)
 
     def provenance_sentence(self) -> str:
-        """Section 6.1's sentence: "An N-ion error budget assembled from them is stitched from at least three apparatus,
-        and the report says so" **[extracted]**. Empty when the model is quiet (no rates, nothing to stitch)."""
+        """Section 6.1's report that a budget is stitched from several apparatus; empty when the model is quiet."""
         tags = self.apparatus()
         undeclared = self.undeclared_rate_count()
         if not tags and not undeclared:
@@ -333,114 +271,48 @@ class NoiseModel:
             )
         return "; ".join(parts)
 
-    def summary(self, device: Device | None = None) -> dict[str, tuple[float, str]]:
-        """The channels that follow from what was set, name -> (value, unit) (docs/api_implementation_plan.md 2.5, after
-        Pulser's noise table): per mode the heating rate (quanta/s) and the motional dephasing time (s), per ion the white
-        qubit dephasing rate (1/s) and the collision rate (1/s), each when ``device`` is given and the input is set; the
-        white intensity-noise density (1/(rad/s)); the rms of every sampled band (its own unit) and of every non-quiet
-        drift (the field's unit); the mains amplitude per harmonic (T). Empty for the quiet model."""
+    def summary(self, device: Device) -> dict[str, tuple[float, str]]:
+        """The channels that follow from what was set, name -> (value, unit): per mode the heating rate (quanta/s) and the
+        motional dephasing time (s), per ion the white qubit dephasing rate and the collision rate (1/s), the white
+        intensity-noise density (1/(rad/s)), the rms of every sampled band and non-quiet drift, the mains amplitude per
+        harmonic (T). Empty for the quiet model."""
         out: dict[str, tuple[float, str]] = {}
-        if device is not None:
-            for m, rate in self.heating_rates_quanta_per_s(device).items():
-                out[f"heating_rate_per_s[{m}]"] = (float(rate), "quanta/s")
-            for m, tau in self.motional_dephasing_tau_s(device).items():
-                out[f"motional_dephasing_tau_s[{m}]"] = (float(tau), "s")
-            for i, gamma in self.qubit_white_dephasing_per_s(device).items():
-                out[f"qubit_dephasing_per_s[{i}]"] = (float(gamma), "1/s")
-            if self.collisions is not None and self.collisions.pressure_pa > 0.0:
-                from qutip_trap.noise.collisions import collision_rate_per_ion
+        for m, rate in self.heating_rates_quanta_per_s(device).items():
+            out[f"heating_rate_per_s[{m}]"] = (float(rate), "quanta/s")
+        for m, tau in self.motional_dephasing_tau_s(device).items():
+            out[f"motional_dephasing_tau_s[{m}]"] = (float(tau), "s")
+        for i, gamma in self.qubit_white_dephasing_per_s(device).items():
+            out[f"qubit_dephasing_per_s[{i}]"] = (float(gamma), "1/s")
+        if self.collisions is not None and self.collisions.pressure_pa > 0.0:
+            from qutip_trap.noise.collisions import collision_rate_per_ion
 
-                for i in range(device.crystal.n_ions):
-                    rate = collision_rate_per_ion(self.collisions, float(device.crystal.masses_kg[i]))
-                    out[f"collision_rate_per_ion[{i}]"] = (float(rate), "1/s")
-        elif not self.S_E.is_zero():
-            out["S_E_white_level"] = (float(self.S_E.white_level), self.S_E.unit)
+            for i in range(device.crystal.n_ions):
+                rate = collision_rate_per_ion(self.collisions, float(device.crystal.masses_kg[i]))
+                out[f"collision_rate_per_ion[{i}]"] = (float(rate), "1/s")
         density = self.intensity_white_density()
         if density > 0.0:
             out["intensity_noise_density"] = (density, "1/(rad/s)")
-        for name, spec in self.sampled_spectra(device).items():
+        for name, spec in self.sampled_spectra().items():
             out[f"{name}_rms"] = (float(math.sqrt(max(spec.variance(), 0.0))), _rms_unit(spec.unit))
-        for name, drift in self.drifts.items():
-            if not drift.quiet:
-                out[f"{name}_rms"] = (float(drift.rms), DRIFT_UNITS[name])
+        for f in self._drift_fields():
+            if not f.drift.quiet:
+                out[f"{f.name}_rms"] = (float(f.drift.rms), f.unit)
         if self.mains is not None:
             for k, amp in sorted(self.mains.amplitudes_t.items()):
                 if amp != 0.0:
                     out[f"mains_amplitude_t[{k}]"] = (float(amp), "T")
         return out
 
-    def from_experiments(self, results: Sequence[Any], *, device: Device) -> NoiseModel:
-        """This model with the inputs a set of experiment results imply (docs/api_implementation_plan.md 2.5, True-Q's
-        loop closed): the heating-rate case first. Every ``HeatingRateFit`` (mode ``m``, ``ndot_per_s``) implies the
-        single-sided field spectral density S_E(omega_m) = 4 m hbar omega_m n_dot/e^2 at that mode's frequency
-        (``trap.heating.s_e_from_heating_rate``, Brownnutt; the mass is the crystal's first ion's, so a mixed-species
-        crystal is refused); with one mode the model takes a white two-sided ``S_E`` at S_E/2, with several the mean of
-        their levels and the spread in ``extra["S_E_from_experiments_spread"]``; ``correlation_length_m`` stays as set (0.0
-        by default: uncorrelated). Any other result type is refused: nothing else is inverted yet."""
-        from qutip_trap.trap.heating import s_e_from_heating_rate
-
-        masses = {float(m) for m in device.crystal.masses_kg}
-        if len(masses) != 1:
-            raise ValueError(
-                "NoiseModel.from_experiments: the heating inversion takes one ion mass; the crystal mixes species"
-            )
-        mass = masses.pop()
-        levels: list[float] = []
-        for res in results:
-            if type(res).__name__ != "HeatingRateFit":
-                raise ValueError(
-                    f"NoiseModel.from_experiments inverts heating-rate fits only, not {type(res).__name__}"
-                )
-            mode = int(res.subject["mode"])
-            ndot = float(res.value("ndot_per_s"))
-            omega = float(device.crystal.modes[mode].omega_rad_s)
-            levels.append(
-                0.5 * s_e_from_heating_rate(ndot, mass, omega)
-            )  # two-sided, the NoiseSpectrum convention
-        if not levels:
-            raise ValueError("NoiseModel.from_experiments: no result given")
-        level = float(np.mean(levels))
-        spectrum = NoiseSpectrum(
-            np.array([0.0, 1.0]),
-            np.zeros(2),
-            "(V/m)^2/(rad/s)",
-            white_level=level,
-            provenance=("heating_rate experiment (NoiseModel.from_experiments)",),
-        )
-        extra = dict(self.extra)
-        extra["S_E_from_experiments_modes"] = float(len(levels))
-        if len(levels) > 1:
-            extra["S_E_from_experiments_spread"] = float(np.max(levels) - np.min(levels))
-        return replace(
-            self,
-            S_E=spectrum,
-            correlation_length_m=0.0 if self.correlation_length_m is None else self.correlation_length_m,
-            extra=extra,
-        )
-
-    def grid_omega_max_rad_s(self, device: Device | None) -> float:
-        w = 0.0
-        for spec in self.sampled_spectra(device).values():
-            w = max(w, spec.omega_max_rad_s)
-        if self.mains is not None:
-            w = max(w, self.mains.omega_max_rad_s)
-        return w
-
     def sample(
         self,
         rng: np.random.Generator,
         *,
-        device: Device | None = None,
+        device: Device,
         t_s: float = 0.0,
         duration_s: float | None = None,
         sample_id: int = 0,
     ) -> NoiseSample:
-        """One dynamical sample at shot-clock time ``t_s`` (Appendix E ``sample(rng)``; the keyword arguments are M7's).
-
-        Without ``device`` only the device-independent raw draws are made (field offset, rf fraction, Rabi scale, mains
-        phase, laser offset); with it the per-ion, per-mode and per-beam keys the Hamiltonian builder reads are derived,
-        and with ``duration_s`` the trajectories of the sampled bands are synthesized on the grid of Section 5.5.
-        """
+        """One dynamical sample at shot-clock time ``t_s``; with ``duration_s`` the sampled bands are synthesized too."""
         return self.sample_sequence(rng, (t_s,), device=device, duration_s=duration_s, first_id=sample_id)[0]
 
     def sample_sequence(
@@ -448,55 +320,33 @@ class NoiseModel:
         rng: np.random.Generator,
         times_s: Sequence[float],
         *,
-        device: Device | None = None,
+        device: Device,
         duration_s: float | None = None,
         first_id: int = 0,
         t0_s: float | None = None,
     ) -> tuple[NoiseSample, ...]:
         """Dynamical samples at the shot-clock times ``times_s`` (Section 7.5): every Drift is an Ornstein-Uhlenbeck chain
-        over the times with its correlation time (samples far apart in time are independent, close ones correlated), its ramp
-        rate x (t - t0) added; the trajectories of the sampled bands are drawn independently per sample.
-
-        A Drift with ``servo_bandwidth_hz`` is high-passed into its residual band (Section 7.5, "Age, drift and cost"; M8): the
-        machine re-locks the parameter by tracking it with a first-order loop of that bandwidth over the shot clock, so the
-        offset a sample carries is the parameter minus the servo's last estimate (``servo_residual``), zero at the first sample
-        (the calibration measured it there) and bounded by the drift the loop cannot follow afterwards."""
+        over the times plus its ramp rate x (t - t0), high-passed by its servo when it declares one (the offset is then the
+        parameter minus the loop's last estimate, zero at the first sample); the sampled bands are drawn independently per
+        sample."""
         times = np.asarray(times_s, dtype=float)
         if times.ndim != 1 or times.size == 0:
             raise ValueError("times_s is a non-empty sequence of shot-clock times")
         t0 = float(times[0]) if t0_s is None else float(t0_s)
-        n_beams = 0 if device is None else len(device.beams)
-        n_modes = 0 if device is None else len(device.crystal.modes)
-        draws: dict[str, np.ndarray] = {}
-        gen = rng.spawn(len(self.drifts) + 4)
-        k = 0
-        for name, drift in self.drifts.items():
-            size = {
-                "rf_amplitude_drift": 1,
-                "mode_drift_differential": max(n_modes, 1),
-                "rabi_drift": 1,
-                "beam_phase_drift": max(n_beams, 1),
-                "field_drift": 1,
-                "stray_field_drift": 3,
-                "pointing_drift": max(2 * n_beams, 1),
-                "laser_frequency_drift": 1,
-            }[name]
-            draws[name] = (
-                correlated_normals(gen[k], times, drift.tau_s, size)
-                if not drift.quiet
-                else np.zeros((times.size, size))
-            )
-            k += 1
-        gen_mains, gen_traj = gen[k], gen[k + 1]
-        # the offsets: rms x draw + ramp, high-passed by the servo when the Drift declares one
+        drift_fields = self._drift_fields(len(device.crystal.modes), len(device.beams))
+        gen = rng.spawn(len(drift_fields) + 4)
+        # the offsets: rms x draw + ramp, high-passed by the servo when the Drift declares one; a quiet drift is never read
         offsets: dict[str, np.ndarray] = {}
-        for name, drift in self.drifts.items():
-            raw = drift.rms * draws[name] + drift.rate_per_s * (times - t0)[:, None]
-            offsets[name] = (
-                servo_residual(raw, times, drift.servo_bandwidth_hz)
-                if drift.servo_bandwidth_hz is not None and drift.servo_bandwidth_hz > 0.0 and not drift.quiet
-                else raw
+        for k, f in enumerate(drift_fields):
+            if f.drift.quiet:
+                continue
+            draw = correlated_normals(gen[k], times, f.drift.tau_s, f.draws)
+            raw = f.drift.rms * draw + f.drift.rate_per_s * (times - t0)[:, None]
+            bandwidth = f.drift.servo_bandwidth_hz
+            offsets[f.name] = (
+                servo_residual(raw, times, bandwidth) if bandwidth is not None and bandwidth > 0.0 else raw
             )
+        gen_mains, gen_traj = gen[len(drift_fields)], gen[len(drift_fields) + 1]
         out: list[NoiseSample] = []
         for s_idx, t in enumerate(times):
             values: dict[str, float] = {}
@@ -517,14 +367,11 @@ class NoiseModel:
                 values[KEY_MAINS_PHASE] = (
                     float(gen_mains.uniform(0.0, TWO_PI)) if self.mains.trigger == "free_running" else 0.0
                 )
-            if device is not None:
-                self._derive_device_keys(device, values, amp)
-                if duration_s is not None and duration_s > 0.0:
-                    self._synthesize(device, values, grids, gen_traj, float(duration_s))
+            self._derive_device_keys(device, values, amp)
+            if duration_s is not None and duration_s > 0.0:
+                self._synthesize(device, values, grids, gen_traj, float(duration_s))
             out.append(NoiseSample(sample_id=first_id + s_idx, values=values, ou_grids=grids, t_s=float(t)))
         return tuple(out)
-
-    # ---- helpers -----------------------------------------------------------------------------------------------------------
 
     def _derive_device_keys(
         self, device: Device, values: dict[str, float], amp_fn: Callable[[str, int], float]
@@ -540,7 +387,7 @@ class NoiseModel:
                     sp.qubit[0], sp.qubit[1], device.field.B_gauss + db_t * GAUSS_PER_TESLA
                 )
                 values[key_qubit_offset_hz(i)] = float(f1 - f0)
-        # mode offsets: common-mode rf fraction on the transverse families plus the differential drift
+        # mode offsets: the common-mode rf fraction on the transverse families plus the differential drift
         frac = values.get(KEY_RF_FRACTION, 0.0)
         for m, mode in enumerate(device.crystal.modes):
             off = 0.0
@@ -583,15 +430,16 @@ class NoiseModel:
         rng: np.random.Generator,
         duration_s: float,
     ) -> None:
-        spectra = self.sampled_spectra(device)
-        w_max = self.grid_omega_max_rad_s(device)
+        w_max = max((s.omega_max_rad_s for s in self.sampled_spectra().values()), default=0.0)
+        if self.mains is not None:
+            w_max = max(w_max, self.mains.omega_max_rad_s)
         if w_max <= 0.0:
             return
         times = time_grid(duration_s, w_max, oversample=self.grid_oversample)
-        # the field: S_B trajectory plus the mains at this sample's trigger phase -> per-ion transition offsets
+        # the field: the S_B trajectory plus the mains at this sample's trigger phase -> per-ion transition offsets
         field_traj: Trajectory | None = None
-        if "S_B" in spectra:
-            field_traj = synthesize(spectra["S_B"], times, rng)
+        if (s_b := _band(self.S_B)) is not None:
+            field_traj = synthesize(s_b, times, rng)
         if self.mains is not None and self.mains.amplitudes_t:
             mt = mains_trajectory(self.mains, times, values.get(KEY_MAINS_PHASE, 0.0))
             field_traj = mt if field_traj is None else Trajectory(times, field_traj.values + mt.values)
@@ -603,31 +451,30 @@ class NoiseModel:
                 _f, d1, d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], b_static)
                 dnu = d1 * db_g + 0.5 * d2 * db_g**2
                 grids[key_qubit_trajectory_hz(i)] = Trajectory(times, dnu).as_grid()
-        if "laser_phase" in spectra:
-            grids[KEY_LASER_PHASE_TRAJECTORY] = synthesize(spectra["laser_phase"], times, rng).as_grid()
-        if "laser_intensity" in spectra:
-            grids[KEY_INTENSITY_TRAJECTORY] = synthesize(spectra["laser_intensity"], times, rng).as_grid()
-        if "rf_amplitude_noise" in spectra:
-            grids[KEY_RF_FRACTION_TRAJECTORY] = synthesize(
-                spectra["rf_amplitude_noise"], times, rng
-            ).as_grid()
-        if "beam_phase_noise" in spectra:
-            # independent per beam: a Raman pair's beat-note phase is the DIFFERENCE of two independent paths
-            # (Section 7.10), so a co-propagating pair (one shared path) must be declared as one beam, not two
+        for key, spec in (
+            (KEY_LASER_PHASE_TRAJECTORY, self.laser_phase),
+            (KEY_INTENSITY_TRAJECTORY, self.laser_intensity),
+            (KEY_RF_FRACTION_TRAJECTORY, self.rf_amplitude_noise),
+        ):
+            if (band := _band(spec)) is not None:
+                grids[key] = synthesize(band, times, rng).as_grid()
+        if (beam_band := _band(self.beam_phase_noise)) is not None:
+            # independent per beam: a co-propagating pair (one shared path) must be declared as one beam, not two
             for b in range(len(device.beams)):
-                grids[key_beam_phase_trajectory_rad(b)] = synthesize(
-                    spectra["beam_phase_noise"], times, rng
-                ).as_grid()
+                grids[key_beam_phase_trajectory_rad(b)] = synthesize(beam_band, times, rng).as_grid()
+
+
+def _band(spectrum: NoiseSpectrum | None) -> NoiseSpectrum | None:
+    """The spectrum when it has a non-zero tabulated band to sample, else None."""
+    return spectrum if spectrum is not None and bool(np.any(np.asarray(spectrum.S) != 0.0)) else None
 
 
 def servo_residual(values: np.ndarray, times_s: np.ndarray, bandwidth_hz: float) -> np.ndarray:
-    """The part of a slowly drifting parameter a first-order servo of ``bandwidth_hz`` does not remove (Section 7.5, M8).
+    """The part of a drifting parameter a first-order servo of ``bandwidth_hz`` does not remove (Section 7.5).
 
-    ``values[k]`` is the parameter at shot-clock time ``times_s[k]``; the loop's estimate x_hat is re-locked at every sample,
-    x_hat_k = x_hat_{k-1} + (1 - e^{-2 pi f_s dt_k})(x_k - x_hat_{k-1}), starting from x_hat_0 = x_0 (the calibration measured
-    the parameter at the first time), and the sample carries the tracking error x_k - x_hat_{k-1}. For an OU drift of
-    correlation time tau the residual variance is sigma^2/(1 + 2 pi f_s tau) in the continuous limit (the high-passed
-    spectrum), the frequency-feedforward mechanism behind the 50 Hz residual of Section 6.2.
+    The loop's estimate is re-locked at every sample, x_hat_k = x_hat_{k-1} + (1 - e^{-2 pi f_s dt_k})(x_k - x_hat_{k-1})
+    from x_hat_0 = x_0, and a sample carries the tracking error x_k - x_hat_{k-1}; for an OU drift of correlation time tau
+    the residual variance is sigma^2/(1 + 2 pi f_s tau) in the continuous limit.
     """
     x = np.asarray(values, dtype=float)
     t = np.asarray(times_s, dtype=float)

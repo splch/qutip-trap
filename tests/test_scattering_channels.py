@@ -1,5 +1,5 @@
-"""Photon-scattering collapse operators with recoil and leakage (PLAN.md Sections 4.2.8, 4.5.5, 6.5, 12; Section 9.7 row
-'Scattering'; Section 13 rows 'Rayleigh dephasing dissipator', 'Recoil kernel discretization'; M7)."""
+"""Photon-scattering collapse operators with recoil and leakage, and the D-level branching of the scattering budget
+(PLAN.md Section 6.5)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, scattering_budget, square_drive
 from qutip_trap.light.recoil import angular_factor
+from qutip_trap.light.scattering import d_level_branching, epsilon_s_and_d
 from qutip_trap.noise.levels import internal_levels
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.scattering import (
@@ -187,3 +188,28 @@ def test_engine_builds_the_channels_per_segment_and_a_shaped_pulse_gets_a_time_d
         and set(rep.channel_names) >= {"scatter_rayleigh", "scatter_raman"}
     )
     assert rep.segments[0].n_collapse_ops > 0 and tr.final.joint is not None and tr.final.joint.isoper
+
+
+def test_epsilon_d_is_f_times_p_total_and_is_reported_beside_epsilon_s() -> None:
+    """eps_S = P_Raman; eps_D = f P_total with f derived from the species' D-level branchings weighted by 1/Delta_e^2; for
+    171Yb+ at 355 nm it is a fraction of a percent, and Ozeri's P_Rayleigh overstates the elastic rate by it."""
+    dev = single_ion_raman_device()
+    f_d = d_level_branching(dev, 0, (0, 1))
+    assert 0.0 < f_d < 0.05, f"171Yb+ has a D3/2 branch of order 0.5 %, got {f_d}"
+    out = epsilon_s_and_d(dev, 0, (0, 1), 30e3)
+    assert out["f_D"] == pytest.approx(f_d)
+    assert out["epsilon_D"] == pytest.approx(f_d * out["P_total"], rel=1e-12)
+    assert out["ozeri_rayleigh_overstatement"] == pytest.approx(out["epsilon_D"])
+    assert 0.0 < out["epsilon_D"] < out["epsilon_S"] <= out["P_total"]
+
+
+def test_the_d_branching_is_bounded_by_the_reachable_levels_branchings() -> None:
+    """f is the 1/Delta_e^2-weighted mean of the reachable excited levels' D branchings."""
+    dev = single_ion_raman_device()
+    per_upper: dict[str, float] = {}
+    for tr in dev.crystal.species[0].transitions:
+        if tr.lower.startswith("D"):
+            per_upper[tr.upper] = per_upper.get(tr.upper, 0.0) + tr.branching
+    assert per_upper, "171Yb+ has D-level decay channels"
+    f_d = d_level_branching(dev, 0, (0, 1))
+    assert min(per_upper.values()) <= f_d <= max(per_upper.values()) + 1e-12, (f_d, per_upper)

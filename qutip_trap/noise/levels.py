@@ -1,13 +1,8 @@
-"""The internal levels a register factor of dimension d > 2 carries (PLAN.md Sections 4.5.5, 6.5, 8.1, 12; M7).
+"""The internal levels a register factor of dimension d > 2 carries (PLAN.md Section 4.5.5).
 
-Index 0 and 1 are the qubit pair (Section 13 computational ordering, index 0 the lower level); indices 2 .. d - 1 are
-the leakage levels in a FIXED order: the remaining field-dressed sublevels of the qubit's own level(s), ascending in
-energy, then one ``SINK`` that collects every other final state (the D levels a P manifold branches to, whatever the
-species table does not resolve). Leakage is simulated whenever d > 2 (Section 4.5.5: "Leakage is therefore simulated,
-not estimated, whenever d > 2, and its rate is the sum of the out-of-pair Raman rates otherwise"), and the leaked
-levels' readout class follows from the manifold (Section 8.1: for 171Yb+ the F = 1 sublevels are bright, F = 0 dark;
-the SINK is read as dark, an approximation the readout stage records, because a D-level population is repumped during
-detection into both hyperfine manifolds of a hyperfine qubit).
+Indices 0 and 1 are the qubit pair (index 0 the lower level); indices 2 .. d - 1 are the leakage levels in a fixed order:
+the remaining field-dressed sublevels of the qubit's own level(s), ascending in energy, then one ``SINK`` that collects
+every other final state. Leakage is simulated whenever d > 2; the SINK is read as dark.
 """
 
 from __future__ import annotations
@@ -55,7 +50,7 @@ class InternalLevels:
 def internal_levels(
     species: Species, d: int, b_gauss: float, b_hat: tuple[float, float, float]
 ) -> InternalLevels:
-    """The level map of one ion at dimension ``d`` (2 = the qubit alone; up to the qubit level(s)' sublevel count plus one)."""
+    """The level map of one ion at dimension ``d`` (2 = the qubit alone; at most the qubit level(s)' sublevels plus one)."""
     if d < 2:
         raise ValueError("a register factor carries at least the two qubit levels")
     st = structure_at(species, b_gauss, b_hat)

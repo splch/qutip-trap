@@ -1,37 +1,27 @@
-"""Dynamical decoupling and the filter-function description of dephasing and amplitude noise (PLAN.md Section 6.9; Section 13
-rows "Filter-function normalization stack", "Dephasing noise variable", "Coherence and decay exponent", "Dynamical-decoupling
-filter function", "dc frozen-noise coefficient", "Toggling-frame control matrix"; Appendix E ``filter_function``; M7).
+"""Dynamical decoupling and the filter-function description of dephasing and amplitude noise (PLAN.md Section 6.9).
 
-The normalization stack, pinned together and asserted against ``check_composite.py`` sections 9 to 15:
+The normalization stack:
 
-- Toggling frame: H(t) = H_c(t) + beta(t) . sigma with NO 1/2 on the Pauli vector, U(t) = U_c(t) U~(t), and the control
-  matrix R_ij(t) = (1/2) Tr[U_c^dag(t) sigma_i U_c(t) sigma_j], a real SO(3) element (the adjoint of U_c^dag). Under
-  piecewise-constant control R(t) = R^{P_l}(t - t_{l-1}) Lambda^{(l-1)} on segment l, Lambda^{(l-1)} the same trace formula
-  on the propagator accumulated BEFORE the segment, right-multiplying. For a segment rotating about the equatorial axis
-  n(phi_l) = (cos phi_l, sin phi_l, 0) at Omega_l, R^{P}(s) = cos(Omega s) 1 + (1 - cos Omega s) n n^T + sin(Omega s) [n]_x,
-  whose third row for phi = 0 is (0, sin Omega s, cos Omega s) as the check script requires; free evolution and a pure z
-  rotation are the one case theta_l = 0 AND Omega_l = 0 (R^P = 1, the z rotation carried by Lambda).
-- Frequency domain with the explicit -i omega: R_ij(omega) = -i omega int_0^tau dt R_ij(t) e^{+i omega t}, evaluated
-  segment by segment in closed form (the integrals of cos, sin and 1 against e^{i omega s}, with removable poles at
-  omega = +-Omega_l guarded). The dephasing filter function is F_z(omega) = sum_i |R_zi(omega)|^2 and the first-order
-  infidelity 1 - F_av = (1/pi) int_0^inf (d omega/omega^2) S_b F_z (one-sided prefactor 1/pi, weight 1/omega^2 paired with
-  the -i omega); for a pure dephasing S_b this reproduces Biercuk's F(omega tau) = |1 + (-1)^{n+1} e^{i omega tau} +
-  2 cos(omega tau_pi/2) sum_j (-1)^j e^{i delta_j omega tau}|^2 for single-axis pi_X trains at both parities.
-- b(t) is HALF the qubit-splitting fluctuation: H_deph = b sigma_z, S_b = S_delta/4 for a supplied splitting spectrum
-  S_delta; chi = (2/pi) int (d omega/omega^2) S_b F = 2 <a_1^2>, W = e^{-chi}, F_av = (1 + W)/2; the module reports the
-  linear 1 - F_av = <a_1^2> = chi/2 inside xi^2 << 1 and the resummed (1 - W)/2 beside it.
-- Amplitude quadrature: F_a(omega) = (1/4){|sum_l A_l rho~_a^{(l)}|^2 + |sum_l B_l rho~_a^{(l)}|^2}, rho~_a^{(l)} =
-  rho(phi_l) Lambda^{(l-1)}, A_l = cos omega t_l - cos omega t_{l-1}, B_l = sin omega t_l - sin omega t_{l-1}; the dc
-  cancellation of a composite pulse is the closed polygon sum_l theta_l rho~_a^{(l)} = 0.
-- dc floor: for an mth-order sequence under frozen noise 1 - F ~ c^_{m+1} <(beta/Omega)^{2(m+1)}>, c^ the dimensionless
-  leading coefficient of ``control/composite.py`` paired ONLY with the relative error, Gaussian moments (2m + 1)!! <beta^2>^{m+1},
-  <beta^2> = (1/pi) x the one-sided power; the reported estimate is max[(1 - F)_FF, (1 - F)_dc].
-- omega_min is always reported with d ln chi/d ln omega_min beside chi: chi is infrared-divergent for free induction, the
-  Hahn echo and every odd-n sequence on a 1/omega^4 spectrum (Section 12).
+- Toggling frame: H(t) = H_c(t) + beta(t) . sigma with NO 1/2 on the Pauli vector, and the control matrix
+  R_ij(t) = (1/2) Tr[U_c^dag(t) sigma_i U_c(t) sigma_j], a real SO(3) element. Under piecewise-constant control
+  R(t) = R^{P_l}(t - t_{l-1}) Lambda^{(l-1)} on segment l, Lambda^{(l-1)} the adjoint of the propagator accumulated before
+  it; a segment rotating about n(phi) = (cos phi, sin phi, 0) at Omega has R^P(s) = cos(Omega s) 1 + (1 - cos Omega s) n n^T
+  + sin(Omega s) [n]_x.
+- Frequency domain: R_ij(omega) = -i omega int_0^tau dt R_ij(t) e^{+i omega t}, in closed form segment by segment. The
+  dephasing filter function is F_z = sum_i |R_zi(omega)|^2; for single-axis pi_X trains it reproduces Biercuk's
+  |1 + (-1)^{n+1} e^{i omega tau} + 2 cos(omega tau_pi/2) sum_j (-1)^j e^{i delta_j omega tau}|^2 at both parities.
+- b(t) is HALF the qubit-splitting fluctuation (H_deph = b sigma_z, S_b = S_delta/4): chi = (2/pi) int (d omega/omega^2)
+  S_b F = 2 <a_1^2>, W = e^{-chi}, and the first-order 1 - F_av = <a_1^2> = chi/2 beside the resummed (1 - W)/2.
+- Amplitude quadrature: F_a = (1/4){|sum_l A_l rho~^{(l)}|^2 + |sum_l B_l rho~^{(l)}|^2}, rho~^{(l)} = rho(phi_l)
+  Lambda^{(l-1)}, A_l = cos omega t_l - cos omega t_{l-1}, B_l = sin omega t_l - sin omega t_{l-1}; a composite pulse's dc
+  cancellation is the closed polygon sum_l theta_l rho~^{(l)} = 0.
+- dc floor: an mth-order sequence under frozen noise has 1 - F ~ c^_{m+1} (2m + 1)!! (<beta^2>/Omega^2)^{m+1}; the reported
+  infidelity is max[(1 - F)_FF, (1 - F)_dc].
+- chi is infrared-divergent for free induction, the Hahn echo and every odd-n sequence on a 1/omega^4 spectrum, so
+  omega_min is always reported with d ln chi/d ln omega_min.
 
-Multi-axis sequences (XY4, XY8, KDD, CDD, (XY)^N) are built by composing per-pulse blocks with the accumulated
-Lambda^{(l-1)} matrices, never with the scalar (-1)^l, and are tagged **[background]**: no source validates them; the
-single-axis closed forms above are what the machinery must reproduce to quadrature precision.
+Multi-axis sequences (XY4, XY8, KDD, CDD) compose per-pulse blocks with the accumulated Lambda^{(l-1)}, never with the
+scalar (-1)^l.
 """
 
 from __future__ import annotations
@@ -39,7 +29,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 
@@ -51,8 +41,6 @@ if TYPE_CHECKING:
     from qutip_trap.experiments.result import ExperimentResult
     from qutip_trap.noise.spectra import NoiseSpectrum
 
-M7 = "milestone M7 (noise/decoupling.py, PLAN.md Section 6.9)"
-
 Timing = Literal["hahn", "cpmg", "udd", "xy4", "xy8", "kdd", "cdd", "custom"]
 Quadrature = Literal["dephasing", "amplitude", "universal"]
 
@@ -60,9 +48,6 @@ _SX = np.array([[0, 1], [1, 0]], dtype=complex)
 _SY = np.array([[0, -1j], [1j, 0]], dtype=complex)
 _SZ = np.array([[1, 0], [0, -1]], dtype=complex)
 _PAULIS = (_SX, _SY, _SZ)
-
-
-# ---- control segments ----------------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -97,13 +82,13 @@ class ControlSegment:
 
 
 def rotation(theta: float, phi: float) -> np.ndarray:
-    """exp(-i theta sigma_phi/2), sigma_phi = cos phi X + sin phi Y (Section 4.3.5's primitive)."""
+    """exp(-i theta sigma_phi/2), sigma_phi = cos phi X + sin phi Y."""
     s = math.cos(phi) * _SX + math.sin(phi) * _SY
     return math.cos(theta / 2.0) * np.eye(2, dtype=complex) - 1j * math.sin(theta / 2.0) * s
 
 
 def adjoint(u: np.ndarray) -> np.ndarray:
-    """Lambda_ij = (1/2) Tr[U^dag sigma_i U sigma_j]: the SO(3) matrix of Section 13 (the adjoint of U^dag)."""
+    """Lambda_ij = (1/2) Tr[U^dag sigma_i U sigma_j], the SO(3) matrix of U^dag."""
     out = np.empty((3, 3))
     ud = u.conj().T
     for i in range(3):
@@ -122,7 +107,7 @@ def _cross_matrix(n: np.ndarray) -> np.ndarray:
 
 
 def pulse_adjoint(theta: float, phi: float) -> np.ndarray:
-    """R^P(theta) = cos theta 1 + (1 - cos theta) n n^T + sin theta [n]_x for the axis n(phi); equals ``adjoint(rotation)``."""
+    """R^P(theta) = cos theta 1 + (1 - cos theta) n n^T + sin theta [n]_x for the axis n(phi), ``adjoint(rotation)``."""
     n = _axis(phi)
     return (
         math.cos(theta) * np.eye(3)
@@ -147,9 +132,8 @@ def segment_frequency_integrals(
 ) -> np.ndarray:
     """M_l(omega) = int_0^tau_l R^{P_l}(s) e^{i omega (t_{l-1} + s)} ds, shape (len(omega), 3, 3) complex.
 
-    ``gated``: the noise coupling is switched off while a pulse is on (Biercuk 2009's finite-pulse idealization, whose whole
-    effect is the cos(omega tau_pi/2) factor), so a driven segment contributes nothing to the integral; the default keeps the
-    noise on through the pulse (Green 2013's finite-width treatment, the physical case).
+    ``gated`` switches the noise off while a pulse is on (Biercuk 2009's idealization, whose whole effect is the
+    cos(omega tau_pi/2) factor); the default keeps it on through the pulse (Green 2013's finite-width treatment).
     """
     w = np.asarray(omega, dtype=float)
     tau = seg.duration_s
@@ -185,13 +169,6 @@ def accumulated_adjoints(segments: Sequence[ControlSegment]) -> list[np.ndarray]
     return out
 
 
-def final_adjoint(segments: Sequence[ControlSegment]) -> np.ndarray:
-    lam = np.eye(3)
-    for seg in segments:
-        lam = pulse_adjoint(seg.theta_rad, seg.phi_rad) @ lam
-    return lam
-
-
 def control_matrix(
     segments: Sequence[ControlSegment], omega: np.ndarray, *, gated: bool = False
 ) -> np.ndarray:
@@ -206,27 +183,10 @@ def control_matrix(
     return (-1j * w)[:, None, None] * total
 
 
-def control_matrix_time(segments: Sequence[ControlSegment], t: float) -> np.ndarray:
-    """R(t) by the trace formula on the actual propagator (the reference the closed forms are checked against)."""
-    u = np.eye(2, dtype=complex)
-    elapsed = 0.0
-    for seg in segments:
-        if t <= elapsed:
-            break
-        if seg.is_instantaneous:
-            u = rotation(seg.theta_rad, seg.phi_rad) @ u
-            continue
-        s = min(t - elapsed, seg.duration_s)
-        if not seg.is_free:
-            u = rotation(seg.omega_rad_s * s, seg.phi_rad) @ u
-        elapsed += seg.duration_s
-    return adjoint(u)
-
-
 def dephasing_filter_function(
     segments: Sequence[ControlSegment], omega: np.ndarray, *, gated: bool = False
 ) -> np.ndarray:
-    """F_z^{(1)}(omega) = sum_i |R_zi(omega)|^2 (all three components, Section 6.9)."""
+    """F_z(omega) = sum_i |R_zi(omega)|^2."""
     r = control_matrix(segments, omega, gated=gated)
     return np.asarray(np.sum(np.abs(r[:, 2, :]) ** 2, axis=1))
 
@@ -253,13 +213,13 @@ def amplitude_filter_function(segments: Sequence[ControlSegment], omega: np.ndar
 def universal_filter_function(
     segments: Sequence[ControlSegment], omega: np.ndarray, *, gated: bool = False
 ) -> np.ndarray:
-    """sum_{ij} |R_ij(omega)|^2: the trace form for an isotropic noise vector (all three quadratures alike)."""
+    """sum_{ij} |R_ij(omega)|^2: the trace form for an isotropic noise vector."""
     r = control_matrix(segments, omega, gated=gated)
     return np.asarray(np.sum(np.abs(r) ** 2, axis=(1, 2)))
 
 
 def dc_polygon(segments: Sequence[ControlSegment]) -> np.ndarray:
-    """sum_l theta_l rho~_a^{(l)}: zero for an amplitude-correcting composite pulse (a closed polygon of toggled axes)."""
+    """sum_l theta_l rho~^{(l)}: zero for an amplitude-correcting composite pulse (a closed polygon of toggled axes)."""
     lams = accumulated_adjoints(segments)
     total = np.zeros(3)
     for seg, lam in zip(segments, lams):
@@ -276,7 +236,7 @@ def chi_integral(
     *,
     n_points: int = 20001,
 ) -> float:
-    """chi = (2/pi) int_{omega_min}^{omega_max} (d omega/omega^2) S_b(omega) F(omega) on a dense log grid (trapezoid in ln omega)."""
+    """chi = (2/pi) int_{omega_min}^{omega_max} (d omega/omega^2) S_b(omega) F(omega), trapezoid in ln omega."""
     if omega_min_rad_s <= 0.0 or omega_max_rad_s <= omega_min_rad_s:
         raise ValueError("0 < omega_min < omega_max")
     u = np.linspace(math.log(omega_min_rad_s), math.log(omega_max_rad_s), int(n_points))
@@ -296,11 +256,10 @@ def double_factorial_odd(m: int) -> int:
 
 
 def dc_floor(c_hat: float, order: int, beta_variance: float, omega_rad_s: float) -> float:
-    """c^_{m+1} (2m + 1)!! (<beta^2>/Omega^2)^{m+1}: the frozen-noise floor of an mth-order sequence (Section 6.9).
+    """c^_{m+1} (2m + 1)!! (<beta^2>/Omega^2)^{m+1}, the frozen-noise floor of an mth-order sequence.
 
-    ``beta_variance`` must be in the SAME normalization as the c_hat it is paired with. ``leading_coefficient`` fits
-    c_hat against Mount's (eps_a, eps_d), for which eps_a = beta_a/Omega but eps_d = 2 beta_d/Omega (beta_d being half
-    the splitting fluctuation, Section 6.9); ``filter_function`` therefore passes 4 <beta_d^2> on the detuning channel.
+    ``beta_variance`` is in the normalization of the c_hat it is paired with: ``leading_coefficient`` fits Mount's
+    (eps_a, eps_d), for which eps_a = beta_a/Omega but eps_d = 2 beta_d/Omega, so the detuning channel takes 4 <beta_d^2>.
     """
     rel = beta_variance / omega_rad_s**2
     return c_hat * double_factorial_odd(order) * rel ** (order + 1)
@@ -309,14 +268,11 @@ def dc_floor(c_hat: float, order: int, beta_variance: float, omega_rad_s: float)
 def frozen_noise_infidelity(
     segs: Sequence[ControlSegment], beta_rad_s: float, quadrature: Quadrature = "dephasing"
 ) -> float:
-    """1 - (1/4)|Tr(U_c^dag U)|^2 for a control held under a CONSTANT noise field beta (Section 6.9's dc limit).
+    """1 - (1/4)|Tr(U_c^dag U)|^2 under a CONSTANT noise field beta, exact to all Magnus orders.
 
-    Exact to all Magnus orders, which is the point: the first-order filter function under-estimates the error for
-    omega/Omega << 1 precisely because it drops the higher orders that survive when the noise is frozen. The noise
-    enters as Section 6.9's H_0 = beta . sigma with NO factor 1/2 on the Pauli vector: beta_z = beta for the dephasing
-    quadrature (beta being half the splitting fluctuation) and beta_a rho^(phi_l)/2 for the amplitude one, so an
-    amplitude beta is a fractional Rabi error beta/Omega. An instantaneous pulse (duration 0) is a bang-bang delta
-    that the frozen field cannot act during, so it contributes its bare rotation.
+    The noise enters as H_0 = beta . sigma: beta sigma_z for the dephasing quadrature (beta half the splitting fluctuation)
+    and (beta/2) sigma_phi for the amplitude one, a fractional Rabi error beta/Omega; an instantaneous pulse contributes its
+    bare rotation.
     """
     if quadrature == "universal":
         raise ValueError(
@@ -348,12 +304,8 @@ def frozen_noise_floor(
     *,
     nodes: int = 41,
 ) -> float:
-    """<1 - F> over a zero-mean Gaussian frozen beta of variance ``beta_variance``, by Gauss-Hermite quadrature.
-
-    The dc floor of Section 6.9 without a fitted c_hat: for a ``DecouplingSequence`` or a ``Schedule`` no source
-    supplies one, and the plan's own recipe (ĉ_{m+1}(2m+1)!!<beta^2>^{m+1}) is only the leading term of this average.
-    Reproduces the composite-pulse ĉ floors to 5e-4 relative in their stated regime (``tests/test_m7_dc_floor.py``).
-    """
+    """<1 - F> over a zero-mean Gaussian frozen beta of variance ``beta_variance``, by Gauss-Hermite quadrature: the dc
+    floor without a fitted c_hat, of which c_hat (2m + 1)!! <beta^2>^{m+1} is the leading term."""
     if beta_variance < 0.0:
         raise ValueError("a variance is non-negative")
     if beta_variance == 0.0:
@@ -366,13 +318,7 @@ def frozen_noise_floor(
 
 
 def _expm_hermitian2(h: np.ndarray, t: float) -> np.ndarray:
-    """exp(-i t h) for a TRACELESS Hermitian 2x2 h, in closed form: cos(|v| t) 1 - i sin(|v| t) (v_hat . sigma).
-
-    Every h this module builds is a real combination of sigma_x, sigma_y and sigma_z (a drive term plus a frozen noise
-    term), so writing h = v . sigma gives the exact Pauli exponential and the Gauss-Hermite average of
-    ``frozen_noise_infidelity`` needs no matrix exponential at all - 41 nodes x the segment count would otherwise be
-    that many ``scipy.linalg.expm`` calls per floor.
-    """
+    """exp(-i t h) for a traceless Hermitian 2x2 h = v . sigma: cos(|v| t) 1 - i sin(|v| t) (v_hat . sigma)."""
     vx = float(np.real(h[0, 1]))
     vy = float(np.imag(h[1, 0]))
     vz = float(np.real(h[0, 0]))
@@ -394,162 +340,6 @@ def udd_centres(n: int) -> tuple[float, ...]:
     return tuple(math.sin(math.pi * j / (2.0 * n + 2.0)) ** 2 for j in range(1, n + 1))
 
 
-# ---- arbitrary precision (Section 9.15 "Bang-bang suppression orders (mpmath >= 200 dps)") ---------------------------------
-#
-# ``mpmath`` is a DEVELOPMENT dependency of this project (pyproject.toml's dev group, for the committed check scripts),
-# not a runtime one, so every function below imports it lazily: the module imports and every float64 entry point works
-# without mpmath installed, and only these validation helpers need it.
-#
-# F is an O(1) sum that cancels to omega^{2n+2}, so double precision loses the whole signal by n ~ 4: a UDD-8 filter
-# function at omega tau = 1e-3 is 1e-48 of an O(1) sum. Section 6.9 says so ("Verifying these orders needs arbitrary
-# precision ... so the test runs in mpmath"). These functions are the SAME equations as
-# ``DecouplingSequence.biercuk_filter_function`` and ``control_matrix``'s zz row, evaluated in mpmath instead of float64;
-# ``tests/test_decoupling_mpmath.py`` cross-checks them against the float64 versions where those are still accurate.
-
-
-def biercuk_amplitude_mp(
-    deltas: Sequence[float], n_pulses: int, x: Any, tau_pi_frac: float = 0.0, dps: int = 200
-) -> Any:
-    """R_zz(x)/(-i) of Biercuk Eq. 2 at ``mp.dps = dps``: 1 + (-1)^{n+1} e^{ix} + 2 cos(x delta_pi/2) sum_j (-1)^j e^{i d_j x}.
-
-    ``x = omega tau`` (an ``mpmath`` number or anything ``mp.mpf`` accepts), ``tau_pi_frac = tau_pi/tau``. The modulus
-    squared is the filter function; the lowest nonvanishing Taylor order of this amplitude in x is the roll-off order the
-    9.15 row pins (3 for Carr-Purcell at every even n, n + 1 for UDD).
-    """
-    from mpmath import mp  # type: ignore[import-untyped]  # mpmath ships no py.typed marker
-
-    with mp.workdps(int(dps)):
-        xx = _as_mpf(x, dps)
-        acc = mp.mpf(0)
-        for j, d in enumerate(deltas, start=1):
-            acc += (-1) ** j * mp.e ** (1j * _as_mpf(d, dps) * xx)
-        y = 1 + (-1) ** (n_pulses + 1) * mp.e ** (1j * xx)
-        y += 2 * mp.cos(xx * _as_mpf(tau_pi_frac, dps) / 2) * acc
-        return +y
-
-
-def chi_integral_mp(
-    spectrum_two_sided: Callable[[Any], Any],
-    filter_fn: Callable[[Any], Any],
-    omega_min_rad_s: float,
-    omega_max_rad_s: float,
-    *,
-    dps: int = 120,
-    maxdegree: int = 9,
-) -> Any:
-    """chi = (2/pi) int (d omega/omega^2) S_b F at ``mp.dps = dps``, substituting u = ln omega (``mp.quad``).
-
-    The mpmath twin of :func:`chi_integral`. Section 9.15's IR-convergence row cannot be reproduced in float64 for even
-    n: the even-n finite-pulse F is (omega tau)^2 (omega tau_pi)^4/64, which at omega = 1e-6 is 1e-43 of an O(1) sum, so
-    double precision returns cancellation noise of order 1e-32 instead. That noise is omega-independent, which turns the
-    ``S ~ omega^-4`` integrand into omega^-6 and reports chi = 128 where the true value is 1.2e-4
-    (``tests/test_decoupling_mpmath.py``).
-    """
-    from mpmath import mp
-
-    if omega_min_rad_s <= 0.0 or omega_max_rad_s <= omega_min_rad_s:
-        raise ValueError("0 < omega_min < omega_max")
-    with mp.workdps(int(dps)):
-
-        def integrand(u: Any) -> Any:
-            w = mp.e**u
-            return spectrum_two_sided(w) * filter_fn(w) / w
-
-        lo = mp.log(_as_mpf(omega_min_rad_s, dps))
-        hi = mp.log(_as_mpf(omega_max_rad_s, dps))
-        return +(2 / mp.pi * mp.quad(integrand, [lo, hi], maxdegree=int(maxdegree)))
-
-
-def _as_mpf(value: Any, dps: int) -> Any:
-    """``mp.mpf`` of a float, an int or an existing mpmath number. A float goes through ``repr`` so that the decimal the
-    caller wrote is what mpmath sees (``mp.mpf(0.05)`` carries the float64 representation error into 200 digits, which is
-    exactly the precision loss these functions exist to avoid); an mpf is already exact and passes through."""
-    from mpmath import mp
-
-    with mp.workdps(int(dps)):
-        if isinstance(value, float):
-            return mp.mpf(repr(value))
-        if isinstance(value, int):
-            return mp.mpf(value)
-        return +value
-
-
-def biercuk_filter_function_mp(
-    deltas: Sequence[float], n_pulses: int, x: Any, tau_pi_frac: float = 0.0, dps: int = 200
-) -> Any:
-    """|R_zz|^2 of Biercuk Eq. 2 at ``mp.dps = dps`` (the mpmath twin of ``biercuk_filter_function``)."""
-    from mpmath import mp
-
-    with mp.workdps(int(dps)):
-        return abs(biercuk_amplitude_mp(deltas, n_pulses, x, tau_pi_frac, dps)) ** 2
-
-
-def cpmg_centres_mp(n: int, dps: int = 200) -> tuple[Any, ...]:
-    """delta_j = (2j - 1)/(2n) exactly, as mpmath rationals (the CPMG timings are rational, so they are exact)."""
-    from mpmath import mp
-
-    with mp.workdps(int(dps)):
-        return tuple(mp.mpf(2 * j - 1) / (2 * n) for j in range(1, n + 1))
-
-
-def udd_centres_mp(n: int, dps: int = 200) -> tuple[Any, ...]:
-    """delta_j = sin^2[pi j/(2n + 2)] at ``dps`` digits: the float64 ``udd_centres`` is only good to 1e-16, which caps the
-    verifiable order at about 4."""
-    from mpmath import mp
-
-    with mp.workdps(int(dps)):
-        return tuple(mp.sin(mp.pi * j / (2 * n + 2)) ** 2 for j in range(1, n + 1))
-
-
-def biercuk_taylor_coefficients_mp(
-    deltas: Sequence[Any], n_pulses: int, dps: int = 200, max_order: int = 32
-) -> list[Any]:
-    """The EXACT Taylor coefficients of the bang-bang Biercuk amplitude in x = omega tau, to ``max_order``.
-
-    A sum of exponentials has closed-form Taylor coefficients, so no numerical differentiation is needed (and none may
-    be used: ``mp.taylor`` of an O(1) sum cancelling at order n + 1 is both slow and precision-limited). With
-    A_k = sum_j (-1)^j delta_j^k,
-
-        c_0 = 1 + (-1)^{n+1} + 2 A_0,      c_k = (i^k/k!)[(-1)^{n+1} + 2 A_k]   (k >= 1),
-
-    the bracket being what a sequence's timings must annihilate: order n + 1 for UDD means A_k = -(-1)^{n+1}/2 for
-    every k <= n. Bang-bang only (tau_pi = 0); the finite-pulse cos(x delta_pi/2) factor multiplies the whole A sum.
-    """
-    from mpmath import mp
-
-    with mp.workdps(int(dps)):
-        parity = mp.mpf((-1) ** (n_pulses + 1))
-        out: list[Any] = []
-        for k in range(int(max_order) + 1):
-            a_k = mp.mpf(0)
-            for j, d in enumerate(deltas, start=1):
-                a_k += (-1) ** j * (mp.mpf(1) if k == 0 else d**k)
-            bracket = parity + 2 * a_k
-            if k == 0:
-                out.append(+(1 + bracket))
-            else:
-                out.append(+((1j) ** k / mp.factorial(k) * bracket))
-        return out
-
-
-def leading_taylor_order_mp(
-    deltas: Sequence[Any], n_pulses: int, dps: int = 200, max_order: int = 32
-) -> tuple[int, Any]:
-    """(k, c_k): the lowest nonvanishing Taylor order of the bang-bang Biercuk amplitude and its coefficient.
-
-    "Nonvanishing" means larger than 10^{-dps/2}, half the working precision, so the answer cannot be an artefact of the
-    arithmetic (this is the whole reason Section 6.9 sends the check to mpmath).
-    """
-    from mpmath import mp
-
-    with mp.workdps(int(dps)):
-        floor_mag = mp.mpf(10) ** (-int(dps) // 2)
-        for k, c in enumerate(biercuk_taylor_coefficients_mp(deltas, n_pulses, dps, max_order)):
-            if abs(c) > floor_mag:
-                return k, +c
-        raise ValueError(f"no nonvanishing Taylor coefficient below order {max_order} at dps = {dps}")
-
-
 def _xy_axes(n: int, pattern: Sequence[float]) -> tuple[float, ...]:
     if n % len(pattern) != 0:
         raise ValueError(f"the pulse count must be a multiple of {len(pattern)} for this axis pattern")
@@ -557,10 +347,8 @@ def _xy_axes(n: int, pattern: Sequence[float]) -> tuple[float, ...]:
 
 
 KDD_BLOCK = (math.pi / 6.0, 0.0, math.pi / 2.0, 0.0, math.pi / 6.0)
-"""Souza, Alvarez and Suter 2011: the five-pulse Knill block replacing each pi pulse, its phases relative to the block axis.
-One block is a pi rotation about the equatorial axis at -60 degrees (checked by ``pulse_adjoint``), two blocks with the X and
-Y bases a pi rotation about z, and the XY4 cycle of four blocks (20 pulses) the identity: ``decoupling_sequence`` needs a
-multiple of 20 pulses."""
+"""Souza, Alvarez and Suter 2011: the five-pulse Knill block replacing each pi pulse, phases relative to the block axis;
+four blocks on the XY4 axes compose to the identity, so KDD takes a multiple of 20 pulses."""
 
 
 def _cdd_tokens(level: int) -> list[str]:
@@ -573,18 +361,18 @@ def _cdd_tokens(level: int) -> list[str]:
 
 @dataclass(frozen=True)
 class DecouplingSequence:
-    """A net-identity pulse train, or a decoupled idle (Section 6.9)."""
+    """A net-identity pulse train, or a decoupled idle."""
 
     timing: Timing
     n_pulses: int
     tau_s: float
-    """TOTAL duration, INCLUSIVE of the pi-pulse widths."""
+    """Total duration, inclusive of the pi-pulse widths."""
     tau_pi_s: float
     """One pulse duration; delta_pi = tau_pi_s/tau_s."""
     deltas: tuple[float, ...]
-    """Fractional pulse CENTRES in [0, 1]; len == n_pulses."""
+    """Fractional pulse centres in [0, 1], one per pulse."""
     axes_rad: tuple[float, ...]
-    """Per-pulse axis azimuth; all zero for single-axis families."""
+    """Per-pulse axis azimuth; all zero for the single-axis families."""
     inner: CompositePulse | None = None
     provenance_id: str = ""
 
@@ -599,7 +387,7 @@ class DecouplingSequence:
             raise ValueError("pulse centres must be strictly increasing")
 
     def is_single_axis(self) -> bool:
-        """If False the scalar (-1)^l bookkeeping is INVALID and the full toggling machinery is needed."""
+        """Whether every pulse shares one axis; otherwise the scalar (-1)^l bookkeeping is invalid."""
         return (
             all(math.isclose(a, self.axes_rad[0], abs_tol=1e-12) for a in self.axes_rad)
             if self.axes_rad
@@ -607,7 +395,7 @@ class DecouplingSequence:
         )
 
     def feasible(self) -> bool:
-        """delta_pi <= 2 sin^2[pi/(2n + 2)] and no pulse overlap (Section 6.9)."""
+        """delta_pi <= 2 sin^2[pi/(2n + 2)] and no pulse overlap."""
         if self.n_pulses == 0:
             return True
         delta_pi = self.tau_pi_s / self.tau_s
@@ -644,10 +432,6 @@ class DecouplingSequence:
             out.append(ControlSegment(0.0, 0.0, self.tau_s - t))
         return tuple(out)
 
-    def control_matrix(self, omega_rad_s: np.ndarray) -> np.ndarray:
-        """(len(omega), 3, 3) complex R_ij(omega) from the full toggling machinery (Section 13, Green Eqs. 25-30)."""
-        return control_matrix(self.segments(), np.asarray(omega_rad_s, dtype=float))
-
     def filter_function(
         self,
         omega_rad_s: np.ndarray,
@@ -655,8 +439,7 @@ class DecouplingSequence:
         *,
         gated: bool = False,
     ) -> np.ndarray:
-        """``gated=True`` switches the noise off during the pulses (Biercuk's idealization, reproduced exactly by
-        ``biercuk_filter_function`` for single-axis trains); the default keeps it on (Green's finite-width case)."""
+        """F(omega) of the sequence; ``gated=True`` switches the noise off during the pulses (Biercuk's idealization)."""
         segs = self.segments()
         w = np.asarray(omega_rad_s, dtype=float)
         if quadrature == "dephasing":
@@ -664,45 +447,6 @@ class DecouplingSequence:
         if quadrature == "amplitude":
             return amplitude_filter_function(segs, w)
         return universal_filter_function(segs, w, gated=gated)
-
-    def biercuk_filter_function(self, omega_rad_s: np.ndarray) -> np.ndarray:
-        """Biercuk Eq. 2 for a SINGLE-AXIS pi_X train (both parities): the closed form the machinery must reproduce."""
-        if not self.is_single_axis():
-            raise ValueError("Biercuk's scalar form holds for single-axis trains only (Section 6.9)")
-        x = np.asarray(omega_rad_s, dtype=float) * self.tau_s
-        n = self.n_pulses
-        acc = np.zeros_like(x, dtype=complex)
-        for j, d in enumerate(self.deltas, start=1):
-            acc += (-1) ** j * np.exp(1j * d * x)
-        y = 1.0 + (-1) ** (n + 1) * np.exp(1j * x) + 2.0 * np.cos(x * self.tau_pi_s / self.tau_s / 2.0) * acc
-        return np.asarray(np.abs(y) ** 2)
-
-    def rounded_to_clock(self, clock_s: float) -> tuple[DecouplingSequence, dict[str, float]]:
-        """Snap pulse centres to the clock grid, then move the LAST pulse to restore A_1 exactly when the grid allows; return
-        the sequence and the residual moment errors (A_1, A_2) against the ideal timings."""
-        if clock_s <= 0.0:
-            raise ValueError("clock step must be positive")
-        centres = [round(d * self.tau_s / clock_s) * clock_s / self.tau_s for d in self.deltas]
-        a1_target = self.moments(1)[0]
-        n = self.n_pulses
-        if n > 0:
-            a1_now = sum((-1) ** j * d for j, d in enumerate(centres, start=1))
-            # the last pulse carries sign (-1)^n; shift it by the whole residual, then re-snap
-            shift = (a1_target - a1_now) / ((-1) ** n)
-            centres[-1] = round((centres[-1] + shift) * self.tau_s / clock_s) * clock_s / self.tau_s
-        new = DecouplingSequence(
-            self.timing,
-            n,
-            self.tau_s,
-            self.tau_pi_s,
-            tuple(centres),
-            self.axes_rad,
-            self.inner,
-            self.provenance_id,
-        )
-        a1, a2 = new.moments(2)
-        b1, b2 = self.moments(2)
-        return new, {"A1_error": float(a1 - b1), "A2_error": float(a2 - b2)}
 
 
 def decoupling_sequence(
@@ -713,12 +457,11 @@ def decoupling_sequence(
     *,
     inner: CompositePulse | None = None,
     centres: Sequence[float] | None = None,
-    axes_rad: Sequence[float] | None = None,
 ) -> DecouplingSequence:
-    """CPMG delta_j = (2j - 1)/2n (exact and tau_pi-independent under the pulse-inclusive convention), UDD delta_j =
-    sin^2[pi j/(2n + 2)], Hahn (n = 1), XY4/(XY)^N (CPMG timings, alternating X and Y axes), XY8 (X Y X Y Y X Y X), KDD (each
-    pulse a Knill block of five, CPMG timings, block axes cycling X Y X Y), CDD (the concatenated recursion with equal free
-    intervals; ``n_pulses`` is the level), or custom centres and axes."""
+    """CPMG delta_j = (2j - 1)/2n (tau_pi-independent under the pulse-inclusive convention), UDD delta_j = sin^2[pi j/(2n + 2)],
+    Hahn (n = 1), XY4 (CPMG timings, alternating X and Y), XY8 (X Y X Y Y X Y X), KDD (each pulse a Knill block of five,
+    block axes cycling X Y), CDD (the concatenated recursion with equal free intervals; ``n_pulses`` is the level), or
+    custom single-axis ``centres``."""
     axes: tuple[float, ...]
     deltas: tuple[float, ...]
     if timing == "hahn":
@@ -770,7 +513,7 @@ def decoupling_sequence(
         if centres is None:
             raise ValueError("custom timing needs the pulse centres")
         deltas = tuple(float(c) for c in centres)
-        axes = tuple(float(a) for a in axes_rad) if axes_rad is not None else tuple(0.0 for _ in deltas)
+        axes = tuple(0.0 for _ in deltas)
         n_pulses = len(deltas)
     else:
         raise ValueError(f"unknown decoupling timing {timing!r}")
@@ -791,18 +534,12 @@ def decoupling_sequence(
     return seq
 
 
-# ---- the Appendix E entry point -------------------------------------------------------------------------------------------------
+# ---- controls and the filter-function report -----------------------------------------------------------------------------
 
 
 def composite_segments(pulse: CompositePulse, rabi_rad_s: float) -> tuple[ControlSegment, ...]:
-    """A composite pulse at constant Rabi frequency: segment durations theta_l/Omega, phases as stored.
-
-    ``pulse.segments`` already carries the target azimuth on EVERY entry, the zeroth included (Section 13's row
-    "Composite-pulse sequence order in time"; ``CompositePulse.phi_rad``), and already carries ``n_rep`` repetitions
-    of the corrector (Appendix E; ``control.composite.repeat_corrector``). Adding either here double-counted it:
-    every phase came out at phi_t too high, and the total area at n_rep times the value ``total_rotation_rad``
-    reports (M2 audit E4, E12).
-    """
+    """A composite pulse at constant Rabi frequency: segment durations theta_l/Omega, phases as stored (``pulse.segments``
+    already carries the target azimuth on every entry and the corrector's repetitions)."""
     if rabi_rad_s <= 0.0:
         raise ValueError("the Rabi frequency must be positive")
     return tuple(ControlSegment(area, phase, area / rabi_rad_s) for area, phase in pulse.segments)
@@ -817,9 +554,7 @@ def schedule_segments(schedule: Schedule, ion: int) -> tuple[ControlSegment, ...
             raise NotImplementedError("filter functions are built for single-tone carrier pulses")
         tone = p.drive.tones[0]
         if callable(tone.envelope_hz) or isinstance(tone.envelope_hz, np.ndarray) or callable(tone.phase_rad):
-            raise NotImplementedError(
-                "filter functions are built for square pulses with constant phases (Section 6.9)"
-            )
+            raise NotImplementedError("filter functions are built for square pulses with constant phases")
         if p.t_start_s - t > 1e-15:
             segs.append(ControlSegment(0.0, 0.0, p.t_start_s - t))
         omega = 2.0 * math.pi * abs(float(tone.envelope_hz))
@@ -837,6 +572,23 @@ def local_slope(omega: np.ndarray, f: np.ndarray) -> float:
     return float(math.log(f[j] / f[i]) / math.log(omega[j] / omega[i]))
 
 
+def _composite_dc_floor(
+    pulse: CompositePulse, quadrature: Quadrature, variance: float, omega_rad_s: float
+) -> tuple[float, float, int]:
+    """(floor, c_hat, m) of a composite pulse under frozen noise of the scored quadrature.
+
+    The order m is the pulse's own only for a channel it corrects (against any other channel the residual is O(eps^2) and
+    m = 0), and the detuning moment is the splitting variance 4 <beta_d^2> that Mount's eps_d = 2 beta_d/Omega pairs with.
+    """
+    from qutip_trap.control.composite import leading_coefficient
+
+    channel = "amplitude" if quadrature == "amplitude" else "detuning"
+    m = pulse.order if channel in pulse.corrects else 0
+    c_hat = leading_coefficient(pulse, channel, 2 * (m + 1))
+    beta_variance = variance * (4.0 if channel == "detuning" else 1.0)
+    return dc_floor(c_hat, m, beta_variance, omega_rad_s), c_hat, m
+
+
 def filter_function(
     device: Device,
     control: CompositePulse | DecouplingSequence | Schedule,
@@ -850,23 +602,19 @@ def filter_function(
     ion: int = 0,
     rabi_hz: float | None = None,
     seed: int = 0,
-    experiment_duration_s: float | None = None,
 ) -> ExperimentResult:
-    """F(omega), 1 - F_av = (1/pi) int dw/w^2 S F, chi, W, the roll-off order, the dc floor (Section 6.9).
+    """F(omega), 1 - F_av = (1/pi) int (d omega/omega^2) S F, chi, W, the roll-off order and the dc floor of a control.
 
-    ``spectrum=None`` uses the device's S_B converted through the computed Zeeman sensitivities to S_b (the PSD of the
-    sigma_z coefficient, HALF the splitting fluctuation) for the dephasing quadrature and ``device.noise.rabi_amplitude`` for
-    the amplitude one. ``omega_min_rad_s`` defaults to the spectrum's lowest tabulated frequency when its band starts above zero, else to 2
-    pi/``experiment_duration_s`` (the total experiment, Section 12), else to three decades below the sequence; it is always reported
-    with d ln chi/d ln omega_min.
-    ``monte_carlo_samples > 0`` additionally propagates sampled b(t) trajectories through the Section 4.3.1 Hamiltonian (the
-    builder's qubit-trajectory hook on a mode-less single-ion space) and returns the sampled 1 - F_av beside the filter-function
-    estimate; the result records xi^2 and flags the comparison when it is not small.
+    ``spectrum=None`` takes the device's S_B converted through the Zeeman sensitivity to S_b (the sigma_z coefficient, half
+    the splitting fluctuation) for the dephasing quadrature and ``device.noise.rabi_amplitude`` for the amplitude one.
+    ``omega_min_rad_s`` (the infrared cutoff, e.g. 2 pi over the whole experiment) defaults to the spectrum's lowest
+    tabulated frequency when its band starts above zero, else to three decades below the sequence.
+    ``monte_carlo_samples > 0`` also propagates sampled b(t) trajectories through the Hamiltonian builder and reports that
+    1 - F_av beside the filter-function one.
     """
     from qutip_trap.experiments.result import ExperimentResult
     from qutip_trap.noise.model import GAUSS_PER_TESLA
 
-    # ---- the control -------------------------------------------------------------------------------------------------
     if isinstance(control, DecouplingSequence):
         segs = control.segments()
     elif isinstance(control, CompositePulse):
@@ -878,7 +626,7 @@ def filter_function(
     tau = sum(s.duration_s for s in segs)
     omegas_ctrl = [s.omega_rad_s for s in segs if not s.is_free]
     omega_ctrl = max(omegas_ctrl) if omegas_ctrl else 0.0
-    # ---- the spectrum: S_b of the sigma_z coefficient, or the additive amplitude noise -------------------------------
+    # the spectrum: S_b of the sigma_z coefficient, or the additive amplitude noise
     sp = device.crystal.species[ion]
     _f, d1, _d2 = sp.transition_frequency_hz(sp.qubit[0], sp.qubit[1], device.field.B_gauss)
     conv = 1.0
@@ -888,7 +636,7 @@ def filter_function(
             if spectrum is None:
                 raise ValueError("the device has no rabi_amplitude spectrum")
         else:
-            spectrum = device.noise.field_spectrum(device)
+            spectrum = device.noise.S_B
             if spectrum is None:
                 raise ValueError("the device has no magnetic-field spectrum S_B")
             # delta nu = d1 dB (Hz), b = pi delta nu (rad/s): S_b = pi^2 d1^2 S_B (T -> G inside d1)
@@ -905,8 +653,6 @@ def filter_function(
             return amplitude_filter_function(segs, w)
         return universal_filter_function(segs, w)
 
-    # the infrared cutoff (Section 12): the spectrum's own lowest tabulated frequency when the band starts above zero (the
-    # device declared it), else 2 pi over the total experiment duration, else three decades below the sequence; always reported
     if omega_min_rad_s is not None:
         w_min = float(omega_min_rad_s)
     else:
@@ -914,8 +660,6 @@ def filter_function(
         positive = tab[tab > 0.0]
         if float(np.min(tab)) > 0.0 and positive.size:
             w_min = float(np.min(positive))
-        elif experiment_duration_s is not None and experiment_duration_s > 0.0:
-            w_min = 2.0 * math.pi / float(experiment_duration_s)
         else:
             w_min = 2.0 * math.pi / (1000.0 * tau)
     w_max = 50.0 * max(omega_ctrl, 2.0 * math.pi / tau)
@@ -930,8 +674,7 @@ def filter_function(
     dlnchi = math.log(chi_hi / chi) / math.log(1.1) if chi > 0.0 and chi_hi > 0.0 else 0.0
     a1sq = chi / 2.0
     w_coh = math.exp(-chi)
-    # the TABULATED band only: white noise is not frozen over the sequence, so it does not enter the dc floor or xi^2
-    # (chi above uses spec.value, band plus white, because the filter function does score the white part).
+    # the dc floor and xi^2 use the TABULATED band: a white level is not frozen over the sequence (chi does score it)
     variance = float(spec.variance()) * conv
     xi2 = tau**2 * variance
     fitted: dict[str, tuple[float, float]] = {
@@ -947,32 +690,12 @@ def filter_function(
     }
     floor = 0.0
     if dc_floor and isinstance(control, CompositePulse) and omega_ctrl > 0.0:
-        from qutip_trap.control.composite import leading_coefficient
-
-        channel = "amplitude" if quadrature == "amplitude" else "detuning"
-        # Section 6.9: c-hat is sequence- AND axis-dependent. ``CompositePulse.order`` is the order of the channels the
-        # pulse CORRECTS; against any other channel the residual is O(eps^2) and the floor is the primitive's (m = 0).
-        # Using control.order unconditionally divides an O(eps^2) infidelity by eps^{2(m+1)}, inflating c_hat as
-        # eps^{-2m} (BB1 under dephasing noise then reports a 70 % infidelity).
-        m = control.order if channel in control.corrects else 0
-        c_hat = leading_coefficient(control, channel, 2 * (m + 1))
-        # c_hat comes from ``CompositePulse.infidelity(eps_a, eps_d)``, i.e. Mount's primitive
-        # R = exp[-(i/2) theta (1 + eps_a)(sigma_phi + eps_d sigma_z)]. Matching that against Section 6.9's
-        # H_0 = beta . sigma (no 1/2 on the Pauli vector) gives eps_a = beta_a/Omega but eps_d = 2 beta_d/Omega,
-        # because beta_d is HALF the splitting fluctuation while eps_d scales the whole splitting. So the detuning
-        # moment must be the SPLITTING variance 4 <beta_d^2>; pairing c_hat_d with <beta_d^2>/Omega^2 under-reports the
-        # floor by 4^(m+1). Verified against the Gauss-Hermite average of the exact frozen-noise 1 - (1/4)|Tr U_c^dag U|^2:
-        # the ratio is 4.0000 at m = 0 and 16 for CORPSE at m = 1 (conv.dc_floor_detuning_normalization).
-        beta_variance = variance * (4.0 if channel == "detuning" else 1.0)
-        floor = dc_floor_value(c_hat, m, beta_variance, omega_ctrl)
+        floor, c_hat, m = _composite_dc_floor(control, quadrature, variance, omega_ctrl)
         fitted["infidelity_dc"] = (floor, 0.0)
         fitted["dc_c_hat"] = (c_hat, 0.0)
         fitted["dc_order"] = (float(m), 0.0)
     elif dc_floor and variance > 0.0:
-        # Section 6.9's max rule is stated for "an mth-order sequence", and a DecouplingSequence or Schedule is one:
-        # without a floor the module reports the first-order estimate alone "for precisely the band that dominates a
-        # real trap". No source supplies a c_hat for these, so the floor is the EXACT Gaussian frozen-noise average
-        # rather than its leading term (conv.dc_floor_decoupling_sequences).
+        # no source supplies a c_hat for a sequence or a schedule, so the floor is the exact Gaussian frozen-noise average
         floor = frozen_noise_floor(segs, variance, quadrature)
         fitted["infidelity_dc"] = (floor, 0.0)
     fitted["infidelity"] = (max(a1sq, floor), 0.0)
@@ -988,10 +711,6 @@ def filter_function(
     )
 
 
-def dc_floor_value(c_hat: float, order: int, beta_variance: float, omega_rad_s: float) -> float:
-    return dc_floor(c_hat, order, beta_variance, omega_rad_s)
-
-
 def _monte_carlo_dephasing(
     device: Device,
     ion: int,
@@ -1002,7 +721,7 @@ def _monte_carlo_dephasing(
     n_samples: int,
     seed: int,
 ) -> tuple[float, float]:
-    """1 - F_av = 1 - (1/4)<|Tr(U_c^dag U)|^2> over sampled b(t) trajectories propagated through the builder (Section 6.9)."""
+    """1 - F_av = 1 - (1/4)<|Tr(U_c^dag U)|^2> over sampled b(t) trajectories propagated through the builder."""
     from qutip_trap.control.pulses import Drive, Pulse, Tone
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions

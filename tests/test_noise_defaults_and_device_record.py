@@ -1,6 +1,6 @@
-"""``NoiseModel()`` is the quiet model, ``summary`` lists the channels that follow from what was set and nothing else, ``from_experiments``
-inverts a heating-rate fit into the field spectrum it implies, ``Device.to_dict``/``from_dict`` round-trip both presets exactly,
-and ``Device.specs`` renders the derived quantities with their provenance ids."""
+"""``NoiseModel()`` is the quiet model and ``summary`` lists the channels that follow from what was set; ``Device.to_dict`` and
+``from_dict`` round-trip both presets exactly, and ``Device.specs`` renders the derived quantities with their provenance
+ids."""
 
 from __future__ import annotations
 
@@ -8,36 +8,26 @@ import dataclasses
 import json
 import math
 
-import numpy as np
 import pytest
 
-from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.device.model import Device
 from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.device.serial import parse
-from qutip_trap.experiments.result import HeatingRateFit
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.noise.model import DRIFT_UNITS, NoiseModel, quiet_drift, quiet_field_spectrum
+from qutip_trap.noise.model import NoiseModel, quiet_drift
 from qutip_trap.noise.spectra import Collisions, power_law_spectrum, white_spectrum
-from qutip_trap.trap.heating import s_e_from_heating_rate
-
-ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
 
 
 def test_the_default_noise_model_is_quiet() -> None:
     quiet = NoiseModel()
     assert quiet.is_quiet() and quiet.S_E.is_zero() and quiet.correlation_length_m == 0.0
     assert all(d.quiet for d in quiet.drifts.values()) and quiet.collisions is None and quiet.mains is None
-    assert (
-        canonical_digest(quiet_field_spectrum()) == canonical_digest(quiet.S_E) and quiet_drift().rms == 0.0
-    )
+    assert quiet.summary(yb171_chain(1).device) == {} and quiet.apparatus() == ()
     assert canonical_digest(yb171_chain(2).device.noise) == canonical_digest(NoiseModel())
 
 
 def test_summary_lists_heating_when_the_field_spectrum_is_set_and_nothing_when_it_is_not() -> None:
-    preset = yb171_chain(2)
-    device = preset.device
-    assert NoiseModel().summary(device) == {} and NoiseModel().summary() == {}
+    device = yb171_chain(2).device
     s_e = power_law_spectrum(
         level_at_ref=1e-12,
         omega_ref_rad_s=2 * math.pi * 1e6,
@@ -56,6 +46,7 @@ def test_summary_lists_heating_when_the_field_spectrum_is_set_and_nothing_when_i
     drifting = dataclasses.replace(
         noisy,
         rabi_drift=dataclasses.replace(quiet_drift(), rms=0.01),
+        field_drift=dataclasses.replace(quiet_drift(), rms=1e-9),
         collisions=Collisions(
             pressure_pa=1e-9,
             gas={"H2": 1.0},
@@ -64,38 +55,13 @@ def test_summary_lists_heating_when_the_field_spectrum_is_set_and_nothing_when_i
         laser_intensity=white_spectrum(1e-12, "1/(rad/s)"),
     )
     more = drifting.summary(device)
-    assert more["rabi_drift_rms"] == (0.01, DRIFT_UNITS["rabi_drift"]) and DRIFT_UNITS["field_drift"] == "T"
+    assert more["rabi_drift_rms"] == (0.01, "1") and more["field_drift_rms"] == (1e-9, "T")
     assert more["intensity_noise_density"] == (1e-12, "1/(rad/s)")
     assert {k for k in more if k.startswith("collision_rate_per_ion[")} == {
         "collision_rate_per_ion[0]",
         "collision_rate_per_ion[1]",
     }
     assert all(more[f"collision_rate_per_ion[{i}]"][1] == "1/s" for i in range(2))
-    assert "S_E_white_level" in NoiseModel(S_E=white_spectrum(2e-13, "(V/m)^2/(rad/s)")).summary()
-
-
-def test_from_experiments_inverts_a_heating_rate_into_the_field_spectrum_it_implies() -> None:
-    device = yb171_chain(2).device
-    mode = 0
-    ndot = 40.0
-    fit = HeatingRateFit(
-        data=np.zeros((0, 2)),
-        fitted={"ndot_per_s": (ndot, 2.0)},
-        model="heating_rate_sideband_asymmetry",
-        provenance_id="anchor.trap.heating_dynamics",
-        subject={"mode": mode},
-    )
-    model = NoiseModel().from_experiments([fit], device=device)
-    omega = device.crystal.modes[mode].omega_rad_s
-    expected = 0.5 * s_e_from_heating_rate(ndot, float(device.crystal.masses_kg[0]), omega)
-    assert model.S_E.white_level == pytest.approx(expected) and model.correlation_length_m == 0.0
-    assert model.extra["S_E_from_experiments_modes"] == 1.0 and "heating_rate" in model.S_E.provenance[0]
-    # the loop closes: the model's heating rate of that mode is the measured one
-    assert model.heating_rates_quanta_per_s(device)[mode] == pytest.approx(ndot, rel=1e-9)
-    with pytest.raises(ValueError, match="heating-rate fits only"):
-        NoiseModel().from_experiments([dataclasses.replace(fit, model="other")] and [object()], device=device)  # type: ignore[list-item]
-    with pytest.raises(ValueError, match="no result"):
-        NoiseModel().from_experiments([], device=device)
 
 
 @pytest.mark.parametrize(
