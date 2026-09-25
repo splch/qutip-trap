@@ -1,16 +1,5 @@
-"""``Machine``: a trapped-ion computer as a client sees it (docs/api_proposal.md Section 4.2; docs/api_implementation_plan.md
-1.3; 0.2.0).
-
-The executor of the ladder: the physical ``Device`` (rung 4) with the roles its beams play, the ``CalibrationTable`` it runs
-on (None: the closed-form surrogate of Section 7.5, cached per device), the three option objects ``Physics``, ``Numerics``
-and ``Readout`` (``qutip_trap.options``) and the level policy, in one frozen record whose methods walk down the rungs:
-``run`` (a ``Result``), ``compile`` (rung 1), ``schedule`` (rung 2: compile, calibrate and schedule without integrating,
-IonQ's dry run), ``engine`` (rung 3), ``calibrated`` (the same machine with its table pinned), ``estimate`` (the level, the
-space and a wall-time guess before anything is integrated) and ``hash`` (the identity a run record stores). ``run``
-is ``qutip_trap.run.pipeline.execute`` on the machine (the pipeline ``run`` delegates to since 0.3.0); ``submit`` (0.4.0)
-is the same run in a worker process behind a ``Job``, with ``spec`` the ``RunSpec`` it records; ``error_model`` (0.3.0)
-the inverse direction. Variants are ``dataclasses.replace(machine, ...)``.
-"""
+"""``Machine``: a Device with the roles its beams play, the calibration table it runs on, the three option objects and the
+level policy; ``run`` takes a circuit to a ``Result`` (PLAN.md Section 3.4)."""
 
 from __future__ import annotations
 
@@ -20,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.options import Numerics, Physics, Readout
-from qutip_trap.run.levels import FidelityLevel, LevelDecision, decide_level
+from qutip_trap.run.levels import FidelityLevel, decide_level
 from qutip_trap.run.space import ModeClass3
 
 if TYPE_CHECKING:
@@ -50,9 +39,8 @@ TOMOGRAPHY_INPUTS_PER_STEP = 4
 @dataclass(frozen=True)
 class Estimate:
     """What a run would do before anything is integrated (``Machine.estimate``): the level and why, the declared joint
-    space with the class of every mode, its dimension and drive-operator non-zeros, the pulse counts and the schedule's
-    length, and a wall-time guess from the Section 11.2 cost model (an order of magnitude: the constants predate the
-    factorized kernel and the rotating frame of the 2026-09-09 performance pass, so a run is usually faster)."""
+    space with the class of every mode, its dimension and drive-operator non-zeros, the pulse counts, the schedule's length
+    and a wall-time guess from the Section 11.2 cost model (an order of magnitude; a run is usually faster)."""
 
     level: FidelityLevel
     reason: str
@@ -69,12 +57,9 @@ class Estimate:
 
 
 def _wall_time_guess(dimension: int, nnz: int, sched: Schedule, level: FidelityLevel) -> float:
-    """Section 11.2: cost = a + b x (elements per evaluation) x evaluations per segment, CSR elements = the drive operator's
-    non-zeros, summed over the pulses; a GATE_LOCAL walk plays each gate on a two-ion local space (the same resolved modes,
-    the pair's 2^2 factor) and propagates the tomography inputs, so its guess is per gate on that space."""
+    """Section 11.2: cost = a + b x (drive-operator non-zeros) x evaluations, summed over the pulses; a GATE_LOCAL walk plays
+    each gate on a local space of its ions and propagates the tomography inputs."""
     total = 0.0
-    n_ions_joint = max(1, round(dimension / max(1, nnz / max(1, dimension)) ** 0 if False else 1))
-    del n_ions_joint  # the joint numbers below already carry the ion count
     for pulse in sched.pulses:
         duration = max(0.0, pulse.t_end_s - pulse.t_start_s)
         evaluations = EVALUATIONS_PER_PULSE_SECOND * duration
@@ -90,19 +75,16 @@ def _wall_time_guess(dimension: int, nnz: int, sched: Schedule, level: FidelityL
 
 
 def _ions_of(dimension: int, nnz: int) -> float:
-    """N 2^N from the joint numbers: nnz = N 2^N Pi d_m^2 and dimension = 2^N Pi d_m (Section 11.2), so nnz/dimension =
-    N Pi d_m; the ratio is what the local-space scaling divides by."""
+    """nnz/dimension, the scale the local-space guess divides the joint non-zeros by."""
     return max(1.0, nnz / max(1, dimension)) if dimension else 1.0
 
 
 @dataclass(frozen=True)
 class Machine:
-    """A trapped-ion computer as a client sees it: the physical device with the roles its beams play, the calibration it
-    runs on and the policy that turns a circuit into a ``Result``. Immutable; derive variants with ``dataclasses.replace``
-    (``replace(machine, level=FidelityLevel.GATE_LOCAL)``, ``replace(machine, physics=Physics(noise=False))``)."""
+    """A trapped-ion computer as a client sees it. Immutable; variants are ``dataclasses.replace(machine, ...)``."""
 
     device: Device
-    """Rung 4: the apparatus, with ``Device.roles`` naming which beams play which part."""
+    """The apparatus, with ``Device.roles`` naming which beams play which part."""
     table: CalibrationTable | None = None
     """The calibration the scheduler reads; None builds the closed-form surrogate at run time, cached per device and seed."""
     physics: Physics = Physics()
@@ -118,14 +100,6 @@ class Machine:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "level", FidelityLevel(self.level))
-        if isinstance(self.physics, Mapping):
-            object.__setattr__(self, "physics", Physics.from_mapping(self.physics))
-        if isinstance(self.numerics, Mapping):
-            object.__setattr__(self, "numerics", Numerics.from_mapping(self.numerics))
-        if isinstance(self.readout, Mapping):
-            object.__setattr__(self, "readout", Readout.from_mapping(self.readout))
-
-    # ---- rung 0 -------------------------------------------------------------------------------------------------------
 
     def run(
         self,
@@ -136,10 +110,8 @@ class Machine:
         keep_final_state: bool = False,
         progress: Callable[[Progress], None] | None = None,
     ) -> Result:
-        """Compile, calibrate, schedule, prepare, evolve and read out ``circuit`` for ``shots`` (Section 3.4):
-        ``qutip_trap.run.pipeline.execute`` on this machine, with its table, level and option objects; ``seed`` is the root
-        of every keyed stream and ``progress`` is called per pulse, per branch, per sample and per readout (``Progress``).
-        The function ``qutip_trap.run.job.run`` is this method with the machine built from its keyword arguments."""
+        """Compile, calibrate, schedule, prepare, evolve and read out ``circuit`` for ``shots`` (Section 3.4); ``seed`` is the
+        root of every keyed stream and ``progress`` is called per pulse, branch, sample and readout."""
         from qutip_trap.run.pipeline import execute
 
         return execute(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=progress)
@@ -153,10 +125,8 @@ class Machine:
         keep_final_state: bool = False,
         label: str = "",
     ) -> Job:
-        """``run`` in a worker process behind a ``Job`` (docs/api_implementation_plan.md 3.1; 0.4.0): ``job.status()``,
-        ``job.progress`` (the latest ``Progress``), ``job.result()`` (the same ``Result`` ``run`` returns at this seed),
-        ``job.record()`` (the ``RunRecord`` behind it) and ``job.cancel()`` (stops within one pulse when the engines run
-        in-process); ``job.spec`` is the ``RunSpec`` of the call, with ``label`` the caller's name for it."""
+        """``run`` in a worker process behind a ``Job`` (status, progress, result, record, cancel); ``job.spec`` is the
+        ``RunSpec`` of the call, ``label`` the caller's name for it."""
         from qutip_trap.run.spec import submit
 
         return submit(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, label=label)
@@ -170,13 +140,10 @@ class Machine:
         keep_final_state: bool = False,
         label: str = "",
     ) -> RunSpec:
-        """The ``RunSpec`` of ``run(circuit, shots, seed=seed, keep_final_state=keep_final_state)`` on this machine (0.4.0):
-        the frozen, JSON-serialisable record of the request and the policy, with this machine's hash."""
+        """The JSON-serialisable ``RunSpec`` of ``run(circuit, shots, seed=seed, keep_final_state=keep_final_state)``."""
         from qutip_trap.run.spec import RunSpec
 
         return RunSpec.of(self, circuit, shots, seed=seed, keep_final_state=keep_final_state, label=label)
-
-    # ---- rung 1 and 2 -------------------------------------------------------------------------------------------------
 
     def compile(self, circuit: Circuit) -> CompileReport:
         """Standard gates to native gates with phase tracking, every block and the whole circuit verified (Section 7.2)."""
@@ -185,57 +152,37 @@ class Machine:
         return compile_report(circuit, self.device, entangler=self.physics.entangler)
 
     def schedule(self, circuit: Circuit, *, seed: int = 0) -> Schedule:
-        """The compile-calibrate-schedule prefix of ``run`` (``run/pipeline.py``): the pulses with absolute times, the played
-        gates and the measurement event, nothing integrated; the table is this machine's, or the cached surrogate at ``seed``."""
+        """The compile-calibrate-schedule prefix of ``run``: the pulses with absolute times, the played gates and the
+        measurement event, nothing integrated; the table is this machine's, or the cached surrogate at ``seed``."""
         from qutip_trap.run.pipeline import compile_calibrate_schedule
 
-        return compile_calibrate_schedule(circuit, self.device, seed=seed, **self._prefix_kwargs()).schedule
-
-    def _prefix_kwargs(self) -> dict[str, Any]:
-        return {
-            "table": self.table,
-            "t0_s": self.physics.t0_s,
-            "options": self.numerics.to_solver_options(self.physics),
-            "builder_options": self.physics.builder,
-            "caps": self.numerics.truncation.caps,
-            "entangler": self.physics.entangler,
-            "parallel": self.numerics.parallel.addressing,
-            "crosstalk_suppression": self.physics.crosstalk_suppression,
-            "stark_compensation": self.physics.stark_compensation,
-            "internal_levels": self.physics.internal_levels,
-        }
+        return compile_calibrate_schedule(self, circuit, seed=seed).schedule
 
     def calibrated(
         self, method: CalibrationMethod = "closed_form", *, seed: int = 0, **scans: Any
     ) -> Machine:
-        """This machine with its table pinned: ``calibration.calibrate(self, method=method, seed=seed, **scans)`` (the
-        closed-form surrogate with exact spot checks, Section 7.5's default, or the simulated experiments, M8) and its
-        report's table on the record; ``scans`` are that function's scan settings (``pairs``, ``detection_records``,
-        ``detection_windows_s``, ``experiments``, ...). ``calibrate`` itself returns the whole ``CalibrationReport``."""
+        """This machine with the table of ``calibration.calibrate(self, method=method, seed=seed, **scans)`` pinned; ``scans``
+        are that function's scan settings (``pairs``, ``detection_records``, ``detection_windows_s``, ...)."""
         from qutip_trap.calibration import calibrate
 
         report = calibrate(self, method=method, seed=seed, **scans)
         return replace(self, table=report.table)
 
-    # ---- before running ------------------------------------------------------------------------------------------------
-
     def estimate(self, circuit: Circuit, *, seed: int = 0) -> Estimate:
-        """What a run would cost before anything is integrated: the schedule, the space Section 5.2 would declare for it,
-        the level the guards resolve to (and why), and the Section 11.2 wall-time guess; the app's budgets and a caller
-        deciding between running at once and a background job read this."""
+        """What a run would cost before anything is integrated: the schedule, the space Section 5.2 declares for it, the level
+        the guards resolve to (and why), and the Section 11.2 wall-time guess."""
         from qutip_trap.prep.recipe import recipe_of, run_preparation
         from qutip_trap.run.job import _raman_pair_hint
         from qutip_trap.run.pipeline import compile_calibrate_schedule
-        from qutip_trap.run.space import select_space
+        from qutip_trap.run.space import SpaceSelection, select_space
 
-        prefix = compile_calibrate_schedule(circuit, self.device, seed=seed, **self._prefix_kwargs())
+        prefix = compile_calibrate_schedule(self, circuit, seed=seed)
         device = prefix.device
         opts = prefix.options
         prep_run = run_preparation(
             device, recipe_of(device, raman_pair=_raman_pair_hint(prefix.entangling_drives))
         )
         tr = self.numerics.truncation
-        notes: list[str] = list(prefix.notes)
         if tr.space is None:
             selection = select_space(
                 device,
@@ -246,42 +193,29 @@ class Machine:
                 ion_dims=[int(self.physics.internal_levels)] * device.crystal.n_ions,
                 enr=tr.enr_group,
             )
-            space = selection.space
-            mode_class = dict(selection.mode_class)
-            notes.extend(selection.notes)
         else:
-            space = tr.space
-            mode_class = {m: _class_of(space, m) for m in range(len(device.crystal.modes))}
-            notes.append("space supplied by the caller")
-        decision: LevelDecision = decide_level(device, prefix.compiled, opts, space=space)
-        level = decision.level if self.level is FidelityLevel.AUTO else self.level
-        reason = (
-            decision.reason
-            if self.level is FidelityLevel.AUTO
-            else f"{level.value} forced by the caller; level='auto' would choose {decision.reason}"
-        )
+            selection = SpaceSelection.supplied(tr.space, opts, prep_run.nbar, len(device.crystal.modes))
+        decision = decide_level(selection.budget, opts, self.level)
         sched = prefix.schedule
         return Estimate(
-            level=level,
-            reason=reason,
-            space=space,
-            mode_class=mode_class,
+            level=decision.level,
+            reason=decision.reason,
+            space=selection.space,
+            mode_class=dict(selection.mode_class),
             dimension=decision.dimension,
             nnz=decision.nnz,
             n_pulses=prefix.report.n_pulses,
             n_entangling=prefix.report.n_entangling,
             duration_s=float(sched.pulses_end_s),
-            wall_time_s=_wall_time_guess(decision.dimension, decision.nnz, sched, level),
-            notes=tuple(notes),
+            wall_time_s=_wall_time_guess(decision.dimension, decision.nnz, sched, decision.level),
+            notes=prefix.notes + selection.notes,
         )
-
-    # ---- rung 3 -------------------------------------------------------------------------------------------------------
 
     @property
     def engine(self) -> JointExactEngine:
-        """The JOINT_EXACT engine a run of this machine builds (Section 5.4): its Hamiltonian builder options, extra
-        channels, device channels and hardware chain from ``physics``, its table from the machine; ``run_pulses`` takes the
-        ``SolverOptions`` of ``numerics.to_solver_options(physics)``."""
+        """A ``JointExactEngine`` configured from the machine: the builder options, extra channels, device channels and
+        hardware chain of ``physics`` and the machine's table; ``run_pulses`` takes ``numerics.to_solver_options(physics)``.
+        Not the engine a run builds, which also carries the qubit-frequency shifts and the leakage level maps."""
         from qutip_trap.dynamics.engine import JointExactEngine
 
         return JointExactEngine(
@@ -291,8 +225,6 @@ class Machine:
             hardware_chain=bool(self.physics.hardware_chain),
             table=self.table,
         )
-
-    # ---- identity and the later phases -----------------------------------------------------------------------------------
 
     def hash(self) -> str:
         """The identity a run record stores: the device digest, the roles (which the device digest leaves out), the table's
@@ -312,17 +244,15 @@ class Machine:
         )
 
     def error_model(self, *, qubits: Sequence[int] | None = None) -> ErrorModel:
-        """The phenomenological summary of this machine (``benchmarks.error_model``; docs/api_implementation_plan.md 2.6):
-        per native gate kind the average gate infidelity of its GATE_LOCAL channel and its duration, the depolarizing
-        weights, the SPAM errors and the noise rates, with the exporters to IonQ's, Quantinuum's and the QDK estimator's
-        vocabularies; ``qubits`` restricts the characterised ions."""
+        """The phenomenological summary of this machine (``benchmarks.error_model``): per native gate kind the average gate
+        infidelity of its GATE_LOCAL channel and its duration, the SPAM errors and the noise rates, with exporters to IonQ's,
+        Quantinuum's and the QDK estimator's vocabularies; ``qubits`` restricts the characterised ions."""
         from qutip_trap.benchmarks.error_model import error_model
 
         return error_model(self, qubits=qubits)
 
     def specs(self) -> str:
-        """The derived quantities of the device as a readable report with their provenance ids (``Device.specs``), then
-        the roles the machine resolved (which beams play the gates), whether a table is pinned and the level policy."""
+        """``Device.specs`` followed by the roles the machine resolved, whether a table is pinned and the level policy."""
         roles = self.device.roles.resolve(self.device)
         lines = [self.device.specs(), "", "machine"]
         lines.append(f"  gate drives = {dict(sorted(roles.gate.items()))}")
@@ -349,12 +279,3 @@ def laboratory_kwargs(machine: Machine, kw: Mapping[str, Any]) -> tuple[Device, 
     if machine.physics.builder is not None:
         out.setdefault("builder_options", machine.physics.builder)
     return machine.device, out
-
-
-def _class_of(space: HilbertSpace, mode: int) -> ModeClass3:
-    cls = space.mode_class(mode)
-    if cls == "resolved":
-        return "resolved"
-    if cls == "enr":
-        return "enr"
-    return "dropped" if mode in space.dropped else "frozen"

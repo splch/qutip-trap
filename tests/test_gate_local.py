@@ -1,7 +1,7 @@
-"""GATE_LOCAL against JOINT_EXACT (PLAN.md Section 5.4; Section 9.8; Section 9.17 rows "Size guard" and "GATE_LOCAL tomography";
-Section 6.8; M9a): the step partition of a schedule, the exact agreement on a single-qubit gate, the Bell circuit within the
-reported residual-displacement bound with the motional bookkeeping, the register as a density matrix or a Kraus-sampled ensemble,
-the map-accuracy rule on the trajectory path, the cache, and the three-ion circuits of Section 9.8 as a slow test."""
+"""GATE_LOCAL against JOINT_EXACT (PLAN.md Sections 5.4, 6.8, 9.8, 9.17): the step partition of a schedule, the exact
+agreement on a single-qubit gate, the Bell circuit within the reported bound with the motional bookkeeping, the register as
+a density matrix or a Kraus-sampled ensemble, the per-step register and channels, the map-accuracy rule on the trajectory
+path, the caches, and the three- and four-ion circuits of Section 9.8 row 1 as slow tests."""
 
 from __future__ import annotations
 
@@ -12,16 +12,24 @@ import pytest
 import qutip as qt
 
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, schedule
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.dynamics.tomography import apply_kraus_dm, kraus_operators
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
-from qutip_trap.run.gate_local import clear_gate_local_cache, gate_steps
+from qutip_trap.run.gate_local import (
+    REGISTER_STORE_DIM_MAX,
+    AppliedChannel,
+    clear_gate_local_cache,
+    gate_steps,
+)
 from qutip_trap.run.job import last_record, register_fidelity
+from qutip_trap.run.levels import within_budget
+from qutip_trap.run.space import best_contributions, select_space
 from tests.fixtures import run
 from tests.m2_fixtures import single_ion_raman_device
 from tests.m6_fixtures import circuit_fixture
@@ -53,8 +61,6 @@ def test_gate_steps_partition_the_schedule_into_gates_and_idles(two_ion) -> None
     """Every pulse lies in exactly one gate step, the steps alternate with the dead-time idles, every GateTarget's pulses lie in one
     step, and the entangling gate as played is attached to its step."""
     fx, sur, _kw = two_ion
-    from qutip_trap.control.compiler import compile_to_native
-
     sched = schedule(compile_to_native(BELL, fx.device), fx.device, sur.table)
     steps = gate_steps(sched)
     gates = [s for s in steps if s.kind == "gate"]
@@ -153,10 +159,10 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
     pa, pb = _populations(a), _populations(b)
     gl = b.diagnostics.gate_local
     assert gl is not None
-    # the bound plus the weight of the initial-mixture branches JOINT_EXACT dropped (GATE_LOCAL keeps the full register)
+    # the bound plus the weight of the initial-mixture branches JOINT_EXACT dropped (GATE_LOCAL keeps the full register),
+    # no slack on top: Section 9.8 row 1 says "disagreement above it fails"
     bound = gl.discrepancy_bound + a.diagnostics.dropped_branch_weight
     assert gl.discrepancy_bound > 0.0
-    # no fudge on top: Section 9.8 row 1 says "disagreement above it fails" (M9a audit E5)
     assert np.max(np.abs(pa - pb)) < bound, (pa, pb, bound)
     assert abs(register_fidelity(a) - register_fidelity(b)) < bound
     ms = [s for s in gl.steps if s.kind == "gate" and s.resolved]
@@ -164,7 +170,7 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
     s = ms[0]
     assert s.resolved == (2, 3) and s.space_dims[:2] == (2, 2) and s.n_inputs == 16 and s.n_branches >= 1
     assert s.tp_residual < 1e-10 and s.cp_residual < 1e-8
-    # the Tier 2 relaxations of the performance pass 2026-09-09, each with its reported term in the bound
+    # the isometry route, the keyed tolerance and the branch floor, each with its reported term in the bound
     assert s.route == "isometry" and s.tolerances == (1e-8, 1e-6) and s.tolerance_change > 0.0
     assert s.branch_error_bound >= 0.0 and s.branch_error_bound <= 2.0 * 1e-3 / 4 + 2.0 * 1e-3
     assert set(s.element_error) == {2, 3} and all(0.0 <= v <= 1e-8 for v in s.element_error.values())
@@ -255,9 +261,8 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
     assert len(rec_me.labels) == 4 and rec_me.branches >= 1
     opts = SolverOptions(lindblad_method="mcsolve", map_accuracy=0.25, branch_weight_min=0.05)
     rec_mc = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), opts)
-    # Section 9.17's rule is ceil(1/eps_map) = 4 STOCHASTIC trajectories per input. Under improved_sampling, which Section 5.3
-    # makes the default and M6 implemented, mcsolve evolves the no-jump trajectory once more as a deterministic member of
-    # weight p_no-jump, so the stored WEIGHTED mixture has five members carrying those four; with the flag off it has four
+    # Section 9.17's rule is ceil(1/eps_map) = 4 STOCHASTIC trajectories per input; under improved_sampling (Section 5.3's
+    # default) the no-jump trajectory is one more, deterministic member of weight p_no-jump, so the mixture has five
     plain = dataclasses.replace(opts, improved_sampling=False)
     rec_plain = eng.tomography(noisy, pulse, space, model, quiet_sample(), SeedSpec(0), plain)
     assert rec_mc.method == "mcsolve" and rec_plain.method == "mcsolve"
@@ -271,6 +276,35 @@ def test_map_accuracy_rule_fixes_the_trajectory_count_on_the_trajectory_path() -
     assert (
         math.isnan(summary.average_gate_infidelity) and abs(sum(summary.pauli_twirled.values()) - 1.0) < 1e-9
     )
+
+
+def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) -> None:  # type: ignore[no-untyped-def]
+    """Every step of the first sample's walk reports the register after it and the channels it applied; composing a step's
+    channels on the previous step's register gives its own, and the last equals the run's recombined register."""
+    fx, _sur, kw = two_ion
+    rec = last_record(run(BELL, fx.device, 100, level="GATE_LOCAL", **kw))  # type: ignore[arg-type]
+    assert rec.gate_local is not None
+    steps = rec.gate_local.steps
+    assert steps and 4 <= REGISTER_STORE_DIM_MAX
+    for st in steps:
+        assert st.register_after is not None and st.register_after.shape == (4, 4)
+        assert abs(np.trace(st.register_after) - 1.0) < 1e-9
+        assert np.allclose(st.register_after, st.register_after.conj().T, atol=1e-12)
+        assert st.channels and all(isinstance(c, AppliedChannel) for c in st.channels)
+        if st.kind == "gate":
+            assert len(st.channels) == 1 and st.channels[0].ions == st.ions
+            assert st.summary is not None and np.allclose(st.channels[0].choi, st.summary.choi, atol=1e-12)
+        else:
+            assert [c.ions for c in st.channels] == [(0,), (1,)]
+            assert all(c.choi.shape == (4, 4) for c in st.channels)
+    for before, after in zip(steps, steps[1:]):
+        rho = np.asarray(before.register_after, dtype=complex)
+        for ch in after.channels:
+            rho = apply_kraus_dm(rho, kraus_operators(ch.choi), [2, 2], list(ch.ions))
+        assert after.register_after is not None
+        assert np.max(np.abs(rho - after.register_after)) < 1e-10, after.gate_id
+    assert rec.register_state is not None
+    assert np.max(np.abs(steps[-1].register_after - np.asarray(rec.register_state.full()))) < 1e-10
 
 
 def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:  # type: ignore[no-untyped-def]
@@ -299,37 +333,20 @@ def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:
     assert rec.summary(ideal).average_gate_infidelity < 1e-10
 
 
-@pytest.mark.slow
-def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
-    """Section 9.8 row 1: the three-ion GHZ circuit (two entangling gates, five carrier pulses) through GATE_LOCAL against
-    JOINT_EXACT: final probabilities within the reported bound, the tracked occupations within 5 % of the joint reduced state
-    after every gate, the crosstalk neighbours inside the gate-local spaces."""
-    fx = circuit_fixture(3, address_waist_m=2.0e-6)
-    sur = surrogate_table(
-        fx.device, pairs=[(0, 1), (1, 2)], detection_records=1000, detection_windows_s=WINDOWS
-    )
-    ghz = Circuit(
-        3, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()), Operation("cnot", (1, 2), ())), (0, 1, 2)
-    )
-    kw = dict(
-        table=sur.table,
-        keep_final_state=True,
-        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
-    )
-    a = run(ghz, fx.device, 500, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
-    b = run(ghz, fx.device, 500, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
-    pa, pb = _populations(a), _populations(b)
+def _compare_levels(a, b):  # type: ignore[no-untyped-def]
+    """Section 9.8 rows 1 and 2 on a JOINT_EXACT run ``a`` and a GATE_LOCAL run ``b`` of one circuit: the final register
+    populations agree within the bound GATE_LOCAL reports plus the initial-mixture weight JOINT_EXACT dropped (no other
+    slack), and the tracked occupation after every entangling step is the joint run's branch-weighted reduced state at that
+    time to 5 %. Returns (the bound, the entangling steps)."""
     gl = b.diagnostics.gate_local
-    assert gl is not None
-    # Section 9.8 row 1 licenses no slack beyond the bound GATE_LOCAL reports (M9a audit E5: the +1e-5 that stood here was
-    # never recorded); the initial mixture's dropped branch weight is the one addition, and it is recorded
+    assert gl is not None and gl.discrepancy_bound > 0.0
     bound = gl.discrepancy_bound + a.diagnostics.dropped_branch_weight
+    pa, pb = _populations(a), _populations(b)
     assert np.max(np.abs(pa - pb)) < bound, (np.max(np.abs(pa - pb)), gl.discrepancy_bound, bound)
+    assert abs(register_fidelity(a) - register_fidelity(b)) < bound
     ms_steps = [s for s in gl.steps if s.kind == "gate" and s.resolved]
-    assert len(ms_steps) == 2 and all(s.ions in ((0, 1), (1, 2), (0, 1, 2)) for s in ms_steps)
     rec_a = last_record(a)
     w_tot = sum(br.weight for br in rec_a.branches)
-    # the joint occupations at each gate's end, branch-weighted over the initial mixture: the traces store the segment endpoints
     for s in ms_steps:
         k = int(np.argmin(np.abs(rec_a.traces[0].times_s - s.t_end_s)))
         for m in s.resolved:
@@ -346,11 +363,82 @@ def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
                 s.nbar_after[m],
                 joint_n,
             )
+    return bound, ms_steps
+
+
+@pytest.mark.slow
+def test_three_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
+    """Section 9.8 row 1: the three-ion GHZ circuit (two entangling gates, five carrier pulses), with the crosstalk
+    neighbours inside the gate-local spaces."""
+    fx = circuit_fixture(3, address_waist_m=2.0e-6)
+    sur = surrogate_table(
+        fx.device, pairs=[(0, 1), (1, 2)], detection_records=1000, detection_windows_s=WINDOWS
+    )
+    ghz = Circuit(
+        3, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()), Operation("cnot", (1, 2), ())), (0, 1, 2)
+    )
+    kw = dict(
+        table=sur.table,
+        keep_final_state=True,
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+    )
+    a = run(ghz, fx.device, 500, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
+    b = run(ghz, fx.device, 500, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    _bound, ms_steps = _compare_levels(a, b)
+    assert len(ms_steps) == 2 and all(s.ions in ((0, 1), (1, 2), (0, 1, 2)) for s in ms_steps)
     assert b.probabilities.get("000", 0.0) + b.probabilities.get("111", 0.0) > 0.9
-    assert register_fidelity(b) > 0.9 and abs(register_fidelity(a) - register_fidelity(b)) < bound
+    assert register_fidelity(b) > 0.9
 
 
-# ---- the register bookkeeping and the idle cache (performance pass 2026-09-09) ----------------------------------------------------
+GHZ4 = Circuit(
+    4,
+    (
+        Operation("h", (0,), ()),
+        Operation("cnot", (0, 1), ()),
+        Operation("cnot", (1, 2), ()),
+        Operation("cnot", (2, 3), ()),
+    ),
+    (0, 1, 2, 3),
+)
+
+
+@pytest.mark.slow
+def test_four_ion_ghz_circuit_gate_local_against_joint_exact() -> None:
+    """Section 9.8 row 1 on four ions: GHZ4 has three Mølmer-Sørensen steps, and at ``freeze_chi_max_rad = 0.3`` the gate
+    mode (chi 0.81 to 0.84 rad per step, the other x modes at most 0.13) is the only resolved mode at BOTH levels, so the
+    comparison measures GATE_LOCAL's own approximation: JOINT_EXACT runs at dimension 192, and the three frozen x modes, whose
+    chi the common surrogate table absorbs, carry their Debye-Waller factors and Fock branches at both levels
+    (``conv.four_ion_gate_local_fixture``)."""
+    fx = circuit_fixture(4)
+    sur = surrogate_table(
+        fx.device, pairs=[(0, 1), (1, 2), (2, 3)], detection_records=200, detection_windows_s=WINDOWS
+    )
+    sched = schedule(compile_to_native(GHZ4, fx.device), fx.device, sur.table, t0_s=0.0)
+    nbar0 = {m: 0.0 for m in range(len(fx.device.crystal.modes))}
+    best = best_contributions(fx.device, sched.gates, nbar0)
+    opts = SolverOptions(freeze_chi_max_rad=0.3)
+    selection = select_space(fx.device, sched, opts, nbar=nbar0, caps={7: 12})
+    resolved = selection.resolved_modes
+    assert resolved == (7,), (resolved, {m: round(c.chi_rad, 4) for m, c in sorted(best.items())})
+    assert selection.space.dims == [2, 2, 2, 2, 12] and selection.space.dimension == 192
+    inside, dim, _nnz = within_budget(selection.space, opts)
+    assert inside and dim == 192, "JOINT_EXACT must be affordable inside the Section 11.5 guard"
+    assert [selection.mode_class[m] for m in (4, 5, 6)] == ["frozen"] * 3, selection.mode_class
+    kw = dict(
+        table=sur.table,
+        keep_final_state=True,
+        numerics=Numerics.from_solver_options(opts, caps={7: 12}),
+        seed=3,
+    )
+    a = run(GHZ4, fx.device, 200, level="JOINT_EXACT", **kw)  # type: ignore[arg-type]
+    b = run(GHZ4, fx.device, 200, level="GATE_LOCAL", **kw)  # type: ignore[arg-type]
+    assert a.diagnostics.space.dimension == 192
+    assert tuple(a.diagnostics.mode_class[m] for m in resolved) == ("resolved",) * len(resolved)
+    _bound, ms_steps = _compare_levels(a, b)
+    assert len(ms_steps) == 3, [s.gate_id for s in ms_steps]
+
+
+# ---- the register bookkeeping and the idle cache ------------------------------------------------------------------------------
 
 
 def test_register_marginal_is_the_partial_trace_in_the_requested_factor_order() -> None:

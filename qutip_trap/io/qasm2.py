@@ -1,7 +1,6 @@
-"""OpenQASM 2 both ways, shaped like ``json`` (docs/api_implementation_plan.md 1.6; 0.2.0): ``loads(text)`` is the importer
-of ``qutip_trap.io.openqasm`` (the subset in that module's docstring, angles in radians, ``creg`` names into
-``Circuit.registers``) and ``dumps(circuit)`` the exporter, with the qelib1.inc names (``cx`` for ``cnot``), one ``creg``
-per register and the terminal measurements written into them.
+"""OpenQASM 2 both ways, shaped like ``json``: ``loads(text)`` is the importer of ``qutip_trap.io.openqasm`` (the subset in
+that module's docstring, angles in radians, ``creg`` names into ``Circuit.registers``) and ``dumps(circuit)`` the exporter,
+with the qelib1.inc names (``cx`` for ``cnot``), one ``creg`` per register and the terminal measurements written into them.
 
 The four native gates have no qelib1.inc name. ``dumps(declare_native=True)`` (the default) declares the ones the circuit
 uses as ``gate`` definitions over ``u3``, ``rz``, ``rxx`` and ``rzz``, exact up to a global phase and the forms the client

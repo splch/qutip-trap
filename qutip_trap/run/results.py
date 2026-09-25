@@ -1,4 +1,4 @@
-"""Results, diagnostics and the persistent machine state (PLAN.md Sections 3.4, 6.7, 8.6; Appendix E).
+"""Results, diagnostics and the persistent machine state (PLAN.md Sections 3.4, 6.7, 8.6).
 
 Bit order (Section 13, row "Result bit order"; the one sentence, stated in the same words on docs/conventions.md):
 in every bitstring key qubit 0 is the least-significant bit, the rightmost character, so "101" on three qubits is
@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -21,11 +21,11 @@ if TYPE_CHECKING:
     from qutip import Qobj
 
     from qutip_trap.control.table import CalibrationTable
-    from qutip_trap.device.model import Device
     from qutip_trap.dynamics.evolve import ConvergenceReport
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.run.gate_local import GateLocalReport
+    from qutip_trap.run.job import RunRecord
 
 
 def bitstring_key(bits: np.ndarray) -> str:
@@ -70,22 +70,11 @@ class RunState:
     events: tuple[tuple[int, str], ...]
     """(shot index, event) log."""
 
-    def recrystallize(self, shot: int = -1) -> RunState:
-        """Bookkeeping of a recrystallization after a melt (Section 6.7): the order and the dark/lost flags persist (a reorder
-        is not undone and a dark ion stays dark until repumped or reloaded); the event is logged."""
-        return RunState(self.order, self.dark, self.lost, self.events + ((int(shot), "recrystallize"),))
-
-    def reload(self, device: Device, shot: int = -1) -> RunState:
-        """A reload restores the device's nominal crystal: identity order, no dark or lost ions, the event logged."""
-        n = device.crystal.n_ions
-        return RunState(tuple(range(n)), frozenset(), frozenset(), self.events + ((int(shot), "reload"),))
-
     @classmethod
     def nominal(cls, n_ions: int) -> RunState:
         return cls(tuple(range(n_ions)), frozenset(), frozenset(), ())
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain JSON-able values (``Result.to_dict``, 0.2.0)."""
         return {
             "order": [int(i) for i in self.order],
             "dark": sorted(int(i) for i in self.dark),
@@ -107,13 +96,13 @@ class RunState:
 class Diagnostics:
     """What a run did and what it approximated (Sections 3.4, 5.5, 8.6): the level that ran and the space it used, the class
     of every mode, the truncation monitors, the integrator and its tolerances, the realized (samples, trajectories, shots
-    per sample) triple with the effective sample size, the root seed that reruns it, the calibration table it believed,
-    the approximations it made and the closed-form error budget reported beside the result; the GATE_LOCAL report when
-    that level ran."""
+    per sample) triple with the effective sample size, the root seed, the calibration table it believed, the approximations
+    it made and the closed-form error budget; the GATE_LOCAL report when that level ran."""
 
     level: Literal["JOINT_EXACT", "GATE_LOCAL"]
     """The level actually run."""
     space: HilbertSpace
+    """The joint space; for GATE_LOCAL the one above the guards that the run did not build."""
     mode_class: dict[int, Literal["resolved", "frozen", "dropped", "enr"]]
     run_state: RunState
     wall_clock_span_s: float
@@ -127,63 +116,48 @@ class Diagnostics:
     tolerances: tuple[float, float]
     samples: int
     trajectories: int
+    """Evolved Fock branches times the engine's trajectory count."""
     shots_per_sample: int
     effective_sample_size: float
     root_seed: int
     calibration: CalibrationTable
     approximations: tuple[str, ...]
     intrinsic_budget: dict[str, float] = field(default_factory=dict)
-    """Per played gate, the closed-form error scales of Section 9.6 reported beside the result (M6): residual displacement
-    eps_ent = sum |alpha|^2 (2 nbar + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale (Omega/nu)^2,
-    the frozen spectators' chi loss; and 'total' their sum."""
+    """Per played gate, the closed-form error scales of Section 9.6 (``run.job.intrinsic_budget``), and 'total' their sum."""
     dropped_branch_weight: float = 0.0
-    """Weight of the initial-mixture branches below SolverOptions.branch_weight_min that were not evolved (M6)."""
+    """Weight of the initial-mixture branches below ``branch_weight_min`` that were not evolved."""
     frozen_excitation_bound: dict[int, float] = field(default_factory=dict)
-    """Per frozen mode, the Section 5.2 off-resonant excitation bound summed over the schedule's pulses (M9a)."""
+    """Per frozen mode, the Section 5.2 off-resonant excitation bound summed over the schedule's pulses."""
     dropped_contribution: tuple[float, float] = (0.0, 0.0)
-    """(sum |alpha|^2 (2n + 1), sum |chi|) over the dropped modes: the summed dropped contribution of Section 11.3 item 2 (M9a)."""
+    """(sum |alpha|^2 (2n + 1), sum |chi|) over the dropped modes (Section 11.3 item 2)."""
     margin_reached: dict[int, int] = field(default_factory=dict)
-    """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during a pulse (Section 5.5; M9a)."""
+    """Per resolved mode, the smallest margin (levels) the cap kept above the populated range during a pulse (Section 5.5)."""
     populated_n_max: dict[int, int] = field(default_factory=dict)
-    """Per resolved mode, the highest Fock index populated above the boundary threshold during a pulse (M9a)."""
+    """Per resolved mode, the highest Fock index populated above the boundary threshold during a pulse."""
     cap_growth: dict[int, int] = field(default_factory=dict)
-    """Per resolved mode, the levels the truncation monitor added to the cap during the run (Section 5.5; M9a)."""
+    """Per resolved mode, the levels the truncation monitor added to the cap during the run (Section 5.5)."""
     gate_local: GateLocalReport | None = None
-    """The GATE_LOCAL walk's report (Section 5.4; M9a): per step the local space, the tomography, the channel summary, the
-    residual displacement and the motional bookkeeping; None for a JOINT_EXACT run. ``space`` is then the joint space the run
-    would have needed (the one above the guards), whose mode classes ``mode_class`` reports."""
+    """The GATE_LOCAL walk's report (Section 5.4); None for a JOINT_EXACT run."""
     kernel: str = "none"
-    """How the drive operators were held (Section 11.3 item 4; M9b): ``factorized`` (the matrix-free kernel on some segment),
-    ``assembled`` (CSR everywhere), ``mixed``, or ``none`` (no drive term integrated in this process: GATE_LOCAL's runs report
-    theirs in ``gate_local``)."""
+    """How the drive operators were held (Section 11.3 item 4): ``factorized``, ``assembled`` (CSR everywhere), ``mixed``,
+    or ``none`` (no drive term integrated in this process: GATE_LOCAL's runs report theirs in ``gate_local``)."""
     workers: int = 1
     """Processes the parallel maps of Section 11.3 item 9 used (1 = everything in-process)."""
     propagator_cache_hits: int = 0
-    """Segments served from the engines' propagator caches (Section 11.3 item 5; M9b)."""
+    """Segments served from the engines' propagator caches (Section 11.3 item 5)."""
     branches: int = 1
-    """Branches of the initial mixture (Section 5.3's Fock sum) that were evolved. ``trajectories`` counts branches TIMES the
-    engine's trajectory count, the plan's realized triple being (samples, trajectories, shots per sample); this field
-    separates the two so a reader can tell a Fock branch from a quantum-jump trajectory (M6 fix, ``conv.fock_sum_branches``)."""
+    """Branches of the initial mixture (Section 5.3's Fock sum) that were evolved."""
     convergence: ConvergenceReport | None = None
-    """Section 5.5's tolerance-convergence report, present when ``SolverOptions.convergence_check`` was set: the change in the
-    register populations when atol and rtol are tightened by ten (M2's ``dynamics.evolve.convergence_check``; the run-path
-    plumbing is M9's, recorded as ``conv.appendix_e_signatures``). ``None`` means the check was not asked for, never that it
-    passed."""
+    """Section 5.5's tolerance-convergence report when ``convergence_check`` was set; None means not asked for."""
     shots_per_sample_realized: tuple[int, ...] = ()
-    """The shots each dynamical sample actually took, in sample order (Section 3.4 / 8.6): ``shots_per_sample`` is the floor
-    ``shots // samples``, so with shots = 2000 over 64 samples it reports 31 while 32 samples took 32 shots. This tuple is
-    also the shot -> sample map Section 8.6 asks the result to make recoverable: sample k owns the contiguous shot block
-    [sum_{j<k} M_j, sum_{j<=k} M_j) (see ``Result.sample_of_shot``)."""
+    """The shots each dynamical sample took, in sample order: sample k owns the contiguous shot block
+    [sum_{j<k} M_j, sum_{j<=k} M_j) (``shots_per_sample`` is the floor ``shots // samples``)."""
     level_reason: str = ""
-    """Why the run integrated at ``level`` (0.2.0; docs/api_implementation_plan.md 1.2): the joint dimension and the
-    drive-operator non-zero count of the declared space against ``SolverOptions.joint_dimension_max`` and ``nnz_max``
-    (``run.levels.LevelDecision.reason``), or the level the caller forced and what ``level="auto"`` would have chosen."""
+    """Why the run integrated at ``level`` (``run.levels.LevelDecision.reason``)."""
 
     def to_dict(self) -> dict[str, Any]:
-        """The summary of the run as plain JSON-able values (``Result.to_dict``, 0.2.0): every scalar and per-mode field, the
-        declared space, the calibration table's entries (``CalibrationTable.to_dict``), and for the two reports only whether
-        they exist; ``from_dict`` reads it back with those two as None."""
-
+        """The summary as plain JSON-able values: every scalar and per-mode field, the declared space, the calibration
+        table's entries (``CalibrationTable.to_dict``), and for the two reports only whether they exist."""
         space: HilbertSpace = self.space
         return {
             "level": self.level,
@@ -248,8 +222,8 @@ class Diagnostics:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Diagnostics:
-        """The inverse of :meth:`to_dict`: the GATE_LOCAL report and the convergence report come back as None (the summary
-        says only that they existed) and the calibration table without its waveforms."""
+        """The inverse of :meth:`to_dict`: the GATE_LOCAL and convergence reports come back as None and the calibration
+        table without its waveforms."""
         from qutip_trap.control.table import CalibrationTable
         from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 
@@ -262,16 +236,16 @@ class Diagnostics:
                     int(t["d"]),
                     (int(t["expected_n_range"][0]), int(t["expected_n_range"][1])),
                     float(t["eta_max"]),
-                    None if t.get("element_tol") is None else float(t["element_tol"]),
+                    None if t["element_tol"] is None else float(t["element_tol"]),
                 )
                 for t in sp["resolved"]
             ),
             None
-            if sp.get("enr_group") is None
+            if sp["enr_group"] is None
             else (tuple(int(m) for m in sp["enr_group"][0]), int(sp["enr_group"][1])),
             tuple(int(m) for m in sp["frozen"]),
-            tuple(int(i) for i in sp.get("ions", ())),
-            tuple(int(m) for m in sp.get("dropped", ())),
+            tuple(int(i) for i in sp["ions"]),
+            tuple(int(m) for m in sp["dropped"]),
         )
         return cls(
             level=d["level"],
@@ -308,13 +282,13 @@ class Diagnostics:
             branches=int(d["branches"]),
             convergence=None,
             shots_per_sample_realized=tuple(int(m) for m in d["shots_per_sample_realized"]),
-            level_reason=str(d.get("level_reason", "")),
+            level_reason=str(d["level_reason"]),
         )
 
     @classmethod
     def external(cls, n_qubits: int, *, approximations: Sequence[str] = ()) -> Diagnostics:
-        """The diagnostics of a result that came from outside the simulator (``Result.from_ionq_v1_shots``): a register-only
-        space, no modes, no samples, an empty calibration table, and ``approximations`` saying where the shots came from."""
+        """The diagnostics of shots from outside the simulator (``Result.from_ionq_v1_shots``): a register-only space, no
+        modes, no samples, an empty calibration table, and ``approximations`` saying where the shots came from."""
         from qutip_trap.control.table import CalibrationTable
         from qutip_trap.hilbert.space import HilbertSpace
 
@@ -343,13 +317,11 @@ class Diagnostics:
 
 @dataclass(frozen=True)
 class Progress:
-    """One step of a run's progress (0.2.0; docs/api_implementation_plan.md 1.8), handed to the ``progress`` callback of
-    ``run`` and ``Machine.run``: the ``stage`` (``pulse``, one integrated pulse segment, counted across the in-process
-    (sample, branch) engine runs; ``branch``, one (sample, branch) engine run; ``sample``, one dynamical sample evolved;
-    ``readout``, one sample read out), how many of the stage's ``total`` steps are ``done``, and the seconds since the run
-    started. Within one run the counts of a stage are monotone and end at ``done == total``; a parallel map reports its
-    branches when the map returns and no pulses (the engines ran in workers), and a cap-raising retry or a convergence
-    check integrates again and repeats the pulse counts."""
+    """One step of a run's progress, handed to the ``progress`` callback of ``Machine.run``: the ``stage`` (``pulse``, one
+    integrated pulse segment counted across the in-process engine runs; ``branch``, one (sample, branch) engine run;
+    ``sample``, one dynamical sample evolved; ``readout``, one sample read out), how many of its ``total`` steps are
+    ``done``, and the seconds since the run started. A stage's counts are monotone and end at ``done == total``; a parallel
+    map reports its branches when it returns and no pulses."""
 
     stage: str
     done: int
@@ -382,8 +354,7 @@ class Result:
     and posteriors when the record was read in full, the noise sample of every dynamical sample, the herald flags, the
     discarded shots, the persistent machine state, the SPAM errors per qubit, the recombined register state when kept, and
     the ``Diagnostics``. Histogram keys follow the Section 13 bit order (module docstring); ``to_dict`` is the versioned
-    record and the ``to_ionq_v1_*`` / ``to_ionq_v2_*`` methods the IonQ formats, each named by the convention it emits
-    (0.2.0; docs/api_implementation_plan.md 1.7)."""
+    record and the ``to_ionq_v1_*`` / ``to_ionq_v2_*`` methods the IonQ formats."""
 
     bitstrings: np.ndarray
     """(shots, n_qubits) array of 0/1: row k is shot k, column j the qubit ``qubits[j]`` (qubit j when every qubit was
@@ -412,24 +383,23 @@ class Result:
     ``run.job.to_register_order`` converts a compiler-order ket to this one."""
     diagnostics: Diagnostics
     sub_bin_records: np.ndarray | None = None
-    """(shots, n_qubits, n_sub_bins) counts per sub-bin when the discriminator is time resolved, which is Section 8.6's
-    "the photon-count record per ion AND PER SUB-BIN when time-resolved"; None for a threshold discriminator, whose record
-    carries no sub-bin structure, and on the fast path."""
+    """(shots, n_qubits, n_sub_bins) counts per sub-bin when the discriminator is time resolved (Section 8.6); None for a
+    threshold discriminator and on the fast path."""
     arrival_times_s: tuple[tuple[np.ndarray, ...], ...] | None = None
-    """Per shot, per ion, the photon arrival times when the discriminator asked for them (Noek's first-photon protocol,
-    Crain's stop-on-first-photon); None otherwise. Ragged, so a tuple of arrays rather than one array."""
+    """Per shot, per ion, the photon arrival times when the discriminator asked for them (first-photon protocols)."""
     qubits: tuple[int, ...] | None = None
-    """The circuit qubit each column of ``bitstrings`` holds (the measured qubits in ascending order); None means column
-    j is qubit j (0.2.0)."""
+    """The circuit qubit each column of ``bitstrings`` holds (the measured qubits ascending); None means column j is qubit j."""
     registers: dict[str, tuple[int, ...]] | None = None
     """The circuit's classical registers, name -> qubits in bit order (``Circuit.registers``), which the IonQ v2 exporters
-    report beside ``output_all``; None means one register ``"c"`` over every measured qubit (0.2.0)."""
+    report beside ``output_all``; None means one register ``"c"`` over every measured qubit."""
     machine_hash: str | None = None
-    """``Machine.hash()`` of the machine that ran the circuit (0.2.0); None for a run through the ``run`` function."""
+    """``Machine.hash()`` of the machine that ran the circuit."""
     created_at: str = ""
-    """When the run started, ISO 8601 in UTC (0.2.0); empty when unknown."""
+    """When the run started, ISO 8601 in UTC; empty when unknown."""
     duration_s: float = 0.0
-    """Wall time of the run, seconds (0.2.0); 0 when unknown."""
+    """Wall time of the run, seconds; 0 when unknown."""
+    record: RunRecord | None = field(default=None, repr=False, compare=False)
+    """Everything the run produced besides the Result (``run.job.RunRecord``); None for a Result not made by a run."""
 
     def __post_init__(self) -> None:
         arr = np.asarray(self.bitstrings)
@@ -490,8 +460,7 @@ class Result:
         cls, shots: Sequence[str | int], n_qubits: int, *, source: str = "IonQ v1 shots"
     ) -> Result:
         """A ``Result`` from a v1 per-shot list (decimal strings or integers, qubit 0 the 2^0 bit): counts, probabilities
-        and binomial error bars for ``len(shots)`` independent shots, no SPAM, and ``Diagnostics.external`` saying that no
-        simulation stands behind it; ``to_ionq_v1_shots`` closes the round trip."""
+        and binomial error bars for ``len(shots)`` independent shots, no SPAM, and ``Diagnostics.external``."""
         rows = [bits_from_decimal(str(int(k)), int(n_qubits)) for k in shots]
         bits = (
             np.asarray(rows, dtype=np.uint8).reshape(-1, int(n_qubits))
@@ -548,7 +517,7 @@ class Result:
     def to_ionq_v2_probabilities(self) -> dict[str, Any]:
         """``ionq.result.probabilities.json.v2``: ``{"probabilities": {"registers": {"output_all": {bitstring: p}, ...}}}``
         with the circuit's registers beside ``output_all``; the strings are in IonQ's wire order, q[0] the LEFTMOST
-        character (the reverse of ``counts``' keys; the source is recorded in ``qutip_trap.io.ionq``)."""
+        character (the reverse of ``counts``' keys)."""
         registers: dict[str, dict[str, float]] = {}
         for name, columns in self._v2_registers().items():
             tally = Counter(self._v2_strings(columns))
@@ -580,8 +549,6 @@ class Result:
         character of a key is qubit 0's bit (``bit_order == "qubit0_msb"``): for comparisons with Cirq, Braket and
         PennyLane, which report that way. ``qubits`` and ``registers`` keep naming the qubits; a second call restores the
         Section 13 order."""
-        from dataclasses import replace
-
         bits = np.asarray(self.bitstrings)[:, ::-1]
         counts, probabilities = aggregate(bits)
         order: Literal["qubit0_lsb", "qubit0_msb"] = (
@@ -610,11 +577,11 @@ class Result:
     # ---- the versioned record ---------------------------------------------------------------------------------------------
 
     def to_dict(self, *, per_shot: bool = False) -> dict[str, Any]:
-        """The result as plain JSON-able values under the envelope of ``docs/schemas/result.schema.json`` (schema version 1):
-        the identity (``schema_version``, ``qutip_trap_version``, ``device_hash``, ``machine_hash``, ``shots``, ``root_seed``,
-        ``created_at``, ``duration_s``), then counts, probabilities, error bars, SPAM, the herald tallies, the run state and
-        the diagnostics summary; ``per_shot=True`` adds the per-shot arrays (bitstrings, heralds, photon records, posteriors).
-        Not carried: the noise samples, the final state, the calibration waveforms, the GATE_LOCAL and convergence reports."""
+        """The result as plain JSON-able values (schema version 1): the identity (``schema_version``,
+        ``qutip_trap_version``, ``device_hash``, ``machine_hash``, ``shots``, ``root_seed``, ``created_at``, ``duration_s``),
+        then counts, probabilities, error bars, SPAM, the herald tallies, the run state and the diagnostics summary;
+        ``per_shot=True`` adds the per-shot arrays (bitstrings, heralds, photon records, posteriors). Not carried: the noise
+        samples, the final state, the run record, the calibration waveforms, the GATE_LOCAL and convergence reports."""
         from qutip_trap import __version__
 
         heralds = np.asarray(self.heralds, dtype=int)
@@ -662,17 +629,16 @@ class Result:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Result:
         """The inverse of :meth:`to_dict` for schema version 1: the per-shot arrays when the record carries them, else
-        bitstrings rebuilt from the counts (one row per counted shot, in key order) with zero heralds; the diagnostics as
-        ``Diagnostics.from_dict`` reads the summary; no noise samples, no final state."""
-        if int(d.get("schema_version", -1)) != 1:
-            raise ValueError(f"Result.from_dict reads schema version 1, got {d.get('schema_version')!r}")
+        bitstrings rebuilt from the counts (one row per counted shot, in key order) with zero heralds."""
+        if d["schema_version"] != 1:
+            raise ValueError(f"Result.from_dict reads schema version 1, got {d['schema_version']!r}")
         n = int(d["n_qubits"])
         per_shot = d.get("per_shot")
         if per_shot is not None:
             bits = np.asarray(per_shot["bitstrings"], dtype=np.uint8).reshape(-1, n)
             heralds = np.asarray(per_shot["heralds"], dtype=np.uint8)
-            records = per_shot.get("photon_records")
-            posteriors = per_shot.get("posteriors")
+            records = per_shot["photon_records"]
+            posteriors = per_shot["posteriors"]
         else:
             rows = [
                 np.array([int(ch) for ch in key[::-1]], dtype=np.uint8)
@@ -702,25 +668,20 @@ class Result:
             diagnostics=Diagnostics.from_dict(d["diagnostics"]),
             qubits=tuple(int(q) for q in d["qubits"]),
             registers=None
-            if d.get("registers") is None
+            if d["registers"] is None
             else {k: tuple(int(q) for q in v) for k, v in dict(d["registers"]).items()},
-            machine_hash=d.get("machine_hash"),
-            created_at=str(d.get("created_at", "")),
-            duration_s=float(d.get("duration_s", 0.0)),
+            machine_hash=d["machine_hash"],
+            created_at=str(d["created_at"]),
+            duration_s=float(d["duration_s"]),
         )
 
     @property
     def sample_of_shot(self) -> np.ndarray:
-        """Per shot, the index of the dynamical sample it was drawn from (Section 8.6: "a Result carries per shot ... the
-        sampled quasi-static noise parameters of that shot's dynamical sample"). ``noise_samples[sample_of_shot[k]]`` is
-        shot k's parameter draw. Shots are allocated in contiguous blocks (``conv.shot_blocks_per_sample``), so this is the
-        block index built from ``Diagnostics.shots_per_sample_realized``; a run with one sample maps every shot to 0."""
+        """Per shot, the index of the dynamical sample it was drawn from (Section 8.6): ``noise_samples[sample_of_shot[k]]``
+        is shot k's parameter draw. Shots are allocated in contiguous blocks, so this is the block index built from
+        ``Diagnostics.shots_per_sample_realized``; a run with one sample maps every shot to 0."""
         realized = self.diagnostics.shots_per_sample_realized
-        n = self.shots
         if not realized:
-            return np.zeros(n, dtype=np.int64)
+            return np.zeros(self.shots, dtype=np.int64)
         out = np.concatenate([np.full(int(m), s, dtype=np.int64) for s, m in enumerate(realized)])
-        # discarded shots (heralded collisions, Section 6.7) shorten the kept array; the map covers what was kept
-        return (
-            out[:n] if out.shape[0] >= n else np.concatenate([out, np.full(n - out.shape[0], -1, np.int64)])
-        )
+        return out[: self.shots]

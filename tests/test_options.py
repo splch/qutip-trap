@@ -1,5 +1,5 @@
 """The option objects: every ``SolverOptions`` field has exactly one home, the defaults reproduce ``SolverOptions()``,
-validation errors are ``SolverOptions``'s, and mappings are accepted."""
+validation errors are ``SolverOptions``'s, and mappings of the fields are accepted."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from qutip_trap.options import (
     Trajectories,
     Truncation,
 )
+from tests.fixtures import make_space
 
 HOMES: dict[str, tuple[type, str]] = {
     "atol": (Integration, "atol"),
@@ -119,11 +120,11 @@ def test_non_default_solver_options_round_trip_through_the_objects() -> None:
     ],
 )
 def test_validation_errors_are_solver_options_errors(bad, solver_bad) -> None:  # type: ignore[no-untyped-def]
-    with pytest.raises(ValueError) as new:
+    with pytest.raises(ValueError) as grouped:
         bad()
-    with pytest.raises(ValueError) as old:
+    with pytest.raises(ValueError) as flat:
         solver_bad()
-    assert str(new.value) == str(old.value)
+    assert str(grouped.value) == str(flat.value)
 
 
 def test_the_objects_own_rules() -> None:
@@ -142,13 +143,7 @@ def test_the_objects_own_rules() -> None:
     with pytest.raises(ValueError, match="samples is a positive count"):
         Parallel(samples=0)
     with pytest.raises(ValueError, match="not both"):
-        Truncation(enr_group=((0, 1), 2), space=Numerics().truncation.space or _space())
-
-
-def _space():  # type: ignore[no-untyped-def]
-    from tests.fixtures import make_space
-
-    return make_space()
+        Truncation(enr_group=((0, 1), 2), space=make_space())
 
 
 def test_mappings_are_accepted_and_unknown_keys_refused() -> None:

@@ -1,9 +1,8 @@
-"""``Field``, ``Device`` and ``DerivedQuantities`` (PLAN.md Section 3.3; Appendix E).
+"""``Field``, ``BeamRoles`` and ``Device`` (PLAN.md Section 3.3).
 
-Design principle (Section 3.1): device parameters in, everything else derived. ``Device.derived()`` returns
-every computed number with its provenance id from the ledger of Section 14.5; ``Device.hash()`` is the
-canonical serialization of Appendix E (``qutip_trap.hashing``), the identity for the calibration cache and
-the run record.
+Device parameters in, everything else derived (Section 3.1): ``Device.derived()`` returns every computed number with its
+provenance id from the ledger of Section 14.5; ``Device.hash()`` is the canonical digest (``qutip_trap.hashing``), the
+identity for the calibration cache and the run record.
 """
 
 from __future__ import annotations
@@ -88,7 +87,7 @@ class DerivedQuantities:
     values: dict[str, float]
     provenance: dict[str, str]
     notes: tuple[str, ...] = ()
-    """What the device could not derive and why (a microwave drive's Rabi frequency, a species without a detection beam; M8)."""
+    """What the device could not derive and why (a microwave drive's Rabi frequency, a species without a detection beam)."""
 
     def __post_init__(self) -> None:
         if set(self.values) != set(self.provenance):
@@ -109,14 +108,12 @@ class ResolvedRoles:
 
 @dataclass(frozen=True)
 class BeamRoles:
-    """Which of a device's beams play which part (Section 7.3; docs/api_proposal.md Section 4.6; 0.2.0): per ion the drive
-    that plays its single-qubit gates, per ion the drive that plays its entangling gates (the global pair), and the index of
-    the detection beam. ``None`` on a field means "infer it": the gate drive from the far-detuned beams (none = microwave,
-    one = optical, one pair of equal wavelength = Raman; several pairs are ambiguous and refuse), the entangling drives as
-    the gate drives, the detection beam as the beam nearest the first species' cycling line. The roles are the operator's
-    assignment of the apparatus, not the apparatus: they are left out of ``Device.hash()`` and carried by ``Machine.hash()``.
-    Explicit ``gate_drives=`` / ``entangling_drives=`` keyword arguments of ``run``, ``calibrate`` and ``schedule`` take
-    precedence over them (they are deprecated in 0.3.0)."""
+    """Which of a device's beams play which part (Section 7.3): per ion the drive that plays its single-qubit gates, per ion
+    the drive that plays its entangling gates (the global pair), and the index of the detection beam. ``None`` on a field
+    means "infer it": the gate drive from the far-detuned beams (none = microwave, one = optical, one pair of equal
+    wavelength = Raman; several pairs are ambiguous and refuse), the entangling drives as the gate drives, the detection beam
+    as the beam nearest the first species' cycling line. The roles are the operator's assignment of the apparatus, not the
+    apparatus: they are left out of ``Device.hash()`` and carried by ``Machine.hash()``."""
 
     gate: Mapping[int, GateDrive] | None = None
     """Per ion, the drive kind and the beams that play its single-qubit gates."""
@@ -145,11 +142,9 @@ class BeamRoles:
         gate_drives: Mapping[int, GateDrive] | None = None,
         entangling_drives: Mapping[int, GateDrive] | None = None,
     ) -> ResolvedRoles:
-        """The one resolution rule (docs/api_implementation_plan.md 1.1) for the scheduler, ``run``, the calibration, the
-        experiments, the benchmarks and ``Device.derived()``: an explicit keyword argument first, then the declared role, then
-        the inference from the wavelengths and the beam count; entangling drives fall back to the gate drives; every ion and
-        beam index is checked against ``device``. Raises ``ScheduleError`` when a gate drive is needed and the beams do not
-        identify one."""
+        """The one resolution rule: an explicit drive map first, then the declared role, then the inference from the
+        wavelengths and the beam count; entangling drives fall back to the gate drives; every ion and beam index is checked
+        against ``device``. Raises ``ScheduleError`` when a gate drive is needed and the beams do not identify one."""
         from qutip_trap.control.schedule import infer_gate_drives
         from qutip_trap.light.roles import infer_detection_beam
 
@@ -200,40 +195,34 @@ class Device:
     detector: Detector
     hardware: HardwareChain
     preparation: PreparationRecipe | None = None
-    """How the device cools and pumps before every shot (Section 4.2.6; M6); None = ``prep.recipe.standard_recipe``."""
+    """How the device cools and pumps before every shot (Section 4.2.6); None = ``prep.recipe.standard_recipe``."""
     gradient: GradientField | None = None
-    """The near-field microwave-gradient electrodes (Section 4.4.5; M4): None on a device with no gradient drive, in which
-    case a ``gradient`` ``Drive`` is refused by the builder."""
+    """The near-field microwave-gradient electrodes (Section 4.4.5): None on a device with no gradient drive, in which case a
+    ``gradient`` ``Drive`` is refused by the builder."""
     roles: BeamRoles = dataclasses.field(default_factory=BeamRoles, metadata={"hash": "exclude"})
-    """Which beams play which part (0.2.0; docs/api_proposal.md Section 4.6): the default infers everything from the beams.
-    Left out of :meth:`hash`, which identifies the apparatus (``qutip_trap.hashing``); ``Machine.hash()`` carries the roles."""
+    """Which beams play which part; the default infers everything from the beams. Left out of :meth:`hash`, which
+    identifies the apparatus; ``Machine.hash()`` carries the roles."""
 
     def derived(self) -> DerivedQuantities:
-        """Every computed number with its provenance id (Section 3.3; the ledger of Section 14.5): the qubit transition
-        frequencies and their Zeeman sensitivities per ion (M0a), the secular frequencies, Mathieu parameters and C0 of the
-        trap (M1), the mode frequencies and heating rates (M1, M7), the carrier Rabi frequencies, Stark shifts, crosstalk ratios
-        and Lamb-Dicke parameters of the inferred single-qubit drives (M2), the detection rates (M5) and the prepared
-        occupations (M6). These are the values the calibration of Section 7.5 starts from as ``seed`` entries (M8); a device
-        whose beams do not identify a single-qubit drive reports what it can and says so in ``provenance``."""
+        """Every computed number with its provenance id (Section 3.3; the ledger of Section 14.5): the qubit transitions and
+        their Zeeman sensitivities, the trap's secular frequencies, Mathieu parameters and C0, the mode frequencies and
+        heating rates, the Rabi frequencies, Stark shifts, crosstalk ratios and Lamb-Dicke parameters of the single-qubit
+        drives, and the detection rates: the values the calibration of Section 7.5 starts from as ``seed`` entries."""
         from qutip_trap.device.derived import derived_quantities
 
         return derived_quantities(self)
 
     def specs(self) -> str:
-        """The derived quantities as a readable report with their provenance ids (docs/api_implementation_plan.md 2.5,
-        after Pulser's ``Device.specs``): the crystal, beams, detector and electronics in one line each, then every entry of
-        ``derived()`` grouped by family (the qubit transitions, the trap, the modes, the drives, the detection, the heating),
-        ``key = value  [ledger id]``, the units in the keys (``_hz``, ``_gauss``, ``_per_s``, ``_m``, ``_ev``), and the noise
-        channels ``NoiseModel.summary`` lists; the notes of ``derived()`` close the report."""
+        """The derived quantities as a readable report: the crystal, beams, detector and electronics in one line each, every
+        entry of ``derived()`` grouped by family as ``key = value  [ledger id]``, the noise channels ``NoiseModel.summary``
+        lists, and the notes of ``derived()``."""
         from qutip_trap.device.specs import render_specs
 
         return render_specs(self)
 
     def to_dict(self) -> dict[str, Any]:
-        """The device as plain JSON-able values (``qutip_trap.device.serial``; schema version 1 in
-        ``docs/schemas/device.schema.json``): ``{"schema_version", "qutip_trap_version", "device_hash", "device"}``, the
-        record walked by its field annotations (tuples as lists, dict keys as strings, non-finite floats as strings, arrays
-        as dtype, shape and data). ``from_dict`` reads it back exactly: the read device has the hash written."""
+        """The device as plain JSON-able values (``qutip_trap.device.serial``, schema version 1): ``{"schema_version",
+        "qutip_trap_version", "device_hash", "device"}``; ``from_dict`` reads it back to the same hash."""
         from qutip_trap.device.serial import device_to_dict
 
         return device_to_dict(self)
@@ -246,13 +235,9 @@ class Device:
         return device_from_dict(data)
 
     def hash(self) -> str:
-        """The canonical digest of Appendix E: declaration-order fields, 12-digit floats, sorted dicts, Qobj excluded.
-
-        Memoized per instance (a frozen dataclass whose arrays and dicts the code never mutates in place; a changed device is a
-        new instance through ``dataclasses.replace``): the builder fingerprints every segment Hamiltonian with it, and a
-        GATE_LOCAL tomography builds tens of thousands of segments on one device (0.9 ms each at four ions, 80 s of a 1137 s
-        four-qubit GHZ run; performance pass 2026-09-09).
-        """
+        """The canonical digest: declaration-order fields, 12-digit floats, sorted dicts, Qobj excluded. Memoized per
+        instance (a changed device is a new instance through ``dataclasses.replace``): the builder fingerprints every segment
+        Hamiltonian with it."""
         entry = _HASHES.get(id(self))
         if entry is not None and entry[0] is self:
             return entry[1]

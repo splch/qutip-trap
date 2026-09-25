@@ -1,4 +1,4 @@
-"""The OpenQASM 2 importer subset (PLAN.md Sections 1.4, 7.2, 7.6; milestone M6)."""
+"""OpenQASM 2 both ways (PLAN.md Sections 1.4, 7.2, 7.6): the importer subset, the registers and the exporter."""
 
 from __future__ import annotations
 
@@ -89,8 +89,6 @@ def test_custom_gate_definitions_are_inlined_including_the_sdk_style_native_decl
     """
     circ = load_openqasm2(text)
     got = circuit_unitary(circ)
-    from qutip_trap.control.native import gpi, gpi2, ms, zz
-
     ref = Circuit(
         2,
         (
@@ -107,31 +105,6 @@ def test_custom_gate_definitions_are_inlined_including_the_sdk_style_native_decl
     idx = np.unravel_index(int(np.argmax(np.abs(want))), want.shape)
     r = got[idx] / want[idx]
     assert abs(abs(r) - 1.0) < 1e-9 and np.allclose(got, r * want, atol=1e-9)
-    # the SDK-style bodies really are the native matrices, one gate at a time
-    for stmt, mat in (
-        ("gpi(0.7) q[0];", gpi(0.7)),
-        ("gpi2(-0.4) q[0];", gpi2(-0.4)),
-    ):
-        one = load_openqasm2(
-            "OPENQASM 2.0; gate gpi(phi) a { u(pi, phi, pi - phi) a; } "
-            "gate gpi2(phi) a { u(pi/2, phi - pi/2, pi/2 - phi) a; } qreg q[1]; " + stmt
-        )
-        u = circuit_unitary(one)
-        idx = np.unravel_index(int(np.argmax(np.abs(mat))), mat.shape)
-        r = u[idx] / mat[idx]
-        assert abs(abs(r) - 1.0) < 1e-9 and np.allclose(u, r * mat, atol=1e-9)
-    two = load_openqasm2(
-        "OPENQASM 2.0; gate ms(p0, p1, t) a, b { rz(-p0) a; rz(-p1) b; rxx(t) a, b; rz(p0) a; rz(p1) b; } "
-        "gate zz(t) a, b { rzz(t) a, b; } qreg q[2]; ms(0.2, -0.4, 0.9) q[0], q[1]; zz(0.5) q[0], q[1];"
-    )
-    want = circuit_unitary(
-        Circuit(2, (Operation("ms", (0, 1), (0.2, -0.4, 0.9)), Operation("zz", (0, 1), (0.5,))), (0, 1))
-    )
-    u2 = circuit_unitary(two)
-    idx = np.unravel_index(int(np.argmax(np.abs(want))), want.shape)
-    r = u2[idx] / want[idx]
-    assert abs(abs(r) - 1.0) < 1e-9 and np.allclose(u2, r * want, atol=1e-9)
-    _ = (ms, zz)
 
 
 def test_mid_circuit_measure_and_reset_stay_in_ops() -> None:
@@ -160,7 +133,7 @@ def test_refusals_and_expression_errors() -> None:
         evaluate(tokenize("lambda")[:-1], {})
 
 
-# ---- registers and the exporter (docs/api_implementation_plan.md 1.5 and 1.6; 0.2.0) ------------------------------------------
+# ---- registers and the exporter -----------------------------------------------------------------------------------------------
 
 
 def test_registers_survive_an_openqasm_round_trip() -> None:
@@ -177,7 +150,7 @@ def test_registers_survive_an_openqasm_round_trip() -> None:
     # a broadcast measure writes bit k of the creg from qubit k of the qreg
     assert load_openqasm2("OPENQASM 2.0; qreg q[2]; creg r[2]; measure q -> r;").registers == {"r": (0, 1)}
     # no creg, or a creg nothing writes into: the default register over the terminal targets, which a program without a
-    # measure statement leaves empty (the 0.1.0 rule: run() then measures every ion)
+    # measure statement leaves empty (a run then measures every ion)
     for text in ("OPENQASM 2.0; qreg q[2]; h q[0];", "OPENQASM 2.0; qreg q[2]; creg c[2]; h q[0];"):
         assert load_openqasm2(text).measure == () and load_openqasm2(text).registers == {"c": ()}
     assert load_openqasm2("OPENQASM 2.0; qreg q[2]; creg c[2]; h q[0]; measure q[1] -> c[0];").registers == {
@@ -188,7 +161,9 @@ def test_registers_survive_an_openqasm_round_trip() -> None:
 
 
 def test_dumps_declares_the_native_gates_and_the_bare_form_round_trips_exactly() -> None:
-    from qutip_trap.control.native import gpi, gpi2, ms, zz
+    """The declarations (the forms the client SDKs' exports use) are the native matrices up to a global phase, the declared
+    text reads back to the same unitary, and the bare form round-trips the native operations exactly."""
+    from qutip_trap.control.native import gpi, gpi2
     from qutip_trap.io.qasm2 import NATIVE_DECLARATIONS, dumps, loads
 
     native = Circuit(2).gpi2(0, 0.3).gpi(1, 1.1).ms(0, 1, 0.2, -0.4, 0.9).zz(1, 0, 0.5)
@@ -226,7 +201,6 @@ def test_dumps_declares_the_native_gates_and_the_bare_form_round_trips_exactly()
         circuit_unitary(Circuit(2).ms(0, 1, 0.2, -0.4, 0.9)),
         circuit_unitary(Circuit(2, (Operation("ms", (0, 1), (0.2, -0.4, 0.9)),))),
     )
-    _ = (ms, zz)
     idx = np.unravel_index(int(np.argmax(np.abs(want2))), want2.shape)
     r = u2[idx] / want2[idx]
     assert abs(abs(r) - 1.0) < 1e-9 and np.allclose(u2, r * want2, atol=1e-9)

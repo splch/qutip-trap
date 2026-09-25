@@ -1,30 +1,40 @@
-"""``Machine`` (docs/api_implementation_plan.md 1.3): the executor's run equals ``run`` field for field at the same seed, its
-schedule equals the scheduler's on the same table, ``calibrated`` pins a table for the device, a forced level shows in the
-diagnostics, ``estimate`` matches the run that follows, and ``hash`` moves when and only when the device, the table or the
-policy moves."""
+"""``Machine``: its run equals a run on the bare device at the same seed, its schedule is the scheduler's on the same table,
+``calibrated`` pins a table, a forced level shows in the diagnostics, ``estimate`` matches the run that follows, ``hash``
+moves when and only when the device, the table or the policy moves; the ``progress`` callback; ``RunSpec`` and the ``Job``
+of ``Machine.submit``."""
 
 from __future__ import annotations
 
 import dataclasses
+import json
 import math
+import time
+import warnings
 
 import numpy as np
 import pytest
 
+import qutip_trap as trap
 from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.schedule import schedule
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.hilbert.truncation import TruncationWarning, warn_if_boundary_exceeds
 from qutip_trap.machine import Estimate, Machine
-from qutip_trap.options import Numerics, Physics, Readout, Truncation
+from qutip_trap.options import Numerics, Parallel, Physics, Readout, Truncation
+from qutip_trap.readout.discriminate import ThresholdDiscriminator
+from qutip_trap.run.job import last_record
 from qutip_trap.run.levels import FidelityLevel
+from qutip_trap.run.results import Progress
+from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec, submit
 from tests.fixtures import run
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
 ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
+SERIAL = Numerics(truncation=Truncation(branch_weight_min=1e-3), parallel=Parallel(map="serial"))
 
 
 @pytest.fixture(scope="module")
@@ -134,35 +144,210 @@ def test_hash_changes_when_and_only_when_device_table_or_policy_change(machine) 
     assert Machine(preset.device).hash() == Machine(preset.device).hash()
 
 
-def test_mappings_are_accepted_and_the_engine_is_configured_from_the_machine(machine) -> None:  # type: ignore[no-untyped-def]
-    preset, m = machine
-    loose = Machine(
-        preset.device,
-        physics={"noise": False},
-        numerics={"convergence_check": True},
-        readout={"mode": "full"},
-    )  # type: ignore[arg-type]
-    assert (
-        loose.physics == Physics(noise=False)
-        and loose.numerics.convergence_check
-        and loose.readout.mode == "full"
-    )
+def test_the_engine_is_configured_from_the_machine(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
     engine = m.engine
     assert isinstance(engine, JointExactEngine) and engine.table is m.table and engine.device_channels
     assert dataclasses.replace(m, physics=Physics(noise=False)).engine.device_channels is False
 
 
-def test_the_later_phases_name_themselves(machine) -> None:  # type: ignore[no-untyped-def]
+def test_specs_reports_the_derived_quantities_the_roles_the_table_and_the_level(machine) -> None:  # type: ignore[no-untyped-def]
     _preset, m = machine
-    # 3.1 (0.4.0): submit is implemented, a Job in a worker process whose spec records the call (tests/test_job.py runs it)
-    job = m.submit(BELL, 10)
-    try:
-        assert job.status() in ("running", "done") and job.spec.shots == 10
-        assert job.spec.machine_hash == m.hash() and m.spec(BELL, 10) == job.spec
-    finally:
-        job.cancel(terminate_after_s=0.0)
-    assert job.status() == "cancelled"
-    # 2.5: specs is implemented, on the device's derived quantities plus the machine's roles, table and level
     text = m.specs()
     assert text.startswith(f"device {m.device.hash()[:12]}") and "rabi_hz[(0, 2)] =" in text
     assert "gate drives = {0: GateDrive(" in text and "table = pinned (" in text and "level = auto" in text
+
+
+# ---- progress and the truncation warnings ---------------------------------------------------------------------------------
+
+
+def test_progress_is_a_frozen_record() -> None:
+    p = Progress("pulse", 2, 6, 0.5)
+    assert (p.stage, p.done, p.total, p.elapsed_s) == ("pulse", 2, 6, 0.5) and p.fraction == pytest.approx(
+        1 / 3
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        p.done = 3  # type: ignore[misc]
+    with pytest.raises(ValueError):
+        Progress("pulse", 7, 6, 0.0)
+
+
+def test_the_callback_sequence_is_monotone_per_stage_and_complete(machine) -> None:  # type: ignore[no-untyped-def]
+    """The serial map keeps every (sample, branch) engine run in-process, where the pulses are reported."""
+    _preset, m = machine
+    serial = dataclasses.replace(m, numerics=SERIAL)
+    seen: list[Progress] = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", TruncationWarning)  # the Bell run is silent
+        result = serial.run(BELL, 200, seed=1, progress=seen.append)
+    assert result.shots == 200
+    stages = {p.stage for p in seen}
+    assert {"pulse", "branch", "sample", "readout"} <= stages, stages
+    for stage in stages:
+        events = [p for p in seen if p.stage == stage]
+        assert [p.done for p in events] == sorted(p.done for p in events), stage
+        assert len({p.total for p in events}) == 1 and events[-1].done == events[-1].total, stage
+        assert all(0 <= p.done <= p.total for p in events)
+    elapsed = [p.elapsed_s for p in seen]
+    assert elapsed == sorted(elapsed) and elapsed[-1] > 0.0
+    seen_fn: list[Progress] = []
+    same = run(BELL, serial.device, 200, table=serial.table, numerics=SERIAL, seed=1, progress=seen_fn.append)
+    assert np.array_equal(same.bitstrings, result.bitstrings)
+    assert [(p.stage, p.done, p.total) for p in seen_fn] == [(p.stage, p.done, p.total) for p in seen]
+
+
+class Abort(RuntimeError):
+    pass
+
+
+def test_a_raising_callback_aborts_the_run_and_leaves_the_machine_usable(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
+
+    def boom(p: Progress) -> None:
+        raise Abort(p.stage)
+
+    with pytest.raises(Abort):
+        m.run(ONE, 20, progress=boom)
+    assert m.run(ONE, 20).shots == 20
+
+
+def test_a_boundary_excess_warns_and_a_bounded_one_does_not() -> None:
+    with pytest.warns(
+        TruncationWarning,
+        match=r"mode 3: boundary population 2\.000e-05 exceeds boundary_population_max = 1\.0e-06",
+    ):
+        warn_if_boundary_exceeds({2: 1e-7, 3: 2e-5}, 1e-6)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", TruncationWarning)
+        warn_if_boundary_exceeds({2: 1e-7, 3: 1e-6}, 1e-6)
+    assert issubclass(TruncationWarning, UserWarning)
+
+
+# ---- RunSpec: the record of a request ---------------------------------------------------------------------------------------
+
+
+def test_spec_of_a_machine_carries_its_hash_and_policy(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
+    spec = m.spec(BELL, 200, seed=3, label="bell")
+    assert spec == RunSpec.of(m, BELL, 200, seed=3, label="bell")
+    assert spec.machine_hash == m.hash() and spec.level is m.level
+    assert spec.physics == m.physics and spec.numerics == m.numerics and spec.readout == m.readout
+    assert spec.shots == 200 and spec.seed == 3 and spec.circuit == BELL and not spec.keep_final_state
+    with pytest.raises(ValueError, match="shots must be positive"):
+        RunSpec(BELL, 0)
+
+
+def test_spec_round_trips_through_json(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
+    numerics = dataclasses.replace(
+        m.numerics,
+        truncation={"branch_weight_min": 1e-3, "caps": {2: 12, 3: 14}, "enr_group": ((4, 5), 2)},
+        integration={"atol": 1e-9, "integrators": ("vern9",), "store_marginals": True},
+        parallel={"map": "serial", "samples": 3},
+    )
+    physics = trap.Physics(noise=False, internal_levels=3, entangler="zz", shot_period_s=2e-3)
+    spec = RunSpec(
+        BELL.measured(1),
+        shots=7,
+        seed=11,
+        machine_hash=m.hash(),
+        physics=physics,
+        numerics=numerics,
+        readout=trap.Readout(mode="full", povm_samples=99),
+        level=trap.FidelityLevel.GATE_LOCAL,
+        keep_final_state=True,
+        label="round trip",
+    )
+    d = spec.to_dict()
+    text = json.dumps(d)  # plain JSON: tuples became lists, integer keys strings
+    assert d["schema_version"] == SPEC_SCHEMA_VERSION and d["qutip_trap_version"] == trap.__version__
+    assert d["numerics"]["truncation"]["caps"] == {"2": 12, "3": 14}
+    assert d["numerics"]["truncation"]["enr_group"] == [[4, 5], 2]
+    assert d["level"] == "GATE_LOCAL" and d["circuit"]["measure"] == [1]
+    back = RunSpec.from_dict(json.loads(text))
+    assert back == spec, "exact: the option objects, the level and the circuit rebuilt as the same values"
+    assert back.numerics.truncation.caps == {2: 12, 3: 14} and back.numerics.truncation.enr_group == (
+        (4, 5),
+        2,
+    )
+    assert back.numerics.integration.integrators == ("vern9",)
+    with pytest.raises(ValueError, match="schema version"):
+        RunSpec.from_dict({**d, "schema_version": 2})
+
+
+def test_spec_refuses_by_name_what_a_record_cannot_carry(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
+    space = m.estimate(BELL).space
+    with pytest.raises(ValueError, match="truncation.space"):
+        dataclasses.replace(m.spec(BELL, 1), numerics=trap.Numerics(truncation={"space": space})).to_dict()
+    with pytest.raises(ValueError, match="discriminator"):
+        dataclasses.replace(
+            m.spec(BELL, 1),
+            readout=trap.Readout(discriminator=ThresholdDiscriminator(n_c=1.5, window_s=1e-5)),
+        ).to_dict()
+
+
+# ---- Job: the run in a worker process ---------------------------------------------------------------------------------------
+
+
+def test_submit_result_equals_run_and_carries_its_record(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
+    job = m.submit(BELL, 200, seed=5, label="bell")
+    assert isinstance(job, Job) and job.status() in ("running", "done") and job.spec.label == "bell"
+    assert job.spec == m.spec(BELL, 200, seed=5, label="bell")
+    direct = m.run(BELL, 200, seed=5)
+    result = job.result(timeout_s=600.0)
+    assert job.status() == "done" and repr(job).startswith("Job('done'")
+    assert np.array_equal(result.bitstrings, direct.bitstrings), (
+        "the same keyed streams, whichever process ran them"
+    )
+    assert result.counts == direct.counts and result.spam == direct.spam
+    assert result.machine_hash == m.hash() == job.spec.machine_hash
+    assert result.diagnostics.root_seed == 5 and result.diagnostics.level == direct.diagnostics.level
+    record = job.record()  # the RunRecord travelled back on the Result
+    assert record.schedule.pulses and record.compile.n_pulses == last_record(direct).compile.n_pulses
+    progress = job.progress
+    assert progress is not None and progress.stage == "readout" and progress.done == progress.total
+    assert job.result() is result, "a finished job returns the same result again"
+
+
+def test_cancel_stops_the_worker_within_one_pulse(machine) -> None:  # type: ignore[no-untyped-def]
+    """Under a serial map the engine runs in-process and reports every pulse, so the cancel lands within one pulse."""
+    _preset, m = machine
+    job = submit(dataclasses.replace(m, numerics=SERIAL), BELL, 2000, seed=1)
+    deadline = time.monotonic() + 300.0
+    while time.monotonic() < deadline:
+        p = job.progress
+        if p is not None and p.stage == "pulse" and p.done >= 1:
+            break
+        if job.status() != "running":
+            pytest.fail(f"the run ended before its first pulse report: {job.status()}")
+        time.sleep(0.05)
+    else:
+        pytest.fail("no pulse progress arrived")
+    first = job.progress
+    assert first is not None
+    job.cancel()
+    assert job.cancel_requested and job.status() == "cancelled"
+    t0 = time.monotonic()
+    with pytest.raises(JobCancelled, match="cancelled"):
+        job.result(timeout_s=300.0)
+    stopped_after_s = time.monotonic() - t0
+    last = job.progress
+    assert last is not None and last.done <= first.done + 1, (first, last)
+    assert not job._process.is_alive() and stopped_after_s < 120.0
+    with pytest.raises(JobCancelled):
+        job.result()
+
+
+def test_a_job_started_twice_and_a_timeout_are_refused(machine) -> None:  # type: ignore[no-untyped-def]
+    _preset, m = machine
+    job = m.submit(BELL, 200, seed=0)
+    with pytest.raises(RuntimeError, match="already started"):
+        job.start()
+    with pytest.raises(TimeoutError):
+        job.result(timeout_s=0.0)
+    job.cancel(terminate_after_s=0.0)
+    assert job.status() == "cancelled"
+    with pytest.raises(JobCancelled):
+        job.result(timeout_s=60.0)

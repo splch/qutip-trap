@@ -1,5 +1,5 @@
-"""run() with the noise layer on (PLAN.md Sections 3.4, 6.1, 6.6, 6.7, 7.5, 7.10; Section 9.17 rows 'Shot clock', 'Seeds and
-reproducibility'; M7): dynamical samples at the shot clock, the effective sample size, the trajectory path, leakage levels,
+"""Runs with the noise layer on (PLAN.md Sections 3.4, 6.1, 6.6, 6.7, 7.5, 7.10; Section 9.17 rows 'Shot clock', 'Seeds and
+reproducibility'): dynamical samples at the shot clock, the effective sample size, the trajectory path, leakage levels,
 collisions with heralds and the persistent machine state, and the scheduler's crosstalk-suppression echoes."""
 
 from __future__ import annotations
@@ -122,9 +122,7 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
     assert all(t.final.joint is not None for t in rec.traces)
 
 
-# eight trajectories at dimension 1287: under the xdist worker cap they run one after another and took over an hour on the
-# runner (py-spy on the run of 83920a0 found the last worker alone in this mcsolve loop while three sat idle); the heavy step
-# runs the test by itself, where the engine's trajectory pool spreads them over the runner's cores
+# eight trajectories at dimension 1287: heavy, so it runs alone and the engine's trajectory pool takes every core
 @pytest.mark.slow
 @pytest.mark.heavy
 @pytest.mark.timeout(3600)
@@ -156,8 +154,7 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
     """An absurd pressure makes collisions frequent: heating kicks during the cooling stage are heralded and kept with their drawn
     energy reported (Section 6.7's k_B T m_gas/m_ion scale), events during the sequence discard the shot, a reorder permutes
     RunState.order from the configured permutation distribution, and a loss or dark-ion event flags the ion so that every later shot
-    reads it dark (Section 6.7). All four outcomes are enabled here: the audit found reorder and loss pinned to zero, so neither
-    branch ever executed in CI."""
+    reads it dark (Section 6.7). All four outcomes are enabled."""
     fx, sur = two_ion
     col = Collisions(
         3e-6 * TORR_PA,
@@ -205,12 +202,8 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:  # 
 
 def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:
     fx = circuit_fixture(3)
-    sur = (
-        surrogate_table(
-            fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
-        )
-        if "spot_check" in surrogate_table.__code__.co_varnames
-        else surrogate_table(fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,))
+    sur = surrogate_table(
+        fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
     )
     ms_circ = Circuit(3, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), (0, 1, 2))
     rep = compile_report(ms_circ, fx.device)
@@ -229,7 +222,7 @@ def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:
     assert len(echo_neigh) == 2 and {p.drive.ions[0] for p in echo_neigh} == {2}, (
         "the spectator gets X(pi) then Y(pi) = Z(pi)"
     )
-    # Z(pi) plus the virtual-Z frame the two compensated echo pulses leave behind (2 pi delta_St t_pi each, M8 Section 7.5 item 7)
+    # Z(pi) plus the virtual-Z frame the two compensated echo pulses leave behind (2 pi delta_St t_pi each, Section 7.5 item 7)
     from qutip_trap.control.schedule import stark_phase_rad
 
     stark_frame = sum(stark_phase_rad(p) for p in echo_neigh)

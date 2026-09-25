@@ -1,4 +1,4 @@
-"""``Device.to_dict`` and ``Device.from_dict``: the JSON form of the device record, and its JSON schema.
+"""``Device.to_dict`` and ``Device.from_dict``: the JSON form of the device record.
 
 The device tree is dataclasses over simple leaves, so one walker driven by the field annotations writes and reads every
 record: a dataclass is an object of its fields, a tuple a list, a ``dict`` an object whose keys are written as strings (an
@@ -125,9 +125,7 @@ def _registry() -> dict[str, type]:
 def resolve(name: str) -> type:
     reg = _registry()
     if name not in reg:
-        raise ValueError(
-            f"Device.to_dict: the dataclass {name!r} is not on the Appendix E surface or beside one that is"
-        )
+        raise ValueError(f"Device.to_dict: {name!r} is not a dataclass of the package")
     return reg[name]
 
 
@@ -390,113 +388,8 @@ def device_to_dict(device: Device) -> dict[str, Any]:
 
 
 def device_from_dict(data: Mapping[str, Any]) -> Device:
-    version = data.get("schema_version")
+    version = data["schema_version"]
     if version != SCHEMA_VERSION:
         raise ValueError(f"Device.from_dict reads schema version {SCHEMA_VERSION}, got {version!r}")
     device: Device = decode(data["device"], Node("cls", name="Device"), "device")
     return device
-
-
-# ---- the JSON schema ------------------------------------------------------------------------------------------------------------------
-
-_FLOAT_SCHEMA: dict[str, Any] = {
-    "anyOf": [{"type": "number"}, {"type": "string", "enum": ["inf", "-inf", "nan"]}]
-}
-_COMPLEX_SCHEMA: dict[str, Any] = {
-    "anyOf": [
-        {
-            "type": "object",
-            "required": ["re", "im"],
-            "additionalProperties": False,
-            "properties": {"re": _FLOAT_SCHEMA, "im": _FLOAT_SCHEMA},
-        },
-        _FLOAT_SCHEMA,
-    ]
-}
-_ARRAY_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "required": ["dtype", "shape", "data"],
-    "additionalProperties": False,
-    "properties": {
-        "dtype": {"type": "string"},
-        "shape": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-        "data": {"type": "array", "items": {"anyOf": [_FLOAT_SCHEMA, _COMPLEX_SCHEMA]}},
-    },
-}
-
-
-def schema_of(node: Node, defs: dict[str, Any]) -> dict[str, Any]:
-    """The JSON schema of one node; dataclasses become ``$defs`` entries referenced by name."""
-    if node.kind == "union":
-        return {"anyOf": [schema_of(n, defs) for n in node.args]}
-    if node.kind == "none":
-        return {"type": "null"}
-    if node.kind == "callable":
-        return {"type": "null", "description": "callables have no JSON form; only None is written"}
-    if node.kind == "any":
-        return {}
-    if node.kind == "scalar":
-        return {
-            "float": _FLOAT_SCHEMA,
-            "int": {"type": "integer"},
-            "str": {"type": "string"},
-            "bool": {"type": "boolean"},
-            "complex": _COMPLEX_SCHEMA,
-        }[node.name]
-    if node.kind == "literal":
-        return {"type": "string", "enum": list(node.args)}
-    if node.kind == "alias":
-        return {"type": "string", "description": f"the {node.name} literal"}
-    if node.kind == "array":
-        return _ARRAY_SCHEMA
-    if node.kind == "tuple":
-        if node.variadic:
-            return {"type": "array", "items": schema_of(node.args[0], defs)}
-        kinds = {(n.kind, n.name) for n in node.args}
-        out: dict[str, Any] = {"type": "array", "minItems": len(node.args), "maxItems": len(node.args)}
-        if len(kinds) == 1:
-            out["items"] = schema_of(node.args[0], defs)
-        return out
-    if node.kind == "dict":
-        return {"type": "object", "additionalProperties": schema_of(node.args[1], defs)}
-    if node.kind == "cls":
-        if node.name not in defs:
-            cls = resolve(node.name)
-            defs[node.name] = {}  # placeholder against recursion
-            defs[node.name] = {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    f.name
-                    for f in dataclasses.fields(cls)
-                    if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
-                ],
-                "properties": {
-                    f.name: schema_of(parse(_annotation(f)), defs) for f in dataclasses.fields(cls)
-                },
-                "description": (cls.__doc__ or "").strip().split("\n")[0],
-            }
-        return {"$ref": f"#/$defs/{node.name}"}
-    raise ValueError(f"schema: unhandled node {node.kind}")
-
-
-def device_schema() -> dict[str, Any]:
-    """The JSON schema of ``Device.to_dict()`` (``docs/schemas/device.schema.json``)."""
-    defs: dict[str, Any] = {}
-    body = schema_of(Node("cls", name="Device"), defs)
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://github.com/splch/qutip-trap/docs/schemas/device.schema.json",
-        "title": "qutip-trap Device",
-        "description": "The device record of PLAN.md Section 3.3 as Device.to_dict() writes it (schema version 1).",
-        "type": "object",
-        "required": ["schema_version", "qutip_trap_version", "device_hash", "device"],
-        "additionalProperties": False,
-        "properties": {
-            "schema_version": {"type": "integer", "const": SCHEMA_VERSION},
-            "qutip_trap_version": {"type": "string"},
-            "device_hash": {"type": "string", "description": "Device.hash() of the record written"},
-            "device": body,
-        },
-        "$defs": defs,
-    }

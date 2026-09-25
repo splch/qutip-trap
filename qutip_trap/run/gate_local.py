@@ -1,37 +1,20 @@
-"""GATE_LOCAL: the fidelity level above the joint-exact range (PLAN.md Sections 5.4, 9.8, 11.3 item 8, 11.5; milestone M9a).
+"""GATE_LOCAL: the fidelity level above the joint-exact range (PLAN.md Section 5.4).
 
-For each step of the schedule, a group of time-overlapping pulses (one entangling gate's segments on its pair, one carrier pulse
-with its crosstalk neighbours, parallel single-qubit gates) or an idle interval, the executor
+The schedule is split into steps: a group of time-overlapping pulses (one entangling gate's segments on its pair, a carrier
+pulse, parallel single-qubit gates) or an idle interval. For each gate step the walk
 
-1. builds the exact joint space of the addressed ions plus every neighbour receiving crosstalk light above
-   ``SolverOptions.crosstalk_threshold`` and of the modes the contribution criterion of Section 11.3 resolves for that step
-   (``step_space``: the same classes as JOINT_EXACT's ``run.space``, from the closed-form integrals of the played waveforms
-   evaluated at the TRACKED occupations, with caps from the loop radius, the tracked state's populated range and the Section
-   5.1.1 margin; the remaining modes are frozen spectators whose Fock populations enter as weighted Debye-Waller branches);
-2. initializes the motional part from the tracked motional model (the reduced density matrix of every mode a previous step
-   resolved, the thermal state of the others), evolves every one of the prod_i d_i^2 tomography inputs exactly through the
-   JOINT_EXACT engine (``dynamics.tomography``), reconstructs the Choi matrix, projects it onto CP and TP and applies the map to
-   the register: by Kraus operators on the register density matrix (N <= ``register_dm_max_qubits`` qubits) or by Kraus sampling
-   on each member of a pure-state ensemble beyond that (Section 5.4);
-3. updates the motional model: the reduced density matrix of every resolved mode as the register-weighted combination of the
-   tomography outputs (the outputs are linear in the input, and the register's local marginal is expanded in the input basis),
-   the untouched occupations of the others, and reports the residual displacement |alpha_m| per spin eigenstate, the purity
-   deficit of the reduced motional state, the frozen modes' off-resonant excitation bound and the crosstalk it dropped;
-4. treats idle intervals exactly as JOINT_EXACT does, through the same engine: the one-qubit channel of every ion (its
-   quasi-static and sampled offsets, its dephasing) by tomography of the idle schedule, the heating of every tracked mode by
-   the master equation on its own factor, and nbar + ndot t for the modes tracked by their occupation alone.
+1. builds the exact joint space of the addressed ions, every neighbour whose crosstalk reaches ``crosstalk_threshold``, and
+   the modes the contribution criterion resolves at the TRACKED occupations (``step_space``); the rest are frozen;
+2. starts the motional part from the tracked model (the reduced state of every mode a previous step resolved, thermal
+   otherwise), extracts the step's channel by tomography through the JOINT_EXACT engine, projects it onto CPTP and applies
+   it to the register: a density matrix up to ``register_dm_max_qubits`` qubits, a Kraus-sampled pure-state ensemble above;
+3. updates the motional model from the register-weighted tomography outputs and reports the residual displacement, the
+   purity deficit, the frozen modes' off-resonant excitation and the dropped crosstalk.
 
-The approximation is what Section 5.4 states: spin-motion and mode-mode correlations left after a step are traced out rather than
-carried to the next; every step reports the bound Section 9.8 compares against, sum_m |alpha_m|^2 (2 nbar_m + 1) over its
-resolved modes, and the comparison itself is the test suite's. Extractions are cached by (device, step fingerprint, local space,
-motional-model fingerprint, noise sample, solver options): the same gate on the same motional state under the same sample costs
-nothing twice. The cost of a fresh one (performance pass 2026-09-09; ``SolverOptions.tomography_isometry``) is prod_i d_i x
-branches engine runs when the step is unitary (the channel read off the propagated internal basis, ``TomographyRecord.route``),
-one propagator per branch on an internal-state-only space (every carrier step), and the prod_i d_i^2 x branches x n_traj runs of
-Section 11.2 only on a dissipative step. The one-ion idle channels are cached by (device, ion, duration, engine setup, sample,
-options) and, when the sample carries a fast trajectory, the absolute window: an idle has no pulse, so no Debye-Waller factor and no
-motional coupling enters its one-ion Hamiltonian, and the same dead time between two gates is the same channel wherever it sits. One
-JOINT_EXACT engine serves the whole walk, so its propagator cache outlives the step that filled it.
+An idle step applies each ion's exact one-qubit channel and heats the tracked modes. Spin-motion and mode-mode correlations
+left after a step are traced out (Section 5.4's approximation); every step reports the bound Section 9.8 compares against.
+Extractions are cached by (device, step, local space, motional model, noise sample, options, engine setup), the one-ion idle
+channels by (device, ion, duration, sample, options, setup), and one engine serves the whole walk.
 """
 
 from __future__ import annotations
@@ -70,14 +53,15 @@ from qutip_trap.hilbert.operators import displacement_leakage
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.hilbert.truncation import warn_cap_clamped
 from qutip_trap.run.space import (
+    _D_MIN,
     ModeClass3,
     ModeContribution,
+    _peak_rabi_rad_s,
     best_contributions,
     cap_for,
     classify,
     frozen_excitation_bounds,
 )
-from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Pulse
@@ -88,7 +72,6 @@ if TYPE_CHECKING:
     from qutip_trap.noise.levels import InternalLevels
     from qutip_trap.noise.sampling import NoiseSample
 
-M9A = "milestone M9a (run/gate_local.py, PLAN.md Section 5.4)"
 RegisterKind = Literal["density_matrix", "ensemble"]
 
 
@@ -123,13 +106,10 @@ class GateStep:
 
 
 def gate_steps(schedule: Schedule, *, tolerance_s: float = 1e-12) -> tuple[GateStep, ...]:
-    """Split a schedule into gate steps and the idle intervals between them, from the schedule's start (``t0_s``, else min(0,
-    the first start) as the engine takes it) to ``pulses_end_s``.
-
-    A step is one gate piece as the scheduler recorded it (every pulse of one ``GateTarget``: the segments of a
-    Mølmer-Sørensen waveform on both ions stay together, since tracing the motion out between segments would discard exactly
-    the spin-motion correlations the gate builds), merged with every other piece it overlaps in time (parallel single-qubit
-    gates on distinct ions); pulses without a target are pieces of their own."""
+    """Split a schedule into gate steps and the idle intervals between them, from the schedule's start (``t0_s``, else
+    min(0, the first start)) to ``pulses_end_s``. A step is one gate piece as the scheduler recorded it (every pulse of one
+    ``GateTarget``: a Mølmer-Sørensen waveform's segments stay together, since tracing the motion out between them would
+    discard the spin-motion correlations the gate builds), merged with every piece it overlaps in time."""
     ordered = sorted(schedule.pulses, key=lambda p: (p.t_start_s, p.t_end_s))
     target_of: dict[str, int] = {}
     for k, tg in enumerate(schedule.targets):
@@ -183,9 +163,8 @@ def gate_steps(schedule: Schedule, *, tolerance_s: float = 1e-12) -> tuple[GateS
 
 
 class Register:
-    """The N-qubit register of a GATE_LOCAL run: a density matrix over the ion dimensions, or a pure-state ensemble (Section 5.4).
-
-    A service object with state (the walk advances it step by step), not one of the API's frozen records."""
+    """The register of a GATE_LOCAL run: a density matrix over the ion dimensions, or a pure-state ensemble (Section 5.4).
+    A service object with state (the walk advances it step by step), not a record."""
 
     def __init__(
         self, dims: Sequence[int], *, dm: np.ndarray | None = None, kets: list[np.ndarray] | None = None
@@ -195,7 +174,6 @@ class Register:
         self.dims = tuple(int(d) for d in dims)
         self.dm = dm
         self.kets = kets
-        self.kraus_draws: list[int] = []
 
     @property
     def kind(self) -> RegisterKind:
@@ -218,8 +196,7 @@ class Register:
         size: int,
         rng: np.random.Generator,
     ) -> Register:
-        """``size`` product basis states drawn from the ions' (diagonal) prepared populations: the pure-state ensemble of a
-        register too large for a density matrix."""
+        """``size`` product basis states drawn from the ions' (diagonal) prepared populations."""
         total = int(np.prod(dims))
         kets: list[np.ndarray] = []
         for _ in range(size):
@@ -240,9 +217,8 @@ class Register:
         rest = [f for f in range(n) if f not in fac]
         d_loc = int(np.prod([self.dims[f] for f in fac]))
         if self.dm is not None:
-            # one einsum over the 2n-axis VIEW of the density matrix: a traced factor shares its row and column letter, a kept
-            # factor keeps both, so only the diagonal of the traced part is read (the transpose-then-reshape it replaces copied
-            # the whole register, 268 MB at twelve qubits, to trace 16 k of its elements; performance pass 2026-09-09)
+            # one einsum over the 2n-axis view: a traced factor shares its row and column letter, so only the diagonal of
+            # the traced part is read
             letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
             if 2 * n > len(letters):
                 raise ValueError(f"a register of {n} factors exceeds the einsum alphabet")
@@ -270,12 +246,7 @@ class Register:
         assert self.kets is not None
         if rngs is None or len(rngs) != len(self.kets):
             raise ValueError("Kraus sampling needs one generator per ensemble member")
-        new: list[np.ndarray] = []
-        for k, rng in zip(self.kets, rngs):
-            v, a = apply_kraus_ket(k, kraus, self.dims, factors, rng)
-            new.append(v)
-            self.kraus_draws.append(a)
-        self.kets = new
+        self.kets = [apply_kraus_ket(k, kraus, self.dims, factors, rng)[0] for k, rng in zip(self.kets, rngs)]
 
     def states(self) -> list[tuple[float, qt.Qobj]]:
         """Weighted states for the readout stage: one density matrix, or the ensemble's kets at equal weight."""
@@ -302,21 +273,8 @@ class Register:
 # ---- the gate-local space of a step -----------------------------------------------------------------------------------------------
 
 
-def _pulse_area_rad(pulse: Pulse) -> float:
-    peak = 0.0
-    for tone in pulse.drive.tones:
-        env = tone.envelope_hz
-        if callable(env):
-            grid = np.linspace(0.0, pulse.duration_s, 101)
-            peak = max(peak, float(np.max(np.abs([float(env(x)) for x in grid]))))
-        elif isinstance(env, np.ndarray):
-            peak = max(peak, float(np.max(np.abs(env))))
-        else:
-            peak = max(peak, abs(float(env)))
-    return TWO_PI * peak * pulse.duration_s
-
-
 def _coupled(device: Device, pulses: Sequence[Pulse], ions: Sequence[int]) -> set[int]:
+    """The modes a pulse couples to (|eta| > 1e-12) on any of ``ions`` it addresses or leaks crosstalk onto."""
     from qutip_trap.light.raman import lamb_dicke_parameters
 
     out: set[int] = set()
@@ -359,28 +317,23 @@ def step_space(
     ion_dims: Mapping[int, int],
     *,
     caps: Mapping[int, int] | None = None,
-    d_min: int = 6,
-    d_max: int | None = None,
 ) -> StepSpace:
-    """The gate-local space of a gate step (Section 5.4): the addressed ions plus the neighbours above the crosstalk threshold,
-    and the modes the Section 11.3 criterion resolves for the step's played gates at the TRACKED occupations; every other mode is
-    frozen. The cap of a resolved mode follows the loop radius and the tracked state's populated range plus the Section 5.1.1
-    margin.
-
-    ``d_max`` = None reads ``options.mode_dimension_max`` (default 64) and a clamp is named in ``notes`` with the range the
-    rule asked for (M9a audit D1)."""
+    """The gate-local space of a gate step (Section 5.4): the addressed ions plus the neighbours above the crosstalk
+    threshold, and the modes the Section 11.3 criterion resolves for the step's played gates at the TRACKED occupations,
+    with caps from the loop radius, the tracked state's populated range and the margin; every other mode is frozen. A cap
+    above ``options.mode_dimension_max`` is clamped, warned and named in ``notes``."""
     addressed = set(step.ions)
     neighbours: set[int] = set()
     dropped_xt = 0.0
     for p in step.pulses:
-        theta = _pulse_area_rad(p)
+        theta = _peak_rabi_rad_s(p) * p.duration_s
         for j, eps in p.drive.crosstalk.items():
             if abs(complex(eps)) >= options.crosstalk_threshold:
                 neighbours.add(int(j))
             else:
                 dropped_xt += math.sin(abs(complex(eps)) * theta / 2.0) ** 2
     ions_local = tuple(sorted(addressed | neighbours))
-    d_ceiling = int(options.mode_dimension_max if d_max is None else d_max)
+    d_ceiling = int(options.mode_dimension_max)
     n_modes = len(device.crystal.modes)
     nbar_now = {m: float(model.nbar.get(m, 0.0)) for m in range(n_modes)}
     best = best_contributions(device, step.played, nbar_now)
@@ -395,24 +348,23 @@ def step_space(
         )
     notes: list[str] = []
     resolved: list[ModeTruncation] = []
+    tail = float(options.boundary_population_max)
     for m in range(n_modes):
         if classes[m] != "resolved":
             continue
         c = best[m]
-        # the same boundary threshold the engine's margin check reads (Section 5.5's per-test override; M9a audit B4)
-        tail = float(options.boundary_population_max)
-        tr = cap_for(c.radius, nbar_now[m], c.eta_max, d_min=d_min, d_max=d_ceiling, tail=tail)
+        tr = cap_for(c.radius, nbar_now[m], c.eta_max, d_min=_D_MIN, d_max=d_ceiling, tail=tail)
         n_hi = tr.expected_n_range[1]
         tracked = model.reduced.get(m)
         if tracked is not None:
-            # the tracked state's populated range (not thermal any more after a gate) plus the coherent excursion of this gate
+            # the tracked state's populated range (not thermal any more after a gate) plus this gate's coherent excursion
             n_tracked = _populated_of(tracked, options.boundary_population_max)
             excursion = int(math.ceil(c.radius**2 + 2.0 * c.radius)) if c.radius > 0.0 else 0
             n_hi = max(n_hi, n_tracked + excursion)
         # the margin above the populated range: the Section 5.1.1 fixture, or the margin derived for the declared element
-        # tolerance (SolverOptions.margin_element_tol; the engine's margin check reads the same rule)
+        # tolerance (``margin_element_tol``; the engine's margin check reads the same rule)
         margin = required_margin_under(c.eta_max, options, n_hi)
-        d_want = max(n_hi + 1 + margin, d_min)
+        d_want = max(n_hi + 1 + margin, _D_MIN)
         d = min(d_want, d_ceiling)
         if caps is not None and m in caps:
             d = int(caps[m])
@@ -456,15 +408,13 @@ def step_space(
 
 
 REGISTER_STORE_DIM_MAX = 256
-"""``GateLocalStep.register_after`` is stored up to this register dimension (eight qubits, one megabyte per step); above it,
-and for a pure-state ensemble, the field is None and the step's channels are the way to the register (0.4.0)."""
+"""``GateLocalStep.register_after`` is stored up to this register dimension (eight qubits, one megabyte per step)."""
 
 
 @dataclass(frozen=True)
 class AppliedChannel:
-    """One channel the GATE_LOCAL walk applied to the register (0.4.0; docs/api_implementation_plan.md 3.2): the projected
-    Choi matrix (trace 1, ``dynamics.tomography.kraus_operators`` gives the Kraus form the walk applied) and the register
-    factors it acts on, in the Choi matrix's own factor order (a gate step's local ions; one ion of an idle step)."""
+    """One channel the walk applied to the register: the projected Choi matrix (trace 1; ``dynamics.tomography.
+    kraus_operators`` gives the Kraus form applied) and the register factors it acts on, in the Choi matrix's factor order."""
 
     ions: tuple[int, ...]
     choi: np.ndarray
@@ -472,7 +422,7 @@ class AppliedChannel:
 
 @dataclass(frozen=True)
 class GateLocalStep:
-    """What one step of the GATE_LOCAL walk did (the first dynamical sample's walk is reported step by step)."""
+    """What one step of the first dynamical sample's walk did."""
 
     gate_id: str
     kind: Literal["gate", "idle"]
@@ -497,7 +447,7 @@ class GateLocalStep:
     residual_displacement: dict[int, float]
     """Per resolved mode, max over the spin eigenstates of |<a_m>| after the step (Section 5.4)."""
     residual_bound: float
-    """sum_m |alpha_m|^2 (2 nbar_m + 1) over the resolved modes: what Section 9.8 compares the JOINT_EXACT disagreement against."""
+    """sum_m |alpha_m|^2 (2 nbar_m + 1) over the resolved modes at their occupation before the step (Section 9.8)."""
     purity_deficit: dict[int, float]
     """1 - Tr rho_m^2 of the reduced motional state the step leaves, per resolved mode."""
     nbar_after: dict[int, float]
@@ -508,38 +458,31 @@ class GateLocalStep:
     margin_reached: dict[int, int]
     notes: tuple[str, ...]
     workers: int = 1
-    """Processes this step's engine runs actually used (M9b audit B10): the tomography inputs spread over a parallel map, or
-    the trajectories inside one engine run. 1 = in-process, which is every carrier step (no resolved mode in its space)."""
+    """Processes this step's engine runs used (1 = in-process, every carrier step and every cache hit)."""
     route: TomographyRoute = "states"
-    """How the step's channel was extracted (``TomographyRecord.route``; performance pass 2026-09-09): "propagator" on an
-    internal-state-only space, "isometry" on a unitary step with resolved modes, "states" on a dissipative step. An idle step
-    reports the route of its one-ion channels ("propagator" when they came from the idle cache too)."""
+    """How the channel was extracted (``TomographyRecord.route``): "propagator" on an internal-state-only space, "isometry"
+    on a unitary step with resolved modes, "states" on a dissipative step."""
     branch_error_bound: float = 0.0
-    """2 x the dropped motional-branch weight of the step's tomography: the diamond-norm bound on the channel error of the
-    branch floor and the tail rule (``SolverOptions.tomography_dropped_weight_max``); summed into ``discrepancy_bound``."""
+    """2 x the dropped motional-branch weight of the step's tomography: the diamond-norm bound of the branch floor and the
+    tail rule (``tomography_dropped_weight_max``)."""
     tolerance_change: float = 0.0
-    """The change the step's channel makes when its dominant branch is re-integrated ten times tighter than the map-accuracy-keyed
-    tolerance (``SolverOptions.tomography_tolerance_keyed``; d x trace norm of the Choi change, weighted by the branch's share);
-    0 where the tolerance was not keyed. Summed into ``discrepancy_bound``."""
+    """The channel's change when its dominant branch is re-integrated ten times tighter than the map-accuracy-keyed
+    tolerance (``tomography_tolerance_keyed``); 0 where the tolerance was not keyed."""
     tolerances: tuple[float, float] = (SolverOptions.atol, SolverOptions.rtol)
     """(atol, rtol) the step's engine runs integrated at."""
     element_error: dict[int, float] = field(default_factory=dict)
-    """Per resolved mode, the measured maximum difference between the exponential's interior elements and the analytic ones over
-    the declared range (the Section 5.1.1 oracle), at the eta the cap was derived for; the number ``SolverOptions.margin_element_tol``
-    bounds when the margin is derived."""
+    """Per resolved mode, the measured maximum error of the exponential's interior elements over the declared range (the
+    Section 5.1.1 oracle), the number ``margin_element_tol`` bounds."""
     register_after: np.ndarray | None = None
-    """The register density matrix after this step (the first sample; 0.4.0; docs/api_implementation_plan.md 3.2), over the
-    ion dimensions in ion order (ion 0 the first factor, as ``Result.final_state``); None when the register is a pure-state
-    ensemble or its dimension exceeds ``REGISTER_STORE_DIM_MAX``. The last step's equals ``RunRecord.register_state``."""
+    """The register density matrix after this step, ion 0 the first factor; None for a pure-state ensemble or above
+    ``REGISTER_STORE_DIM_MAX``. The last step's equals ``RunRecord.register_state``."""
     channels: tuple[AppliedChannel, ...] = ()
-    """The channels this step applied to the register, in order (0.4.0): a gate step's one map on its local ions, an idle
-    step's one-qubit channel per ion. Composing them from the run's initial register reproduces ``register_after`` step by
-    step (``tests/test_gate_local.py``)."""
+    """The channels this step applied, in order: a gate step's one map on its local ions, an idle step's one per ion."""
 
 
 @dataclass(frozen=True)
 class GateLocalReport:
-    """The GATE_LOCAL diagnostics of a run (Section 5.4: the approximation made measurable and visible)."""
+    """The GATE_LOCAL diagnostics of a run (Section 5.4)."""
 
     steps: tuple[GateLocalStep, ...]
     """The first sample's walk, step by step."""
@@ -556,27 +499,21 @@ class GateLocalReport:
     """Gate steps whose extraction came from the cache."""
     summaries: dict[str, ChannelSummary]
     """Per gate step id (the first sample), the Section 6.8 channel summary."""
-    motional_after: dict[str, dict[int, float]]
-    """Per step id (the first sample), nbar per tracked mode after the step."""
     notes: tuple[str, ...] = field(default_factory=tuple)
     workers: int = 1
-    """The largest number of processes any step of any sample actually used (M9b audit B10). The walk itself iterates its
-    quasi-static samples serially (Section 11.3 item 9 asks for them to be spread too; that is unimplemented and this number
-    says so), so a run whose every step is a carrier reports 1 however many workers were configured."""
+    """The most processes any step used; the quasi-static samples are walked serially."""
     idle_cache_hits: int = 0
-    """One-ion idle channels served from the cache over every sample and idle step (performance pass 2026-09-09)."""
+    """One-ion idle channels served from the cache over every sample and idle step."""
     branch_error_total: float = 0.0
-    """sum over the gate steps of ``GateLocalStep.branch_error_bound`` (the first sample): the diamond-norm bound of the dropped
-    motional branches (Section 5.4; performance pass 2026-09-09)."""
+    """sum over the gate steps of ``GateLocalStep.branch_error_bound`` (the first sample)."""
     tolerance_change_total: float = 0.0
-    """sum over the gate steps of ``GateLocalStep.tolerance_change`` (the first sample): the measured convergence change of the
-    map-accuracy-keyed tolerance (Section 5.5; performance pass 2026-09-09)."""
+    """sum over the gate steps of ``GateLocalStep.tolerance_change`` (the first sample)."""
 
     @property
     def discrepancy_bound(self) -> float:
         """The bound a JOINT_EXACT comparison of the final probabilities is held to (Section 9.8): the residual displacement,
-        the frozen spectators' off-resonant excitation, the dropped crosstalk, the dropped motional branches' 2w and the keyed
-        tolerance's measured change, summed over the steps."""
+        the frozen spectators' excitation, the dropped crosstalk, the dropped motional branches and the keyed tolerance's
+        change, summed over the steps."""
         return (
             self.residual_bound_total
             + self.frozen_excitation_total
@@ -599,14 +536,13 @@ def clear_gate_local_cache() -> None:
 
 @dataclass(frozen=True)
 class EngineSetup:
-    """What the JOINT_EXACT engines of the walk are built with (the same knobs ``run`` gives its joint engine)."""
+    """What the JOINT_EXACT engines of the walk are built with (the knobs a run gives its joint engine)."""
 
     builder_options: BuilderOptions | None = None
     channels: tuple[CollapseOp, ...] = ()
     qubit_shifts_hz: dict[int, float] = field(default_factory=dict)
     device_channels: bool = False
     levels_by_ion: dict[int, InternalLevels] | None = None
-    hardware_chain: bool = True
     table: CalibrationTable | None = None
 
     def engine(self) -> JointExactEngine:
@@ -617,7 +553,7 @@ class EngineSetup:
             qubit_shifts_hz=dict(self.qubit_shifts_hz),
             device_channels=self.device_channels,
             levels_by_ion=self.levels_by_ion,
-            hardware_chain=self.hardware_chain,
+            hardware_chain=True,
             table=self.table,
         )
 
@@ -638,7 +574,6 @@ class EngineSetup:
             tuple(sorted(self.qubit_shifts_hz.items())),
             self.device_channels,
             None if self.levels_by_ion is None else {i: m.labels for i, m in self.levels_by_ion.items()},
-            self.hardware_chain,
             table_fp,
         )
 
@@ -679,10 +614,9 @@ def _idle_key(
     setup: EngineSetup,
 ) -> str:
     """The cache key of one ion's idle channel. An idle schedule has no pulse, so nothing motional enters the one-ion
-    Hamiltonian (no Debye-Waller factor, no coupling) and the channel depends on the ion, the duration, the engine setup (its
-    qubit shifts and channels), the sample's offsets and the options alone; a sample with a fast trajectory (an OU grid indexed by
-    absolute time) makes the channel depend on WHERE the idle sits, so the absolute window joins the key exactly then. The
-    duration is rounded as the engine's propagator cache rounds its stored times (1e-15 s)."""
+    Hamiltonian and the channel depends on the ion, the duration (rounded to 1e-15 s like the engine's propagator cache),
+    the engine setup, the sample's offsets and the options; a sample with a fast trajectory (an OU grid in absolute time)
+    adds the absolute window."""
     return canonical_digest(
         (
             "idle-channel",
@@ -729,9 +663,8 @@ def _idle_step(
     step_index: int,
     snapshot: bool = True,
 ) -> tuple[MotionalModel, GateLocalStep, int, int]:
-    """Free evolution over an idle interval: per ion its exact one-qubit channel (from the idle cache when the same ion idled for
-    the same duration before, ``_idle_key``), per tracked mode its master equation, per occupation-tracked mode nbar + ndot t (the
-    heating that applies whether or not a mode is carried, Section 11.3 item 2). Returns (model, report, engine runs, cache hits)."""
+    """Free evolution over an idle interval: per ion its exact one-qubit channel (cached, ``_idle_key``), per tracked mode its
+    master equation, per occupation-tracked mode nbar + ndot t. Returns (model, report, engine runs, cache hits)."""
     n_modes = len(device.crystal.modes)
     sched = Schedule((), ((step.t_start_s, step.t_end_s),), (), {}, t0_s=step.t_start_s)
     runs = 0
@@ -740,7 +673,6 @@ def _idle_step(
     integrators: list[str] = []
     method = "sesolve"
     route: TomographyRoute = "propagator"
-    notes: list[str] = []
     applied: list[AppliedChannel] = []
     for q, d in enumerate(ion_dims):
         space_q = HilbertSpace((int(d),), (), None, tuple(range(n_modes)), ions=(q,))
@@ -832,7 +764,7 @@ def _idle_step(
         dropped_crosstalk=0.0,
         boundary_population={},
         margin_reached={},
-        notes=tuple(notes),
+        notes=(),
         workers=workers,
         route=route,
         register_after=_register_snapshot(register) if snapshot else None,
@@ -879,7 +811,7 @@ def _gate_step(
         ]
     register.apply(rec.kraus(), factors, rngs)
     # the motional update: the register-weighted combination of the tomography outputs (Section 5.4 (b))
-    mot, alpha = rec.motional_for(rho_local)
+    mot, _alpha = rec.motional_for(rho_local)
     reduced: dict[int, qt.Qobj] = dict(model.reduced)
     nbar: dict[int, float] = dict(model.nbar)
     purity: dict[int, float] = {}
@@ -888,16 +820,13 @@ def _gate_step(
         nbar[m] = _nbar(arr)
         purity[m] = _purity_deficit(arr)
     resid = rec.residual_displacement()
-    # Section 9.8's bound sum_m |alpha_m|^2 (2 nbar_m + 1) at the occupation the mode HAD when the step started: the
-    # post-step nbar of the same step's own output made the reported bound depend on the gate's heating (conservative for a
-    # heating gate, an under-estimate for a cooling one) and so not reproducible from the step's inputs (M9a audit B12)
+    # Section 9.8's bound at the occupation each mode HAD when the step started, so it is reproducible from the inputs
     bound = float(sum(v**2 * (2.0 * float(model.nbar.get(m, 0.0)) + 1.0) for m, v in resid.items()))
     excitation, guard = frozen_excitation_bounds(device, step.pulses, sel.frozen_coupled, nbar)
     ideal = local_ideal(space.ion_labels, space.ion_dims, step.targets)
     summary = rec.summary(ideal)
     notes = list(sel.notes) + list(rec.notes) + list(guard)
-    # the Section 5.1.1 oracle's measured element error per resolved mode, at the eta the cap was derived for (a declared
-    # element tolerance asserts it at construction; the fixture reports it)
+    # the Section 5.1.1 oracle's measured element error per resolved mode, at the eta the cap was derived for
     element_error: dict[int, float] = {}
     for tr in rec.space.resolved:
         c_m = sel.contribution.get(tr.mode)
@@ -939,7 +868,6 @@ def _gate_step(
         boundary_population=dict(rec.boundary_population),
         margin_reached=dict(rec.margin_reached),
         notes=tuple(dict.fromkeys(notes)),
-        # a cache hit ran nothing, so it used no worker (M9b audit B10)
         workers=1 if hit else rec.workers,
         route=rec.route,
         branch_error_bound=float(rec.branch_error_bound),
@@ -966,17 +894,15 @@ def evolve_gate_local(
     caps: Mapping[int, int] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[list[tuple[float, qt.Qobj]]], GateLocalReport, list[MotionalModel]]:
-    """The GATE_LOCAL walk of Section 5.4 over every dynamical sample: (per sample the weighted register states for the readout
-    stage, the report, per sample the final motional model). ``progress(done, total)`` is called after every sample's walk
-    (``run``'s ``progress`` of 0.2.0)."""
+    """The GATE_LOCAL walk over every dynamical sample: (per sample the weighted register states for the readout stage, the
+    report, per sample the final motional model); ``progress(done, total)`` is called after every sample's walk."""
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
     steps = gate_steps(sched)
-    # the step spaces' margin is derived for the map accuracy unless the caller declared an element tolerance (Section 5.4;
-    # performance pass 2026-09-09): the cap rule, the tomography's engine and the extraction cache all read the same options
+    # the step spaces' margin is derived for the map accuracy unless the caller declared an element tolerance: the cap
+    # rule, the tomography's engine and the extraction cache all read the same options
     if options.margin_element_tol is None:
         options = replace(options, margin_element_tol=options.map_accuracy * 1e-5)
-    # one engine for the whole walk: its propagator cache (Section 11.3 item 5) outlives the step that filled it
     engine = setup.engine()
     heating = device.noise.heating_rates_quanta_per_s(device) if setup.device_channels else {}
     kind: RegisterKind = "density_matrix" if n_ions <= options.register_dm_max_qubits else "ensemble"
@@ -985,7 +911,6 @@ def evolve_gate_local(
     models: list[MotionalModel] = []
     first_steps: list[GateLocalStep] = []
     summaries: dict[str, ChannelSummary] = {}
-    motional_after: dict[str, dict[int, float]] = {}
     runs_total = 0
     hits_total = 0
     idle_hits_total = 0
@@ -1060,7 +985,6 @@ def evolve_gate_local(
                         summaries[rep.gate_id] = rep.summary
             if s_idx == 0:
                 first_steps.append(rep)
-                motional_after[rep.gate_id] = dict(rep.nbar_after)
         out_states.append(register.states())
         models.append(model)
         if progress is not None:
@@ -1081,7 +1005,6 @@ def evolve_gate_local(
         engine_runs=runs_total,
         cache_hits=hits_total,
         summaries=summaries,
-        motional_after=motional_after,
         notes=tuple(notes),
         workers=workers_max,
         idle_cache_hits=idle_hits_total,

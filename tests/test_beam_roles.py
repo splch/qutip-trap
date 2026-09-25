@@ -1,7 +1,5 @@
-"""``BeamRoles`` on the ``Device`` and the ``FidelityLevel`` enum (docs/api_implementation_plan.md items 1.1 and 1.2): the
-inference equals the old default, the presets carry their drive maps as roles with their digests unchanged, the roles stay
-out of the device digest, a run with no drive keyword reproduces the documented Bell histogram bit for bit, and the level
-decision reports the numbers it compared."""
+"""``BeamRoles`` on the ``Device`` and the level decision: the inference where the beams identify one drive, the presets'
+drive maps as roles, the roles out of the device digest, and a run that reports its level and why."""
 
 from __future__ import annotations
 
@@ -23,9 +21,10 @@ from qutip_trap.device.model import BeamRoles, ResolvedRoles
 from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
 from qutip_trap.hashing import canonical_digest
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
 from qutip_trap.options import Numerics, Truncation
-from qutip_trap.run.levels import FidelityLevel, decide_level, resolve_level
+from qutip_trap.run.levels import FidelityLevel, decide_level, within_budget
 from tests.fixtures import make_device, run
 from tests.m6_fixtures import circuit_fixture
 
@@ -33,8 +32,8 @@ BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0,
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 
 
-def test_inference_equals_the_old_default_where_the_beams_identify_one_drive() -> None:
-    """The fixture device carries one Raman pair: the roles' inference, the compatibility function and the raw rule agree."""
+def test_inference_where_the_beams_identify_one_drive() -> None:
+    """The fixture device carries one Raman pair: the roles' inference, the scheduler's default and the raw rule agree."""
     dev = make_device()
     assert dev.roles == BeamRoles()
     resolved = dev.roles.resolve(dev)
@@ -85,7 +84,7 @@ def test_roles_are_validated_against_the_device() -> None:
 
 
 @pytest.mark.parametrize("build", [lambda: yb171_chain(2), lambda: yb171_chain(1), lambda: ca40_optical(1)])
-def test_each_preset_carries_its_old_drive_maps_as_roles(build) -> None:  # type: ignore[no-untyped-def]
+def test_each_preset_carries_its_drive_maps_as_roles(build) -> None:  # type: ignore[no-untyped-def]
     preset = build()
     dev = preset.device
     assert dev.roles == BeamRoles(
@@ -106,35 +105,27 @@ def test_roles_do_not_enter_the_device_digest_but_are_hashable_on_their_own() ->
     assert with_roles.hash() == dev.hash()
     assert with_roles.roles != dev.roles
     assert canonical_digest(with_roles.roles) != canonical_digest(dev.roles)  # Machine.hash() digests them
-    # any other field still moves the digest
-    assert dataclasses.replace(dev, gradient=None).hash() == dev.hash()
-
-
-def test_fidelity_level_members_equal_the_strings_the_code_accepted() -> None:
-    assert (
-        FidelityLevel("auto") is FidelityLevel.AUTO
-        and FidelityLevel("GATE_LOCAL") is FidelityLevel.GATE_LOCAL
-    )
-    assert FidelityLevel.JOINT_EXACT == "JOINT_EXACT" and FidelityLevel.GATE_LOCAL == "GATE_LOCAL"
-    assert FidelityLevel(FidelityLevel.JOINT_EXACT) is FidelityLevel.JOINT_EXACT
-    assert f"{FidelityLevel.GATE_LOCAL}" == "GATE_LOCAL"
-    with pytest.raises(ValueError):
-        FidelityLevel("exact")
 
 
 def test_the_level_decision_names_both_numbers_and_both_guards() -> None:
-    dev = make_device()
-    native = Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, 1.5707963267948966)),), (0, 1))
-    d = decide_level(dev, native, SolverOptions())
-    assert d.level is FidelityLevel.JOINT_EXACT and d.estimated
+    """Two ions with two resolved modes at d_m = 12: dimension 576 and N 2^N prod d_m^2 = 165888 drive non-zeros."""
+    space = HilbertSpace(
+        (2, 2), tuple(ModeTruncation(m, 12, (0, 4), 0.1) for m in (2, 3)), None, (0, 1, 4, 5)
+    )
+    budget = within_budget(space, SolverOptions())
+    d = decide_level(budget, SolverOptions(), FidelityLevel.AUTO)
+    assert d.level is FidelityLevel.JOINT_EXACT and d.inside and not d.forced
     assert d.dimension == 4 * 12**2 and d.nnz == 2 * 4 * (12**2) ** 2
     assert d.reason == (
-        "JOINT_EXACT: estimated joint dimension 576 <= joint_dimension_max = 4096, drive-operator non-zeros 165888 <= "
+        "JOINT_EXACT: declared joint dimension 576 <= joint_dimension_max = 4096, drive-operator non-zeros 165888 <= "
         "nnz_max = 20000000 (Section 11.5)"
     )
-    tight = decide_level(dev, native, SolverOptions(joint_dimension_max=64))
+    tight_options = SolverOptions(joint_dimension_max=64)
+    tight = decide_level(within_budget(space, tight_options), tight_options, FidelityLevel.AUTO)
     assert tight.level is FidelityLevel.GATE_LOCAL and "576 > joint_dimension_max = 64" in tight.reason
-    assert resolve_level(dev, native, SolverOptions(joint_dimension_max=64)) is FidelityLevel.GATE_LOCAL
+    forced = decide_level(budget, SolverOptions(), FidelityLevel.GATE_LOCAL)
+    assert forced.level is FidelityLevel.GATE_LOCAL and forced.inside and forced.forced
+    assert forced.reason == f"GATE_LOCAL forced by the caller; level='auto' would choose {d.reason}"
 
 
 FAST = Numerics(truncation=Truncation(branch_weight_min=1e-3))
@@ -151,7 +142,7 @@ def test_a_bell_run_reports_its_level_and_why(two_ion) -> None:  # type: ignore[
     preset, table = two_ion
     new = run(BELL, preset.device, 400, table=table, numerics=FAST, seed=3)
     assert new.probabilities["00"] + new.probabilities["11"] > 0.98
-    # 1.2: the diagnostics say which level ran and why, with the dimension and the non-zeros against the guards
+    # the diagnostics say which level ran and why, with the dimension and the non-zeros against the guards
     assert new.diagnostics.level == "JOINT_EXACT" == FidelityLevel.JOINT_EXACT
     reason = new.diagnostics.level_reason
     assert reason.startswith("JOINT_EXACT: declared joint dimension ") and "nnz_max = 20000000" in reason

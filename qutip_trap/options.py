@@ -1,7 +1,7 @@
 """The option objects of a run: ``Physics`` (which effects are simulated), ``Numerics`` (how the integration is done,
-nested by concern) and ``Readout`` (how the photon record is read). ``Machine`` holds one of each. ``SolverOptions`` is what
-``Numerics`` is built into (``Numerics.to_solver_options``), and validation delegates to it, so the errors are the ones a
-``SolverOptions`` raises.
+nested by concern) and ``Readout`` (how the photon record is read); ``Machine`` holds one of each. ``Numerics`` is built into
+the ``SolverOptions`` a run integrates with (``Numerics.to_solver_options``), and validation delegates to ``SolverOptions``,
+so the errors are the ones it raises.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from qutip_trap.control.schedule import CrosstalkSuppression
 from qutip_trap.dynamics.engine import LindbladMethod, RecoilOption, SolverOptions
+from qutip_trap.dynamics.parallel import MapKind
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -23,13 +24,12 @@ if TYPE_CHECKING:
     from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.readout.discriminate import Discriminator
 
-MapKind = Literal["serial", "parallel", "loky"]
 ReadoutMode = Literal["fast", "full"]
 Scattering = Literal["estimate", "channels"]
 
 
 def _group_from(cls: type[Any], value: object, name: str) -> Any:
-    """A nested group from an instance (kept) or a mapping (built); anything else is refused by name."""
+    """A nested group from an instance (kept) or a mapping of its fields (built); anything else is refused by name."""
     if isinstance(value, cls):
         return value
     if isinstance(value, Mapping):
@@ -38,11 +38,11 @@ def _group_from(cls: type[Any], value: object, name: str) -> Any:
 
 
 class _FromMapping:
-    """``from_mapping`` for a frozen dataclass of scalars: unknown keys are refused (QuTiP's rule for its options dict)."""
+    """``from_mapping`` and ``asdict`` for the frozen option dataclasses."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> Self:
-        # every subclass is a frozen dataclass; the mixin itself is not, which the cast tells the type checker
+        """The object of a mapping of its fields; an unknown key is refused (QuTiP's rule for its options dict)."""
         names = {f.name for f in dataclasses.fields(cast("type[DataclassInstance]", cls))}
         unknown = sorted(set(mapping) - names)
         if unknown:
@@ -50,8 +50,9 @@ class _FromMapping:
         return cls(**dict(mapping))
 
     def asdict(self) -> dict[str, Any]:
-        """The fields as a plain dictionary (nested groups as dictionaries), the form ``from_mapping`` accepts."""
-        return dataclasses.asdict(cast("DataclassInstance", self))
+        """The fields as a dictionary of their values (nested groups, a declared space, collapse operators and a
+        discriminator as the objects they are), the form ``from_mapping`` accepts."""
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(cast("DataclassInstance", self))}
 
 
 @dataclass(frozen=True)
@@ -71,10 +72,10 @@ class Integration(_FromMapping):
     propagator_cache: bool = True
     """Cache the propagator of internal-state-only segments (Section 11.3 item 5)."""
     store_marginals: bool = False
-    """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal`` (0.4.0)."""
+    """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal``."""
 
     def __post_init__(self) -> None:
-        SolverOptions(**self.asdict())  # the same rules and messages as SolverOptions
+        SolverOptions(**self.asdict())
 
 
 @dataclass(frozen=True)
@@ -114,12 +115,10 @@ class Truncation(_FromMapping):
             object.__setattr__(self, "enr_group", (tuple(int(m) for m in modes), int(n_exc)))
         if self.enr_group is not None and self.space is not None:
             raise ValueError("give the ENR group inside the supplied space or as enr_group, not both")
-        SolverOptions(**{k: v for k, v in self.asdict().items() if k not in ("caps", "enr_group", "space")})
+        SolverOptions(**self._solver_fields())
 
-    def asdict(self) -> dict[str, Any]:
-        out = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
-        out["caps"] = None if self.caps is None else dict(self.caps)
-        return out
+    def _solver_fields(self) -> dict[str, Any]:
+        return {k: v for k, v in self.asdict().items() if k not in ("caps", "enr_group", "space")}
 
 
 @dataclass(frozen=True)
@@ -187,8 +186,8 @@ class Parallel(_FromMapping):
 
 @dataclass(frozen=True)
 class Numerics(_FromMapping):
-    """How the integration is done, nested so that a physicist reads the truncation policy without the tomography knobs
-    (docs/api_proposal.md Section 4.7). ``to_solver_options(physics)`` is the ``SolverOptions`` a run integrates with."""
+    """How the integration is done, nested by concern; each group also accepts a mapping of its fields.
+    ``to_solver_options(physics)`` is the ``SolverOptions`` a run integrates with."""
 
     integration: Integration = Integration()
     """Tolerances, the escalation ladder, the frame and the propagator cache."""
@@ -214,12 +213,12 @@ class Numerics(_FromMapping):
             object.__setattr__(self, name, _group_from(cls, getattr(self, name), f"Numerics.{name}"))
 
     def to_solver_options(self, physics: Physics | None = None) -> SolverOptions:
-        """The ``SolverOptions`` of a run: these numerics plus the three physics switches ``SolverOptions`` still carries
+        """The ``SolverOptions`` of a run: these numerics plus the four physics switches ``SolverOptions`` carries
         (``scattering_channels``, ``scattering_recoil``, ``intensity_noise_channels``, ``hardware_chain``)."""
         phys = physics if physics is not None else Physics()
         return SolverOptions(
             **self.integration.asdict(),
-            **{k: v for k, v in self.truncation.asdict().items() if k not in ("caps", "enr_group", "space")},
+            **self.truncation._solver_fields(),
             **self.trajectories.asdict(),
             **self.gate_local.asdict(),
             map=self.parallel.map,
@@ -242,10 +241,9 @@ class Numerics(_FromMapping):
         samples: int | None = None,
         addressing: bool | None = None,
     ) -> Numerics:
-        """The numerics a ``SolverOptions`` carries (its four physics switches go to ``Physics.from_solver_options``; None is
-        the default options), plus the five numerics that never lived on ``SolverOptions``: the explicit caps, a declared
-        space and an ENR group (``Truncation``), the sample count and the parallel-addressing switch (``Parallel``), the
-        homes of ``run``'s 0.1.0 keywords ``caps``, ``space``, ``enr_group``, ``samples`` and ``parallel``."""
+        """The numerics a ``SolverOptions`` carries (None: the defaults; its physics switches go to
+        ``Physics.from_solver_options``), plus the explicit caps, a declared space, an ENR group, the sample count and the
+        parallel-addressing switch, which ``SolverOptions`` does not carry."""
         opts = options if options is not None else SolverOptions()
         d = dataclasses.asdict(opts)
 
@@ -264,8 +262,8 @@ class Numerics(_FromMapping):
 
 @dataclass(frozen=True)
 class Physics(_FromMapping):
-    """Which physical effects a run simulates (docs/api_proposal.md Section 4.7). Every default is what ``run`` did in 0.1.0:
-    the device's noise on, two register levels per ion, scattering as an estimate, the hardware chain applied."""
+    """Which physical effects a run simulates: by default the device's noise, two register levels per ion, scattering as
+    an estimate and the hardware chain."""
 
     noise: bool = True
     """Draw the device's dynamical samples and assemble its collapse operators; False runs the quiet nominal sample."""
@@ -311,10 +309,6 @@ class Physics(_FromMapping):
             raise ValueError("scattering_recoil is 'off', 'minimal' or 'vector'")
         object.__setattr__(self, "extra_channels", tuple(self.extra_channels))
 
-    def asdict(self) -> dict[str, Any]:
-        """The scalar fields as a dictionary; ``extra_channels`` and ``builder`` are kept as the objects they are."""
-        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
-
     @classmethod
     def from_solver_options(cls, options: SolverOptions | None = None, **fields: Any) -> Physics:
         """The physics switches a ``SolverOptions`` carries (None: the defaults), plus any other ``Physics`` field as a
@@ -345,6 +339,3 @@ class Readout(_FromMapping):
             raise ValueError("readout mode is 'fast' or 'full'")
         if self.povm_samples < 1:
             raise ValueError("povm_samples is a positive count")
-
-    def asdict(self) -> dict[str, Any]:
-        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}

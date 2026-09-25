@@ -1,9 +1,11 @@
-"""End-to-end circuits in JOINT_EXACT (PLAN.md Section 9.6; Sections 3.4, 5.2, 5.7, 7.2, 7.3, 8.6): the Bell state with all physics
-on against the ideal distribution and the intrinsic budget, the diagnostics, seeds, the two readout paths, the surrogate
-calibration path, and the three- and four-ion rows (GHZ, Wright's crosstalk model) as slow tests."""
+"""End-to-end circuits in JOINT_EXACT (PLAN.md Sections 3.4, 5.2, 5.7, 7.2, 7.3, 8.6, 9.6): the surrogate table, the Bell
+state with all physics on against the ideal distribution and the intrinsic budget, the diagnostics, seeds, the two
+readout paths and every discriminator of Section 8.3, circuits on fewer qubits than ions, and the three- and four-ion rows
+(GHZ, Wright's crosstalk model, row 2b) as slow tests."""
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import numpy as np
@@ -14,13 +16,16 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, ideal_probabilities
 from qutip_trap.control.schedule import ScheduleError
 from qutip_trap.dynamics.engine import SolverOptions
+from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
-from qutip_trap.run.job import enumerate_branches, last_record, register_fidelity
+from qutip_trap.readout.discriminate import AdaptiveML, FirstPhoton, ThresholdDiscriminator, TimeResolvedML
+from qutip_trap.run.job import enumerate_branches, ideal_register_state, last_record, register_fidelity
 from tests.fixtures import run
 from tests.m6_fixtures import circuit_fixture
 
 BELL = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
+ONE = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
 WINDOWS = tuple(float(x) for x in np.linspace(10e-6, 40e-6, 7))
 FAST = SolverOptions(branch_weight_min=1e-4)
 
@@ -61,9 +66,7 @@ def test_surrogate_table_carries_seeds_spot_checked_waveform_and_detection(two_i
     }, (
         "the addressing pairs' and the global pair's carrier Rabi frequencies (the MS gate's light shift is compensated from it)"
     )
-    # 100.9 kHz until the M0a fix of 2026-09-08 (audit item E4) gave the 171Yb+ Raman intermediate sum its
-    # P3/2 path: for this fixture's polarization the two paths ADD (the P3/2 partial sum is +0.4577 of the
-    # P1/2 one), so every carrier Rabi seed rose by the same factor 1.4577 -> 146.88 and 147.12 kHz.
+    # the 171Yb+ Raman intermediate sum over P1/2 and P3/2: the two paths add for this polarization (147 kHz)
     assert all(abs(e.value - 147.0e3) < 2e3 for e in t.rabi.values())
     assert t.stark[(0, 0)].status == "seed" and abs(t.stark[(0, 0)].value) < 100.0
     assert all(e.status == "seed" for e in t.qubit_freq.values()) and len(t.qubit_freq) == 2
@@ -85,8 +88,7 @@ def test_surrogate_table_carries_seeds_spot_checked_waveform_and_detection(two_i
 
 
 def test_bell_state_probabilities_match_the_ideal_distribution_within_readout_and_statistics(bell) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.6: the two-ion Bell state with all physics on; populations as in Section 7.9 (P_00 ~ P_11, the odd strings at
-    the readout-error level), the ideal statevector distribution beside them."""
+    """Section 9.6: the two-ion Bell state with all physics on; P_00 ~ P_11, the odd strings at the readout-error level."""
     fx, sur, res = bell
     p = res.probabilities
     ideal = ideal_probabilities(BELL)
@@ -105,9 +107,8 @@ def test_bell_state_probabilities_match_the_ideal_distribution_within_readout_an
 
 
 def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.6: the register state's infidelity against the compiled circuit's ideal state (its residual frame absorbed) lies
-    below the closed-form budget reported beside the result (residual displacement, Debye-Waller, the (Omega/nu)^2 carrier scale,
-    the addressing crosstalk) and is not zero: the physics is on."""
+    """Section 9.6: the register infidelity against the compiled circuit's ideal state (its residual frame absorbed) lies
+    below the closed-form budget reported beside the result and is not zero: the physics is on."""
     fx, sur, res = bell
     fid = register_fidelity(res)
     budget = res.diagnostics.intrinsic_budget
@@ -125,7 +126,7 @@ def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None: 
 def test_bell_diagnostics_report_the_space_classes_branches_and_approximations(bell) -> None:  # type: ignore[no-untyped-def]
     fx, sur, res = bell
     d = res.diagnostics
-    # the caps follow the pulse's coherent excursion at the 1e-6 tail plus the 6-level margin (Section 5.5; M9a), and the margin
+    # the caps follow the pulse's coherent excursion at the 1e-6 tail plus the 6-level margin (Section 5.5), and the margin
     # check never trips on them (no cap growth)
     assert d.level == "JOINT_EXACT" and d.space.dims[:2] == [2, 2] and len(d.space.dims) == 4
     assert all(10 <= x <= 14 for x in d.space.dims[2:]), d.space.dims
@@ -185,7 +186,7 @@ def test_seeds_reproduce_shot_by_shot_and_readout_full_path_generates_records(tw
     assert full.photon_records is not None and full.photon_records.shape == (300, 2)
     assert full.photon_records.max() > 3, "bright ions scatter tens of photons in the window"
     assert abs(full.probabilities.get("00", 0.0) - a.probabilities.get("00", 0.0)) < 0.1
-    # the diagnostics say WHICH readout path ran (the `for s in ()` of the first version made this vacuous, M5 audit B13)
+    # the diagnostics say which readout path ran
     assert any("readout full path" in s for s in full.diagnostics.approximations)
     assert any("photon record per ion per shot" in s for s in full.diagnostics.approximations)
     assert any("readout fast path" in s for s in a.diagnostics.approximations)
@@ -225,7 +226,7 @@ def test_refusals_and_the_level_guard(two_ion) -> None:  # type: ignore[no-untyp
     mid = Circuit(2, (Operation("measure", (0,), ()), Operation("x", (0,), ())), (0, 1))
     with pytest.raises(ScheduleError, match="mid-circuit"):
         run(mid, fx.device, 10, **kw)  # type: ignore[arg-type]
-    # a joint dimension above the guard routes to GATE_LOCAL (Section 11.5; M9a): the run proceeds and says so
+    # a joint dimension above the guard routes to GATE_LOCAL (Section 11.5): the run proceeds and says so
     small_guard = run(
         BELL,
         fx.device,
@@ -248,26 +249,10 @@ def test_branch_enumeration_weights_and_cutoff() -> None:
     assert len(only) == 1 and only[0].weight == 1.0 and none == 0.0
 
 
-@pytest.mark.slow
-def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_pairs() -> None:
-    """Appendix E: run(table=None) calibrates the surrogate at t0 for the pairs the circuit uses; calibrate() is the same table."""
-    fx = circuit_fixture(2)
-    table = calibrate(
-        Machine(fx.device), pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS
-    ).table
-    assert table.waveform_for((0, 1)) is not None and table.detection["threshold"].status == "calibrated"
-    # no table: run builds the closed-form surrogate for the circuit's pairs (the default scan settings)
-    res = run(
-        BELL, fx.device, 200, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
-    )
-    assert res.diagnostics.calibration.surrogate and res.probabilities.get("00", 0.0) > 0.3
-    assert any("surrogate" in a or "waveform" in a for a in res.diagnostics.approximations)
-
-
 def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase() -> None:
-    """Section 7.10: hardware that programs each gate's tones from its own start resets the bichromatic beat note per gate; the
-    red and blue legs shift by opposite phases 2 pi mu t_g, the spin phase (their half-sum) and hence the virtual-Z frame are
-    unchanged, and phase-continuous hardware leaves the legs alone (Roos's tilt then belongs to the gate, M6 finding)."""
+    """Section 7.10: hardware that programs each gate's tones from its own start resets the bichromatic beat note per gate;
+    the red and blue legs shift by opposite phases 2 pi mu t_g, the spin phase (their half-sum) and hence the virtual-Z frame
+    are unchanged, and phase-continuous hardware leaves the legs alone."""
     import dataclasses
 
     from qutip_trap.control.schedule import beat_phase_offset_rad, schedule
@@ -315,10 +300,174 @@ def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase()
     )
 
 
+# ---- circuits on fewer qubits than ions -------------------------------------------------------------------------------------
+
+
+def _fast_run(two_ion, circuit: Circuit, shots: int = 40):  # type: ignore[no-untyped-def]
+    fx, sur = two_ion
+    opts = SolverOptions(branch_weight_min=1e-3)
+    return run(
+        circuit,
+        fx.device,
+        shots,
+        table=sur.table,
+        keep_final_state=True,
+        physics=Physics.from_solver_options(opts),
+        numerics=Numerics.from_solver_options(opts),
+    )
+
+
+def test_register_fidelity_of_a_circuit_on_fewer_qubits_than_ions(two_ion) -> None:  # type: ignore[no-untyped-def]
+    """A one-qubit circuit on the two-ion chain: the register state is 4 x 4, the ideal ket is |+> on ion 0 and |0> on the
+    idle ion 1, and the fidelity is that of the played pi/2 pulse."""
+    res = _fast_run(two_ion, Circuit(1, (Operation("h", (0,), ()),), (0,)))
+    assert res.final_state is not None and res.final_state.dims[0] == [2, 2]
+    assert res.n_qubits == 1 and res.bitstrings.shape == (40, 1)
+    fid = register_fidelity(res)
+    assert 0.99 < fid <= 1.0 + 1e-12
+    # the same number by hand: the compiled circuit's ket on ion 0 (its frame absorbed) with |0> on the idle ion 1
+    rho = np.asarray(res.final_state.full())
+    ideal = np.kron(ideal_register_state(res), np.array([1.0, 0.0])).astype(complex)
+    assert fid == pytest.approx(float(np.real(ideal.conj() @ rho @ ideal)), abs=1e-12)
+    # an explicit target on the circuit's qubits is embedded the same way
+    plus = np.array([1.0, 1.0]) / math.sqrt(2.0)
+    plus0 = np.kron(plus, np.array([1.0, 0.0])).astype(complex)
+    assert register_fidelity(res, plus) == pytest.approx(
+        float(np.real(plus0.conj() @ rho @ plus0)), abs=1e-12
+    )
+    with pytest.raises(ValueError, match="spans 3 qubits"):
+        register_fidelity(res, np.ones(8) / math.sqrt(8.0))
+
+
+def test_register_fidelity_when_the_circuit_measures_a_subset(two_ion) -> None:  # type: ignore[no-untyped-def]
+    """The Bell circuit measuring qubit 0 only: one histogram column, the fidelity against the full two-qubit Bell ket."""
+    bell_q0 = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0,))
+    res = _fast_run(two_ion, bell_q0)
+    assert res.n_qubits == 1 and res.qubits == (0,) and set(res.counts) <= {"0", "1"}
+    fid = register_fidelity(res)
+    assert 0.98 < fid <= 1.0 + 1e-12
+
+
+def test_run_record_outcome_covers_every_kept_shot(two_ion) -> None:  # type: ignore[no-untyped-def]
+    """The readout runs once per (sample, branch) batch; the RunRecord's outcome is the concatenation over the kept shots in
+    the Result's row order, over every ion, so a per-shot reader lines up with ``Result.bitstrings``."""
+    res = _fast_run(two_ion, BELL, shots=60)
+    rec = last_record(res)
+    assert len(rec.branches) > 1, (
+        "the fixture's initial mixture has several branches, so several readout batches"
+    )
+    out = rec.outcome
+    assert out.bits.shape == (res.shots, 2) and out.levels.shape == (res.shots, 2)
+    assert out.time_used_s.shape == (res.shots, 2)
+    assert np.array_equal(out.bits, res.bitstrings), "every ion measured: the declared bits are the Result's"
+    assert out.mode == "fast" and out.records is None
+
+
+# ---- every discriminator of Section 8.3 through the run -------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def one_ion():  # type: ignore[no-untyped-def]
+    fx = circuit_fixture(1)
+    sur = surrogate_table(
+        fx.device,
+        pairs=[],
+        detection_records=400,
+        detection_windows_s=tuple(float(x) for x in np.linspace(10e-6, 40e-6, 4)),
+    )
+    kw = {
+        "table": sur.table,
+        "numerics": Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+        "physics": Physics(noise=False),
+    }
+    return fx, kw
+
+
+def test_time_resolved_ml_runs_end_to_end_on_the_full_record_path(one_ion) -> None:  # type: ignore[no-untyped-def]
+    """The record path replaces the POVM (Section 5.7), so no Monte-Carlo confusion is built; the sub-bin record and the
+    posterior confidence of Section 8.6 reach ``Result``."""
+    fx, kw = one_ion
+    disc = TimeResolvedML(5e-6, 20e-6)
+    res = run(ONE, fx.device, 40, **kw, readout=Readout(mode="full", discriminator=disc))
+    rec = last_record(res)
+    assert rec.readout.povm is None and rec.readout.product is None
+    # the scheme states the dark class: 171Yb+ direct fluorescence, so "dark" and Myerson's 1/tau is R_b
+    assert rec.readout.discriminator.dark_class == "dark"  # type: ignore[union-attr]
+    assert res.photon_records is not None and res.photon_records.shape == (40, 1)
+    assert res.sub_bin_records is not None and res.sub_bin_records.shape == (40, 1, 4)
+    assert np.array_equal(res.sub_bin_records.sum(axis=2), res.photon_records)
+    assert res.posteriors is not None and res.posteriors.shape == (40, 1)
+    assert np.all(res.posteriors >= 0.0) and np.all(res.posteriors <= 1.0)
+    assert any("SPAM definition" in s and "TimeResolvedML" in s for s in res.diagnostics.approximations)
+    assert any("estimated from this run's own" in s for s in res.diagnostics.approximations)
+    # a level the circuit never populates reports nan rather than a silent zero
+    eps = res.spam["q0"]
+    assert all(math.isnan(x) or 0.0 <= x <= 1.0 for x in eps)
+    assert sum(res.probabilities.values()) == pytest.approx(1.0)
+
+
+def test_a_monte_carlo_povm_runs_the_fast_path_and_declares_its_error_bar(one_ion) -> None:  # type: ignore[no-untyped-def]
+    """Section 8.4: a non-threshold discriminator's confusion has no closed form, so the fast path estimates it and reports
+    the statistical uncertainty it earned (``POVM.uncertainty``)."""
+    fx, kw = one_ion
+    disc = TimeResolvedML(5e-6, 20e-6)
+    res = run(ONE, fx.device, 40, **kw, readout=Readout(discriminator=disc, povm_samples=400))
+    rec = last_record(res)
+    assert rec.readout.povm is not None and rec.readout.povm.per_ion is not None
+    unc = rec.readout.povm.uncertainty
+    assert unc == pytest.approx(math.sqrt(0.25 / 400), rel=1e-12)
+    assert any(f"{unc:.2e}" in s for s in res.diagnostics.approximations)
+    assert any("400 sampled" in s for s in res.diagnostics.approximations)
+    eps_b, eps_d = res.spam["q0"]
+    assert 0.0 <= eps_b <= 0.1 and 0.0 <= eps_d <= 0.1
+    # the threshold discriminator's POVM stays exact and reports no uncertainty
+    thr = run(ONE, fx.device, 40, **kw, readout=Readout(discriminator=ThresholdDiscriminator(0.5, 20e-6)))
+    assert last_record(thr).readout.povm.uncertainty == 0.0  # type: ignore[union-attr]
+    assert not any("sampled records per level" in s for s in thr.diagnostics.approximations)
+
+
+def test_the_adaptive_and_first_photon_protocols_also_run(one_ion) -> None:  # type: ignore[no-untyped-def]
+    """Section 8.3's adaptive Bayesian early termination and Noek's / Crain's first-photon protocols; the first-photon
+    record needs arrival times, which Section 8.6 asks ``Result`` to keep."""
+    fx, kw = one_ion
+    for disc in (
+        AdaptiveML(5e-6, 40e-6, 1e-3),
+        FirstPhoton(40e-6, cutoff_s=10e-6),
+    ):
+        res = run(ONE, fx.device, 30, **kw, readout=Readout(mode="full", discriminator=disc))
+        assert res.shots == 30 and res.photon_records is not None
+        assert any("readout full path" in s for s in res.diagnostics.approximations)
+        if disc.needs_arrivals:
+            assert res.arrival_times_s is not None and len(res.arrival_times_s) == 30
+            assert all(len(shot) == 1 for shot in res.arrival_times_s)
+            assert all(
+                len(shot[0]) == int(total)
+                for shot, total in zip(res.arrival_times_s, res.photon_records[:, 0])
+            )
+        else:
+            assert res.arrival_times_s is None
+
+
+# ---- three- and four-ion rows of Section 9.6 --------------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_calibrate_and_run_without_a_table_build_the_surrogate_for_the_circuit_pairs() -> None:
+    """A run without a table calibrates the surrogate for the pairs the circuit uses; ``calibrate`` is the same table."""
+    fx = circuit_fixture(2)
+    table = calibrate(
+        Machine(fx.device), pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS
+    ).table
+    assert table.waveform_for((0, 1)) is not None and table.detection["threshold"].status == "calibrated"
+    res = run(
+        BELL, fx.device, 200, numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2))
+    )
+    assert res.diagnostics.calibration.surrogate and res.probabilities.get("00", 0.0) > 0.3
+    assert any("surrogate" in a or "waveform" in a for a in res.diagnostics.approximations)
+
+
 def _declared_probabilities(res, ions):  # type: ignore[no-untyped-def]
     """Exact declared-bit distribution over ``ions``: the register populations pushed through the readout POVM (no shot noise)."""
-    import itertools
-
     rec = last_record(res)
     rho = res.final_state
     assert rho is not None
@@ -333,8 +482,7 @@ def _declared_probabilities(res, ions):  # type: ignore[no-untyped-def]
         levels = [
             (idx >> (n - 1 - i)) & 1 for i in range(n)
         ]  # register order: ion 0 the most-significant index bit
-        # the POVM takes the ions' true INTERNAL LEVELS, not their start classes (M5): identical for a two-level
-        # ReadoutScheme.direct(1) whose bright level is 1, and wrong for any scheme whose bright level is 0
+        # the POVM takes the ions' true INTERNAL LEVELS, not their start classes
         for declared in itertools.product((True, False), repeat=n):
             q = povm.declared_bright_probability(levels, list(declared))
             if q <= 0.0:
@@ -347,20 +495,17 @@ def _declared_probabilities(res, ions):  # type: ignore[no-untyped-def]
 
 @pytest.mark.slow
 def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None:
-    """Section 9.6 row 2 through run(): H, CNOT(0,1), CNOT(1,2) on the three-ion chain; the adjacent pairs resolve the COM and
-    zigzag modes and freeze the tilt (whose participation on the middle ion vanishes), the frozen contribution is reported, the
-    boundary populations stay below the threshold and the histogram is the GHZ one within the readout and the crosstalk."""
+    """Section 9.6 row 2: H, CNOT(0,1), CNOT(1,2) on the three-ion chain; the adjacent pairs resolve the COM and zigzag modes
+    and freeze the tilt (whose participation on the middle ion vanishes), the frozen contribution is reported, the boundary
+    populations stay below the threshold and the histogram is the GHZ one within the readout and the crosstalk."""
     fx = circuit_fixture(3, address_waist_m=2.0e-6)
     sur = surrogate_table(
         fx.device, pairs=[(0, 1), (1, 2)], detection_records=1500, detection_windows_s=WINDOWS
     )
     assert 0.01 < sur.table.crosstalk[(1, 0)].value < 0.04
     for pair in ((0, 1), (1, 2)):
-        # Section 5.2 with the M9 third drop condition: the tilt's LOOP pair (|alpha|^2 (2n+1) = 3.5e-33, chi = 0) sits below
-        # (1e-6, 1e-4) because the AM pulse closes its loop exactly, but its eta = 0.0809 at the prepared nbar = 0.0214
-        # carries a Debye-Waller spread eta^2 sqrt(nbar(nbar+1)) = 9.69e-4 rad, 3.2x above DW_SPREAD_DROP_MAX = 3e-4, so it is
-        # FROZEN and the per-shot draw of Section 5.2 carries the spread the calibration cannot absorb
-        # (conv.drop_test_debye_waller_spread; before that condition it was dropped and the factor left the dynamics)
+        # the tilt's loop pair sits below the drop pair (the AM pulse closes its loop exactly), but its Debye-Waller spread
+        # eta^2 sqrt(nbar(nbar+1)) = 9.69e-4 rad is above DW_SPREAD_DROP_MAX = 3e-4, so it is FROZEN
         assert sur.mode_classes[pair][4] == "frozen" and sur.mode_classes[pair][5] == "resolved"
         check = sur.entangling[pair].checks[-1]
         wf = sur.table.waveform_for(pair)
@@ -385,9 +530,7 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3)),
     )
     d = res.diagnostics
-    # two resolved modes: the cap rule of Section 5.5 at the 1e-6 tail (M9a) gives 11 levels on the COM (populated to n = 2) and
-    # 13 on the zigzag (populated to n = 4, the larger excursion), each with the Section 5.1.1 margin; the M6 rule's 10 to 12
-    # range this assertion carried until M9b was stale from the M9a rule change (the test failed identically at the M9a commit)
+    # two resolved modes, each capped by the Section 5.5 rule at the 1e-6 tail plus the Section 5.1.1 margin
     assert (
         d.space.dims[:3] == [2, 2, 2]
         and len(d.space.dims) == 5
@@ -395,10 +538,8 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         and d.mode_class[4] == "frozen"
         and set(d.frozen_contribution) == {4}
     )
-    # the tilt is frozen by the Debye-Waller-spread condition (see the comment above), so its chi_m loss and its off-resonant
-    # excitation are reported and the factor stays in the dynamics; nothing is DROPPED among the modes an entangling gate
-    # touches on this fixture, and the modes that are dropped (the y and z families, eta = 0 for a Delta k along x) have no
-    # contribution to report, so Section 11.3 item 2's summed dropped contribution is legitimately zero here
+    # the frozen tilt's chi_m loss and off-resonant excitation are reported; the dropped modes (the y and z families,
+    # eta = 0 for a Delta k along x) contribute nothing
     assert 4 not in d.dropped_modes and d.dropped_contribution == (0.0, 0.0)
     assert d.frozen_contribution[4][0] < 1e-6 and d.frozen_contribution[4][1] < 1e-4
     assert d.frozen_excitation_bound.get(4, 0.0) > 0.0
@@ -417,11 +558,10 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
 @pytest.mark.slow
 def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -> None:
     """Section 9.6 row 6 (Wright's minimal model as a test of what emerges): Bernstein-Vazirani with the secret 01 on data ions 0
-    and 2, the middle ion the ancilla, 1.3 % addressing crosstalk; the exact declared distribution (register state through the
-    POVM) puts more weight on the 1 -> 0 flip of the secret than on the 0 -> 1 flip: the oracle CNOT maps the ancilla's
-    crosstalk rotations onto its control (the secret's 1 bit) while the 0 bit sees only the ancilla pulses' direct rotations,
-    and the bright-state readout error exceeding the dark one adds to it (check_circuits.py 4 prints the coherent-only
-    matrix model beside the exact register populations)."""
+    and 2, the middle ion the ancilla, 1.3 % addressing crosstalk; the exact declared distribution puts more weight on the
+    1 -> 0 flip of the secret than on the 0 -> 1 flip: the oracle CNOT maps the ancilla's crosstalk rotations onto its
+    control while the 0 bit sees only the ancilla pulses' direct rotations, and the bright-state readout error exceeding the
+    dark one adds to it."""
     fx = circuit_fixture(3, address_waist_m=2.0e-6)
     sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=1500, detection_windows_s=WINDOWS)
     ops = (
@@ -458,3 +598,66 @@ def test_bernstein_vazirani_errors_emerge_predominantly_as_one_to_zero_flips() -
         key = f"{row[2]}{row[0]}"
         hist[key] = hist.get(key, 0) + 1
     assert hist.get("01", 0) / res.shots == pytest.approx(declared["01"], abs=0.02)
+
+
+@pytest.fixture(scope="module")
+def four_ion():  # type: ignore[no-untyped-def]
+    fx = circuit_fixture(4, address_waist_m=2.0e-6)
+    sur = surrogate_table(fx.device, pairs=[(0, 1)], detection_records=800, detection_windows_s=WINDOWS)
+    return fx, sur
+
+
+@pytest.mark.slow
+def test_a_four_ion_circuit_runs_through_the_pipeline_at_the_row_2b_dimension(four_ion) -> None:  # type: ignore[no-untyped-def]
+    """Section 9.6 row 2b, "four ions with two resolved modes at d_m = 12 (dimension 2304)", on an explicit space (the
+    pipeline's own selection resolves three x modes and is above the guard): a Bell pair on ions 0 and 1, all physics on,
+    the two spectators dark, the truncation monitor inside its threshold."""
+    fx, sur = four_ion
+    resolved = (6, 7)  # the x-COM at 3.0 MHz and the tilt at 2.8284 MHz
+    space = HilbertSpace(
+        (2, 2, 2, 2),
+        tuple(ModeTruncation(m, 12, (0, 4), 0.15) for m in resolved),
+        None,
+        tuple(m for m in range(12) if m not in resolved),
+    )
+    circuit = Circuit(4, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1, 2, 3))
+    result = run(
+        circuit,
+        fx.device,
+        200,
+        table=sur.table,
+        keep_final_state=True,
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=3e-3), space=space),
+    )
+    d = result.diagnostics
+    assert d.level == "JOINT_EXACT"
+    assert d.space.dimension == 2304 and d.space.dims == [2, 2, 2, 2, 12, 12]
+    assert tuple(t.mode for t in d.space.resolved) == resolved and all(t.d == 12 for t in d.space.resolved)
+    assert all(v < 1e-6 for v in d.boundary_population.values())
+    assert d.cap_growth == {}
+    # ions 2 and 3 were never addressed, so every shot reads them dark: the histogram lives on 00xx and 11xx
+    probabilities = result.probabilities
+    assert probabilities.get("0000", 0.0) + probabilities.get("0011", 0.0) > 0.9, probabilities
+    assert 1.0 - register_fidelity(result) < d.intrinsic_budget["total"]
+    assert result.bitstrings.shape == (200, 4)
+
+
+@pytest.mark.slow
+def test_the_pipeline_s_own_four_ion_space_exceeds_the_guard_and_routes_to_gate_local(four_ion) -> None:  # type: ignore[no-untyped-def]
+    """The adjacent-pair waveform resolves three of the four x modes, whose caps put the joint space above the Section 11.5
+    guard, so the run takes the GATE_LOCAL level and says so (Section 5.4)."""
+    fx, sur = four_ion
+    circuit = Circuit(4, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1, 2, 3))
+    result = run(
+        circuit,
+        fx.device,
+        50,
+        table=sur.table,
+        numerics=Numerics.from_solver_options(SolverOptions(branch_weight_min=1e-2)),
+    )
+    d = result.diagnostics
+    assert d.level == "GATE_LOCAL" and d.gate_local is not None
+    assert any("GATE_LOCAL" in note for note in d.approximations)
+    resolved = sorted(t.mode for t in d.space.resolved)
+    assert len(resolved) == 3 and set(resolved) <= {4, 5, 6, 7}, resolved
+    assert d.space.dimension > 4096

@@ -1,8 +1,8 @@
-"""OpenQASM 2 importer, a subset (PLAN.md Sections 1.4, 7.2, 7.6; milestone M6).
+"""OpenQASM 2 importer, a subset (PLAN.md Sections 1.4, 7.2, 7.6).
 
 Accepted: the ``OPENQASM 2.0;`` header, ``include`` statements (ignored: the qelib1.inc gates are built in), ``qreg`` and
 ``creg`` declarations (qubit registers are flattened in declaration order; the classical registers a terminal measurement
-writes into become ``Circuit.registers``, name -> the measured qubits in bit order, 0.2.0), ``gate`` declarations with parameters (expanded
+writes into become ``Circuit.registers``, name -> the measured qubits in bit order), ``gate`` declarations with parameters (expanded
 by inlining, so the client SDKs' OpenQASM 2 export, which declares gpi, gpi2, ms and zz as custom gates built from u, rz,
 rxx and rzz, imports through its own definitions, Section 7.6), gate applications with register broadcasting, ``barrier``
 (ignored), ``measure`` (a trailing measurement is the circuit's terminal ``measure``; one followed by a later gate on the
@@ -19,7 +19,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.compiler import NATIVE_GATES, STANDARD_GATES, Circuit, Operation
 
 _TOKEN = re.compile(
     r"\s+|//[^\n]*|(?P<string>\"[^\"]*\")|(?P<real>(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?)"
@@ -27,38 +27,16 @@ _TOKEN = re.compile(
 )
 
 BUILTIN_ARITY: dict[str, tuple[int, int]] = {
+    **STANDARD_GATES,
+    **NATIVE_GATES,
     "U": (1, 3),
-    "u3": (1, 3),
     "u": (1, 3),
     "u2": (1, 2),
     "u1": (1, 1),
     "CX": (2, 0),
-    "cx": (2, 0),
-    "cnot": (2, 0),
-    "id": (1, 0),
-    "x": (1, 0),
-    "y": (1, 0),
-    "z": (1, 0),
-    "h": (1, 0),
-    "s": (1, 0),
-    "sdg": (1, 0),
-    "t": (1, 0),
-    "tdg": (1, 0),
-    "sx": (1, 0),
-    "rx": (1, 1),
-    "ry": (1, 1),
-    "rz": (1, 1),
-    "cz": (2, 0),
-    "swap": (2, 0),
-    "cp": (2, 1),
     "cu1": (2, 1),
-    "rxx": (2, 1),
-    "rzz": (2, 1),
-    "gpi": (1, 1),
-    "gpi2": (1, 1),
-    "ms": (2, 3),
-    "zz": (2, 1),
 }
+"""(qubits, parameters) of every gate the importer builds in: the IR's gates and the qelib1.inc spellings of them."""
 
 _FUNCTIONS: dict[str, Callable[[float], float]] = {
     "sin": math.sin,
@@ -177,7 +155,7 @@ class _Parser:
         # the registers: every creg a measurement writes into, in declaration order, its written bits in bit order (a
         # declared bit nothing writes is left out; a creg nothing writes into is not a register of the circuit; with no
         # creg written at all the circuit gets the default register over its terminal targets, which is empty when the
-        # program measures nothing: run() then measures every ion, the 0.1.0 rule)
+        # program measures nothing, and a run then measures every ion)
         registers = {
             name: tuple(written[bit] for bit in sorted(written)) for name, written in bits.items() if written
         }
@@ -217,7 +195,7 @@ class _Parser:
         elif t.text in ("if", "opaque"):
             raise OpenQASMError(f"{t.text!r} statements are outside the accepted subset (offset {t.pos})")
         elif t.kind == "id":
-            self.application(env={}, qmap=None)
+            self.application()
         else:
             raise OpenQASMError(f"unexpected token {t.text!r} at offset {t.pos}")
 
@@ -337,14 +315,14 @@ class _Parser:
             return name, [idx]
         return name, list(range(self.cregs[name]))
 
-    def application(self, env: dict[str, float], qmap: dict[str, int] | None) -> None:
-        """A gate application at the top level (qmap None: register arguments) with broadcasting."""
+    def application(self) -> None:
+        """A gate application at the top level (register arguments) with broadcasting."""
         name = self.expect_kind("id").text
         values: list[float] = []
         if self.peek().text == "(":
             self.take()
             for toks in self.expr_token_lists():
-                values.append(evaluate(toks, env))
+                values.append(evaluate(toks, {}))
             self.expect(")")
         args: list[list[int]] = []
         while self.peek().text != ";":
@@ -493,5 +471,5 @@ def evaluate(tokens: Sequence[_Tok], env: dict[str, float]) -> float:
 
 def load_openqasm2(text: str) -> Circuit:
     """Import OpenQASM 2 text (the subset in the module docstring) into the IR: angles in radians, the terminal measurements
-    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers`` (0.2.0)."""
+    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers``."""
     return _Parser(text).program()

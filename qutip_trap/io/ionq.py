@@ -9,29 +9,19 @@ PennyLane-IonQ clients, Section 7.6): the native gate names are ``gpi``, ``gpi2`
 (Section 13, "Gate parameters"); exported turns are rounded to 12 significant digits so that a value such as
 0.75 round-trips exactly (the 9.13 test).
 
-Result formats (Section 8.6; the exporters live on ``Result`` in ``run/results.py``). v1, the format
-``ionq.result.probabilities.json.v1`` and its histogram and shots forms: decimal-integer keys, qubit 0 the
-least-significant bit (``to_ionq_json``, ``to_ionq_histogram``, ``to_ionq_shots``). v2, the format
-``ionq.result.probabilities.json.v2``: the envelope ``{"probabilities": {"registers": {<register>: {<bitstring>: p}}}}``
-with zero-padded bitstrings per named classical register and ``output_all`` the whole-circuit register (the histogram
-form under ``"histogram"`` with counts, the shots form as per-shot bit arrays). Character order of a v2 bitstring,
-settled 2026-09-11 (docs/api_implementation_plan.md item 0.4): WIRE order, q[0] the first (leftmost) character, the
-reverse of this package's ``bitstring_key``, so ``x q[0]`` on three qubits is ``"1"`` in v1 and ``"100"`` in v2.
-Sources: IonQ's documentation, the OpenQASM 3 page of the v0.4 API reference under "Reading results"
-(https://docs.ionq.com/api-reference/v0.4/openqasm3: "q[0] is the leftmost character of the bitstring. A three-qubit
-circuit applying x q[0]; and measuring all three returns {"100": 1.0}"), and qiskit-ionq 1.1.1, whose
-``_decode_distribution_artifact`` in ``ionq_job.py`` reverses every ``output_all`` key before converting it to the
-decimal form ("Result artifacts use wire-order bitstrings (qubit 0 first)"). The OpenAPI v0.4 document itself (spec
-dated 2026-09-10) does not state the order and its example is the symmetric Bell state. ``Result.to_ionq_v2_probabilities``,
-``to_ionq_v2_histogram`` and ``to_ionq_v2_shots`` emit the envelope in this order (0.2.0); the 0.1.0 ``Result.to_ionq_v2``
-kept this package's own order and is deprecated; ``tests/test_m6_results_export.py`` holds the fixture.
+Result formats (Section 8.6; the exporters live on ``Result``). v1 (``ionq.result.probabilities.json.v1`` and its histogram
+and shots forms): decimal-integer keys, qubit 0 the least-significant bit. v2 (``ionq.result.probabilities.json.v2``): the
+envelope ``{"probabilities": {"registers": {<register>: {<bitstring>: p}}}}`` with bitstrings per named classical register
+and ``output_all`` the whole-circuit register, in WIRE order, q[0] the leftmost character, the reverse of this package's
+``bitstring_key``: ``x q[0]`` on three qubits is ``"1"`` in v1 and ``"100"`` in v2. Sources: the v0.4 API reference's
+OpenQASM 3 page under "Reading results" (https://docs.ionq.com/api-reference/v0.4/openqasm3: "q[0] is the leftmost character
+of the bitstring"), and qiskit-ionq 1.1.1's ``_decode_distribution_artifact``, which reverses every ``output_all`` key.
 
 Job bodies (the v0.4 ``CircuitJobCreationPayload``): ``dump_job`` writes ``{"type": "ionq.circuit.v1", "backend": ...,
 "shots": ..., "input": {...}}`` plus the optional ``name``, ``metadata``, ``noise`` (``{"model": ..., "seed": ...}``),
 ``settings`` (``compilation``, ``error_mitigation``) and ``dry_run``; the spec sets ``additionalProperties: false`` on the
-body, the input and the settings, so every key is checked here and a v0.3 ``target`` is written as ``backend``.
-``load_job`` reads either (``target`` or ``backend``). ``loads`` and ``dumps`` are the circuit importer and exporter in the
-shape of ``json`` (a string in, a string out).
+body, the input and the settings, so every key is checked here. ``load_job`` reads a v0.4 body or a v0.3 one (``target``
+for ``backend``). ``loads`` and ``dumps`` are the circuit importer and exporter shaped like ``json``.
 """
 
 from __future__ import annotations
@@ -45,7 +35,7 @@ from qutip_trap.control.compiler import NATIVE_GATES, STANDARD_GATES, Circuit, O
 from qutip_trap.control.native import rad_from_turns, turns_from_rad
 
 _TURN_GATES: Final[frozenset[str]] = frozenset({"gpi", "gpi2", "ms", "zz"})
-_QIS_ALIASES: Final[dict[str, str]] = {"cx": "cnot", "rz": "rz"}
+_QIS_ALIASES: Final[dict[str, str]] = {"cx": "cnot"}
 
 JOB_TYPE: Final[str] = "ionq.circuit.v1"
 """The ``type`` of a JSON gate-list job (the other v0.4 type, ``ionq.qasm3.v1``, carries OpenQASM 3 text)."""
@@ -112,7 +102,7 @@ def load_ionq_json(obj: dict[str, Any]) -> Circuit:
                 raise ValueError("zz carries angle only (Section 7.6)")
             params = (rad_from_turns(float(item["angle"])),)
         elif name in STANDARD_GATES or name == "rz":
-            n_params = STANDARD_GATES.get(name, NATIVE_GATES.get(name, (0, 0)))[1]
+            n_params = (NATIVE_GATES["rz"] if name == "rz" else STANDARD_GATES[name])[1]
             if n_params == 0:
                 params = ()
             elif "rotation" in item:
