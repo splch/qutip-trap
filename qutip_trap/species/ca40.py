@@ -5,7 +5,7 @@ both taken on 40Ca+, are in the 43Ca+ table). The metastable D lifetimes are Kre
 measurements (their one-sided systematic corrections are not transcribed), with the theory values stored beside them.
 
 The P-level TOTAL rates come from measured lifetimes (Hettrich et al. 2015's 6.904(26) ns, Meir et al. 2020's
-6.639(42) ns), and PLAN.md 9.13's "quoted" 21.57 and 23.4 MHz are read as PARTIAL rates into S1/2, as Hettrich prints
+6.639(42) ns), and the "quoted" 21.57 and 23.4 MHz (PLAN.md 9.2, 4.5.6) are read as PARTIAL rates into S1/2, as Hettrich prints
 the first (gamma_PS = 2 pi x 21.57(8) MHz). With Ramm et al. 2013's branching the 397 nm partial rate is 21.5691 MHz,
 reproducing Hettrich to 4e-5, so the plan's 2.045 e a0 and 45.11 mW/cm^2 come out of this table. The 393 nm pair does
 not: Meir's lifetime with Gerritsma's branching gives 22.4071 MHz, 4.2% below the plan's unsourced 23.4 MHz.
@@ -92,18 +92,18 @@ _ENTRIES: tuple[Cited, ...] = (
         "P12.linewidth_quoted_hz",
         21.57e6,
         "Hz",
-        "PLAN_9_13",
+        "Hettrich2015",
         tag="contested",
-        note="cross-check only: PLAN.md 9.13's unsourced 'quoted 21.57 MHz', read as the partial rate into S1/2 "
-        "(as a total it would mean tau = 7.379 ns, which no measurement supports)",
+        note="cross-check only: Hettrich's printed gamma_PS/2pi, the partial rate into S1/2 (as a total it would mean "
+        "tau = 7.379 ns, which no measurement supports)",
     ),
     _c(
         "P32.linewidth_quoted_hz",
         23.4e6,
         "Hz",
-        "PLAN_9_13",
+        "PLAN_4_5_6",
         tag="contested",
-        note="cross-check only: PLAN.md 9.13's unsourced 'quoted 23.4 MHz', which matches no measurement as a total "
+        note="cross-check only: PLAN.md 4.5.6's unsourced 'quoted 23.4 MHz', which matches no measurement as a total "
         "or a partial rate (Meir 2020: 23.9727 / 22.4071 MHz; Jin and Church 1993: 22.9860 / 21.4848 MHz)",
     ),
     _c(
