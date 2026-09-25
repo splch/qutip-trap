@@ -27,14 +27,6 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from qutip_trap.noise.processes import (
-    TAU_C_OVERSAMPLE,
-    Trajectory,
-    correlated_normals,
-    mains_trajectory,
-    synthesize,
-    time_grid,
-)
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
     KEY_INTENSITY_TRAJECTORY,
@@ -44,7 +36,10 @@ from qutip_trap.noise.sampling import (
     KEY_RABI_SCALE,
     KEY_RF_FRACTION,
     KEY_RF_FRACTION_TRAJECTORY,
+    TAU_C_OVERSAMPLE,
     NoiseSample,
+    Trajectory,
+    correlated_normals,
     key_beam_offset_m,
     key_beam_phase_rad,
     key_beam_phase_trajectory_rad,
@@ -52,6 +47,9 @@ from qutip_trap.noise.sampling import (
     key_position_offset_m,
     key_qubit_offset_hz,
     key_qubit_trajectory_hz,
+    mains_trajectory,
+    synthesize,
+    time_grid,
 )
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum
 from qutip_trap.units import E_C, GAUSS_PER_TESLA, TWO_PI

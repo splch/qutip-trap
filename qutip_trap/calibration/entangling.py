@@ -21,6 +21,7 @@ from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.native import zz as native_zz
 from qutip_trap.control.schedule import (
     GateDrive,
+    PhaseFrame,
     Schedule,
     carrier_rabi_hz,
     entangling_pulses,
@@ -31,7 +32,6 @@ from qutip_trap.control.schedule import (
 from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, excursion_by_mode, scaled
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, SolverOptions, Traces
-from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.dynamics.operators import populated_range, required_margin
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import NoiseSample, quiet_sample

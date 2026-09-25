@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.hamiltonian import BuilderOptions, BuiltHamiltonian
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.dynamics.tomography import TomographyRecord
-    from qutip_trap.noise.levels import InternalLevels
     from qutip_trap.noise.sampling import NoiseSample
+    from qutip_trap.noise.scattering import InternalLevels
     from qutip_trap.run.results import Progress
 
 MULTISTEP_INTEGRATORS: frozenset[str] = frozenset({"adams", "bdf", "lsoda", "vode", "zvode"})
@@ -576,7 +576,7 @@ class JointExactEngine:
         sched = schedule
         hw_notes: tuple[str, ...] = ()
         if self.table is not None:
-            from qutip_trap.control.played import physical_schedule
+            from qutip_trap.control.hardware import physical_schedule
 
             sched, played_notes = physical_schedule(device, sched, self.table)
             notes.extend(played_notes)

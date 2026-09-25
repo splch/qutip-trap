@@ -1,4 +1,4 @@
-"""OpenQASM 2 importer, a subset (PLAN.md Sections 1.4, 7.2, 7.6).
+"""OpenQASM 2: an importer of a subset and the exporter (PLAN.md Sections 1.4, 7.2, 7.6).
 
 Accepted: the ``OPENQASM 2.0;`` header, ``include`` statements (ignored: the qelib1.inc gates are built in), ``qreg`` and
 ``creg`` declarations (qubit registers are flattened in declaration order; the classical registers a terminal measurement
@@ -18,8 +18,77 @@ import math
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final
 
 from qutip_trap.control.compiler import NATIVE_GATES, STANDARD_GATES, Circuit, Operation
+
+if TYPE_CHECKING:
+    from qutip_trap.control.compiler import Circuit
+
+
+QELIB_NAMES: Final[dict[str, str]] = {"cnot": "cx"}
+
+
+"""IR gate name -> qelib1.inc name where the two differ."""
+
+
+NATIVE_DECLARATIONS: Final[dict[str, str]] = {
+    "gpi": "gate gpi(phi) a { u3(pi, phi, pi - phi) a; }",
+    "gpi2": "gate gpi2(phi) a { u3(pi/2, phi - pi/2, pi/2 - phi) a; }",
+    "ms": "gate ms(phi0, phi1, theta) a, b { rz(-phi0) a; rz(-phi1) b; rxx(theta) a, b; rz(phi0) a; rz(phi1) b; }",
+    "zz": "gate zz(theta) a, b { rzz(theta) a, b; }",
+}
+
+
+"""The native gates as qelib1.inc definitions (radians), each equal to ``control.native``'s matrix up to a global phase:
+GPi(phi) = U3(pi, phi, pi - phi) exactly, GPi2(phi) = U3(pi/2, phi - pi/2, pi/2 - phi) exactly, MS(phi0, phi1, theta) =
+[RZ(phi0) (x) RZ(phi1)] RXX(theta) [RZ(-phi0) (x) RZ(-phi1)] since GPi(phi) = RZ(phi) X RZ(-phi), and ZZ(theta) = rzz(theta)
+up to e^{i theta/2}; ``tests/test_openqasm.py`` checks each against the matrix."""
+
+
+def loads(text: str) -> Circuit:
+    """OpenQASM 2 text -> ``Circuit`` (``qutip_trap.io.openqasm.load_openqasm2``)."""
+    return load_openqasm2(text)
+
+
+def dumps(circuit: Circuit, *, declare_native: bool = True) -> str:
+    """``Circuit`` -> OpenQASM 2 text (module docstring): the header, the native declarations the circuit needs, one
+    ``qreg``, one ``creg`` per register, the operations in order, and the terminal measurements into their registers."""
+    lines = ["OPENQASM 2.0;", 'include "qelib1.inc";']
+    used = {op.name for op in circuit.ops}
+    if declare_native:
+        lines.extend(NATIVE_DECLARATIONS[name] for name in NATIVE_DECLARATIONS if name in used)
+    lines.append(f"qreg q[{circuit.n_qubits}];")
+    for name, qubits in circuit.registers.items():
+        lines.append(f"creg {name}[{len(qubits)}];")
+    bit_of: dict[int, tuple[str, int]] = {}
+    for name, qubits in circuit.registers.items():
+        for k, q in enumerate(qubits):
+            bit_of.setdefault(q, (name, k))  # a qubit in two registers is written into the first
+    for op in circuit.ops:
+        if op.name == "measure":
+            for q in op.qubits:
+                if q not in bit_of:
+                    raise ValueError(
+                        f"a mid-circuit measure of qubit {q} needs a classical register that holds it (Circuit.registers)"
+                    )
+                name, bit = bit_of[q]
+                lines.append(f"measure q[{q}] -> {name}[{bit}];")
+        elif op.name == "reset":
+            lines.extend(f"reset q[{q}];" for q in op.qubits)
+        elif op.name == "recool":
+            raise ValueError("OpenQASM 2 has no recool operation")
+        else:
+            gate = QELIB_NAMES.get(op.name, op.name)
+            params = f"({', '.join(repr(float(x)) for x in op.params)})" if op.params else ""
+            lines.append(f"{gate}{params} {', '.join(f'q[{q}]' for q in op.qubits)};")
+    measured = set(circuit.measure)
+    for name, qubits in circuit.registers.items():
+        for k, q in enumerate(qubits):
+            if q in measured:
+                lines.append(f"measure q[{q}] -> {name}[{k}];")
+    return "\n".join(lines) + "\n"
+
 
 _TOKEN = re.compile(
     r"\s+|//[^\n]*|(?P<string>\"[^\"]*\")|(?P<real>(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?)"

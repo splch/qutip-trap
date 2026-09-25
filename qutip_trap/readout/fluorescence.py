@@ -262,7 +262,7 @@ class ReadoutScheme:
     ) -> ReadoutScheme:
         """The ideal scheme of a species: a label in the bright manifold is bright, one in a metastable D level the shelf,
         any other dark. ``labels`` extends the classes to every level of a d > 2 register factor (the SINK reads dark)."""
-        from qutip_trap.noise.levels import SINK
+        from qutip_trap.noise.scattering import SINK
         from qutip_trap.species.model import parse_state_label
 
         wanted = tuple(species.qubit) if labels is None else tuple(labels)

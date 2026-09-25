@@ -53,7 +53,6 @@ from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.comb import comb_build_notes
 from qutip_trap.light.raman import lamb_dicke_parameters
-from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (
     KEY_BRANCH_WEIGHT,
     KEY_INTENSITY_TRAJECTORY,
@@ -62,6 +61,7 @@ from qutip_trap.noise.sampling import (
     KEY_RABI_SCALE,
     KEY_RF_FRACTION_TRAJECTORY,
     NoiseSample,
+    Trajectory,
     key_beam_offset_m,
     key_beam_phase_rad,
     key_beam_phase_trajectory_rad,

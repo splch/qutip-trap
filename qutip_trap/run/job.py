@@ -24,8 +24,7 @@ from qutip_trap.control.schedule import GateDrive, Schedule
 from qutip_trap.dynamics.engine import SeedSpec, State, Traces
 from qutip_trap.dynamics.operators import thermal_populations
 from qutip_trap.dynamics.space import HilbertSpace
-from qutip_trap.noise.levels import InternalLevels, internal_levels
-from qutip_trap.noise.scattering import scattering_estimates
+from qutip_trap.noise.scattering import InternalLevels, internal_levels, scattering_estimates
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
 from qutip_trap.prep.sequence import prepare_state
 from qutip_trap.published import ballance_thermal_error

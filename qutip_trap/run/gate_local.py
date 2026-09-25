@@ -69,8 +69,8 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.channels import CollapseOp
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
-    from qutip_trap.noise.levels import InternalLevels
     from qutip_trap.noise.sampling import NoiseSample
+    from qutip_trap.noise.scattering import InternalLevels
 
 RegisterKind = Literal["density_matrix", "ensemble"]
 

@@ -18,7 +18,7 @@ import qutip as qt
 from qutip_trap.dynamics.multilevel import SINK
 from qutip_trap.light.bloch import BlochModel, PumpingTrace, operator_angular_factor
 from qutip_trap.light.recoil import emission_lamb_dicke
-from qutip_trap.noise.levels import SINK as REGISTER_SINK
+from qutip_trap.noise.scattering import SINK as REGISTER_SINK
 from qutip_trap.trap.crystal import Crystal
 
 TOLERANCE = 1e-4

@@ -39,7 +39,6 @@ from qutip_trap.control import native
 from qutip_trap.control.compiler import Circuit, Operation, gate_matrix
 from qutip_trap.control.pulses import Drive, DriveKind, LightShiftCouplings, Pulse, Tone
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.light.roles import gate_beams
 from qutip_trap.units import TWO_PI
 
@@ -48,6 +47,31 @@ if TYPE_CHECKING:
 
     from qutip_trap.control.table import CalibrationTable, Segment
     from qutip_trap.device.model import Device
+from dataclasses import field
+
+
+@dataclass(frozen=True)
+class PhaseFrame:
+    """The per-qubit virtual-Z frame: an offset theta_i (rad) that every later pulse phase on qubit i subtracts."""
+
+    offsets_rad: dict[int, float] = field(default_factory=dict)
+
+    def offset(self, qubit: int) -> float:
+        return float(self.offsets_rad.get(qubit, 0.0))
+
+    def rz(self, qubit: int, theta_rad: float) -> PhaseFrame:
+        """RZ(theta) on ``qubit``: later pulses on it carry phi -> phi - theta."""
+        new = dict(self.offsets_rad)
+        new[qubit] = new.get(qubit, 0.0) + float(theta_rad)
+        return PhaseFrame(new)
+
+    def pulse_phase(self, qubit: int, phi_program_rad: float) -> float:
+        """The phase the hardware plays for a gate programmed at phi on ``qubit``."""
+        return float(phi_program_rad) - self.offset(qubit)
+
+    def as_dict(self, n_qubits: int) -> dict[int, float]:
+        return {q: self.offset(q) for q in range(n_qubits)}
+
 
 MID_CIRCUIT_REFUSAL = (
     "mid-circuit measure, reset and recool are refused: their physics (detection recoil, neighbour Stark shift, "

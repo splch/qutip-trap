@@ -16,8 +16,7 @@ import pytest
 import qutip as qt
 from scipy.special import jv
 
-from qutip_trap.calibration import calibrate
-from qutip_trap.calibration.cache import CalibrationCache
+from qutip_trap.calibration import CalibrationCache, calibrate
 from qutip_trap.calibration.experiments import (
     ALIASES,
     ORDER,

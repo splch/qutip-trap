@@ -21,13 +21,13 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
-from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (
     KEY_FIELD_OFFSET_T,
     KEY_MAINS_PHASE,
     KEY_RABI_SCALE,
     KEY_RF_FRACTION,
     NoiseSample,
+    Trajectory,
     key_beam_offset_m,
     key_beam_phase_rad,
     key_beam_phase_trajectory_rad,

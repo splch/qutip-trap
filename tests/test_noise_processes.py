@@ -8,16 +8,18 @@ import numpy as np
 import pytest
 from scipy.signal import welch
 
-from qutip_trap.noise.processes import (
+from qutip_trap.noise.sampling import (
     MAX_GRID_POINTS,
     MIN_GRID_POINTS,
+    NoiseSample,
     Trajectory,
     correlated_normals,
+    key_qubit_trajectory_hz,
     mains_trajectory,
+    quiet_sample,
     synthesize,
     time_grid,
 )
-from qutip_trap.noise.sampling import NoiseSample, key_qubit_trajectory_hz, quiet_sample
 from qutip_trap.noise.spectra import (
     Mains,
     NoiseSpectrum,

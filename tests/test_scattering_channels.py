@@ -16,10 +16,10 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, scattering_budget, square_drive
 from qutip_trap.light.recoil import angular_factor
-from qutip_trap.noise.levels import internal_levels
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.scattering import (
     ScatteringOptions,
+    internal_levels,
     recoil_nodes,
     scattering_channels,
     scattering_estimates,

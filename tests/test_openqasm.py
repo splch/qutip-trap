@@ -137,7 +137,7 @@ def test_refusals_and_expression_errors() -> None:
 
 
 def test_registers_survive_an_openqasm_round_trip() -> None:
-    from qutip_trap.io.qasm2 import dumps, loads
+    from qutip_trap.io.openqasm import dumps, loads
 
     text = (
         "OPENQASM 2.0; qreg q[3]; creg a[1]; creg b[2]; h q[0]; cx q[0], q[2]; "
@@ -164,7 +164,7 @@ def test_dumps_declares_the_native_gates_and_the_bare_form_round_trips_exactly()
     """The declarations (the forms the client SDKs' exports use) are the native matrices up to a global phase, the declared
     text reads back to the same unitary, and the bare form round-trips the native operations exactly."""
     from qutip_trap.control.native import gpi, gpi2
-    from qutip_trap.io.qasm2 import NATIVE_DECLARATIONS, dumps, loads
+    from qutip_trap.io.openqasm import NATIVE_DECLARATIONS, dumps, loads
 
     native = Circuit(2).gpi2(0, 0.3).gpi(1, 1.1).ms(0, 1, 0.2, -0.4, 0.9).zz(1, 0, 0.5)
     text = dumps(native)
@@ -207,7 +207,7 @@ def test_dumps_declares_the_native_gates_and_the_bare_form_round_trips_exactly()
 
 
 def test_dumps_writes_standard_gates_mid_circuit_operations_and_refuses_recool() -> None:
-    from qutip_trap.io.qasm2 import dumps, loads
+    from qutip_trap.io.openqasm import dumps, loads
 
     c = (
         Circuit(3)

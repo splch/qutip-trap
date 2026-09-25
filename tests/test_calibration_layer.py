@@ -11,15 +11,15 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.calibration import calibrate
-from qutip_trap.calibration.cache import CalibrationCache
+from qutip_trap.calibration import CalibrationCache, calibrate
 from qutip_trap.calibration.entangling import frame_rotated, gate_space
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
+from qutip_trap.control.hardware import physical_schedule
 from qutip_trap.control.native import gpi2
-from qutip_trap.control.played import physical_schedule
 from qutip_trap.control.schedule import (
+    PhaseFrame,
     Schedule,
     carrier_rabi_hz,
     compensation_phase_rad,
@@ -35,7 +35,6 @@ from qutip_trap.control.shaping import gate_modes
 from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
-from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.experiments.fitting import (
     Observation,
     fit_lineshape,
@@ -56,8 +55,7 @@ from qutip_trap.experiments.single_ion import rabi_scan, sub_stream
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.model import servo_residual
-from qutip_trap.noise.processes import correlated_normals
-from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, quiet_sample
+from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, correlated_normals, quiet_sample
 from qutip_trap.noise.spectra import Drift
 from qutip_trap.provenance import load_ledger
 from qutip_trap.run.results import RunState

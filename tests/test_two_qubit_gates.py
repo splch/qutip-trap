@@ -22,7 +22,7 @@ from qutip_trap.calibration.entangling import (
     ms_schedule,
 )
 from qutip_trap.control.native import ms as native_ms
-from qutip_trap.control.schedule import PlayedGate, Schedule, entangling_pulses, ms_spin_phases
+from qutip_trap.control.schedule import PhaseFrame, PlayedGate, Schedule, entangling_pulses, ms_spin_phases
 from qutip_trap.control.shaping import (
     CHI_MAXIMAL_RAD,
     SINE_MOTION_PHASE_RAD,
@@ -40,7 +40,6 @@ from qutip_trap.control.table import Waveform
 from qutip_trap.device.model import Device, Field
 from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
-from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.dynamics.operators import rabi_matrix_element
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation

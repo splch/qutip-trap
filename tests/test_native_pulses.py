@@ -12,13 +12,13 @@ from qutip_trap.control.native import equal_up_to_global_phase, gpi, gpi2, rz
 from qutip_trap.control.schedule import (
     MICROWAVE_BEAM_KEY,
     GateDrive,
+    PhaseFrame,
     ScheduleError,
     default_gate_drives,
     schedule,
     single_qubit_pulse,
 )
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
-from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample

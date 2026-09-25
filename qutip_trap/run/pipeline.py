@@ -109,7 +109,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
     compiled = report.circuit
     table = machine.table
     if table is None:
-        from qutip_trap.calibration.cache import cached_surrogate
+        from qutip_trap.calibration import cached_surrogate
 
         sur = cached_surrogate(
             device,
