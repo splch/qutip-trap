@@ -130,7 +130,7 @@ def _truncated_weights(
     if not out:
         best = float(np.max(probabilities)) if len(probabilities) else 0.0
         raise RunError(
-            f"SolverOptions.branch_weight_min = {weight_min:g} keeps no state of the {what}: its most likely state has "
+            f"Numerics.branch_weight_min = {weight_min:g} keeps no state of the {what}: its most likely state has "
             f"probability {best:.3e}. Lower branch_weight_min below that (the Fock sum of Section 5.3 needs at least one "
             "branch), or cool the mode further"
         )
@@ -182,7 +182,7 @@ def enumerate_branches(
         for options in [*ion_options, *[mode_options[m] for m in modes]]:
             best *= max(p for _k, p in options)
         raise RunError(
-            f"SolverOptions.branch_weight_min = {weight_min:g} keeps no branch of the initial mixture: the most likely "
+            f"Numerics.branch_weight_min = {weight_min:g} keeps no branch of the initial mixture: the most likely "
             f"branch of {len(ion_options)} ion factors and {len(modes)} carried modes has weight {best:.3e}. Lower "
             "branch_weight_min below that, cool the modes further, or carry fewer modes (Section 5.3)"
         )

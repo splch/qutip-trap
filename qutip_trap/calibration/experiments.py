@@ -31,13 +31,14 @@ from qutip_trap.calibration.surrogate import SurrogateReport, surrogate_table
 from qutip_trap.control.table import CalEntry, CalibrationTable, Waveform, usable
 from qutip_trap.experiments.result import ExperimentResult
 from qutip_trap.machine import Machine
+from qutip_trap.options import Physics
 
 if TYPE_CHECKING:
     from qutip_trap.control.schedule import GateDrive
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.noise.sampling import NoiseSample
+    from qutip_trap.options import Numerics
 
 ORDER: tuple[str, ...] = (
     "crystal_image",
@@ -244,13 +245,15 @@ def full_calibration(
     experiments: Sequence[str] = ("all",),
     pairs: Sequence[tuple[int, int]] | None = None,
     scans: CalibrationScans | None = None,
-    options: SolverOptions | None = None,
+    options: Numerics | None = None,
     builder_options: BuilderOptions | None = None,
+    physics: Physics | None = None,
     surrogate: SurrogateReport | None = None,
     **surrogate_kwargs: Any,
 ) -> CalibrationReport:
     """Calibrate ``device`` by simulated experiments in the dependency order (module docstring), starting
-    from ``surrogate`` (default: ``surrogate_table`` with ``surrogate_kwargs``) and restricted to ``experiments``."""
+    from ``surrogate`` (default: ``surrogate_table`` with ``surrogate_kwargs``) and restricted to ``experiments``; the
+    experiments run under ``physics`` (default ``Physics()``: the hardware chain and the channel switches)."""
     from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
     from qutip_trap.experiments.entangling import _shift_detuning, ms_phase_scan, ms_scan, parity_scan
@@ -272,6 +275,7 @@ def full_calibration(
         )
     drives, ent = resolve_drives(device)
     n = device.crystal.n_ions
+    lab = Machine(device, physics=physics if physics is not None else Physics())
     sur = surrogate or surrogate_table(
         device,
         seed=seed,
@@ -279,6 +283,7 @@ def full_calibration(
         pairs=pairs,
         options=options,
         builder_options=builder_options,
+        hardware_chain=lab.physics.hardware_chain,
         **surrogate_kwargs,
     )
     table = sur.table
@@ -318,7 +323,7 @@ def full_calibration(
 
     # 0. the crystal image: is the crystal what the device says it is?
     if "crystal_image" in wanted:
-        img = crystal_image(Machine(device), **{**common, "stream": "crystal_image"})
+        img = crystal_image(lab, **{**common, "stream": "crystal_image"})
         results["crystal_image"] = img
         if not img.converged:
             notes.append(
@@ -327,7 +332,7 @@ def full_calibration(
     # 1. the field
     if "field_scan" in wanted and check("field_scan"):
         res = field_scan(
-            Machine(device),
+            lab,
             0,
             sc.ramsey_delays_s,
             b_seed_gauss=float(table.field.value),
@@ -380,7 +385,7 @@ def full_calibration(
             )
         else:
             res = micromotion_scan(
-                Machine(device),
+                lab,
                 0,
                 int(detection_beams(device, 0)[0]),
                 ranges,
@@ -409,7 +414,7 @@ def full_calibration(
         for m in _coupled_modes(device, drives):
             ion = _probe_ion(device, m)
             res = mode_spectroscopy(
-                Machine(device),
+                lab,
                 ion,
                 m,
                 seed_hz=float(table.modes[m].value),
@@ -443,7 +448,7 @@ def full_calibration(
             ts = [float(x) for x in np.linspace(0.0, 10.0 * 0.5 / seed_rabi, sc.rabi_points)]  # ten pi times
             driven = _driven_mode(device, i, spec)
             res = rabi_scan(
-                Machine(device),
+                lab,
                 i,
                 ts,
                 nbar_fixed=nbar_belief.get(driven, 0.0) if driven is not None else 0.0,
@@ -463,7 +468,7 @@ def full_calibration(
             if spec.kind not in ("raman", "optical_E1", "optical_E2"):
                 continue
             res = stark_scan(
-                Machine(device),
+                lab,
                 i,
                 sc.stark_delays_s,
                 probe_hz=_PROBE_HZ,
@@ -483,7 +488,7 @@ def full_calibration(
             spec = drives[i]
             frame_hz = float(table.qubit_freq[i].value) if usable(table.qubit_freq.get(i)) else 0.0
             res = ramsey_frequency(
-                Machine(device),
+                lab,
                 i,
                 sc.ramsey_delays_s,
                 probe_hz=_PROBE_HZ,
@@ -512,7 +517,7 @@ def full_calibration(
             f_i = _belief(table, i, spec)
             ts = [float(x) for x in np.linspace(0.0, 0.5 / max(eps_seed * f_i, 1e-9), sc.crosstalk_points)]
             res = crosstalk_scan(
-                Machine(device),
+                lab,
                 i,
                 ts,
                 rabi_hz_belief=f_i,
@@ -563,7 +568,7 @@ def full_calibration(
             if "ms_scan" in wanted:
                 amps = [float(x) for x in np.linspace(0.7, 1.3, sc.ms_amplitude_points)]
                 res = ms_scan(
-                    Machine(device),
+                    lab,
                     pair,
                     amps,
                     sc.ms_detuning_offsets_hz,
@@ -604,7 +609,7 @@ def full_calibration(
                 if usable(current.phi_s):
                     phases = [float(x) for x in np.linspace(0.0, math.pi, sc.phase_points, endpoint=False)]
                     res_ph = ms_phase_scan(
-                        Machine(device),
+                        lab,
                         pair,
                         phases,
                         inputs=sc.phase_inputs,
@@ -641,9 +646,7 @@ def full_calibration(
                     gate_kw["table"] = table
             if "parity_scan" in wanted and usable(current.phi_s):
                 phases = [float(x) for x in np.linspace(0.0, math.pi, sc.parity_points, endpoint=False)]
-                res_par = parity_scan(
-                    Machine(device), pair, phases, **{**gate_kw, "stream": f"parity_scan[{pair}]"}
-                )
+                res_par = parity_scan(lab, pair, phases, **{**gate_kw, "stream": f"parity_scan[{pair}]"})
                 results[f"parity_scan[{pair}]"] = res_par
                 if res_par.converged:
                     notes.append(
@@ -654,7 +657,7 @@ def full_calibration(
     if "detection_histogram" in wanted:
         det_entries = dict(table.detection)
         res = detection_histogram(
-            Machine(device),
+            lab,
             0,
             sc.detection_records,
             windows_s=sc.detection_windows_s,
@@ -701,7 +704,7 @@ def full_calibration(
                 float(x) for x in np.linspace(0.0, sc.heating_span_over_ndot / ndot_seed, sc.heating_delays)
             ]
             res = heating_rate(
-                Machine(device),
+                lab,
                 m,
                 delays,
                 ion=ion,

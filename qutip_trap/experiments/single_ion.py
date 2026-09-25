@@ -45,11 +45,11 @@ if TYPE_CHECKING:
     from qutip_trap.control.schedule import GateDrive
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
     from qutip_trap.noise.sampling import NoiseSample
+    from qutip_trap.options import Numerics, Physics
 
 _WEIGHT_MIN = 1e-3
 """The weight below which a branch of the thermal initial mixture is dropped (the dropped weight is noted)."""
@@ -66,7 +66,7 @@ class _LabOptions(TypedDict, total=False):
     occupation ``nbar`` per mode and ``qubit_shifts_hz`` per ion (the true transition minus the frame)."""
 
     table: CalibrationTable | None
-    options: SolverOptions | None
+    options: Numerics | None
     builder_options: BuilderOptions | None
     sample: NoiseSample | None
     shots: int | None
@@ -94,12 +94,14 @@ def sub_stream(kw: Mapping[str, Any], label: str) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class _Lab:
-    """The machine resolved for one experiment call: the device, the table, the solver and builder options, the noise
-    sample, the observation model, the thermal occupations and the frame shifts."""
+    """The machine resolved for one experiment call: the device, the table, the numerics, the physics and the builder
+    options, the noise sample, the observation model, the thermal occupations and the frame shifts."""
 
     device: Device
     table: CalibrationTable | None
-    options: SolverOptions | None
+    options: Numerics | None
+    physics: Physics
+    """The machine's: the hardware chain and the channel switches the experiment's engines play under."""
     builder: BuilderOptions | None
     sample: NoiseSample | None
     obs: Observation
@@ -122,7 +124,8 @@ class _Lab:
         return cls(
             device=machine.device,
             table=table,
-            options=kw.get("options", machine.numerics.to_solver_options(machine.physics)),
+            options=kw.get("options", machine.numerics),
+            physics=machine.physics,
             builder=kw.get("builder_options", machine.physics.builder),
             sample=sample,
             obs=obs,
@@ -304,12 +307,14 @@ def _run(
     """Play ``pulses`` from |0...0> x thermal(nbar) on the setup's space, averaged over the branches of the initial mixture;
     ``device_channels`` assembles the device's collapse operators."""
     from qutip_trap.control.schedule import Schedule
-    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
     from qutip_trap.noise.sampling import NoiseSample, key_frozen_n, quiet_sample
+    from qutip_trap.options import Numerics
 
     device = lab.device
     n = device.crystal.n_ions
     schedule = Schedule(tuple(pulses), idle, (), {q: 0.0 for q in range(n)})
+    phys = lab.physics
     engine = JointExactEngine(
         builder_options=lab.builder,
         store_per_segment=2,
@@ -317,8 +322,12 @@ def _run(
         qubit_shifts_hz=lab.qubit_shifts_hz,
         table=lab.table,
         device_channels=device_channels,
+        hardware_chain=phys.hardware_chain,
+        scattering_channels=phys.scattering == "channels",
+        scattering_recoil=phys.scattering_recoil,
+        intensity_noise_channels=phys.intensity_noise_channels,
     )
-    options = lab.options or SolverOptions()
+    options = lab.options or Numerics()
     base_sample = lab.sample or quiet_sample()
     seeds = SeedSpec(lab.obs.seed)
     branches, dropped = _branches(setup.space, lab.nbar, setup.etas, weight_min, fock_branches)

@@ -114,7 +114,7 @@ def calibrate(
     **scans: Any,
 ) -> CalibrationReport:
     """Calibrate a machine: the ``CalibrationReport`` whose ``table`` the scheduler reads. The machine supplies the drive
-    roles, the solver options, the builder options and the caps; ``scans`` are the settings of
+    roles, the numerics and the physics (the builder options and the hardware chain); ``scans`` are the settings of
     :func:`~qutip_trap.calibration.surrogate.surrogate_table` (``pairs``, ``detection_records``, ``detection_windows_s``,
     ``spot_check``) or of :func:`~qutip_trap.calibration.experiments.full_calibration` (``pairs``, ``scans`` a
     ``CalibrationScans``, and the surrogate's settings), ``experiments`` restricts the simulated experiments (the others
@@ -124,14 +124,12 @@ def calibrate(
 
     device = machine.device
     t0 = float(machine.physics.t0_s if t0_s is None else t0_s)
-    kwargs: dict[str, Any] = {
-        "options": machine.numerics.to_solver_options(machine.physics),
-        "builder_options": machine.physics.builder,
-        "caps": machine.numerics.truncation.caps,
-        **scans,
-    }
+    physics = machine.physics
+    kwargs: dict[str, Any] = {"options": machine.numerics, "builder_options": physics.builder, **scans}
     if method == "closed_form":
-        sur = cached_surrogate(device, seed=seed, t0_s=t0, cache=cache, **kwargs)
+        sur = cached_surrogate(
+            device, seed=seed, t0_s=t0, cache=cache, hardware_chain=physics.hardware_chain, **kwargs
+        )
         return CalibrationReport(
             table=sur.table,
             surrogate=sur,
@@ -145,7 +143,9 @@ def calibrate(
         raise ValueError("method is 'closed_form' or 'experiments'")
 
     def build() -> CalibrationReport:
-        return full_calibration(device, seed=seed, t0_s=t0, experiments=experiments, **kwargs)
+        return full_calibration(
+            device, seed=seed, t0_s=t0, experiments=experiments, physics=physics, **kwargs
+        )
 
     if cache is None:
         return build()
@@ -155,6 +155,6 @@ def calibrate(
         "experiments",
         seed=seed,
         t0_s=t0,
-        kwargs={"experiments": tuple(experiments), **kwargs},
+        kwargs={"experiments": tuple(experiments), "physics": physics, **kwargs},
         build=build,
     )

@@ -59,15 +59,10 @@ TWO_PI = 2.0 * math.pi
 
 def engine_for(live: LiveRun, *, store_per_segment: int = 2) -> core.JointExactEngine:
     """The JOINT_EXACT engine with the settings the run gave its own."""
-    return core.JointExactEngine(
-        builder_options=None,
+    return dataclasses.replace(
+        live.machine.engine,
         store_per_segment=int(store_per_segment),
-        channels=(),
         qubit_shifts_hz=dict(live.core_record.qubit_shifts_hz),
-        device_channels=True,
-        levels_by_ion=None,
-        hardware_chain=True,
-        table=live.table,
     )
 
 
@@ -164,7 +159,7 @@ class _Chain:
         self.position = 0
         self.engine_calls = 0
 
-    def play(self, engine: core.JointExactEngine, options: core.SolverOptions) -> core.Traces:
+    def play(self, engine: core.JointExactEngine, options: core.Numerics) -> core.Traces:
         """Evolve the chain's state through its next step."""
         tr = engine.run_pulses(
             self.live.device,
@@ -196,16 +191,14 @@ def boundary_states(
     dims = tuple(int(d) for d in chain.space.dims)
     new = [_boundary(chain.state, step_index=0, sample_index=sample_index, branch=branch, dims=dims)]
     for k in range(last):
-        chain.play(engine, live.options)
+        chain.play(engine, live.machine.numerics)
         new.append(
             _boundary(chain.state, step_index=k + 1, sample_index=sample_index, branch=branch, dims=dims)
         )
     return record.with_boundaries(new)
 
 
-def zoom_key(
-    step_index: int, sample_index: int, branch: int, n_store: int, options: core.SolverOptions
-) -> str:
+def zoom_key(step_index: int, sample_index: int, branch: int, n_store: int, options: core.Numerics) -> str:
     """The cache key of a zoom made with ``options``; a zoom always stores the Fock marginals, so the key is taken over the
     options with ``store_marginals`` on."""
     opts = dataclasses.replace(options, store_marginals=True)
@@ -229,11 +222,13 @@ def zoom(
     branch: int = 0,
     *,
     n_store: int = DEFAULT_ZOOM_POINTS,
-    options: core.SolverOptions | None = None,
+    options: core.Numerics | None = None,
 ) -> tuple[Record, ZoomTrace, ZoomStats]:
     """Re-simulate one gate step at fine resolution from its recorded initial state, with the per-time Fock populations of
     every resolved mode (``core.Traces.mode_marginal``); cached on the record by key."""
-    opts = dataclasses.replace(options if options is not None else live.options, store_marginals=True)
+    opts = dataclasses.replace(
+        options if options is not None else live.machine.numerics, store_marginals=True
+    )
     key = zoom_key(step_index, sample_index, branch, n_store, opts)
     cached = record.zoom(key)
     if cached is not None:
@@ -308,13 +303,15 @@ def tolerance_recheck(
     """Section 5.5's tolerance arm on one zoomed step: atol and rtol tightened by ten, the change per observable."""
     rec, base, _ = zoom(record, live, step_index, sample_index, branch)
     tight = dataclasses.replace(
-        live.options, atol=live.options.atol / TIGHTEN_FACTOR, rtol=live.options.rtol / TIGHTEN_FACTOR
+        live.machine.numerics,
+        atol=live.machine.numerics.atol / TIGHTEN_FACTOR,
+        rtol=live.machine.numerics.rtol / TIGHTEN_FACTOR,
     )
     rec, fine, _ = zoom(rec, live, step_index, sample_index, branch, options=tight)
     changes = _changes(base.trace.expectations, fine.trace.expectations)
     worst = max(changes.values()) if changes else 0.0
     return rec, ConvergenceRecord(
-        tolerances=(live.options.atol, live.options.rtol),
+        tolerances=(live.machine.numerics.atol, live.machine.numerics.rtol),
         tightened_tolerances=(tight.atol, tight.rtol),
         changes=changes,
         tol=CONVERGENCE_TOL,
@@ -344,16 +341,16 @@ def truncation_recheck(
     grown = space
     for m in space.resolved:
         grown = grown.grown(m.mode, CAP_RAISE)
-    if grown.dimension > live.options.joint_dimension_max:
+    if grown.dimension > live.machine.numerics.joint_dimension_max:
         raise RecordError(
             f"raising every cap by {CAP_RAISE} takes the joint dimension to {grown.dimension}, above "
-            f"joint_dimension_max = {live.options.joint_dimension_max}; the check would need the reduced mode set (Section 9.9)"
+            f"joint_dimension_max = {live.machine.numerics.joint_dimension_max}; the check would need the reduced mode set (Section 9.9)"
         )
     chain = _Chain(rec, live, sample_index, branch, space=grown)
     coarse = engine_for(live)
     while chain.position < step_index:
-        chain.play(coarse, live.options)
-    tr = chain.play(engine_for(live, store_per_segment=DEFAULT_ZOOM_POINTS), live.options)
+        chain.play(coarse, live.machine.numerics)
+    tr = chain.play(engine_for(live, store_per_segment=DEFAULT_ZOOM_POINTS), live.machine.numerics)
     changes = _changes(base.trace.expectations, tr.expectations)
     worst = max(changes.values()) if changes else 0.0
     return rec, TruncationCheck(
@@ -499,7 +496,7 @@ def hamiltonian_record(
         )
         for c in device.noise.channels(device, space)
     ]
-    scattering_on = bool(live.options.scattering_channels)
+    scattering_on = live.machine.physics.scattering == "channels"
     if first_pulses:
         try:
             ops, notes = core.scattering_channels(device, first_pulses[0], space)
@@ -508,7 +505,7 @@ def hamiltonian_record(
         note = "photon-scattering channel of Section 6.5" + (
             ""
             if scattering_on
-            else "; not integrated in this run (SolverOptions.scattering_channels is off: the per-pulse error is estimated instead)"
+            else "; not integrated in this run (Physics.scattering is 'estimate': the per-pulse error is estimated instead)"
         )
         collapse += [_collapse(c, active=scattering_on, note=note) for c in ops]
         collapse += [
@@ -596,7 +593,7 @@ def process_matrix(
         _state_from_boundary(start, space).motional,
         sample,
         core.SeedSpec(rec.job.seed),
-        live.options,
+        live.machine.numerics,
         ideal=ideal,
     )
     choi = np.asarray(summary.choi, dtype=complex)

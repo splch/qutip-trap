@@ -28,7 +28,7 @@ import qutip as qt
 
 from qutip_trap.control.compiler import CompileReport, compile_report
 from qutip_trap.control.schedule import GateDrive, Schedule, resolve_drives, schedule
-from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, SolverOptions, State, Traces
+from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, State, Traces
 from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.dynamics.space import HilbertSpace
@@ -40,6 +40,7 @@ from qutip_trap.noise.collisions import (
     sample_reorder,
 )
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n, quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.prep.recipe import recipe_of, run_preparation
 from qutip_trap.readout.detection import PhotonRecord, count_anomaly_band
 from qutip_trap.readout.discriminate import ReadoutOutcome, measure
@@ -67,14 +68,14 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
-    from qutip_trap.options import ReadoutMode
+    from qutip_trap.options import Physics, ReadoutMode
 
 
 @dataclass(frozen=True)
 class Prefix:
     """What the prefix produced: the compile report and its native circuit, the table (built or given), the device the run
-    evolves (the table's calibrated shims programmed onto it), the schedule, the resolved entangling drives, the solver
-    options after the ``internal_levels`` adjustment, and the notes so far."""
+    evolves (the table's calibrated shims programmed onto it), the schedule, the resolved entangling drives, the physics
+    after the ``internal_levels`` adjustment, and the notes so far."""
 
     report: CompileReport
     compiled: Circuit
@@ -82,7 +83,7 @@ class Prefix:
     device: Device
     schedule: Schedule
     entangling_drives: dict[int, GateDrive]
-    options: SolverOptions
+    physics: Physics
     notes: tuple[str, ...]
 
 
@@ -91,18 +92,17 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
     and schedule: the prefix of Section 3.4's pipeline."""
     physics, numerics = machine.physics, machine.numerics
     device = machine.device
-    opts = numerics.to_solver_options(physics)
     drives, ent_drives = resolve_drives(device)
     notes: list[str] = []
     # Section 4.5.5: "leakage is simulated, not estimated, whenever d > 2", so a d > 2 register turns the scattering
     # channels on; the recoil displacements (30 to 50x the cost of the register-only operators) stay an explicit choice
-    if physics.internal_levels > 2 and not opts.scattering_channels:
-        recoil = opts.scattering_recoil if opts.scattering_recoil == "vector" else "off"
-        opts = replace(opts, scattering_channels=True, scattering_recoil=recoil)
+    if physics.internal_levels > 2 and physics.scattering == "estimate":
+        recoil = physics.scattering_recoil if physics.scattering_recoil == "vector" else "off"
+        physics = replace(physics, scattering="channels", scattering_recoil=recoil)
         notes.append(
-            f"internal_levels = {physics.internal_levels} > 2: scattering_channels turned ON with scattering_recoil={recoil!r} "
+            f"internal_levels = {physics.internal_levels} > 2: scattering='channels' turned on with scattering_recoil={recoil!r} "
             "(Section 4.5.5, 'leakage is simulated, not estimated, whenever d > 2'; the recoil displacements are an "
-            "explicit choice: pass scattering_channels=True with scattering_recoil='minimal' or 'vector'); pass "
+            "explicit choice: pass scattering='channels' with scattering_recoil='minimal' or 'vector'); pass "
             "internal_levels=2 for the d = 2 estimate path instead"
         )
     report = compile_report(circuit, entangler=physics.entangler)
@@ -117,9 +117,9 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
             t0_s=physics.t0_s,
             gate_drives=drives,
             entangling_drives=ent_drives,
-            options=opts,
+            options=numerics,
             builder_options=physics.builder,
-            caps=numerics.truncation.caps,
+            hardware_chain=physics.hardware_chain,
             pairs=compiled.entangling_pairs(),
         )
         table = sur.table
@@ -167,7 +167,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
         gate_drives=drives,
         entangling_drives=ent_drives,
         t0_s=0.0,
-        parallel=numerics.parallel.addressing,
+        parallel=numerics.addressing,
         crosstalk_suppression=physics.crosstalk_suppression,
         stark_compensation=physics.stark_compensation,
     )
@@ -178,7 +178,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
         device=device,
         schedule=sched,
         entangling_drives=ent_drives,
-        options=opts,
+        physics=physics,
         notes=tuple(notes),
     )
 
@@ -203,7 +203,7 @@ class _BranchRun(NamedTuple):
 
 
 def _engine_task(
-    payload: tuple[Any, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, SolverOptions],
+    payload: tuple[Any, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, Numerics],
 ) -> tuple[Traces, EngineReport]:
     """One (sample, branch) engine run as a map task (module-level so that it pickles under ``map="parallel"``)."""
     engine, device, sched, state, space, smp, seeds, opts = payload
@@ -236,7 +236,7 @@ def _run_engine_tasks(
     space: HilbertSpace,
     payloads: Sequence[_BranchRun],
     seeds: SeedSpec,
-    opts: SolverOptions,
+    opts: Numerics,
     report: _Reporter | None = None,
 ) -> tuple[list[tuple[Traces, EngineReport]], int]:
     """The (sample, branch) engine runs of a JOINT_EXACT run: in-process on one engine when the map is serial, one worker is
@@ -297,7 +297,7 @@ class _Walk:
     sched: Schedule
     samples: tuple[NoiseSample, ...]
     seeds: SeedSpec
-    opts: SolverOptions
+    opts: Numerics
     state0: State
     setup: EngineSetup
     notify: _Reporter
@@ -341,7 +341,7 @@ class _Level(ABC):
         return self.space
 
     def enumerate(
-        self, device: Device, sched: Schedule, state0: State, opts: SolverOptions, notes: list[str]
+        self, device: Device, sched: Schedule, state0: State, opts: Numerics, notes: list[str]
     ) -> None:
         """The branches of the initial mixture; none when the register is carried whole."""
         self.branches, self.dropped_weight = [], 0.0
@@ -356,7 +356,7 @@ class _JointExact(_Level):
     name = "JOINT_EXACT"
 
     def enumerate(
-        self, device: Device, sched: Schedule, state0: State, opts: SolverOptions, notes: list[str]
+        self, device: Device, sched: Schedule, state0: State, opts: Numerics, notes: list[str]
     ) -> None:
         """The Fock-sum branches: the internal levels, the resolved and ENR modes, and the frozen spectators a pulse couples
         to (their Debye-Waller factor is the physics; a dropped mode costs no branch)."""
@@ -413,7 +413,7 @@ class _JointExact(_Level):
                 payloads.append(_BranchRun(s_idx, k, st, sample_b))
 
         def runs(
-            options: SolverOptions, report: _Reporter | None = None
+            options: Numerics, report: _Reporter | None = None
         ) -> tuple[list[tuple[Traces, EngineReport]], int]:
             return _run_engine_tasks(
                 engine, walk.device, walk.sched, space, payloads, walk.seeds, options, report
@@ -425,7 +425,7 @@ class _JointExact(_Level):
         if walk.opts.convergence_check:
             # Section 5.5: the evolution again at atol and rtol tightened by ten; the change in the FIRST sample's register
             # populations, which are deterministic where the sampled histogram is not
-            def _register_populations(o: SolverOptions) -> dict[str, np.ndarray]:
+            def _register_populations(o: Numerics) -> dict[str, np.ndarray]:
                 rho = np.zeros((d_int, d_int), dtype=complex)
                 for run, (tr_c, _rep_c) in zip(payloads, runs(o)[0]):
                     if run.sample != 0:
@@ -497,7 +497,7 @@ class _GateLocal(_Level):
         notes = walk.notes
 
         def gate_local(
-            options: SolverOptions,
+            options: Numerics,
             samples: Sequence[NoiseSample],
             progress: Callable[[int, int], None] | None = None,
         ) -> tuple[list[list[tuple[float, qt.Qobj]]], GateLocalReport, list[MotionalModel]]:
@@ -544,7 +544,7 @@ class _GateLocal(_Level):
         notes.extend(n for n in report.notes if n not in notes)
         if walk.opts.convergence_check:
 
-            def _gate_local_populations(o: SolverOptions) -> dict[str, np.ndarray]:
+            def _gate_local_populations(o: Numerics) -> dict[str, np.ndarray]:
                 states = gate_local(o, walk.samples[:1])[0]
                 rho = sum(w * np.asarray((st if st.isoper else qt.ket2dm(st)).full()) for w, st in states[0])
                 return {"register_populations": np.real(np.diag(np.asarray(rho)))}
@@ -707,11 +707,10 @@ def execute(
     started = time.perf_counter()
     created_at = datetime.now(UTC).isoformat(timespec="seconds")
     notify = _Reporter(progress, started)
-    physics, numerics, reading = machine.physics, machine.numerics, machine.readout
-    trunc = numerics.truncation
+    opts, reading = machine.numerics, machine.readout
     path: _ReadoutPath = _FastReadout() if reading.mode == "fast" else _FullReadout()
     prefix = compile_calibrate_schedule(machine, circuit, seed=seed)
-    opts = prefix.options
+    physics = prefix.physics
     notes: list[str] = list(prefix.notes)
     compiled = prefix.compiled
     table = prefix.table
@@ -725,18 +724,12 @@ def execute(
     notes.extend(prep_run.notes)
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
-    if trunc.space is None:
+    if opts.space is None:
         selection = select_space(
-            device,
-            sched,
-            opts,
-            nbar=prep_run.nbar,
-            caps=trunc.caps,
-            ion_dims=[int(physics.internal_levels)] * n_ions,
-            enr=trunc.enr_group,
+            device, sched, opts, nbar=prep_run.nbar, ion_dims=[int(physics.internal_levels)] * n_ions
         )
     else:
-        selection = SpaceSelection.supplied(trunc.space, opts, prep_run.nbar, n_modes)
+        selection = SpaceSelection.supplied(opts.space, opts, prep_run.nbar, n_modes)
     joint_space = selection.space
     levels = level_maps(device, joint_space)
     if levels:
@@ -753,7 +746,7 @@ def execute(
             raise RunError(
                 f"level='JOINT_EXACT' asks for a joint space of dimension {dim} with {nnz} drive non-zeros, above the Section "
                 f"11.5 guards (joint_dimension_max = {opts.joint_dimension_max}, nnz_max = {opts.nnz_max}); raise them in "
-                "SolverOptions to build it deliberately, reduce the caps or the resolved modes, or let level='auto' route the "
+                "Numerics to build it deliberately, reduce the caps or the resolved modes, or let level='auto' route the "
                 "run to GATE_LOCAL"
             )
         level = _JointExact(joint_space)
@@ -763,11 +756,11 @@ def execute(
             f"guards ({opts.joint_dimension_max}, {opts.nnz_max})"
             + ("" if not decision.inside else "; requested below the guards")
         )
-        if trunc.space is not None:
+        if opts.space is not None:
             notes.append(
                 "GATE_LOCAL builds its own gate-local spaces; the supplied space sets the mode classes reported"
             )
-        level = _GateLocal(joint_space, trunc.caps)
+        level = _GateLocal(joint_space, opts.caps)
     seeds = SeedSpec(int(seed))
     state0 = prepare(device, level.prep_space(n_modes), table, preparation=prep_run, levels=levels)
     level.enumerate(device, sched, state0, opts, notes)
@@ -788,7 +781,7 @@ def execute(
         if physics.shot_period_s is not None
         else prep_run.duration_s + sched.pulses_end_s + window + float(device.hardware.dead_time_s)
     )
-    samples = numerics.parallel.samples
+    samples = opts.samples
     quiet = (not physics.noise) or device.noise.is_quiet()
     if quiet:
         n_samples = 1
@@ -816,6 +809,10 @@ def execute(
         qubit_shifts_hz=shifts,
         device_channels=bool(physics.noise),
         levels_by_ion=levels or None,
+        hardware_chain=physics.hardware_chain,
+        scattering_channels=physics.scattering == "channels",
+        scattering_recoil=physics.scattering_recoil,
+        intensity_noise_channels=physics.intensity_noise_channels,
         table=table,
     )
     evo = level.evolve(_Walk(device, sched, samples_seq, seeds, opts, state0, setup, notify, notes))

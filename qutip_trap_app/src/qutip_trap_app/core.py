@@ -32,7 +32,6 @@ from qutip_trap.dynamics.engine import (
     JointExactEngine,
     MotionalModel,
     SeedSpec,
-    SolverOptions,
     State,
     Traces,
 )
@@ -134,7 +133,6 @@ __all__ = [
     "SeedSpec",
     "Segment",
     "SegmentedEnvelope",
-    "SolverOptions",
     "SpaceSelection",
     "Species",
     "State",

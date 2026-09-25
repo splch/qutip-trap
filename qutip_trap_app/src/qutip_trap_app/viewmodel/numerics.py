@@ -17,7 +17,7 @@ from qutip_trap_app.resim import TruncationCheck
 from qutip_trap_app.viewmodel.catalogue import Shown
 from qutip_trap_app.viewmodel.dynamics import norm_deficit
 
-POLICY_BOUNDARY_MAX: float = core.SolverOptions().boundary_population_max
+POLICY_BOUNDARY_MAX: float = core.Numerics().boundary_population_max
 """Section 5.5's default threshold on the truncation-boundary population: the badge judges against the policy, and says so
 when a run was made with a looser threshold of its own."""
 

@@ -31,10 +31,11 @@ from qutip_trap.control.schedule import (
 )
 from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, excursion_by_mode, scaled
 from qutip_trap.control.table import Waveform
-from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, SolverOptions, Traces
+from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, Traces
 from qutip_trap.dynamics.operators import populated_range, required_margin
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import NoiseSample, quiet_sample
+from qutip_trap.options import Numerics
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Pulse
@@ -217,8 +218,9 @@ def exact_gate_check(
     chi_target_rad: float = CHI_MAXIMAL_RAD,
     nbar: Mapping[int, float] | None = None,
     sample: NoiseSample | None = None,
-    options: SolverOptions | None = None,
+    options: Numerics | None = None,
     builder_options: BuilderOptions | None = None,
+    hardware_chain: bool = True,
     qubit_shifts_hz: Mapping[int, float] | None = None,
     channels: Sequence[object] = (),
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
@@ -228,11 +230,12 @@ def exact_gate_check(
     An MS waveform is played once from |00>: P_11 = sin^2 chi. A light-shift waveform is played in the spin-echo pair
     (``single_qubit_drives`` supply the GPi echo pulses) from |+x +x> and read in the x basis: P_11 = sin^2(2 chi) with chi
     the two-body angle of ONE pulse, so the reported ``chi_rad`` is per pulse and the fidelity is against ZZ(4 chi_target).
+    ``hardware_chain`` is ``Physics.hardware_chain``: the control electronics the run plays the gate through.
     """
     n_ions = space.n_ions
     x_basis = waveform.kind == "light_shift"
     # the tone phases compensate the modulator's envelope delay exactly as the scheduler does
-    delay = float(device.hardware.aom_rise_s) if (options or SolverOptions()).hardware_chain else 0.0
+    delay = float(device.hardware.aom_rise_s) if hardware_chain else 0.0
     if x_basis:
         if single_qubit_drives is None:
             raise ValueError(
@@ -265,10 +268,11 @@ def exact_gate_check(
         store_per_segment=2,
         channels=tuple(channels),  # type: ignore[arg-type]
         qubit_shifts_hz=dict(qubit_shifts_hz or {}),
+        hardware_chain=hardware_chain,
         table=table,
     )
     traces = engine.run_pulses(
-        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
+        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or Numerics()
     )
     rho = traces.final.internal
     # populations in the computational basis (MS) or the x basis (light shift): P_11 = sin^2 chi either way
@@ -344,8 +348,9 @@ def calibrate_entangling_angle(
     chi_target_rad: float = CHI_MAXIMAL_RAD,
     tolerance_rad: float = 1e-4,
     max_iterations: int = 6,
-    options: SolverOptions | None = None,
+    options: Numerics | None = None,
     builder_options: BuilderOptions | None = None,
+    hardware_chain: bool = True,
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> CalibrationRun:
     """Correct the waveform's amplitude until the exact |chi| from |00>|0> (Ballance's reference) equals ``chi_target_rad``:
@@ -367,6 +372,7 @@ def calibrate_entangling_angle(
             chi_target_rad=chi_target_rad,
             options=options,
             builder_options=builder_options,
+            hardware_chain=hardware_chain,
             single_qubit_drives=single_qubit_drives,
         )
         checks.append(check)
@@ -437,8 +443,9 @@ def parity_after_analysis_pulse(
     analysis_phase_rad: float,
     analysis_rabi_hz: Mapping[int, float],
     nbar: Mapping[int, float] | None = None,
-    options: SolverOptions | None = None,
+    options: Numerics | None = None,
     builder_options: BuilderOptions | None = None,
+    hardware_chain: bool = True,
     sample: NoiseSample | None = None,
     analysis_drives: Mapping[int, GateDrive] | None = None,
     spin_phases_rad: tuple[float, float] = (0.0, 0.0),
@@ -477,10 +484,13 @@ def parity_after_analysis_pulse(
     levels = [0] * n_ions if internal is None else [int(x) for x in internal]
     state = space.initial_state(levels, thermal=dict(nbar or {}))
     engine = JointExactEngine(
-        builder_options=builder_options, table=table, qubit_shifts_hz=dict(qubit_shifts_hz or {})
+        builder_options=builder_options,
+        hardware_chain=hardware_chain,
+        table=table,
+        qubit_shifts_hz=dict(qubit_shifts_hz or {}),
     )
     traces = engine.run_pulses(
-        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or SolverOptions()
+        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or Numerics()
     )
     pops = _populations(traces.final.internal, n_ions, pair[0], pair[1])
     return pops["P00"] + pops["P11"] - pops["P01"] - pops["P10"], pops

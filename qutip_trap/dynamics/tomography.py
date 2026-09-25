@@ -35,7 +35,6 @@ from qutip_trap.dynamics.engine import (
     EngineReport,
     MotionalModel,
     SeedSpec,
-    SolverOptions,
     State,
     Traces,
     _lindblad_method,
@@ -53,6 +52,7 @@ from qutip_trap.noise.summary import (
     entanglement_infidelity,
     pauli_twirl,
 )
+from qutip_trap.options import Numerics
 
 if TYPE_CHECKING:
     from qutip_trap.control.pulses import Pulse
@@ -464,7 +464,7 @@ class TomographyRecord:
     route: TomographyRoute = "states"
     branch_error_bound: float = 0.0
     """2 x ``dropped_branch_weight``: the diamond-norm bound on the error of dropping and renormalizing motional branches."""
-    tolerances: tuple[float, float] = (SolverOptions.atol, SolverOptions.rtol)
+    tolerances: tuple[float, float] = (Numerics.atol, Numerics.rtol)
     """(atol, rtol) the engine runs integrated at: the caller's, or the map-accuracy-keyed pair (``keyed_tolerances``)."""
     tolerance_change: float | None = None
     """With keyed tolerances, d times the trace norm of the Choi change when the dominant branch is re-integrated ten times
@@ -581,9 +581,7 @@ def _branch_sample(sample: NoiseSample, branch: MotionalBranch) -> NoiseSample:
 
 
 def _engine_run(
-    payload: tuple[
-        JointExactEngine, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, SolverOptions
-    ],
+    payload: tuple[JointExactEngine, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, Numerics],
 ) -> tuple[Traces, EngineReport]:
     """One engine run as a map task (module-level, so it pickles)."""
     engine, device, sched, state, space, smp, seeds, opts = payload
@@ -600,7 +598,7 @@ def _run_tasks(
     space: HilbertSpace,
     payloads: Sequence[_TomographyTask],
     seeds: SeedSpec,
-    opts: SolverOptions,
+    opts: Numerics,
 ) -> tuple[list[tuple[Traces, EngineReport]], int]:
     """The tomography's engine runs and the number of processes they used: in-process on the shared engine (whose
     propagator cache serves an internal-state-only space), or over the workers when the space has resolved modes."""
@@ -678,7 +676,7 @@ def _extract_from_states(
     labels_kets: Sequence[tuple[str, np.ndarray]],
     sample: NoiseSample,
     seeds: SeedSpec,
-    opts: SolverOptions,
+    opts: Numerics,
 ) -> _Extraction | HilbertSpace:
     """The "states" route: every input of ``labels_kets`` propagated for every branch and the outputs averaged with the
     branch weights (the Choi matrix is left to the least-squares fit); the grown space when a run grew one."""
@@ -748,7 +746,7 @@ def _isometry_columns(
     thermal_frozen: Mapping[int, float],
     sample: NoiseSample,
     seeds: SeedSpec,
-    opts: SolverOptions,
+    opts: Numerics,
 ) -> _Columns:
     """The "isometry" route's runs: the d_int internal basis kets of every branch through the engine (the same map as the
     "states" route), their final joint kets stacked into one isometry per branch."""
@@ -788,7 +786,7 @@ def _propagator_columns(
     branches: Sequence[MotionalBranch],
     sample: NoiseSample,
     seeds: SeedSpec,
-    opts: SolverOptions,
+    opts: Numerics,
     motional_model: MotionalModel,
 ) -> _Columns:
     """The "propagator" route: on an internal-state-only space each branch's segment propagator is its isometry (d_mot = 1),
@@ -883,7 +881,7 @@ def tomography(
     motional_model: MotionalModel,
     sample: NoiseSample,
     seeds: SeedSpec,
-    options: SolverOptions,
+    options: Numerics,
 ) -> TomographyRecord:
     """State-based process tomography of ``pulse`` on ``space`` from the motional state of ``motional_model`` (Section 5.4).
 
@@ -913,7 +911,7 @@ def tomography(
         )
         thermal_frozen = {m: float(motional_model.nbar.get(m, 0.0)) for m in current.frozen}
         route: TomographyRoute = "states"
-        if engine.is_unitary(device, current, opts):
+        if engine.is_unitary(device, current):
             route = "propagator" if (not current.resolved and current.enr_group is None) else "isometry"
         # keyed tolerances only on a unitary step with resolved modes, where the tighter probe below reports their effect
         keyed = keyed_tolerances(options) if route == "isometry" else None
@@ -1014,13 +1012,13 @@ def tomography(
     raise RuntimeError("the gate-local space kept growing beyond the engine's retry budget")
 
 
-def keyed_tolerances(options: SolverOptions) -> tuple[float, float] | None:
-    """(atol, rtol) a unitary step with resolved modes integrates at under ``SolverOptions.tomography_tolerance_keyed``:
+def keyed_tolerances(options: Numerics) -> tuple[float, float] | None:
+    """(atol, rtol) a unitary step with resolved modes integrates at under ``Numerics.tomography_tolerance_keyed``:
     1e-5 and 1e-3 of the map accuracy where the caller left the engine defaults, the caller's own value where not; None when
     the switch is off or neither tolerance would move."""
     if not options.tomography_tolerance_keyed:
         return None
-    defaults = SolverOptions()
+    defaults = Numerics()
     atol = options.map_accuracy * 1e-5 if options.atol == defaults.atol else options.atol
     rtol = options.map_accuracy * 1e-3 if options.rtol == defaults.rtol else options.rtol
     if atol == options.atol and rtol == options.rtol:
@@ -1094,26 +1092,7 @@ def fingerprint_sample(sample: NoiseSample) -> tuple[object, ...]:
     )
 
 
-def fingerprint_options(options: SolverOptions) -> Mapping[str, object]:
-    """The ``SolverOptions`` fields a GATE_LOCAL channel depends on (the tomography cache key)."""
-    return {
-        "atol": options.atol,
-        "rtol": options.rtol,
-        "integrators": options.integrators,
-        "boundary_population_max": options.boundary_population_max,
-        "branch_weight_min": options.branch_weight_min,
-        "lindblad_method": options.lindblad_method,
-        "mesolve_dimension_max": options.mesolve_dimension_max,
-        "ntraj": options.ntraj,
-        "improved_sampling": options.improved_sampling,
-        "trajectory_target_tol": options.trajectory_target_tol,
-        "map_accuracy": options.map_accuracy,
-        "scattering_channels": options.scattering_channels,
-        "scattering_recoil": options.scattering_recoil,
-        "intensity_noise_channels": options.intensity_noise_channels,
-        "hardware_chain": options.hardware_chain,
-        "margin_check": options.margin_check,
-        "tomography_dropped_weight_max": options.tomography_dropped_weight_max,
-        "tomography_tolerance_keyed": options.tomography_tolerance_keyed,
-        "margin_element_tol": options.margin_element_tol,
-    }
+def fingerprint_options(options: Numerics) -> Numerics:
+    """The numerics a GATE_LOCAL channel depends on (the tomography cache key): every field but the map and the worker
+    count, which change how it is computed, not what."""
+    return replace(options, map="serial", workers=None)

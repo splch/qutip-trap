@@ -35,7 +35,6 @@ from qutip_trap.dynamics.engine import (
     JointExactEngine,
     MotionalModel,
     SeedSpec,
-    SolverOptions,
     required_margin_under,
 )
 from qutip_trap.dynamics.operators import displacement_leakage
@@ -52,6 +51,7 @@ from qutip_trap.dynamics.tomography import (
 )
 from qutip_trap.dynamics.truncation import warn_cap_clamped
 from qutip_trap.hashing import canonical_digest
+from qutip_trap.options import Numerics
 from qutip_trap.run.space import (
     _D_MIN,
     ModeClass3,
@@ -67,7 +67,7 @@ if TYPE_CHECKING:
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.channels import CollapseOp
+    from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.noise.scattering import InternalLevels
@@ -313,7 +313,7 @@ def step_space(
     device: Device,
     step: GateStep,
     model: MotionalModel,
-    options: SolverOptions,
+    options: Numerics,
     ion_dims: Mapping[int, int],
     *,
     caps: Mapping[int, int] | None = None,
@@ -386,7 +386,7 @@ def step_space(
             leak = displacement_leakage(c.eta_max, n_hi, d - 1 - min(n_hi, d - 1))
             notes.append(
                 f"mode {m}: margin {d - 1 - min(n_hi, d - 1)} above n = {min(n_hi, d - 1)} derived for interior elements exact "
-                f"to {options.margin_element_tol:.0e} (the Section 5.1.1 fixture is {required_margin_under(c.eta_max, SolverOptions(), n_hi)}); "
+                f"to {options.margin_element_tol:.0e} (the Section 5.1.1 fixture is {required_margin_under(c.eta_max, Numerics(), n_hi)}); "
                 f"one displacement from n = {min(n_hi, d - 1)} leaks {leak:.1e} past the cap, below "
                 f"{tail * MARGIN_LEAKAGE_FRACTION:.0e}"
             )
@@ -468,7 +468,7 @@ class GateLocalStep:
     tolerance_change: float = 0.0
     """The channel's change when its dominant branch is re-integrated ten times tighter than the map-accuracy-keyed
     tolerance (``tomography_tolerance_keyed``); 0 where the tolerance was not keyed."""
-    tolerances: tuple[float, float] = (SolverOptions.atol, SolverOptions.rtol)
+    tolerances: tuple[float, float] = (Numerics.atol, Numerics.rtol)
     """(atol, rtol) the step's engine runs integrated at."""
     element_error: dict[int, float] = field(default_factory=dict)
     """Per resolved mode, the measured maximum error of the exponential's interior elements over the declared range (the
@@ -543,6 +543,10 @@ class EngineSetup:
     qubit_shifts_hz: dict[int, float] = field(default_factory=dict)
     device_channels: bool = False
     levels_by_ion: dict[int, InternalLevels] | None = None
+    hardware_chain: bool = True
+    scattering_channels: bool = False
+    scattering_recoil: RecoilOption = "minimal"
+    intensity_noise_channels: bool = True
     table: CalibrationTable | None = None
 
     def engine(self) -> JointExactEngine:
@@ -553,7 +557,10 @@ class EngineSetup:
             qubit_shifts_hz=dict(self.qubit_shifts_hz),
             device_channels=self.device_channels,
             levels_by_ion=self.levels_by_ion,
-            hardware_chain=True,
+            hardware_chain=self.hardware_chain,
+            scattering_channels=self.scattering_channels,
+            scattering_recoil=self.scattering_recoil,
+            intensity_noise_channels=self.intensity_noise_channels,
             table=self.table,
         )
 
@@ -574,6 +581,12 @@ class EngineSetup:
             tuple(sorted(self.qubit_shifts_hz.items())),
             self.device_channels,
             None if self.levels_by_ion is None else {i: m.labels for i, m in self.levels_by_ion.items()},
+            (
+                self.hardware_chain,
+                self.scattering_channels,
+                self.scattering_recoil,
+                self.intensity_noise_channels,
+            ),
             table_fp,
         )
 
@@ -585,7 +598,7 @@ def _cache_key(
     model: MotionalModel,
     frozen_coupled: Sequence[int],
     sample: NoiseSample,
-    options: SolverOptions,
+    options: Numerics,
     setup: EngineSetup,
 ) -> str:
     modes = [t.mode for t in space.resolved] + list(frozen_coupled)
@@ -610,7 +623,7 @@ def _idle_key(
     step: GateStep,
     sample: NoiseSample,
     seeds: SeedSpec,
-    options: SolverOptions,
+    options: Numerics,
     setup: EngineSetup,
 ) -> str:
     """The cache key of one ion's idle channel. An idle schedule has no pulse, so nothing motional enters the one-ion
@@ -655,7 +668,7 @@ def _idle_step(
     model: MotionalModel,
     sample: NoiseSample,
     seeds: SeedSpec,
-    options: SolverOptions,
+    options: Numerics,
     setup: EngineSetup,
     engine: JointExactEngine,
     ion_dims: Sequence[int],
@@ -780,7 +793,7 @@ def _gate_step(
     model: MotionalModel,
     sample: NoiseSample,
     seeds: SeedSpec,
-    options: SolverOptions,
+    options: Numerics,
     setup: EngineSetup,
     engine: JointExactEngine,
     ion_dims: Sequence[int],
@@ -885,7 +898,7 @@ def evolve_gate_local(
     sched: Schedule,
     samples: Sequence[NoiseSample],
     seeds: SeedSpec,
-    options: SolverOptions,
+    options: Numerics,
     *,
     register0: qt.Qobj,
     nbar0: Mapping[int, float],

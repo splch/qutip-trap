@@ -724,7 +724,7 @@ def _monte_carlo_dephasing(
     """1 - F_av = 1 - (1/4)<|Tr(U_c^dag U)|^2> over sampled b(t) trajectories propagated through the builder."""
     from qutip_trap.control.pulses import Drive, Pulse, Tone
     from qutip_trap.control.schedule import Schedule
-    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
+    from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.noise.sampling import (
         NoiseSample,
@@ -733,6 +733,7 @@ def _monte_carlo_dephasing(
         synthesize,
         time_grid,
     )
+    from qutip_trap.options import Numerics
 
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
@@ -752,7 +753,7 @@ def _monte_carlo_dephasing(
     )
     sched = Schedule(tuple(pulses), idle, (), {q: 0.0 for q in range(n_ions)})
     engine = JointExactEngine(store_per_segment=2, hardware_chain=False)
-    opts = SolverOptions(atol=1e-12, rtol=1e-10)
+    opts = Numerics(atol=1e-12, rtol=1e-10)
 
     def propagator(sample: NoiseSample) -> np.ndarray:
         cols = []

@@ -1,65 +1,40 @@
-"""The option objects of a run: ``Physics`` (which effects are simulated), ``Numerics`` (how the integration is done,
-nested by concern) and ``Readout`` (how the photon record is read); ``Machine`` holds one of each. ``Numerics`` is built into
-the ``SolverOptions`` a run integrates with (``Numerics.to_solver_options``), and validation delegates to ``SolverOptions``,
-so the errors are the ones it raises.
+"""The option objects of a run: ``Physics`` (which effects are simulated), ``Numerics`` (how the integration is done) and
+``Readout`` (how the photon record is read); ``Machine`` holds one of each. The engine and every lower-level routine take
+the ``Numerics``; ``Machine.engine`` builds the engine from the ``Physics``.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Self, cast
-
-from qutip_trap.control.schedule import CrosstalkSuppression
-from qutip_trap.dynamics.channels import RecoilOption
-from qutip_trap.dynamics.engine import LindbladMethod, SolverOptions
-from qutip_trap.dynamics.parallel import MapKind
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from _typeshed import DataclassInstance
-
-    from qutip_trap.dynamics.channels import CollapseOp
+    from qutip_trap.control.schedule import CrosstalkSuppression
+    from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
+    from qutip_trap.dynamics.parallel import MapKind
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.readout.discriminate import Discriminator
 
+LindbladMethod = Literal["auto", "mesolve", "mcsolve"]
 ReadoutMode = Literal["fast", "full"]
 Scattering = Literal["estimate", "channels"]
 
-
-def _group_from(cls: type[Any], value: object, name: str) -> Any:
-    """A nested group from an instance (kept) or a mapping of its fields (built); anything else is refused by name."""
-    if isinstance(value, cls):
-        return value
-    if isinstance(value, Mapping):
-        return cls.from_mapping(value)
-    raise TypeError(f"{name} takes a {cls.__name__} or a mapping of its fields, got {type(value).__name__}")
-
-
-class _FromMapping:
-    """``from_mapping`` and ``asdict`` for the frozen option dataclasses."""
-
-    @classmethod
-    def from_mapping(cls, mapping: Mapping[str, Any]) -> Self:
-        """The object of a mapping of its fields; an unknown key is refused (QuTiP's rule for its options dict)."""
-        names = {f.name for f in dataclasses.fields(cast("type[DataclassInstance]", cls))}
-        unknown = sorted(set(mapping) - names)
-        if unknown:
-            raise ValueError(f"{cls.__name__} has no field {unknown}; the fields are {sorted(names)}")
-        return cls(**dict(mapping))
-
-    def asdict(self) -> dict[str, Any]:
-        """The fields as a dictionary of their values (nested groups, a declared space, collapse operators and a
-        discriminator as the objects they are), the form ``from_mapping`` accepts."""
-        return {f.name: getattr(self, f.name) for f in dataclasses.fields(cast("DataclassInstance", self))}
+MULTISTEP_INTEGRATORS: frozenset[str] = frozenset({"adams", "bdf", "lsoda", "vode", "zvode"})
+"""QuTiP's multistep integrators, never used: their damping distorts the oscillatory spectrum of -iH (Section 5.3)."""
+ALLOWED_INTEGRATORS: frozenset[str] = frozenset(
+    {"dop853", "vern7", "vern9", "tsit5", "explicit_rk", "krylov", "diag"}
+)
 
 
 @dataclass(frozen=True)
-class Integration(_FromMapping):
-    """The ODE integration of every segment (Section 5.3): tolerances and the escalation ladder."""
+class Numerics:
+    """How a run integrates (Sections 5.1 to 5.5, 11.3, 11.5): the tolerances and the escalation ladder, the caps and the
+    guards, the trajectory method, the GATE_LOCAL walk and the parallel maps."""
 
+    # the integration of every segment (Section 5.3)
     atol: float = 1e-10
     """Absolute tolerance of the integrator (dimensionless amplitude)."""
     rtol: float = 1e-8
@@ -67,44 +42,85 @@ class Integration(_FromMapping):
     nsteps: int = 10**7
     """The integrator's step budget per segment."""
     integrators: tuple[str, ...] = ("dop853", "vern9")
-    """The escalation ladder of Section 5.3; never a multistep method."""
+    """The escalation ladder (``dynamics.evolve``); never a multistep method."""
     propagator_cache: bool = True
-    """Cache the propagator of internal-state-only segments (Section 11.3 item 5)."""
+    """On an internal-state-only space integrate a segment's propagator once and apply it to every initial state; False
+    integrates every state."""
     store_marginals: bool = False
     """Store the Fock populations of every carried mode at every stored time as ``Traces.mode_marginal``."""
-
-    def __post_init__(self) -> None:
-        SolverOptions(**self.asdict())
-
-
-@dataclass(frozen=True)
-class Truncation(_FromMapping):
-    """The Fock caps, the guards and the mode classes (Sections 5.1, 5.2, 5.5, 11.5)."""
-
+    convergence_check: bool = False
+    """``run()`` repeats its evolution with atol and rtol tightened by ten and reports the change as
+    ``Diagnostics.convergence`` (Section 5.5); off by default because it triples the cost."""
+    # the truncation (Sections 5.1, 5.2, 5.5, 11.5)
     joint_dimension_max: int = 4096
-    """The joint dimension above which ``FidelityLevel.AUTO`` routes to GATE_LOCAL (Section 11.5)."""
+    """The joint dimension above which ``FidelityLevel.AUTO`` routes a run to GATE_LOCAL (Section 11.5)."""
     nnz_max: int = 2 * 10**7
-    """The drive-operator non-zero count above which AUTO routes to GATE_LOCAL."""
+    """The drive-operator non-zero count above which AUTO routes a run to GATE_LOCAL."""
     mode_dimension_max: int = 64
-    """The ceiling on one resolved mode's Fock dimension; a clamp warns (``TruncationWarning``) and is reported."""
+    """The ceiling on one resolved mode's Fock dimension the cap rule may ask for; a clamp warns (``TruncationWarning``) and
+    is reported, and the oracle and margin checks then cover the clamped range only."""
     boundary_population_max: float = 1e-6
     """The population the cap may leave at its boundary before the monitor raises it (Section 5.5)."""
     freeze_chi_max_rad: float = 0.05
     """|chi_m| (rad) below which a spectator mode may be frozen rather than resolved (Section 5.2)."""
     freeze_alpha_max: float = 1e-4
-    """|alpha_m|^2 (2 nbar + 1) below which a spectator may be frozen (Section 5.2)."""
+    """|alpha_m|^2 (2 nbar_m + 1) below which a spectator may be frozen rather than resolved (Section 5.2)."""
     branch_weight_min: float = 1e-6
-    """Weight below which a branch of the initial mixture is dropped and reported (Section 5.3)."""
+    """Weight below which a branch of the initial mixture is dropped from the exact evolution (renormalized, reported)."""
     margin_check: bool = True
-    """Compare every resolved cap's margin with the Section 5.1.1 margin after each pulse."""
+    """After every pulse compare each driven resolved mode's margin above its populated range with the Section 5.1.1 margin;
+    a deficit raises the cap and repeats the run (Section 5.5)."""
     margin_element_tol: float | None = None
-    """The interior-element tolerance the margin is derived from; None keeps the fixture margin."""
+    """The interior-element tolerance the Section 5.1.1 margin of a resolved mode is derived from (``required_margin_under``);
+    None keeps the fixture margins, and the GATE_LOCAL walk then derives ``map_accuracy * 1e-5`` for its step spaces."""
     caps: Mapping[int, int] | None = None
     """Per mode, a Fock dimension that overrides the cap rule (mode index -> d)."""
     enr_group: tuple[Sequence[int], int] | None = None
     """(modes, N_exc): carry these modes as one excitation-number-restricted factor (Section 11.3 item 1)."""
     space: HilbertSpace | None = None
     """A declared joint space that replaces the selection of Section 5.2 entirely."""
+    # the collapse operators (Sections 3.4, 5.3)
+    lindblad_method: LindbladMethod = "auto"
+    """``mesolve`` (the density matrix), ``mcsolve`` (``ntraj`` quantum-jump trajectories per pure initial state) or
+    ``auto``, mesolve up to ``mesolve_dimension_max``."""
+    mesolve_dimension_max: int = 128
+    """The joint dimension up to which the density matrix is integrated under ``auto``."""
+    ntraj: int = 64
+    """Trajectories per pure initial state on the mcsolve path (a fixed keyed seed list)."""
+    improved_sampling: bool = True
+    """``mcsolve``'s no-jump trajectory as a deterministic member of weight p_no-jump, the stochastic ones carrying the rest,
+    so the mixture shots are drawn from is weighted (Section 5.3); applied when the run has exactly one trajectory segment."""
+    trajectory_target_tol: float | None = None
+    """The absolute tolerance ``mcsolve``'s ``target_tol`` targets on the population e_ops in phase one (Section 3.4), which
+    fixes the trajectory count phase two replays from a keyed seed list (under a serial map, capped by ``ntraj``, floored by
+    ``TARGET_TOL_MIN_TRAJECTORIES``). None keeps ``ntraj``: QuTiP's ``target_tol`` can stop on a zero-variance first batch
+    and its firing point depends on scheduling."""
+    # the GATE_LOCAL walk (Section 5.4)
+    map_accuracy: float = 1e-3
+    """epsilon_map of the tomography, a fraction in (0, 1) that keys its tolerances: ceil(1/epsilon_map) trajectories per
+    input on the trajectory path."""
+    crosstalk_threshold: float = 1e-3
+    """A neighbour receiving crosstalk with |epsilon| at or above this joins the gate-local space; below it the light is
+    dropped and its rotation sin^2(eps theta/2) added to the reported bound."""
+    register_dm_max_qubits: int = 12
+    """Carry the register as a density matrix up to this many qubits, as a pure-state ensemble above."""
+    register_ensemble: int = 64
+    """Members of the pure-state register ensemble."""
+    tomography_dropped_weight_max: float | None = None
+    """Total weight of the lightest motional branches a step may drop beyond ``branch_weight_min``, reported as the
+    diamond-norm bound 2w; None = ``map_accuracy / 4``, 0.0 keeps every branch above the floor."""
+    tomography_tolerance_keyed: bool = True
+    """Integrate a unitary step with resolved modes at atol = 1e-5 and rtol = 1e-3 of the map accuracy where the caller left
+    the defaults, and report the change a ten times tighter dominant branch makes."""
+    # the parallel maps (Section 11.3 item 9) and the two per-run counts that shape them
+    map: MapKind = "parallel"
+    """QuTiP's serial, ``multiprocessing`` (``parallel``) or ``loky`` map; ``serial`` runs in-process."""
+    workers: int | None = None
+    """Processes for the maps: None = every CPU QuTiP sees, capped by the memory rule; 1 = in-process."""
+    samples: int | None = None
+    """Dynamical samples per run; None = min(shots, 64) when the noise model has quasi-static content, else 1."""
+    addressing: bool | None = None
+    """Schedule single-qubit gates in parallel (Section 7.3); None = the device's ``HardwareChain.parallel_addressing``."""
 
     def __post_init__(self) -> None:
         if self.caps is not None:
@@ -114,149 +130,47 @@ class Truncation(_FromMapping):
             object.__setattr__(self, "enr_group", (tuple(int(m) for m in modes), int(n_exc)))
         if self.enr_group is not None and self.space is not None:
             raise ValueError("give the ENR group inside the supplied space or as enr_group, not both")
-        SolverOptions(**self._solver_fields())
-
-    def _solver_fields(self) -> dict[str, Any]:
-        return {k: v for k, v in self.asdict().items() if k not in ("caps", "enr_group", "space")}
-
-
-@dataclass(frozen=True)
-class Trajectories(_FromMapping):
-    """How collapse operators are integrated (Sections 3.4, 5.3): the density matrix or keyed quantum-jump trajectories."""
-
-    lindblad_method: LindbladMethod = "auto"
-    """``mesolve``, ``mcsolve``, or ``auto`` = mesolve up to ``mesolve_dimension_max``."""
-    mesolve_dimension_max: int = 128
-    """The joint dimension up to which the density matrix is integrated under ``auto``."""
-    ntraj: int = 64
-    """Trajectories per pure initial state on the mcsolve path (a fixed keyed seed list)."""
-    improved_sampling: bool = True
-    """The no-jump trajectory as a deterministic member of weight p_no-jump (Section 5.3)."""
-    trajectory_target_tol: float | None = None
-    """``mcsolve``'s ``target_tol`` on the population e_ops; None keeps the fixed ``ntraj``."""
-
-    def __post_init__(self) -> None:
-        SolverOptions(**self.asdict())
-
-
-@dataclass(frozen=True)
-class GateLocal(_FromMapping):
-    """The GATE_LOCAL walk of Section 5.4: the map accuracy, the neighbour rule, the register carrier, the tomography."""
-
-    map_accuracy: float = 1e-3
-    """The tolerance of the channel map; a fraction in (0, 1) that keys the tomography's tolerances."""
-    crosstalk_threshold: float = 1e-3
-    """The Rabi ratio |epsilon| at or above which a neighbour joins the gate-local space."""
-    register_dm_max_qubits: int = 12
-    """Carry the register as a density matrix up to this many qubits, as a pure-state ensemble above."""
-    register_ensemble: int = 64
-    """Members of the pure-state ensemble above ``register_dm_max_qubits``."""
-    tomography_dropped_weight_max: float | None = None
-    """The total motional-branch weight a step may drop (None = map_accuracy / 4; 0 keeps every branch)."""
-    tomography_tolerance_keyed: bool = True
-    """Integrate a unitary step with resolved modes at the tolerance the map accuracy warrants."""
-
-    def __post_init__(self) -> None:
-        SolverOptions(**self.asdict())
-
-
-@dataclass(frozen=True)
-class Parallel(_FromMapping):
-    """The parallel maps of Section 11.3 item 9 and the two per-run counts that shape them."""
-
-    map: MapKind = "parallel"
-    """QuTiP's serial, ``multiprocessing`` (``parallel``) or ``loky`` map."""
-    workers: int | None = None
-    """Processes for the maps; None = every CPU QuTiP sees, capped by the memory rule."""
-    samples: int | None = None
-    """Dynamical samples per run; None = min(shots, 64) when the noise model has quasi-static content, else 1."""
-    addressing: bool | None = None
-    """Schedule single-qubit gates in parallel (Section 7.3); None = the device's ``HardwareChain.parallel_addressing``."""
-
-    def __post_init__(self) -> None:
+        if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
+            raise ValueError("tolerances and nsteps must be positive")
+        if not self.integrators:
+            raise ValueError("at least one integrator is required")
+        bad = [name for name in self.integrators if name in MULTISTEP_INTEGRATORS]
+        if bad:
+            raise ValueError(f"multistep integrators are never used (Section 5.3): {bad}")
+        unknown = [name for name in self.integrators if name not in ALLOWED_INTEGRATORS]
+        if unknown:
+            raise ValueError(f"unknown QuTiP integrators: {unknown}")
+        if self.joint_dimension_max < 2 or self.nnz_max < 1:
+            raise ValueError("the size guards must be positive")
+        if self.mode_dimension_max < 2:
+            raise ValueError("mode_dimension_max is at least two Fock levels per resolved mode")
+        if not 0.0 < self.boundary_population_max < 1.0:
+            raise ValueError("boundary_population_max is a population fraction in (0, 1)")
+        if not 0.0 < self.freeze_alpha_max < 1.0 or not 0.0 < self.branch_weight_min < 1.0:
+            raise ValueError("freeze_alpha_max and branch_weight_min are fractions in (0, 1)")
+        if self.margin_element_tol is not None and self.margin_element_tol <= 0.0:
+            raise ValueError("margin_element_tol is a positive tolerance or None")
+        if self.ntraj < 1 or self.mesolve_dimension_max < 1:
+            raise ValueError("ntraj and mesolve_dimension_max are positive")
+        if not 0.0 < self.map_accuracy < 1.0 or not 0.0 <= self.crosstalk_threshold <= 1.0:
+            raise ValueError(
+                "map_accuracy is a fraction in (0, 1) and crosstalk_threshold a Rabi ratio in [0, 1]"
+            )
+        if self.register_dm_max_qubits < 1 or self.register_ensemble < 1:
+            raise ValueError("register_dm_max_qubits and register_ensemble are positive")
+        if (
+            self.tomography_dropped_weight_max is not None
+            and not 0.0 <= self.tomography_dropped_weight_max < 1.0
+        ):
+            raise ValueError("tomography_dropped_weight_max is a weight fraction in [0, 1) or None")
+        if self.workers is not None and self.workers < 1:
+            raise ValueError("workers is a positive process count or None (every CPU)")
         if self.samples is not None and self.samples < 1:
             raise ValueError("samples is a positive count or None")
-        SolverOptions(map=self.map, workers=self.workers)
 
 
 @dataclass(frozen=True)
-class Numerics(_FromMapping):
-    """How the integration is done, nested by concern; each group also accepts a mapping of its fields.
-    ``to_solver_options(physics)`` is the ``SolverOptions`` a run integrates with."""
-
-    integration: Integration = Integration()
-    """Tolerances, the escalation ladder and the propagator cache."""
-    truncation: Truncation = Truncation()
-    """The caps, the guards, the mode classes, the branch cutoff and any declared space."""
-    trajectories: Trajectories = Trajectories()
-    """The Lindblad method and the trajectory count."""
-    gate_local: GateLocal = GateLocal()
-    """The GATE_LOCAL walk's accuracy, neighbour rule, register carrier and tomography."""
-    parallel: Parallel = Parallel()
-    """The maps, the workers, the sample count and parallel addressing."""
-    convergence_check: bool = False
-    """Repeat the evolution at ten times tighter tolerances and report the change (Section 5.5)."""
-
-    def __post_init__(self) -> None:
-        for name, cls in (
-            ("integration", Integration),
-            ("truncation", Truncation),
-            ("trajectories", Trajectories),
-            ("gate_local", GateLocal),
-            ("parallel", Parallel),
-        ):
-            object.__setattr__(self, name, _group_from(cls, getattr(self, name), f"Numerics.{name}"))
-
-    def to_solver_options(self, physics: Physics | None = None) -> SolverOptions:
-        """The ``SolverOptions`` of a run: these numerics plus the four physics switches ``SolverOptions`` carries
-        (``scattering_channels``, ``scattering_recoil``, ``intensity_noise_channels``, ``hardware_chain``)."""
-        phys = physics if physics is not None else Physics()
-        return SolverOptions(
-            **self.integration.asdict(),
-            **self.truncation._solver_fields(),
-            **self.trajectories.asdict(),
-            **self.gate_local.asdict(),
-            map=self.parallel.map,
-            workers=self.parallel.workers,
-            convergence_check=self.convergence_check,
-            scattering_channels=(phys.scattering == "channels"),
-            scattering_recoil=phys.scattering_recoil,
-            intensity_noise_channels=phys.intensity_noise_channels,
-            hardware_chain=phys.hardware_chain,
-        )
-
-    @classmethod
-    def from_solver_options(
-        cls,
-        options: SolverOptions | None = None,
-        *,
-        caps: Mapping[int, int] | None = None,
-        space: HilbertSpace | None = None,
-        enr_group: tuple[Sequence[int], int] | None = None,
-        samples: int | None = None,
-        addressing: bool | None = None,
-    ) -> Numerics:
-        """The numerics a ``SolverOptions`` carries (None: the defaults; its physics switches go to
-        ``Physics.from_solver_options``), plus the explicit caps, a declared space, an ENR group, the sample count and the
-        parallel-addressing switch, which ``SolverOptions`` does not carry."""
-        opts = options if options is not None else SolverOptions()
-        d = dataclasses.asdict(opts)
-
-        def pick(group: type[DataclassInstance]) -> dict[str, Any]:
-            return {f.name: d[f.name] for f in dataclasses.fields(group) if f.name in d}
-
-        return cls(
-            integration=Integration(**pick(Integration)),
-            truncation=Truncation(**pick(Truncation), caps=caps, space=space, enr_group=enr_group),
-            trajectories=Trajectories(**pick(Trajectories)),
-            gate_local=GateLocal(**pick(GateLocal)),
-            parallel=Parallel(map=opts.map, workers=opts.workers, samples=samples, addressing=addressing),
-            convergence_check=opts.convergence_check,
-        )
-
-
-@dataclass(frozen=True)
-class Physics(_FromMapping):
+class Physics:
     """Which physical effects a run simulates: by default the device's noise, two register levels per ion, scattering as
     an estimate and the hardware chain."""
 
@@ -304,22 +218,9 @@ class Physics(_FromMapping):
             raise ValueError("scattering_recoil is 'off', 'minimal' or 'vector'")
         object.__setattr__(self, "extra_channels", tuple(self.extra_channels))
 
-    @classmethod
-    def from_solver_options(cls, options: SolverOptions | None = None, **fields: Any) -> Physics:
-        """The physics switches a ``SolverOptions`` carries (None: the defaults), plus any other ``Physics`` field as a
-        keyword (``noise=False``, ``entangler="zz"``, ...)."""
-        opts = options if options is not None else SolverOptions()
-        return cls(
-            scattering="channels" if opts.scattering_channels else "estimate",
-            scattering_recoil=opts.scattering_recoil,
-            intensity_noise_channels=opts.intensity_noise_channels,
-            hardware_chain=opts.hardware_chain,
-            **fields,
-        )
-
 
 @dataclass(frozen=True)
-class Readout(_FromMapping):
+class Readout:
     """How the photon record is read (Sections 5.7, 8.3): the fast POVM path or the full record, and the discriminator."""
 
     mode: ReadoutMode = "fast"

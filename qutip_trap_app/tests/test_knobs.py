@@ -263,7 +263,7 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
         record.job.circuit.to_core(),
         20,
         seed=record.job.seed,
-        options=live.options,
+        options=live.machine.numerics,
         detection_records=500,
         overrides=ref.overrides,
         preset=preset,

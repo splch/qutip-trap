@@ -44,8 +44,8 @@ from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
+    from qutip_trap.options import Numerics
 
 CROSSTALK_MIN = 1e-6
 """Rabi ratios below this are not stored (a beam of finite waist gives every ion some light)."""
@@ -139,16 +139,17 @@ def surrogate_table(
     spot_check: bool = True,
     detection_records: int = 10_000,
     detection_windows_s: Sequence[float] | None = None,
-    options: SolverOptions | None = None,
+    options: Numerics | None = None,
     builder_options: BuilderOptions | None = None,
-    caps: Mapping[int, int] | None = None,
+    hardware_chain: bool = True,
 ) -> SurrogateReport:
     """The surrogate CalibrationTable for ``device``: ``pairs`` restricts the entangling waveforms (default:
     every pair of the crystal), ``spot_check=False`` stores the closed-form waveforms as seeds, the explicit drive maps
-    override the device's roles."""
-    from qutip_trap.dynamics.engine import SolverOptions
+    override the device's roles; the spot checks integrate with ``options`` (its caps too) and play through the control
+    electronics under ``hardware_chain`` (``Physics.hardware_chain``)."""
+    from qutip_trap.options import Numerics
 
-    opts = options or SolverOptions()
+    opts = options or Numerics()
     drives, ent = resolve_drives(device, gate_drives, entangling_drives)
     crystal = device.crystal
     n = crystal.n_ions
@@ -272,7 +273,7 @@ def surrogate_table(
             freeze_alpha_max=opts.freeze_alpha_max,
             freeze_chi_max_rad=opts.freeze_chi_max_rad,
             tail=opts.boundary_population_max,
-            caps=caps,
+            caps=opts.caps,
         )
         space, classes = space_for()
         classes_by_pair[(a, b)] = classes
@@ -305,6 +306,7 @@ def surrogate_table(
                 chi_target_rad=CHI_MAXIMAL_RAD,
                 options=opts,
                 builder_options=builder_options,
+                hardware_chain=hardware_chain,
             )
             runs[(a, b)] = run
             ms[(a, b)] = run.waveform

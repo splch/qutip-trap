@@ -143,11 +143,10 @@ class JobSpec:
     gate_drives: dict[int, DriveRef]
     entangling_drives: dict[int, DriveRef]
     calibration: CalibrationRef
-    options: core.SolverOptions
+    options: core.Numerics
+    """The numerics the run integrates with, its explicit Fock caps too (None lets the Section 5.5 cap rule decide)."""
     level: FidelityLevelRequest = "auto"
     readout: Literal["fast", "full"] = "fast"
-    caps: dict[int, int] | None = None
-    """Explicit Fock caps per mode; None lets the Section 5.5 cap rule decide."""
     waveform_overrides: dict[str, float] = field(default_factory=dict)
     """A detuning set by hand at Level 2 (Section 14.4): per entangling pair ``"a,b"``, the beat-note offset in Hz added to
     every blue leg and subtracted from every red leg of the pair's calibrated waveform, which the scheduler plays as written."""
@@ -156,23 +155,20 @@ class JobSpec:
     label: str = ""
     """A name for the job when a preset or an exercise made it."""
 
-    def solver_options(self) -> core.SolverOptions:
-        return self.options
-
     def machine(self, device: core.Device, table: core.CalibrationTable | None = None) -> core.Machine:
-        """The ``Machine`` this job runs on: the device (which carries the drive roles), the table and the job's options."""
+        """The ``Machine`` this job runs on: the device (which carries the drive roles), the table, the job's numerics and
+        the default physics."""
         return core.Machine(
             device,
             table=table,
-            physics=core.Physics.from_solver_options(self.options),
-            numerics=core.Numerics.from_solver_options(self.options, caps=self.caps),
+            numerics=self.options,
             readout=core.Readout(mode=self.readout),
             level=core.FidelityLevel(self.level),
         )
 
 
-def options_digest(options: core.SolverOptions) -> str:
-    """A short stable digest of the solver options, for cache keys."""
+def options_digest(options: core.Numerics) -> str:
+    """A short stable digest of the numerics, for cache keys."""
     return hashlib.sha256(dumps(encode(options, {}))).hexdigest()[:16]
 
 
@@ -193,7 +189,7 @@ def job_for_preset(
     shots: int,
     *,
     seed: int = 0,
-    options: core.SolverOptions | None = None,
+    options: core.Numerics | None = None,
     pairs: Sequence[tuple[int, int]] | None = None,
     detection_records: int = 2000,
     detection_windows_s: Sequence[float] = DEFAULT_DETECTION_WINDOWS_S,
@@ -228,7 +224,7 @@ def job_for_preset(
             detection_records=int(detection_records),
             detection_windows_s=tuple(float(w) for w in detection_windows_s),
         ),
-        options=options or core.SolverOptions(),
+        options=options or core.Numerics(),
         **run_fields,
     )
     return (job if preset is None else complete_job(job, preset)), preset
@@ -629,7 +625,7 @@ class DiagnosticsRecord:
     shots_per_sample_realized: tuple[int, ...]
     boundary_population: dict[int, float]
     boundary_population_max: float
-    """The policy threshold the run was judged against (``SolverOptions.boundary_population_max``)."""
+    """The policy threshold the run was judged against (``Numerics.boundary_population_max``)."""
     margin_levels: dict[int, int]
     margin_reached: dict[int, int]
     dropped_branch_weight: float
@@ -1375,7 +1371,7 @@ def results_record(result: core.Result, circuit: core.Circuit) -> ResultsRecord:
 
 
 def diagnostics_record(
-    diag: core.Diagnostics, options: core.SolverOptions, wall_time_s: float
+    diag: core.Diagnostics, options: core.Numerics, wall_time_s: float
 ) -> DiagnosticsRecord:
     conv = None
     if diag.convergence is not None:
@@ -1493,7 +1489,8 @@ class LiveRun:
     table: core.CalibrationTable
     result: core.Result
     core_record: core.RunRecord
-    options: core.SolverOptions
+    machine: core.Machine
+    """The machine the run ran on: its numerics and the engine it built (``Machine.engine``)."""
 
     @property
     def space(self) -> core.HilbertSpace:
@@ -1588,12 +1585,13 @@ def execute(
     if pre.device.hash() != job.device.hash:
         raise RecordError("the preset given does not match the job's device hash")
     table = calibrate_for(job, pre.device)
-    result = job.machine(pre.device, table).run(
+    machine = job.machine(pre.device, table)
+    result = machine.run(
         job.circuit.to_core(),
         job.shots,
         seed=job.seed,
         keep_final_state=True,
         progress=progress,
     )
-    live = LiveRun(pre.device, table, result, core.last_record(result), job.options)
+    live = LiveRun(pre.device, table, result, core.last_record(result), machine)
     return build_record(job, pre.device, table, result), live

@@ -38,8 +38,8 @@ from qutip_trap.experiments.single_ion import _WEIGHT_MIN, _Lab, _LabOptions, _P
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.machine import Machine
+    from qutip_trap.options import Numerics
 
 
 def _sideband_pi_time_s(rabi_hz: float, eta: float) -> float:
@@ -326,12 +326,12 @@ def mode_spectroscopy(
     )
 
 
-def _density_matrix_options(options: SolverOptions | None) -> SolverOptions:
+def _density_matrix_options(options: Numerics | None) -> Numerics:
     """``options`` (or the defaults) integrating by ``mesolve`` at any dimension: a thermal density matrix cannot take
     the trajectory route."""
-    from qutip_trap.dynamics.engine import SolverOptions
+    from qutip_trap.options import Numerics
 
-    base = options if options is not None else SolverOptions()
+    base = options if options is not None else Numerics()
     return replace(
         base, lindblad_method="mesolve", mesolve_dimension_max=max(int(base.mesolve_dimension_max), 1_000_000)
     )

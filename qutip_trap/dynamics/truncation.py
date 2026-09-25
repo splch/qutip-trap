@@ -18,7 +18,7 @@ from qutip_trap.dynamics.space import HilbertSpace
 
 
 class TruncationWarning(UserWarning):
-    """A truncation the run could not make exact: a cap clamped by ``SolverOptions.mode_dimension_max``, or a boundary
+    """A truncation the run could not make exact: a cap clamped by ``Numerics.mode_dimension_max``, or a boundary
     population above ``boundary_population_max`` after the cap-raising retries."""
 
 

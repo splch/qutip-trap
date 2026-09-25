@@ -79,7 +79,7 @@ def selection(store: Store, record: Record, pulse_param: str, sample_param: str)
 def current_zoom(record: Record, step: int, sample: int, branch: int) -> tuple[ZoomTrace | None, bool]:
     """The fine zoom when cached, else the recorded coarse trace; (None, False) when the record stores no trace (a derived
     or GATE_LOCAL run)."""
-    key = resim.zoom_key(step, sample, branch, resim.DEFAULT_ZOOM_POINTS, record.job.solver_options())
+    key = resim.zoom_key(step, sample, branch, resim.DEFAULT_ZOOM_POINTS, record.job.options)
     z = record.zoom(key)
     if z is not None:
         return z, True

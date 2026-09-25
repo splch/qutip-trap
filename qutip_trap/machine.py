@@ -177,23 +177,20 @@ class Machine:
 
         prefix = compile_calibrate_schedule(self, circuit, seed=seed)
         device = prefix.device
-        opts = prefix.options
+        opts = self.numerics
         prep_run = run_preparation(
             device, recipe_of(device, raman_pair=_raman_pair_hint(prefix.entangling_drives))
         )
-        tr = self.numerics.truncation
-        if tr.space is None:
+        if opts.space is None:
             selection = select_space(
                 device,
                 prefix.schedule,
                 opts,
                 nbar=prep_run.nbar,
-                caps=tr.caps,
                 ion_dims=[int(self.physics.internal_levels)] * device.crystal.n_ions,
-                enr=tr.enr_group,
             )
         else:
-            selection = SpaceSelection.supplied(tr.space, opts, prep_run.nbar, len(device.crystal.modes))
+            selection = SpaceSelection.supplied(opts.space, opts, prep_run.nbar, len(device.crystal.modes))
         decision = decide_level(selection.budget, opts, self.level)
         sched = prefix.schedule
         return Estimate(
@@ -212,16 +209,20 @@ class Machine:
 
     @property
     def engine(self) -> JointExactEngine:
-        """A ``JointExactEngine`` configured from the machine: the builder options, extra channels, device channels and
-        hardware chain of ``physics`` and the machine's table; ``run_pulses`` takes ``numerics.to_solver_options(physics)``.
-        Not the engine a run builds, which also carries the qubit-frequency shifts and the leakage level maps."""
+        """A ``JointExactEngine`` configured from the machine: the builder options, extra channels, device channels, hardware
+        chain and channel switches of ``physics`` and the machine's table; ``run_pulses`` takes ``numerics``. Not the engine a
+        run builds, which also carries the qubit-frequency shifts and the leakage level maps."""
         from qutip_trap.dynamics.engine import JointExactEngine
 
+        phys = self.physics
         return JointExactEngine(
-            builder_options=self.physics.builder,
-            channels=tuple(self.physics.extra_channels),
-            device_channels=bool(self.physics.noise),
-            hardware_chain=bool(self.physics.hardware_chain),
+            builder_options=phys.builder,
+            channels=tuple(phys.extra_channels),
+            device_channels=bool(phys.noise),
+            hardware_chain=bool(phys.hardware_chain),
+            scattering_channels=phys.scattering == "channels",
+            scattering_recoil=phys.scattering_recoil,
+            intensity_noise_channels=bool(phys.intensity_noise_channels),
             table=self.table,
         )
 

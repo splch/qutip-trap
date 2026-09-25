@@ -17,7 +17,7 @@ from qutip.settings import available_cpu_count
 from qutip.solver.parallel import loky_pmap, parallel_map
 
 if TYPE_CHECKING:
-    from qutip_trap.dynamics.engine import SolverOptions
+    from qutip_trap.options import Numerics
 
 MapKind = Literal["serial", "parallel", "loky"]
 
@@ -26,7 +26,7 @@ MEMORY_FRACTION_FOR_WORKERS = 0.5
 MIN_PARENT_BYTES = 512 * 1024**2
 """The smallest parent footprint the memory cap reckons with, so a fresh process still gets every CPU."""
 WORKERS_ENV = "QUTIP_TRAP_MAX_WORKERS"
-"""Environment cap on the default worker count (``SolverOptions.workers = None``); an explicit ``workers`` is not capped.
+"""Environment cap on the default worker count (``Numerics.workers = None``); an explicit ``workers`` is not capped.
 A process that already runs beside others (a pytest-xdist worker) sets it to 1."""
 
 
@@ -52,7 +52,7 @@ def memory_worker_cap() -> int:
     return max(1, int(MEMORY_FRACTION_FOR_WORKERS * physical_memory_bytes() // parent))
 
 
-def worker_count(options: SolverOptions) -> int:
+def worker_count(options: Numerics) -> int:
     """The processes the maps may use: 1 under ``map="serial"``, else ``options.workers`` or every CPU QuTiP sees capped by
     ``WORKERS_ENV``, never more than ``memory_worker_cap()``."""
     if options.map == "serial":

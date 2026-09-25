@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from qutip_trap.run.job import RunRecord
     from qutip_trap.run.results import Progress, Result
 
-SPEC_SCHEMA_VERSION = 1
+SPEC_SCHEMA_VERSION = 2
 """The ``schema_version`` ``RunSpec.to_dict`` writes."""
 
 JobStatus = Literal["queued", "running", "done", "failed", "cancelled"]
@@ -105,8 +105,8 @@ class RunSpec:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """The spec as plain JSON-able values (schema version 1): tuples become lists and integer keys strings. A
-        ``Physics.extra_channels`` with collapse operators, a ``Numerics.truncation.space`` or a ``Readout.discriminator``
+        """The spec as plain JSON-able values (``SPEC_SCHEMA_VERSION``): tuples become lists and integer keys strings. A
+        ``Physics.extra_channels`` with collapse operators, a ``Numerics.space`` or a ``Readout.discriminator``
         object is refused by name, because the record cannot carry it."""
         from qutip_trap import __version__
 
@@ -219,7 +219,7 @@ def _physics_to_dict(physics: Physics) -> dict[str, Any]:
         raise ValueError(
             "RunSpec.to_dict: Physics.extra_channels holds collapse operators (Qobj), which the record cannot carry"
         )
-    out = physics.asdict()
+    out = _fields(physics)
     out["extra_channels"] = []
     out["builder"] = None if physics.builder is None else _builder_to_dict(physics.builder)
     return out
@@ -229,42 +229,35 @@ def _physics_from_dict(d: Mapping[str, Any]) -> Physics:
     fields = dict(d)
     fields["extra_channels"] = ()
     fields["builder"] = None if fields["builder"] is None else _builder_from_dict(fields["builder"])
-    return Physics.from_mapping(fields)
+    return Physics(**fields)
+
+
+def _fields(obj: Physics | Numerics) -> dict[str, Any]:
+    return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
 
 
 def _numerics_to_dict(numerics: Numerics) -> dict[str, Any]:
-    tr = numerics.truncation
-    if tr.space is not None:
+    if numerics.space is not None:
         raise ValueError(
-            "RunSpec.to_dict: Numerics.truncation.space is a declared HilbertSpace, which the record cannot carry; give "
-            "caps or an enr_group and let the run select the space"
+            "RunSpec.to_dict: Numerics.space is a declared HilbertSpace, which the record cannot carry; give caps or an "
+            "enr_group and let the run select the space"
         )
-    out: dict[str, Any] = {
-        "integration": numerics.integration.asdict(),
-        "truncation": tr.asdict(),
-        "trajectories": numerics.trajectories.asdict(),
-        "gate_local": numerics.gate_local.asdict(),
-        "parallel": numerics.parallel.asdict(),
-        "convergence_check": numerics.convergence_check,
-    }
-    out["integration"]["integrators"] = [str(x) for x in numerics.integration.integrators]
-    out["truncation"]["caps"] = None if tr.caps is None else {str(int(m)): int(v) for m, v in tr.caps.items()}
-    out["truncation"]["enr_group"] = (
-        None if tr.enr_group is None else [[int(m) for m in tr.enr_group[0]], int(tr.enr_group[1])]
-    )
+    out = _fields(numerics)
+    out["integrators"] = [str(x) for x in numerics.integrators]
+    out["caps"] = None if numerics.caps is None else {str(int(m)): int(v) for m, v in numerics.caps.items()}
+    enr = numerics.enr_group
+    out["enr_group"] = None if enr is None else [[int(m) for m in enr[0]], int(enr[1])]
     return out
 
 
 def _numerics_from_dict(d: Mapping[str, Any]) -> Numerics:
-    fields = {k: (dict(v) if isinstance(v, Mapping) else v) for k, v in dict(d).items()}
-    integration = fields["integration"]
-    integration["integrators"] = tuple(str(x) for x in integration["integrators"])
-    truncation = fields["truncation"]
-    caps = truncation["caps"]
-    truncation["caps"] = None if caps is None else {int(m): int(v) for m, v in dict(caps).items()}
-    enr = truncation["enr_group"]
-    truncation["enr_group"] = None if enr is None else (tuple(int(m) for m in enr[0]), int(enr[1]))
-    return Numerics.from_mapping(fields)
+    fields = dict(d)
+    fields["integrators"] = tuple(str(x) for x in fields["integrators"])
+    caps = fields["caps"]
+    fields["caps"] = None if caps is None else {int(m): int(v) for m, v in dict(caps).items()}
+    enr = fields["enr_group"]
+    fields["enr_group"] = None if enr is None else (tuple(int(m) for m in enr[0]), int(enr[1]))
+    return Numerics(**fields)
 
 
 def _readout_to_dict(readout: Readout) -> dict[str, Any]:

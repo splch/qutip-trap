@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from qutip_trap.control.schedule import PlayedGate, Schedule
     from qutip_trap.control.table import Waveform
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.engine import SolverOptions
+    from qutip_trap.options import Numerics
 
 ModeClass3 = Literal["resolved", "frozen", "dropped", "enr"]
 """The three classes of Section 5.2 plus ``enr``, the class of a mode carried in the ENR group."""
@@ -176,7 +176,7 @@ class SpaceSelection:
 
     @classmethod
     def supplied(
-        cls, space: HilbertSpace, options: SolverOptions, nbar: Mapping[int, float], n_modes: int
+        cls, space: HilbertSpace, options: Numerics, nbar: Mapping[int, float], n_modes: int
     ) -> SpaceSelection:
         """The selection of a space the caller declared: its own classes (a mode in ``space.dropped`` is dropped), no
         contributions, the prepared occupations."""
@@ -326,18 +326,18 @@ def frozen_excitation_bounds(
 def select_space(
     device: Device,
     schedule: Schedule,
-    options: SolverOptions,
+    options: Numerics,
     *,
     nbar: Mapping[int, float] | None = None,
-    caps: Mapping[int, int] | None = None,
     ion_dims: Sequence[int] | None = None,
-    enr: tuple[Sequence[int], int] | None = None,
 ) -> SpaceSelection:
     """Classify every mode for ``schedule`` and declare the product space of the resolved ones (Sections 5.2, 5.5).
 
-    ``caps`` override the cap rule per mode; where the rule wants more than ``options.mode_dimension_max`` the clamp warns
-    and is named in ``notes``. ``enr`` = (modes, N_exc) carries the named modes as one ENR factor whatever their criterion
-    class, with a note for a mode the criterion would resolve (the top ENR shell is then its boundary, Section 5.1)."""
+    ``options.caps`` override the cap rule per mode; where the rule wants more than ``options.mode_dimension_max`` the clamp
+    warns and is named in ``notes``. ``options.enr_group`` = (modes, N_exc) carries the named modes as one ENR factor
+    whatever their criterion class, with a note for a mode the criterion would resolve (the top ENR shell is then its
+    boundary, Section 5.1)."""
+    caps, enr = options.caps, options.enr_group
     d_ceiling = int(options.mode_dimension_max)
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)

@@ -264,7 +264,7 @@ def replay(
     if progress:
         progress("preparing", 0.1, "the preparation recipe and the mode classes")
     prep = preparation_for(job, device)
-    selection = core.select_space(device, sched, opts, nbar=prep.nbar, caps=job.caps, ion_dims=[2] * n)
+    selection = core.select_space(device, sched, opts, nbar=prep.nbar, ion_dims=[2] * n)
     targets = sorted(sched.targets, key=lambda t: (t.t_start_s, t.gate_id))
     # the initial register: every ion pumped to |0> with its preparation error in |1> (Section 4.2.6)
     rho = np.array([[1.0 + 0.0j]])

@@ -10,7 +10,7 @@ import os
 import pytest
 from fixtures import BELL, FAST, SEED, SHOTS
 
-from qutip_trap_app.core import SolverOptions
+from qutip_trap_app.core import Numerics
 from qutip_trap_app.record import LiveRun, Record, execute, job_for_preset
 from qutip_trap_app.replay import ChannelLibrary, replay
 
@@ -38,7 +38,7 @@ def bell() -> tuple[Record, LiveRun]:
 def bell_gate_local() -> tuple[Record, LiveRun]:
     """The same job routed to GATE_LOCAL by a joint-dimension guard far below the Bell run's dimension (Section 11.5): the
     record stores step channels and no trace, the case a three-qubit circuit meets on the full engine (about 4 s)."""
-    options = SolverOptions(branch_weight_min=1e-3, joint_dimension_max=8)
+    options = Numerics(branch_weight_min=1e-3, joint_dimension_max=8)
     job, preset = job_for_preset(
         "yb171_chain", 2, BELL, SHOTS, seed=SEED, options=options, detection_records=500
     )
@@ -49,9 +49,11 @@ def bell_gate_local() -> tuple[Record, LiveRun]:
 def under_truncated() -> tuple[Record, LiveRun]:
     """The same job with the two gate modes capped far below what the pulse populates, and the monitor told not to trip
     (an under-truncated run turns the badge red)."""
-    options = SolverOptions(branch_weight_min=1e-3, boundary_population_max=0.5, margin_check=False)
+    options = Numerics(
+        branch_weight_min=1e-3, boundary_population_max=0.5, margin_check=False, caps={2: 4, 3: 4}
+    )
     job, preset = job_for_preset(
-        "yb171_chain", 2, BELL, SHOTS, seed=SEED, options=options, detection_records=500, caps={2: 4, 3: 4}
+        "yb171_chain", 2, BELL, SHOTS, seed=SEED, options=options, detection_records=500
     )
     return execute(job, preset)
 

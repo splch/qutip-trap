@@ -31,9 +31,9 @@ if TYPE_CHECKING:
     from qutip_trap.control.shaping import GateModes
     from qutip_trap.control.table import CalibrationTable, Waveform
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
+    from qutip_trap.options import Numerics
 
 
 class _GateSetup(NamedTuple):
@@ -98,11 +98,11 @@ def _gate_lab(
     return lab, _entangling_setup(lab.device, pair, setup)
 
 
-def _solver_options(lab: _Lab) -> SolverOptions:
+def _solver_options(lab: _Lab) -> Numerics:
     """The lab's solver options, else the defaults with the thermal branches of the initial mixture cut at 1e-3."""
-    from qutip_trap.dynamics.engine import SolverOptions
+    from qutip_trap.options import Numerics
 
-    return lab.options if lab.options is not None else SolverOptions(branch_weight_min=1e-3)
+    return lab.options if lab.options is not None else Numerics(branch_weight_min=1e-3)
 
 
 def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, int]) -> GateCheck:
@@ -119,6 +119,7 @@ def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, i
         nbar=lab.nbar,
         options=_solver_options(lab),
         builder_options=lab.builder,
+        hardware_chain=lab.physics.hardware_chain,
         sample=lab.sample,
         qubit_shifts_hz=lab.qubit_shifts_hz,
     )
@@ -156,6 +157,7 @@ def _parity_populations(
         nbar=lab.nbar,
         options=_solver_options(lab),
         builder_options=lab.builder,
+        hardware_chain=lab.physics.hardware_chain,
         sample=lab.sample,
         analysis_drives=g.single,
         analysis_stark_hz=stark,

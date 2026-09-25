@@ -7,8 +7,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.dynamics.space import HilbertSpace
+    from qutip_trap.options import Numerics
 
 
 class FidelityLevel(StrEnum):
@@ -62,7 +62,7 @@ class LevelDecision:
         )
 
 
-def within_budget(space: HilbertSpace, options: SolverOptions) -> Budget:
+def within_budget(space: HilbertSpace, options: Numerics) -> Budget:
     """The guards on a DECLARED space: both numbers are arithmetic on its dimensions and a ``HilbertSpace`` allocates no
     operator when constructed, so the verdict comes before anything is built."""
     from qutip_trap.run.space import drive_operator_nonzeros
@@ -72,7 +72,7 @@ def within_budget(space: HilbertSpace, options: SolverOptions) -> Budget:
     return Budget(dim <= options.joint_dimension_max and nnz <= options.nnz_max, dim, nnz)
 
 
-def decide_level(budget: Budget, options: SolverOptions, policy: FidelityLevel) -> LevelDecision:
+def decide_level(budget: Budget, options: Numerics, policy: FidelityLevel) -> LevelDecision:
     """The level ``policy`` runs at on a space with this ``budget``: the forced level, or AUTO's verdict."""
     auto = FidelityLevel.JOINT_EXACT if budget.inside else FidelityLevel.GATE_LOCAL
     forced = policy is not FidelityLevel.AUTO

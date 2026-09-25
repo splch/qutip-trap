@@ -18,7 +18,7 @@ from typing import Any, Literal, assert_never, get_args
 
 import flet as ft
 
-from qutip_trap_app.core import Circuit, SolverOptions
+from qutip_trap_app.core import Circuit, Numerics
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import ConvergenceRecord, DeviceRef, JobSpec, Record, TableRecord, job_for_preset
@@ -76,7 +76,7 @@ BELL_QASM = (
 DEVICE_PRESET = "yb171_chain"
 """The public preset every job runs on (the Level 4 knobs edit it)."""
 
-FAST_OPTIONS = SolverOptions(branch_weight_min=1e-3)
+FAST_OPTIONS = Numerics(branch_weight_min=1e-3)
 """The options every job the app submits uses (the Section 9.6 fixture rule's fast setting)."""
 
 UNDO_DEPTH = 30

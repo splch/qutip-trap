@@ -17,14 +17,14 @@ import numpy as np
 import qutip as qt
 from qutip.solver.integrator import IntegratorException
 
-from qutip_trap.dynamics.engine import SolverOptions
+from qutip_trap.options import Numerics
 
 LARGE_MODE_DIMENSION = 100
 """Above this per-mode dimension the default atol relaxes to ``LARGE_MODE_ATOL`` (dop853 aborts as 'probably stiff' at
 d_m = 121 with atol 1e-10)."""
 LARGE_MODE_ATOL = 1e-8
 """The relaxed atol above ``LARGE_MODE_DIMENSION``; an atol the caller chose is kept."""
-_DEFAULT_ATOL = SolverOptions().atol
+_DEFAULT_ATOL = Numerics().atol
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,7 @@ def evolve(
     *,
     c_ops: Sequence[qt.Qobj] = (),
     e_ops: Mapping[str, qt.Qobj] | None = None,
-    options: SolverOptions | None = None,
+    options: Numerics | None = None,
     omega_max_rad_s: float | None = None,
     largest_mode_dimension: int | None = None,
     propagator: bool = False,
@@ -92,7 +92,7 @@ def evolve(
     ``propagator=True`` integrates an operator-valued ``state0`` (the identity) under ``sesolve``, so the stored states are
     the propagators U(t, t_0). Only the integrator's own ``IntegratorException`` escalates; anything else propagates.
     """
-    opts = options or SolverOptions()
+    opts = options or Numerics()
     times = np.asarray(times_s, dtype=float)
     if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
         raise ValueError("times_s must be an increasing array with at least two points")
@@ -133,7 +133,7 @@ def evolve(
     )
 
 
-def tightened(options: SolverOptions, factor: float = 10.0) -> SolverOptions:
+def tightened(options: Numerics, factor: float = 10.0) -> Numerics:
     """``options`` with both atol and rtol divided by ``factor``: the Section 5.5 convergence companion."""
     return replace(options, atol=options.atol / factor, rtol=options.rtol / factor)
 
@@ -168,8 +168,8 @@ class ConvergenceReport:
 
 
 def convergence_check(
-    run: Callable[[SolverOptions], Mapping[str, np.ndarray]],
-    options: SolverOptions | None = None,
+    run: Callable[[Numerics], Mapping[str, np.ndarray]],
+    options: Numerics | None = None,
     *,
     factor: float = 10.0,
     tol: float = 1e-6,
@@ -178,7 +178,7 @@ def convergence_check(
     returns the observable traces of one integration."""
     if factor <= 1.0:
         raise ValueError("the tightening factor exceeds one")
-    opts = options or SolverOptions()
+    opts = options or Numerics()
     tight = tightened(opts, factor)
     a = run(opts)
     b = run(tight)
