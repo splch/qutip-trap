@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 def _sideband_pi_time_s(rabi_hz: float, eta: float) -> float:
     """pi/(Omega eta e^{-eta^2/2}): the blue-sideband pi time out of |n = 0> (the exact n = 0 -> 1 matrix element)."""
-    from qutip_trap.hilbert.operators import rabi_matrix_element
+    from qutip_trap.dynamics.operators import rabi_matrix_element
 
     return math.pi / (TWO_PI * rabi_hz * rabi_matrix_element(1, 0, eta))
 
@@ -358,8 +358,8 @@ def heating_rate(
     P_bsb); fitted ndot_per_s and nbar0 (the intercept)."""
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
-    from qutip_trap.hilbert.operators import required_margin
-    from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+    from qutip_trap.dynamics.operators import required_margin
+    from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
     from qutip_trap.prep.recipe import preparation_occupations
 
     lab = _Lab.of(machine, kw)

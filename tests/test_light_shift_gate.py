@@ -32,7 +32,7 @@ from qutip_trap.control.table import CalEntry, Segment, Waveform
 from qutip_trap.device.model import BeamRoles, Device, Field, GradientField
 from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.microwave import (
     derive_gradient_drive,

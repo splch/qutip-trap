@@ -13,7 +13,7 @@ import pytest
 import qutip_trap
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.dynamics.engine import SolverOptions
-from qutip_trap.hilbert.space import ModeTruncation
+from qutip_trap.dynamics.space import ModeTruncation
 from tests.fixtures import (
     make_calibration_table,
     make_crystal,

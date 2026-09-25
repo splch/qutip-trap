@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from scipy.special import eval_genlaguerre, factorial
 
-from qutip_trap.hilbert.operators import displacement_element_analytic
+from qutip_trap.dynamics.operators import displacement_element_analytic
 from qutip_trap.light.bloch import CoolingError
 from qutip_trap.prep.closed_forms import (
     doppler_force_energy_j,

@@ -16,8 +16,8 @@ from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, schedule
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import apply_kraus_dm, kraus_operators
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics

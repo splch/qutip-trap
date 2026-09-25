@@ -19,7 +19,7 @@ from qutip_trap.control.schedule import (
 )
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.frames import PhaseFrame
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive
 from qutip_trap.noise.sampling import quiet_sample
 from tests.m2_fixtures import microwave_device, single_ion_raman_device, table_with_rabi

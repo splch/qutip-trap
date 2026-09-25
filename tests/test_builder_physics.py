@@ -22,8 +22,8 @@ from qutip_trap.dynamics.hamiltonian import (
     build_hamiltonian,
     interaction_picture,
 )
-from qutip_trap.hilbert.operators import debye_waller_factor, rabi_matrix_element, thermal_populations
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.operators import debye_waller_factor, rabi_matrix_element, thermal_populations
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import (

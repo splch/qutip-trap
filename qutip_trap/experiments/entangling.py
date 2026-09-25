@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable, Waveform
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.engine import SolverOptions
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
 
 

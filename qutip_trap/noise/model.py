@@ -59,7 +59,7 @@ from qutip_trap.units import E_C, GAUSS_PER_TESLA, TWO_PI
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.channels import CollapseOp
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
 
 RF_DERIVED_FAMILIES = ("transverse_1", "transverse_2")
 """The mode families whose frequencies follow the rf amplitude."""

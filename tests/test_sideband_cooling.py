@@ -11,7 +11,7 @@ import pytest
 from scipy.optimize import brentq
 from scipy.special import eval_genlaguerre
 
-from qutip_trap.hilbert.operators import rabi_matrix_element
+from qutip_trap.dynamics.operators import rabi_matrix_element
 from qutip_trap.light.recoil import minimal_quadrature
 from qutip_trap.prep.sideband import (
     SidebandPulse,

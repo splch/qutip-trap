@@ -33,7 +33,7 @@ from qutip_trap.readout.fluorescence import CLASSES, ReadoutClass, ReadoutScheme
 
 if TYPE_CHECKING:
     from qutip_trap.dynamics.engine import SeedSpec, State
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
 
 
 @dataclass(frozen=True)

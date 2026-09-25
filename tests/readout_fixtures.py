@@ -15,7 +15,7 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.device.model import Device, Field
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.bloch import beam_for_transition
 from qutip_trap.readout.detection import Detector, RecordModel

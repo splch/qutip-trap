@@ -14,7 +14,7 @@ from typing import Literal
 import qutip as qt
 
 from qutip_trap.dynamics.engine import State
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.prep.doppler import DopplerResult
 from qutip_trap.prep.pumping import PumpingResult
 

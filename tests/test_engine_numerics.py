@@ -28,9 +28,9 @@ from qutip_trap.dynamics.evolve import (
     tightened,
 )
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, interaction_picture
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.truncation import regrid_state
 from qutip_trap.experiments.single_ion import ramsey
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
-from qutip_trap.hilbert.truncation import regrid_state
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample

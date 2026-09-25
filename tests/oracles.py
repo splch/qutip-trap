@@ -10,7 +10,7 @@ import qutip as qt
 from scipy.special import eval_genlaguerre, jn_zeros, jv
 
 from qutip_trap.device.model import Device
-from qutip_trap.hilbert.operators import displacement_element_analytic
+from qutip_trap.dynamics.operators import displacement_element_analytic
 from qutip_trap.light.raman import scattering_budget
 from qutip_trap.units import C_M_PER_S, TWO_PI
 
@@ -276,7 +276,7 @@ def frozen_thermal_population(
     omega_rad_s: float, eta: float, nbar: float, t_s: float, *, n_max: int | None = None
 ) -> float:
     """sum_n P_n sin^2(Omega_n t/2) with Omega_n = Omega e^{-eta^2/2} L_n(eta^2): the carrier under a frozen thermal spectator."""
-    from qutip_trap.hilbert.operators import thermal_populations
+    from qutip_trap.dynamics.operators import thermal_populations
 
     if n_max is None:
         n_max = int(60 + 40 * nbar)

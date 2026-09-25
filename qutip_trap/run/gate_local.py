@@ -38,6 +38,8 @@ from qutip_trap.dynamics.engine import (
     SolverOptions,
     required_margin_under,
 )
+from qutip_trap.dynamics.operators import displacement_leakage
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import (
     TomographyRecord,
     TomographyRoute,
@@ -48,10 +50,8 @@ from qutip_trap.dynamics.tomography import (
     fingerprint_sample,
     local_ideal,
 )
+from qutip_trap.dynamics.truncation import warn_cap_clamped
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.hilbert.operators import displacement_leakage
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
-from qutip_trap.hilbert.truncation import warn_cap_clamped
 from qutip_trap.run.space import (
     _D_MIN,
     ModeClass3,

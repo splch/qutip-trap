@@ -82,18 +82,19 @@ qutip_trap/
   units.py         units, CODATA constants, the Hz / rad/s boundary (5.6)
   hashing.py       canonical serialization and digests (3.3)
   provenance.py    provenance tags and the ledger reader (14.5)
+  published.py     the closed forms of the published experiments the app's presets compare against (9)
   species/         one table per isotope, every number cited; the angular-momentum layer that derives everything
                    hyperfine-resolved: wigner, zeeman, dipole, polarization, raman, quadrupole, metastable (4.5)
   trap/            Trap record, Mathieu and Floquet, micromotion, pseudopotential, surface electrodes, crystal and
                    modes, anharmonic couplings, heating (4.1)
   light/           beams and beam roles, derived Raman and microwave drives, comb drives, the optical-Bloch
-                   scattering-rate object, recoil, scattering and Stark shifts (4.2.8, 4.3, 4.5.4, 4.5.5)
-  hilbert/         the composite space with the ENR option, cached and displacement operators, truncation (5.1, 5.5)
+                   scattering-rate object, recoil (4.2.8, 4.3, 4.5.4, 4.5.5)
   control/         native gates, the circuit IR and compiler, KAK, pulses, the scheduler, the calibration table,
                    pulse shaping, composite pulses, the played and hardware chains (4.3.5, 4.4.3, 7)
-  dynamics/        the one Hamiltonian builder and its multi-level mode, collapse operators, solvers, the JOINT_EXACT
-                   engine, frames, the exact rotating frame, the factorized kernel, steady states, parallel maps,
-                   process tomography (5, 11.3)
+  dynamics/        the composite space with the ENR option, displacement operators and truncation, the one
+                   Hamiltonian builder and its multi-level mode, collapse operators, solvers, the JOINT_EXACT engine,
+                   frames, the exact rotating frame, the factorized kernel, steady states, parallel maps, process
+                   tomography (5, 11.3)
   prep/            Doppler, sideband, EIT and polarization-gradient cooling, rate coefficients, optical pumping,
                    the preparation recipe and sequence, validity guards (4.2)
   readout/         fluorescence rates, photon records, discriminators and POVMs, published operating points (8)
@@ -108,7 +109,6 @@ qutip_trap/
   benchmarks/      Clifford groups, randomized benchmarking, GHZ, quantum volume, the budget, the error model (7.9)
   io/              OpenQASM 2 and IonQ JSON (7.6, 8.6)
   interop/         the Qiskit BackendV2
-  validation/      closed forms from the sources that the tests compare against
 tests/             the test suite (Section 9)
 qutip_trap_app/    the application (Section 14): a separate package that imports the core only in core.py
 docs/              examples, the API pages and the provenance ledger

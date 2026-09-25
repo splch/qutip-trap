@@ -13,7 +13,7 @@ import qutip as qt
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, scattering_budget, square_drive
 from qutip_trap.light.recoil import angular_factor
 from qutip_trap.noise.levels import internal_levels

@@ -26,8 +26,8 @@ from qutip_trap.dynamics.kernels import (
     kernel_costs_us,
     prefer_factorized,
 )
-from qutip_trap.hilbert.operators import displacement_operator, qudit_projector, qudit_sigma_plus
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.operators import displacement_operator, qudit_projector, qudit_sigma_plus
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import KEY_INTENSITY_TRAJECTORY, NoiseSample, quiet_sample
 from qutip_trap.noise.spectra import white_spectrum

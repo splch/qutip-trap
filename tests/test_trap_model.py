@@ -13,7 +13,7 @@ from scipy.special import jv
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, micromotion_index
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.run.job import detection_micromotion
 from qutip_trap.species import species

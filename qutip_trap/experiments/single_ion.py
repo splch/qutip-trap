@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.engine import SolverOptions
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
     from qutip_trap.noise.sampling import NoiseSample
 
@@ -166,8 +166,8 @@ def _setup(lab: _Lab, ion: int, probe: _Probe, space: HilbertSpace | None = None
     """The drive of ``probe`` on ``ion`` and, unless given, the space: the driven mode resolved at a Gaussian cutoff sized
     for the branches that carry weight (the boundary monitor of Section 5.5 guards it), every other mode frozen."""
     from qutip_trap.control.schedule import default_gate_drives
-    from qutip_trap.hilbert.operators import required_margin
-    from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+    from qutip_trap.dynamics.operators import required_margin
+    from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
     from qutip_trap.light.microwave import square_microwave_drive
     from qutip_trap.light.raman import (
         crosstalk_ratios,
@@ -259,7 +259,7 @@ def _branches(
     """(weight, resolved Fock states, frozen Fock states) of the thermal initial mixture over the coupled modes: the frozen
     ones always (Wineland's shot-to-shot Debye-Waller statistics as a weighted sum, Section 5.2), the resolved ones when
     ``fock_resolved`` (the Fock sum of Section 5.3); returned with the weight dropped below ``weight_min``."""
-    from qutip_trap.hilbert.operators import thermal_populations
+    from qutip_trap.dynamics.operators import thermal_populations
 
     options: list[tuple[int, bool, list[tuple[int, float]]]] = []
     for m, nb in nbar.items():

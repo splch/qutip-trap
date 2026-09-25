@@ -16,7 +16,7 @@ from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation, ideal_probabilities
 from qutip_trap.control.schedule import ScheduleError
 from qutip_trap.dynamics.engine import SolverOptions
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import AdaptiveML, FirstPhoton, ThresholdDiscriminator, TimeResolvedML

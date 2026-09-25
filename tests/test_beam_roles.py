@@ -20,8 +20,8 @@ from qutip_trap.control.schedule import (
 from qutip_trap.device.model import BeamRoles, ResolvedRoles
 from qutip_trap.device.presets import ca40_optical, yb171_chain
 from qutip_trap.dynamics.engine import SolverOptions
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.roles import detection_beams, infer_detection_beam
 from qutip_trap.options import Numerics, Truncation
 from qutip_trap.run.levels import FidelityLevel, decide_level, within_budget

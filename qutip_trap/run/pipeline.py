@@ -31,8 +31,8 @@ from qutip_trap.control.schedule import GateDrive, Schedule, resolve_drives, sch
 from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, SolverOptions, State, Traces
 from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
-from qutip_trap.hilbert.space import HilbertSpace
-from qutip_trap.hilbert.truncation import warn_if_boundary_exceeds
+from qutip_trap.dynamics.space import HilbertSpace
+from qutip_trap.dynamics.truncation import warn_if_boundary_exceeds
 from qutip_trap.noise.collisions import (
     collision_rate_per_ion,
     sample_collisions,

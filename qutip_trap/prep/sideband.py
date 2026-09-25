@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 
-from qutip_trap.hilbert.operators import rabi_matrix_element, thermal_populations
+from qutip_trap.dynamics.operators import rabi_matrix_element, thermal_populations
 from qutip_trap.light.recoil import Quadrature1D, recoil_kernel_matrix
 
 

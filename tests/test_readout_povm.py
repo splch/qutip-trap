@@ -13,7 +13,7 @@ import pytest
 import qutip as qt
 
 from qutip_trap.dynamics.engine import SeedSpec
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.readout.discriminate import (
     POVM,
     ReadoutOutcome,

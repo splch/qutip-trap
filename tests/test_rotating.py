@@ -18,6 +18,7 @@ from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.kernels import FactorizedOperator, factorized_qobj
+from qutip_trap.dynamics.operators import displacement_operator, qudit_sigma_plus, qudit_sigma_z
 from qutip_trap.dynamics.rotating import (
     FrameEnergies,
     PhasedSum,
@@ -28,8 +29,7 @@ from qutip_trap.dynamics.rotating import (
     rotating_collapse,
     rotating_frame,
 )
-from qutip_trap.hilbert.operators import displacement_operator, qudit_sigma_plus, qudit_sigma_z
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from tests.m4_fixtures import (
@@ -92,7 +92,7 @@ def test_kronecker_energies_decompose_a_separable_diagonal_and_refuse_a_coupled_
 def test_eigen_frequencies_of_the_standard_collapse_operators() -> None:
     dims = (2, 4)
     omega, delta = 2.0e6, 3.0e3
-    # the ENERGY sigma_z = |1><1| - |0><0| of hilbert/operators.py (the negative of QuTiP's sigmaz) puts the upper level at
+    # the ENERGY sigma_z = |1><1| - |0><0| of dynamics/operators.py (the negative of QuTiP's sigmaz) puts the upper level at
     # +delta/2, as H_int = (Delta/2) sigma_z does in the builder
     h = 0.5 * delta * qt.tensor(qudit_sigma_z(2), qt.qeye(4)) + omega * qt.tensor(qt.qeye(2), qt.num(4))
     frame = frame_energies_of(h, dims)

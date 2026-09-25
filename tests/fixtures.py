@@ -16,7 +16,7 @@ from qutip_trap.control.compiler import Circuit
 from qutip_trap.control.hardware import HardwareChain
 from qutip_trap.control.table import CalEntry, CalibrationTable
 from qutip_trap.device.model import Device, Field
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.machine import Machine
 from qutip_trap.noise.model import NoiseModel

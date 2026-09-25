@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from qutip_trap.control.shaping import GateModes, excursion_by_mode, gate_modes, waveform_integrals
-from qutip_trap.hilbert.operators import populated_range, required_margin
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation, enr_dimension
-from qutip_trap.hilbert.truncation import warn_cap_clamped
+from qutip_trap.dynamics.operators import populated_range, required_margin
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation, enr_dimension
+from qutip_trap.dynamics.truncation import warn_cap_clamped
 from qutip_trap.run.levels import Budget, within_budget
 from qutip_trap.units import TWO_PI
 

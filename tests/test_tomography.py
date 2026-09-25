@@ -14,6 +14,7 @@ from qutip_trap.control import native
 from qutip_trap.control.schedule import GateTarget
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import (
     MotionalBranch,
     apply_kraus_dm,
@@ -35,7 +36,6 @@ from qutip_trap.dynamics.tomography import (
     single_qudit_inputs,
     tp_residual,
 )
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.summary import (
     apply_choi,

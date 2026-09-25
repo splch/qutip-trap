@@ -20,7 +20,7 @@ from qutip_trap.control.schedule import schedule
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine
-from qutip_trap.hilbert.truncation import TruncationWarning, warn_if_boundary_exceeds
+from qutip_trap.dynamics.truncation import TruncationWarning, warn_if_boundary_exceeds
 from qutip_trap.machine import Estimate, Machine
 from qutip_trap.options import Numerics, Parallel, Physics, Readout, Truncation
 from qutip_trap.readout.discriminate import ThresholdDiscriminator

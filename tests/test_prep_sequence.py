@@ -10,7 +10,7 @@ import pytest
 import qutip as qt
 
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.prep.doppler import doppler_cooling
 from qutip_trap.prep.pumping import PumpingResult, optical_pumping

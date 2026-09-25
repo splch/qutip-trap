@@ -13,7 +13,7 @@ from qutip_trap.calibration.entangling import exact_gate_check
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.channels import heating_channels, motional_dephasing_channels
 from qutip_trap.dynamics.engine import SolverOptions
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.summary import (
     average_gate_infidelity,
     choi_from_unitary,

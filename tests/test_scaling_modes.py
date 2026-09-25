@@ -24,9 +24,9 @@ from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions, TruncationLimit
 from qutip_trap.dynamics.evolve import LARGE_MODE_DIMENSION, evolve
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
-from qutip_trap.hilbert.operators import displacement_matrix_analytic, required_margin
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
-from qutip_trap.hilbert.truncation import (
+from qutip_trap.dynamics.operators import displacement_matrix_analytic, required_margin
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.truncation import (
     TruncationWarning,
     boundary_population,
     convergence_report,
@@ -565,7 +565,7 @@ def test_the_fingerprint_carries_the_device_so_no_propagator_is_served_across_de
 def test_a_space_beyond_the_guards_is_measured_and_refused_without_allocating(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Section 11.5: the monitor "refuses to build" joint spaces above the guards, so declaring one allocates nothing (no
     O(D) joint identity, about 86 GB for the eight-ion eight-mode case of Section 5.4)."""
-    import qutip_trap.hilbert.space as space_mod
+    import qutip_trap.dynamics.space as space_mod
 
     def refuse(self: HilbertSpace) -> qt.Qobj:
         raise AssertionError("the declaration allocated the joint identity")

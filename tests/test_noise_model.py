@@ -19,7 +19,7 @@ from qutip_trap.dynamics.channels import (
 )
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import build_hamiltonian
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.processes import Trajectory
 from qutip_trap.noise.sampling import (

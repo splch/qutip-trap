@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import qutip as qt
 
-from qutip_trap.hilbert.operators import (
+from qutip_trap.dynamics.operators import (
     _element_error,
     displacement_operator,
     interior_tolerance,

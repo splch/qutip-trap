@@ -37,9 +37,9 @@ from qutip_trap.dynamics.engine import (
     Traces,
 )
 from qutip_trap.dynamics.hamiltonian import BuiltHamiltonian, build_hamiltonian
+from qutip_trap.dynamics.operators import debye_waller_factor, rabi_table
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.dynamics.tomography import kraus_operators
-from qutip_trap.hilbert.operators import debye_waller_factor, rabi_table
-from qutip_trap.hilbert.space import HilbertSpace
 from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.io.openqasm import load_openqasm2
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive

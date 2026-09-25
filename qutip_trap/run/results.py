@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.dynamics.evolve import ConvergenceReport
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.run.gate_local import GateLocalReport
     from qutip_trap.run.job import RunRecord
@@ -225,7 +225,7 @@ class Diagnostics:
         """The inverse of :meth:`to_dict`: the GATE_LOCAL and convergence reports come back as None and the calibration
         table without its waveforms."""
         from qutip_trap.control.table import CalibrationTable
-        from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+        from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 
         sp = d["space"]
         space = HilbertSpace(
@@ -290,7 +290,7 @@ class Diagnostics:
         """The diagnostics of shots from outside the simulator (``Result.from_ionq_v1_shots``): a register-only space, no
         modes, no samples, an empty calibration table, and ``approximations`` saying where the shots came from."""
         from qutip_trap.control.table import CalibrationTable
-        from qutip_trap.hilbert.space import HilbertSpace
+        from qutip_trap.dynamics.space import HilbertSpace
 
         return cls(
             level="JOINT_EXACT",

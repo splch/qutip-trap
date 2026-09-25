@@ -42,7 +42,7 @@ from typing import Any, Literal
 import numpy as np
 import qutip as qt
 
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.light.recoil import (
     RecoilMode,

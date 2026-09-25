@@ -22,8 +22,8 @@ import qutip as qt
 from qutip_trap.control.compiler import CompileReport
 from qutip_trap.control.schedule import GateDrive, Schedule
 from qutip_trap.dynamics.engine import SeedSpec, State, Traces
-from qutip_trap.hilbert.operators import thermal_populations
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.operators import thermal_populations
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.noise.levels import InternalLevels, internal_levels
 from qutip_trap.noise.scattering import scattering_estimates
 from qutip_trap.prep.recipe import PreparationRun, recipe_of, run_preparation
@@ -358,7 +358,7 @@ def sideband_lamb_dicke_deficit(modes: GateModes, selection: SpaceSelection) -> 
     NIST J. Res. 103, 259, Eq. 18), the worst case over the gate's ions and its resolved and frozen modes at the highest Fock
     index each carries. Reported, not summed into the budget total: its thermal mean is the force rescaling the s^2
     calibration absorbs and its spread is the Debye-Waller term the total already carries."""
-    from qutip_trap.hilbert.operators import rabi_matrix_element
+    from qutip_trap.dynamics.operators import rabi_matrix_element
 
     worst = 0.0
     populated = {t.mode: t.expected_n_range[1] for t in selection.space.resolved}

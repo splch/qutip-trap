@@ -33,8 +33,8 @@ from qutip_trap.control.pulses import ConstantFn, InterpFn, Pulse, ScaledFn
 from qutip_trap.control.schedule import stark_scaling_power
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
-from qutip_trap.hilbert.operators import displacement_operator
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.operators import displacement_operator
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.light.raman import (
     derive_light_shift_drive,
     derive_optical_drive,

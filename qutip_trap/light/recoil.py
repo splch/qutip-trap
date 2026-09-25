@@ -226,7 +226,7 @@ def emission_lamb_dicke(crystal: Crystal, ion: int, k_em_rad_per_m: float, mode:
 def recoil_kernel_matrix(d: int, eta_em: float, quad: Quadrature1D) -> np.ndarray:
     """K[n, n'] = sum_j p_j |<n|D(-i eta_em u_j)|n'>|^2 on d Fock levels: the population kernel of one emitted photon, exact
     in eta; column stochastic up to what the truncation loses, with mean kick alpha eta_em^2 per column."""
-    from qutip_trap.hilbert.operators import displacement_matrix_analytic
+    from qutip_trap.dynamics.operators import displacement_matrix_analytic
 
     if d < 2:
         raise ValueError("at least two Fock levels")

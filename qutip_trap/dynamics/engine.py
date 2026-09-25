@@ -24,9 +24,9 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
+from qutip_trap.dynamics.operators import _highest_populated, _thermal_levels, required_margin
 from qutip_trap.dynamics.parallel import worker_count
 from qutip_trap.dynamics.rotating import RotatingSegment, _diagonal_energies, eigen_frequency, rotating_frame
-from qutip_trap.hilbert.operators import _highest_populated, _thermal_levels, required_margin
 
 if TYPE_CHECKING:
     from qutip import Qobj
@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.hamiltonian import BuilderOptions, BuiltHamiltonian
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.dynamics.tomography import TomographyRecord
-    from qutip_trap.hilbert.space import HilbertSpace
     from qutip_trap.noise.levels import InternalLevels
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.run.results import Progress
@@ -420,7 +420,7 @@ class JointExactEngine:
     ) -> Traces:
         """Evolve ``state`` through ``schedule`` on ``space``; a boundary or margin trip raises the cap, regrids the state and
         repeats the run, up to ``_MAX_GROWTH_RETRIES`` times and never past ``joint_dimension_max``."""
-        from qutip_trap.hilbert.truncation import regrid_state
+        from qutip_trap.dynamics.truncation import regrid_state
 
         current_space = space
         current_state = state
@@ -595,7 +595,7 @@ class JointExactEngine:
     ) -> dict[int, int]:
         """The frozen spectators' Fock states for this evolution (Section 5.2): the sample's, where ``run()`` put them (it
         enumerates them as weighted branches), else a thermal draw keyed per sample and reported."""
-        from qutip_trap.hilbert.operators import thermal_populations
+        from qutip_trap.dynamics.operators import thermal_populations
         from qutip_trap.noise.sampling import key_frozen_n
 
         frozen_n: dict[int, int] = {}
@@ -768,7 +768,7 @@ class JointExactEngine:
     ) -> Traces:
         from qutip_trap.dynamics.evolve import LARGE_MODE_ATOL, LARGE_MODE_DIMENSION, evolve
         from qutip_trap.dynamics.hamiltonian import _kernel_label, build_hamiltonian
-        from qutip_trap.hilbert.truncation import boundary_populations
+        from qutip_trap.dynamics.truncation import boundary_populations
         from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT
 
         bopts = self._builder_options()

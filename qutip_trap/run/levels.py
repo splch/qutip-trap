@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from qutip_trap.dynamics.engine import SolverOptions
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
 
 
 class FidelityLevel(StrEnum):

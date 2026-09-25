@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from qutip_trap.dynamics.channels import CollapseOp
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.readout.discriminate import Discriminator
 
 ReadoutMode = Literal["fast", "full"]

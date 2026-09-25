@@ -571,7 +571,7 @@ records:
     symbol: "sigma_z = |1><1| - |0><0|"
     tag: derived
     section: "5.2; 5.7; 7.6"
-    source: "qutip_trap.hilbert.operators"
+    source: "qutip_trap.dynamics.operators"
     equation: "qudit index 0 is the lower qubit level |0> = Species.qubit[0], index 1 the upper; sigma_+ = |1><0|; the ENERGY sigma_z of H_int = (Delta/2) sigma_z and H_Stark puts the upper level up; the native-gate matrices act on (|0>, |1>) as printed"
     corrected_form: "the computational Pauli Z of control/native.py (Z|0> = +|0>) is the negative of the energy sigma_z, and the two are never aliased"
   - id: conv.drive_coefficient_and_phase_continuity
@@ -592,21 +592,21 @@ records:
     symbol: "margin >= 4"
     tag: derived
     section: "5.1.1; 5.5"
-    source: "qutip_trap.hilbert.space"
+    source: "qutip_trap.dynamics.space"
     equation: "HilbertSpace.displacement_factor asserts the interior elements against the analytic oracle to interior_tolerance(margin, eta) (the table row d = 2 margin, log-interpolated, floored at 1e-12) whenever the margin above the declared range is at least 4 levels; below the table's smallest row the difference is reported by oracle_status and the boundary monitor governs; required margins 6/10/20 at eta 0.1/0.5/1.0 are stored as an interpolated fixture"
     corrected_form: "a fatal oracle at small caps would defeat the cap-raising retries of Section 5.5, which start from a deliberately small cap"
   - id: anchor.m2.rabi_matrix_elements
     symbol: "Omega_{n',n}/Omega = |<n'|D(i eta)|n>|"
     tag: recomputed here
     section: "4.3.1; 5.1.1; 9.2"
-    source: "Wineland 1998 Eq. 18; qutip_trap.hilbert.operators"
+    source: "Wineland 1998 Eq. 18; qutip_trap.dynamics.operators"
     equation: "the modulus form matches |<n'|expm(i eta (a + a^dag))|n>| at N = 400 to rtol 1e-10 over eta in {-0.9, -0.1, 0.05, 0.1, 0.3, 0.5, 0.9, 1.0, 1.5}, n, n' <= 8, and is non-negative; the signed Laguerre form is negative at eta = +0.5 for n = n' >= 6; the drive phase on the k-th sideband is arg (i eta)^k = k pi/2; <p|D|0> exceeds the eta^p/p! heuristic by sqrt(p!) e^{-eta^2/2} = 2.4373 (p = 3), 4.8745 (p = 4)"
     corrected_form: "the quartic Debye-Waller residual at n = 1, eta = 0.1 is 0.9850623544 exact against 1 - 3x/2 + 5x^2/8 = 0.9850625000, scaling as eta^6 with coefficient -7/48"
   - id: anchor.m2.debye_waller_identity
     symbol: "sum_n P_n e^{-eta^2/2} L_n(eta^2)"
     tag: recomputed here
     section: "4.2.7; 9.2"
-    source: "Wineland 1998 Eqs. 122-127; qutip_trap.hilbert.operators"
+    source: "Wineland 1998 Eqs. 122-127; qutip_trap.dynamics.operators"
     equation: "0.9851119396031 at eta^2 = 0.01, nbar = 1 and 0.8203698531378 at eta^2 = 0.09, nbar = 1.7 to 13 digits; the sum from n = 1 in the second case is 0.4662967 (0.4876057 in the first); 100 modes at nbar = 0.1, eta = 0.01: rms 3.3e-4 and P(|dOmega/Omega| < 1e-4) = erf(1e-4/sqrt(2 x 1e-6 x 0.11)) = 0.237, 0.330 without the 2"
     corrected_form: "the thermal mean equals exp[-eta^2(nbar + 1/2)] exactly (a thermal state's characteristic function is Gaussian); the sum from n = 1 (0.4662967) belongs to the (0.09, 1.7) case"
   - id: anchor.m2.picture_equivalence_and_step_density
@@ -1000,7 +1000,7 @@ records:
     symbol: "HilbertSpace.dropped"
     tag: corrected
     section: "5.2; 11.3; 9.8"
-    source: "qutip_trap.run.space; qutip_trap.hilbert.space"
+    source: "qutip_trap.run.space; qutip_trap.dynamics.space"
     equation: "the class follows the contribution pair alone - dropped when |alpha_m|^2 (2 n_m + 1) < 1e-6 AND |chi_m| < 1e-4, whatever couples to the mode; the coupling test (|eta| > 1e-12 for some drive) decides only the modes NO entangling gate touches (no contribution): frozen when a carrier pulse couples to them, dropped when nothing does. A dropped mode has no tensor factor (like a frozen one) and additionally no Debye-Waller factor and no Fock branch, so it evolves freely and is not modelled at all, which is what makes SpaceSelection.dropped_contribution the loss nothing absorbs"
     corrected_form: "the drop test is not intersected with the coupling test (which would leave 'dropped' unreachable and report a three-ion GHZ tilt mode with |alpha|^2 (2n+1) = 3.5e-33 as frozen), and a dropped mode is not a frozen one (no Debye-Waller factor, no Fock branch)"
   - id: conv.shot_blocks_per_sample
@@ -1215,7 +1215,7 @@ records:
     symbol: "sigma_+ (x) prod_m D_m as factors"
     tag: recomputed here
     section: "11.3; 5.1.1; 5.2"
-    source: "qutip_trap.dynamics.kernels; qutip_trap.hilbert.space (drive_operator_factorized)"
+    source: "qutip_trap.dynamics.kernels; qutip_trap.dynamics.space (drive_operator_factorized)"
     equation: "the drive operator held as its tensor factors (sigma_+ on the ion's factor, the oracle-checked per-mode exponentials D_m(i eta_m) on the resolved modes) and applied axis by axis (the ion factor a slice of the source level into the target level, every mode factor one batched matrix product) is the assembled operator to round-off: |F psi - A psi| = 2.4e-16 on the Bell space [2, 2, 10, 11] and 5.0e-16 at dimension 2048, max|F - A| = 0 element by element, the adjoint, the factor-wise F^dag F (9e-15) and the trace exact; registered as a QuTiP data-layer type so that QobjEvo, sesolve, mcsolve and the dop853/vern9 ladder run unchanged on it; the 20 us single-loop pulse through the engine with the kernel forced each way gives |psi_assembled - psi_factorized| = 2.2e-13 with identical populations (0.491426, 0.0252973, 0.0252973, 0.4579794)"
     corrected_form: "an ENR group's sum-generator exponential is not a product of per-mode factors (Section 5.1.1), so a drive coupling to an ENR mode is assembled whatever the option says; a sum of two factorized operators has no factorized form and converts to Dense (the reason QobjEvo.compress must never merge the drive terms: every term carries its own coefficient object), and every mesolve segment builds the assembled CSR operator because the Liouvillian is formed from the matrix (Section 5.3)"
   - id: anchor.m9b.cost_model_constants
@@ -1236,7 +1236,7 @@ records:
     symbol: "HilbertSpace.check()"
     tag: corrected
     section: "11.5; 5.1; 5.4"
-    source: "qutip_trap.hilbert.space (check, IDENTITY_CHECK_MAX_DIMENSION); qutip_trap.run.space"
+    source: "qutip_trap.dynamics.space (check, IDENTITY_CHECK_MAX_DIMENSION); qutip_trap.run.space"
     equation: "the guards of Section 11.5 are evaluated on the declared space before anything is allocated: HilbertSpace.check() asserts shape == prod(dims) arithmetically and forms the joint identity only below IDENTITY_CHECK_MAX_DIMENSION = 65536, so a HilbertSpace is a declaration (every operator on it lazy and cached), select_space evaluates within_budget on it (SpaceSelection.budget), and an explicit level='JOINT_EXACT' above the guards is refused with the dimension, the non-zeros and the two knobs named (joint_dimension_max, nnz_max)"
     corrected_form: "evaluating the guard after allocation forms an O(D)-non-zero identity first (64 MB at dimension 4194304; about 86 GB for the eight-ion eight-mode case), and an explicit JOINT_EXACT above the guards built a 37752-dimensional ENR space that took 20 GB and an hour before QobjEvo rejected its term"
   - id: conv.mode_dimension_max
@@ -1257,7 +1257,7 @@ records:
     symbol: "SolverOptions.convergence_check, Diagnostics.convergence, hilbert.truncation.convergence_report"
     tag: corrected
     section: "5.5; 9.9; 14.5"
-    source: "qutip_trap.hilbert.truncation (convergence_report); qutip_trap.dynamics.evolve"
+    source: "qutip_trap.dynamics.truncation (convergence_report); qutip_trap.dynamics.evolve"
     equation: "Section 9.9: tightening tolerances by 10x (and, for the integrator ladder, loosening by 10x and comparing) and raising truncation caps by 2 changes reported probabilities by less than the stated test tolerance, for every validation case"
     corrected_form: "the run level carries the first arm (SolverOptions.convergence_check repeats the evolution at atol/10, rtol/10 and reports the change in the register populations as Diagnostics.convergence; off by default because it triples a run's cost), and hilbert.truncation.convergence_report runs all three arms of one case: tolerances/10, tolerances x10, and every resolved cap and the ENR excitation cap + 2 at unchanged tolerances (a mode whose growth would cross the dimension ceiling is left)"
   - id: conv.gate_local_residual_bound_pre_step

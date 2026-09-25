@@ -16,7 +16,7 @@ import qutip as qt
 
 from qutip_trap.dynamics.engine import SolverOptions, State
 from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.space import HilbertSpace
 
 
 class TruncationWarning(UserWarning):

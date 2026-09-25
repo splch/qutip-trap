@@ -32,8 +32,8 @@ from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, excursion_by_
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, SolverOptions, Traces
 from qutip_trap.dynamics.frames import PhaseFrame
-from qutip_trap.hilbert.operators import populated_range, required_margin
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.operators import populated_range, required_margin
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import NoiseSample, quiet_sample
 
 if TYPE_CHECKING:

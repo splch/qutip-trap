@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.engine import JointExactEngine
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.run.results import Progress, Result
     from qutip_trap.run.spec import Job, RunSpec
 

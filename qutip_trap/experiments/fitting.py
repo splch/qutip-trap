@@ -19,7 +19,7 @@ from scipy.optimize import least_squares
 from scipy.special import eval_genlaguerre
 
 from qutip_trap.dynamics.engine import SeedSpec
-from qutip_trap.hilbert.operators import thermal_populations
+from qutip_trap.dynamics.operators import thermal_populations
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:

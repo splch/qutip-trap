@@ -725,7 +725,7 @@ def _monte_carlo_dephasing(
     from qutip_trap.control.pulses import Drive, Pulse, Tone
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.noise.processes import synthesize, time_grid
     from qutip_trap.noise.sampling import NoiseSample, key_qubit_trajectory_hz, quiet_sample
 

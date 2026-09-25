@@ -14,7 +14,7 @@ from qutip_trap.control.schedule import Schedule
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.comb import (
     FIELD_FWHM_OVER_TAU,
     INTENSITY_FWHM_OVER_TAU,

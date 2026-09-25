@@ -43,14 +43,14 @@ from scipy.special import jv
 from qutip_trap.control.pulses import Drive, Pulse, as_time_function, fingerprint_pulse
 from qutip_trap.device.model import Device
 from qutip_trap.dynamics.kernels import KernelChoice, prefer_factorized
-from qutip_trap.hashing import canonical_digest
-from qutip_trap.hilbert.operators import (
+from qutip_trap.dynamics.operators import (
     debye_waller_factor,
     qudit_projector,
     qudit_sigma_plus,
     sideband_operators,
 )
-from qutip_trap.hilbert.space import HilbertSpace
+from qutip_trap.dynamics.space import HilbertSpace
+from qutip_trap.hashing import canonical_digest
 from qutip_trap.light.comb import comb_build_notes
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.processes import Trajectory

@@ -16,8 +16,8 @@ from qutip_trap.dynamics.multilevel import (
     build_multilevel,
     decay_sum_rule_residual,
 )
-from qutip_trap.hilbert.operators import displacement_operator
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.operators import displacement_operator
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.recoil import (
     MOMENT_TOLERANCE,
     VectorChannel,

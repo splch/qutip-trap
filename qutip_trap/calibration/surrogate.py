@@ -27,7 +27,7 @@ from qutip_trap.control.shaping import (
     symmetric_pulse,
 )
 from qutip_trap.control.table import CalEntry, CalibrationTable, Waveform
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import (
     crosstalk_ratios,
     derive_optical_drive,

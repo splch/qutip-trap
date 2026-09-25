@@ -21,8 +21,8 @@ from qutip_trap.control.schedule import Schedule, single_qubit_pulse
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, MotionalModel, SeedSpec, SolverOptions
 from qutip_trap.dynamics.parallel import map_tasks, memory_worker_cap, worker_count
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.dynamics.tomography import cp_residual
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics

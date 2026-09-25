@@ -42,8 +42,8 @@ from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.frames import PhaseFrame
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
-from qutip_trap.hilbert.operators import rabi_matrix_element
-from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
+from qutip_trap.dynamics.operators import rabi_matrix_element
+from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.published import (

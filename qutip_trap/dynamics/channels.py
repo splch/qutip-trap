@@ -20,7 +20,7 @@ RecoilOption = Literal["off", "minimal", "vector"]
 """The photon-recoil model of the scattering channels: none, the minimal quadrature, or the full vector quadrature."""
 
 if TYPE_CHECKING:
-    from qutip_trap.hilbert.space import HilbertSpace
+    from qutip_trap.dynamics.space import HilbertSpace
 
 
 @dataclass(frozen=True)

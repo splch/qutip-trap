@@ -41,10 +41,10 @@ from qutip_trap.dynamics.engine import (
     _lindblad_method,
 )
 from qutip_trap.dynamics.evolve import tightened
+from qutip_trap.dynamics.operators import _thermal_levels, thermal_populations
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
-from qutip_trap.hilbert.operators import _thermal_levels, thermal_populations
-from qutip_trap.hilbert.space import HilbertSpace
-from qutip_trap.hilbert.truncation import boundary_populations
+from qutip_trap.dynamics.space import HilbertSpace
+from qutip_trap.dynamics.truncation import boundary_populations
 from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT, NoiseSample, key_frozen_n
 from qutip_trap.noise.summary import (
     average_gate_infidelity,
