@@ -1,6 +1,6 @@
 # Examples
 
-A short tour, runnable in order: `tests/test_docs.py` executes every ```python block below in one namespace. Frequencies
+A short tour, runnable in order: `tests/test_docs.py` executes every Python block below in one namespace. Frequencies
 are in Hz, angles in radians and times in seconds; a bitstring key has qubit 0 rightmost, the least-significant bit
 (PLAN.md Section 13, "Result bit order"). Every name outside the root namespace is imported from the module that defines
 it, and [api.md](api.md) lists them.
@@ -140,7 +140,7 @@ print({k: f"{v:.1e}" for k, v in em.infidelity.items()}, em.to_ionq_noise(), em.
 kinds = em.single_qubit_kinds
 assert em.to_ionq_noise()["r_1q"] == 2.0 * sum(em.infidelity[k] for k in kinds) / len(kinds)   # F_avg = 1 - r/2
 
-channel = gate_channel(pinned, "gpi2[0]")           # one kind's channel, cached with the error model's
+channel = gate_channel(pinned, "gpi2[0]")         # one kind's channel, cached with the error model's
 twirl = channel.steps[0].summary.pauli_twirled
 print("reduced to qubit 0:", f"{channel.infidelity_on((0,)):.1e}", "| twirl p_II:", twirl["II"])
 ```

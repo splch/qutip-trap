@@ -39,7 +39,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 
 **`qutip_trap.run.levels`**
 - `FidelityLevel`: `AUTO` (JOINT_EXACT inside the Section 11.5 guards, GATE_LOCAL above them), `JOINT_EXACT`, `GATE_LOCAL`.
-- `decide_level(budget, numerics, policy)`: the `LevelDecision` (level, dimension, non-zeros and the `reason` in words) a run acts on; `within_budget(space, numerics)`: the guards on a declared space, a `Budget`.
+- `decide_level(budget, options, policy)`: the `LevelDecision` (level, dimension, non-zeros and the `reason` in words) a run acts on, `options` a `Numerics`; `within_budget(space, options)`: the guards on a declared space, a `Budget`.
 
 ## Circuits and wire formats
 
@@ -146,7 +146,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 
 **`qutip_trap.control.composite`**: `composite_pulse(family, theta_rad, phi_rad)`, a `CompositePulse` (BB1, SK1, CORPSE, ...); **`qutip_trap.noise.decoupling`**: `decoupling_sequence`, `DecouplingSequence`, `filter_function`, `ControlSegment`.
 
-**`qutip_trap.dynamics.engine`**: `JointExactEngine`, the JOINT_EXACT engine (`run_pulses(device, schedule, state, space, sample, seeds, numerics)`, `tomography`, `process_tomography`, `last_report`); `State`, `MotionalModel`, `SeedSpec`, `Traces`, `ChannelSummary`, `EngineReport`, `SegmentReport`, `TruncationLimit`.
+**`qutip_trap.dynamics.engine`**: `JointExactEngine`, the JOINT_EXACT engine (`run_pulses(device, schedule, state, space, sample, seeds, options)` with `options` a `Numerics`, `tomography`, `process_tomography`, `last_report`); `State`, `MotionalModel`, `SeedSpec`, `Traces`, `ChannelSummary`, `EngineReport`, `SegmentReport`, `TruncationLimit`.
 
 **`qutip_trap.dynamics.space`**: `HilbertSpace`, a declared composite space whose operators are built lazily and cached, `ModeTruncation`, `enr_dimension`; **`qutip_trap.dynamics.truncation`**: `TruncationWarning`.
 
