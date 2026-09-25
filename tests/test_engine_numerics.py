@@ -326,7 +326,7 @@ def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
 
 
 @pytest.mark.slow
-def test_the_ladder_at_the_three_large_caps() -> None:
+def test_the_ladder_at_the_large_caps() -> None:
     """A spin-dependent force at d_m = 101, 121, 151 and 201 integrates on dop853 with no retry, atol LARGE_MODE_ATOL and norm 1
     to 1e-7, and at d_m = 100 atol stays 1e-10."""
     eta, om_drive = 0.1, TWO_PI * 250e3

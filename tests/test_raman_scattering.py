@@ -510,7 +510,7 @@ def test_decay_amplitude_shares_reproduce_the_tabulated_branchings(name: str) ->
     assert checked >= 4
 
 
-def test_the_scattering_budget_of_the_355_nm_drive_leaks_at_the_tabulated_rate(yb: Species) -> None:
+def test_the_355_nm_drive_leaks_under_two_percent_of_its_scattering(yb: Species) -> None:
     """On the 171Yb+ 355 nm clock drive the leakage out of S1/2 is between 0 and 2 % of the scattering rate."""
     st = AtomicStructure(yb, 5.0, Z_HAT)
     beam = Beam(355e-9, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 20e-6, 10e-3, (0.0, 0.0, 0.0))
