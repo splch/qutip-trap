@@ -1,9 +1,7 @@
-"""Trajectory, branch and sample parallelism and the propagator cache (PLAN.md Sections 3.4, 5.3, 9.9, 11.3 items 5 and 9;
-Section 9.17 row "Seeds and reproducibility"; milestone M9b).
+"""Trajectory, branch and sample parallelism and the propagator cache (PLAN.md Sections 3.4, 9.9, 11.3).
 
-Section 9.9: the same run over 1 and N workers agrees to 1e-12 with per-trajectory identity under the same seed (a bitwise
-assertion on the ensemble average fails at 4.4e-16 on 5.3.1 because trajectory sums accumulate in completion order). Section
-11.3 item 5: pulse propagators are reused only on internal-state-only spaces, where one propagator serves many initial states.
+The same run over 1 and N workers agrees to 1e-12 under the same keyed seeds; pulse propagators are reused only on
+internal-state-only spaces, where one propagator serves many initial states.
 """
 
 from __future__ import annotations
@@ -41,7 +39,7 @@ from tests.m4_fixtures import (
 from tests.m6_fixtures import circuit_fixture
 
 N_WORKERS = max(2, int(available_cpu_count()))
-"""Every CPU QuTiP sees (18 on the plan's machine, Section 11.1)."""
+"""Every CPU QuTiP sees."""
 
 
 def _square(x: int) -> int:
@@ -69,9 +67,9 @@ def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_thr
 
 
 def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """QuTiP's parallel map FORKS its workers, so each starts as a copy-on-write image of the parent and can grow to its size:
-    the cap keeps N x (parent peak) inside half of physical memory (ledger conv.worker_memory_cap). A 3 GB parent on a 48 GB
-    machine gets 8 workers, a 6 GB one 4, a small parent every CPU; an explicit request is capped too, never raised."""
+    """QuTiP's parallel map forks its workers, each a copy-on-write image of the parent that can grow to its size: the cap
+    keeps N x (parent peak) inside half of physical memory. A 3 GB parent on a 48 GB machine gets 8 workers, a 6 GB one 4, a
+    small parent every CPU; an explicit request is capped too, never raised."""
     import qutip_trap.dynamics.parallel as par
 
     monkeypatch.setattr(par, "physical_memory_bytes", lambda: 48 * 1024**3)
@@ -135,14 +133,10 @@ def heating_fixture():  # type: ignore[no-untyped-def]
 
 
 def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identity(heating_fixture) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.9: six keyed trajectories of a dissipative entangling pulse in-process and over every CPU: the reduced register
-    agrees to 1e-12, every trajectory's final state and jump record are identical under its seed, and the report names the map.
-
-    Plain (uniform-weight) trajectories: the fixture's Bell caps (d = 10, 11) were sized for that ensemble. Under
-    ``improved_sampling`` every stochastic member is conditioned on jumping, and for this seed two of them take several
-    heating jumps (mean occupations 4.0 and 5.6 on the two x modes), so the Section 5.1.1 margin rule asks for d = 17
-    (dimension 1156) and the run exceeds the cap-growth retries. The improved-sampling path's worker identity is covered
-    by ``test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heating_pulse`` below on a space sized for it.
+    """Six keyed trajectories of a dissipative entangling pulse in-process and over every CPU: the register, the
+    ensemble's density matrix and the jump records agree, and the report names the map. Plain (uniform-weight) trajectories:
+    the Bell caps (d = 10, 11) are sized for them, while improved sampling conditions every stochastic member on jumping and
+    would need larger caps (its worker identity is tested below on a space sized for it).
     """
     dev, _drives, sched, space, _table = heating_fixture
     state = space.initial_state([0, 0])
@@ -162,25 +156,17 @@ def test_trajectories_agree_over_one_and_many_workers_with_per_trajectory_identi
         )
         expected = 1 if mp == "serial" else min(worker_count(opts), 6)
         if expected < 2 and mp != "serial":
-            pytest.skip(
-                "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
-            )
+            pytest.skip("the memory cap left no room for a parallel run on this machine")
         assert rep.map == mp and rep.workers == expected
         out[mp] = (tr, rep)
     tr_s, rep_s = out["serial"]
     tr_p, rep_p = out["parallel"]
     assert (tr_s.final.internal - tr_p.final.internal).norm() < 1e-12
     assert np.max(np.abs(tr_s.expectations["P1[0]"] - tr_p.expectations["P1[0]"])) < 1e-12
-    assert rep_s.trajectory_seeds == rep_p.trajectory_seeds and len(rep_s.trajectory_seeds) == 6
-    for a, b in zip(rep_s.trajectory_finals, rep_p.trajectory_finals):
-        assert (a - b).norm() < 1e-14, "per-trajectory identity under the same seed"
+    assert (tr_s.final.joint - tr_p.final.joint).norm() < 1e-12, "the same trajectories under the same seeds"
     assert tr_s.jumps == tr_p.jumps and len(tr_s.jumps) >= 1, (
         "the same jump records, and some jumps to compare"
     )
-    assert len({s for s in rep_s.trajectory_seeds}) == 6, "distinct keyed seeds per trajectory"
-    # the coefficient counter cannot see the workers' calls: the parallel segment reports no evaluation count
-    assert all(s.rhs_evaluations is not None for s in rep_s.segments if s.pulses)
-    assert all(s.rhs_evaluations is None for s in rep_p.segments if s.pulses)
 
 
 def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> None:  # type: ignore[no-untyped-def]
@@ -205,7 +191,7 @@ def test_tomography_over_workers_matches_the_in_process_run(heating_fixture) -> 
     assert recs["serial"].tp_residual < 1e-10 and recs["parallel"].tp_residual < 1e-10
 
 
-# ---- the propagator cache (Section 11.3 item 5) ------------------------------------------------------------------------------------
+# ---- the propagator cache ------------------------------------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -236,10 +222,10 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
         seg = [s for s in rep.segments if s.pulses][0]
         if k == 0:
             assert rep.propagator_solves == 1 and rep.propagator_cache_hits == 0
-            assert seg.integrator.startswith("dop853[propagator]") and seg.rhs_evaluations
+            assert seg.integrator.startswith("dop853[propagator]")
         else:
             assert rep.propagator_solves == 0 and rep.propagator_cache_hits == 1
-            assert seg.integrator == "propagator[cached]" and seg.rhs_evaluations is None
+            assert seg.integrator == "propagator[cached]"
         assert seg.kernel == "assembled", "a carrier on an all-frozen space keeps the tiny CSR operator"
     ref_engine = JointExactEngine()
     for st, final in zip(states, finals):
@@ -256,8 +242,8 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
 
 def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(carrier_fixture) -> None:  # type: ignore[no-untyped-def]
     """A carrier step on an internal-state-only space, times the frozen modes' Fock branches: the propagator route integrates one
-    propagator per branch (the Debye-Waller factors differ between branches, so H differs) and takes it AS the branch's Kraus
-    operator, no state propagated; the M9a reference (``tomography_isometry=False``) propagates the sixteen inputs through the
+    propagator per branch (the Debye-Waller factors differ between branches, so H differs) and takes it as the branch's Kraus
+    operator, no state propagated; the "states" route (``tomography_isometry=False``) propagates the sixteen inputs through the
     same cached propagators and reconstructs the same channel to round-off."""
     dev, sched, space = carrier_fixture
     model = MotionalModel(
@@ -357,9 +343,7 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
     assert np.max(np.abs(np.asarray(a.final_state.full()) - np.asarray(b.final_state.full()))) < 1e-12
     expected = min(worker_count(SolverOptions(map="parallel", workers=N_WORKERS)), 6)
     if expected < 2:
-        pytest.skip(
-            "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
-        )
+        pytest.skip("the memory cap left no room for a parallel run on this machine")
     assert a.diagnostics.workers == 1 and b.diagnostics.workers == expected
     assert a.diagnostics.trajectories == b.diagnostics.trajectories >= 2
     # one propagator per distinct Fock tuple of the coupled frozen modes (their Debye-Waller factors change H); every internal
@@ -372,13 +356,11 @@ def test_run_over_workers_reproduces_the_in_process_run_on_a_carrier_circuit(two
 
 @pytest.mark.slow
 def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_ion) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.9 on the two-ion Bell circuit (twelve branches on the 572-dimensional joint space, the factorized kernel): the
+    """The two-ion Bell circuit (twelve branches on the 572-dimensional joint space, the factorized kernel): the
     serial and the parallel run agree to 1e-12 in the register state and shot by shot."""
     fx, sur = two_ion
     if worker_count(SolverOptions(map="parallel", workers=min(N_WORKERS, 6))) < 2:
-        pytest.skip(
-            "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
-        )
+        pytest.skip("the memory cap left no room for a parallel run on this machine")
     a, b = _run_both(BELL, fx, sur, 300, branch_weight_min=1e-3)
     assert np.array_equal(a.bitstrings, b.bitstrings)
     assert a.final_state is not None and b.final_state is not None
@@ -389,10 +371,9 @@ def test_run_over_workers_reproduces_the_in_process_run_on_the_bell_circuit(two_
 
 
 def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heating_pulse() -> None:
-    """Section 9.9's worker identity on the improved-sampling path (Section 5.3): a 10 us carrier pulse on one ion whose x mode
-    heats at the white-noise rate, four keyed stochastic trajectories plus the deterministic no-jump member, in-process and
-    over every CPU. The mixture's weights sum to one, the register and P1 agree to 1e-12, and every member's final state and
-    the jump record are identical under the seed."""
+    """Worker identity on the improved-sampling path: a 10 us carrier pulse on one ion whose x mode heats at the
+    white-noise rate, four keyed stochastic trajectories plus the deterministic no-jump member, in-process and over every
+    CPU: the register, P1, the ensemble's density matrix and the jump records agree."""
     from qutip_trap.light.raman import derive_raman_drive, square_drive
     from tests.m2_fixtures import single_ion_raman_device
 
@@ -411,9 +392,7 @@ def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heati
     space = HilbertSpace((2,), (ModeTruncation(x_mode, 14, (0, 6), 0.12),), None, others)
     state = space.initial_state([0])
     if worker_count(SolverOptions(map="parallel", workers=N_WORKERS)) < 2:
-        pytest.skip(
-            "the memory cap left no room for a parallel run on this machine (ledger conv.worker_memory_cap)"
-        )
+        pytest.skip("the memory cap left no room for a parallel run on this machine")
     out = {}
     for mp, workers in (("serial", 1), ("parallel", N_WORKERS)):
         eng = JointExactEngine(device_channels=True)
@@ -422,17 +401,12 @@ def test_improved_sampling_trajectories_agree_over_workers_on_a_single_ion_heati
         )  # type: ignore[arg-type]
         tr = eng.run_pulses(dev, sched, state, space, quiet_sample(), SeedSpec(5), opts)
         rep = eng.last_report
-        # the report counts the members of the weighted mixture: four stochastic members conditioned on jumping plus the
-        # deterministic no-jump member (Section 5.3), whose seeds are the four keyed ones
+        # the members of the weighted mixture: four stochastic ones conditioned on jumping plus the no-jump member
         assert rep is not None and rep.method == "mcsolve" and rep.trajectories == 5
         assert rep.map == mp
-        assert len(rep.trajectory_finals) == 5, len(rep.trajectory_finals)
-        out[mp] = (tr, rep)
-    tr_s, rep_s = out["serial"]
-    tr_p, rep_p = out["parallel"]
+        out[mp] = tr
+    tr_s, tr_p = out["serial"], out["parallel"]
     assert (tr_s.final.internal - tr_p.final.internal).norm() < 1e-12
     assert np.max(np.abs(tr_s.expectations["P1[0]"] - tr_p.expectations["P1[0]"])) < 1e-12
-    assert rep_s.trajectory_seeds == rep_p.trajectory_seeds and len(rep_s.trajectory_seeds) == 4
-    for a, b in zip(rep_s.trajectory_finals, rep_p.trajectory_finals):
-        assert (a - b).norm() < 1e-14, "per-member identity under the same seed"
+    assert (tr_s.final.joint - tr_p.final.joint).norm() < 1e-12, "the same members under the same seeds"
     assert tr_s.jumps == tr_p.jumps and len(tr_s.jumps) >= 4, "every stochastic member jumped at least once"

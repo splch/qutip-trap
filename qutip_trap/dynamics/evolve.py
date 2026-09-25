@@ -1,11 +1,9 @@
-"""Solver selection (sesolve/mesolve), step control and the integrator ladder (PLAN.md Section 5.3; milestone M2).
+"""The integrator ladder and the tolerance-convergence check (PLAN.md Section 5.3).
 
-Pure states evolve with ``sesolve`` (``dop853`` by default, atol 1e-10, rtol 1e-8, nsteps 1e7), density matrices or any
-Lindblad channel with ``mesolve`` (the reference path for small spaces; the drive operators are CSR so ``liouvillian``
-stays sparse, Section 5.3). The escalation ladder is ``dop853`` -> ``vern9`` -> ``vern9`` at atol 1e-8 with a max_step
-budget of one fourteenth of the fastest period, never a multistep method (BDF damps the oscillatory spectrum of -iH);
-atol is keyed to the measured points, 1e-10 up to d_m ~ 100 and 1e-8 above (2026-09-04 numerics critique). The
-integrator actually used, the retries and the right-hand-side evaluation count are recorded.
+Kets evolve with ``sesolve``, density matrices and any collapse operator with ``mesolve`` (the drive operators are CSR there,
+so the Liouvillian stays sparse). The ladder is the configured integrators (``dop853`` then ``vern9``) and then the last one
+at atol 1e-8 with a max_step of one fourteenth of the fastest period; never a multistep method, whose damping distorts the
+oscillatory spectrum of -iH. The default atol relaxes from 1e-10 to 1e-8 above d_m = 100.
 """
 
 from __future__ import annotations
@@ -21,30 +19,25 @@ from qutip.solver.integrator import IntegratorException
 
 from qutip_trap.dynamics.engine import SolverOptions
 
-M2 = "milestone M2 (dynamics/evolve.py, PLAN.md Section 5.3)"
-
 LARGE_MODE_DIMENSION = 100
-"""Above this per-mode dimension the DEFAULT atol relaxes to ``LARGE_MODE_ATOL`` (dop853 aborts as 'probably stiff' at
-d_m = 121 with atol 1e-10; Section 5.3, keyed to the measured points)."""
+"""Above this per-mode dimension the default atol relaxes to ``LARGE_MODE_ATOL`` (dop853 aborts as 'probably stiff' at
+d_m = 121 with atol 1e-10)."""
 LARGE_MODE_ATOL = 1e-8
-"""The relaxed atol above ``LARGE_MODE_DIMENSION``, applied only when the caller left ``SolverOptions.atol`` at its default:
-a deliberate tightening (the Section 5.5 convergence run) is never clamped back up."""
+"""The relaxed atol above ``LARGE_MODE_DIMENSION``; an atol the caller chose is kept."""
 _DEFAULT_ATOL = SolverOptions().atol
-"""1e-10. The keying is on 'the caller did not choose an atol', which is what this comparison expresses."""
 
 
 @dataclass(frozen=True)
 class Evolution:
-    times_s: np.ndarray
+    """One integration: the final state, the state and the expectation values at every requested time, and the rung that
+    succeeded (integrator and atol) after the failed ones (``retries``)."""
+
     final: qt.Qobj
-    states: tuple[qt.Qobj, ...] | None
+    states: tuple[qt.Qobj, ...]
     expect: dict[str, np.ndarray]
     integrator: str
     atol: float
-    rtol: float
     retries: tuple[str, ...]
-    rhs_evaluations: int | None
-    """Right-hand-side evaluations from the builder's coefficient counter (calls over calls_per_rhs; None without one)."""
 
 
 def _solve(
@@ -58,19 +51,15 @@ def _solve(
     rtol: float,
     nsteps: int,
     max_step: float,
-    store_states: bool,
-    propagator: bool = False,
-) -> tuple[qt.solver.Result, int]:
-    """The QuTiP result and the number of coefficient calls one right-hand-side evaluation makes per coefficient-bearing
-    element of ``H`` (1 under ``sesolve``; 2 under ``mesolve``, whose Liouvillian carries every drive term twice, as
-    ``spre`` and ``spost`` elements that each evaluate the term's coefficient)."""
+    propagator: bool,
+) -> qt.solver.Result:
     options: dict[str, object] = {
         "method": method,
         "atol": atol,
         "rtol": rtol,
         "nsteps": nsteps,
         "store_final_state": True,
-        "store_states": store_states,
+        "store_states": True,
         "normalize_output": False,
         "progress_bar": "",
     }
@@ -81,26 +70,9 @@ def _solve(
         # scipy's dop853 warns before it raises on a too-small step; the ladder records the failure and escalates
         warnings.filterwarnings("ignore", message=".*step size becomes too small.*", category=UserWarning)
         if not c_ops and (state0.isket or propagator):
-            # an operator-valued "state" under sesolve integrates the propagator U(t) itself (Section 11.3 item 5)
-            return qt.sesolve(H, state0, times, e_ops=eops, options=options), 1
-        solver = qt.MESolver(H, c_ops=list(c_ops), options=options)
-        return solver.run(state0, times, e_ops=eops), _calls_per_element(solver.rhs, H)
-
-
-def _coefficient_elements(op: qt.QobjEvo | qt.Qobj) -> int:
-    if not isinstance(op, qt.QobjEvo):
-        return 0
-    return sum(1 for el in op.to_list() if isinstance(el, list))
-
-
-def _calls_per_element(rhs: qt.QobjEvo, H: qt.QobjEvo | qt.Qobj) -> int:
-    """How many coefficient-bearing elements the solver's right-hand side carries per element of ``H`` (the Liouvillian's
-    spre and spost pair of each drive term makes it 2 on the mesolve path, so the evaluation count read from the
-    coefficient counter is divided by it; the count was twice the evaluations on every mesolve segment before)."""
-    n_h = _coefficient_elements(H)
-    if n_h == 0:
-        return 1
-    return max(1, round(_coefficient_elements(rhs) / n_h))
+            # an operator-valued state under sesolve integrates the propagator U(t) itself
+            return qt.sesolve(H, state0, times, e_ops=eops, options=options)
+        return qt.MESolver(H, c_ops=list(c_ops), options=options).run(state0, times, e_ops=eops)
 
 
 def evolve(
@@ -111,17 +83,15 @@ def evolve(
     c_ops: Sequence[qt.Qobj] = (),
     e_ops: Mapping[str, qt.Qobj] | None = None,
     options: SolverOptions | None = None,
-    store_states: bool = False,
     omega_max_rad_s: float | None = None,
     largest_mode_dimension: int | None = None,
-    counter_calls: Callable[[], int] | None = None,
-    calls_per_rhs: int = 1,
     propagator: bool = False,
 ) -> Evolution:
-    """Integrate from ``times_s[0]`` to ``times_s[-1]`` through the ladder of Section 5.3, storing at every time.
+    """Integrate from ``times_s[0]`` to ``times_s[-1]`` through the ladder, storing the state at every time.
 
-    ``propagator=True`` integrates an operator-valued ``state0`` (the identity) under ``sesolve``, so that the stored states
-    are the propagators U(t, t_0) of an internal-state-only space (Section 11.3 item 5; M9b)."""
+    ``propagator=True`` integrates an operator-valued ``state0`` (the identity) under ``sesolve``, so the stored states are
+    the propagators U(t, t_0). Only the integrator's own ``IntegratorException`` escalates; anything else propagates.
+    """
     opts = options or SolverOptions()
     times = np.asarray(times_s, dtype=float)
     if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
@@ -132,83 +102,45 @@ def evolve(
         and largest_mode_dimension > LARGE_MODE_DIMENSION
         and opts.atol == _DEFAULT_ATOL
     ):
-        # the keying of Section 5.3 relaxes the DEFAULT atol above d_m ~ 100 (dop853 aborts as "probably stiff" at
-        # d_m = 121 with 1e-10). It must not clamp a tolerance the caller chose deliberately: max(atol, 1e-8) turned a
-        # Section 5.5 tolerance-convergence run at d_m > 100 into an rtol-only tightening, so the convergence check
-        # reported a spuriously small change (M2 audit E9/E10).
         atol = LARGE_MODE_ATOL
     ladder: list[tuple[str, float, float]] = [(m, atol, 0.0) for m in opts.integrators]
     last = opts.integrators[-1]
     max_step = (2.0 * math.pi / omega_max_rad_s / 14.0) if omega_max_rad_s else 0.0
     ladder.append((last, max(atol, 1e-8), max_step))
     retries: list[str] = []
-    calls0 = counter_calls() if counter_calls is not None else 0
     result = None
-    per_element = 1
     used = ladder[-1]
     for method, a, ms in ladder:
         try:
-            result, per_element = _solve(
-                H,
-                state0,
-                times,
-                c_ops,
-                e_ops,
-                method,
-                a,
-                opts.rtol,
-                opts.nsteps,
-                ms,
-                store_states,
-                propagator,
-            )
+            result = _solve(H, state0, times, c_ops, e_ops, method, a, opts.rtol, opts.nsteps, ms, propagator)
             used = (method, a, ms)
             break
         except IntegratorException as exc:
-            # the INTEGRATOR's own failure ("probably stiff", "excess work", "larger nsteps is needed"): escalate and
-            # report. Anything else propagates: a bare `except Exception` here recorded a TypeError in a coefficient or a
-            # KeyError from an unsupported solver option as an integrator failure, tried every remaining rung on the same
-            # broken input and ended in "every rung of the integrator ladder failed", hiding the programming error the
-            # plan never asked the ladder to rescue (M9b audit B8)
             retries.append(f"{method}@atol={a:g},max_step={ms:g}: {type(exc).__name__}: {exc}")
-            continue
     if result is None:
         raise RuntimeError("every rung of the integrator ladder failed: " + " | ".join(retries))
     expect: dict[str, np.ndarray] = {}
     if e_ops:
         for key, arr in zip(e_ops.keys(), result.expect):
             expect[str(key)] = np.asarray(arr)
-    states = tuple(result.states) if store_states else None
-    evals = (
-        (counter_calls() - calls0) // max(calls_per_rhs * per_element, 1)
-        if counter_calls is not None
-        else None
-    )
     return Evolution(
-        times_s=times,
         final=result.final_state,
-        states=states,
+        states=tuple(result.states),
         expect=expect,
         integrator=used[0],
         atol=used[1],
-        rtol=opts.rtol,
         retries=tuple(retries),
-        rhs_evaluations=evals,
     )
 
 
 def tightened(options: SolverOptions, factor: float = 10.0) -> SolverOptions:
-    """The Section 5.5 tolerance-convergence companion: atol and rtol divided by ``factor``.
-
-    Both tolerances move, which is the point: above ``LARGE_MODE_DIMENSION`` the atol keying used to clamp the tightened
-    atol back to 1e-8 and leave rtol alone, so the comparison measured an rtol-only change (M2 audit E9).
-    """
+    """``options`` with both atol and rtol divided by ``factor``: the Section 5.5 convergence companion."""
     return replace(options, atol=options.atol / factor, rtol=options.rtol / factor)
 
 
 @dataclass(frozen=True)
 class ConvergenceReport:
-    """The Section 5.5 / 9.9 tolerance-convergence comparison of one run (Section 14.5's convergence badge)."""
+    """One tolerance-convergence comparison (Section 5.5): the change per observable under the tighter pair."""
 
     tolerances: tuple[float, float]
     tightened_tolerances: tuple[float, float]
@@ -242,12 +174,8 @@ def convergence_check(
     factor: float = 10.0,
     tol: float = 1e-6,
 ) -> ConvergenceReport:
-    """Run ``run`` at ``options`` and again at ``tightened(options, factor)``, and report the change per observable.
-
-    Section 5.5 says the test suite does this for EVERY validation case; ``hilbert.truncation.halving_test`` is the
-    single-array form behind the convergence badge and this is the named-observable form a run path can report
-    (Section 9.9). ``run`` returns the observable traces of one integration, keyed as the engine keys them.
-    """
+    """Run ``run`` at ``options`` and at ``tightened(options, factor)`` and report the change per observable; ``run``
+    returns the observable traces of one integration."""
     if factor <= 1.0:
         raise ValueError("the tightening factor exceeds one")
     opts = options or SolverOptions()

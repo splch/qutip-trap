@@ -1,17 +1,17 @@
-"""The multi-level mode of the ONE Hamiltonian builder (PLAN.md Sections 3.2, 4.2.8, 4.5, 5.7, 8.1; milestone M3a).
+"""The multi-level optical Bloch builder (PLAN.md Section 4.2.8).
 
-Cooling, optical pumping and detection share one Hamiltonian and one set of collapse operators built here from the
-level structure of Section 4.5 and re-exported by :mod:`qutip_trap.dynamics.hamiltonian`:
+Cooling, optical pumping and detection share one Hamiltonian and one set of collapse operators built here from the level
+structure of the species:
 
     H/hbar = sum_p (E_p - f_{level(p)}) |p><p|
            + sum_beams sum_{(L,U) addressed} sum_{p in L, q in U} (1/2) Omega^{(b)}_{qp} e^{-i delta_b t} |q><p| (x) D(i eta_b) + h.c.,
 
-with E_p the field-dressed energies of Section 4.5.1 (rad/s), f the frame frequency assigned to each fine-structure
-level, Omega^{(b)}_{qp} = E_0 sum_q eps_q <q|T_q|p>/hbar the polarization-resolved Rabi frequency of Section 4.5.2 in
-the (hbar Omega/2) convention, D(i eta_b) the exact displacement operator of the beam's projection on the one mode
-(Section 5.1.1; identity without a mode) and delta_b the beam's residual against the frame.
+with E_p the field-dressed energies (rad/s), f the frame frequency assigned to each fine-structure level,
+Omega^{(b)}_{qp} = E_0 sum_q eps_q <q|T_q|p>/hbar the polarization-resolved Rabi frequency in the (hbar Omega/2) convention,
+D(i eta_b) the exact displacement operator of the beam's projection on the one mode (identity without a mode) and delta_b
+the beam's residual against the frame.
 
-Rotating frame (Section 4.2.8): frame frequencies are assigned manifold by manifold along the beams, starting from
+Rotating frame: frame frequencies are assigned manifold by manifold along the beams, starting from
 the lowest included level at f = 0, so that every beam's detuning from every transition it drives sits on the
 diagonal; a beam whose frequency is inconsistent with two already assigned manifolds (two beams on one transition at
 different frequencies, or a closed loop of beams whose frequencies do not sum consistently) leaves a nonzero
@@ -20,7 +20,7 @@ residual delta_b, the Hamiltonian is then explicitly time periodic at the beat a
 frequency, which leaves the dissipator invariant. A level a beam is not near (|omega_b - omega_LU| >= omega_LU/2)
 is not addressed by it.
 
-Dissipator (Sections 4.5.2, 8.1, 4.2.8): one collapse operator per fine-structure decay line (L, U) and emitted
+Dissipator: one collapse operator per fine-structure decay line (L, U) and emitted
 polarization index q, C_q = sqrt(g_LU) T_q^- with g_LU = omega_LU^3/(3 pi eps0 hbar c^3) and T_q^- the lower<-upper
 block of the dipole operator in C m, so that sum_q C_q^dagger C_q = Gamma_{U->L} P_U by the Wigner-Eckart sum rule,
 the excited-to-ground feeding term carries the product of two matrix elements that transfers excited coherence into
@@ -55,8 +55,6 @@ from qutip_trap.light.recoil import (
 from qutip_trap.species.polarization import spherical_components
 from qutip_trap.species.raman import AtomicStructure, DressedState
 from qutip_trap.units import C_M_PER_S, EPSILON_0_F_PER_M, HBAR_J_S, TWO_PI
-
-M3A = "milestone M3a (dynamics/multilevel.py, PLAN.md Section 4.2.8)"
 
 LeakPolicy = Literal["include", "sink", "renormalize"]
 SINK = "sink"
@@ -118,19 +116,9 @@ class MultiLevelOptions:
     beam_phases_rad: tuple[float, ...] = ()
     """Optical phase of each beam at the ion (default 0); only relative phases between beams on one transition matter."""
     laser_linewidth_rad_s: tuple[float, ...] = ()
-    """delta omega_L of each beam (FWHM, angular): the phase-diffusion rate its light puts on the optical coherences.
-
-    Empty (the default) means an ideal monochromatic laser. Section 8.1 requires "-(gamma/2 + delta omega_L/2) on
-    optical coherences": the Lindblad form supplies -gamma/2 by itself, and a nonzero entry here adds the missing
-    -delta omega_L/2 as one phase-diffusion collapse operator per beam,
-
-        C_b = sqrt(delta omega_L,b / 4) (P_upper(b) - P_lower(b)),
-
-    the projector difference on the manifolds beam b connects (Berkeland and Boshier, Phys. Rev. A 65, 033413 (2002)
-    Eq. 12: a Lorentzian laser spectrum of full width delta omega_L is a Wiener phase whose Lindblad generator damps
-    the driven transition's coherence at delta omega_L/2 and leaves every population and every within-manifold
-    coherence untouched). This is the constant-rate Lorentzian of Section 8.1, not the laser's spectrum as a
-    spectral density, which Section 12 grants may be omitted."""
+    """delta omega_L of each beam (FWHM, angular; empty = monochromatic): one phase-diffusion collapse operator per beam,
+    C_b = sqrt(delta omega_L,b / 4) (P_upper(b) - P_lower(b)) on the manifolds beam b connects, which damps the driven
+    coherences at delta omega_L/2 and leaves populations untouched (Berkeland and Boshier 2002 Eq. 12)."""
 
     def __post_init__(self) -> None:
         if self.recoil_nodes < 3:
@@ -153,7 +141,6 @@ class FrameEdge:
     beam: int
     lower: str
     upper: str
-    omega_beam_rad_s: float
     residual_rad_s: float
     sets_frame: bool
     """True for the beam that fixed the upper manifold's frame along this edge."""
@@ -173,9 +160,6 @@ class FrameAssignment:
     @property
     def static(self) -> bool:
         return not self.beats_rad_s
-
-    def inconsistent_edges(self) -> tuple[FrameEdge, ...]:
-        return tuple(e for e in self.edges if e.residual_rad_s != 0.0)
 
 
 @dataclass(frozen=True)
@@ -203,7 +187,6 @@ class EmissionChannel:
     rate_rad_s: float
     """Gamma_{U->L}: the tabulated partial rate (s^-1); for a renormalized line the scaled mean rate."""
     wavenumber_rad_per_m: float
-    n_operators: int
     kind: Literal["decay", "sink", "renormalized"]
     eta_em: float
     """k_em x0 on the mode; 0 without a mode."""
@@ -235,10 +218,8 @@ class MultiLevelBuild:
     options: MultiLevelOptions
     n_beams: int
     dephasing_slice: tuple[int, int] = (0, 0)
-    """[start, stop) of the laser-linewidth phase-diffusion operators in ``c_ops`` (empty when no linewidth is given).
-
-    They are Lindblad operators like the decay ones, but they carry no photon and no recoil, so the decay sum rule of
-    Section 4.2.8 excludes them (``decay_sum_rule_residual``) and no ``EmissionChannel`` claims them."""
+    """[start, stop) of the laser-linewidth phase-diffusion operators in ``c_ops``: no photon, no recoil, no
+    ``EmissionChannel``, and excluded from the decay sum rule."""
 
     # ---- bookkeeping ---------------------------------------------------------------------------------------
 
@@ -318,7 +299,7 @@ class MultiLevelBuild:
         return out
 
 
-# ---- coefficients (module-level functions: they pickle, Section 5.3) ------------------------------------------------------
+# ---- coefficients (module-level functions, so they pickle) -------------------------------------------------------------
 
 
 def _beat_coefficient(
@@ -423,7 +404,7 @@ def assign_frames(
                 frame[lo] = frame[up] - w_b
             else:
                 continue
-            records.append(FrameEdge(b, lo, up, w_b, 0.0, True))
+            records.append(FrameEdge(b, lo, up, 0.0, True))
             used.add(k)
             changed = True
     changed = True
@@ -449,7 +430,7 @@ def assign_frames(
             residual = 0.0
         else:
             beats.append(abs(residual))
-        records.append(FrameEdge(b, lo, up, w_b, residual, False))
+        records.append(FrameEdge(b, lo, up, residual, False))
     distinct = tuple(sorted({round(x, 6) for x in beats}))
     return FrameAssignment(frame, tuple(records), distinct, _common_period(distinct))
 
@@ -762,7 +743,6 @@ def build_multilevel(
             eta_em = eta_em_by_line.get((lo, up), 0.0)
             k_em = _transition_omega(st, lo, up) / C_M_PER_S
             row_idx = [idx[p.full_label] for p in dressed_by_level[lo]]
-            n_ops = 0
             start = len(c_ops)
             op_qs: list[int] = []
             alphas: dict[int, float] = {}
@@ -783,7 +763,6 @@ def build_multilevel(
                     op_int = _place(math.sqrt(ch.weight * g) * matrix, row_idx, col_idx, scale, n_int)
                     c_ops.append(embed(op_int, kick).to("CSR"))
                     op_qs.append(9)
-                    n_ops += 1
                 alphas = {q: angular_factor(q, cos_chi) for q in per_q}
             else:
                 for q, blk in per_q.items():
@@ -791,7 +770,6 @@ def build_multilevel(
                     if opts.recoil == "off" or space is None:
                         c_ops.append(embed(op_int).to("CSR"))
                         op_qs.append(q)
-                        n_ops += 1
                         continue
                     alpha = angular_factor(q, cos_chi)
                     alphas[q] = alpha
@@ -806,29 +784,24 @@ def build_multilevel(
                         kick = space.displacement_factor(0, -eta_em * float(u))
                         c_ops.append(embed(math.sqrt(p_w) * op_int, kick).to("CSR"))
                         op_qs.append(q)
-                        n_ops += 1
             kind: Literal["decay", "sink", "renormalized"] = "decay"
             rate = st.e1[(lo, up)].partial_rate_rad_s
             if opts.leak == "renormalize" and has_deficit:
                 kind = "renormalized"
                 rate = rate * float(np.mean(scale**2))
             channels.append(
-                EmissionChannel(
-                    lo, up, rate, k_em, n_ops, kind, eta_em, alphas, (start, len(c_ops)), tuple(op_qs)
-                )
+                EmissionChannel(lo, up, rate, k_em, kind, eta_em, alphas, (start, len(c_ops)), tuple(op_qs))
             )
         if opts.leak == "sink" and has_deficit:
-            n_ops = 0
             start = len(c_ops)
             for j, e in enumerate(uppers):
                 if deficit[j] <= 0.0:
                     continue
                 op_int = qt.basis(n_int, idx[SINK]) * qt.basis(n_int, idx[e.full_label]).dag()
                 c_ops.append(math.sqrt(float(deficit[j])) * embed(op_int).to("CSR"))
-                n_ops += 1
             channels.append(
                 EmissionChannel(
-                    SINK, up, float(np.max(deficit)), 0.0, n_ops, "sink", 0.0, {}, (start, len(c_ops)), ()
+                    SINK, up, float(np.max(deficit)), 0.0, "sink", 0.0, {}, (start, len(c_ops)), ()
                 )
             )
             approximations.append(
@@ -859,7 +832,7 @@ def build_multilevel(
             approximations.append(
                 f"beam {b}: laser linewidth {width / TWO_PI:.4g} Hz added as phase diffusion on its optical "
                 "coherences (-delta omega_L/2; Section 8.1, Berkeland and Boshier 2002 Eq. 12), a constant "
-                "Lorentzian rate and not the laser's spectrum (Section 12) [background]"
+                "Lorentzian rate and not the laser's spectrum [background]"
             )
         if any(
             width > 0.0 and len(addressed_transitions(st, beams[b], level_order, opts.address_window)) > 1

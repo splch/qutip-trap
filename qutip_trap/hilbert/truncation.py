@@ -1,11 +1,8 @@
-"""Truncation policy: n_max caps, the boundary-population monitor and adaptive growth (PLAN.md Section 5.5; M2, M9a).
+"""The boundary-population monitor, cap growth and the convergence regime (PLAN.md Section 5.5).
 
-The monitor records, per mode and per pulse, the population in the top two Fock levels (or the top ENR shell);
-above the threshold (default 1e-6 of the population the pulse moves, with per-test overrides for hot modes) or when
-the cap's margin above the populated range falls below the Section 5.1.1 margin for the pulse's eta, the run is
-repeated with the cap raised, up to a configured limit, and both numbers are reported (Section 5.5). Tolerance
-convergence repeats a run with tolerances tightened by a factor of 10 and reports the change in final
-probabilities; the test suite does this for every validation case (Section 5.5).
+The monitor reads the population in the top two Fock levels of each resolved mode (the top shell of an ENR group); the
+engine raises a cap and repeats the run when it exceeds the threshold, and ``regrid_state`` carries the state onto the
+grown space.
 """
 
 from __future__ import annotations
@@ -18,57 +15,47 @@ import numpy as np
 import qutip as qt
 
 from qutip_trap.dynamics.engine import SolverOptions, State
-from qutip_trap.dynamics.evolve import ConvergenceReport
+from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.hilbert.space import HilbertSpace
-
-M2 = "milestone M2 (hilbert/truncation.py, PLAN.md Section 5.5)"
-
-
-class TruncationError(RuntimeError):
-    """The boundary monitor tripped and the configured growth limit was reached (Section 5.5)."""
 
 
 class TruncationWarning(UserWarning):
-    """A truncation the run could not make exact: a cap the rule wanted larger than ``SolverOptions.mode_dimension_max``
-    allowed, or a boundary population above ``boundary_population_max`` after the cap-raising retries. The warning names the
-    mode and both numbers, so silence means the caps held."""
+    """A truncation the run could not make exact: a cap clamped by ``SolverOptions.mode_dimension_max``, or a boundary
+    population above ``boundary_population_max`` after the cap-raising retries."""
 
 
 def warn_cap_clamped(mode: int, d_wanted: int, n_hi_wanted: int, d: int, d_max: int) -> None:
-    """Issue the :class:`TruncationWarning` of a cap clamped by ``mode_dimension_max`` (``run.space.select_space`` and the
-    GATE_LOCAL step spaces), attributed to the caller of the selection."""
+    """The :class:`TruncationWarning` of a cap clamped by ``mode_dimension_max``, attributed to the selection's caller."""
     warnings.warn(
         TruncationWarning(
             f"mode {mode}: the cap rule asks for d = {d_wanted} (expected occupation up to n = {n_hi_wanted}) but "
             f"mode_dimension_max = {d_max} clamps it to d = {d}; the boundary monitor grows the cap only up to the engine's "
-            "retry budget (Section 5.5), and the Diagnostics report the clamped range"
+            "retry budget, and the Diagnostics report the clamped range"
         ),
         stacklevel=3,
     )
 
 
 def warn_if_boundary_exceeds(boundary: Mapping[int, float], threshold: float) -> None:
-    """Issue one :class:`TruncationWarning` per mode whose reported boundary population exceeds ``threshold``
-    (``SolverOptions.boundary_population_max``) after the run's cap-raising retries; nothing is issued when every mode is
-    below it, so a silent run kept its caps."""
+    """One :class:`TruncationWarning` per mode whose boundary population exceeds ``threshold`` after the retries."""
     for mode, value in sorted(boundary.items()):
         if value > threshold:
             warnings.warn(
                 TruncationWarning(
                     f"mode {mode}: boundary population {value:.3e} exceeds boundary_population_max = {threshold:.1e} after "
-                    "the cap-raising retries (Section 5.5; a branch of weight w is allowed boundary_population_max / w, so a "
+                    "the cap-raising retries (a branch of weight w is allowed boundary_population_max / w, so a "
                     "low-weight branch can report this legitimately); Diagnostics.boundary_population carries it"
                 ),
                 stacklevel=3,
             )
 
 
-def boundary_population(state: State | qt.Qobj, space: HilbertSpace, mode: int, *, levels: int = 2) -> float:
-    """Population in the top ``levels`` Fock levels of a resolved mode, or in the top ENR shell (n_total = N_exc)."""
+def boundary_population(state: State | qt.Qobj, space: HilbertSpace, mode: int) -> float:
+    """Population in the top two Fock levels of a resolved mode, or in the top ENR shell."""
     cls = space.mode_class(mode)
     if cls == "resolved":
         p = space.fock_populations(state, mode)
-        return float(np.sum(p[-levels:]))
+        return float(np.sum(p[-2:]))
     if cls == "enr":
         assert space.enr_factor is not None
         sigma = np.real(np.diag(np.asarray(space.marginal(state, (space.enr_factor,)).full())))
@@ -79,90 +66,19 @@ def boundary_population(state: State | qt.Qobj, space: HilbertSpace, mode: int, 
     raise KeyError(f"mode {mode} is frozen and has no boundary")
 
 
-def boundary_populations(state: State | qt.Qobj, space: HilbertSpace, *, levels: int = 2) -> dict[int, float]:
-    out = {m.mode: boundary_population(state, space, m.mode, levels=levels) for m in space.resolved}
+def boundary_populations(state: State | qt.Qobj, space: HilbertSpace) -> dict[int, float]:
+    """``boundary_population`` of every resolved mode and ENR member (the members share the group's top shell)."""
+    out = {m.mode: boundary_population(state, space, m.mode) for m in space.resolved}
     if space.enr_group is not None:
-        top = boundary_population(state, space, space.enr_group[0][0], levels=levels)
+        top = boundary_population(state, space, space.enr_group[0][0])
         for m in space.enr_group[0]:
             out[m] = top
     return out
 
 
-@dataclass(frozen=True)
-class MarginReport:
-    mode: int
-    margin_levels: int
-    required_levels: int
-
-    @property
-    def ok(self) -> bool:
-        return self.margin_levels >= self.required_levels
-
-    @property
-    def deficit(self) -> int:
-        return max(self.required_levels - self.margin_levels, 0)
-
-
-def margin_reports(space: HilbertSpace, etas: Mapping[int, float] | None = None) -> tuple[MarginReport, ...]:
-    """The Section 5.1.1 margin check per resolved mode for the given |eta| (default: the declared eta_max)."""
-    deficits = space.margin_deficits(etas)
-    return tuple(
-        MarginReport(m.mode, m.margin_levels, m.margin_levels + deficits[m.mode]) for m in space.resolved
-    )
-
-
-def grow_for_margins(space: HilbertSpace, etas: Mapping[int, float] | None = None) -> HilbertSpace:
-    """Raise every resolved cap whose margin is below the Section 5.1.1 requirement (no-op when all margins hold)."""
-    out = space
-    for rep in margin_reports(space, etas):
-        if not rep.ok:
-            out = out.grown(rep.mode, rep.deficit)
-    return out
-
-
-def grow_for_boundary(
-    space: HilbertSpace, boundary: Mapping[int, float], threshold: float, *, add: int = 4
-) -> HilbertSpace:
-    """Raise the caps of the modes whose boundary population exceeds ``threshold`` by ``add`` levels each."""
-    out = space
-    for m in space.resolved:
-        if boundary.get(m.mode, 0.0) > threshold:
-            out = out.grown(m.mode, add)
-    return out
-
-
-def halving_test(
-    run: Callable[[SolverOptions], np.ndarray],
-    options: SolverOptions,
-    *,
-    factor: float = 10.0,
-    tol: float = 1e-6,
-) -> tuple[bool, float, SolverOptions]:
-    """The tolerance-convergence test of Section 5.5 behind the convergence badge (Section 14.5).
-
-    Runs ``run`` at ``options`` and again with atol and rtol tightened by ``factor`` (10 by default; the name keeps
-    the plan's historical "halving" label for the step-density halving it generalizes) and returns (converged,
-    max |delta probability|, the tightened options) with converged = the change is below ``tol``.
-    """
-    if factor <= 1.0:
-        raise ValueError("the tightening factor exceeds one")
-    tight = replace(options, atol=options.atol / factor, rtol=options.rtol / factor)
-    p0 = np.asarray(run(options), dtype=float)
-    p1 = np.asarray(run(tight), dtype=float)
-    if p0.shape != p1.shape:
-        raise ValueError("the two runs returned probabilities of different shapes")
-    delta = float(np.max(np.abs(p0 - p1))) if p0.size else 0.0
-    return delta < tol, delta, tight
-
-
 def grown_caps(space: HilbertSpace, add: int = 2, *, dimension_max: int | None = None) -> HilbertSpace:
-    """Every resolved cap of ``space`` (and the ENR group's excitation cap) raised by ``add``: the truncation half of Section
-    9.9's convergence regime.
-
-    Section 9.9 asks for the comparison "where the doubled cap stays within the dimension ceiling; otherwise the check runs
-    on the reduced mode set", so with ``dimension_max`` the modes are grown one at a time in resolved order and a mode whose
-    growth would cross the ceiling is left at its cap.
-    """
+    """Every resolved cap (and the ENR excitation cap) raised by ``add``; with ``dimension_max`` a mode whose growth would
+    cross the ceiling is left at its cap."""
     if add <= 0:
         raise ValueError("grow by a positive number of levels")
     out = space
@@ -180,20 +96,14 @@ def grown_caps(space: HilbertSpace, add: int = 2, *, dimension_max: int | None =
 
 @dataclass(frozen=True)
 class ConvergenceRegime:
-    """The three comparisons Section 9.9 asks of every validation case, each one a ``dynamics.evolve.ConvergenceReport``.
-
-    - ``tightened``: atol and rtol divided by ``factor`` (Section 5.5's second bullet, the run-level check
-      ``SolverOptions.convergence_check`` reports on its own);
-    - ``loosened``: both multiplied by ``factor``, which Section 9.9 asks for "for the integrator ladder";
-    - ``caps``: every resolved cap and the ENR excitation cap raised by ``add`` at UNCHANGED tolerances, so its report's
-      ``tolerances`` and ``tightened_tolerances`` are equal and ``grown_modes`` names what moved instead.
-    """
+    """The three convergence comparisons of a validation case: atol and rtol divided by ``factor`` (``tightened``),
+    multiplied by it (``loosened``), and every cap raised by ``add`` at unchanged tolerances (``caps``)."""
 
     tightened: ConvergenceReport
     loosened: ConvergenceReport
     caps: ConvergenceReport
     grown_modes: tuple[int, ...]
-    """The resolved modes whose caps were actually raised (a mode whose growth would cross the dimension ceiling is left)."""
+    """The resolved modes whose caps were raised."""
     add: int
 
     @property
@@ -206,7 +116,7 @@ class ConvergenceRegime:
 
     def summary(self) -> str:
         return (
-            f"Section 9.9 convergence: tolerances tightened move the probabilities by "
+            f"convergence: tolerances tightened move the probabilities by "
             f"{self.tightened.max_change:.3g}, loosened by {self.loosened.max_change:.3g}, caps +{self.add} on modes "
             f"{list(self.grown_modes)} by {self.caps.max_change:.3g}; threshold {self.tightened.tol:g}: "
             f"{'converged' if self.converged else 'NOT CONVERGED'}"
@@ -222,21 +132,11 @@ def convergence_report(
     add: int = 2,
     tol: float = 1e-6,
 ) -> ConvergenceRegime:
-    """Section 9.9's convergence regime for one validation case, all three arms through
-    :class:`~qutip_trap.dynamics.evolve.ConvergenceReport`.
+    """The convergence regime of one case: ``run(options, space)`` returns its probabilities by observable.
 
-    ``run(options, space)`` returns the case's reported probabilities keyed by observable, as the engine keys them. The
-    tolerance arms are ``dynamics.evolve.convergence_check`` on a closure that holds the space fixed; the loosened arm is
-    that same comparison started from ``options`` scaled UP by ``factor``, so its pair is (loose, options) and |delta p| is
-    the same number the plan asks for. The cap arm raises the caps at fixed tolerances (``grown_caps``); a case that carries
-    a fixed joint state regrids it inside its own closure (``regrid_state(state, space, grown)``), which is what makes that
-    arm comparable at all.
-
-    ``halving_test`` is the single-array form of the first comparison; this is the whole Section 9.9 row, and the tests that
-    call it carry the ``convergence`` marker so the CI convergence-report artifact means something (Sections 5.5, 14.5).
+    The loosened arm is ``convergence_check`` started from ``options`` scaled up by ``factor``; the cap arm runs on
+    ``grown_caps(space, add)`` within ``options.joint_dimension_max`` (a case with a fixed joint state regrids it itself).
     """
-    from qutip_trap.dynamics.evolve import convergence_check
-
     if factor <= 1.0:
         raise ValueError("the tightening factor exceeds one")
     loose = replace(options, atol=options.atol * factor, rtol=options.rtol * factor)
@@ -256,20 +156,14 @@ def convergence_report(
         tightened=tightened_rep,
         loosened=loosened_rep,
         caps=caps_rep,
-        grown_modes=tuple(
-            m.mode
-            for m, g in zip(space.resolved, grown.resolved)
-            if g.d > m.d  # a mode left at its cap by the dimension ceiling is not part of the comparison
-        ),
+        grown_modes=tuple(m.mode for m, g in zip(space.resolved, grown.resolved) if g.d > m.d),
         add=add,
     )
 
 
 def regrid_state(joint: qt.Qobj, old: HilbertSpace, new: HilbertSpace) -> qt.Qobj:
-    """Embed a joint state of ``old`` into ``new``, a copy of it with larger caps: zero-padded Fock factors for the resolved
-    modes, and for an ENR group a larger excitation cap, every old Fock tuple mapped to its index in the new group's
-    dictionary (``enr_state_dictionaries``; M9a). The caps may only grow; ions, frozen modes and the ENR modes are unchanged.
-    """
+    """A joint state of ``old`` embedded into ``new``, a copy of it with larger caps: zero-padded Fock factors, and for an
+    ENR group every old Fock tuple mapped to its index in the larger group."""
     if old.ion_dims != new.ion_dims or old.frozen != new.frozen or old.ion_labels != new.ion_labels:
         raise ValueError("regrid_state changes the motional caps only")
     if [m.mode for m in old.resolved] != [m.mode for m in new.resolved]:

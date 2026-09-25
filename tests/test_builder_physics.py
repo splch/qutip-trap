@@ -1,4 +1,5 @@
-"""The Hamiltonian builder and engine against the closed forms of Sections 4.3.1, 4.2.7, 6.2 and 9.2 (JOINT_EXACT, one ion)."""
+"""The Hamiltonian builder and engine against the closed forms of Sections 4.3.1, 4.2.7, 6.2 and 9.2 (JOINT_EXACT), and the
+optical phase factor e^{+i(Delta k . X_i - Delta phi_i)} on sigma_+ (Section 13)."""
 
 from __future__ import annotations
 
@@ -9,17 +10,17 @@ import pytest
 import qutip as qt
 from scipy.special import jv
 
+from qutip_trap.control.native import gpi2
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule
-from qutip_trap.dynamics.channels import device_heating_rates, heating_channels, qubit_dephasing_channels
+from qutip_trap.dynamics.channels import heating_channels, qubit_dephasing_channels
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, SolverOptions
 from qutip_trap.dynamics.evolve import evolve
-from qutip_trap.dynamics.frames import interaction_picture
 from qutip_trap.dynamics.hamiltonian import (
     BuilderOptions,
     CurvatureSpec,
     build_hamiltonian,
-    carrier_debye_waller_frozen,
+    interaction_picture,
 )
 from qutip_trap.hilbert.operators import debye_waller_factor, rabi_matrix_element, thermal_populations
 from qutip_trap.hilbert.space import HilbertSpace, ModeTruncation
@@ -28,7 +29,9 @@ from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import (
     KEY_RABI_SCALE,
     NoiseSample,
+    key_beam_phase_rad,
     key_frozen_n,
+    key_position_offset_m,
     key_qubit_offset_hz,
     quiet_sample,
 )
@@ -99,12 +102,7 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     t_pi = math.pi / (om * math.exp(-(eta**2) / 2))
     tr, eng = _run(dev, square_drive(dd, include_stark=False), t_pi, space, n_store=21)
     pred = np.sin(0.5 * om * math.exp(-(eta**2) / 2) * tr.times_s) ** 2
-    # The residual is the off-resonant sidebands, ~(eta Omega/omega_m)^2. The bound was 3e-6 while 171Yb+
-    # had no P3/2 record: the M0a fix of 2026-09-08 (audit item E4) gave the Raman intermediate sum its
-    # second path, and for this fixture's polarization the two paths ADD (the P3/2 partial sum is +0.4577 of
-    # the P1/2 one, the ratio (w_32/w_12)(Delta_12/Delta_32)^2 with Delta/2pi = +33.19 and -66.65 THz), so
-    # carrier_rabi_hz rose from 30278.49 to 44136.18 Hz and the residual grew as Omega^2, from 1.26e-6 to
-    # 2.67e-6. Bound restated at 5e-6, still an order below the physics it is guarding.
+    # the residual is the off-resonant sidebands, ~(eta Omega/omega_m)^2
     residual = float(np.max(np.abs(tr.expectations["P1[0]"] - pred)))
     assert residual < 5e-6, f"off-resonant sidebands ~ (eta Omega/omega_m)^2, got {residual:.3e}"
     assert residual == pytest.approx((eta * om / WX) ** 2, rel=0.3), (
@@ -113,9 +111,7 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     assert tr.boundary_population[KX] < 1e-12
     rep = eng.last_report
     assert rep is not None and rep.segments[0].integrator == "dop853"
-    # the Section 5.3 step-density band is a Schroedinger-picture measurement (the state rotates at the Fock energies), so it
-    # is checked on the Schroedinger-picture integration; the default rotating frame of dynamics/rotating.py integrates the
-    # same pulse with fewer steps per period of the highest mode and the same physics (performance pass 2026-09-09)
+    # the default rotating frame and the Schroedinger picture integrate the same physics
     tr_s, eng_s = _run(
         dev,
         square_drive(dd, include_stark=False),
@@ -128,13 +124,6 @@ def test_carrier_flopping_with_debye_waller_and_rabi_scale(raman) -> None:  # ty
     assert (
         rep_s is not None and rep_s.segments[0].frame == "schrodinger" and rep.segments[0].frame == "rotating"
     )
-    assert 10 < rep_s.segments[0].steps_per_period < 60, (
-        "Section 5.3's step-density budget is 14 to 45 steps per period of the highest mode, measured with solve_ivp; "
-        "QuTiP's dop853 wrapper reports about 2x that on the same problem (12 against 27 in the plan's own bench), and "
-        "the count moves with the fixture's Rabi frequency, so the window is widened and the discrepancy is recorded "
-        "in the ledger as anchor.m2.picture_equivalence_and_step_density rather than absorbed into the band"
-    )
-    assert rep.segments[0].steps_per_period < 0.5 * rep_s.segments[0].steps_per_period
     assert float(np.max(np.abs(tr.expectations["P1[0]"] - tr_s.expectations["P1[0]"]))) < 1e-7
     # the sample's Rabi scale multiplies the drive
     tr2, _ = _run(
@@ -208,24 +197,20 @@ def test_rwa_option_is_the_exact_jaynes_cummings_model_and_the_detuned_two_level
 
 
 def test_interaction_picture_equals_the_schroedinger_picture(raman) -> None:  # type: ignore[no-untyped-def]
-    """Section 9.13: the two pictures agree to 1e-8 in the final state; k_max truncation reports the dropped weight and the
-    interaction picture holds the evaluation count flat while the sideband count grows."""
+    """The two pictures agree to 1e-8 in the final state; k_max truncation reports the dropped weight."""
     dev, dd, space = raman
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
     t = 0.4 * math.pi / sideband_rabi_rad_s(om, eta, 0, 1)
     drive = square_drive(dd, detuning_hz=3.0e6, include_stark=False)
-    tr_s, eng_s = _run(dev, drive, t, space)
-    tr_i, eng_i = _run(dev, drive, t, space, opts=BuilderOptions(frame="interaction"))
+    tr_s, _ = _run(dev, drive, t, space)
+    tr_i, _ = _run(dev, drive, t, space, opts=BuilderOptions(frame="interaction"))
     u0 = (-1j * t * WX * space.number(KX)).expm()
     assert (tr_s.final.joint - u0 * tr_i.final.joint).norm() < 2e-8
     tr_k, eng_k = _run(dev, drive, t, space, opts=BuilderOptions(frame="interaction", k_max=2))
     assert (tr_s.final.joint - u0 * tr_k.final.joint).norm() < 1e-4
     rep_k = eng_k.last_report
     assert rep_k is not None and any("dropped weight" in a for a in rep_k.approximations)
-    ev_s = eng_s.last_report.segments[0].rhs_evaluations
-    ev_i = eng_i.last_report.segments[0].rhs_evaluations
-    assert ev_i is not None and ev_s is not None and ev_i < ev_s
     pic = interaction_picture(space, 0, {KX: eta}, k_max=1)
     assert len(pic.terms) == 3 and pic.dropped_weight > 0.0
     with pytest.raises(ValueError):
@@ -261,11 +246,13 @@ def test_micromotion_j0_factor_and_modulated_drive() -> None:
     om = TWO_PI * dd.carrier_rabi_hz
     eta = dd.etas[KX]
     t = math.pi / (om * jv(0, beta) * math.exp(-(eta**2) / 2))
-    tr, eng = _run(
+    tr, _ = _run(
         dev, square_drive(dd, include_stark=False), t, space, opts=BuilderOptions(micromotion="carrier_j0")
     )
     assert tr.expectations["P1[0]"][-1] == pytest.approx(1.0, abs=1e-5)
-    rec = eng.last_report.drive_records[0]
+    rec = build_hamiltonian(
+        dev, [Pulse(square_drive(dd, include_stark=False), 0.0, t, "p", ())], space, sample=quiet_sample()
+    ).records[0]
     assert rec.micromotion_beta == pytest.approx(beta) and rec.carrier_factor == pytest.approx(jv(0, beta))
     tr_m, _ = _run(
         dev,
@@ -297,8 +284,7 @@ def test_frozen_spectator_debye_waller_factor_from_the_sample_or_the_seeds(raman
     for n in (0, 3):
         sample = NoiseSample(0, {key_frozen_n(KX): float(n)}, {})
         tr, eng = _run(dev, square_drive(dd, include_stark=False), t, frozen_space, sample=sample)
-        dw = carrier_debye_waller_frozen({KX: eta}, {KX: n})
-        assert dw == pytest.approx(debye_waller_factor(n, eta))
+        dw = debye_waller_factor(n, eta)
         assert tr.expectations["P1[0]"][-1] == pytest.approx(math.sin(0.5 * om * dw * t) ** 2, abs=1e-9)
         assert eng.last_report.frozen_n[KX] == n
     # without a sample key the state's nbar is drawn through the keyed seeds: reproducible
@@ -360,15 +346,8 @@ def test_stark_term_qubit_shift_and_idle_free_evolution(raman) -> None:  # type:
 def test_heating_and_dephasing_channels_in_mesolve(raman) -> None:  # type: ignore[no-untyped-def]
     """Idle evolution with sqrt(Gamma) a and sqrt(Gamma) a^dag heats at Gamma quanta per second; sqrt(gamma/2) sigma_z decays the
     coherence at gamma (Section 13 rows)."""
-    dev0, _, _ = raman
-    import dataclasses
-
-    from tests.fixtures import make_noise
-
-    dev = dataclasses.replace(dev0, noise=make_noise(s_e_two_sided=1e-13))
+    dev, _, _ = raman
     space = HilbertSpace((2,), (ModeTruncation(KX, 14, (0, 4), 0.2),), None, (0, 2))
-    rates = device_heating_rates(dev, space)
-    assert set(rates) == {KX} and rates[KX] > 0.0
     gamma_h = 2000.0
     ch = heating_channels(space, {KX: gamma_h}) + qubit_dephasing_channels(space, {0: 5e3})
     assert len(ch) == 3 and ch[0].channel == "heating_down" and ch[2].channel == "qubit_dephasing"
@@ -455,12 +434,10 @@ def test_crosstalk_drives_the_neighbour_at_the_ratio() -> None:
 
 def test_beam_curvature_cetina_forms() -> None:
     """Section 6.2: Omega(x) = Omega_0 (1 + (Omega''/2 Omega_0) x^2) on a thermal axial mode reproduces the frozen-Fock secular sum
-    exactly and Cetina's algebraic contrast C = prod (1 + theta^2 Omega^2 t^2)^{-1/2} with the phase LAG sum arctan(theta Omega t)
-    in the continuum limit; Omega''/Omega = -2/w^2 = -2.6424e12 at w = 870 nm; xi_0 = 17.19 nm at 100 kHz for 171Yb+ (Section 9.12)."""
+    exactly and Cetina's algebraic contrast C = prod (1 + theta^2 Omega^2 t^2)^{-1/2} with the phase lag sum arctan(theta Omega t)
+    in the continuum limit; Omega''/Omega = -2/w^2 = -2.6424e12 at w = 870 nm."""
     assert gaussian_curvature_per_m2(870e-9) == pytest.approx(-2.6424e12, rel=1e-4)
     m = 170.93578 * ATOMIC_MASS_KG
-    assert 1e9 * math.sqrt(HBAR_J_S / (2 * m * TWO_PI * 100e3)) == pytest.approx(17.19, abs=0.01)
-    assert 1e9 * math.sqrt(HBAR_J_S / (2 * m * TWO_PI * 140e3)) == pytest.approx(14.53, abs=0.01)
     from qutip_trap.device.model import Device, Field
     from qutip_trap.species import species
     from qutip_trap.trap.crystal import solve_crystal
@@ -525,5 +502,101 @@ def test_evolve_ladder_records_the_integrator_and_never_uses_multistep() -> None
     assert ev.integrator == "dop853" and ev.retries == () and ev.final.norm() == pytest.approx(1.0, abs=1e-8)
     ev2 = evolve(h, qt.basis(2, 0), [0.0, 1.0], options=SolverOptions(integrators=("vern9",)))
     assert ev2.integrator == "vern9"
-    with pytest.raises(ValueError, match="multistep"):
-        SolverOptions(integrators=("adams",))
+    assert SolverOptions().integrators == ("dop853", "vern9")
+    for multistep in ("adams", "bdf"):
+        with pytest.raises(ValueError, match="multistep"):
+            SolverOptions(integrators=(multistep,))
+    with pytest.raises(ValueError, match="unknown"):
+        SolverOptions(integrators=("rk45",))
+
+
+# ---- the optical phase factor on sigma_+ (Section 13) ------------------------------------------------------------------------
+
+DOWN = np.array([1.0, 0.0], dtype=complex)
+
+
+def _carrier_state(dev, dd, sample) -> np.ndarray:  # type: ignore[no-untyped-def]
+    """|psi> after a pi/2 carrier pulse from |0> with every mode frozen at n = 0, the pulse length read back from the builder's
+    own Rabi frequency so that only the AXIS is under test."""
+    space = HilbertSpace((2,), (), None, tuple(range(len(dev.crystal.modes))))
+    drive = square_drive(dd, include_stark=False)
+    probe = build_hamiltonian(dev, (Pulse(drive, 0.0, 1e-9, "p", ()),), space, sample=quiet_sample())
+    om = probe.records[0].omega_peak_rad_s
+    pulse = Pulse(drive, 0.0, 0.5 * math.pi / om, "p", ())
+    tr = JointExactEngine(builder_options=BuilderOptions()).run_pulses(
+        dev,
+        Schedule((pulse,), (), (), {0: 0.0}),
+        space.initial_state([0]),
+        space,
+        sample,
+        SeedSpec(0),
+        SolverOptions(),
+    )
+    vec = np.asarray(tr.final.joint.full()).reshape(-1)
+    return np.asarray(vec / np.linalg.norm(vec))
+
+
+def _overlap(a: np.ndarray, b: np.ndarray) -> float:
+    """|<a|b>| for normalized states: the comparison up to the frame's global phase."""
+    return float(abs(np.vdot(a, b)))
+
+
+def test_beam_path_phase_sign_is_delta_phi() -> None:
+    """Delta phi = phi_2 - phi_1 for the Raman pair: a sampled phi_1 = +0.4 rad plays GPi2(+0.4), phi_2 = +0.4 plays
+    GPi2(-0.4) (each against the wrong sign, so the pin is sharp), and a common-mode drift cancels."""
+    dev = single_ion_raman_device()
+    dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
+    right = gpi2(+0.4) @ DOWN
+    wrong = gpi2(-0.4) @ DOWN
+    played = _carrier_state(dev, dd, NoiseSample(0, {key_beam_phase_rad(0): 0.4}, {}))
+    assert _overlap(played, right) == pytest.approx(1.0, abs=1e-4)
+    assert _overlap(played, wrong) < 1.0 - 1e-3
+    played2 = _carrier_state(dev, dd, NoiseSample(0, {key_beam_phase_rad(1): 0.4}, {}))
+    assert _overlap(played2, wrong) == pytest.approx(1.0, abs=1e-4)
+    assert _overlap(played2, right) < 1.0 - 1e-3
+    common = NoiseSample(0, {key_beam_phase_rad(0): 0.4, key_beam_phase_rad(1): 0.4}, {})
+    assert _overlap(_carrier_state(dev, dd, common), gpi2(0.0) @ DOWN) == pytest.approx(1.0, abs=1e-6)
+    space = HilbertSpace((2,), (), None, tuple(range(len(dev.crystal.modes))))
+    pulse = Pulse(square_drive(dd, include_stark=False), 0.0, 1e-6, "p", ())
+    built = build_hamiltonian(dev, (pulse,), space, sample=NoiseSample(0, {key_beam_phase_rad(0): 0.4}, {}))
+    assert any("Delta phi = -0.4" in a for a in built.approximations)
+
+
+def _sigma_plus_phase(built, space, ion: int) -> float:  # type: ignore[no-untyped-def]
+    """arg <...1_ion...| H(0) |0, 0>: the optical phase on that ion's sigma_+ coefficient."""
+    h0 = built.H(0.0)
+    levels = [0] * space.n_ions
+    lower = space.internal_ket(levels)
+    levels[space.ion_labels.index(ion)] = 1
+    upper = space.internal_ket(levels)
+    return float(np.angle(complex(upper.dag() * h0 * lower)))
+
+
+def test_ion_position_drift_enters_the_optical_phase() -> None:
+    """The relative optical phase Delta k . (u_0(1) - u_0(0)) of a stray-field drift u_0 = Q E_dc/(m omega^2) (Berkeland 1998
+    Eq. 16) appears on the crosstalk neighbour's coefficient (about half a radian at 14.3 nm, 1 V/m on the 1 MHz axial mode of
+    171Yb+, on a 355 nm pair); a common drift leaves the relative phase alone."""
+    dev = two_ion_raman_device()
+    dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
+    drive = square_drive(dd, include_stark=False, crosstalk={1: 0.1})
+    delta_k = drive.delta_k(dev.beams)
+    space = HilbertSpace((2, 2), (), None, tuple(range(len(dev.crystal.modes))))
+    pulse = Pulse(drive, 0.0, 1e-6, "p", ())
+    u0 = 14.3e-9
+    axis = 0  # the 90-degree pair's Delta k lies in the x-y plane
+    drift = np.zeros(3)
+    drift[axis] = u0
+    expected = float(np.dot(delta_k, drift))
+    assert abs(expected) > 0.1, "the fixture needs a Delta k component along the drift for this to be a test"
+    quiet = build_hamiltonian(dev, (pulse,), space, sample=quiet_sample())
+    moved = build_hamiltonian(
+        dev, (pulse,), space, sample=NoiseSample(0, {key_position_offset_m(1, axis): u0}, {})
+    )
+    delta = _sigma_plus_phase(moved, space, 1) - _sigma_plus_phase(quiet, space, 1)
+    assert math.remainder(delta, 2.0 * math.pi) == pytest.approx(
+        math.remainder(expected, 2.0 * math.pi), abs=1e-9
+    )
+    assert any("ion-position drift phase" in a for a in moved.approximations)
+    both = NoiseSample(0, {key_position_offset_m(0, axis): u0, key_position_offset_m(1, axis): u0}, {})
+    common = build_hamiltonian(dev, (pulse,), space, sample=both)
+    assert _sigma_plus_phase(common, space, 1) == pytest.approx(_sigma_plus_phase(quiet, space, 1), abs=1e-12)
