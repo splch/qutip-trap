@@ -51,7 +51,7 @@ from qutip_trap.noise.sampling import (
     synthesize,
     time_grid,
 )
-from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum
+from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum, white_spectrum
 from qutip_trap.units import E_C, GAUSS_PER_TESLA, TWO_PI
 
 if TYPE_CHECKING:
@@ -85,18 +85,12 @@ def quiet_drift() -> Drift:
     return Drift(rms=0.0, tau_s=1.0, servo_bandwidth_hz=None)
 
 
-def _quiet_field_spectrum() -> NoiseSpectrum:
-    """The zero electric-field spectrum: a five-point zero band over +-2 pi x 10^7 rad/s."""
-    omega = np.linspace(-2.0 * math.pi * 1e7, 2.0 * math.pi * 1e7, 5)
-    return NoiseSpectrum(omega_rad_s=omega, S=np.zeros(5), unit="(V/m)^2/(rad/s)")
-
-
 @dataclass(frozen=True)
 class NoiseModel:
     """The noise of a device as spectra, drifts and event rates, never as phenomenological error rates (units in the module
     docstring). Every default means off: ``NoiseModel()`` is the quiet model."""
 
-    S_E: NoiseSpectrum = field(default_factory=_quiet_field_spectrum)
+    S_E: NoiseSpectrum = field(default_factory=lambda: white_spectrum(0.0, "(V/m)^2/(rad/s)"))
     """Electric-field noise, the source of heating."""
     correlation_length_m: float = 0.0
     """Spatial correlation length of the field noise: 0 uncorrelated (every mode heats at the single-ion rate), inf uniform
