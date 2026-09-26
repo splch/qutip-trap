@@ -246,11 +246,11 @@ def _played_from(
 
 
 def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with() -> None:
-    """Roos's spin-axis tilt at beat phase zeta = pi/2 against the exact engine on the two-ion chain's x-COM mode: the |++>
-    output moves from the zeta = 0 one by the budget's sin^2(psi), psi = (2 Omega_on/mu) sin(zeta), for a square pulse
-    (1.77e-3 against 1.81e-3) and for Leung's FM pulse on hardware that resets the beat note per gate, which leaves a
-    detuning schedule running (6.95e-3 against 6.48e-3); the Fourier-sine AM switches on at zero amplitude, the carrier
-    follows it adiabatically and its output does not move (below 1e-5), where its time-mean amplitude would give 4.4e-3."""
+    """Roos's spin-axis tilt at beat phase zeta = pi/2 against the exact engine on the two-ion chain's x-COM mode with
+    phase-continuous tones: the |++> output moves from the zeta = 0 one by the budget's sin^2(psi), psi = (2 Omega_on/mu)
+    sin(zeta), for a square pulse (1.77e-3 against 1.81e-3) and for Leung's FM pulse at its starting detuning (6.95e-3
+    against 6.48e-3); the Fourier-sine AM switches on at zero amplitude, the carrier follows it adiabatically and its output
+    does not move (below 1e-5), where its time-mean amplitude would give 4.4e-3."""
     device = chain_device(2)
     assert device.hardware.phase_continuous
     reset_hw = dataclasses.replace(
@@ -264,15 +264,14 @@ def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with()
     fm = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=5, mu0_hz=3.012e6).waveform
     plus = qt.tensor((qt.basis(2, 0) + qt.basis(2, 1)).unit(), (qt.basis(2, 0) + qt.basis(2, 1)).unit())
     moved: dict[str, tuple[float, float]] = {}
-    for name, wf, dev in (("square", square, device), ("fourier", fourier, device), ("fm", fm, reset_hw)):
+    for name, wf in (("square", square), ("fourier", fourier), ("fm", fm)):
         mu = wf.segments[0].detuning_hz["blue"]
         t_g = 0.25 / float(mu(0.0) if callable(mu) else mu)
-        reset = not dev.hardware.phase_continuous
-        at_zero = _played_from(dev, wf, 0.0, plus, reset=reset)
-        at_quarter = _played_from(dev, wf, t_g, plus, reset=reset)
+        at_zero = _played_from(device, wf, 0.0, plus, reset=False)
+        at_quarter = _played_from(device, wf, t_g, plus, reset=False)
         assert float(np.real((at_zero * at_zero).tr())) > 1.0 - 1e-6, "the |++> output is pure"
         change = 1.0 - float(np.real((at_zero * at_quarter).tr()))
-        moved[name] = (change, roos_beat_phase_tilt(wf, t_g, beat_reset=reset))
+        moved[name] = (change, roos_beat_phase_tilt(wf, t_g, beat_reset=False))
     assert moved["square"][1] == pytest.approx(1.81e-3, rel=1e-2)
     assert moved["square"][0] == pytest.approx(moved["square"][1], rel=0.05), moved
     assert moved["fm"][1] == pytest.approx(6.48e-3, rel=1e-2)
