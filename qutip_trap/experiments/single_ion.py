@@ -15,7 +15,7 @@ import itertools
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, Unpack
 
 import numpy as np
 
@@ -257,6 +257,16 @@ class _Averaged:
         return float(self.p1(ion)[-1])
 
 
+class _ModeStates(NamedTuple):
+    """The thermal states of one coupled mode the Fock sum carries."""
+
+    mode: int
+    resolved: bool
+    """A Fock state of the resolved mode (else a frozen spectator's)."""
+    states: list[tuple[int, float]]
+    """(n, P_n) of every state at or above the branch cut."""
+
+
 def _branches(
     space: HilbertSpace,
     nbar: Mapping[int, float],
@@ -272,7 +282,7 @@ def _branches(
     from qutip_trap.dynamics.operators import thermal_populations
     from qutip_trap.run.job import RunError
 
-    options: list[tuple[int, bool, list[tuple[int, float]]]] = []
+    options: list[_ModeStates] = []
     for m, nb in nbar.items():
         if nb <= 0.0 or abs(etas.get(m, 0.0)) <= 1e-12:
             continue
@@ -291,22 +301,22 @@ def _branches(
                 f"likely state has probability {float(np.max(probs)):.3e}, and the Fock sum of Section 5.3 needs at least "
                 "one branch; cool the mode"
             )
-        options.append((m, resolved_flag, opts))
+        options.append(_ModeStates(m, resolved_flag, opts))
     if not options:
         return [(1.0, {}, {})], 0.0
     out: list[tuple[float, dict[int, int], dict[int, int]]] = []
-    for choice in itertools.product(*[o[2] for o in options]):
+    for choice in itertools.product(*[o.states for o in options]):
         w = float(np.prod([p for _n, p in choice]))
         if w < weight_min:
             continue
-        res = {options[k][0]: n for k, (n, _p) in enumerate(choice) if options[k][1]}
-        fro = {options[k][0]: n for k, (n, _p) in enumerate(choice) if not options[k][1]}
+        res = {o.mode: n for o, (n, _p) in zip(options, choice) if o.resolved}
+        fro = {o.mode: n for o, (n, _p) in zip(options, choice) if not o.resolved}
         out.append((w, res, fro))
     if not out:
-        best = float(np.prod([max(p for _n, p in o[2]) for o in options]))
+        best = float(np.prod([max(p for _n, p in o.states) for o in options]))
         raise RunError(
             f"the experiment's branch cut {weight_min:g} keeps no branch of the thermal mixture of modes "
-            f"{[o[0] for o in options]}: the most likely branch has weight {best:.3e}, and the Fock sum of Section 5.3 "
+            f"{[o.mode for o in options]}: the most likely branch has weight {best:.3e}, and the Fock sum of Section 5.3 "
             "needs at least one; cool the modes"
         )
     total = sum(w for w, _r, _f in out)
