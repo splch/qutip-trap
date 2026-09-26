@@ -145,10 +145,13 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
             t.crosstalk_phase[(i, j)].value
         ) < SIGMA * t.crosstalk_phase[(i, j)].uncertainty
     # the Lamb-Dicke parameters: one entry per coupled mode, on the mode's probe ion, all calibrated by the sideband Rabi
-    # frequency
+    # frequency of the mode spectroscopy under the Lamb-Dicke convention's provenance
     assert {m for (_ion, m) in t.lamb_dicke} == {2, 3}
     assert all(
-        e.status == "calibrated" and e.experiment == "sideband_spectroscopy" for e in t.lamb_dicke.values()
+        e.status == "calibrated"
+        and e.experiment == "mode_spectroscopy"
+        and e.provenance_id == "conv.lamb_dicke"
+        for e in t.lamb_dicke.values()
     )
     # the entangling waveform: calibrated by the amplitude scan, aligned by the phase scan
     wf = t.waveform_for((0, 1))
@@ -388,6 +391,31 @@ def test_a_subset_calibration_leaves_the_other_entries_as_seeds_not_uncalibrated
     assert report.table.field.status == "calibrated"
     assert all(e.status == "seed" for e in report.table.rabi.values())
     assert report.table.uncalibrated() == ()
+
+
+def test_the_calibration_writes_each_result_as_its_own_proposal(two_ion) -> None:
+    """The entries the calibration writes are the results' own proposals (``CalibrationTable.updated_with``), the one
+    result-to-entry path: the field scan's field, and the detection entries under their fits' provenance, the three rates
+    under the mean-count fit's and the threshold, window and errors under the figure of merit's."""
+    fx, sur = two_ion
+    scans = CalibrationScans(
+        shots=None, detection_records=300, detection_windows_s=(20e-6,), micromotion_ranges={}
+    )
+    report = full_calibration(
+        fx.device, experiments=("field_scan", "detection_histogram"), surrogate=sur, scans=scans, t0_s=5.0
+    )
+    proposal = sur.table
+    for name in ("field_scan[0]", "detection_histogram[0]"):
+        proposal = proposal.updated_with(report.results[name], fitted_at_s=5.0, sample_id=0)
+    assert report.table.field == proposal.field and report.table.field.status == "calibrated"
+    assert report.table.detection == proposal.detection
+    assert {n: e.provenance_id for n, e in report.table.detection.items()} == {
+        **dict.fromkeys(("threshold", "window_s", "eps_B", "eps_D"), "conv.readout_figure_of_merit"),
+        **dict.fromkeys(
+            ("R_bright_detected_per_s", "R_dark_pumping_per_s", "R_bright_pumping_per_s"),
+            "conv.mean_count_curve",
+        ),
+    }
 
 
 # ---- an uncalibrated qubit frequency -------------------------------------------------------------------------------------

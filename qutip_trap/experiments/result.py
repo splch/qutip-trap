@@ -120,21 +120,28 @@ class ExperimentResult:
             return "good"
         return "poor"
 
-    def _entry(self, key: str, fitted_at_s: float, sample_id: int) -> CalEntry:
-        value, uncertainty = self.fitted[key]
+    def _entry(
+        self, key: str, fitted_at_s: float, sample_id: int, provenance_id: str | None = None
+    ) -> CalEntry:
+        """The fitted ``key`` as a table entry: ``calibrated`` when the fit converged on a finite value and uncertainty,
+        else ``uncalibrated`` with a non-finite number stored as 0; stamped with the experiment, ``provenance_id`` (default
+        the result's, the model of its principal fit), the time and the noise sample."""
+        value, uncertainty = (float(x) for x in self.fitted[key])
+        finite = math.isfinite(value) and math.isfinite(uncertainty)
         return CalEntry(
-            float(value),
-            float(uncertainty),
-            "calibrated" if self.converged else "uncalibrated",
+            value if math.isfinite(value) else 0.0,
+            uncertainty if math.isfinite(uncertainty) else 0.0,
+            "calibrated" if self.converged and finite else "uncalibrated",
             self.experiment,
-            self.provenance_id,
+            self.provenance_id if provenance_id is None else provenance_id,
             float(fitted_at_s),
             int(sample_id),
         )
 
     def table_updates(self, *, fitted_at_s: float, sample_id: int) -> dict[str, Any]:
         """The calibration-table fields this result sets (``CalibrationTable.updated_with``): ``{field: {key: CalEntry}}``,
-        or ``{"field": CalEntry}``, each entry ``calibrated`` when the fit converged; a result that sets none refuses."""
+        or ``{"field": CalEntry}``, each entry ``calibrated`` when the fit converged on a finite value (``_entry``); a result
+        that sets none refuses."""
         raise ValueError(
             f"{type(self).__name__} ({self.experiment}) sets no calibration table entry directly"
         )
@@ -174,7 +181,8 @@ class RamseyFringe(ExperimentResult):
 @dataclass(frozen=True)
 class SidebandSpectrum(ExperimentResult):
     """``sideband_spectroscopy`` and ``mode_spectroscopy``: sets ``modes[mode]``, ``nbar[mode]`` and
-    ``lamb_dicke[(ion, mode)]`` from ``mode_hz``, ``nbar`` and ``eta`` where fitted."""
+    ``lamb_dicke[(ion, mode)]`` from ``mode_hz``, ``nbar`` and ``eta`` where fitted, the occupation under the sideband
+    ratio's provenance and |eta| under the Lamb-Dicke convention's."""
 
     experiment: str = "sideband_spectroscopy"
 
@@ -183,11 +191,15 @@ class SidebandSpectrum(ExperimentResult):
             raise ValueError("SidebandSpectrum: the scan drove no mode, so it sets no mode entry")
         mode = int(self.subject["mode"])
         out: dict[str, Any] = {}
-        for name, key in (("modes", "mode_hz"), ("nbar", "nbar")):
-            if key in self.fitted:
-                out[name] = {mode: self._entry(key, fitted_at_s, sample_id)}
+        if "mode_hz" in self.fitted:
+            out["modes"] = {mode: self._entry("mode_hz", fitted_at_s, sample_id)}
+        if "nbar" in self.fitted:
+            out["nbar"] = {
+                mode: self._entry("nbar", fitted_at_s, sample_id, "anchor.m3.thermometry_exactness")
+            }
         if "eta" in self.fitted and "ion" in self.subject:
-            out["lamb_dicke"] = {(int(self.subject["ion"]), mode): self._entry("eta", fitted_at_s, sample_id)}
+            key = (int(self.subject["ion"]), mode)
+            out["lamb_dicke"] = {key: self._entry("eta", fitted_at_s, sample_id, "conv.lamb_dicke")}
         if not out:
             raise ValueError("SidebandSpectrum: neither mode_hz, nbar nor eta was fitted")
         return out
@@ -222,13 +234,18 @@ class ParityScan(ExperimentResult):
 
 @dataclass(frozen=True)
 class DetectionHistogram(ExperimentResult):
-    """``detection_histogram``: sets ``detection[name]`` for every fitted entry but the scattered rate."""
+    """``detection_histogram``: sets ``detection[name]`` for the threshold, the window and (eps_B, eps_D) of the figure of
+    merit, and for the three rates of the mean-count fit under that fit's provenance."""
 
     experiment: str = "detection_histogram"
 
     def table_updates(self, *, fitted_at_s: float, sample_id: int) -> dict[str, Any]:
-        names = [k for k in self.fitted if k != "R_bright_scattered_per_s"]
-        return {"detection": {n: self._entry(n, fitted_at_s, sample_id) for n in names}}
+        entries = {
+            n: self._entry(n, fitted_at_s, sample_id) for n in ("threshold", "window_s", "eps_B", "eps_D")
+        }
+        for n in ("R_bright_detected_per_s", "R_dark_pumping_per_s", "R_bright_pumping_per_s"):
+            entries[n] = self._entry(n, fitted_at_s, sample_id, "conv.mean_count_curve")
+        return {"detection": entries}
 
 
 @dataclass(frozen=True)
@@ -281,15 +298,14 @@ class FieldScan(ExperimentResult):
 
 @dataclass(frozen=True)
 class MicromotionScan(ExperimentResult):
-    """``micromotion_scan``: sets ``micromotion["shim[name]"]`` for every shim the scan nulled."""
+    """``micromotion_scan``: sets ``micromotion["shim[name]"]`` for every shim the scan nulled and
+    ``micromotion["beta[beam]"]``, the residual index it left."""
 
     experiment: str = "micromotion_scan"
 
     def table_updates(self, *, fitted_at_s: float, sample_id: int) -> dict[str, Any]:
-        shims = [k for k in self.fitted if k.startswith("shim[") and k.endswith("]")]
-        if not shims:
-            raise ValueError("MicromotionScan: no shim was fitted")
-        return {"micromotion": {k: self._entry(k, fitted_at_s, sample_id) for k in shims}}
+        keys = [k for k in self.fitted if k.startswith(("shim[", "beta[")) and k.endswith("]")]
+        return {"micromotion": {k: self._entry(k, fitted_at_s, sample_id) for k in keys}}
 
 
 @dataclass(frozen=True)

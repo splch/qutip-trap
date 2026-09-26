@@ -318,6 +318,33 @@ def test_detection_histogram_and_crystal_image_propose_what_they_measured(machin
     assert image.quality in ("good", "exact", "failed")
 
 
+def test_a_proposal_holds_no_non_finite_number_and_names_each_entrys_provenance() -> None:
+    """A Ramsey-frequency experiment on three delays fits no fringe: its proposal is an uncalibrated qubit frequency holding
+    0, not the NaN it reports. A mode spectroscopy proposes its mode frequency under the lineshape's provenance, the
+    occupation under the sideband ratio's and |eta| under the Lamb-Dicke convention's."""
+    table = make_calibration_table()
+    res = ramsey_frequency(Machine(microwave_device()), 0, [0.0, 1e-3, 2e-3], rabi_hz=2e4, probe_hz=1000.0)
+    assert math.isnan(res.fitted["qubit_freq_hz"][0]) and not res.converged
+    entry = table.updated_with(res).qubit_freq[0]
+    assert entry.status == "uncalibrated" and entry.value == 0.0 and entry.experiment == "ramsey_frequency"
+    spectrum = SidebandSpectrum(
+        data=np.zeros((0, 3)),
+        fitted={"mode_hz": (2.9e6, 300.0), "nbar": (0.02, 0.005), "eta": (0.08, 0.003)},
+        model="sideband_lineshape_two_stage",
+        provenance_id="conv.sideband_lineshape",
+        subject={"ion": 0, "mode": 3, "beam": 2},
+        experiment="mode_spectroscopy",
+    )
+    proposal = table.updated_with(spectrum)
+    entries = (proposal.modes[3], proposal.nbar[3], proposal.lamb_dicke[(0, 3)])
+    assert [e.provenance_id for e in entries] == [
+        "conv.sideband_lineshape",
+        "anchor.m3.thermometry_exactness",
+        "conv.lamb_dicke",
+    ]
+    assert all(e.status == "calibrated" and e.experiment == "mode_spectroscopy" for e in entries)
+
+
 def test_the_experiments_read_out_through_the_micromotion_factor_run_applies() -> None:
     """Under excess micromotion (a 60 V/m stray field, beta = 0.136 on the detection beam at 30 MHz rf) the readout errors the
     experiments declare their populations through are the product POVM of ``run``'s readout stage at the same threshold and

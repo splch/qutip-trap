@@ -159,22 +159,6 @@ class CalibrationReport:
         return out
 
 
-def _entry(
-    res: ExperimentResult, key: str, experiment: str, provenance_id: str, t0_s: float, sample_id: int
-) -> CalEntry:
-    value, unc = res.fitted.get(key, (math.nan, math.nan))
-    good = res.converged and math.isfinite(value) and math.isfinite(unc)
-    return CalEntry(
-        float(value) if math.isfinite(value) else 0.0,
-        float(unc) if math.isfinite(unc) and unc >= 0.0 else 0.0,
-        "calibrated" if good else "uncalibrated",
-        experiment,
-        provenance_id,
-        float(t0_s),
-        int(sample_id),
-    )
-
-
 def _uncalibrated(entry: CalEntry, experiment: str, t0_s: float, sample_id: int) -> CalEntry:
     return replace(
         entry, status="uncalibrated", experiment=experiment, fitted_at_s=float(t0_s), sample_id=int(sample_id)
@@ -253,7 +237,8 @@ def full_calibration(
 ) -> CalibrationReport:
     """Calibrate ``device`` by simulated experiments in the dependency order (module docstring), starting
     from ``surrogate`` (default: ``surrogate_table`` with ``surrogate_kwargs``) and restricted to ``experiments``; the
-    experiments run under ``physics`` (default ``Physics()``: the hardware chain and the channel switches)."""
+    experiments run under ``physics`` (default ``Physics()``: the hardware chain and the channel switches). Every result
+    enters the table as its own proposal (``CalibrationTable.updated_with``), stamped at ``t0_s`` and the sample's id."""
     from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
     from qutip_trap.experiments.entangling import _shift_detuning, ms_phase_scan, ms_scan, parity_scan
@@ -342,7 +327,7 @@ def full_calibration(
             **{**common, "stream": "field_scan[0]"},
         )
         results["field_scan[0]"] = res
-        table = replace(table, field=_entry(res, "B_gauss", "field_scan", "conv.curvature_naming", t0_s, sid))
+        table = table.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
         # the qubit frequencies follow the calibrated field until the Ramsey-frequency experiment measures them directly
         if table.field.status == "calibrated":
             qf: dict[int, CalEntry] = {}
@@ -364,10 +349,10 @@ def full_calibration(
         ranges = sc.micromotion_ranges
         if ranges is None:
             ranges = {"Ex": (-50.0, 50.0), "Ey": (-50.0, 50.0)} if device.trap.path == "explicit" else {}
-        entries: dict[str, CalEntry] = {}
         if device.trap.rf is None:
             # no rf record: no excess micromotion (beta = 0, C0 = 1), a statement of the device model and not a
             # measurement, so the entries are usable seeds
+            entries: dict[str, CalEntry] = {}
             no_rf = CalEntry(
                 0.0,
                 0.0,
@@ -383,6 +368,7 @@ def full_calibration(
                 "micromotion_scan: no rf record on the trap; excess micromotion is not modelled (beta = 0) and the entries "
                 "are seeds of the device model, not measurements"
             )
+            table = replace(table, micromotion=entries)
         else:
             res = micromotion_scan(
                 lab,
@@ -394,23 +380,10 @@ def full_calibration(
                 **{**common, "stream": "micromotion_scan[0]"},
             )
             results["micromotion_scan[0]"] = res
-            for key, val in res.fitted.items():
-                if key.startswith("shim[") or key.startswith("beta["):
-                    entries[key] = CalEntry(
-                        float(val[0]),
-                        float(val[1]) if math.isfinite(val[1]) else 0.0,
-                        "calibrated" if res.converged else "uncalibrated",
-                        "micromotion_scan",
-                        "anchor.trap.berkeland_excess_micromotion",
-                        t0_s,
-                        sid,
-                    )
-        table = replace(table, micromotion=entries)
+            table = table.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
     # 3. modes, occupations and Lamb-Dicke parameters
     if "sideband_spectroscopy" in wanted and check("sideband_spectroscopy"):
-        modes_entries = dict(table.modes)
-        nbar_entries = dict(table.nbar)
-        eta_entries = dict(table.lamb_dicke)
+        measured = table
         for m in _coupled_modes(device, drives):
             ion = _probe_ion(device, m)
             res = mode_spectroscopy(
@@ -427,19 +400,13 @@ def full_calibration(
                 **{**common, "stream": f"mode_spectroscopy[{m}]"},
             )
             results[f"mode_spectroscopy[{m}]"] = res
-            modes_entries[m] = _entry(
-                res, "mode_hz", "sideband_spectroscopy", "conv.sideband_lineshape", t0_s, sid
-            )
-            nbar_entries[m] = _entry(
-                res, "nbar", "sideband_spectroscopy", "anchor.m3.thermometry_exactness", t0_s, sid
-            )
-            eta_entries[(ion, m)] = _entry(res, "eta", "sideband_spectroscopy", "conv.lamb_dicke", t0_s, sid)
-        table = replace(table, modes=modes_entries, nbar=nbar_entries, lamb_dicke=eta_entries)
+            measured = measured.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
+        table = measured
         nbar_belief = {m: float(e.value) for m, e in table.nbar.items() if usable(e)}
         common["nbar"] = nbar_belief
     # 4. carrier Rabi frequencies (nbar from the thermometry), then Stark and the qubit frequencies
     if "rabi_scan" in wanted and check("rabi_scan"):
-        rabi_entries = dict(table.rabi)
+        measured = table
         for i in range(n):
             spec = drives[i]
             if spec.kind == "microwave":
@@ -457,12 +424,10 @@ def full_calibration(
                 **{**common, "stream": f"rabi_scan[{i}]"},
             )
             results[f"rabi_scan[{i}]"] = res
-            rabi_entries[(i, spec.table_key_beam)] = _entry(
-                res, "f_rabi_hz", "rabi_scan", "conv.rabi_frequency", t0_s, sid
-            )
-        table = replace(table, rabi=rabi_entries)
+            measured = measured.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
+        table = measured
     if "stark_scan" in wanted and check("stark_scan"):
-        stark_entries = dict(table.stark)
+        measured = table
         for i in range(n):
             spec = drives[i]
             if spec.kind not in ("raman", "optical_E1", "optical_E2"):
@@ -478,12 +443,10 @@ def full_calibration(
                 **{**common, "stream": f"stark_scan[{i}]"},
             )
             results[f"stark_scan[{i}]"] = res
-            stark_entries[(i, spec.table_key_beam)] = _entry(
-                res, "stark_shift_hz", "stark_scan", "conv.stark_scaling_with_amplitude", t0_s, sid
-            )
-        table = replace(table, stark=stark_entries)
+            measured = measured.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
+        table = measured
     if "ramsey_frequency" in wanted and check("ramsey_frequency"):
-        qf_entries = dict(table.qubit_freq)
+        measured = table
         for i in range(n):
             spec = drives[i]
             frame_hz = float(table.qubit_freq[i].value) if usable(table.qubit_freq.get(i)) else 0.0
@@ -500,12 +463,11 @@ def full_calibration(
                 **{**common, "stream": f"ramsey_frequency[{i}]"},
             )
             results[f"ramsey_frequency[{i}]"] = res
-            qf_entries[i] = _entry(res, "qubit_freq_hz", "ramsey_frequency", "conv.frequencies", t0_s, sid)
-        table = replace(table, qubit_freq=qf_entries)
+            measured = measured.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
+        table = measured
     # 5. crosstalk
     if "crosstalk_scan" in wanted and check("crosstalk_scan"):
-        xt_entries = dict(table.crosstalk)
-        ph_entries = dict(table.crosstalk_phase)
+        measured = table
         for i in range(n):
             spec = drives[i]
             if spec.kind not in ("raman", "optical_E1", "optical_E2"):
@@ -529,16 +491,8 @@ def full_calibration(
                 **{**common, "stream": f"crosstalk_scan[{i}]"},
             )
             results[f"crosstalk_scan[{i}]"] = res
-            for j in neighbours:
-                if f"eps[{j}]" in res.fitted:
-                    xt_entries[(i, j)] = _entry(
-                        res, f"eps[{j}]", "crosstalk_scan", "conv.crosstalk_ratio", t0_s, sid
-                    )
-                if f"phase_rad[{j}]" in res.fitted:
-                    ph_entries[(i, j)] = _entry(
-                        res, f"phase_rad[{j}]", "crosstalk_scan", "conv.crosstalk_ratio", t0_s, sid
-                    )
-        table = replace(table, crosstalk=xt_entries, crosstalk_phase=ph_entries)
+            measured = measured.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
+        table = measured
     # 6. the entangling gates: amplitude and detuning, the phase alignment, parity; each scan checked under its own name,
     # both checks run so that each marks the groups it would have written
     entangling_checks = [check(name) for name in ("ms_scan", "parity_scan") if name in wanted]
@@ -655,7 +609,6 @@ def full_calibration(
                     )
     # 7. detection
     if "detection_histogram" in wanted:
-        det_entries = dict(table.detection)
         res = detection_histogram(
             lab,
             0,
@@ -666,30 +619,10 @@ def full_calibration(
             sample_id=sid,
         )
         results["detection_histogram[0]"] = res
-        for key in (
-            "threshold",
-            "window_s",
-            "eps_B",
-            "eps_D",
-            "R_bright_detected_per_s",
-            "R_dark_pumping_per_s",
-            "R_bright_pumping_per_s",
-        ):
-            if key in res.fitted:
-                det_entries[key] = _entry(
-                    res,
-                    key,
-                    "detection_histogram",
-                    "conv.readout_figure_of_merit"
-                    if key in ("threshold", "window_s", "eps_B", "eps_D")
-                    else "conv.mean_count_curve",
-                    t0_s,
-                    sid,
-                )
-        table = replace(table, detection=det_entries)
+        table = table.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
     # 8. heating rates
     if "heating_rate" in wanted and check("heating_rate"):
-        heat_entries = dict(table.heating)
+        measured = table
         for m in _coupled_modes(device, drives):
             ndot_seed = float(table.heating[m].value) if m in table.heating else 0.0
             if ndot_seed <= 0.0:
@@ -717,10 +650,8 @@ def full_calibration(
                 **{**{k: v for k, v in common.items() if k != "nbar"}, "stream": f"heating_rate[{m}]"},
             )
             results[f"heating_rate[{m}]"] = res
-            heat_entries[m] = _entry(
-                res, "ndot_per_s", "heating_rate", "conv.electric_field_noise", t0_s, sid
-            )
-        table = replace(table, heating=heat_entries)
+            measured = measured.updated_with(res, fitted_at_s=t0_s, sample_id=sid)
+        table = measured
     table = replace(table, surrogate=False, fitted_at_s=float(t0_s))
     return CalibrationReport(
         table=table,
