@@ -432,8 +432,8 @@ def test_noise_rates_carry_provenance_and_the_model_says_how_many_apparatus() ->
 
 def test_the_model_says_which_configured_noise_a_run_leaves_out_or_draws_independently() -> None:
     """The rf phase noise the run does not apply, rf amplitude noise with density at twice a transverse mode's frequency
-    (whose parametric heating is not modelled) and the independent per-mode differential drift are each one sentence; a
-    band below every 2 omega_m and the quiet model say nothing."""
+    (whose parametric heating is not modelled), the independent per-mode differential drift and the drifts the readout
+    does not follow are each one sentence; a band below every 2 omega_m and the quiet model say nothing."""
     dev = chain_device(2)
     assert NoiseModel().approximations(dev) == ()
     phase = NoiseModel(rf_phase_noise=white_spectrum(1e-12, "rad^2/(rad/s)"))
@@ -453,6 +453,11 @@ def test_the_model_says_which_configured_noise_a_run_leaves_out_or_draws_indepen
     (note,) = drift.approximations(dev)
     assert "independent per-mode offsets" in note and "sqrt(M)" in note
     assert len(dataclasses.replace(drift, rf_phase_noise=phase.rf_phase_noise).approximations(dev)) == 2
+    moving = NoiseModel(stray_field_drift=Drift(1.0, 1.0, None), field_drift=Drift(1e-8, 1.0, None))
+    (note,) = moving.approximations(dev)
+    assert "field_drift, stray_field_drift move the gate drives" in note and "not the readout" in note
+    (note,) = NoiseModel(pointing_drift=Drift(1e-7, 1.0, None)).approximations(dev)
+    assert note.startswith("noise: pointing_drift moves the gate drives")
 
 
 # ---- the sampled beam-path phase in the builder (Section 7.10) ------------------------------------------------------------

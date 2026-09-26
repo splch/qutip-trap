@@ -288,6 +288,22 @@ class NoiseModel:
                 "d omega_m/dV per electrode, so a multi-mode FM or AM-FM robustness result is optimistic by up to sqrt(M) "
                 "for a gate closing M modes (Section 6.2)"
             )
+        # every drift key is read by the Hamiltonian builder alone: the readout stage is the nominal device's
+        moving = [
+            name
+            for name, drift in (
+                ("field_drift", self.field_drift),
+                ("stray_field_drift", self.stray_field_drift),
+                ("pointing_drift", self.pointing_drift),
+                ("laser_frequency_drift", self.laser_frequency_drift),
+            )
+            if drift is not None and not drift.quiet
+        ]
+        if moving:
+            out.append(
+                f"noise: {', '.join(moving)} {'moves' if len(moving) == 1 else 'move'} the gate drives each sample but "
+                "not the readout, whose detection rates and micromotion factor are the nominal device's (Section 8.8)"
+            )
         return tuple(out)
 
     def summary(self, device: Device) -> dict[str, tuple[float, str]]:
