@@ -185,9 +185,11 @@ class Physics:
     intensity_noise_channels: bool = True
     """The white part of the laser-intensity spectrum as the channel sqrt(D) H_drive(t) (Section 6.4)."""
     hardware_chain: bool = True
-    """Pass the schedule through the control electronics of Section 7.10 before integrating."""
+    """Pass the schedule through the control electronics of Section 7.10 before integrating, the scheduler referencing the
+    entangling tones to its response."""
     stark_compensation: bool = True
-    """Detune every pulse by the light shift the table believes (Section 7.5 item 7)."""
+    """Detune every spin-flip tone by the light shift the table believes; a sigma_z force keeps its beat note (Section 7.5
+    item 7)."""
     crosstalk_suppression: CrosstalkSuppression = "none"
     """Section 6.6's echo schemes on the MS gates: ``none``, ``neighbour`` or ``local``."""
     entangler: Literal["ms", "zz"] = "ms"
