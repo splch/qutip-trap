@@ -529,16 +529,14 @@ def build_crystal(
     )
 
 
-def solve_crystal(trap: Trap, species: tuple[Species, ...] | list[Species], *, reference: int = 0) -> Crystal:
+def solve_crystal(trap: Trap, species: tuple[Species, ...] | list[Species]) -> Crystal:
     """Equilibrium and normal modes of ``species`` in ``trap``, displaced by the residual field.
 
-    ``reference`` names the ion whose species the trap's explicit secular frequencies describe; the others follow from
-    the Mathieu parameters scaled by m_ref/m_i, which needs the trap's rf frequency.
+    On the explicit path the trap's secular frequencies are those of the ion mass ``Trap.reference_mass_u``, and an ion of
+    another mass follows from the Mathieu parameters scaled by m_ref/m_i, which needs the trap's rf frequency.
     """
     sp = tuple(species)
     if not sp:
         raise ValueError("a crystal needs at least one ion")
-    if not 0 <= reference < len(sp):
-        raise IndexError("reference ion out of range")
-    omega, axes, field = trap.single_ion_frequencies_rad_s(sp, reference=reference)
+    omega, axes, field = trap.single_ion_frequencies_rad_s(sp)
     return build_crystal(sp, omega, axes=axes, field_v_per_m=field, centre_m=trap.rf_null_m())

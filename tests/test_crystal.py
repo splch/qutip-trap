@@ -220,7 +220,9 @@ def test_home_2013_table_i_end_to_end() -> None:
 def test_the_exact_route_approaches_homes_pseudopotential_scaling_and_keeps_the_radial_order() -> None:
     """Be+ at [9.7, 12.9, 4.6] MHz gives Mg+ [1.52, 5.43, 2.82] MHz in the pseudopotential limit (Home 2013 Eqs. 6-19); the
     exact-exponent route at a 1 GHz rf reaches it and preserves sign(omega_x^2 - omega_y^2) across species."""
-    trap = dataclasses.replace(secular_trap((9.7e6, 12.9e6, 4.6e6)), rf=RfDrive(0.0, 1.0e9))
+    trap = dataclasses.replace(
+        secular_trap((9.7e6, 12.9e6, 4.6e6)), rf=RfDrive(0.0, 1.0e9), reference_mass_u=9.0121822
+    )
     exact, _axes, _field = trap.single_ion_frequencies_rad_s((MassOnly(9.0121822), MassOnly(23.985042)))
     assert exact[1] / TWO_PI / 1e6 == pytest.approx([1.52, 5.43, 2.82], abs=1e-2)
     assert exact[1][0] < exact[1][1]

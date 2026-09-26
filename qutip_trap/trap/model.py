@@ -1,8 +1,9 @@
 """The ``Trap`` record and its Mathieu parameters, principal axes, residual field and micromotion (PLAN.md Section 3.3).
 
-Three paths lead to Mathieu parameters: EXPLICIT secular frequencies (x', y', z) of one species, rotated about z by
-``axis_angle_rad``, inverted for (a, q) under the linear-trap structure when an ``RfDrive`` gives the rf frequency (without
-one there is no Mathieu record and C0 = 1); a ROD or blade trap through Berkeland's map; a SURFACE layout through the
+Three paths lead to Mathieu parameters: EXPLICIT secular frequencies (x', y', z) of the ion mass ``reference_mass_u``,
+rotated about z by ``axis_angle_rad``, inverted for (a, q) under the linear-trap structure when an ``RfDrive`` gives the rf
+frequency (without one there is no Mathieu record and C0 = 1) and scaled by reference_mass_u/m for an ion of mass m, since
+a and q go as Q/m at fixed rf and dc fields; a ROD or blade trap through Berkeland's map; a SURFACE layout through the
 gapless-plane field solution of ``trap/surface.py`` (the Hessians at the rf null, the coupled Mathieu system, the axes of
 the pseudopotential Hessian). The residual field is the stray field plus the shim electrodes' field at the null, which
 only the surface path can compute, so non-zero shims are refused on the other two. The field displaces the ion against
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from qutip_trap.trap.anharmonic import AnharmonicTerms
-from qutip_trap.trap.mathieu import MathieuParameters, mathieu_from_secular, mathieu_parameters, monodromy
+from qutip_trap.trap.mathieu import MathieuParameters, mathieu_from_secular, mathieu_parameters
 from qutip_trap.trap.micromotion import MicromotionIndex, modulation_index, out_of_phase_amplitude_m
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive, linear_trap_parameters, mathieu_matrices
 from qutip_trap.trap.surface import Electrodes, GaplessPlaneTrap
@@ -52,6 +53,10 @@ class Trap:
     stray_field_v_per_m: tuple[float, float, float]
     shim_voltages_v: dict[str, float]
     anharmonic_terms: AnharmonicTerms | None = None
+    reference_mass_u: float | None = None
+    """The ion mass (u) whose secular frequencies ``omega_hz`` are, the one the rf record's Mathieu (a, q) are inverted for;
+    an ion of mass m sees them times reference_mass_u/m. None: the frequencies of every ion the trap is asked about, which a
+    crystal of several masses refuses. Explicit path only: the rod and surface paths derive every mass from the voltages."""
 
     def __post_init__(self) -> None:
         explicit = self.omega_hz is not None
@@ -60,6 +65,14 @@ class Trap:
             raise ValueError("a Trap needs either omega_hz or (rf, geometry[, dc])")
         if self.omega_hz is not None and any(w <= 0.0 for w in self.omega_hz):
             raise ValueError("secular frequencies must be positive (ordinary Hz)")
+        if self.reference_mass_u is not None:
+            if geometry:
+                raise ValueError(
+                    "reference_mass_u names the ion mass of the explicit secular frequencies; the rod and surface paths "
+                    "derive every mass from the voltages"
+                )
+            if self.reference_mass_u <= 0.0:
+                raise ValueError("reference_mass_u is an ion mass in u and must be positive")
         if len(self.stray_field_v_per_m) != 3:
             raise ValueError("stray_field_v_per_m is a laboratory-frame 3-vector")
         surface = geometry and self.geometry is not None and self.geometry.is_surface
@@ -113,8 +126,23 @@ class Trap:
             )
         return self.mathieu(species).principal_axes
 
+    def _mass_ratio(self, species: Species) -> float:
+        """reference_mass_u/m of ``species``: the factor on the explicit path's (a, q), 1 when the trap names no reference
+        mass (``omega_hz`` are then the species' own frequencies)."""
+        return 1.0 if self.reference_mass_u is None else self.reference_mass_u / species.mass_u
+
+    def check_masses(self, species: tuple[Species, ...]) -> None:
+        """Refuse ions of several masses on explicit frequencies that name no reference mass: which ion they describe, and
+        so every ion's Mathieu record, would be a guess."""
+        if self.path == "explicit" and self.reference_mass_u is None and len({s.mass_u for s in species}) > 1:
+            raise ValueError(
+                "the explicit secular frequencies are those of one species and the crystal holds several masses: give "
+                "the ion mass they are quoted for (Trap.reference_mass_u), from which every ion's Mathieu record follows"
+            )
+
     def mathieu(self, species: Species) -> MathieuParameters:
-        """a, q, beta, secular frequencies and C0 of ``species`` in this trap."""
+        """a, q, beta, secular frequencies and C0 of ``species`` in this trap; on the explicit path the (a, q) that reproduce
+        ``omega_hz``, times reference_mass_u/m for an ion of another mass."""
         mass = species.mass_u * ATOMIC_MASS_KG
         if self.path == "surface":
             assert self.rf is not None
@@ -150,58 +178,55 @@ class Trap:
                 )
             assert self.omega_hz is not None
             a, q = mathieu_from_secular(self.omega_hz, self.rf.frequency_hz)
+            ratio = self._mass_ratio(species)
             params = mathieu_parameters(
-                a, q, self.rf.frequency_hz, axes=rotation_about_z(self.axis_angle_rad)
+                (a[0] * ratio, a[1] * ratio, a[2] * ratio),
+                (q[0] * ratio, q[1] * ratio, q[2] * ratio),
+                self.rf.frequency_hz,
+                axes=rotation_about_z(self.axis_angle_rad),
             )
         return dataclasses.replace(params, mass_kg=mass)
 
     def secular_hz(self, species: Species) -> tuple[float, float, float]:
-        """(x', y', z) secular frequencies of ``species``: the explicit ones, or those of the Mathieu solution."""
-        if self.path == "explicit" and self.omega_hz is not None and self.rf is None:
+        """(x', y', z) secular frequencies of ``species``: the explicit ones for the reference mass, else those of the
+        Mathieu solution; another mass on the explicit path needs the rf frequency to split the rf and static confinement."""
+        if self.path == "explicit" and self.rf is None:
+            assert self.omega_hz is not None
+            if self._mass_ratio(species) != 1.0:
+                raise ValueError(
+                    f"the explicit secular frequencies are those of a {self.reference_mass_u} u ion; those of a "
+                    f"{species.name} ion ({species.mass_u} u) need the rf frequency (Trap.rf) to split the rf and static "
+                    "parts of the confinement"
+                )
             return self.omega_hz
         return self.mathieu(species).secular_hz
 
     def single_ion_frequencies_rad_s(
-        self, species: tuple[Species, ...], *, reference: int = 0
+        self, species: tuple[Species, ...]
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """(omega (N, 3) in rad/s along the principal axes, axes, residual field) for the crystal solver.
 
-        Explicit path: the frequencies describe ``species[reference]``; another species needs the rf frequency, from which
-        (a, q) scale as m_ref/m_i and the exact exponents give its frequencies. Geometry paths: each species from the
-        field solution, the reference species' axes the crystal frame.
+        Explicit path: ``omega_hz`` for an ion of the reference mass, and for another mass the exponents of the (a, q)
+        scaled by reference_mass_u/m, which needs the rf frequency; a crystal of several masses in a trap that names no
+        reference mass is refused. Geometry paths: each species from the field solution, the first ion's axes the crystal
+        frame.
         """
         n = len(species)
-        ref = species[reference]
         field = self.residual_field_v_per_m()
         omega = np.zeros((n, 3))
         if self.path == "explicit":
             assert self.omega_hz is not None
-            axes = rotation_about_z(self.axis_angle_rad)
-            same = [s.mass_u == ref.mass_u for s in species]
-            if self.rf is None:
-                if not all(same):
-                    raise ValueError(
-                        "a mixed-species crystal on the explicit-frequency path needs the rf frequency (Trap.rf) to "
-                        "split the rf and static parts of the confinement"
-                    )
-                omega[:] = TWO_PI * np.asarray(self.omega_hz, dtype=float)
-                return omega, axes, field
-            a, q = mathieu_from_secular(self.omega_hz, self.rf.frequency_hz)
+            self.check_masses(species)
             for i, s in enumerate(species):
-                if same[i]:
-                    omega[i] = TWO_PI * np.asarray(self.omega_hz, dtype=float)
-                    continue
-                ratio = ref.mass_u / s.mass_u
-                omega[i] = [
-                    monodromy(a[k] * ratio, q[k] * ratio).beta * self.rf.omega_rad_s / 2.0 for k in range(3)
-                ]
-            return omega, axes, field
+                own = self._mass_ratio(s) == 1.0
+                omega[i] = TWO_PI * np.asarray(self.omega_hz if own else self.secular_hz(s), dtype=float)
+            return omega, rotation_about_z(self.axis_angle_rad), field
         cache: dict[float, MathieuParameters] = {}
         for i, s in enumerate(species):
             if s.mass_u not in cache:
                 cache[s.mass_u] = self.mathieu(s)
             omega[i] = TWO_PI * np.asarray(cache[s.mass_u].secular_hz, dtype=float)
-        return omega, cache[ref.mass_u].principal_axes, field
+        return omega, cache[species[0].mass_u].principal_axes, field
 
     def micromotion_amplitude_m(self, species: Species) -> np.ndarray:
         """The SIGNED in-phase excess-micromotion amplitude u_1 = -(1/2) Q u_0 (peak, laboratory frame).

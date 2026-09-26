@@ -11,10 +11,11 @@ import pytest
 from scipy.special import jv
 
 from qutip_trap.control.pulses import Pulse
+from qutip_trap.device.model import Field
 from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, micromotion_index
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
-from qutip_trap.light.raman import derive_raman_drive, square_drive
+from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, square_drive
 from qutip_trap.run.job import detection_micromotion
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import solve_crystal
@@ -24,7 +25,7 @@ from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
-from tests.fixtures import KX, chain_device, single_ion_raman_device
+from tests.fixtures import KX, chain_device, quiet_device, single_ion_raman_device
 from tests.oracles import five_wire_null_height_m
 
 K_369 = TWO_PI / 369.5e-9
@@ -110,9 +111,11 @@ def test_mixed_species_on_the_explicit_path_scale_with_the_mathieu_parameters() 
     q m_ref/m) to 1e-9; a 40Ca+ neighbour of 171Yb+ at q = 0.28 (so q = 1.2) is refused as unstable."""
     sr, ca, yb = species("88Sr+"), species("40Ca+"), species("171Yb+")
     with pytest.raises(ValueError, match="rf frequency"):
-        secular_trap().single_ion_frequencies_rad_s((yb, ca))
-    trap = dataclasses.replace(secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6))
-    omega, axes, field = trap.single_ion_frequencies_rad_s((sr, ca), reference=0)
+        dataclasses.replace(secular_trap(), reference_mass_u=yb.mass_u).single_ion_frequencies_rad_s((yb, ca))
+    trap = dataclasses.replace(
+        secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6), reference_mass_u=sr.mass_u
+    )
+    omega, axes, field = trap.single_ion_frequencies_rad_s((sr, ca))
     assert omega[0] == pytest.approx(TWO_PI * np.array([3.0e6, 2.9e6, 1.0e6]))
     ratio = sr.mass_u / ca.mass_u
     assert omega[1, 2] == pytest.approx(omega[0, 2] * math.sqrt(ratio), rel=1e-9)
@@ -126,7 +129,66 @@ def test_mixed_species_on_the_explicit_path_scale_with_the_mathieu_parameters() 
     cr = solve_crystal(trap, (sr, ca))
     assert len(cr.modes) == 6 and cr.collinear()
     with pytest.raises(UnstableMathieuError):
-        _yb_trap().single_ion_frequencies_rad_s((yb, ca))
+        dataclasses.replace(_yb_trap(), reference_mass_u=yb.mass_u).single_ion_frequencies_rad_s((yb, ca))
+
+
+def test_each_ion_of_a_mixed_crystal_on_the_explicit_path_takes_its_own_mathieu_record() -> None:
+    """Explicit frequencies quoted for 88Sr+ are the Sr ion's of a rod trap; the 40Ca+ ion's (a, q), exponents, C0 and signed
+    micromotion amplitude then equal the rod's voltage map evaluated at the Ca mass (1e-9), and in a (3.0, 2.9, 1.0) MHz
+    Sr trap at 60 MHz the Ca ion's eta carries its own C0 = 1.019948, not Sr's 1.003867."""
+    sr, ca = species("88Sr+"), species("40Ca+")
+    rod = dataclasses.replace(
+        _rod(),
+        geometry=Electrodes("rod_quadrupole", {"R_m": 0.5e-3, "Z0_m": 2.0e-3, "kappa": 0.3}),
+        stray_field_v_per_m=(10.0, -4.0, 0.0),
+    )
+    quoted = Trap(
+        omega_hz=rod.mathieu(sr).secular_hz,
+        axis_angle_rad=0.0,
+        rf=rod.rf,
+        dc=None,
+        geometry=None,
+        stray_field_v_per_m=rod.stray_field_v_per_m,
+        shim_voltages_v={},
+        reference_mass_u=sr.mass_u,
+    )
+    got, want = quoted.mathieu(ca), rod.mathieu(ca)
+    assert got.mass_kg == want.mass_kg == ca.mass_u * ATOMIC_MASS_KG
+    assert np.diag(got.q) == pytest.approx(np.diag(want.q), rel=1e-9) and abs(want.q[0, 0]) > 0.36
+    assert np.diag(got.a) == pytest.approx(np.diag(want.a), rel=1e-9)
+    assert got.beta == pytest.approx(want.beta, rel=1e-9) and got.C0 == pytest.approx(want.C0, rel=1e-9)
+    assert quoted.micromotion_amplitude_m(ca) == pytest.approx(rod.micromotion_amplitude_m(ca), rel=1e-9)
+    trap = dataclasses.replace(
+        secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6), reference_mass_u=sr.mass_u
+    )
+    crystal = solve_crystal(trap, (sr, ca))
+    device = quiet_device(crystal, trap, Field(5.0, (1.0, 0.0, 0.0)), ())
+    dk = np.array([2.0 * TWO_PI / 729e-9, 0.0, 0.0])
+    etas, applied = lamb_dicke_parameters(device, 1, dk)
+    assert applied
+    for m in (crystal.mode_index("transverse_1", 0), crystal.mode_index("transverse_1", 1)):
+        c0 = etas[m] / crystal.lamb_dicke(1, m, dk, micromotion=None)
+        assert c0 == pytest.approx(1.019948, abs=1e-6)
+    assert trap.mathieu(sr).C0[0] == pytest.approx(1.003867, abs=1e-6)
+
+
+def test_the_explicit_path_refuses_a_mixed_crystal_whose_reference_mass_it_does_not_know() -> None:
+    """Explicit frequencies with no reference mass describe whichever ion is asked about, so a crystal of two masses is
+    refused by the solver and by the device; a reference mass on a rod trap, whose voltages set every mass, is refused
+    too."""
+    sr, ca = species("88Sr+"), species("40Ca+")
+    trap = dataclasses.replace(secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6))
+    with pytest.raises(ValueError, match="reference_mass_u"):
+        solve_crystal(trap, (sr, ca))
+    named = dataclasses.replace(trap, reference_mass_u=sr.mass_u)
+    crystal = solve_crystal(named, (sr, ca))
+    with pytest.raises(ValueError, match="reference_mass_u"):
+        quiet_device(crystal, trap, Field(5.0, (1.0, 0.0, 0.0)), ())
+    assert quiet_device(crystal, named, Field(5.0, (1.0, 0.0, 0.0)), ()).trap is named
+    with pytest.raises(ValueError, match="rod and surface paths derive every mass"):
+        dataclasses.replace(_rod(), reference_mass_u=sr.mass_u)
+    with pytest.raises(ValueError, match="positive"):
+        dataclasses.replace(trap, reference_mass_u=0.0)
 
 
 def test_rod_trap_path_follows_berkeland_and_the_phase_imbalance_term() -> None:
@@ -400,7 +462,9 @@ def test_the_field_displacement_is_the_linear_response_of_the_re_solved_crystal_
     less transversely, and an equal-mass chain in rotated axes moves rigidly by K^{-1} e E."""
     sr, ca, yb = species("88Sr+"), species("40Ca+"), species("171Yb+")
     field = np.array([3.0, -2.0, 5.0])
-    explicit = dataclasses.replace(secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6))
+    explicit = dataclasses.replace(
+        secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6), reference_mass_u=sr.mass_u
+    )
     surface = _house_surface(sr.mass_u * ATOMIC_MASS_KG)
     for trap, ions in ((explicit, (sr, ca)), (_rod(), (yb, ca)), (surface, (sr, ca)), (surface, (sr, sr))):
         shift = solve_crystal(trap, ions).field_displacement_m(field)

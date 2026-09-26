@@ -286,9 +286,10 @@ def test_recoil_energy_over_the_modes_of_one_axis_is_alpha_times_the_free_recoil
 def test_mixed_species_recoil_energy_uses_each_ions_own_mass() -> None:
     """In a 171Yb+-40Ca+ crystal the axial identity holds per ion with its own mass (1e-12) and the other ion's mass
     breaks it by the mass ratio (1e-9)."""
+    yb = species("171Yb+")
     crystal = solve_crystal(
-        dataclasses.replace(secular_trap(), rf=RfDrive(300.0, 60e6)),
-        (species("171Yb+"), species("40Ca+")),
+        dataclasses.replace(secular_trap(), rf=RfDrive(300.0, 60e6), reference_mass_u=yb.mass_u),
+        (yb, species("40Ca+")),
     )
     m0, m1 = (float(m) for m in crystal.masses_kg)
     assert m0 / m1 > 4.0

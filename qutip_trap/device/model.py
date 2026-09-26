@@ -201,6 +201,9 @@ class Device:
     """Which beams play which part; the default infers everything from the beams. Left out of :meth:`hash`, which
     identifies the apparatus; ``Machine.hash()`` carries the roles."""
 
+    def __post_init__(self) -> None:
+        self.trap.check_masses(self.crystal.species)
+
     def derived(self) -> DerivedQuantities:
         """Every computed number with its provenance id (Section 3.3; the ledger of Section 14.5): the qubit transitions and
         their Zeeman sensitivities, the trap's secular frequencies, Mathieu parameters and C0, the mode frequencies and
