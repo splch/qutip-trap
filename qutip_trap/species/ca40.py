@@ -1,8 +1,9 @@
 """40Ca+ species table (PLAN.md Section 4.5.6).
 
-I = 0, so there is no hyperfine structure; the g_J are Lande values ([background]; the measured S1/2 and D5/2 values,
-both taken on 40Ca+, are in the 43Ca+ table). The metastable D lifetimes are Kreuter et al. 2005's single-ion
-measurements (their one-sided systematic corrections are not transcribed), with the theory values stored beside them.
+I = 0, so there is no hyperfine structure. The g_J of S1/2 and D5/2 are measurements on 40Ca+ (Tommaseo et al. 2003,
+Chwalla et al. 2009; the 43Ca+ table takes them as isotope-independent); D3/2 and the P levels, with no measured g_J, carry
+the Lande values ([background]). The metastable D lifetimes are Kreuter et al. 2005's single-ion measurements (their
+one-sided systematic corrections are not transcribed), with the theory values stored beside them.
 
 The P-level TOTAL rates come from measured lifetimes (Hettrich et al. 2015's 6.904(26) ns, Meir et al. 2020's
 6.639(42) ns), and the "quoted" 21.57 and 23.4 MHz (PLAN.md 9.2, 4.5.6) are read as PARTIAL rates into S1/2, as Hettrich prints
@@ -39,6 +40,25 @@ _ENTRIES: tuple[Cited, ...] = (
     _c("D52.energy_cm", 13710.88, "cm^-1", "NIST_ASD_5_12", note="1e8/7293.48 A: the 729.347 nm line"),
     _c("P12.energy_cm", 25191.51, "cm^-1", "NIST_ASD_5_12", note="396.959 nm vacuum"),
     _c("P32.energy_cm", 25414.40, "cm^-1", "NIST_ASD_5_12", note="393.478 nm vacuum"),
+    _c(
+        "S12.g_J",
+        2.00225664,
+        "",
+        "Tommaseo2003",
+        tag="extracted",
+        uncertainty=9e-8,
+        note="measured on 40Ca+ in a Penning trap, 6.3e-5 below the Lande g_S; the digits are read in Hanley et al., "
+        "arXiv:2105.10352",
+    ),
+    _c(
+        "D52.g_J",
+        1.2003340,
+        "",
+        "Chwalla2009",
+        tag="verified",
+        uncertainty=3e-7,
+        note="measured on 40Ca+; the Lande value is 1.2004639",
+    ),
     _c(
         "D32.lifetime_s",
         1.176,
@@ -226,9 +246,7 @@ def species() -> Species:
     e_d52 = energy_hz(t[_P + "D52.energy_cm"])
     e_p12 = energy_hz(t[_P + "P12.energy_cm"])
     e_p32 = energy_hz(t[_P + "P32.energy_cm"])
-    lande = ("NIST_ASD_5_12", "PLAN_background")
-
-    s12 = Level("S1/2", 0.0, None, 0.0, 0.0, lande_g_j(0, half, half), lande)
+    s12 = Level("S1/2", 0.0, None, 0.0, 0.0, t[_P + "S12.g_J"].value, ("Tommaseo2003", "Hanley2021"))
     d32 = Level(
         "D3/2",
         e_d32,
@@ -244,8 +262,8 @@ def species() -> Species:
         t[_P + "D52.lifetime_s"].value,
         0.0,
         0.0,
-        lande_g_j(2, half, Fraction(5, 2)),
-        ("NIST_ASD_5_12", "Kreuter2005", "Barton2000", "PLAN_background"),
+        t[_P + "D52.g_J"].value,
+        ("NIST_ASD_5_12", "Kreuter2005", "Barton2000", "Chwalla2009"),
     )
     p12 = Level(
         "P1/2",

@@ -22,6 +22,7 @@ from qutip_trap.species.zeeman import (
 from qutip_trap.units import M_E_OVER_M_P
 from tests.fixtures import G_J_S12
 
+CA40 = MODULES["40Ca+"].TABLE
 CA43 = MODULES["43Ca+"].TABLE
 BE9 = MODULES["9Be+"].TABLE
 MG25 = MODULES["25Mg+"].TABLE
@@ -59,7 +60,7 @@ def _s12(a_hz: float, g_j: float) -> Level:
 
 def ca43_ground() -> HyperfineZeeman:
     return HyperfineZeeman(
-        _s12(CA43["ca43.S12.A_hfs_hz"].value, CA43["ca43.S12.g_J"].value),
+        _s12(CA43["ca43.S12.A_hfs_hz"].value, CA40["ca40.S12.g_J"].value),
         3.5,
         CA43["ca43.mu_I_nuclear_magnetons"].value,
     )
@@ -91,7 +92,7 @@ def test_breit_rabi_against_numerical_diagonalization_43ca(B: float) -> None:
     """The 16 43Ca+ S1/2 levels match the Breit-Rabi form to 1e-6 Hz at 0, 10, 146.0942 and 500 G."""
     hz = ca43_ground()
     closed = sorted(
-        breit_rabi_hz(3.5, CA43["ca43.S12.A_hfs_hz"].value, CA43["ca43.S12.g_J"].value, hz.g_I, B, F, mF)
+        breit_rabi_hz(3.5, CA43["ca43.S12.A_hfs_hz"].value, CA40["ca40.S12.g_J"].value, hz.g_I, B, F, mF)
         for F in (3, 4)
         for mF in range(-F, F + 1)
     )
@@ -125,7 +126,7 @@ def test_43ca_clock_point_negative_controls() -> None:
     """Langer's plus sign on g_I moves the 43Ca+ point to 146.3015 G and 3,199,857,314.5 Hz (5e-4 G, 2 Hz), A > 0
     removes it, and g_J = 2.000 moves it by 160 mG and 47 Hz."""
     A = CA43["ca43.S12.A_hfs_hz"].value
-    gJ = CA43["ca43.S12.g_J"].value
+    gJ = CA40["ca40.S12.g_J"].value
     wrong_sign = HyperfineZeeman(_s12(A, gJ), 3.5, +1.31535)
     (cp,) = clock_points(wrong_sign, "F=4 mF=0", wrong_sign, "F=3 mF=1", 50.0, 300.0)
     assert cp.B0_gauss == pytest.approx(146.3015, abs=5e-4)

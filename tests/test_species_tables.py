@@ -3,6 +3,7 @@ records they build."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from fractions import Fraction
@@ -13,12 +14,12 @@ from scipy.constants import physical_constants
 from qutip_trap.provenance import Cited
 from qutip_trap.species import MODULES, available, species
 from qutip_trap.species.dipole import reduced_element_from_partial_rate
-from qutip_trap.species.model import Level, Species, Transition
+from qutip_trap.species.model import Level, Species, Transition, level_j
 from qutip_trap.species.raman import AtomicStructure
 from qutip_trap.species.sources import SOURCES
 from qutip_trap.species.table import IncompleteSpeciesTable, a_hfs_from_two_manifold_splitting
 from qutip_trap.species.zeeman import MU_B_OVER_H_HZ_PER_G, g_I_steck
-from qutip_trap.units import C_M_PER_S, E_C, TWO_PI
+from qutip_trap.units import C_M_PER_S, E_C, TWO_PI, lande_g_j
 
 HYPERFINE_RESOLVED = re.compile(r"(mF|F=\d|zeeman_energy|dipole_element|rabi|raman_coupling|clebsch)", re.I)
 LOCATOR = re.compile(r"\((?:19|20)\d\d\)|arXiv:\d{4}\.\d{4,5}|doi:10\.")
@@ -181,12 +182,36 @@ def test_ca40_quadrupole_records() -> None:
     assert ca.level("D3/2").lifetime_s == 1.176 and ca.level("D5/2").lifetime_s == 1.168
 
 
-def test_ca40_lande_factors_and_spin_zero() -> None:
+def test_ca40_takes_the_measured_s_and_d52_g_factors_and_lande_for_the_rest() -> None:
+    """40Ca+ has no hyperfine structure; S1/2 and D5/2 carry the 40Ca+ measurements 2.00225664 (Tommaseo 2003) and
+    1.2003340 (Chwalla 2009), 350 Hz and 1.6 kHz from the Lande values in the S1/2 splitting and the mJ = -1/2 -> -5/2 line
+    at 4 G (1 %), and D3/2 and the P levels the Lande values; 43Ca+ takes the same g_J."""
     ca = species("40Ca+")
     assert ca.nuclear_spin == 0.0 and ca.mu_I_nuclear_magnetons == 0.0
     assert all(lv.A_hfs_hz == 0.0 and lv.B_hfs_hz == 0.0 for lv in ca.levels)
-    assert ca.level("D5/2").g_J == pytest.approx(1.2, abs=1e-3)
-    assert ca.level("P1/2").g_J == pytest.approx(2.0 / 3.0, abs=1e-3)
+    assert ca.level("S1/2").g_J == 2.00225664 and "Tommaseo2003" in ca.level("S1/2").citations
+    assert ca.level("D5/2").g_J == 1.2003340 and "Chwalla2009" in ca.level("D5/2").citations
+    half = Fraction(1, 2)
+    for name, (L, J) in {"D3/2": (2, Fraction(3, 2)), "P1/2": (1, half), "P3/2": (1, Fraction(3, 2))}.items():
+        assert ca.level(name).g_J == lande_g_j(L, half, J) and "PLAN_background" in ca.level(name).citations
+    lande_ca = dataclasses.replace(
+        ca,
+        levels=tuple(
+            dataclasses.replace(lv, g_J=lande_g_j({"S1/2": 0, "D5/2": 2}[lv.name], half, level_j(lv.name)))
+            if lv.name in ("S1/2", "D5/2")
+            else lv
+            for lv in ca.levels
+        ),
+    )
+    for lower, upper, shift_hz in (
+        ("S1/2 mJ=-1/2", "S1/2 mJ=1/2", -350.8),
+        ("S1/2 mJ=-1/2", "D5/2 mJ=-5/2", 1642.2),
+    ):
+        measured, _slope, _curvature = ca.transition_frequency_hz(lower, upper, 4.0)
+        lande, _slope, _curvature = lande_ca.transition_frequency_hz(lower, upper, 4.0)
+        assert measured - lande == pytest.approx(shift_hz, rel=1e-2)
+    ca43 = species("43Ca+")
+    assert ca43.level("S1/2").g_J == ca.level("S1/2").g_J and ca43.level("D5/2").g_J == ca.level("D5/2").g_J
 
 
 def test_ca40_397_nm_i_sat_anchor_comes_out_of_the_table() -> None:

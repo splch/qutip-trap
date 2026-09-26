@@ -1,10 +1,10 @@
 """43Ca+ species table (PLAN.md Section 4.5.6): 40Ca+'s fine structure with the 43Ca hyperfine
 structure (I = 7/2, mu_I < 0, so every A is negative and F = 3 lies above F = 4).
 
-The level energies, P lifetimes, branchings and D lifetimes are isotope-independent and read from the 40Ca+ table (the
-~1 GHz isotope shift is below the 0.01 cm^-1 its energies resolve). The g_J of S1/2 and D5/2 are measurements on 40Ca+
-applied as isotope-independent; the P levels and D3/2 have no measured g_J (theory: Sahoo, arXiv:1710.06558) and carry
-the Lande values ([background]).
+The level energies, P lifetimes, branchings, D lifetimes and g_J are isotope-independent and read from the 40Ca+ table
+(the ~1 GHz isotope shift is below the 0.01 cm^-1 its energies resolve): the S1/2 and D5/2 g_J are the measurements on
+40Ca+, applied as isotope-independent as Hanley et al. (arXiv:2105.10352) do in their 43Ca+ fit; the P levels and D3/2
+have no measured g_J (theory: Sahoo, arXiv:1710.06558) and carry the Lande values ([background]).
 """
 
 from __future__ import annotations
@@ -44,16 +44,6 @@ _ENTRIES: tuple[Cited, ...] = (
         "the clock point exists nowhere between 1 and 4000 G",
     ),
     _c(
-        "S12.g_J",
-        2.00225664,
-        "",
-        "Tommaseo2003",
-        tag="extracted",
-        uncertainty=9e-8,
-        note="measured on 40Ca+ in a Penning trap and applied as isotope-independent (as Hanley et al., "
-        "arXiv:2105.10352, do in their 43Ca+ fit); the digits are read in Hanley et al.",
-    ),
-    _c(
         "P12.A_hfs_hz",
         -145.4e6,
         "Hz",
@@ -84,15 +74,6 @@ _ENTRIES: tuple[Cited, ...] = (
         note="the signs are the erratum's, Phys. Rev. A 75, 049901(E); arXiv v1/v2 print both positive",
     ),
     _c("D52.B_hfs_hz", -4.241e6, "Hz", "Benhelm2007", tag="verified", uncertainty=0.004e6),
-    _c(
-        "D52.g_J",
-        1.2003340,
-        "",
-        "Chwalla2009",
-        tag="verified",
-        uncertainty=3e-7,
-        note="measured on 40Ca+, isotope-independent; the Lande value is 1.2004639",
-    ),
     _c(
         "nuclear_quadrupole_moment_b",
         -0.0408,
@@ -130,7 +111,7 @@ TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
 
 
 def species() -> Species:
-    """The ``Species`` record for 43Ca+: the 40Ca+ levels and E1 lines with this table's hyperfine constants and g_J."""
+    """The ``Species`` record for 43Ca+: the 40Ca+ levels, g_J and E1 lines with this table's hyperfine constants."""
     t = TABLE
     ca = ca40.species()
     lv = {level.name: level for level in ca.levels}
@@ -138,7 +119,6 @@ def species() -> Species:
         replace(
             lv["S1/2"],
             A_hfs_hz=t["ca43.S12.A_hfs_hz"].value,
-            g_J=t["ca43.S12.g_J"].value,
             citations=("Arbes1994", "Tommaseo2003", "Hanley2021"),
         ),
         replace(
@@ -151,7 +131,6 @@ def species() -> Species:
             lv["D5/2"],
             A_hfs_hz=t["ca43.D52.A_hfs_hz"].value,
             B_hfs_hz=t["ca43.D52.B_hfs_hz"].value,
-            g_J=t["ca43.D52.g_J"].value,
             citations=("NIST_ASD_5_12", "Benhelm2007", "Chwalla2009", "Kreuter2005"),
         ),
         replace(

@@ -228,7 +228,7 @@ RABI_HZ_PER_MICROTESLA = 14012.475693
 
 
 def zeeman_calcium() -> Species:
-    """40Ca+ with its field-sensitive (2.8025 MHz/G), magnetic-dipole-coupled S1/2 Zeeman pair as the qubit."""
+    """40Ca+ with its field-sensitive (2.8024 MHz/G), magnetic-dipole-coupled S1/2 Zeeman pair as the qubit."""
     return dataclasses.replace(species("40Ca+"), qubit=("S1/2 mJ=-1/2", "S1/2 mJ=1/2"))
 
 
@@ -262,9 +262,9 @@ def test_gradient_couplings_are_derived_and_r0_carries_the_total_two_ion_mass() 
     -/+2 Omega_g on the antisymmetric mode to 1e-9, Omega_mu/delta = 0.6012 and the dressed coupling 2174.0 Hz (Srinivas 2021)."""
     dev = gradient_device()
     dd = derive_gradient_drive(dev, (0, 1))
-    assert dd.field_sensitivity_rad_s_per_t == pytest.approx(1.76086e11, rel=1e-5)
-    assert dd.field_sensitivity_rad_s_per_t == pytest.approx(TWO_PI * 2.8024951386e6 * 1e4, rel=1e-9), (
-        "2.8025 MHz/G, the 40Ca+ Zeeman qubit's slope, in rad/s per tesla"
+    assert dd.field_sensitivity_rad_s_per_t == pytest.approx(1.76080e11, rel=1e-5)
+    assert dd.field_sensitivity_rad_s_per_t == pytest.approx(TWO_PI * 2.8024074320e6 * 1e4, rel=1e-9), (
+        "2.8024 MHz/G, the 40Ca+ Zeeman qubit's slope at the measured g_J = 2.00225664, in rad/s per tesla"
     )
     delta = TWO_PI * DELTA_HZ
     assert dd.microwave_rabi_rad_s / delta == pytest.approx(0.6012, abs=1e-4)
