@@ -78,7 +78,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 **`qutip_trap.trap`**
 - `model`: `Trap`, from secular frequencies or from voltages and geometry; `pseudopotential`: `RfDrive`, `DcElectrodes`; `surface`: `Electrodes`, `GaplessPlaneTrap`.
 - `mathieu`: `monodromy(a, q)`, `is_stable(a, q)`, `mathieu_parameters`, `MathieuParameters`, `UnstableMathieuError`.
-- `crystal`: `solve_crystal(trap, species)`, `Crystal`, `Mode`, `ZigzagError`, `equilibrium_dimensionless`, `axial_modes_dimensionless`.
+- `crystal`: `solve_crystal(trap, species)`, `Crystal` (with `field_displacement_m`, each ion's shift under a uniform field), `Mode`, `ZigzagError`, `equilibrium_dimensionless`, `axial_modes_dimensionless`.
 - `heating`: `heating_rate_quanta_per_s`, `s_e_from_heating_rate`; `anharmonic`: `AnharmonicTerms`, `anharmonic_estimate`; `micromotion`: `MicromotionIndex`.
 
 **`qutip_trap.light`**
@@ -87,7 +87,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 - `microwave`: `derive_gradient_drive`, `GradientDrive`; `bloch`: `BlochModel`, `SteadyStateReport`, `DetectionRates`.
 
 **`qutip_trap.noise`**
-- `model`: `NoiseModel`, noise as spectra, drifts and event rates (`NoiseModel()` is quiet; `summary(device)` lists its channels).
+- `model`: `NoiseModel`, noise as spectra, drifts and event rates (`NoiseModel()` is quiet; `summary(device)` lists its channels, `approximations(device)` what a run leaves out of it).
 - `spectra`: `NoiseSpectrum` with `white_spectrum`, `ou_spectrum`, `gaussian_spectrum` and `power_law_spectrum`, `Drift`, `Mains`, `Collisions`.
 - `sampling`: `NoiseSample`, one draw of every quasi-static parameter, and `quiet_sample`; `collisions`: `CollisionEvent`, `collision_rate_per_ion`.
 
@@ -170,8 +170,8 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 - `Result`: the per-shot `bitstrings` and their `counts`, `probabilities` and `error_bars`, the photon records and posteriors of a full readout, the noise samples, `heralds`, `spam`, `final_state` (with `keep_final_state=True`), `diagnostics`, `machine_hash`, `created_at`, `duration_s` and `record`.
   - `to_ionq_v1_probabilities`, `to_ionq_v1_histogram`, `to_ionq_v1_shots`, `from_ionq_v1_shots`: IonQ's v1 formats, decimal keys.
   - `to_ionq_v2_probabilities`, `to_ionq_v2_histogram`, `to_ionq_v2_shots`: IonQ's v0.4 envelope, bitstrings in its wire order, q[0] first.
-  - `reversed_bits()`: every key reversed, for the SDKs that write qubit 0's bit first; `sample_of_shot`: each shot's dynamical sample.
-  - `to_dict(per_shot=False)` and `from_dict(d)`: the versioned record (schema version 1).
+  - `reversed_bits()`: every key reversed, for the SDKs that write qubit 0's bit first; `sample_of_shot`: each kept shot's dynamical sample, None for imported shots or a record without per-shot arrays.
+  - `to_dict(per_shot=False)` and `from_dict(d)`: the versioned record (schema version 2; `per_shot` carries `sample_of_shot`).
 - `Diagnostics`: what the run did and approximated: the level and why, the space and mode classes, the boundary populations and margins, the integrator and tolerances, samples, trajectories and branches, the seeds, the approximations and the intrinsic error budget.
 - `RunState`: the machine state a run threads through its shots (ion order, dark and lost ions, events).
 - `bitstring_key`, `decimal_key`, `aggregate`: the key conventions.

@@ -116,7 +116,7 @@ records:
     tag: corrected
     section: "13; 4.5.6"
     source: "Steck; Langer 2005; Harty 2014"
-    equation: "A_hfs is a signed input inferred from mu_I when not printed (9Be+, 43Ca+, 171Yb+ 3D[3/2]1/2 inverted); measured g_J replaces Lande; Steck's g_S = +2.0023193 (CODATA g_e is negative); nuclear Zeeman in Steck's form with a plus sign in H_B"
+    equation: "A_hfs is a signed input inferred from mu_I when not printed (9Be+, 43Ca+, 171Yb+ 3D[3/2]1/2 inverted); measured g_J replaces Lande, and without a measurement the Lande value with this g_S, never NIST's g_S = 2 rounding; Steck's g_S = +2.0023193 (CODATA g_e is negative); nuclear Zeeman in Steck's form with a plus sign in H_B"
     corrected_form: "A > 0 removes the clock points (no 43Ca+ point in 1 to 4000 G, no 9Be+ root in 8 to 16 mT), the ingest test of the sign"
   - id: conv.curvature_naming
     symbol: "d2nu_dB2, taylor_c2"
@@ -180,7 +180,7 @@ records:
     section: "13; 4.4.1"
     source: "Sorensen-Molmer 2000; Kirchmair 2009; Roos 2008"
     equation: "the force on S_y is -(hbar eta Omega/2)(a^dagger e^{i eps t} + h.c.) for the per-tone Omega; closure eta Omega/eps = 1/(2 sqrt K) in every spin normalization; targets -pi/2 on J_y^2, -pi/8 on S_y^2, pi/4 on sigma_y sigma_y"
-    corrected_form: "the closure is not 1/(4 sqrt K), which is a factor-2 force error; Roos's Omega_c = |eps|/(4 eta) reads |eps|/(2 eta) in this Omega"
+    corrected_form: "the closure is not 1/(4 sqrt K), which is a factor-2 force error; Roos's Omega_c = |eps|/(4 eta) reads |eps|/(2 eta) in this Omega, and his (J0 + J2)(4 Omega_R/delta) reads (J0 + J2)(2 Omega/delta) (the exact chi ratio 0.96238 against 0.96233 at 2 Omega/mu, 0.856 at 4 Omega/mu)"
   - id: conv.entangling_angle
     symbol: "chi_ij"
     tag: corrected
@@ -606,7 +606,7 @@ records:
     tag: corrected
     section: "4.2.6; 7.3"
     source: "qutip_trap.prep.sequence"
-    equation: "PreparationSequence refuses a sequence that does not start with Doppler cooling, a sub-Doppler stage with no Doppler precooling before it, and a pump followed by a cooling stage with no later pump; the hand-off State takes each mode's nbar from the LAST stage that addressed it and each ion's internal state from its last pump (or an explicit state for an unpumped coolant/qubit)"
+    equation: "PreparationSequence refuses a sequence that does not start with Doppler cooling, a sub-Doppler stage with no Doppler precooling before it, and a pump followed by a cooling stage with no later pump; the hand-off State takes each mode's nbar from the LAST stage that addressed it and each ion's internal state from its last pump (or an explicit state for an unpumped coolant/qubit); a pulsed-sideband-cooled mode is handed off as the thermal state of its nbar, and its preparation note compares <n^2> and the 1e-4 tail level with the pulsed distribution (default 171Yb+ chain: 7.3x and 5.6x, n = 20 and 15 against 2)"
     corrected_form: "not the reverse order (pump first); run.job.prepare takes the recipe the Device carries"
   - id: anchor.m3.doppler_rate_framework
     symbol: "nbar_D = (Gamma/4 nu)(1 + alpha/cos^2 theta_L) - 1/2"
@@ -808,6 +808,13 @@ records:
     section: "7.2; 3.4; 8.5"
     source: "qutip_trap.control.schedule"
     equation: "the terminal measure (the circuit's targets plus trailing measure operations) is the schedule's one event, after the last pulse and dead time, of the calibration table's detection window (the detector's when the table has none); a measure, reset or recool before a later gate is refused with a ScheduleError naming Section 8.5; the engine integrates to the end of the pulses, never through the detection window"
+  - id: conv.modulator_response_phase
+    symbol: "leg phase + arctan(2 pi mu tau_r); edge transient weighted by |H(mu)| = (1 + (2 pi mu tau_r)^2)^(-1/2)"
+    tag: recomputed here
+    section: "7.10"
+    source: "qutip_trap.control.schedule (response_phase_rad)"
+    equation: "every entangling pulse's leg phases lead by arctan(2 pi mu tau_r), the modulator's phase at the leg's detuning; on the two-ion fixture scaling that reference by 0.9, 1.0 and 1.1 gives 1 - F = 1.29e-4, 7.71e-5 and 9.44e-5, and without it 1 - F = 3.0e-3"
+    corrected_form: "a realistic 50 ns modulator beating an ideal one (1 - F = 7.71e-5 against 1.32e-4) is physics, not over-compensation: the filter weights each square AM segment edge's off-resonant carrier transient by |H(mu)|, a rise-time sweep 0, 5, 10, 20, 50, 100, 200 ns giving 1.322e-4, 1.312e-4, 1.279e-4, 1.168e-4, 7.71e-5, 4.40e-5, 2.81e-5 (the |H|^2 law to 0.1 % at 5 to 10 ns, 7 % at 50 ns); under the sideband RWA, each chain re-calibrated, realistic 6.354e-6 against ideal 6.346e-6"
   - id: conv.beat_phase_at_gate_start
     symbol: "phi_leg -> phi_leg + 2 pi mu_leg t_g"
     tag: corrected
@@ -834,8 +841,8 @@ records:
     tag: corrected
     section: "3.4; 8.6; 7.5"
     source: "qutip_trap.run.pipeline"
-    equation: "shots are allocated in CONTIGUOUS BLOCKS, M_k = shots // S + 1 for the first shots % S samples, and sample k is drawn at the shot clock t0 + (sum_{j<k} M_j) T_rep; Diagnostics.shots_per_sample_realized reports the realized block sizes and Result.sample_of_shot the shot -> sample map Section 8.6 asks for"
-    corrected_form: "not round-robin: one quasi-static draw per contiguous block of the shot clock is what the hardware does, and round-robin would give every sample the same mean shot time, so a drift over the sample times would produce no between-sample spread"
+    equation: "shots are allocated in CONTIGUOUS BLOCKS, M_k = shots // S + 1 for the first shots % S samples, and sample k is drawn at the shot clock t0 + (sum_{j<k} M_j) T_rep; Diagnostics.shots_per_sample_realized reports the realized block sizes, and Result.sample_of_shot, the shot -> sample map Section 8.6 asks for, is recorded per kept shot where the readout keeps it"
+    corrected_form: "not round-robin: one quasi-static draw per contiguous block of the shot clock is what the hardware does, and round-robin would give every sample the same mean shot time, so a drift over the sample times would produce no between-sample spread; the map is not rebuilt from the block sizes, which moves every later kept row after a discard (12 of 52 rows at eight discards)"
   - id: conv.trajectory_count_two_phases
     symbol: "target_tol -> n_est -> replay of n_est keyed seeds"
     tag: corrected
