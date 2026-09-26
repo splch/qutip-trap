@@ -640,6 +640,7 @@ def schedule(
     parallel: bool | None = None,
     crosstalk_suppression: CrosstalkSuppression = "none",
     stark_compensation: bool = True,
+    hardware_chain: bool = True,
 ) -> Schedule:
     """Native gates -> pulses with absolute times from the calibration table (module docstring).
 
@@ -649,8 +650,11 @@ def schedule(
     into two half-angle plays around a physical echo, exact to first order in the leaked drives; ``local`` plays Y(pi) (a
     GPi(pi/2)) on both targets between the halves and again after the second (Y X Y = -X flips the leaked terms while
     Y (x) Y commutes with XX), ``neighbour`` a physical Z(pi) = GPi(0) GPi(pi/2) on every crosstalk spectator of the pair
-    between the halves, absorbed afterwards into its frame. ``parallel`` defaults to the chain's ``parallel_addressing``
-    and is refused on a chain without it."""
+    between the halves, absorbed afterwards into its frame. ``hardware_chain`` says whether the run passes the schedule
+    through the device's control electronics (``Physics.hardware_chain``): every entangling tone's phase then compensates the
+    first-order response the chain filters the pair's drive with (``response_phase_rad`` at
+    ``HardwareChain.response_time_s``), and without the chain no tone carries a reference for a filter the run never
+    applies. ``parallel`` defaults to the chain's ``parallel_addressing`` and is refused on a chain without it."""
     if not circuit.is_native:
         raise ScheduleError("schedule() takes a native circuit; compile_to_native first")
     allows_parallel = bool(device.hardware.parallel_addressing)
@@ -669,7 +673,10 @@ def schedule(
         _ParallelTimeline(range(circuit.n_qubits), t0_s, dead) if parallel else _SerialTimeline(t0_s, dead)
     )
     reset = not bool(device.hardware.phase_continuous)
-    delay = float(device.hardware.aom_rise_s)
+    response_s = {
+        ion: device.hardware.response_time_s(drive.kind) if hardware_chain else 0.0
+        for ion, drive in ent_drives.items()
+    }
     frame = PhaseFrame()
     pulses: list[Pulse] = []
     gates: list[PlayedGate] = []
@@ -695,7 +702,7 @@ def schedule(
             table=table,
             gate_id=gate_id,
             beat_phase_reset=reset,
-            response_delay_s=delay,
+            response_delay_s=response_s[pair[0]],
             stark_compensation=stark_compensation,
         )
         pulses.extend(new)

@@ -18,19 +18,22 @@ from qutip_trap.calibration.entangling import (
     spot_check_space,
 )
 from qutip_trap.calibration.surrogate import surrogate_table
-from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains, apply_hardware_chain
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, HardwareChain, _trains, apply_hardware_chain
 from qutip_trap.control.native import ms
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, response_phase_rad
 from qutip_trap.control.shaping import gate_modes
+from qutip_trap.control.table import Waveform
 from qutip_trap.device.presets import ideal_hardware, yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
+from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from tests.fixtures import REALISTIC_HARDWARE, single_ion_raman_device
 
 
@@ -178,6 +181,73 @@ def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_no
     assert response_phase_rad(3.0e6, 50e-9) == pytest.approx(math.atan(2 * math.pi * 3e6 * 50e-9))
     assert response_phase_rad(-3.0e6, 50e-9) == pytest.approx(-math.atan(2 * math.pi * 3e6 * 50e-9))
     assert response_phase_rad(lambda tau: 1e6, 1e-9) == pytest.approx(math.atan(2 * math.pi * 1e-3))
+
+
+MS_QUARTER = Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), ())
+
+
+def test_a_run_references_its_entangling_tones_to_the_chain_it_plays() -> None:
+    """A machine that plays its schedule through the 50 ns modulator gives every MS leg the filter's phase
+    sgn(mu) arctan(2 pi |mu| tau) over the phase it programs when it passes the chain by (Physics.hardware_chain=False),
+    which references no filter the run never applies; without a modulator rise the Raman legs carry none, since the
+    amplifier's 100 MHz response shapes only the microwave path."""
+    fx = yb171_chain(2)
+    wf: Waveform | None = None
+
+    def legs(hardware: HardwareChain, chain: bool) -> list[float]:
+        nonlocal wf
+        dev = dataclasses.replace(fx.device, hardware=hardware)
+        sur = surrogate_table(
+            dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
+        )
+        wf = sur.table.waveform_for((0, 1))
+        machine = Machine(dev, table=sur.table, physics=Physics(hardware_chain=chain))
+        return [t.phase_rad for p in machine.schedule(MS_QUARTER).pulses for t in p.drive.tones]
+
+    bare = legs(REALISTIC_HARDWARE, False)
+    assert wf is not None and len(bare) == 4 * len(wf.segments)
+    filtered = legs(REALISTIC_HARDWARE, True)
+    shift = [
+        response_phase_rad(seg.detuning_hz[leg], REALISTIC_HARDWARE.aom_rise_s)
+        for seg in wf.segments
+        for _ion in seg.ions
+        for leg in seg.legs
+    ]
+    assert min(abs(s) for s in shift) > 0.5
+    assert np.array(filtered) - np.array(bare) == pytest.approx(shift, abs=1e-12)
+    amplifier_only = dataclasses.replace(REALISTIC_HARDWARE, aom_rise_s=0.0)
+    assert legs(amplifier_only, True) == pytest.approx(bare, abs=1e-12)
+
+
+@pytest.mark.slow
+def test_a_calibration_through_no_chain_plays_the_gate_its_spot_check_measured() -> None:
+    """With the 50 ns modulator on the device and the chain switched off, the MS gate a run schedules from the surrogate at
+    the waveform's own angle is the one the spot check measures, F = 0.999868 to 1e-9, where a phase reference for the
+    filter the run never applies tilted it to 0.994686."""
+    fx = yb171_chain(2)
+    dev = dataclasses.replace(fx.device, hardware=REALISTIC_HARDWARE)
+    sur = surrogate_table(
+        dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), hardware_chain=False
+    )
+    wf = sur.table.waveform_for((0, 1))
+    assert wf is not None
+    nb = {m: e.value for m, e in sur.table.nbar.items()}
+    space, _classes = spot_check_space(dev, gate_modes(dev, (0, 1), (0, 1), nbar=nb), wf, (0, 1), Numerics())
+    measured, _ = exact_gate_check(
+        dev, wf, (0, 1), fx.entangling_drives, sur.table, space=space, hardware_chain=False
+    )
+    assert measured.fidelity == pytest.approx(0.999868, abs=5e-6)
+    machine = Machine(dev, table=sur.table, physics=Physics(hardware_chain=False))
+    unscaled = Operation("ms", (0, 1), (0.0, 0.0, 2.0 * abs(wf.chi_total_rad)))
+    sched = machine.schedule(Circuit(2, (unscaled,), ()))
+    traces = machine.engine.run_pulses(
+        dev, sched, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics()
+    )
+    target = frame_rotated(
+        qt.Qobj(ms(0.0, 0.0, math.pi / 2)[:, :1], dims=[[2, 2], [1, 1]]), sched.phase_frame
+    )
+    played = float(np.real(qt.expect(traces.final.internal, target)))
+    assert played == pytest.approx(measured.fidelity, abs=1e-9)
 
 
 @pytest.mark.slow

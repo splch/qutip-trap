@@ -170,6 +170,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
         parallel=numerics.addressing,
         crosstalk_suppression=physics.crosstalk_suppression,
         stark_compensation=physics.stark_compensation,
+        hardware_chain=physics.hardware_chain,
     )
     return Prefix(
         report=report,

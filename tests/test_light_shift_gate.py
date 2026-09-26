@@ -50,6 +50,7 @@ from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.units import ATOMIC_MASS_KG, C_M_PER_S, HBAR_J_S, TWO_PI
 from tests.fixtures import (
     G_J_S12,
+    REALISTIC_HARDWARE,
     ca_light_shift_device,
     chain_device,
     derived_seeds,
@@ -548,10 +549,10 @@ def gradient_waveform(dev: Device, *, chi_rad: float) -> Waveform:
 
 
 def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> None:
-    """ZZ(pi/2) on a gradient waveform schedules four gradient pulses at -/+ delta and four echo pi pulses as two zz gates,
-    and a light shift of the microwave drives, at the table key the gradient drive reads too, detunes the echo pulses and
-    not the gradient tones; a non-gradient entangling drive, an MS on the gradient waveform and a waveform of the wrong sign
-    are refused."""
+    """ZZ(pi/2) on a gradient waveform schedules four gradient pulses at -/+ delta and four echo pi pulses as two zz gates;
+    a light shift of the microwave drives, at the table key the gradient drive reads too, detunes the echo pulses and not
+    the gradient tones, and a laser modulator's response leaves the microwave tones' phases alone; a non-gradient
+    entangling drive, an MS on the gradient waveform and a waveform of the wrong sign are refused."""
     dev = gradient_device()
     wf = gradient_waveform(dev, chi_rad=-math.pi / 8.0)
     table = dataclasses.replace(
@@ -585,6 +586,13 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
         detunings = sorted(float(t.detuning_hz) for t in pulse.drive.tones)
         want = [-DELTA_HZ, DELTA_HZ] if pulse.drive.kind == "gradient" else [300.0]
         assert detunings == pytest.approx(want, rel=1e-12), pulse.gate_id
+    # the microwave tones pass the amplifier, not the 50 ns laser modulator: behind an ideal amplifier they carry no
+    # response phase
+    modulator_only = dataclasses.replace(REALISTIC_HARDWARE, amplifier_bandwidth_hz=math.inf)
+    behind = schedule(circuit, dataclasses.replace(dev, hardware=modulator_only), table)
+    assert [t.phase_rad for p in behind.pulses for t in p.drive.tones] == pytest.approx(
+        [t.phase_rad for p in sched.pulses for t in p.drive.tones], abs=1e-12
+    )
     # a gradient waveform on a non-gradient entangling drive is refused, and so is MS(...) on a gradient waveform
     with pytest.raises(ScheduleError, match="gradient gate drive"):
         schedule(circuit, dataclasses.replace(dev, roles=BeamRoles(gate=micro, entangling=micro)), table)
