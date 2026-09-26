@@ -1089,6 +1089,7 @@ def execute(
     approximations.extend(device.hardware.describe())
     notes.extend(v for v in selection.guard_violations if v not in notes)
     branches = level.branches
+    budget = intrinsic_budget(device, sched, selection, hardware_chain=physics.hardware_chain)
     diagnostics = Diagnostics(
         level=level.name,
         space=evo.space,
@@ -1109,8 +1110,8 @@ def execute(
         effective_sample_size=n_eff,
         root_seed=int(seed),
         calibration=table,
-        approximations=tuple(approximations) + tuple(notes) + tuple(selection.notes),
-        intrinsic_budget=intrinsic_budget(device, sched, selection),
+        approximations=tuple(approximations) + tuple(notes) + tuple(selection.notes) + budget.omitted,
+        intrinsic_budget=budget,
         dropped_branch_weight=level.dropped_weight,
         frozen_excitation_bound=dict(selection.frozen_excitation),
         dropped_contribution=selection.dropped_contribution,

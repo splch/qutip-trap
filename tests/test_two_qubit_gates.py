@@ -325,14 +325,14 @@ def test_the_carrier_kicks_predict_how_far_the_start_phase_moves_a_gate() -> Non
         selection = select_space(
             dev, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
         )
-        (ms,) = intrinsic_budget(dev, sched, selection).entangling
+        (ms,) = intrinsic_budget(dev, sched, selection, hardware_chain=True).entangling
         assert ms.carrier_steps == pytest.approx(want, rel=1e-6, abs=1e-15)
 
 
 def test_a_modulator_softens_the_budget_s_kicks_by_its_response_at_the_beat_note() -> None:
     """Through the 50 ns modulator of the realistic chain the budget's carrier steps are the programmed kicks' term times
     |H(mu)|^2 = (1 + (2 pi mu tau)^2)^(-1) = 0.53 at the square pulse's 2.99 MHz beat note, the response the scheduler
-    references the tones to, and the budget names that a run passing the chain by plays them unsoftened."""
+    references the tones to; a run that passes the chain by plays them unsoftened."""
     device = dataclasses.replace(chain_device(2), hardware=REALISTIC_HARDWARE)
     assert device.hardware.phase_continuous and device.hardware.aom_rise_s == 50e-9
     modes = two_ion_modes(device).subset([X_COM_TWO_IONS])
@@ -355,15 +355,15 @@ def test_a_modulator_softens_the_budget_s_kicks_by_its_response_at_the_beat_note
     selection = select_space(
         device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
     )
-    budget = intrinsic_budget(device, sched, selection)
-    (ms,) = budget.entangling
+    (played,) = intrinsic_budget(device, sched, selection, hardware_chain=True).entangling
+    (passed_by,) = intrinsic_budget(device, sched, selection, hardware_chain=False).entangling
     softened = 1.0 / (1.0 + (TWO_PI * mu * 50e-9) ** 2)
     assert softened == pytest.approx(0.53, abs=0.01)
-    programmed = carrier_step_kicks(square, t_g, beat_reset=False)
-    assert ms.carrier_steps == pytest.approx(
-        softened * carrier_step_infidelity(square, two_ion_modes(device), programmed), rel=1e-9
+    programmed = carrier_step_infidelity(
+        square, two_ion_modes(device), carrier_step_kicks(square, t_g, beat_reset=False)
     )
-    assert any("Physics.hardware_chain = False" in note for note in budget.omitted), budget.omitted
+    assert played.carrier_steps == pytest.approx(softened * programmed, rel=1e-9)
+    assert passed_by.carrier_steps == pytest.approx(programmed, rel=1e-12)
 
 
 def test_the_carrier_kicks_do_not_depend_on_the_order_the_pair_is_named_in() -> None:
@@ -816,7 +816,7 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     selection = select_space(
         device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
     )
-    budget = intrinsic_budget(device, sched, selection)
+    budget = intrinsic_budget(device, sched, selection, hardware_chain=True)
     (ms,) = budget.entangling
     assert ms.gate_id == "ms11"
     # (Omega_tone/(2 mu))^2 at mu/2pi = 2.99 MHz: the off-resonant term above to (nu/mu)^2 - 1 = 0.67 %

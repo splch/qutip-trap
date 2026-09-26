@@ -600,7 +600,9 @@ def carrier_step_infidelity(waveform: Waveform, modes: GateModes, kicks: Mapping
     return float(total)
 
 
-def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> IntrinsicBudget:
+def intrinsic_budget(
+    device: Device, sched: Schedule, selection: SpaceSelection, *, hardware_chain: bool
+) -> IntrinsicBudget:
     """The closed-form error scales reported beside the result (Section 9.6), as typed records that say which terms the
     total sums, and the errors it leaves out named. Per entangling gate (``EntanglingScales``): the residual displacement
     sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the scale (Omega_peak/(2 mu_min))^2 of
@@ -610,7 +612,8 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
     summed) the Lamb-Dicke deficit and that angle in radians. Per single-qubit carrier pulse, every GPi and GPi2 piece of
     the schedule's targets (``CarrierScales``): the sideband scale eta^2 (Omega/nu)^2 of the most strongly driven mode and
     the addressing crosstalk sum_j sin^2(eps_ij theta/2). Per pulse and addressed ion the scattering estimates
-    (``ScatteringScales``)."""
+    (``ScatteringScales``). ``hardware_chain`` is the run's ``Physics.hardware_chain``: the carrier's kicks are softened
+    by the response of a chain the run plays, never by one it passes by."""
     from qutip_trap.control.shaping import waveform_integrals
     from qutip_trap.light.raman import lamb_dicke_parameters
     from qutip_trap.run.space import DROP_CHI_MAX_RAD, gate_modes_for
@@ -637,21 +640,12 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
             if p.gate_id is not None
             and (p.gate_id == gate.gate_id or p.gate_id.startswith(gate.gate_id + "/"))
         )
-        response_s = device.hardware.response_time_s(drive_kind)
         kicks = carrier_step_kicks(
             gate.waveform,
             gate.t_start_s,
             beat_reset=not device.hardware.phase_continuous,
-            response_s=response_s,
+            response_s=device.hardware.response_time_s(drive_kind) if hardware_chain else 0.0,
         )
-        if response_s > 0.0 and gate.waveform.kind == "ms":
-            mu0 = abs(_at(gate.waveform.segments[0].detuning_hz["blue"], 0.0))
-            softened = 1.0 / (1.0 + (TWO_PI * mu0 * response_s) ** 2)
-            omitted.append(
-                f"{gate.gate_id}: the carrier's kicks are the ones the device's chain plays, softened by its {response_s:.3g} s "
-                f"response to |H(mu)|^2 = {softened:.3g} of the programmed ones; a run that passes the chain by "
-                "(Physics.hardware_chain = False) plays them unsoftened"
-            )
         # the run's gate reaches the angle of the modes it carries: a calibration measured the angle its own space
         # reached, the closed forms of a seed waveform assumed every mode
         uncarried = {
