@@ -91,16 +91,16 @@ def sub_stream(kw: Mapping[str, Any], label: str) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class _Lab:
-    """The machine resolved for one experiment call: the device, the table, the numerics, the physics and the builder
-    options, the noise sample, the observation model, the thermal occupations and the frame shifts."""
+    """The machine resolved for one experiment call: the device, the table, the numerics, the physics, the noise sample,
+    the observation model, the thermal occupations and the frame shifts."""
 
     device: Device
     table: CalibrationTable | None
     options: Numerics
     """The call's numerics, the machine's when it gives none, ``Numerics()`` for None."""
     physics: Physics
-    """The machine's: the hardware chain and the channel switches the experiment's engines play under."""
-    builder: BuilderOptions | None
+    """The machine's under the call's ``builder_options``: the builder, the hardware chain and the channel switches the
+    experiment's engines play under."""
     sample: NoiseSample | None
     obs: Observation
     nbar: dict[int, float]
@@ -126,8 +126,9 @@ class _Lab:
             device=machine.device,
             table=table,
             options=options if options is not None else Numerics(),
-            physics=machine.physics,
-            builder=kw.get("builder_options", machine.physics.builder),
+            physics=replace(machine.physics, builder=kw["builder_options"])
+            if "builder_options" in kw
+            else machine.physics,
             sample=sample,
             obs=obs,
             nbar={int(k): float(v) for k, v in kw.get("nbar", {}).items()},
@@ -342,7 +343,7 @@ def _run(
     schedule = Schedule(tuple(pulses), idle, (), {q: 0.0 for q in range(n)})
     phys = lab.physics
     engine = JointExactEngine(
-        builder_options=lab.builder,
+        builder_options=phys.builder,
         store_per_segment=2,
         store_times_s=tuple(store_times),
         qubit_shifts_hz=lab.qubit_shifts_hz,

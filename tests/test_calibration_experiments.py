@@ -227,7 +227,7 @@ def test_a_fock_sum_that_keeps_no_branch_is_refused_rather_than_run_as_the_vacuu
 def test_the_machine_supplies_the_laboratory_defaults_and_an_unknown_keyword_raises(machine: Machine) -> None:
     lab = _Lab.of(machine, {"shots": 5})
     assert lab.device is machine.device and lab.obs.shots == 5 and lab.table is machine.table
-    assert lab.options == machine.numerics and lab.builder is None
+    assert lab.options == machine.numerics and lab.physics == machine.physics
     given = _Lab.of(machine, {"table": None, "options": Numerics(atol=1e-12)})
     assert given.table is None and given.options.atol == 1e-12  # the call's keywords win
     assert _Lab.of(machine, {"options": None}).options == Numerics()  # None: the defaults
@@ -506,7 +506,7 @@ def test_the_heating_probe_runs_in_the_interaction_frame_with_the_other_builder_
     played: list[BuilderOptions | None] = []
 
     def spy(lab, ion, pulses, setup, **kw):
-        played.append(lab.builder)
+        played.append(lab.physics.builder)
         return _Averaged(np.array([0.0]), {f"P1[{ion}]": np.array([0.25])}, 0.0)
 
     monkeypatch.setattr("qutip_trap.experiments.motion._run", spy)
@@ -647,6 +647,32 @@ def test_micromotion_scan_by_the_sideband_ratio_nulls_the_stray_field_through_th
     assert res.fitted["carrier_hz"][0] == pytest.approx(
         derive_raman_drive(dev, 0, (0, 1), scattering=False).carrier_rabi_hz, rel=1e-3
     )
+
+
+def test_the_sideband_ratio_scan_plays_the_modulated_builder_with_the_other_builder_options(
+    monkeypatch,
+) -> None:
+    """The sideband-ratio scan swaps in the modulated micromotion and keeps the call's or the machine's other builder
+    options."""
+    dev = single_ion_raman_device(rf=RfDrive(voltage_peak_v=200.0, frequency_hz=30e6), stray=(30.0, 0.0, 0.0))
+    played: list[BuilderOptions | None] = []
+
+    class Played(Exception):
+        pass
+
+    def spy(lab, ion, pulses, setup, **kw):
+        played.append(lab.physics.builder)
+        raise Played
+
+    monkeypatch.setattr("qutip_trap.experiments.micromotion._run", spy)
+    options = BuilderOptions(include_stark=False, lamb_dicke_order=2)
+    for machine, kw in (
+        (Machine(dev), {"builder_options": options}),
+        (Machine(dev, physics=Physics(builder=options)), {}),
+    ):
+        with pytest.raises(Played):
+            micromotion_scan(machine, 0, 0, {"Ex": (-60.0, 0.0)}, method="sideband_ratio", points=5, **kw)
+    assert played == [dataclasses.replace(options, micromotion="modulated")] * 2
 
 
 @pytest.mark.slow

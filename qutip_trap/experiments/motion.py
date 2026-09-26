@@ -374,9 +374,12 @@ def heating_rate(
         raise ValueError("delays are non-negative")
     # the thermal probe is a density matrix, integrated by mesolve whatever options it was handed, in the interaction frame
     # (H_0 removed, so that the idle costs nothing) with the machine's or the call's other builder options
-    builder = replace(lab.builder if lab.builder is not None else BuilderOptions(), frame="interaction")
+    builder = replace(lab.physics.builder or BuilderOptions(), frame="interaction")
     lab = replace(
-        lab, nbar={**lab.nbar, mode: nb0}, builder=builder, options=_density_matrix_options(lab.options)
+        lab,
+        nbar={**lab.nbar, mode: nb0},
+        physics=replace(lab.physics, builder=builder),
+        options=_density_matrix_options(lab.options),
     )
     probe = _Probe(include_stark=include_stark, mode=mode)
     base = _setup(lab, probe_ion, probe)

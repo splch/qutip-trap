@@ -364,8 +364,9 @@ def _sideband_ratio_scan(
         derived = derive_optical_drive(device, ion, gate_drive.beams[0], scattering=False)
     else:
         raise ValueError("the sideband-ratio method drives the ion with laser light")
-    modulated = BuilderOptions(micromotion="modulated")
-    lab = replace(lab, builder=modulated)
+    # the sideband is the modulated micromotion's: the caller's other builder options are kept
+    modulated = replace(lab.physics.builder or BuilderOptions(), micromotion="modulated")
+    lab = replace(lab, physics=replace(lab.physics, builder=modulated))
     omega = derived.carrier_rabi_hz
     probe = _Probe(detuning_hz=float(device.trap.rf.frequency_hz), include_stark=False, rf_locked=True)
     t_sb = 1.0 / (4.0 * float(jv(1, 0.2)) * omega)

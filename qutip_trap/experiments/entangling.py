@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
-    from qutip_trap.options import Physics
 
 
 class _GateSetup(NamedTuple):
@@ -100,11 +99,6 @@ def _gate_lab(
     return lab, _entangling_setup(lab.device, pair, setup)
 
 
-def _lab_physics(lab: _Lab) -> Physics:
-    """The physics the lab's engines play: the machine's under the call's builder options (``builder_options``)."""
-    return replace(lab.physics, builder=lab.builder)
-
-
 def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, int]) -> GateCheck:
     """The gate played once from |00> on the exact space as a run plays it under the lab's physics
     (``calibration.entangling.exact_gate_check``)."""
@@ -117,7 +111,7 @@ def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, i
         g.entangling,
         g.table,
         space=g.space,
-        physics=_lab_physics(lab),
+        physics=lab.physics,
         nbar=lab.nbar,
         options=lab.options,
         sample=lab.sample,
@@ -147,7 +141,7 @@ def _parity_populations(
         g.entangling,
         g.table,
         space=g.space,
-        physics=_lab_physics(lab),
+        physics=lab.physics,
         analysis_phase_rad=analysis_phase_rad,
         nbar=lab.nbar,
         options=lab.options,
