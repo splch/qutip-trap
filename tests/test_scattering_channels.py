@@ -19,7 +19,9 @@ from qutip_trap.light.recoil import angular_factor
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.scattering import (
     ScatteringOptions,
+    intensity_scale,
     internal_levels,
+    nominal_rabi_hz,
     recoil_nodes,
     scattering_channels,
     scattering_estimates,
@@ -27,6 +29,8 @@ from qutip_trap.noise.scattering import (
 from qutip_trap.options import Numerics
 from qutip_trap.readout.fluorescence import ReadoutScheme
 from qutip_trap.species import species
+from qutip_trap.trap.mathieu import UnstableMathieuError
+from qutip_trap.trap.pseudopotential import RfDrive
 from tests.fixtures import single_ion_raman_device
 
 
@@ -79,6 +83,22 @@ def test_operator_rates_sum_to_the_amplitude_budget_at_the_played_intensity() ->
     assert est["ion0.rayleigh_dephasing"] < 1e-9, (
         "clock states far from the fine structure: Gamma_el vanishes (Section 4.5.5)"
     )
+
+
+def test_the_scattering_scale_raises_on_a_drive_the_light_layer_cannot_derive() -> None:
+    """The played envelope scales the scattering rates by (|Omega|/Omega_nom)^p with Omega_nom the derived carrier Rabi
+    frequency (sqrt 3 for a Raman pulse at three times it); an rf record the derived drive cannot evaluate (5 MHz under
+    the 3 MHz radial frequency) raises instead of taking the rates at the beams' configured power."""
+    dev = single_ion_raman_device(rf=RfDrive(100.0, 30e6))
+    pulse, der = _pulse(dev, scale=3.0)
+    assert nominal_rabi_hz(dev, 0, pulse) == der.carrier_rabi_hz > 0.0
+    const, varying, note = intensity_scale(dev, pulse)
+    assert const == pytest.approx(math.sqrt(3.0), rel=1e-12) and varying is None and note is None
+    unstable = dataclasses.replace(dev, trap=dataclasses.replace(dev.trap, rf=RfDrive(100.0, 5e6)))
+    with pytest.raises(UnstableMathieuError):
+        intensity_scale(unstable, pulse)
+    with pytest.raises(UnstableMathieuError):
+        scattering_estimates(unstable, pulse)
 
 
 def test_raman_flip_rate_and_recoil_heating_per_photon_in_mesolve() -> None:

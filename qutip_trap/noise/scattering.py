@@ -158,27 +158,28 @@ def recoil_nodes(q: int, b_hat: Sequence[float], options: ScatteringOptions) -> 
     return tuple(out)
 
 
-def nominal_rabi_hz(device: Device, ion: int, pulse: Pulse) -> float | None:
-    """The derived carrier Rabi frequency of the addressed ion under the drive's beams at their configured power."""
+def nominal_rabi_hz(device: Device, ion: int, pulse: Pulse) -> float:
+    """The derived carrier Rabi frequency of the addressed ion under the drive's beams at their configured power, the one
+    the played envelope is measured against. A drive the light layer cannot derive raises: a trap record it cannot
+    evaluate, a light-shift pair with no state-dependent force, or a microwave or gradient drive, which has no beams."""
     drive = pulse.drive
-    try:
-        if drive.kind == "raman":
-            return float(
-                derive_raman_drive(
-                    device, ion, (drive.beams[0], drive.beams[1]), scattering=False
-                ).carrier_rabi_hz
-            )
-        if drive.kind == "light_shift":
-            return float(
-                derive_light_shift_drive(
-                    device, ion, (drive.beams[0], drive.beams[1]), scattering=False
-                ).carrier_rabi_hz
-            )
-        if drive.kind in ("optical_E1", "optical_E2"):
-            return float(derive_optical_drive(device, ion, drive.beams[0], scattering=False).carrier_rabi_hz)
-    except (ValueError, ZeroDivisionError):
-        return None
-    return None
+    if drive.kind == "raman":
+        return float(
+            derive_raman_drive(
+                device, ion, (drive.beams[0], drive.beams[1]), scattering=False
+            ).carrier_rabi_hz
+        )
+    if drive.kind == "light_shift":
+        return float(
+            derive_light_shift_drive(
+                device, ion, (drive.beams[0], drive.beams[1]), scattering=False
+            ).carrier_rabi_hz
+        )
+    if drive.kind in ("optical_E1", "optical_E2"):
+        return float(derive_optical_drive(device, ion, drive.beams[0], scattering=False).carrier_rabi_hz)
+    raise ValueError(
+        f"a {drive.kind} drive scatters no photons from its beams and has no nominal Rabi frequency"
+    )
 
 
 @dataclass
@@ -214,13 +215,13 @@ def intensity_scale(device: Device, pulse: Pulse) -> tuple[float | None, _Intens
     """(constant sqrt s, or the time-dependent scale, note): how the played envelope scales the nominal scattering rates."""
     drive = pulse.drive
     omega_nom = nominal_rabi_hz(device, drive.ions[0], pulse)
-    if omega_nom is None or omega_nom <= 0.0:
+    if omega_nom <= 0.0:
         return (
             1.0,
             None,
             (
-                f"pulse {pulse.gate_id!r}: no derived Rabi frequency to scale the scattering rates with; rates taken at the beams' "
-                "configured power"
+                f"pulse {pulse.gate_id!r}: the beams derive no Rabi frequency at ion {drive.ions[0]} to scale the scattering "
+                "rates with; rates taken at the beams' configured power"
             ),
         )
     p = stark_scaling_power(drive.kind)
