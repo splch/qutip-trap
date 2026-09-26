@@ -12,8 +12,9 @@ import pytest
 
 from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.experiments import CalibrationReport
+from qutip_trap.control.table import CalEntry
 from qutip_trap.device.presets import ideal_hardware, yb171_chain
-from qutip_trap.experiments.fitting import thermal_rabi_model
+from qutip_trap.experiments.fitting import readout_errors_for, thermal_rabi_model
 from qutip_trap.experiments.imaging import crystal_image
 from qutip_trap.experiments.light import crosstalk_scan, field_scan, stark_scan
 from qutip_trap.experiments.micromotion import (
@@ -42,10 +43,11 @@ from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
+from qutip_trap.run.job import readout_stage
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
 from qutip_trap.trap.pseudopotential import RfDrive
-from tests.fixtures import FAST, WINDOWS, microwave_device, single_ion_raman_device
+from tests.fixtures import FAST, WINDOWS, make_calibration_table, microwave_device, single_ion_raman_device
 
 DURATIONS = np.linspace(0.0, 20e-6, 9)
 DETUNINGS = np.linspace(-3.2e6, 3.2e6, 9)
@@ -271,6 +273,37 @@ def test_detection_histogram_and_crystal_image_propose_what_they_measured(machin
     image = crystal_image(machine, seed=2)
     assert isinstance(image, CrystalImage) and image.fitted["n_ions"][0] == 2.0
     assert image.quality in ("good", "exact", "failed")
+
+
+def test_the_experiments_read_out_through_the_micromotion_factor_run_applies() -> None:
+    """Under excess micromotion (a 60 V/m stray field, beta = 0.136 on the detection beam at 30 MHz rf) the readout errors the
+    experiments declare their populations through are the product POVM of ``run``'s readout stage at the same threshold and
+    window, and the crystal image counts at the rate that stage detects: Section 8.8's J_0^2/J_1^2 factor moves eps_B by 1.8 %
+    and the counts by 0.8 %, on both sides."""
+    base = yb171_chain(2).device
+    trap = dataclasses.replace(
+        base.trap, rf=RfDrive(voltage_peak_v=200.0, frequency_hz=30e6), stray_field_v_per_m=(60.0, 0.0, 0.0)
+    )
+    dev = dataclasses.replace(base, trap=trap, crystal=solve_crystal(trap, base.crystal.species))
+    detection = {
+        name: CalEntry(
+            value, 0.0, "calibrated", "detection_histogram", "conv.readout_figure_of_merit", 0.0, 0
+        )
+        for name, value in (("threshold", 0.5), ("window_s", 20e-6))
+    }
+    table = make_calibration_table().with_params(detection=detection)
+    stage = readout_stage(dev, table)
+    assert stage.micromotion[0][0] == pytest.approx(0.136, abs=1e-3)
+    assert stage.product is not None
+    declared = readout_errors_for(dev, table)
+    for i, (eps_b, eps_d) in enumerate(stage.product.per_ion_errors()):
+        assert declared.eps_b[i] == pytest.approx(eps_b, rel=1e-12)
+        assert declared.eps_d[i] == pytest.approx(eps_d, rel=1e-12)
+    image = crystal_image(Machine(dev))
+    exposure = 10.0 * dev.detector.window_s
+    for i, model in enumerate(stage.models):
+        expected = (model.detected_bright_per_s + model.background_per_s) * exposure
+        assert image.fitted[f"counts[{i}]"][0] == pytest.approx(expected, rel=1e-12)
 
 
 def test_calibrate_returns_the_report(two_ion, machine: Machine) -> None:

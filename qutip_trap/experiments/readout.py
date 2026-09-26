@@ -33,7 +33,7 @@ def detection_histogram(
     from qutip_trap.readout.detection import RecordModel
 
     device = machine.device
-    rates, scheme, _model = _detection_rates(device, ion, micromotion=True)
+    rates, scheme, _model = _detection_rates(device, ion)
     if windows_s is None:
         windows_s = tuple(float(x) for x in np.geomspace(0.25, 2.5, 12) * device.detector.window_s)
     cal = calibrate_detection(

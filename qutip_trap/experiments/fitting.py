@@ -310,17 +310,16 @@ class ReadoutErrors:
         return out
 
 
-def _detection_rates(
-    device: Device, ion: int, *, micromotion: bool = False
-) -> tuple[FluorescenceRates, ReadoutScheme, BlochModel]:
-    """``detection_rates_for_ion`` for ``ion`` under its detection beams; ``micromotion`` applies the J_0^2/J_1^2 factor of
-    Section 8.8 that the readout stage of ``run`` applies (``run.job.detection_micromotion``)."""
+def _detection_rates(device: Device, ion: int) -> tuple[FluorescenceRates, ReadoutScheme, BlochModel]:
+    """``detection_rates_for_ion`` for ``ion`` under its detection beams with the J_0^2/J_1^2 micromotion factor of Section
+    8.8 (``run.job.detection_micromotion``): the rates the readout stage of ``run`` detects. The Bloch model is the
+    unmodulated drive's."""
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.fluorescence import detection_rates_for_ion
     from qutip_trap.run.job import detection_micromotion
 
     beams = [device.beams[k] for k in detection_beams(device, ion)]
-    beta, omega_rf = detection_micromotion(device, ion, beams) if micromotion else (0.0, 0.0)
+    beta, omega_rf = detection_micromotion(device, ion, beams)
     return detection_rates_for_ion(
         device.crystal.species[ion],
         device.field.B_gauss,
@@ -333,9 +332,9 @@ def _detection_rates(
 
 
 def readout_errors_for(device: Device, table: CalibrationTable | None = None) -> ReadoutErrors:
-    """The readout the experiments see: per ion, the detection model's (eps_B, eps_D) at the table's threshold and window
-    when calibrated, else at the detector's window and the true model's optimal threshold; (0, 0) for an ion no detection
-    beam addresses."""
+    """The readout the experiments see, the one ``run`` reads out through: per ion, the detection model's (eps_B, eps_D),
+    micromotion factor included, at the table's threshold and window when calibrated, else at the detector's window and the
+    true model's optimal threshold; (0, 0) for an ion no detection beam addresses."""
     from qutip_trap.control.table import usable
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel

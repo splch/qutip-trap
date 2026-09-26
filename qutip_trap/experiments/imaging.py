@@ -29,7 +29,8 @@ _ROI_PIXELS = 3
 
 
 def _ion_rates(device: Device, ion: int) -> tuple[float, float] | None:
-    """(detected bright photon rate, background rate) of ``ion`` under the detection beams, None when no beam addresses it."""
+    """(detected bright photon rate, background rate) of ``ion`` under the detection beams, micromotion factor included
+    (``fitting._detection_rates``), None when no beam addresses it."""
     from qutip_trap.light.roles import detection_beams
     from qutip_trap.readout.detection import RecordModel
 
