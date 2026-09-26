@@ -30,13 +30,13 @@ if TYPE_CHECKING:
 COST_FIXED_S = 0.02
 """Section 11.2's fitted per-segment constant a of cost = a + (seconds per evaluation) x evaluations."""
 EVALUATIONS_PER_PULSE_SECOND = 2.8e8
-"""Right-hand-side evaluations per second of pulse the engine makes in its exact rotating frame (Section 11.3 item 10), with
-dop853 at atol 1e-10 and rtol 1e-8, counted on QuTiP's dop853 right-hand side: 1.9 to 3.2 x 10^8 over the segments of the
-Bell circuit on ``presets.yb171_chain(2)`` (dimension 572: 3.2e8 on its 20 us MS segments, 2.3e8 on its 1.7 us carrier
-pulses), the three-ion GHZ circuit (1144: 2.7e8 and 2.0e8) and the four-ion row-2b Bell pair (2304: 2.5e8 and 1.9e8); the
+"""Right-hand-side evaluations per second of pulse the engine makes in its exact rotating frame, with dop853 at atol 1e-10
+and rtol 1e-8, counted on QuTiP's dop853 right-hand side: 1.9 to 3.2 x 10^8 over the segments of the Bell circuit on
+``presets.yb171_chain(2)`` (dimension 572: 3.2e8 on its 20 us MS segments, 2.3e8 on its 1.7 us carrier pulses), the
+three-ion GHZ circuit (1144: 2.7e8 and 2.0e8) and the four-ion row-2b Bell pair (2304: 2.5e8 and 1.9e8), where the
 Schroedinger picture needs 3 to 8 times more (Section 11.2). With the kernel costs of ``dynamics.kernels`` per evaluation
-the guess is 1.4, 1.8 and 2.1 times the measured integration of one pass through those runs on the reference machine of
-Section 11.1 (1.55 s against 1.07 s, 4.19 against 2.37, 3.28 against 1.54)."""
+the guess is 1.4, 1.8 and 2.1 times the measured integration of one pass through those runs on an 18-CPU Apple machine
+(1.55 s against 1.07 s, 4.19 against 2.37, 3.28 against 1.54)."""
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ def _wall_time_guess(space: HilbertSpace, sched: Schedule, level: FidelityLevel)
     """Section 11.2's cost summed over what the level integrates, for one pass through the schedule (one branch of one
     dynamical sample; a run's branches and samples share the workers). JOINT_EXACT integrates every segment of the schedule
     once on the declared space, its drive terms on the addressed ions and the crosstalk neighbours over every resolved mode.
-    A GATE_LOCAL walk integrates every gate step (Section 5.4) on the local space of its k ions, with the declared space's
+    A GATE_LOCAL walk integrates every gate step on the local space of its k ions, with the declared space's
     resolved modes when the step plays an entangling gate and none otherwise, once per tomography input (the step's
     prod_i d_i basis kets), segment by segment."""
     from qutip_trap.control.schedule import Schedule
