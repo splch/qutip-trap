@@ -97,7 +97,9 @@ class PreparationRecipe:
     levels: tuple[str, ...] | None = None
     """Fine-structure levels of the Bloch models; None = the cycling transition's two levels."""
     leak: LeakPolicy = "renormalize"
-    pump_samples: int = 2001
+    pump_samples: int = 4001
+    """Stored times of the pump evolution: 5 ns steps over the default 20 us, where the photon count and the recoil
+    heating have converged (10 ns steps alias them by about 1e-5)."""
     notes: tuple[str, ...] = field(default_factory=tuple)
     """What the recipe builder chose and why (standard_recipe records its assumptions here)."""
 
