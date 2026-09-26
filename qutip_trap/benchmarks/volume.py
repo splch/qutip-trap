@@ -286,7 +286,7 @@ def _qv_budget(
             "heavy_output_probability": float(np.mean(ideal_h * (1.0 - eps) + 0.5 * eps)),
             "register_fidelity": 1.0 - eps_gates,
             "ideal_heavy_output_probability": float(ideal_h.mean()),
-            "intrinsic_total": float(intrinsic.get("total", 0.0)),
+            "intrinsic_total": float(intrinsic["total"]),
         },
         notes=(
             "eps_gates = 1 - prod over the circuit's native pieces of (1 - reduced average infidelity of the kind's GATE_LOCAL"

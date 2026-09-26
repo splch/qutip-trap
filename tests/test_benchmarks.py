@@ -56,6 +56,7 @@ from qutip_trap.noise.summary import (
 )
 from qutip_trap.options import Numerics
 from qutip_trap.run.job import last_record
+from qutip_trap.run.results import CarrierScales, EntanglingScales, IntrinsicBudget, ScatteringScales
 from tests.fixtures import FAST, make_result, two_ion_surrogate
 
 
@@ -210,8 +211,8 @@ def test_reduced_ideal_factors_a_step_s_target_instead_of_taking_its_zero_block(
 
 
 def test_gate_piece_of_finds_multi_piece_gate_ids_by_longest_prefix() -> None:
-    """A budget key maps to the longest gate id prefixing it, the ZZ wrapper's slashed ids (``zz[k]/ms``,
-    ``zz[k]/loop1``) included, and an unknown key to None."""
+    """A budget record's gate id maps to the longest gate id equal to it or prefixing it at a slash, the ZZ wrapper's
+    slashed ids (``zz[k]/ms``, ``zz[k]/loop1``) included, and an unknown id to None."""
     kinds = {
         "gpi2[0]": "gpi2[0]",
         "ms[2]": "ms[2,3]",
@@ -219,13 +220,29 @@ def test_gate_piece_of_finds_multi_piece_gate_ids_by_longest_prefix() -> None:
         "zz[2]/loop1": "gpi2[2]",
         "zz[2]/loop2": "gpi2[3]",
     }
-    assert gate_piece_of("zz[2]/loop1.residual_displacement", kinds) == "zz[2]/loop1"
-    assert gate_piece_of("zz[2]/ms/seg0/ion0.ion0.P_raman", kinds) == "zz[2]/ms"
-    assert gate_piece_of("ms[2]/seg0/ion0.ion0.P_raman", kinds) == "ms[2]"
-    assert gate_piece_of("gpi2[0].crosstalk", kinds) == "gpi2[0]"
+    assert gate_piece_of("zz[2]/loop1", kinds) == "zz[2]/loop1"
+    assert gate_piece_of("zz[2]/ms/seg0/ion0", kinds) == "zz[2]/ms"
+    assert gate_piece_of("ms[2]/seg0/ion0", kinds) == "ms[2]"
+    assert gate_piece_of("gpi2[0]", kinds) == "gpi2[0]"
     assert gate_piece_of("ms[2]", kinds) == "ms[2]"
-    assert gate_piece_of("gpi2[1].crosstalk", kinds) is None
-    assert gate_piece_of("total", kinds) is None
+    assert gate_piece_of("gpi2[1]", kinds) is None
+    assert gate_piece_of("ms[20]", kinds) is None, "a prefix counts only at a slash"
+
+
+def test_the_per_kind_intrinsic_scales_are_the_budget_s_own_summed_terms() -> None:
+    """``intrinsic_by_kind`` charges each record's summed terms to its piece, so the kinds add up to the budget's total and
+    the reported-only numbers (the 2.1e-2 Lamb-Dicke deficit, the frozen angle, the Rayleigh probability) stay out."""
+    ms = EntanglingScales("ms[2]", 1e-6, 4e-6, 1.4e-3, 2e-5, 0.0, 2.1e-2, 0.3)
+    carrier = CarrierScales("gpi2[0]", 3e-4, 1.8e-5)
+    scatter = ScatteringScales("ms[2]/seg0/ion0", 0, 5e-6, 5e-6, 2e-3, 1e-11)
+    budget = IntrinsicBudget((ms,), (carrier, carrier), (scatter,))
+    by_kind = intrinsic_by_kind(budget, {"ms[2]": "ms[0,1]", "gpi2[0]": "gpi2[0]"})
+    assert by_kind == pytest.approx({"ms[0,1]": ms.total + scatter.total, "gpi2[0]": 2.0 * carrier.total})
+    assert sum(by_kind.values()) == pytest.approx(budget.total, rel=1e-15)
+    assert ms.total == pytest.approx(1e-6 + 4e-6 + 1.4e-3 + 2e-5)
+    assert scatter.total == pytest.approx(1e-5 + 1e-11)
+    with pytest.raises(ValueError, match="belongs to no piece"):
+        intrinsic_by_kind(budget, {"ms[2]": "ms[0,1]"})
 
 
 def test_depolarizing_kraus_normalizations_and_the_qiskit_lambda_conversion() -> None:
@@ -476,25 +493,22 @@ def test_simultaneous_rb_runs_on_three_ions() -> None:
 
 @pytest.mark.slow
 def test_the_intrinsic_budget_keeps_the_zz_wrapper_s_section_9_6_scales(two_ion: Machine) -> None:
-    """With ``entangler="zz"`` every intrinsic-budget entry belongs to a schedule piece, the slashed wrapper ids
-    (``zz[0]/ms``, ``zz[0]/loop1``) included, and the wrapper's pieces contribute."""
+    """With ``entangler="zz"`` every intrinsic-budget record belongs to a schedule piece, the slashed wrapper ids
+    (``zz[k]/ms``, ``zz[k]/wrap_in/ion0``) included, the wrapper's carrier pulses carry their crosstalk and sideband
+    scales like any GPi2, and the kinds add up to the run's total."""
     circuit = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
     zz = dataclasses.replace(two_ion, physics=dataclasses.replace(two_ion.physics, entangler="zz"))
     res = zz.run(circuit, 1)
     kinds = kinds_of_schedule(last_record(res).schedule)
     assert any("/" in gid for gid in kinds), kinds
-    by_kind = intrinsic_by_kind(res.diagnostics, kinds)
-    assert by_kind, "the per-kind budget is not empty"
-    orphans = [
-        k
-        for k in res.diagnostics.intrinsic_budget
-        if k != "total" and gate_piece_of(k, kinds) is None and not k.startswith(("prep", "readout"))
-    ]
-    assert not orphans, orphans
-    assert [k for k in res.diagnostics.intrinsic_budget if k.startswith("zz[")], list(
-        res.diagnostics.intrinsic_budget
-    )
-    assert sum(by_kind.values()) > 0.0
+    budget = res.diagnostics.intrinsic_budget
+    assert not [gid for gid in budget.by_gate() if gate_piece_of(gid, kinds) is None]
+    assert [g.gate_id for g in budget.entangling] == [gid for gid in kinds if gid.endswith("/ms")]
+    wrappers = [c for c in budget.carriers if "/wrap_" in c.gate_id]
+    assert len(wrappers) == 4, wrappers
+    assert all(c.crosstalk > 0.0 and c.sideband_scale > 0.0 for c in wrappers), wrappers
+    by_kind = intrinsic_by_kind(budget, kinds)
+    assert sum(by_kind.values()) == pytest.approx(budget.total, rel=1e-12) and budget.total > 0.0
 
 
 @pytest.mark.slow

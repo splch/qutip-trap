@@ -24,7 +24,11 @@ from qutip_trap.io.ionq import (
 )
 from qutip_trap.run.results import (
     RESULT_SCHEMA_VERSION,
+    CarrierScales,
+    EntanglingScales,
+    IntrinsicBudget,
     Result,
+    ScatteringScales,
     aggregate,
     bits_from_decimal,
     bitstring_key,
@@ -304,6 +308,14 @@ def test_from_ionq_v1_shots_closes_the_round_trip() -> None:
     assert Result.from_ionq_v1_shots([6, 1], 3).counts == {"110": 1, "001": 1}
 
 
+BUDGET = IntrinsicBudget(
+    entangling=(EntanglingScales("ms[2]", 1e-6, 4e-6, 1.4e-3, 2e-5, 0.0, 2.1e-2, 0.0),),
+    carriers=(CarrierScales("gpi2[0]", 3e-4, 1.8e-5), CarrierScales("gpi2[0]", 3e-4, 1.8e-5)),
+    scattering=(ScatteringScales("ms[2]/ion0", 0, 5e-6, 5e-6, 2e-8, 1e-11),),
+)
+"""Two carrier records under one gate id (a pulse train on one ion shares it): both are kept and summed."""
+
+
 def test_the_envelope_round_trips() -> None:
     result = dataclasses.replace(
         make_result(BITS),
@@ -312,10 +324,12 @@ def test_the_envelope_round_trips() -> None:
         machine_hash="m" * 64,
         created_at="2026-09-11T12:00:00+00:00",
         duration_s=8.5,
+        diagnostics=dataclasses.replace(make_result(BITS).diagnostics, intrinsic_budget=BUDGET),
     )
     d = result.to_dict()
     assert json.loads(json.dumps(d)) == d, "plain JSON values only"
-    assert d["schema_version"] == RESULT_SCHEMA_VERSION == 2
+    assert d["schema_version"] == RESULT_SCHEMA_VERSION == 3
+    assert d["diagnostics"]["intrinsic_budget"]["total"] == BUDGET.total
     assert d["device_hash"] == "fixture" and d["machine_hash"] == "m" * 64
     assert d["heralds"] == {"collision": 2, "dark_or_lost": 2, "count_anomaly": 1}
     assert (
@@ -340,6 +354,7 @@ def test_the_envelope_round_trips() -> None:
     )
     assert back.diagnostics.calibration.entries()["field"] == result.diagnostics.calibration.field
     assert back.diagnostics.calibration.ms == {} and back.diagnostics.gate_local is None
+    assert back.diagnostics.intrinsic_budget == BUDGET
     assert (
         back.shots == result.shots and int(back.heralds.sum()) == 0
     )  # rebuilt from the counts: no per-shot flags
@@ -349,8 +364,8 @@ def test_the_envelope_round_trips() -> None:
         again.heralds, result.heralds
     )
     assert full["per_shot"]["sample_of_shot"] is None and again.sample_of_shot is None
-    with pytest.raises(ValueError, match="schema version 2"):
-        Result.from_dict({**d, "schema_version": 1})
+    with pytest.raises(ValueError, match="schema version 3"):
+        Result.from_dict({**d, "schema_version": 2})
 
 
 def test_dump_job_writes_the_v0_4_body_and_load_job_reads_v0_3_and_v0_4() -> None:

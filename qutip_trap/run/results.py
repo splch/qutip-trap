@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from qutip_trap.run.gate_local import GateLocalReport
     from qutip_trap.run.job import RunRecord
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 """The ``schema_version`` ``Result.to_dict`` writes and ``Result.from_dict`` reads."""
 
 
@@ -95,6 +95,131 @@ class RunState:
 
 
 @dataclass(frozen=True)
+class EntanglingScales:
+    """One played entangling gate's closed-form error scales (Section 9.6, ``run.job.intrinsic_budget``): the terms ``total``
+    sums, each an entanglement infidelity, and two numbers reported beside them."""
+
+    gate_id: str
+    residual_displacement: float
+    """sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1) at closure over the gate's modes: the open loops (Section 4.4.7)."""
+    debye_waller: float
+    """The n = 0-referenced thermal Debye-Waller loss summed over the resolved and frozen modes (Ballance 2016)."""
+    carrier_scale: float
+    """(Omega_peak/(2 mu_min))^2: the off-resonant carrier at the largest tone amplitude and the smallest tone detuning."""
+    bessel_saturation: float
+    """Roos's force saturation, sin^2(pi f/2) with f = 1 - (J_0 + J_2)(2 Omega/mu)."""
+    beat_phase_tilt: float
+    """Roos's spin-axis tilt at the switch-on, sin^2(psi)."""
+    sideband_lamb_dicke_deficit: float
+    """Reported, not summed: the worst sideband matrix element's Lamb-Dicke deficit at the highest Fock index carried."""
+    frozen_chi_rad: float
+    """Reported, not summed: sum |chi_m| over the modes the run freezes, radians."""
+
+    @property
+    def total(self) -> float:
+        """The terms the budget sums: all but the Lamb-Dicke deficit and the frozen angle."""
+        return (
+            self.residual_displacement
+            + self.debye_waller
+            + self.carrier_scale
+            + self.bessel_saturation
+            + self.beat_phase_tilt
+        )
+
+
+@dataclass(frozen=True)
+class CarrierScales:
+    """One single-qubit carrier pulse's closed-form error scales (Section 9.6), both summed."""
+
+    gate_id: str
+    crosstalk: float
+    """sum_j sin^2(|eps_ij| theta/2): the rotation the addressing crosstalk gives the neighbours (Section 3.3)."""
+    sideband_scale: float
+    """eta^2 (Omega/nu)^2 of the most strongly driven mode; 0 for a drive without a momentum kick."""
+
+    @property
+    def total(self) -> float:
+        return self.crosstalk + self.sideband_scale
+
+
+@dataclass(frozen=True)
+class ScatteringScales:
+    """One pulse's photon-scattering probabilities on one addressed ion (Section 9.7, ``noise.scattering.
+    scattering_estimates``), reported whether or not the channels are simulated."""
+
+    gate_id: str
+    ion: int
+    p_raman: float
+    """A Raman spin flip."""
+    p_leak: float
+    """Scattering out of the qubit pair."""
+    p_rayleigh: float
+    """Reported, not summed: a Rayleigh event, which returns the ion to its level; its coherence loss is the next term."""
+    rayleigh_dephasing: float
+    """The differential-Rayleigh coherence loss Gamma_el t/2."""
+
+    @property
+    def total(self) -> float:
+        return self.p_raman + self.p_leak + self.rayleigh_dephasing
+
+
+BudgetRecord = EntanglingScales | CarrierScales | ScatteringScales
+
+
+@dataclass(frozen=True)
+class IntrinsicBudget:
+    """The closed-form error scales a run reports beside its result (Section 9.6, ``run.job.intrinsic_budget``): per played
+    entangling gate, per single-qubit carrier pulse and per (pulse, addressed ion) the scattering estimates. Each record
+    states which of its terms the budget sums (its ``total``), so a consumer reads ``total`` or ``by_gate`` and never adds
+    terms itself."""
+
+    entangling: tuple[EntanglingScales, ...] = ()
+    carriers: tuple[CarrierScales, ...] = ()
+    scattering: tuple[ScatteringScales, ...] = ()
+
+    @property
+    def records(self) -> tuple[BudgetRecord, ...]:
+        return (*self.entangling, *self.carriers, *self.scattering)
+
+    @property
+    def total(self) -> float:
+        """The summed terms of every record."""
+        return float(sum(r.total for r in self.records))
+
+    def by_gate(self) -> dict[str, float]:
+        """Per gate id (a played gate, a carrier pulse, an entangling segment's per-ion pulse), the summed terms of its
+        records: the parts ``total`` is made of."""
+        out: dict[str, float] = {}
+        for r in self.records:
+            out[r.gate_id] = out.get(r.gate_id, 0.0) + r.total
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        """The records as plain JSON-able values, with ``total`` for a reader that wants the sum."""
+        return {
+            "entangling": [asdict(r) for r in self.entangling],
+            "carriers": [asdict(r) for r in self.carriers],
+            "scattering": [asdict(r) for r in self.scattering],
+            "total": self.total,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> IntrinsicBudget:
+        """The inverse of :meth:`to_dict` (``total`` is recomputed from the records)."""
+        return cls(
+            entangling=tuple(_record(EntanglingScales, r) for r in d["entangling"]),
+            carriers=tuple(_record(CarrierScales, r) for r in d["carriers"]),
+            scattering=tuple(_record(ScatteringScales, r) for r in d["scattering"]),
+        )
+
+
+def _record[R: BudgetRecord](cls: type[R], d: Mapping[str, Any]) -> R:
+    """One budget record from its JSON form, every declared field read and cast to its declared type."""
+    cast: dict[str, type] = {"str": str, "int": int, "float": float}
+    return cls(**{f.name: cast[str(f.type)](d[f.name]) for f in fields(cls)})
+
+
+@dataclass(frozen=True)
 class Diagnostics:
     """What a run did and what it approximated (Sections 3.4, 5.5, 8.6): the level that ran and the space it used, the class
     of every mode, the truncation monitors, the integrator and its tolerances, the realized (samples, trajectories, shots
@@ -124,8 +249,8 @@ class Diagnostics:
     root_seed: int
     calibration: CalibrationTable
     approximations: tuple[str, ...]
-    intrinsic_budget: dict[str, float] = field(default_factory=dict)
-    """Per played gate, the closed-form error scales of Section 9.6 (``run.job.intrinsic_budget``), and 'total' their sum."""
+    intrinsic_budget: IntrinsicBudget = field(default_factory=IntrinsicBudget)
+    """The closed-form error scales of Section 9.6 (``run.job.intrinsic_budget``); its ``total`` is their sum."""
     dropped_branch_weight: float = 0.0
     """Weight of the initial-mixture branches below ``branch_weight_min`` that were not evolved."""
     frozen_excitation_bound: dict[int, float] = field(default_factory=dict)
@@ -204,7 +329,7 @@ class Diagnostics:
             "root_seed": int(self.root_seed),
             "calibration": self.calibration.to_dict(),
             "approximations": [str(a) for a in self.approximations],
-            "intrinsic_budget": {str(k): float(v) for k, v in self.intrinsic_budget.items()},
+            "intrinsic_budget": self.intrinsic_budget.to_dict(),
             "dropped_branch_weight": float(self.dropped_branch_weight),
             "frozen_excitation_bound": {str(m): float(v) for m, v in self.frozen_excitation_bound.items()},
             "dropped_contribution": [
@@ -271,7 +396,7 @@ class Diagnostics:
             root_seed=int(d["root_seed"]),
             calibration=CalibrationTable.from_dict(d["calibration"]),
             approximations=tuple(str(a) for a in d["approximations"]),
-            intrinsic_budget={str(k): float(v) for k, v in dict(d["intrinsic_budget"]).items()},
+            intrinsic_budget=IntrinsicBudget.from_dict(d["intrinsic_budget"]),
             dropped_branch_weight=float(d["dropped_branch_weight"]),
             frozen_excitation_bound={int(m): float(v) for m, v in dict(d["frozen_excitation_bound"]).items()},
             dropped_contribution=(float(d["dropped_contribution"][0]), float(d["dropped_contribution"][1])),

@@ -295,7 +295,8 @@ def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with()
         selection = select_space(
             dev, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
         )
-        assert intrinsic_budget(dev, sched, selection)["ms.beat_phase_tilt"] == pytest.approx(want, abs=1e-15)
+        (ms,) = intrinsic_budget(dev, sched, selection).entangling
+        assert ms.beat_phase_tilt == pytest.approx(want, abs=1e-15)
 
 
 def test_a_resetting_chain_plays_an_fm_gate_a_quarter_beat_in_as_it_plays_at_t_zero() -> None:
@@ -726,18 +727,20 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
         device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
     )
     budget = intrinsic_budget(device, sched, selection)
+    (ms,) = budget.entangling
+    assert ms.gate_id == "ms11"
     # (Omega_tone/(2 mu))^2 at mu/2pi = 2.99 MHz: the off-resonant term above to (nu/mu)^2 - 1 = 0.67 %
     mu = TWO_PI * float(waveform.segments[0].detuning_hz["blue"])
-    assert budget["ms11.carrier_scale"] == pytest.approx((omega_tone / (2.0 * mu)) ** 2, rel=1e-12)
-    assert budget["ms11.carrier_scale"] == pytest.approx(1.1507e-4, rel=2e-3)
-    assert budget["ms11.carrier_scale"] == pytest.approx(off_resonant, rel=1e-2)
-    assert infidelity < budget["ms11.carrier_scale"]
+    assert ms.carrier_scale == pytest.approx((omega_tone / (2.0 * mu)) ** 2, rel=1e-12)
+    assert ms.carrier_scale == pytest.approx(1.1507e-4, rel=2e-3)
+    assert ms.carrier_scale == pytest.approx(off_resonant, rel=1e-2)
+    assert infidelity < ms.carrier_scale
     # the loop closes, so the residual displacement is below 1e-3, and the ground state has no thermal Debye-Waller loss
-    assert budget["ms11.debye_waller"] == 0.0
-    assert budget["ms11.residual_displacement"] < 1e-3
+    assert ms.debye_waller == 0.0
+    assert ms.residual_displacement < 1e-3
     # the sideband element's Lamb-Dicke deficit: 1 - <n+1|D(i eta)|n>/(eta sqrt(n+1)) at the cap's top n = 11, reported
     # beside the budget and NOT summed (its mean is the s^2 calibration's rescaling, its spread the Debye-Waller term)
-    assert budget["ms11.sideband_lamb_dicke_deficit"] == pytest.approx(3.0554e-2, rel=1e-2)
+    assert ms.sideband_lamb_dicke_deficit == pytest.approx(3.0554e-2, rel=1e-2)
     # the Bessel force saturation is Roos Eq. 17: f = 1 - (J_0 + J_2)(2 Omega/mu) in the per-tone Omega at the tone
     # amplitude and the tone-to-carrier detuning, entered as the uncalibrated angle error's infidelity sin^2(pi f/2)
     gate = sched.gates[0]
@@ -748,18 +751,20 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     # x = 2 Omega/mu = 0.0429 at Omega/2pi = 64.1 kHz against mu/2pi = 2.99 MHz: f = x^2/8
     assert mu_hz == pytest.approx(2.99e6, rel=1e-6)
     assert f == pytest.approx((2.0 * omega_hz / mu_hz) ** 2 / 8.0, rel=1e-3) and 2e-4 < f < 3e-4, f
-    assert budget["ms11.bessel_saturation"] == pytest.approx(math.sin(math.pi * f / 2.0) ** 2, rel=1e-9)
-    assert budget["ms11.bessel_saturation"] == pytest.approx(roos_bessel_saturation(gate.waveform), rel=1e-12)
-    assert budget["ms11.bessel_saturation"] < 1e-5, "far inside the off-resonant carrier term"
-    ms_terms = (
-        budget["ms11.residual_displacement"]
-        + budget["ms11.debye_waller"]
-        + budget["ms11.carrier_scale"]
-        + budget["ms11.bessel_saturation"]
-        + budget["ms11.beat_phase_tilt"]
+    assert ms.bessel_saturation == pytest.approx(math.sin(math.pi * f / 2.0) ** 2, rel=1e-9)
+    assert ms.bessel_saturation == pytest.approx(roos_bessel_saturation(gate.waveform), rel=1e-12)
+    assert ms.bessel_saturation < 1e-5, "far inside the off-resonant carrier term"
+    summed = (
+        ms.residual_displacement
+        + ms.debye_waller
+        + ms.carrier_scale
+        + ms.bessel_saturation
+        + ms.beat_phase_tilt
     )
-    assert budget["total"] >= ms_terms * (1.0 - 1e-12), "the total carries the five summed MS terms"
-    assert budget["total"] < budget["ms11.sideband_lamb_dicke_deficit"], (
+    assert ms.total == summed, "the gate's total sums its five MS terms"
+    others = sum(r.total for r in (*budget.carriers, *budget.scattering))
+    assert budget.total == pytest.approx(ms.total + others)
+    assert budget.total < ms.sideband_lamb_dicke_deficit, (
         "the Lamb-Dicke deficit (3e-2 at the cap's top) is reported, not summed"
     )
 

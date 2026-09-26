@@ -217,7 +217,7 @@ def _ghz_budget(machine: Machine, res_pop: Result, qs: tuple[int, ...]) -> Bench
             "P0_plus_P1": f_gates * pop_factor,
             "contrast": f_gates * contrast_factor,
             "fidelity_bound": 0.5 * f_gates * (pop_factor + contrast_factor),
-            "intrinsic_total": float(intrinsic.get("total", 0.0)),
+            "intrinsic_total": float(intrinsic["total"]),
         },
         notes=(
             "F_gates = prod over the GHZ circuit's native pieces of (1 - reduced average infidelity of the kind's GATE_LOCAL "

@@ -496,7 +496,7 @@ def _rb_budget(
     predicted = {
         "r_channel": r_channel,
         "p_channel": 1.0 - r_channel * 2**n_channel / (2**n_channel - 1),
-        "r_intrinsic": float(intrinsic.get("total", 0.0)),
+        "r_intrinsic": float(intrinsic["total"]),
         "F0_spam": f0,
         "B_depolarizing": 1.0 / 2**n_q,
         "A_spam": f0 - 1.0 / 2**n_q,

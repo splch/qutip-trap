@@ -189,7 +189,7 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
     res = run(BELL, fx.device, 1000, table=report.table, **kw)
     ref = run(BELL, fx.device, 1000, table=report.surrogate.table, **kw)
     fid, fid_ref = register_fidelity(res), register_fidelity(ref)
-    budget = res.diagnostics.intrinsic_budget["total"]
+    budget = res.diagnostics.intrinsic_budget.total
     # the calibration's contribution: the over-rotation (sigma_Omega/Omega x pi/2)^2 per carrier pulse and the residual frame offset
     t = report.table
     cal = 0.0

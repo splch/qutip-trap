@@ -185,7 +185,7 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
     assert any("derived for interior elements exact to 1e-08" in n for n in s.notes)
     assert (
         s.summary is not None
-        and 0.0 < s.summary.average_gate_infidelity < b.diagnostics.intrinsic_budget["total"]
+        and 0.0 < s.summary.average_gate_infidelity < b.diagnostics.intrinsic_budget.total
     )
     assert s.summary.depolarizing_rate == pytest.approx(1.25 * s.summary.average_gate_infidelity, rel=1e-9)
     assert set(s.residual_displacement) == {2, 3} and s.residual_bound > 0.0

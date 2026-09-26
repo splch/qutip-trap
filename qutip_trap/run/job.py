@@ -42,7 +42,14 @@ from qutip_trap.readout.discriminate import (
 )
 from qutip_trap.readout.fluorescence import FluorescenceRates, ReadoutScheme, detection_rates_for_ion
 from qutip_trap.run.gate_local import GateLocalReport
-from qutip_trap.run.results import Result, aggregate
+from qutip_trap.run.results import (
+    CarrierScales,
+    EntanglingScales,
+    IntrinsicBudget,
+    Result,
+    ScatteringScales,
+    aggregate,
+)
 from qutip_trap.run.space import SpaceSelection
 from qutip_trap.units import TWO_PI
 
@@ -362,7 +369,7 @@ def sideband_lamb_dicke_deficit(modes: GateModes, selection: SpaceSelection) -> 
     worst = 0.0
     populated = {t.mode: t.expected_n_range[1] for t in selection.space.resolved}
     for k, m in enumerate(modes.modes):
-        if selection.mode_class.get(m) not in ("resolved", "frozen"):
+        if selection.mode_class[m] not in ("resolved", "frozen"):
             continue
         eta = max(abs(modes.eta[i][k]) for i in modes.ions)
         if eta == 0.0:
@@ -462,81 +469,88 @@ def roos_beat_phase_tilt(waveform: Waveform, t_start_s: float, *, beat_reset: bo
     return math.sin(psi) ** 2
 
 
-def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> dict[str, float]:
-    """The closed-form error scales reported beside the result (Section 9.6). Per entangling gate: the residual displacement
-    sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale
-    (Omega_peak/(2 mu_min))^2 with mu_min the tones' smallest detuning from the carrier, Roos's Bessel saturation, Roos's
-    beat-phase spin-axis tilt, the frozen spectators' chi and (reported, not summed) the Lamb-Dicke deficit. Per
-    single-qubit pulse: the sideband scale eta^2 (Omega/nu)^2 of the nearest mode and the addressing crosstalk
-    sum_j sin^2(eps_ij theta/2). Per pulse the scattering estimates; and their sum as ``total``."""
+def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> IntrinsicBudget:
+    """The closed-form error scales reported beside the result (Section 9.6), as typed records that say which terms the
+    total sums. Per entangling gate (``EntanglingScales``): the residual displacement sum_{i,m} |alpha_{i,m}|^2
+    (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale (Omega_peak/(2 mu_min))^2 with
+    mu_min the tones' smallest detuning from the carrier, Roos's Bessel saturation and his beat-phase spin-axis tilt, and
+    (reported, not summed) the Lamb-Dicke deficit and the frozen modes' chi. Per single-qubit carrier pulse, every GPi and
+    GPi2 piece of the schedule's targets (``CarrierScales``): the sideband scale eta^2 (Omega/nu)^2 of the most strongly
+    driven mode and the addressing crosstalk sum_j sin^2(eps_ij theta/2). Per pulse and addressed ion the scattering
+    estimates (``ScatteringScales``)."""
     from qutip_trap.control.shaping import waveform_integrals
     from qutip_trap.light.raman import lamb_dicke_parameters
     from qutip_trap.run.space import gate_modes_for
 
-    out: dict[str, float] = {}
-    total = 0.0
+    entangling: list[EntanglingScales] = []
     for gate in sched.gates:
         modes = gate_modes_for(device, gate, selection.nbar)
         ints = waveform_integrals(gate.waveform, modes)
-        eps_ent = float(ints.residual_error(modes))
         dw = 0.0
         for k, m in enumerate(modes.modes):
-            if selection.mode_class.get(m) == "resolved" or selection.mode_class.get(m) == "frozen":
+            if selection.mode_class[m] in ("resolved", "frozen"):
                 eta = max(abs(modes.eta[i][k]) for i in modes.ions)
                 dw += ballance_thermal_error(eta, modes.nbar[k])
-        bessel = roos_bessel_saturation(gate.waveform)
         # the off-resonant carrier: a tone mu from the carrier rotates the spin through (Omega/mu) sin(mu t), an infidelity
         # scale (Omega/(2 mu))^2 at the largest tone amplitude and the smallest tone detuning
         # (anchor.m6.section_11_1_native_identity)
         carrier = (
             _peak_amplitude_hz(gate.waveform.segments) / (2.0 * _min_detuning_hz(gate.waveform.segments))
         ) ** 2
-        lamb_dicke = sideband_lamb_dicke_deficit(modes, selection)
-        chi_frozen = sum(
-            abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class.get(m) == "frozen"
+        entangling.append(
+            EntanglingScales(
+                gate_id=gate.gate_id,
+                residual_displacement=float(ints.residual_error(modes)),
+                debye_waller=dw,
+                carrier_scale=carrier,
+                bessel_saturation=roos_bessel_saturation(gate.waveform),
+                beat_phase_tilt=roos_beat_phase_tilt(
+                    gate.waveform, gate.t_start_s, beat_reset=not device.hardware.phase_continuous
+                ),
+                sideband_lamb_dicke_deficit=sideband_lamb_dicke_deficit(modes, selection),
+                frozen_chi_rad=float(
+                    sum(abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class[m] == "frozen")
+                ),
+            )
         )
-        tilt = roos_beat_phase_tilt(
-            gate.waveform, gate.t_start_s, beat_reset=not device.hardware.phase_continuous
-        )
-        out[f"{gate.gate_id}.residual_displacement"] = eps_ent
-        out[f"{gate.gate_id}.debye_waller"] = dw
-        out[f"{gate.gate_id}.carrier_scale"] = carrier
-        out[f"{gate.gate_id}.bessel_saturation"] = bessel
-        out[f"{gate.gate_id}.sideband_lamb_dicke_deficit"] = lamb_dicke
-        out[f"{gate.gate_id}.frozen_chi_rad"] = chi_frozen
-        out[f"{gate.gate_id}.beat_phase_tilt"] = tilt
-        total += eps_ent + dw + carrier + bessel + tilt
+    carrier_ids = {pid for t in sched.targets if t.native[0] in ("gpi", "gpi2") for pid in t.pulse_ids}
+    carriers: list[CarrierScales] = []
     for pulse in sched.pulses:
-        gid = pulse.gate_id or ""
-        if len(pulse.drive.ions) != 1 or not gid.startswith("gpi"):
+        gid = pulse.gate_id
+        if gid is None or gid not in carrier_ids:
             continue
         env = pulse.drive.tones[0].envelope_hz
         omega = 2.0 * math.pi * (abs(float(env)) if not callable(env) else abs(float(env(0.0))))
         # addressing crosstalk (Section 3.3): a neighbour sees the carrier at eps_ij Omega, a rotation by eps_ij theta
-        if pulse.drive.crosstalk:
-            theta = omega * pulse.duration_s
-            xt = sum(math.sin(abs(eps) * theta / 2.0) ** 2 for eps in pulse.drive.crosstalk.values())
-            out[f"{gid}.crosstalk"] = xt
-            total += xt
-        dk = pulse.drive.delta_k(device.beams)
-        if float(np.linalg.norm(dk)) == 0.0:
-            continue
-        etas, _ = lamb_dicke_parameters(device, pulse.drive.ions[0], dk)
+        theta = omega * pulse.duration_s
+        xt = sum(math.sin(abs(eps) * theta / 2.0) ** 2 for eps in pulse.drive.crosstalk.values())
         scale = 0.0
-        for m, eta in etas.items():
-            if eta != 0.0:
-                scale = max(scale, (eta * omega / device.crystal.modes[m].omega_rad_s) ** 2)
-        out[f"{gid}.sideband_scale"] = scale
-        total += scale
-    # photon scattering per pulse (Section 9.7), reported whether or not the channels are simulated
+        dk = pulse.drive.delta_k(device.beams)
+        if float(np.linalg.norm(dk)) > 0.0:
+            etas, _ = lamb_dicke_parameters(device, pulse.drive.ions[0], dk)
+            for m, eta in etas.items():
+                if eta != 0.0:
+                    scale = max(scale, (eta * omega / device.crystal.modes[m].omega_rad_s) ** 2)
+        carriers.append(CarrierScales(gid, float(xt), scale))
+    # photon scattering per pulse (Section 9.7), reported whether or not the channels are simulated; the estimate's
+    # per-ion keys are read here once, into the typed record
+    scattering: list[ScatteringScales] = []
     for pulse in sched.pulses:
-        gid = pulse.gate_id or ""
-        for key, val in scattering_estimates(device, pulse).items():
-            out[f"{gid}.{key}"] = val
-            if key.endswith((".P_raman", ".P_leak", ".rayleigh_dephasing")):
-                total += val
-    out["total"] = total
-    return out
+        est = scattering_estimates(device, pulse)
+        if not est:
+            continue
+        for ion in pulse.drive.ions:
+            scattering.append(
+                ScatteringScales(
+                    gate_id=pulse.gate_id or "",
+                    ion=int(ion),
+                    p_raman=est[f"ion{ion}.P_raman"],
+                    p_leak=est[f"ion{ion}.P_leak"],
+                    p_rayleigh=est[f"ion{ion}.P_rayleigh"],
+                    rayleigh_dephasing=est[f"ion{ion}.rayleigh_dephasing"],
+                )
+            )
+    return IntrinsicBudget(tuple(entangling), tuple(carriers), tuple(scattering))
 
 
 def effective_sample_size(bits_per_sample: Sequence[np.ndarray]) -> float:

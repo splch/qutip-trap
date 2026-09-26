@@ -3,7 +3,7 @@
 Three layers of the simulator's own accounting predict what a benchmark should return, so that the benchmark measures the
 machine and the budget says how much of it the known physics accounts for:
 
-1. the closed-form error scales every run reports (``Diagnostics.intrinsic_budget``), summed per native gate
+1. the closed-form error scales every run reports (``Diagnostics.intrinsic_budget``), their summed terms per native gate
    kind and per benchmark unit (a Clifford, a circuit): scales that bound the coherent errors, not their values;
 2. the channel of every native gate kind the benchmark compiled to (``gpi2`` and ``gpi`` per ion, ``ms`` and ``zz`` per
    pair) by state-based process tomography: the kind played once as a one-gate circuit at GATE_LOCAL from the prepared
@@ -37,7 +37,7 @@ from qutip_trap.noise.summary import (
 from qutip_trap.run.gate_local import gate_steps
 from qutip_trap.run.job import last_record
 from qutip_trap.run.levels import FidelityLevel
-from qutip_trap.run.results import Diagnostics, Result
+from qutip_trap.run.results import IntrinsicBudget, Result
 
 if TYPE_CHECKING:
     from qutip_trap.control.schedule import Schedule
@@ -57,35 +57,30 @@ def kinds_of_schedule(schedule: Schedule) -> dict[str, str]:
     return {t.gate_id: kind_of(t.native[0], t.ions) for t in schedule.targets}
 
 
-def gate_piece_of(key: str, gate_ids: Iterable[str]) -> str | None:
-    """The schedule ``gate_id`` an ``intrinsic_budget`` key belongs to: the longest gate id that prefixes the key at a
-    separator (a gate id may itself contain a slash: the ZZ wrapper's ``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/loop2``)."""
+def gate_piece_of(gate_id: str, gate_ids: Iterable[str]) -> str | None:
+    """The schedule ``gate_id`` a budget record's gate id belongs to: the longest gate id that equals it or prefixes it at a
+    slash (an entangling segment's per-ion pulse ``ms[2]/seg0/ion0``; a gate id may itself contain a slash: the ZZ
+    wrapper's ``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/wrap_in/ion0``)."""
     best: str | None = None
     for gid in gate_ids:
-        if key == gid or (key.startswith(gid) and key[len(gid)] in "./"):
+        if gate_id == gid or (gate_id.startswith(gid) and gate_id[len(gid)] == "/"):
             if best is None or len(gid) > len(best):
                 best = gid
     return best
 
 
-def intrinsic_by_kind(diagnostics: Diagnostics, kinds: Mapping[str, str]) -> dict[str, float]:
-    """The closed-form intrinsic scales of one run summed per kind: every non-scattering entry and, of the scattering
-    estimates, the Raman, leakage and Rayleigh-dephasing probabilities. Each entry is summed over the kind's whole schedule
-    entry, the crosstalk it inflicts outside the benchmarked set included (``gpi2[0].crosstalk`` is the neighbour's rotation
-    error), so the total bounds a larger error than the channel infidelities, which are reduced to the benchmarked qubits."""
+def intrinsic_by_kind(budget: IntrinsicBudget, kinds: Mapping[str, str]) -> dict[str, float]:
+    """The closed-form intrinsic scales of one run summed per kind: every record's summed terms (``IntrinsicBudget.by_gate``)
+    charged to the schedule piece its gate id belongs to, so the kinds add up to the run's total. Each record is summed over
+    the kind's whole schedule entry, the crosstalk it inflicts outside the benchmarked set included (``gpi2[0]``'s
+    ``crosstalk`` is the neighbour's rotation error), so the total bounds a larger error than the channel infidelities,
+    which are reduced to the benchmarked qubits."""
     out: dict[str, float] = {}
-    for key, val in diagnostics.intrinsic_budget.items():
-        if key == "total":
-            continue
-        # "ms[2].residual_displacement", "gpi2[0].ion0.P_raman", "ms[2]/seg0/ion0.ion0.P_raman", "zz[2]/loop1.crosstalk"
-        piece = gate_piece_of(key, kinds)
+    for gid, val in budget.by_gate().items():
+        piece = gate_piece_of(gid, kinds)
         if piece is None:
-            continue
-        rest = key[len(piece) :]
-        scale = "/" not in rest and rest.count(".") == 1
-        scattering = rest.endswith((".P_raman", ".P_leak", ".rayleigh_dephasing"))
-        if scale or scattering:
-            out[kinds[piece]] = out.get(kinds[piece], 0.0) + float(val)
+            raise ValueError(f"the budget record {gid!r} belongs to no piece of the schedule")
+        out[kinds[piece]] = out.get(kinds[piece], 0.0) + val
     return out
 
 
@@ -283,9 +278,9 @@ def gather_counts_and_intrinsic(
         kinds = kinds_of_schedule(last_record(res).schedule)
         for kind in kinds.values():
             counts[kind] = counts.get(kind, 0.0) + 1.0
-        for kind, val in intrinsic_by_kind(res.diagnostics, kinds).items():
+        for kind, val in intrinsic_by_kind(res.diagnostics.intrinsic_budget, kinds).items():
             intrinsic[kind] = intrinsic.get(kind, 0.0) + val
-        intrinsic_total += float(res.diagnostics.intrinsic_budget.get("total", 0.0))
+        intrinsic_total += res.diagnostics.intrinsic_budget.total
     counts = {k: v / total_units for k, v in counts.items()}
     intrinsic = {k: v / total_units for k, v in intrinsic.items()}
     intrinsic["total"] = intrinsic_total / total_units
