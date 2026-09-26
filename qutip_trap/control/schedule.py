@@ -19,8 +19,9 @@ serialized one at a time per crystal (they share the global beam pair).
 
 Beliefs, not truth: every pulse carries the table's values and is marked ``Drive.programmed`` (the requested Rabi
 frequency, the believed Stark shift and crosstalk); ``control.played`` restores what the ions see. The believed Stark shift
-is compensated by detuning every tone by it, and the phase 2 pi int delta dt the shifted qubit gains is absorbed into the
-ion's virtual-Z frame, so the ideal target of a schedule is its gates followed by RZ(phase_frame) per ion.
+is compensated by detuning every spin-flip tone by it (a sigma_z force's tone is the motion's beat note and keeps its
+detuning), and the phase 2 pi int delta dt the shifted qubit gains is absorbed into the ion's virtual-Z frame, so the ideal
+target of a schedule is its gates followed by RZ(phase_frame) per ion.
 
 The terminal measurement is one ``ScheduledEvent`` after the last pulse and dead time, of the table's detection window;
 a measure, reset or recool before a later gate is refused. Every entangling gate played is a ``PlayedGate`` and every gate
@@ -471,14 +472,18 @@ def entangling_pulses(
     spin phase (already in its frame), the segment's amplitudes and detunings, the Stark shift scaled with the played
     amplitude.
 
-    ``stark_compensation`` detunes BOTH legs of every segment by the believed shift for the segment's amplitude (which moves
-    the beat-note centre with the shifted qubit and leaves the motion phase alone); the spin phase is referenced per
-    segment, ``compensation_phase_rad`` at the segment's own start minus the frame the ion accumulated in the gate's earlier
-    segments, so that every segment's force axis is where the calibration put it. ``beat_phase_reset`` offsets every leg by
-    ``beat_phase_offset_rad`` (hardware that programs each gate's tones from its own start); with phase-continuous tones the
-    beat phase at the start is 2 pi mu t_g and Roos's spin-axis tilt is part of the gate."""
+    ``stark_compensation`` detunes BOTH legs of every segment of an MS waveform by the believed shift for the segment's
+    amplitude (which moves the beat-note centre with the shifted qubit and leaves the motion phase alone); the spin phase is
+    referenced per segment, ``compensation_phase_rad`` at the segment's own start minus the frame the ion accumulated in the
+    gate's earlier segments, so that every segment's force axis is where the calibration put it. A sigma_z force (a
+    light-shift or gradient waveform) keeps its calibrated tones: its beat note drives the motion itself, so a detuning
+    would open the loops, and the shift its drive carries commutes with the force (the frame absorbs it, ``frame_after``).
+    ``beat_phase_reset`` offsets every leg by ``beat_phase_offset_rad`` (hardware that programs each gate's tones from its
+    own start); with phase-continuous tones the beat phase at the start is 2 pi mu(0) t_g and Roos's spin-axis tilt is part
+    of the gate."""
     pulses: list[Pulse] = []
     in_gate_frame: dict[int, float] = {}
+    compensated = stark_compensation and waveform.kind == "ms"
     t = t_start_s
     for k, seg in enumerate(waveform.segments):
         for ion in seg.ions:
@@ -490,7 +495,7 @@ def entangling_pulses(
             if waveform.kind == "ms" and spec.kind not in ("raman", "optical_E1", "optical_E2", "microwave"):
                 raise ScheduleError(f"ion {ion}: an MS waveform needs a spin-flip drive, not {spec.kind}")
             believed_shift = _stark_for_segment(table, ion, spec, seg)
-            compensation = believed_shift if stark_compensation else 0.0
+            compensation = believed_shift if compensated else 0.0
             spin_reference = compensation_phase_rad(compensation, t) - in_gate_frame.get(ion, 0.0)
             tones = tuple(
                 Tone(
@@ -523,7 +528,7 @@ def entangling_pulses(
                     tuple(waveform.chi_m),
                 )
             )
-            if stark_compensation:
+            if compensated:
                 in_gate_frame[ion] = in_gate_frame.get(ion, 0.0) + stark_phase_rad(pulses[-1])
         t += seg.duration_s
     return pulses
@@ -638,8 +643,9 @@ def schedule(
 ) -> Schedule:
     """Native gates -> pulses with absolute times from the calibration table (module docstring).
 
-    ``gate_drives``/``entangling_drives`` override the device's roles. ``stark_compensation``: every tone is detuned by the
-    believed Stark shift for the played amplitude. ``crosstalk_suppression`` (Fang et al. 2022): every MS gate is split
+    ``gate_drives``/``entangling_drives`` override the device's roles. ``stark_compensation``: every spin-flip tone (the
+    carrier pulses' and an MS waveform's) is detuned by the believed Stark shift for the played amplitude, and the frame
+    absorbs the shift of every pulse. ``crosstalk_suppression`` (Fang et al. 2022): every MS gate is split
     into two half-angle plays around a physical echo, exact to first order in the leaked drives; ``local`` plays Y(pi) (a
     GPi(pi/2)) on both targets between the halves and again after the second (Y X Y = -X flips the leaked terms while
     Y (x) Y commutes with XX), ``neighbour`` a physical Z(pi) = GPi(0) GPi(pi/2) on every crosstalk spectator of the pair

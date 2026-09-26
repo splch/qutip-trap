@@ -143,6 +143,58 @@ def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> 
     assert not any("spin flip" in a and "keeps" in a for a in built.approximations)
 
 
+def test_a_believed_light_shift_leaves_the_sigma_z_force_at_its_beat_note(ca_device) -> None:
+    """A table that believes the light-shift drive's static shift (the derived 10567.7 Hz) plays the sigma_z force at its
+    calibrated beat note, where detuning the tone by it opened the loops (0.787 quanta left in the x-COM mode, F = 0.7145):
+    the drive carries the shift, which commutes with the force, the frame absorbs it, and the spot check reads the fidelity,
+    angle and residual quanta of the table without the entry (to 1e-8)."""
+    dev, ent, sq, modes = ca_device
+    rabi, stark = derived_seeds(dev, sq)
+    wf = Waveform.symmetric(
+        modes,
+        gate_mode=X_COM,
+        loops=1,
+        epsilon_hz=20e3,
+        kind="light_shift",
+        detuning_side="outside",
+        chi_target_rad=math.pi / 8,
+    )
+    space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
+    shift = derive_light_shift_drive(dev, 0, (0, 1), scattering=False).stark_shift_hz
+    assert shift == pytest.approx(10567.7, rel=1e-4)
+    amplitude = float(wf.segments[0].amplitude_hz[(0, "blue")])
+    mu = float(wf.segments[0].detuning_hz["blue"])
+    # the light-shift drive's own entries, keyed by its first beam: the believed shift at the played amplitude is the entry
+    believed = table_with_waveform(
+        (0, 1),
+        wf,
+        rabi_hz={**rabi, **{(i, 0): amplitude for i in (0, 1)}},
+        stark_hz={**stark, **{(i, 0): shift for i in (0, 1)}},
+    )
+    played = schedule(
+        Circuit(2, (Operation("zz", (0, 1), (-4.0 * wf.chi_total_rad,)),), ()),
+        dev,
+        believed,
+        gate_drives=sq,
+        entangling_drives=ent,
+    )
+    forces = [p for p in played.pulses if p.drive.kind == "light_shift"]
+    assert len(forces) == 4
+    for p in forces:
+        (tone,) = p.drive.tones
+        assert tone.detuning_hz == mu and p.drive.stark_shift_hz == pytest.approx(shift, rel=1e-12)
+    checks = [
+        exact_gate_check(
+            dev, wf, (0, 1), ent, table, space=space, chi_target_rad=math.pi / 8, single_qubit_drives=sq
+        )[0]
+        for table in (believed, table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark))
+    ]
+    assert checks[0].fidelity == pytest.approx(checks[1].fidelity, abs=1e-8)
+    assert checks[0].chi_rad == pytest.approx(checks[1].chi_rad, abs=1e-8)
+    for m, quanta in checks[1].residual_quanta.items():
+        assert checks[0].residual_quanta[m] == pytest.approx(quanta, abs=1e-8)
+
+
 @pytest.mark.slow
 def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
     """Two pi/8 light-shift pulses around a pi pulse give ZZ(pi/2) on the optical qubit with fidelity > 0.97 (the opposite
@@ -496,8 +548,10 @@ def gradient_waveform(dev: Device, *, chi_rad: float) -> Waveform:
 
 
 def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> None:
-    """ZZ(pi/2) on a gradient waveform schedules four gradient pulses at -/+ delta and four echo pi pulses as two zz gates;
-    a non-gradient entangling drive, an MS on the gradient waveform and a waveform of the wrong sign are refused."""
+    """ZZ(pi/2) on a gradient waveform schedules four gradient pulses at -/+ delta and four echo pi pulses as two zz gates,
+    and a light shift of the microwave drives, at the table key the gradient drive reads too, detunes the echo pulses and
+    not the gradient tones; a non-gradient entangling drive, an MS on the gradient waveform and a waveform of the wrong sign
+    are refused."""
     dev = gradient_device()
     wf = gradient_waveform(dev, chi_rad=-math.pi / 8.0)
     table = dataclasses.replace(
@@ -523,6 +577,14 @@ def test_scheduler_plays_a_gradient_waveform_through_the_sigma_z_echo_path() -> 
         detunings = sorted(float(t.detuning_hz) for t in pulse.drive.tones)
         assert detunings == pytest.approx([-DELTA_HZ, DELTA_HZ])
     assert [g.kind for g in sched.gates] == ["zz", "zz"]
+    # the microwave gate drives' light shift sits at the key the gradient drive reads too, (ion, -1): it detunes their spin
+    # flips and leaves the gradient tones at -/+ delta about the qubit
+    shift = CalEntry(300.0, 1.0, "calibrated", "stark_scan", "conv.two_photon_rabi", 0.0, 0)
+    shifted = schedule(circuit, dev, dataclasses.replace(table, stark={(i, -1): shift for i in (0, 1)}))
+    for pulse in shifted.pulses:
+        detunings = sorted(float(t.detuning_hz) for t in pulse.drive.tones)
+        want = [-DELTA_HZ, DELTA_HZ] if pulse.drive.kind == "gradient" else [300.0]
+        assert detunings == pytest.approx(want, rel=1e-12), pulse.gate_id
     # a gradient waveform on a non-gradient entangling drive is refused, and so is MS(...) on a gradient waveform
     with pytest.raises(ScheduleError, match="gradient gate drive"):
         schedule(circuit, dataclasses.replace(dev, roles=BeamRoles(gate=micro, entangling=micro)), table)
