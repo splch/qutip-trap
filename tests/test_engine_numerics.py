@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import time
 
 import numpy as np
 import pytest
@@ -95,16 +94,34 @@ def test_idle_and_zero_envelope_segments_are_the_exact_propagator(raman) -> None
     assert (through_probe.final.joint - expected).norm() < 1e-10
 
 
-def test_a_ramsey_scan_with_millisecond_delays_costs_milliseconds() -> None:
-    """A three-point Ramsey scan with delays up to 1 ms runs in under 5 s and shows the 1 kHz fringe."""
+def test_a_ramsey_scan_propagates_its_millisecond_delays_in_closed_form(monkeypatch) -> None:
+    """A three-point Ramsey scan with delays up to 1 ms shows the 1 kHz fringe, and every engine run of it integrates only
+    its two pi/2 pulses: each delay is the exact propagator of its constant Hamiltonian, whose cost does not grow with the
+    delay."""
+    reports = []
+    run_pulses = JointExactEngine.run_pulses
+
+    def recorded(self, *args, **kwargs):
+        traces = run_pulses(self, *args, **kwargs)
+        reports.append(self.last_report)
+        return traces
+
+    monkeypatch.setattr(JointExactEngine, "run_pulses", recorded)
     fx = yb171_chain(2)
-    t0 = time.perf_counter()
     res = ramsey(Machine(fx.device), 0, [0.0, 0.5e-3, 1e-3], nbar={2: 0.0185, 3: 0.0154}, detuning_hz=1e3)
-    assert time.perf_counter() - t0 < 5.0
     p1 = res.data[:, 1]
     assert p1[0] > 0.99 and p1[1] < 0.02 and p1[2] > 0.99, (
         "a 1 kHz fringe: maxima at 0 and 1 ms, a minimum at 0.5 ms"
     )
+    delays_us = {
+        round(1e6 * (s.t_end_s - s.t_start_s)) for rep in reports for s in rep.segments if not s.pulses
+    }
+    assert delays_us == {500, 1000}, "both delays reached the engine as segments without a pulse"
+    for rep in reports:
+        assert all(s.integrator == "exact" for s in rep.segments if not s.pulses), (
+            "every delay in closed form"
+        )
+        assert [s.pulses for s in rep.segments if s.integrator != "exact"] == [("ramsey_1",), ("ramsey_2",)]
 
 
 def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -> None:
