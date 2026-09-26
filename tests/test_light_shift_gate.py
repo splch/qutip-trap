@@ -12,14 +12,21 @@ import pytest
 import qutip as qt
 from scipy.special import jv
 
-from qutip_trap.calibration.entangling import calibrate_entangling_angle, exact_gate_check, gate_space
+from qutip_trap.calibration.entangling import (
+    calibrate_entangling_angle,
+    exact_gate_check,
+    frame_rotated,
+    gate_space,
+)
 from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.native import zz as native_zz
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import GateDrive, ScheduleError, schedule
 from qutip_trap.control.shaping import gate_modes, solve_amplitude_modulation
 from qutip_trap.control.table import CalEntry, Segment, Waveform
 from qutip_trap.device.model import BeamRoles, Device, Field, GradientField
 from qutip_trap.device.presets import secular_trap
+from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import (
@@ -34,6 +41,7 @@ from qutip_trap.light.raman import (
     two_photon_self_couplings_hz,
 )
 from qutip_trap.noise.sampling import NoiseSample, key_qubit_offset_hz, quiet_sample
+from qutip_trap.options import Numerics
 from qutip_trap.species import MODULES, species
 from qutip_trap.species.model import Level, Species
 from qutip_trap.species.zeeman import HyperfineZeeman
@@ -137,14 +145,16 @@ def test_builder_light_shift_operator_is_the_level_weighted_force(ca_device) -> 
 @pytest.mark.slow
 def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
     """Two pi/8 light-shift pulses around a pi pulse give ZZ(pi/2) on the optical qubit with fidelity > 0.97 (the opposite
-    detuning side < 0.05), and the AM pulse calibrated exactly reaches > 0.99 with leakage < 5e-3."""
+    detuning side < 0.05), and the AM pulse calibrated exactly reaches > 0.99 with leakage < 5e-3, the fidelity a run
+    playing ZZ(pi/2) from the calibrated table reaches to 1e-5."""
     dev, ent, sq, modes = ca_device
-    # the table's 729 nm E2 entries are the derived values (200144 Hz at 166 mW in a 200 um waist), so the played chain is
-    # the identity; the E2 drive has no differential light shift
+    # the table's 729 nm E2 entries are the derived values (200144 Hz at 166 mW in a 200 um waist, a -132.45 Hz light
+    # shift), so the played chain is the identity
     rabi, stark = derived_seeds(dev, sq)
     assert rabi[(0, 2)] == pytest.approx(2.00144e5, rel=1e-4), (
         "the derived E2 Rabi frequency, not a supplied one"
     )
+    assert stark[(0, 2)] == pytest.approx(-132.45, rel=1e-4)
     wf = Waveform.symmetric(
         modes,
         gate_mode=X_COM,
@@ -215,6 +225,27 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
         tolerance_rad=3e-4,
     )
     assert run.converged and run.checks[-1].fidelity > 0.99 and run.checks[-1].leakage < 5e-3
+    # the spot check is the scheduler's own echo, whose GPi pulses carry the table's -132.45 Hz E2 Stark shift and follow
+    # the frame: a run playing ZZ(pi/2) from the calibrated table reaches the fidelity the spot check measured (a check
+    # with bare echo pulses measured 0.998065 where the scheduler played 0.997421, an angle 8.0e-4 rad short)
+    table = table_with_waveform((0, 1), run.waveform, rabi_hz=rabi, stark_hz=stark)
+    played = schedule(
+        Circuit(2, (Operation("zz", (0, 1), (math.pi / 2,)),), ()),
+        dev,
+        table,
+        gate_drives=sq,
+        entangling_drives=ent,
+    )
+    plus = qt.tensor(*[(qt.basis(2, 0) + qt.basis(2, 1)).unit()] * 2)
+    traces = JointExactEngine(table=table).run_pulses(
+        dev, played, space_am.initial_state(plus), space_am, quiet_sample(), SeedSpec(0), Numerics()
+    )
+    target = frame_rotated(
+        qt.Qobj(native_zz(math.pi / 2) @ plus.full(), dims=[[2, 2], [1, 1]]), played.phase_frame
+    )
+    assert float(np.real(qt.expect(traces.final.internal, target))) == pytest.approx(
+        run.checks[-1].fidelity, abs=1e-5
+    )
 
 
 # ---- the microwave-gradient gate -------------------------------------------------------------------------------------

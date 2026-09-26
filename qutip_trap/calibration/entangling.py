@@ -3,8 +3,9 @@
 The surrogate's closed-form waveform is played on the pair through the JOINT_EXACT engine from |00>|n = 0>, |chi| is read
 from P_11 = sin^2 chi (an equatorial two-body rotation takes |00> to cos chi |00> -/+ i e^{...} sin chi |11>, so P_01 + P_10
 is the leakage from open loops and off-resonant excitation), every amplitude is rescaled by sqrt(chi_target/chi) (the s^2
-law) and the check repeats. For the |00> input the final mean excitation of a mode is sum_j |alpha_jm|^2, eps_ent at
-nbar = 0. The corrected Waveform is returned, never written into a table.
+law) and the check repeats. A sigma_z-force waveform (light shift, microwave gradient) is checked in the scheduler's own
+spin echo, the sequence a run plays for ZZ. For the |00> input the final mean excitation of a mode is sum_j |alpha_jm|^2,
+eps_ent at nbar = 0. The corrected Waveform is returned, never written into a table.
 """
 
 from __future__ import annotations
@@ -17,16 +18,17 @@ from typing import TYPE_CHECKING
 import numpy as np
 import qutip as qt
 
+from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.native import zz as native_zz
 from qutip_trap.control.schedule import (
     GateDrive,
     PhaseFrame,
     Schedule,
-    carrier_rabi_hz,
     entangling_pulses,
     frame_after,
     ms_spin_phases,
+    schedule,
     single_qubit_pulse,
 )
 from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, excursion_by_mode, scaled
@@ -38,7 +40,6 @@ from qutip_trap.noise.sampling import NoiseSample, quiet_sample
 from qutip_trap.options import Numerics
 
 if TYPE_CHECKING:
-    from qutip_trap.control.pulses import Pulse
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
@@ -103,61 +104,27 @@ def ms_schedule(
     return Schedule(tuple(pulses), (), (), frame.as_dict(n))
 
 
-def light_shift_echo_schedule(
+def zz_echo_schedule(
+    device: Device,
     waveform: Waveform,
     pair: tuple[int, int],
     gate_drives: Mapping[int, GateDrive],
     single_qubit_drives: Mapping[int, GateDrive],
     table: CalibrationTable,
-    *,
-    dead_time_s: float,
-    response_delay_s: float = 0.0,
 ) -> Schedule:
-    """The spin-echo form of the sigma_z sigma_z gate: the waveform, GPi(0) on both ions, the waveform again, GPi(pi) on both
-    (R_x(pi) U R_{-x}(pi) U); the single-qubit sigma_z phases of the light-shift force cancel and the two-body angle doubles.
-    The echo pulses carry no Stark belief and no crosstalk (the scheduler's echo carries both)."""
-    n = max(pair) + 1
-    spins = {pair[0]: 0.0, pair[1]: 0.0}
-
-    def loop(start: float, gate_id: str) -> list[Pulse]:
-        return entangling_pulses(
-            waveform,
-            dict(gate_drives),
-            spin_phases_rad=spins,
-            t_start_s=start,
-            table=table,
-            gate_id=gate_id,
-            response_delay_s=response_delay_s,
-        )
-
-    pulses = loop(0.0, "zz/loop1")
-    idle: list[tuple[float, float]] = []
-    t = waveform.duration_s
-    idle.append((t, t + dead_time_s))
-    t += dead_time_s
-    ends = []
-    for q in pair:
-        drive = single_qubit_drives[q]
-        p = single_qubit_pulse(
-            q, math.pi, 0.0, drive, carrier_rabi_hz(table, q, drive), t, gate_id=f"zz/echo/ion{q}"
-        )
-        pulses.append(p)
-        ends.append(p.t_end_s)
-    t = max(ends)
-    idle.append((t, t + dead_time_s))
-    t += dead_time_s
-    pulses.extend(loop(t, "zz/loop2"))
-    t += waveform.duration_s
-    idle.append((t, t + dead_time_s))
-    t += dead_time_s
-    for q in pair:
-        drive = single_qubit_drives[q]
-        pulses.append(
-            single_qubit_pulse(
-                q, math.pi, math.pi, drive, carrier_rabi_hz(table, q, drive), t, gate_id=f"zz/unecho/ion{q}"
-            )
-        )
-    return Schedule(tuple(pulses), tuple(idle), (), frame_after(pulses, PhaseFrame()).as_dict(n))
+    """The scheduler's own ZZ(-4 chi) on ``pair`` with ``waveform`` in the table, the angle at which it plays the waveform
+    unscaled: the sigma_z sigma_z spin echo of a light-shift or gradient waveform (the waveform, GPi(0) on both ions, the
+    waveform again, GPi(pi) on both), whose single-qubit sigma_z phases cancel while the two-body angle doubles. The echo
+    pulses are ``single_qubit_drives``'s with the table's Stark shifts, crosstalk and frame, under the chain's addressing
+    rule and dead time, exactly as a run plays them."""
+    circuit = Circuit(device.crystal.n_ions, (Operation("zz", pair, (-4.0 * waveform.chi_total_rad,)),), ())
+    return schedule(
+        circuit,
+        device,
+        table.with_params(ms={pair: waveform}),
+        gate_drives=dict(single_qubit_drives),
+        entangling_drives=dict(gate_drives),
+    )
 
 
 @dataclass(frozen=True)
@@ -227,35 +194,29 @@ def exact_gate_check(
 ) -> tuple[GateCheck, Traces]:
     """Play ``waveform`` on ``pair`` through the JOINT_EXACT engine and read chi, leakage, residual quanta and the fidelity.
 
-    An MS waveform is played once from |00>: P_11 = sin^2 chi. A light-shift waveform is played in the spin-echo pair
-    (``single_qubit_drives`` supply the GPi echo pulses) from |+x +x> and read in the x basis: P_11 = sin^2(2 chi) with chi
-    the two-body angle of ONE pulse, so the reported ``chi_rad`` is per pulse and the fidelity is against ZZ(4 chi_target).
-    ``hardware_chain`` is ``Physics.hardware_chain``: the control electronics the run plays the gate through.
+    An MS waveform is played once from |00>: P_11 = sin^2 chi, its tone phases compensating the modulator delay of the chain
+    the check plays through. A light-shift or gradient waveform (a sigma_z force) is played as the scheduler plays it, in
+    its own spin echo (``zz_echo_schedule``, the GPi pulses of ``single_qubit_drives``), from |+x +x> and read in the x
+    basis of the frame the scheduler absorbed: P_11 = sin^2(2 chi) with chi the two-body angle of ONE pulse, so the reported
+    ``chi_rad`` is per pulse and the fidelity is against ZZ(4 chi_target). ``hardware_chain`` is ``Physics.hardware_chain``:
+    the control electronics the run plays the gate through.
     """
     n_ions = space.n_ions
-    x_basis = waveform.kind == "light_shift"
-    # the tone phases compensate the modulator's envelope delay exactly as the scheduler does
-    delay = float(device.hardware.aom_rise_s) if hardware_chain else 0.0
-    if x_basis:
+    sigma_z = waveform.kind != "ms"
+    if sigma_z:
         if single_qubit_drives is None:
             raise ValueError(
-                "a light-shift waveform is checked in the spin-echo pair: pass single_qubit_drives for the GPi pulses"
+                "a sigma_z-force waveform is checked in the scheduler's spin-echo pair: pass single_qubit_drives for the "
+                "GPi pulses"
             )
-        sched = light_shift_echo_schedule(
-            waveform,
-            pair,
-            gate_drives,
-            single_qubit_drives,
-            table,
-            dead_time_s=float(device.hardware.dead_time_s),
-            response_delay_s=delay,
-        )
+        sched = zz_echo_schedule(device, waveform, pair, gate_drives, single_qubit_drives, table)
     else:
+        delay = float(device.hardware.aom_rise_s) if hardware_chain else 0.0
         sched = ms_schedule(waveform, pair, gate_drives, table, phases_rad=phases_rad, response_delay_s=delay)
     # the pair's FACTOR positions: the device ions on a full space, their positions in ``space.ions`` on a GATE_LOCAL space
     fa, fb = space.ion_factor(pair[0]), space.ion_factor(pair[1])
     internal: list[int] | qt.Qobj
-    if x_basis:
+    if sigma_z:
         # a sigma_z force needs an equatorial input: |+x +x> on the pair
         plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
         internal = qt.tensor(*[plus if i in (fa, fb) else qt.basis(2, 0) for i in range(n_ions)])
@@ -275,16 +236,18 @@ def exact_gate_check(
         device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or Numerics()
     )
     rho = traces.final.internal
-    # populations in the computational basis (MS) or the x basis (light shift): P_11 = sin^2 chi either way
-    read = rho
-    if x_basis:
+    frame_local = {space.ion_factor(q): th for q, th in sched.phase_frame.items() if space.has_ion(q)}
+    # populations in the frame the scheduler absorbed, in the computational basis (MS) or the x basis (sigma_z force):
+    # P_11 = sin^2 chi either way
+    frame = frame_operator([int(d) for d in rho.dims[0]], frame_local)
+    read = frame.dag() * rho * frame
+    if sigma_z:
         h = qt.Qobj(np.array([[1.0, 1.0], [1.0, -1.0]]) / math.sqrt(2.0))
         rot = qt.tensor(*[h if i in (fa, fb) else qt.qeye(2) for i in range(n_ions)])
-        read = rot * rho * rot.dag()
+        read = rot * read * rot.dag()
     pops = _populations(read, n_ions, fa, fb)
     p11 = min(max(pops["P11"], 0.0), 1.0)
-    chi = float(math.asin(math.sqrt(p11))) / (2.0 if x_basis else 1.0)
-    frame_local = {space.ion_factor(q): th for q, th in sched.phase_frame.items() if space.has_ion(q)}
+    chi = float(math.asin(math.sqrt(p11))) / (2.0 if sigma_z else 1.0)
     target = frame_rotated(
         _ideal_target(waveform.kind, chi_target_rad, phases_rad, n_ions, (fa, fb), internal), frame_local
     )
@@ -294,10 +257,9 @@ def exact_gate_check(
     return check, traces
 
 
-def frame_rotated(target: qt.Qobj, phase_frame: Mapping[int, float]) -> qt.Qobj:
-    """The ideal ``target`` (a register ket, ion 0 the first factor) as the physical state carries it after the scheduler
-    absorbed a frame offset theta_q per ion: a virtual RZ(theta) leaves the state as RZ(-theta) times the ideal one."""
-    dims = [int(d) for d in target.dims[0]]
+def frame_operator(dims: Sequence[int], phase_frame: Mapping[int, float]) -> qt.Qobj:
+    """(x)_q RZ(-theta_q) on a register of ``dims`` (ion 0 the first factor): what a frame offset theta_q the scheduler absorbed
+    as a virtual RZ(theta_q) leaves on the physical state, which carries it times the ideal one."""
     ops = []
     for q, d in enumerate(dims):
         theta = -float(phase_frame.get(q, 0.0))
@@ -305,7 +267,13 @@ def frame_rotated(target: qt.Qobj, phase_frame: Mapping[int, float]) -> qt.Qobj:
         if theta != 0.0:
             op[0, 0], op[1, 1] = np.exp(-0.5j * theta), np.exp(0.5j * theta)
         ops.append(qt.Qobj(op))
-    return qt.tensor(*ops) * target
+    return qt.tensor(*ops)
+
+
+def frame_rotated(target: qt.Qobj, phase_frame: Mapping[int, float]) -> qt.Qobj:
+    """The ideal ``target`` (a register ket, ion 0 the first factor) as the physical state carries it after the scheduler
+    absorbed a frame offset theta_q per ion (``frame_operator``)."""
+    return frame_operator([int(d) for d in target.dims[0]], phase_frame) * target
 
 
 def _populations(rho: qt.Qobj, n_ions: int, a: int, b: int) -> dict[str, float]:
