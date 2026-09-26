@@ -17,6 +17,7 @@ from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, m
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, square_drive
 from qutip_trap.light.roles import NoDetectionBeamError, detection_beams
+from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.run.job import detection_micromotion
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import build_crystal, solve_crystal
@@ -328,10 +329,10 @@ def test_micromotion_index_refuses_a_missing_geometry_instead_of_reporting_beta_
         rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0)
     )
     dk = np.asarray(derive_raman_drive(base, 0, (0, 1), scattering=False).delta_k, dtype=float)
-    assert micromotion_index(base, 0, dk)[0] > 0.0
+    assert micromotion_index(base, 0, dk, quiet_sample())[0] > 0.0
     no_rf = dataclasses.replace(base, trap=dataclasses.replace(base.trap, rf=None))
-    assert micromotion_index(no_rf, 0, dk) == (0.0, 0.0)
-    assert micromotion_index(base, 0, np.zeros(3)) == (0.0, 0.0), "a drive with no wavevector"
+    assert micromotion_index(no_rf, 0, dk, quiet_sample()) == (0.0, 0.0)
+    assert micromotion_index(base, 0, np.zeros(3), quiet_sample()) == (0.0, 0.0), "a drive with no wavevector"
     imbalanced = dataclasses.replace(
         base,
         trap=dataclasses.replace(
@@ -339,7 +340,7 @@ def test_micromotion_index_refuses_a_missing_geometry_instead_of_reporting_beta_
         ),
     )
     with pytest.raises(ValueError, match="R_m and alpha"):
-        micromotion_index(imbalanced, 0, dk)
+        micromotion_index(imbalanced, 0, dk, quiet_sample())
     with pytest.raises(ValueError, match="R_m and alpha"):
         detection_micromotion(imbalanced, 0, imbalanced.beams[:1])
     rod = dataclasses.replace(
@@ -353,7 +354,7 @@ def test_micromotion_index_refuses_a_missing_geometry_instead_of_reporting_beta_
         ),
     )
     with pytest.raises(ValueError, match="one endcap voltage"):
-        micromotion_index(rod, 0, dk)
+        micromotion_index(rod, 0, dk, quiet_sample())
 
 
 def test_a_derived_drive_raises_on_an_rf_record_it_cannot_evaluate_instead_of_reading_c0_one() -> None:
@@ -434,7 +435,7 @@ def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_th
     assert dd.micromotion is not None
     beta, offset = dd.micromotion.as_modulation()
     assert dd.micromotion.in_phase < 0.0 and offset == pytest.approx(-math.pi, abs=1e-12)
-    assert (beta, offset) == micromotion_index(base, 0, np.asarray(dd.delta_k, dtype=float))
+    assert (beta, offset) == micromotion_index(base, 0, np.asarray(dd.delta_k, dtype=float), quiet_sample())
     expected = 2j * jv(1, beta) * np.exp(1j * offset) / jv(0, beta)
     s_plus = first_harmonic(+50.0)
     assert abs(s_plus) > 1e-3

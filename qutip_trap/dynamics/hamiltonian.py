@@ -71,6 +71,7 @@ from qutip_trap.noise.sampling import (
     key_qubit_offset_hz,
     key_qubit_trajectory_hz,
     quiet_sample,
+    stray_field_offset_v_per_m,
 )
 from qutip_trap.trap.anharmonic import anharmonic_estimate
 from qutip_trap.units import TWO_PI
@@ -368,17 +369,24 @@ def _beat_phase_function(
     return _IntegratedBeat(np.asarray(integral), duration_s, float(offset))
 
 
-def micromotion_index(device: Device, ion: int, delta_k: np.ndarray) -> tuple[float, float]:
-    """(beta, rf-phase offset) of the ion's excess micromotion along delta_k (Section 4.3.6).
+def micromotion_index(
+    device: Device, ion: int, delta_k: np.ndarray, sample: NoiseSample
+) -> tuple[float, float]:
+    """(beta, rf-phase offset) of the ion's excess micromotion along delta_k in the sample (Section 4.3.6).
 
-    beta = hypot(in_phase, out_of_phase) >= 0 and the offset -atan2(out_of_phase, in_phase) is what the modulated
-    coefficient e^{i beta cos(Omega_rf t + delta)} adds to the drive's rf phase to carry both quadratures (a signed in-phase
-    index steps by pi across a compensating shim); J_0 is even, so ``carrier_j0`` sees only beta. (0, 0) for a drive with no
-    wavevector or a trap with no rf record; a trap whose ``micromotion_beta`` cannot be evaluated raises.
+    The in-phase index follows the trap's residual field plus the sample's stray-field drift, which displaces the ion off
+    the rf null as it moves the ion's position (Berkeland et al. 1998). beta = hypot(in_phase, out_of_phase) >= 0 and the
+    offset -atan2(out_of_phase, in_phase) is what the modulated coefficient e^{i beta cos(Omega_rf t + delta)} adds to the
+    drive's rf phase to carry both quadratures (a signed in-phase index steps by pi across a compensating shim); J_0 is
+    even, so ``carrier_j0`` sees only beta. (0, 0) for a drive with no wavevector or a trap with no rf record; a trap whose
+    ``micromotion_beta`` cannot be evaluated raises.
     """
     if float(np.linalg.norm(delta_k)) == 0.0 or device.trap.rf is None:
         return 0.0, 0.0
-    return device.trap.micromotion_beta(device.crystal.species[ion], delta_k).as_modulation()
+    index = device.trap.micromotion_beta(
+        device.crystal.species[ion], delta_k, field_offset_v_per_m=stray_field_offset_v_per_m(sample)
+    )
+    return index.as_modulation()
 
 
 def _truncated_exponential(space: HilbertSpace, mode: int, eta: float, order: int) -> qt.Qobj:
@@ -960,7 +968,7 @@ def build_hamiltonian(
                     f"ion {ion}: no rf record, C0 = 1 and beta = 0 in the Lamb-Dicke parameters"
                 )
             beta, beta_phase = (
-                micromotion_index(device, ion, delta_k) if opts.micromotion != "none" else (0.0, 0.0)
+                micromotion_index(device, ion, delta_k, smp) if opts.micromotion != "none" else (0.0, 0.0)
             )
             if opts.micromotion == "carrier_j0":
                 carrier = float(jv(0, beta))

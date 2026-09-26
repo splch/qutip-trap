@@ -14,7 +14,8 @@ with 2/tau = omega_m^2 S_V,white; ``rf_phase_noise`` is recorded and not applied
 is read by ``noise/decoupling.py``; ``beam_phase_noise`` rad^2/(rad/s) per beam. Drifts: ``rf_amplitude_drift`` and
 ``rabi_drift`` fractional, ``mode_drift_differential`` Hz per mode, ``beam_phase_drift`` rad per beam, ``field_drift`` T
 (exact transition offsets at the shifted field), ``stray_field_drift`` V/m (a laboratory-frame field that shifts every ion
-by the crystal's linear response, ``Crystal.field_displacement_m``), ``pointing_drift`` m per beam transverse to it,
+by the crystal's linear response, ``Crystal.field_displacement_m``, and adds to the trap's residual field in every drive's
+excess-micromotion index), ``pointing_drift`` m per beam transverse to it,
 ``laser_frequency_drift`` Hz (not seen by an rf-referenced Raman beat note). What a run leaves out of the configured noise,
 or draws more simply than the apparatus does, is ``NoiseModel.approximations``.
 """
@@ -49,6 +50,7 @@ from qutip_trap.noise.sampling import (
     key_position_offset_m,
     key_qubit_offset_hz,
     key_qubit_trajectory_hz,
+    key_stray_field_offset_v_per_m,
     mains_trajectory,
     synthesize,
     time_grid,
@@ -430,6 +432,9 @@ class NoiseModel:
                         values[key_beam_offset_m(b, ax)] = float(offset[ax])
         if not self.stray_field_drift.quiet:
             e_field = np.array([amp_fn("stray_field_drift", ax) for ax in range(3)])
+            for ax in range(3):
+                if e_field[ax] != 0.0:
+                    values[key_stray_field_offset_v_per_m(ax)] = float(e_field[ax])
             shift = device.crystal.field_displacement_m(e_field)
             for i in range(device.crystal.n_ions):
                 for ax in range(3):

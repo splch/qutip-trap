@@ -239,6 +239,12 @@ def key_position_offset_m(ion: int, axis: int) -> str:
     return f"position_offset_m[{ion}][{axis}]"
 
 
+def key_stray_field_offset_v_per_m(axis: int) -> str:
+    """The quasi-static stray-field drift along a laboratory axis (V/m): every ion moves by the crystal's linear response to
+    it (``key_position_offset_m``), and it adds to the trap's residual field in every drive's excess-micromotion index."""
+    return f"stray_field_offset_v_per_m[{axis}]"
+
+
 @dataclass(frozen=True)
 class NoiseSample:
     """One draw of every quasi-static parameter plus this sample's fixed-grid trajectories."""
@@ -272,3 +278,8 @@ class NoiseSample:
 def quiet_sample(sample_id: int = 0, t_s: float = 0.0) -> NoiseSample:
     """The nominal sample: no offsets, unit scales, nothing sampled."""
     return NoiseSample(sample_id=sample_id, values={}, ou_grids={}, t_s=t_s)
+
+
+def stray_field_offset_v_per_m(sample: NoiseSample) -> np.ndarray:
+    """The sample's stray-field drift (V/m, laboratory frame), zero along an axis it carries no offset for."""
+    return np.array([sample.get(key_stray_field_offset_v_per_m(ax), 0.0) for ax in range(3)])

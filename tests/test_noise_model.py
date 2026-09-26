@@ -38,7 +38,9 @@ from qutip_trap.noise.sampling import (
     key_position_offset_m,
     key_qubit_offset_hz,
     key_qubit_trajectory_hz,
+    key_stray_field_offset_v_per_m,
     quiet_sample,
+    stray_field_offset_v_per_m,
 )
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, ou_spectrum, power_law_spectrum, white_spectrum
 from qutip_trap.options import Numerics
@@ -48,8 +50,8 @@ from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_
 from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.trap.surface import Electrodes
-from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
-from tests.fixtures import chain_device, single_ion_raman_device
+from qutip_trap.units import ATOMIC_MASS_KG, E_C, GAUSS_PER_TESLA, TWO_PI
+from tests.fixtures import KX, chain_device, single_ion_raman_device
 
 
 def _with(device, **noise_fields):
@@ -297,11 +299,49 @@ def test_a_stray_field_drift_moves_every_ion_by_the_crystal_response_on_any_trap
     response = np.stack(
         [(positions(step * e) - positions(-step * e)).ravel() / (2.0 * step) for e in np.eye(3)], axis=1
     )
-    field, *_ = np.linalg.lstsq(response, shift.ravel(), rcond=None)
+    field = stray_field_offset_v_per_m(sample)
     assert 1.0 < float(np.linalg.norm(field)) < 100.0, "a field of the drift's 10 V/m scale"
     assert shift.ravel() == pytest.approx(response @ field, rel=1e-6, abs=1e-6 * float(np.max(np.abs(shift))))
     assert shift[0, 2] == pytest.approx(shift[1, 2], rel=1e-12)
     assert np.all(np.abs(shift[1, :2]) < np.abs(shift[0, :2]))
+
+
+def test_a_stray_field_drift_moves_each_drives_micromotion_index_by_berkelands_amount() -> None:
+    """The drift that moves the ion by e dE/(m omega^2) also moves it off the rf null, so the builder's index for that
+    sample is Berkeland's -Delta k (q/2) e E/(m (Omega/2)^2 (a + q^2/2)) at the static 50 V/m plus the drift (1e-9), not
+    the static field's alone; the nominal sample keeps the static index."""
+    base = single_ion_raman_device(
+        rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0)
+    )
+    dev = _with(base, stray_field_drift=Drift(10.0, 1.0, None))
+    sample = dev.noise.sample(np.random.default_rng(3), device=dev)
+    drift = stray_field_offset_v_per_m(sample)
+    assert [sample.values[key_stray_field_offset_v_per_m(ax)] for ax in range(3)] == list(drift)
+    assert abs(drift[0]) > 1.0, "a drift along Delta k"
+    yb = dev.crystal.species[0]
+    mass = yb.mass_u * ATOMIC_MASS_KG
+    assert sample.values[key_position_offset_m(0, 0)] == pytest.approx(
+        E_C * drift[0] / (mass * (TWO_PI * 3.0e6) ** 2), rel=1e-9
+    )
+    p = dev.trap.mathieu(yb)
+    spring = (TWO_PI * 30e6 / 2.0) ** 2 * (p.a[0, 0] + p.q[0, 0] ** 2 / 2.0)
+    dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
+    dk = float(dd.delta_k[0])
+
+    def berkeland(field_x: float) -> float:
+        return -dk * 0.5 * float(p.q[0, 0]) * E_C * field_x / (mass * spring)
+
+    pulse = Pulse(square_drive(dd, include_stark=False), 0.0, 1e-6, "p", ())
+    space = HilbertSpace((2,), (ModeTruncation(KX, 6, (0, 2), 0.2),), None, (0, 2))
+
+    def built_beta(smp: NoiseSample) -> float:
+        return build_hamiltonian(dev, [pulse], space, sample=smp).records[0].micromotion_beta
+
+    assert built_beta(quiet_sample()) == pytest.approx(abs(berkeland(50.0)), rel=1e-9)
+    assert built_beta(sample) == pytest.approx(abs(berkeland(50.0 + drift[0])), rel=1e-9)
+    assert abs(built_beta(sample) - built_beta(quiet_sample())) == pytest.approx(
+        abs(berkeland(drift[0])), rel=1e-6
+    )
 
 
 def test_sampled_bands_become_per_ion_trajectories_through_the_sensitivities_plus_the_mains() -> None:

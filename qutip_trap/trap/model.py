@@ -228,16 +228,22 @@ class Trap:
             omega[i] = TWO_PI * np.asarray(cache[s.mass_u].secular_hz, dtype=float)
         return omega, cache[species[0].mass_u].principal_axes, field
 
-    def micromotion_amplitude_m(self, species: Species) -> np.ndarray:
+    def micromotion_amplitude_m(
+        self,
+        species: Species,
+        *,
+        field_offset_v_per_m: np.ndarray | tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> np.ndarray:
         """The SIGNED in-phase excess-micromotion amplitude u_1 = -(1/2) Q u_0 (peak, laboratory frame).
 
-        u_0 is the static displacement of the residual field against the PSEUDOPOTENTIAL spring m (Omega/2)^2 (a + q^2/2),
-        the period average of the driven Mathieu equation, not the exact beta^2 (they differ by 0.39 q^2); Berkeland's
-        per-axis -(1/2) q_i u_0i is its matrix form when the dc axes are rotated against the rf Hessian.
+        u_0 is the static displacement of the residual field, plus ``field_offset_v_per_m`` (a sampled stray-field drift, V/m,
+        laboratory frame), against the PSEUDOPOTENTIAL spring m (Omega/2)^2 (a + q^2/2), the period average of the driven
+        Mathieu equation, not the exact beta^2 (they differ by 0.39 q^2); Berkeland's per-axis -(1/2) q_i u_0i is its matrix
+        form when the dc axes are rotated against the rf Hessian.
         """
         params = self.mathieu(species)
         axes = params.principal_axes
-        e_res = axes.T @ self.residual_field_v_per_m()
+        e_res = axes.T @ (self.residual_field_v_per_m() + np.asarray(field_offset_v_per_m, dtype=float))
         spring = params.pseudopotential_spring()
         confined = np.diag(spring) > 0.0
         u0 = np.zeros(3)
@@ -249,12 +255,21 @@ class Trap:
         amp = -0.5 * np.asarray(params.q, dtype=float) @ u0
         return np.asarray(axes @ amp, dtype=float)
 
-    def micromotion_beta(self, species: Species, delta_k: np.ndarray) -> MicromotionIndex:
-        """The micromotion index of a drive of full wavevector ``delta_k``: signed in-phase delta_k . u_1 and
+    def micromotion_beta(
+        self,
+        species: Species,
+        delta_k: np.ndarray,
+        *,
+        field_offset_v_per_m: np.ndarray | tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> MicromotionIndex:
+        """The micromotion index of a drive of full wavevector ``delta_k``: signed in-phase delta_k . u_1 in the residual
+        field plus ``field_offset_v_per_m`` (a sampled stray-field drift, which moves the ion off the rf null) and
         Berkeland's out-of-phase (1/4) q_x R alpha phi_ac along x' (needs the rod factors ``R_m`` and ``alpha``)."""
         params = self.mathieu(species)
         dk = np.asarray(delta_k, dtype=float)
-        in_phase = modulation_index(dk, self.micromotion_amplitude_m(species))
+        in_phase = modulation_index(
+            dk, self.micromotion_amplitude_m(species, field_offset_v_per_m=field_offset_v_per_m)
+        )
         out_of_phase = 0.0
         if self.rf is not None and self.rf.phase_imbalance_rad != 0.0:
             p = {} if self.geometry is None else self.geometry.parameters
