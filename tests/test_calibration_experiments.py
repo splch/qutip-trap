@@ -43,7 +43,7 @@ from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
-from qutip_trap.run.job import readout_stage
+from qutip_trap.run.job import RunError, readout_stage
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.mathieu import c0_wronskian, mathieu_from_secular
 from qutip_trap.trap.pseudopotential import RfDrive
@@ -173,6 +173,18 @@ def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_ev
     fit, s = res.fitted["f_rabi_hz"]
     assert res.converged and abs(fit - f) < 4.0 * s and s < 1e-3 * f, (fit, s, f)
     assert res.fitted["contrast"][0] == pytest.approx(1.0, abs=0.02)
+
+
+def test_a_fock_sum_that_keeps_no_branch_is_refused_rather_than_run_as_the_vacuum(two_ion) -> None:
+    """A spectator at nbar = 2000 has no Fock state at the experiments' 1e-3 branch cut (P_0 = 5.0e-4), and two coupled modes
+    at nbar = 32 keep their states (P_0 = 0.030) but no product of them (9.2e-4): the scan refuses both, as ``run`` refuses
+    its own initial mixture, where it flopped as if the spectator sat in its ground state and failed on an empty sum."""
+    fx, dd = two_ion
+    ts = np.linspace(0.0, 5.0 / dd.carrier_rabi_hz, 5)
+    with pytest.raises(RunError, match="keeps no Fock state of mode 3"):
+        rabi_scan(Machine(fx.device), 0, ts, nbar={3: 2000.0}, include_stark=False)
+    with pytest.raises(RunError, match=r"keeps no branch of the thermal mixture of modes \[2, 3\]"):
+        rabi_scan(Machine(fx.device), 0, ts, nbar={2: 32.0, 3: 32.0}, include_stark=False)
 
 
 # ---- the laboratory on a machine: keywords, typed results, requested against realized ----------------------------------------

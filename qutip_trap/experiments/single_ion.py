@@ -261,8 +261,11 @@ def _branches(
 ) -> tuple[list[tuple[float, dict[int, int], dict[int, int]]], float]:
     """(weight, resolved Fock states, frozen Fock states) of the thermal initial mixture over the coupled modes: the frozen
     ones always (Wineland's shot-to-shot Debye-Waller statistics as a weighted sum, Section 5.2), the resolved ones when
-    ``fock_resolved`` (the Fock sum of Section 5.3); returned with the weight dropped below ``weight_min``."""
+    ``fock_resolved`` (the Fock sum of Section 5.3); returned with the weight dropped below ``weight_min``. A mode with no
+    Fock state at ``weight_min``, or modes with no product of states at it, are refused (``RunError``), as ``run`` refuses
+    its own initial mixture."""
     from qutip_trap.dynamics.operators import thermal_populations
+    from qutip_trap.run.job import RunError
 
     options: list[tuple[int, bool, list[tuple[int, float]]]] = []
     for m, nb in nbar.items():
@@ -277,7 +280,13 @@ def _branches(
             continue
         probs = thermal_populations(nb, thermal_n_max(nb, weight_min))
         opts = [(n, float(p)) for n, p in enumerate(probs) if p >= weight_min]
-        options.append((m, resolved_flag, opts or [(0, 1.0)]))
+        if not opts:
+            raise RunError(
+                f"the experiment's branch cut {weight_min:g} keeps no Fock state of mode {m} (nbar = {nb:.3g}): its most "
+                f"likely state has probability {float(np.max(probs)):.3e}, and the Fock sum of Section 5.3 needs at least "
+                "one branch; cool the mode"
+            )
+        options.append((m, resolved_flag, opts))
     if not options:
         return [(1.0, {}, {})], 0.0
     out: list[tuple[float, dict[int, int], dict[int, int]]] = []
@@ -288,6 +297,13 @@ def _branches(
         res = {options[k][0]: n for k, (n, _p) in enumerate(choice) if options[k][1]}
         fro = {options[k][0]: n for k, (n, _p) in enumerate(choice) if not options[k][1]}
         out.append((w, res, fro))
+    if not out:
+        best = float(np.prod([max(p for _n, p in o[2]) for o in options]))
+        raise RunError(
+            f"the experiment's branch cut {weight_min:g} keeps no branch of the thermal mixture of modes "
+            f"{[o[0] for o in options]}: the most likely branch has weight {best:.3e}, and the Fock sum of Section 5.3 "
+            "needs at least one; cool the modes"
+        )
     total = sum(w for w, _r, _f in out)
     return [(w / total, r, f) for w, r, f in out], float(max(1.0 - total, 0.0))
 
