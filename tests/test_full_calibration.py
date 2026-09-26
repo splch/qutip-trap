@@ -559,8 +559,8 @@ def test_the_entangling_scans_cut_the_thermal_mixture_where_the_labs_numerics_do
     two_ion, monkeypatch
 ) -> None:
     """The entangling scans play the gate with the lab's numerics, whose branch_weight_min cuts the thermal mixture as it
-    does for ``run``: the machine's 1e-6 when the call gives no options, the defaults' 1e-6 for options=None (where the scans
-    cut at their own 1e-3, three branches of the calibration's mixture in place of ten), a call's own when given."""
+    does for ``run``: the machine's 1e-6 when the call gives no options, the defaults' 1e-6 for options=None, a call's own
+    when given (at the calibration's occupations 1e-6 keeps ten branches, 1e-3 three)."""
     fx, sur = two_ion
     seen: list[Numerics] = []
     real_check = exact_gate_check

@@ -132,8 +132,8 @@ def test_microwave_ramsey_frequency() -> None:
 
 def test_the_two_probe_scans_of_ramsey_frequency_draw_independent_shot_noise() -> None:
     """At zero qubit offset the +probe and -probe scans have the same exact populations, and each draws its own shot noise:
-    over 40 seeds their residuals are uncorrelated and the offset scatters as its reported uncertainty. Drawn from one
-    stream they were identical (correlation 1), and the offset scattered by 0 Hz against a reported 5.3 Hz."""
+    over 40 seeds their residuals are uncorrelated and the offset scatters as its reported uncertainty (one stream for both
+    would draw the same noise twice, cancel it in the half-difference and report 5.3 Hz on an offset that never moves)."""
     machine = Machine(microwave_device())
     delays = np.linspace(0.0, 2e-3, 9)
     kw: dict[str, Any] = {"rabi_hz": 2e4, "probe_hz": 1000.0}
@@ -211,7 +211,7 @@ def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_ev
 def test_a_fock_sum_that_keeps_no_branch_is_refused_rather_than_run_as_the_vacuum(two_ion) -> None:
     """A spectator at nbar = 2000 has no Fock state at the experiments' 1e-3 branch cut (P_0 = 5.0e-4), and two coupled modes
     at nbar = 32 keep their states (P_0 = 0.030) but no product of them (9.2e-4): the scan refuses both, as ``run`` refuses
-    its own initial mixture, where it flopped as if the spectator sat in its ground state and failed on an empty sum."""
+    its own initial mixture, rather than flop the spectator's ground state at weight one or sum no branch at all."""
     fx, dd = two_ion
     ts = np.linspace(0.0, 5.0 / dd.carrier_rabi_hz, 5)
     with pytest.raises(RunError, match="keeps no Fock state of mode 3"):
@@ -499,8 +499,8 @@ def test_the_heating_probe_runs_in_the_interaction_frame_with_the_other_builder_
     single, monkeypatch
 ) -> None:
     """The heating scan's thermal probe runs in the interaction frame whatever frame the call's or the machine's builder
-    options name, and keeps their other options; where those options replaced the frame, the probe ran in the Schroedinger
-    frame, three delays over 1/ndot taking 3.3 times longer on the same populations."""
+    options name, their other options kept: the Schroedinger frame gives the same populations at 3.3 times the wall time
+    over three delays of 1/ndot."""
     dev, _dd = single
     played: list[BuilderOptions | None] = []
 
@@ -597,8 +597,8 @@ def test_the_crosstalk_phase_pulses_last_a_quarter_period_of_the_believed_rabi_f
     two_ion, monkeypatch
 ) -> None:
     """The pi/2 pulses of the crosstalk-phase sequence on neighbour j last 1/(4 f) at ``rabi_hz_belief[j]``, the table's
-    Rabi frequency of j, as every experiment times its pulses; they lasted a quarter period of the physical one, the belief
-    never read. A belief that misses a neighbour the light reaches is refused."""
+    Rabi frequency of j, as every experiment times its pulses, not at the physical one; a belief that misses a neighbour
+    the light reaches is refused."""
     fx, dd = two_ion
     real_run = _run
     halves: list[float] = []
