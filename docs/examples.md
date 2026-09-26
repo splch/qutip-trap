@@ -66,7 +66,7 @@ pinned = machine.calibrated(pairs=[(0, 1)], detection_records=2000, detection_wi
 result = pinned.run(bell, 2000, keep_final_state=True)
 print("ideal:", ideal_probabilities(bell), "| simulated:", result.probabilities)
 infidelity = 1 - register_fidelity(result)
-assert infidelity < result.diagnostics.intrinsic_budget["total"]     # inside the closed-form error budget
+assert infidelity < result.diagnostics.intrinsic_budget.total        # inside the closed-form error budget
 assert result.record is not None and result.record.schedule.pulses  # the RunRecord travels on the Result
 print("SPAM per qubit (eps_B, eps_D):", {k: v for k, v in result.spam.items() if "." not in k})
 ```

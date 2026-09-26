@@ -171,8 +171,8 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
   - `to_ionq_v1_probabilities`, `to_ionq_v1_histogram`, `to_ionq_v1_shots`, `from_ionq_v1_shots`: IonQ's v1 formats, decimal keys.
   - `to_ionq_v2_probabilities`, `to_ionq_v2_histogram`, `to_ionq_v2_shots`: IonQ's v0.4 envelope, bitstrings in its wire order, q[0] first.
   - `reversed_bits()`: every key reversed, for the SDKs that write qubit 0's bit first; `sample_of_shot`: each kept shot's dynamical sample, None for imported shots or a record without per-shot arrays.
-  - `to_dict(per_shot=False)` and `from_dict(d)`: the versioned record (schema version 2; `per_shot` carries `sample_of_shot`).
-- `Diagnostics`: what the run did and approximated: the level and why, the space and mode classes, the boundary populations and margins, the integrator and tolerances, samples, trajectories and branches, the seeds, the approximations and the intrinsic error budget.
+  - `to_dict(per_shot=False)` and `from_dict(d)`: the versioned record (schema version 3; `per_shot` carries `sample_of_shot`).
+- `Diagnostics`: what the run did and approximated: the level and why, the space and mode classes, the boundary populations and margins, the integrator and tolerances, samples, trajectories and branches, the seeds, the approximations and the intrinsic error budget, an `IntrinsicBudget`: per-gate typed records (`EntanglingScales`, `CarrierScales`, `ScatteringScales`) whose `total` sums the counted terms, `by_gate()`, and `omitted`, what the total leaves out.
 - `RunState`: the machine state a run threads through its shots (ion order, dark and lost ions, events).
 - `bitstring_key`, `decimal_key`, `aggregate`: the key conventions.
 
