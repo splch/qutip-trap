@@ -7,7 +7,7 @@ from qutip_trap.calibration.surrogate import MU_ABOVE_TOP_FRACTION, surrogate_wa
 from qutip_trap.control.compiler import Circuit, CompileReport, Operation, embed, ideal_probabilities
 from qutip_trap.control.native import ms, rz
 from qutip_trap.control.pulses import Pulse
-from qutip_trap.control.schedule import GateDrive, Schedule, schedule
+from qutip_trap.control.schedule import GateDrive, Schedule
 from qutip_trap.control.shaping import (
     CHI_MAXIMAL_RAD,
     GateModes,
@@ -39,6 +39,7 @@ from qutip_trap.dynamics.hamiltonian import BuiltHamiltonian, build_hamiltonian
 from qutip_trap.dynamics.operators import debye_waller_factor, rabi_table
 from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.dynamics.tomography import kraus_operators
+from qutip_trap.experiments.entangling import shift_detuning
 from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.io.openqasm import load_openqasm2
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, lamb_dicke_parameters
@@ -76,6 +77,7 @@ from qutip_trap.readout.presets import CRAIN_YB171_SNSPD, MYERSON_CA40_PMT
 from qutip_trap.run.gate_local import GateLocalReport, GateStep, gate_steps
 from qutip_trap.run.job import RunRecord, last_record, prepare, register_fidelity
 from qutip_trap.run.levels import FidelityLevel
+from qutip_trap.run.pipeline import compile_calibrate_schedule
 from qutip_trap.run.results import Diagnostics, Progress, Result, aggregate, binomial_error_bars
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import species
@@ -106,6 +108,7 @@ __all__ = [
     "closure_rabi_rad_s",
     "CollapseOp",
     "collision_rate_per_ion",
+    "compile_calibrate_schedule",
     "CompileReport",
     "crain_snspd_detector",
     "CRAIN_YB171_SNSPD",
@@ -184,11 +187,11 @@ __all__ = [
     "rz",
     "scattering_channels",
     "Schedule",
-    "schedule",
     "SeedSpec",
     "Segment",
     "SegmentedEnvelope",
     "select_space",
+    "shift_detuning",
     "simulate_epg_sets",
     "solve_crystal",
     "SpaceSelection",

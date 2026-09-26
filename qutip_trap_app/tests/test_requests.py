@@ -11,9 +11,9 @@ import math
 import numpy as np
 import pytest
 
+from qutip_trap_app import core, resim
 from qutip_trap_app import requests as rq
-from qutip_trap_app import resim
-from qutip_trap_app.record import LiveRun, Record, execute, shift_detuning, table_with_overrides
+from qutip_trap_app.record import LiveRun, Record, execute, table_with_overrides
 from qutip_trap_app.viewmodel.circuit import register_after, timeline
 from qutip_trap_app.viewmodel.dynamics import closure_table, pulse_dynamics, recorded_zoom
 
@@ -93,7 +93,7 @@ def test_shift_detuning_moves_the_legs_symmetrically(bell: tuple[Record, LiveRun
     _record, live = bell
     pair = next(iter(live.table.ms))
     wf = live.table.ms[pair]
-    shifted = shift_detuning(wf, 5e3)
+    shifted = core.shift_detuning(wf, 5e3)
     assert shifted.segments is not None and wf.segments is not None
     for s0, s1 in zip(wf.segments, shifted.segments):
         for leg, v in s0.detuning_hz.items():

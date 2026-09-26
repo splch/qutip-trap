@@ -1529,48 +1529,14 @@ def calibrate_for(job: JobSpec, device: core.Device) -> core.CalibrationTable:
     return table_with_overrides(report.table, job.waveform_overrides)
 
 
-@dataclass(frozen=True)
-class ShiftedFn:
-    """``tau -> fn(tau) + offset``: a frequency-modulated leg shifted by a hand-set offset (a module-level class, because
-    every coefficient on the pulse path crosses a process boundary by pickle)."""
-
-    fn: Callable[[float], float]
-    offset_hz: float
-
-    def __call__(self, tau: float) -> float:
-        return float(self.fn(tau)) + self.offset_hz
-
-
-def shift_detuning(waveform: core.Waveform, offset_hz: float) -> core.Waveform:
-    """The waveform with every blue leg's detuning raised by ``offset_hz`` and every red leg's lowered by it (the symmetric
-    detuning scan of Section 7.5). ``chi_m`` and ``alpha_m`` stay as the table measured them at closure: the scheduler rescales
-    by them, so the pulse plays as written with its amplitude unchanged, and the run's branch loops show what the detuned
-    loops do (Section 14.4)."""
-    if offset_hz == 0.0:
-        return waveform
-
-    def shifted(value: object, sign: float) -> float | Callable[[float], float]:
-        if callable(value):
-            return ShiftedFn(cast(Callable[[float], float], value), sign * offset_hz)
-        return float(cast(float, value)) + sign * offset_hz
-
-    segments = tuple(
-        core.Segment(
-            s.duration_s,
-            dict(s.amplitude_hz),
-            dict(s.phase_rad),
-            {leg: shifted(v, 1.0 if leg == "blue" else -1.0) for leg, v in s.detuning_hz.items()},
-        )
-        for s in waveform.segments
-    )
-    return dataclasses.replace(waveform, segments=segments)
-
-
 def table_with_overrides(
     table: core.CalibrationTable, overrides: Mapping[str, float]
 ) -> core.CalibrationTable:
-    """The table with each named pair's waveform shifted (``JobSpec.waveform_overrides``); a pair the table does not carry is
-    an error, never a silent no-op."""
+    """The table with each named pair's waveform shifted (``JobSpec.waveform_overrides``: every blue leg raised by the
+    offset, every red leg lowered, the symmetric detuning scan of Section 7.5); a pair the table does not carry is an error,
+    never a silent no-op. ``chi_m`` and ``alpha_m`` stay as the table measured them at closure: the scheduler rescales by
+    them, so the pulse plays as written with its amplitude unchanged, and the run's branch loops show what the detuned loops
+    do (Section 14.4)."""
     if not overrides:
         return table
     shifted: dict[tuple[int, int], core.Waveform] = {}
@@ -1579,7 +1545,7 @@ def table_with_overrides(
         wf = table.waveform_for((a, b))
         if wf is None:
             raise RecordError(f"no entangling waveform for pair {key} in the calibration table to shift")
-        shifted[(a, b)] = shift_detuning(wf, float(offset))
+        shifted[(a, b)] = core.shift_detuning(wf, float(offset))
     return table.with_params(ms=shifted)
 
 

@@ -247,20 +247,12 @@ def replay(
     n = device.crystal.n_ions
     opts = job.options
     if progress:
-        progress("compiling", 0.0, "compiling to native gates")
-    machine = job.machine(device, table)
-    report = machine.compile(job.circuit.to_core())
-    if progress:
-        progress("scheduling", 0.05, "scheduling pulses from the calibration table")
-    sched = core.schedule(
-        report.circuit,
-        machine.device,
-        table,
-        t0_s=0.0,
-        parallel=None,
-        crosstalk_suppression="none",
-        stark_compensation=True,
-    )
+        progress(
+            "scheduling", 0.0, "compiling to native gates and scheduling pulses from the calibration table"
+        )
+    # the run's own prefix: compiled and scheduled under the machine's physics and numerics
+    prefix = core.compile_calibrate_schedule(job.machine(device, table), job.circuit.to_core())
+    report, sched = prefix.report, prefix.schedule
     if progress:
         progress("preparing", 0.1, "the preparation recipe and the mode classes")
     prep = preparation_for(job, device)
@@ -347,11 +339,15 @@ def replay(
     counts, probabilities = core.aggregate(bits)
     shots = int(bits.shape[0])
     total = float(sum(terms.values()))
-    notes = tuple(library.notes) + (
-        "channel replay (app-side, Section 5.4): every gate applied as the Section 6.8 channel of that gate kind extracted once by "
-        "GATE_LOCAL tomography from the prepared motional state and conjugated to the played phase; correlations between gates "
-        "are traced out and bounded by the reported residual",
-        f"readout: the calibration table's eps_B = {eps_b:.3g}, eps_D = {eps_d:.3g} per ion with bright levels {bright}",
+    notes = (
+        prefix.notes
+        + tuple(library.notes)
+        + (
+            "channel replay (app-side, Section 5.4): every gate applied as the Section 6.8 channel of that gate kind extracted once by "
+            "GATE_LOCAL tomography from the prepared motional state and conjugated to the played phase; correlations between gates "
+            "are traced out and bounded by the reported residual",
+            f"readout: the calibration table's eps_B = {eps_b:.3g}, eps_D = {eps_d:.3g} per ion with bright levels {bright}",
+        )
     )
     sched_rec = schedule_record(sched)
     ideal = np.zeros(2**n, dtype=complex)
