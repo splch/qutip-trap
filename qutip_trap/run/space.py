@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import numpy as np
 
@@ -133,6 +133,36 @@ def cap_for(
     d_want, n_hi = cap_requirement(radius, nbar, eta_max, d_min=d_min, tail=tail)
     d = min(d_want, d_max)
     return ModeTruncation(-1, d, (0, min(n_hi, d - 1)), max(eta_max * 1.5, 1e-3))
+
+
+class ModeCap(NamedTuple):
+    """A resolved mode's truncation (``mode_cap``) and what the cap rule asked for before ``mode_dimension_max``."""
+
+    truncation: ModeTruncation
+    d_wanted: int
+    """The Fock dimension the cap rule asks for (``cap_requirement``)."""
+    n_max_wanted: int
+    """The highest Fock index the rule expects populated."""
+    clamped: bool
+    """Whether ``mode_dimension_max`` cut the rule's dimension; a cap ``Numerics.caps`` sets is never a clamp."""
+
+
+def mode_cap(mode: int, contribution: ModeContribution, nbar: float, options: Numerics) -> ModeCap:
+    """The truncation of a resolved mode (Sections 5.1.1, 5.5), the one rule a run's space (``select_space``) and a gate's
+    spot check (``calibration.entangling.spot_check_space``) size a mode by: the cap rule for the contribution's loop
+    radius and eta at occupation ``nbar`` and the numerics' boundary threshold, clamped to ``mode_dimension_max``, or the
+    mode's entry in ``options.caps`` in its place; the declared expected range stops below the cap."""
+    tail = float(options.boundary_population_max)
+    radius, eta_max = contribution.radius, contribution.eta_max
+    d_wanted, n_max_wanted = cap_requirement(radius, nbar, eta_max, d_min=_D_MIN, tail=tail)
+    rule = cap_for(radius, nbar, eta_max, d_min=_D_MIN, d_max=int(options.mode_dimension_max), tail=tail)
+    caps = options.caps
+    if caps is not None and mode in caps:
+        d, clamped = int(caps[mode]), False
+    else:
+        d, clamped = rule.d, d_wanted > rule.d
+    truncation = ModeTruncation(mode, d, (0, min(rule.expected_n_range[1], d - 1)), rule.eta_max)
+    return ModeCap(truncation, d_wanted, n_max_wanted, clamped)
 
 
 @dataclass(frozen=True)
@@ -337,7 +367,7 @@ def select_space(
     warns and is named in ``notes``. ``options.enr_group`` = (modes, N_exc) carries the named modes as one ENR factor
     whatever their criterion class, with a note for a mode the criterion would resolve (the top ENR shell is then its
     boundary, Section 5.1)."""
-    caps, enr = options.caps, options.enr_group
+    enr = options.enr_group
     d_ceiling = int(options.mode_dimension_max)
     n_ions = device.crystal.n_ions
     n_modes = len(device.crystal.modes)
@@ -369,15 +399,12 @@ def select_space(
             classes[m] = "enr"
         enr_group = (group, n_exc)
     resolved: list[ModeTruncation] = []
-    tail = float(options.boundary_population_max)
     for m in range(n_modes):
         if classes[m] != "resolved":
             continue
-        c = best[m]
-        d_want, n_hi_want = cap_requirement(c.radius, nb[m], c.eta_max, d_min=_D_MIN, tail=tail)
-        tr = cap_for(c.radius, nb[m], c.eta_max, d_min=_D_MIN, d_max=d_ceiling, tail=tail)
-        d = int(caps[m]) if caps is not None and m in caps else tr.d
-        if d_want > d and (caps is None or m not in caps):
+        cap = mode_cap(m, best[m], nb[m], options)
+        if cap.clamped:
+            d, d_want, n_hi_want = cap.truncation.d, cap.d_wanted, cap.n_max_wanted
             warn_cap_clamped(m, d_want, n_hi_want, d, d_ceiling)
             notes.append(
                 f"mode {m}: the cap rule asks for d = {d_want} (expected occupation up to n = {n_hi_want}) but "
@@ -386,7 +413,7 @@ def select_space(
                 "the boundary monitor grows the cap only up to the engine's retry budget (Sections 5.2, 5.3: a Doppler-cooled "
                 "nbar ~ 20 mode needs d_m >~ 150)"
             )
-        resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
+        resolved.append(cap.truncation)
     # a dropped mode leaves the dynamics entirely: no tensor factor, no Debye-Waller factor, no Fock branch
     frozen = tuple(m for m in range(n_modes) if classes[m] in ("frozen", "dropped"))
     dropped = tuple(m for m in range(n_modes) if classes[m] == "dropped")

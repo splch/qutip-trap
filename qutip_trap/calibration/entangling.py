@@ -37,7 +37,7 @@ from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec,
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import NoiseSample, quiet_sample
 from qutip_trap.options import Numerics
-from qutip_trap.run.space import _D_MIN, ModeClass3, cap_for, classify, waveform_contributions
+from qutip_trap.run.space import ModeClass3, classify, mode_cap, waveform_contributions
 
 if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
@@ -55,10 +55,11 @@ def spot_check_space(
     ions: Sequence[int] | None = None,
 ) -> tuple[HilbertSpace, dict[int, ModeClass3]]:
     """The joint space of a pair's spot check by the run's rule (``run.space.select_space``): every mode of ``modes`` classed
-    by the closed-form contribution of ``waveform`` at the occupations ``modes`` carries, a resolved one capped by the cap
-    rule at the numerics' boundary threshold and ceiling (``options.caps`` override it), a dropped one out of the dynamics,
-    every other crystal mode frozen; over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone (the pair's
-    GATE_LOCAL space). Returns the space and the class of every mode of ``modes``."""
+    by the closed-form contribution of ``waveform`` at the occupations ``modes`` carries, a resolved one truncated by the
+    run's own rule (``run.space.mode_cap``: the cap rule at the numerics' boundary threshold and ceiling, ``options.caps``
+    in its place), a dropped one out of the dynamics, every other crystal mode frozen; over every ion of the crystal
+    (JOINT_EXACT), or over ``ions`` alone (the pair's GATE_LOCAL space). Returns the space and the class of every mode of
+    ``modes``."""
     contributions = waveform_contributions(waveform, modes, pair)
     classes: dict[int, ModeClass3] = {}
     resolved: list[ModeTruncation] = []
@@ -71,16 +72,7 @@ def spot_check_space(
             freeze_chi_max_rad=options.freeze_chi_max_rad,
         )
         if classes[m] == "resolved":
-            tr = cap_for(
-                c.radius,
-                modes.nbar[k],
-                c.eta_max,
-                d_min=_D_MIN,
-                d_max=options.mode_dimension_max,
-                tail=options.boundary_population_max,
-            )
-            d = int(options.caps[m]) if options.caps is not None and m in options.caps else tr.d
-            resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
+            resolved.append(mode_cap(m, c, modes.nbar[k], options).truncation)
     held = {t.mode for t in resolved}
     frozen = tuple(m for m in range(len(device.crystal.modes)) if m not in held)
     dropped = tuple(m for m in modes.modes if classes[m] == "dropped")
