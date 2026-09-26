@@ -464,10 +464,10 @@ def roos_beat_phase_tilt(waveform: Waveform, t_start_s: float, *, beat_reset: bo
 def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> dict[str, float]:
     """The closed-form error scales reported beside the result (Section 9.6). Per entangling gate: the residual displacement
     sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale
-    (Omega_peak/nu_min)^2, Roos's Bessel saturation, Roos's beat-phase spin-axis tilt, the frozen spectators' chi and
-    (reported, not summed) the Lamb-Dicke deficit. Per single-qubit pulse: the sideband scale eta^2 (Omega/nu)^2 of the
-    nearest mode and the addressing crosstalk sum_j sin^2(eps_ij theta/2). Per pulse the scattering estimates; and their
-    sum as ``total``."""
+    (Omega_peak/(2 mu_min))^2 with mu_min the tones' smallest detuning from the carrier, Roos's Bessel saturation, Roos's
+    beat-phase spin-axis tilt, the frozen spectators' chi and (reported, not summed) the Lamb-Dicke deficit. Per
+    single-qubit pulse: the sideband scale eta^2 (Omega/nu)^2 of the nearest mode and the addressing crosstalk
+    sum_j sin^2(eps_ij theta/2). Per pulse the scattering estimates; and their sum as ``total``."""
     from qutip_trap.control.shaping import waveform_integrals
     from qutip_trap.light.raman import lamb_dicke_parameters
     from qutip_trap.run.space import gate_modes_for
@@ -483,11 +483,14 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
             if selection.mode_class.get(m) == "resolved" or selection.mode_class.get(m) == "frozen":
                 eta = max(abs(modes.eta[i][k]) for i in modes.ions)
                 dw += ballance_thermal_error(eta, modes.nbar[k])
-        nu_min = min(modes.omega_rad_s)
-        peak = _peak_amplitude_hz(gate.waveform.segments)
-        carrier = (2.0 * math.pi * peak / nu_min) ** 2 if nu_min > 0.0 else 0.0
-        lamb_dicke = sideband_lamb_dicke_deficit(modes, selection)
         bessel = roos_bessel_saturation(gate.waveform)
+        # the off-resonant carrier: a tone mu from the carrier rotates the spin through (Omega/mu) sin(mu t), an infidelity
+        # scale (Omega/(2 mu))^2 at the largest tone amplitude and the smallest tone detuning
+        # (anchor.m6.section_11_1_native_identity)
+        carrier = (
+            _peak_amplitude_hz(gate.waveform.segments) / (2.0 * _min_detuning_hz(gate.waveform.segments))
+        ) ** 2
+        lamb_dicke = sideband_lamb_dicke_deficit(modes, selection)
         chi_frozen = sum(
             abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class.get(m) == "frozen"
         )

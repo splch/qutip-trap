@@ -674,8 +674,8 @@ def test_the_section_11_1_fixture_is_the_plan_s_pulse() -> None:
 @pytest.mark.slow
 def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intrinsic_budget() -> None:
     """The exact play of the calibrated reference pulse misses MS(0, 0, pi/2) by 4.66e-5 (2 %), inside the off-resonant
-    carrier term (Omega_tone/(2 nu))^2 = 1.143e-4 and the budget's carrier_scale 5.14e-4, with the budget's other terms at
-    their closed forms."""
+    carrier term (Omega_tone/(2 nu))^2 = 1.143e-4, which the budget's carrier_scale (Omega_tone/(2 mu))^2 = 1.151e-4
+    reports at the tones' detuning mu = nu - eps, with the budget's other terms at their closed forms."""
     device, modes, waveform, sched, infidelity = _exact_play(BuilderOptions(include_stark=False))
     omega_tone = TWO_PI * float(waveform.segments[0].amplitude_hz[(0, "blue")])
     nu = modes.omega_rad_s[0]
@@ -691,9 +691,11 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
         device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
     )
     budget = intrinsic_budget(device, sched, selection)
-    # (Omega_tone/nu_min)^2 with nu_min the x-rocking mode at 2.8284 MHz
-    assert budget["ms11.carrier_scale"] == pytest.approx(5.144e-4, rel=2e-2)
-    assert budget["ms11.carrier_scale"] > 4.0 * off_resonant
+    # (Omega_tone/(2 mu))^2 at mu/2pi = 2.99 MHz: the off-resonant term above to (nu/mu)^2 - 1 = 0.67 %
+    mu = TWO_PI * float(waveform.segments[0].detuning_hz["blue"])
+    assert budget["ms11.carrier_scale"] == pytest.approx((omega_tone / (2.0 * mu)) ** 2, rel=1e-12)
+    assert budget["ms11.carrier_scale"] == pytest.approx(1.1507e-4, rel=2e-3)
+    assert budget["ms11.carrier_scale"] == pytest.approx(off_resonant, rel=1e-2)
     assert infidelity < budget["ms11.carrier_scale"]
     # the loop closes, so the residual displacement is below 1e-3, and the ground state has no thermal Debye-Waller loss
     assert budget["ms11.debye_waller"] == 0.0
