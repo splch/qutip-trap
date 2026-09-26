@@ -146,6 +146,10 @@ def test_bell_diagnostics_report_the_space_classes_branches_and_approximations(b
     assert any(a.startswith("noise:") for a in d.approximations) and any(
         "product POVM" in a for a in d.approximations
     )
+    for m in (2, 3):
+        assert any(
+            a.startswith(f"mode {m}:") and "handed off as the thermal state" in a for a in d.approximations
+        )
     assert d.wall_clock_span_s > 0.0
     assert res.spam["q0"][0] == pytest.approx(res.spam["q1"][0]) and 1e-4 < res.spam["q0"][0] < 5e-3
     assert res.spam["q0.state_preparation"][0] < 1e-4

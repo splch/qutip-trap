@@ -9,12 +9,13 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.device.presets import secular_trap
+from qutip_trap.device.presets import secular_trap, yb171_chain
 from qutip_trap.dynamics.multilevel import MultiLevelOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.bloch import BlochModel, beam_for_transition
 from qutip_trap.prep.doppler import doppler_cooling
 from qutip_trap.prep.pumping import PumpingResult, optical_pumping
+from qutip_trap.prep.recipe import HAND_OFF_TAIL, recipe_of, run_preparation
 from qutip_trap.prep.sequence import (
     PreparationSequence,
     PreparationStage,
@@ -23,6 +24,7 @@ from qutip_trap.prep.sequence import (
     pulsed_sideband_stage,
     pump_stage,
 )
+from qutip_trap.prep.sideband import thermal_distribution
 from qutip_trap.species import species
 from qutip_trap.species.polarization import linear_polarization
 from qutip_trap.species.raman import AtomicStructure
@@ -98,6 +100,26 @@ def test_prepare_state_builds_the_state_with_thermal_modes_and_the_pumped_qubit(
     # the pumps' recoil heating adds to the last cooling stage
     heated = prepare_state(space, seq, qubit_labels=QUBIT, extra_nbar={2: 0.01})
     assert heated.motional.nbar[2] == pytest.approx(0.06, rel=1e-6)
+
+
+def test_the_pulsed_sideband_hand_off_keeps_the_mean_and_its_note_says_how_far_from_thermal_it_is() -> None:
+    """On the default 171Yb+ chain the pulsed cooling of the two x modes leaves the mean the thermal hand-off keeps, with
+    <n^2> 7.33 and 5.64 times the thermal state's (1e-2) and at most 1e-4 of the population above n = 20 and 15 where the
+    thermal state's stops at n = 2; the per-mode preparation note, which a run carries into its approximations, says so."""
+    dev = yb171_chain(2).device
+    prep = run_preparation(dev, recipe_of(dev))
+    assert set(prep.sideband_populations) == set(prep.sideband_nbar) == {2, 3}
+    for m, ratio, top in ((2, 7.33, 20), (3, 5.64, 15)):
+        p = prep.sideband_populations[m]
+        n = np.arange(p.size, dtype=float)
+        assert p.sum() == pytest.approx(1.0)
+        assert float(n @ p) == pytest.approx(prep.sideband_nbar[m], rel=1e-12)
+        thermal = thermal_distribution(prep.sideband_nbar[m], p.size)
+        assert float(n**2 @ p) / float(n**2 @ thermal) == pytest.approx(ratio, rel=1e-2)
+        assert [int(np.searchsorted(np.cumsum(q), 1.0 - HAND_OFF_TAIL)) for q in (p, thermal)] == [top, 2]
+        (note,) = [x for x in prep.notes if x.startswith(f"mode {m}:")]
+        assert "handed off as the thermal state of that nbar" in note
+        assert f"above n = 2, against the pulsed distribution's {float(n**2 @ p):.3g} and n = {top}" in note
 
 
 def test_prepare_state_refuses_undefined_modes_and_unpumped_ions() -> None:

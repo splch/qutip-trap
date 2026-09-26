@@ -291,6 +291,9 @@ class PreparationRun:
     doppler: DopplerResult
     sideband_nbar: dict[int, float]
     sideband_pulses: dict[int, tuple[SidebandPulse, ...]]
+    sideband_populations: dict[int, np.ndarray]
+    """The Fock populations the pulses leave on every sideband-cooled mode, before the pump recoil: a non-thermal
+    distribution that the hand-off replaces by the thermal state of its mean (Section 4.2.7)."""
     pumps: dict[int, PumpingResult]
     pump_heating: dict[int, float]
     """Recoil heating of every mode by the pumps of all ions, in quanta (added to the cooled occupations)."""
@@ -308,6 +311,22 @@ class PreparationRun:
 
 
 _CACHE: dict[tuple[str, str], PreparationRun] = {}
+
+HAND_OFF_TAIL = 1e-4
+"""The population a quoted Fock level leaves above it in the hand-off notes."""
+
+
+def _thermal_hand_off(p: np.ndarray) -> str:
+    """The thermal state of the same mean against the pulsed Fock populations ``p`` it stands in for: <n^2> and the level
+    above which at most ``HAND_OFF_TAIL`` of the population lies, the means being equal by construction."""
+    n2 = np.arange(p.size, dtype=float) ** 2
+    thermal = thermal_distribution(mean_occupation(p), p.size)
+    top, top_thermal = (int(np.searchsorted(np.cumsum(q), 1.0 - HAND_OFF_TAIL)) for q in (p, thermal))
+    return (
+        f"handed off as the thermal state of that nbar (Section 4.2.7), whose <n^2> is {float(n2 @ thermal):.3g} with at "
+        f"most {HAND_OFF_TAIL:g} of its population above n = {top_thermal}, against the pulsed distribution's "
+        f"{float(n2 @ p):.3g} and n = {top}"
+    )
 
 
 def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = True) -> PreparationRun:
@@ -331,6 +350,7 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
     # 2. pulsed sideband cooling of the gate modes
     sb_nbar: dict[int, float] = {}
     sb_pulses: dict[int, tuple[SidebandPulse, ...]] = {}
+    sb_populations: dict[int, np.ndarray] = {}
     if recipe.sideband is not None:
         spec = recipe.sideband
         lam = species.transition(species.cycling).wavelength_vac_m
@@ -369,14 +389,16 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
             )
             if not pulses:
                 continue
-            check = mean_occupation(apply_pulses(p0, pulses, eta, omega0, repump=kernel))
+            populations = apply_pulses(p0, pulses, eta, omega0, repump=kernel)
+            check = mean_occupation(populations)
             sb_nbar[m] = float(check)
             sb_pulses[m] = tuple(pulses)
+            sb_populations[m] = populations
             nbar[m] = float(check)
             duration += sum(p.duration_s for p in pulses) + spec.repump_time_s * len(pulses)
             notes.append(
                 f"mode {m}: nbar {n0:.3f} -> {n_final:.4f} after {len(pulses)} pulses on ion {ion} (eta {eta:.4f}), "
-                f"repump kernel alpha {alpha:.3f}"
+                f"repump kernel alpha {alpha:.3f}; {_thermal_hand_off(populations)}"
             )
         if sb_nbar:
             stages.append(pulsed_sideband_stage(sb_nbar, tuple(range(crystal.n_ions))))
@@ -411,6 +433,7 @@ def run_preparation(device: Device, recipe: PreparationRecipe, *, cache: bool = 
         doppler=doppler,
         sideband_nbar=sb_nbar,
         sideband_pulses=sb_pulses,
+        sideband_populations=sb_populations,
         pumps=pumps,
         pump_heating=heating,
         nbar=final,
