@@ -386,27 +386,35 @@ def _peak_amplitude_hz(segments: Sequence[Segment]) -> float:
     return peak
 
 
+def _min_detuning_hz(segments: Sequence[Segment]) -> float:
+    """The smallest |tone-to-carrier detuning| over a waveform's segments (a callable detuning sampled at 101 points per
+    segment)."""
+    mu_min = math.inf
+    for seg in segments:
+        grid = np.linspace(0.0, seg.duration_s, 101)
+        for det in seg.detuning_hz.values():
+            vals = [abs(float(det(x))) for x in grid] if callable(det) else [abs(float(det))]
+            mu_min = min(mu_min, min(vals))
+    return mu_min
+
+
 def roos_bessel_saturation(waveform: Waveform) -> float:
     """Section 9.6's Bessel force saturation as an infidelity: the carrier's strong-drive correction scales the
-    spin-dependent force by (J_0 + J_2)(4 Omega/mu) (Roos 2008, New J. Phys. 10, 013002, Eq. 17), so a pulse solved for
-    chi = pi/4 with the linear force reaches chi (1 - f)^2 with f = 1 - (J_0 + J_2), and 1 - F = sin^2(pi f / 2); at the
-    largest tone amplitude and the smallest tone-to-carrier detuning of the played waveform. Zero for a non-MS waveform."""
+    spin-dependent force by (J_0 + J_2)(2 Omega/mu) in the per-tone Omega (Roos 2008, New J. Phys. 10, 013002, Eq. 17,
+    whose 4 Omega_R/mu reads Omega_R = Omega/2), so a pulse solved for chi = pi/4 with the linear force reaches chi (1 - f)^2
+    with f = 1 - (J_0 + J_2), and 1 - F = sin^2(pi f / 2); at the largest tone amplitude and the smallest tone-to-carrier
+    detuning of the played waveform. Zero for a non-MS waveform."""
     from qutip_trap.published import roos_force_saturation
 
     if waveform.kind != "ms":
         return 0.0
     peak = _peak_amplitude_hz(waveform.segments)
-    mu_min = math.inf
-    for seg in waveform.segments:
-        grid = np.linspace(0.0, seg.duration_s, 101)
-        for det in seg.detuning_hz.values():
-            vals = [abs(float(det(x))) for x in grid] if callable(det) else [abs(float(det))]
-            mu_min = min(mu_min, min(vals))
+    mu_min = _min_detuning_hz(waveform.segments)
     if peak == 0.0:
         return 0.0
     if not math.isfinite(mu_min) or mu_min == 0.0:
         raise RunError(
-            "an MS waveform carries a tone on the carrier: Roos's saturation (J_0 + J_2)(4 Omega/mu) needs mu != 0"
+            "an MS waveform carries a tone on the carrier: Roos's saturation (J_0 + J_2)(2 Omega/mu) needs mu != 0"
         )
     f = 1.0 - roos_force_saturation(TWO_PI * peak, TWO_PI * mu_min)
     return math.sin(math.pi * f / 2.0) ** 2
@@ -442,8 +450,8 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
         chi_frozen = sum(
             abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class.get(m) == "frozen"
         )
-        # Roos's spin-axis tilt psi = (4 Omega/mu) sin(zeta), zeta the beat phase at the gate start (Section 4.4.1): zero
-        # when the hardware resets the beat note per gate
+        # Roos's spin-axis tilt psi = (2 Omega/mu) sin(zeta) in the per-tone Omega (his 4 Omega_R/mu, Omega_R = Omega/2), zeta
+        # the beat phase at the gate start (Section 4.4.1): zero when the hardware resets the beat note per gate
         tilt = 0.0
         if device.hardware.phase_continuous:
             mu0 = gate.waveform.segments[0].detuning_hz.get("blue", 0.0)
@@ -458,7 +466,7 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
                         ]
                     )
                 )
-                psi = 4.0 * mean_amp / abs(float(mu0)) * abs(math.sin(zeta))
+                psi = 2.0 * mean_amp / abs(float(mu0)) * abs(math.sin(zeta))
                 tilt = math.sin(psi) ** 2
         out[f"{gate.gate_id}.residual_displacement"] = eps_ent
         out[f"{gate.gate_id}.debye_waller"] = dw

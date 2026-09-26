@@ -49,9 +49,11 @@ def kirchmair_populations(alpha_abs: float, gamma: float, nbar: float) -> tuple[
     return 1.0 - p1 - p2, p1, p2
 
 
-def roos_force_saturation(omega_rad_s: float, delta_rad_s: float) -> float:
-    """J_0(x) + J_2(x) at x = 4 Omega/delta: the carrier's saturation of the spin-dependent force (Roos Eq. 17)."""
-    x = 4.0 * omega_rad_s / delta_rad_s
+def roos_force_saturation(omega_tone_rad_s: float, delta_rad_s: float) -> float:
+    """J_0(x) + J_2(x) at x = 2 Omega/delta for the per-tone Omega of this module and delta the tones' detuning from the
+    carrier: the carrier's saturation of the spin-dependent force (Roos 2008 Eq. 17). Roos writes the argument 4 Omega_R/delta
+    with his Omega_R = Omega/2 (``conv.ms_closure``, Section 4.4.1)."""
+    x = 2.0 * omega_tone_rad_s / delta_rad_s
     return float(jv(0, x) + jv(2, x))
 
 

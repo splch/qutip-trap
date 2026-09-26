@@ -80,11 +80,12 @@ def test_ballance_thermal_error_reproduces_the_printed_cooling_floor() -> None:
 
 
 def test_roos_bessel_saturation_of_the_force() -> None:
-    """Roos Eq. 17: J_0(x) + J_2(x) = 2 J_1(x)/x at x = 4 Omega/delta; at Omega/mu ~ 0.03 the force is reduced by 1.80e-3."""
-    for ratio, value in ((0.03, 0.998201080), (0.1, 0.980132890), (0.2, 0.922105115)):
+    """Roos Eq. 17: J_0(x) + J_2(x) = 2 J_1(x)/x at x = 2 Omega/delta in the per-tone Omega (his 4 Omega_R/delta); at
+    Omega/mu = 0.06 the force is reduced by 1.80e-3 (the engine's saturation: test_two_qubit_gates.py)."""
+    for ratio, value in ((0.06, 0.998201080), (0.2, 0.980132890), (0.4, 0.922105115)):
         assert roos_force_saturation(ratio, 1.0) == pytest.approx(value, rel=1e-9)
         assert roos_force_saturation(ratio, 1.0) == pytest.approx(
-            2.0 * float(jv(1, 4.0 * ratio)) / (4.0 * ratio), rel=1e-12
+            2.0 * float(jv(1, 2.0 * ratio)) / (2.0 * ratio), rel=1e-12
         )
-    assert 1.0 - roos_force_saturation(0.03, 1.0) == pytest.approx(1.80e-3, rel=0.01)
+    assert 1.0 - roos_force_saturation(0.06, 1.0) == pytest.approx(1.80e-3, rel=0.01)
     assert roos_force_saturation(0.0, 1.0) == pytest.approx(1.0, rel=1e-12), "no saturation at zero drive"

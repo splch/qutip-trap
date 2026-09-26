@@ -75,13 +75,13 @@ NU_ANCHOR_HZ = 1.0e6
 EPS_ANCHOR_HZ = 10e3
 
 
-def anchor_device() -> Device:
-    """Two 171Yb+ ions whose x-COM mode at 1 MHz carries eta = 0.05 exactly (the 355 nm pair's crossing angle is chosen for
-    it)."""
+def anchor_device(eta: float = ETA_ANCHOR) -> Device:
+    """Two 171Yb+ ions whose x-COM mode at 1 MHz carries ``eta`` (0.05 unless given) exactly (the 355 nm pair's crossing
+    angle is chosen for it)."""
     yb = species("171Yb+")
     mass = yb.mass_u * ATOMIC_MASS_KG
     x0 = math.sqrt(HBAR_J_S / (2.0 * mass * TWO_PI * NU_ANCHOR_HZ))
-    dk = ETA_ANCHOR / (x0 / math.sqrt(2.0))
+    dk = eta / (x0 / math.sqrt(2.0))
     k = TWO_PI / 355e-9
     half = math.asin(dk / (2.0 * k))
     sq = 1.0 / math.sqrt(2.0)
@@ -193,6 +193,36 @@ def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -
     assert tr.final.motional.nbar[ANCHOR_MODE] < 1e-4, (
         "the loop itself closes: the leakage is the axis tilt, not a residual displacement"
     )
+
+
+def test_the_carrier_saturates_the_force_at_twice_the_per_tone_rabi_frequency_over_mu() -> None:
+    """Roos 2008 Eq. 17 in the per-tone Omega: the carrier scales the MS force by (J_0 + J_2)(2 Omega/mu), so chi by its
+    square. One loop at eps = 10 kHz on the 1 MHz anchor mode with the carrier and both first sidebands (lamb_dicke_order =
+    1, no Debye-Waller factor) against the closed form's pi/4, at eta = 0.1 and 0.025 (Omega/mu = 0.0505 and 0.202): the
+    ratio of the two angles is the ratio of (J_0 + J_2)^2 at x = 2 Omega/mu to 2e-4 (0.96238 against 0.96233), where Roos's
+    printed 4 Omega/mu read in this Omega would give 0.856; the counter-rotating S_y^2 term's drive-independent eps/(2 nu)
+    offset (+0.005 on each angle) cancels in the ratio."""
+    opts = BuilderOptions(lamb_dicke_order=1, include_stark=False, frozen_debye_waller=False)
+    chi: dict[float, float] = {}
+    for eta in (0.1, 0.025):
+        dev = anchor_device(eta)
+        modes = gate_modes(dev, (0, 1), (0, 1)).subset([ANCHOR_MODE])
+        wf = Waveform.symmetric(modes, gate_mode=ANCHOR_MODE, loops=1, epsilon_hz=EPS_ANCHOR_HZ, kernel="rwa")
+        omega = TWO_PI * float(wf.segments[0].amplitude_hz[(0, "blue")])
+        mu = TWO_PI * float(wf.segments[0].detuning_hz["blue"])
+        assert omega / mu == pytest.approx(
+            EPS_ANCHOR_HZ / (2.0 * eta * (NU_ANCHOR_HZ - EPS_ANCHOR_HZ)), rel=1e-9
+        )
+        tr, _ = _run(dev, wf, ONE_MODE_SPACE, opts)
+        p11 = float(np.real(tr.final.internal.full()[3, 3]))
+        chi[omega / mu] = math.asin(math.sqrt(p11)) / (math.pi / 4.0)
+    (weak, w_chi), (strong, s_chi) = sorted(chi.items())
+    assert weak == pytest.approx(0.0505, rel=1e-3) and strong == pytest.approx(0.202, rel=1e-3)
+    measured = s_chi / w_chi
+    per_tone = (roos_force_saturation(strong, 1.0) / roos_force_saturation(weak, 1.0)) ** 2
+    roos_printed = (roos_force_saturation(2.0 * strong, 1.0) / roos_force_saturation(2.0 * weak, 1.0)) ** 2
+    assert measured == pytest.approx(per_tone, abs=2e-4), (measured, per_tone)
+    assert abs(measured - roos_printed) > 0.1
 
 
 def test_exact_ms_propagator_first_order_lamb_dicke(anchor) -> None:
@@ -547,15 +577,16 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     # the sideband element's Lamb-Dicke deficit: 1 - <n+1|D(i eta)|n>/(eta sqrt(n+1)) at the cap's top n = 11, reported
     # beside the budget and NOT summed (its mean is the s^2 calibration's rescaling, its spread the Debye-Waller term)
     assert budget["ms11.sideband_lamb_dicke_deficit"] == pytest.approx(3.0554e-2, rel=1e-2)
-    # the Bessel force saturation is Roos Eq. 17: f = 1 - (J_0 + J_2)(4 Omega/mu) at the tone amplitude and the
-    # tone-to-carrier detuning, entered as the uncalibrated angle error's infidelity sin^2(pi f/2)
+    # the Bessel force saturation is Roos Eq. 17: f = 1 - (J_0 + J_2)(2 Omega/mu) in the per-tone Omega at the tone
+    # amplitude and the tone-to-carrier detuning, entered as the uncalibrated angle error's infidelity sin^2(pi f/2)
     gate = sched.gates[0]
     seg = gate.waveform.segments[0]
     omega_hz = max(abs(float(a)) for a in seg.amplitude_hz.values())
     mu_hz = min(abs(float(d)) for d in seg.detuning_hz.values())
     f = 1.0 - roos_force_saturation(TWO_PI * omega_hz, TWO_PI * mu_hz)
-    # x = 4 Omega/mu = 0.085 at Omega/2pi = 64 kHz against mu/2pi = 3.01 MHz: f = x^2/8
-    assert 1e-4 < f < 2e-3, f
+    # x = 2 Omega/mu = 0.0429 at Omega/2pi = 64.1 kHz against mu/2pi = 2.99 MHz: f = x^2/8
+    assert mu_hz == pytest.approx(2.99e6, rel=1e-6)
+    assert f == pytest.approx((2.0 * omega_hz / mu_hz) ** 2 / 8.0, rel=1e-3) and 2e-4 < f < 3e-4, f
     assert budget["ms11.bessel_saturation"] == pytest.approx(math.sin(math.pi * f / 2.0) ** 2, rel=1e-9)
     assert budget["ms11.bessel_saturation"] == pytest.approx(roos_bessel_saturation(gate.waveform), rel=1e-12)
     assert budget["ms11.bessel_saturation"] < 1e-5, "far inside the off-resonant carrier term"
