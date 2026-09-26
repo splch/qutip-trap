@@ -330,7 +330,8 @@ def test_stark_scans_beat_note_mode_splits_the_light_shift_from_the_coupling_shi
 ) -> None:
     """With the beat note at +-delta the fringe shift is the light shift plus the coupling shift Omega^2/(2 mu), odd in the
     beat note mu: on exact fringes the even part returns the light shift and the odd part the expected coupling shift, both
-    to 1e-9 (a 5 kHz probe resolves the 2.4 kHz coupling shift); an unknown mode is refused."""
+    to 1e-9 (the default probe, 1 kHz plus twice the believed coupling shift, resolves the 2.4 kHz coupling shift; a 1 kHz
+    probe does not); an unknown mode is refused."""
     fx, _sur = two_ion
     omega = derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False).carrier_rabi_hz
 
@@ -339,10 +340,12 @@ def test_stark_scans_beat_note_mode_splits_the_light_shift_from_the_coupling_shi
         return _exact_fringe(-38.4 + omega**2 / (2.0 * mu))(machine, ion, delays_s, **kw)
 
     monkeypatch.setattr("qutip_trap.experiments.light.ramsey", fringe)
-    res = stark_scan(
-        Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=5e3, shots=None, mode="beat_note"
-    )
+    res = stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), shots=None, mode="beat_note")
     assert res.converged, res.notes
+    narrow = stark_scan(
+        Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=1e3, shots=None, mode="beat_note"
+    )
+    assert not narrow.converged
     assert res.fitted["stark_shift_hz"][0] == pytest.approx(-38.4, abs=1e-9)
     coupling = res.fitted["coupling_shift_hz"][0]
     assert coupling == pytest.approx(res.fitted["coupling_shift_expected_hz"][0], rel=1e-9) and coupling > 2e3

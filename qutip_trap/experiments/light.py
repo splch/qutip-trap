@@ -71,7 +71,7 @@ def stark_scan(
     delays_s: Sequence[float],
     *,
     mode: Literal["per_beam", "beat_note"] = "per_beam",
-    probe_hz: float = 1e3,
+    probe_hz: float | None = None,
     rabi_hz_belief: float | None = None,
     **kw: Unpack[_LabOptions],
 ) -> ExperimentResult:
@@ -81,8 +81,9 @@ def stark_scan(
     (f_minus - f_plus)/2, exact while |delta| < probe, with f_plus + f_minus = 2 probe and the delay grid's Nyquist
     frequency as the range guards; the drive's shift is the sum over its beams. ``mode="beat_note"``: both beams on, the
     beat note detuned by the highest mode frequency plus ten Rabi frequencies at both signs; the light shift is the even
-    part of the two fringe shifts and the odd part the coupling shift Omega^2/(2 delta). ``probe_hz`` is the Ramsey probe,
-    ``rabi_hz_belief`` the table's Rabi frequency for the pi/2 pulses. Data rows (beam or sign, delay_s, P1); fitted
+    part of the two fringe shifts and the odd part the coupling shift Omega^2/(2 delta). ``probe_hz`` is the Ramsey probe:
+    by default 1 kHz, plus twice the believed coupling shift in beat-note mode, so that the fringe resolves the shift it
+    splits off. ``rabi_hz_belief`` is the table's Rabi frequency for the pi/2 pulses. Data rows (beam or sign, delay_s, P1); fitted
     stark_shift_hz (the drive's total) and, per beam, stark_shift_hz[b], fringe_plus_hz[b], fringe_minus_hz[b]
     (per_beam), or coupling_shift_hz, coupling_shift_expected_hz and stark_detuning_hz (beat_note)."""
     from qutip_trap.control.pulses import Drive, Pulse, Tone
@@ -104,7 +105,12 @@ def stark_scan(
         )
     omega = derived.carrier_rabi_hz
     belief = float(rabi_hz_belief or omega)
-    probe = abs(float(probe_hz))
+    far = abs(float(max(m.omega_hz for m in device.crystal.modes) + 10.0 * belief))
+    coupling_expected = belief**2 / (2.0 * far)
+    if probe_hz is not None:
+        probe = abs(float(probe_hz))
+    else:
+        probe = 1e3 + (2.0 * coupling_expected if mode == "beat_note" else 0.0)
     rows: list[np.ndarray] = []
     sigmas: list[np.ndarray | None] = []
     notes: list[str] = []
@@ -181,7 +187,6 @@ def stark_scan(
             converged = converged and ok
         fitted["stark_shift_hz"] = (total, math.sqrt(var))
     elif mode == "beat_note":
-        far = abs(float(max(m.omega_hz for m in device.crystal.modes) + 10.0 * belief))
         fringes = {
             sign: fringe(
                 float(sign),
@@ -197,7 +202,7 @@ def stark_scan(
         s_total = 0.5 * math.hypot(fringes[+1][1], fringes[-1][1])
         fitted["stark_shift_hz"] = (0.5 * (shift_p + shift_m), s_total)
         fitted["coupling_shift_hz"] = (0.5 * (shift_p - shift_m), s_total)
-        fitted["coupling_shift_expected_hz"] = (belief**2 / (2.0 * far), 0.0)
+        fitted["coupling_shift_expected_hz"] = (coupling_expected, 0.0)
         fitted["stark_detuning_hz"] = (far, 0.0)
         converged = fringes[+1][2] and fringes[-1][2] and max(abs(shift_p), abs(shift_m)) < probe
         notes.append("beat-note mode: the delays must resolve a fringe at probe minus Omega^2/(2 delta)")
