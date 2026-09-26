@@ -146,7 +146,8 @@ def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -
 
 def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(raman) -> None:
     """A thermal mode under a carrier pulse evolves as sesolve eigen-branches that reproduce the master equation (P1 and state to
-    1e-6, n to 1e-5) and drop weight below the threshold with a note; a heated mixture keeps mesolve."""
+    1e-6, n to 1e-5) and drop weight below the threshold with a note, also with the device's channels on when all their rates
+    are zero; a heated mixture keeps mesolve."""
     dev, dd, space = raman
     om = 2.0 * math.pi * dd.carrier_rabi_hz
     state = space.initial_state([0], thermal={KX: 0.8})
@@ -176,6 +177,11 @@ def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(rama
     _, eng = _run(dev, sched, state, space, Numerics(branch_weight_min=0.05))
     assert eng.last_report.trajectories == len(kets3)
     assert any("pure branches" in n and "dropped" in n for n in eng.last_report.notes)
+    # the device's channels on a device whose rates are all zero: the run is still unitary and takes the same branches
+    zero_rates, eng_z = _run(dev, sched, state, space, device_channels=True)
+    assert eng_z.is_unitary(dev, space)
+    assert eng_z.last_report.method == "sesolve" and eng_z.last_report.trajectories == len(kets)
+    assert (zero_rates.final.joint - fast.final.joint).norm() < 1e-12
     # a density matrix WITH collapse operators keeps the master equation
     _, eng_c = _run(
         _heated(dev),

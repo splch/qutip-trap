@@ -689,12 +689,7 @@ class JointExactEngine:
         kets: list[qt.Qobj] | None = [joint] if joint.isket else None
         weights: list[float] = [1.0] if joint.isket else []
         rho: qt.Qobj | None = None if joint.isket else joint
-        if (
-            rho is not None
-            and not self.channels
-            and not self.device_channels
-            and rho.shape[0] <= EIGH_DIMENSION_MAX
-        ):
+        if rho is not None and self.is_unitary(device, space) and rho.shape[0] <= EIGH_DIMENSION_MAX:
             kets, weights, dropped = _pure_branches(rho, options.branch_weight_min)
             rho = None
             if dropped > 0.0:
