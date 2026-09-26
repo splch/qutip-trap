@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from typing import get_args
 
 import numpy as np
 import pytest
@@ -13,7 +14,13 @@ import qutip as qt
 
 from qutip_trap.calibration import CalibrationCache, cached_surrogate, calibrate
 from qutip_trap.calibration.entangling import frame_rotated, spot_check_space
-from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
+from qutip_trap.calibration.experiments import (
+    PRODUCES,
+    UPSTREAM,
+    full_calibration,
+    refused_table,
+    upstream_status,
+)
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
 from qutip_trap.control.hardware import physical_schedule
 from qutip_trap.control.native import gpi2
@@ -32,7 +39,7 @@ from qutip_trap.control.schedule import (
     stark_phase_rad,
 )
 from qutip_trap.control.shaping import gate_modes
-from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable
+from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable, EntryGroup
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
@@ -324,6 +331,28 @@ def test_a_mode_frequency_fit_with_micromotion_uncalibrated_refuses_to_run(two_i
     )
     for name in ("stark_scan", "crosstalk_scan", "field_scan", "crystal_image"):
         assert name in UPSTREAM
+
+
+def test_a_refusal_marks_exactly_the_entries_the_table_files_under_the_group(two_ion) -> None:
+    """Every entry group the dependency graph names is one the table addresses (``EntryGroup``), the groups partition the
+    table's entries, and refusing a group marks exactly its entries uncalibrated, both phases of every waveform for ``ms``,
+    after which ``upstream_status`` names it; a group the table holds nothing of refuses nothing."""
+    _fx, sur = two_ion
+    table = sur.table
+    groups = get_args(EntryGroup)
+    assert {g for named in (*UPSTREAM.values(), *PRODUCES.values()) for g in named} <= set(groups)
+    parts = [set(table.group(g)) for g in groups]
+    assert set().union(*parts) == set(table.entries()) and sum(map(len, parts)) == len(table.entries())
+    assert table.uncalibrated() == ()
+    held = 0
+    for g, part in zip(groups, parts):
+        refused = refused_table(table, (g,), "probe", 5.0, 3)
+        assert set(refused.uncalibrated()) == part, g
+        assert all(e.experiment == "probe" and e.fitted_at_s == 5.0 for e in refused.group(g).values()), g
+        assert upstream_status(refused, (g,)) == (g if part else None)
+        assert upstream_status(refused, tuple(h for h in groups if h != g)) is None
+        held += bool(part)
+    assert len(table.group("ms")) == 2 and held >= 8
 
 
 # ---- the crystal image --------------------------------------------------------------------------------------------------------------

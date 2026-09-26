@@ -11,7 +11,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dc_field
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args
 
 if TYPE_CHECKING:
     from qutip_trap.control.shaping import GateModes, Kernel
@@ -43,7 +43,7 @@ WaveformKind = Literal["ms", "light_shift", "gradient"]
 """``ms``: bichromatic red/blue legs on the spin flip; ``light_shift``: one beat note ("blue") on the state-dependent
 light shift, sigma_z sigma_z; ``gradient``: the two microwave tones at -/+ delta of a near-field magnetic-gradient drive,
 whose dressed sigma_z force carries J_2(4 Omega_mu/delta)."""
-_ENTRY_GROUPS: Final[tuple[str, ...]] = (
+KeyedGroup = Literal[
     "qubit_freq",
     "rabi",
     "stark",
@@ -55,8 +55,14 @@ _ENTRY_GROUPS: Final[tuple[str, ...]] = (
     "detection",
     "heating",
     "lamb_dicke",
-)
+]
 """The table fields that map keys to ``CalEntry`` records, in the order ``CalibrationTable.entries`` lists them."""
+EntryGroup = Literal["field", KeyedGroup, "ms"]
+"""An entry group of the table, what a calibration experiment reads and writes (``CalibrationTable.group``,
+``CalibrationTable.with_group``): the field entry, a keyed map, or the phase entries of the entangling waveforms (``ms``),
+in the order ``CalibrationTable.entries`` lists them."""
+_ENTRY_GROUPS: Final[tuple[KeyedGroup, ...]] = get_args(KeyedGroup)
+_GROUPS: Final[tuple[EntryGroup, ...]] = get_args(EntryGroup)
 
 
 def _kind_of_key(key: str) -> EntryKind:
@@ -334,14 +340,41 @@ class CalibrationTable:
         included; ``kind`` keeps the setpoints or the characterisation only."""
         if kind is not None:
             return {k: e for k, e in self.entries().items() if _kind_of_key(k) == kind}
-        out: dict[str, CalEntry] = {"field": self.field}
-        for name in _ENTRY_GROUPS:
-            for key, entry in getattr(self, name).items():
-                out[f"{name}[{key!r}]"] = entry
-        for pair, wf in self.ms.items():
-            out[f"ms[{pair!r}].phi_s"] = wf.phi_s
-            out[f"ms[{pair!r}].phi_m"] = wf.phi_m
+        out: dict[str, CalEntry] = {}
+        for name in _GROUPS:
+            out.update(self.group(name))
         return out
+
+    def group(self, name: EntryGroup) -> dict[str, CalEntry]:
+        """The entries of one entry group under their flat keys (``entries``): the field entry, every entry of a keyed map,
+        or both phase entries of every entangling waveform (``ms``)."""
+        if name == "field":
+            return {"field": self.field}
+        if name == "ms":
+            phases: dict[str, CalEntry] = {}
+            for pair, wf in self.ms.items():
+                phases[f"ms[{pair!r}].phi_s"] = wf.phi_s
+                phases[f"ms[{pair!r}].phi_m"] = wf.phi_m
+            return phases
+        return {f"{name}[{key!r}]": entry for key, entry in getattr(self, name).items()}
+
+    def with_group(self, name: EntryGroup, entry: Callable[[CalEntry], CalEntry]) -> CalibrationTable:
+        """This table with every entry of the group ``name`` (``group``) replaced by ``entry`` of it: a proposal returning a
+        new table, as ``with_params`` is."""
+        import dataclasses
+
+        if name == "field":
+            return dataclasses.replace(self, field=entry(self.field))
+        if name == "ms":
+            return dataclasses.replace(
+                self,
+                ms={
+                    pair: dataclasses.replace(wf, phi_s=entry(wf.phi_s), phi_m=entry(wf.phi_m))
+                    for pair, wf in self.ms.items()
+                },
+            )
+        changed: dict[str, Any] = {name: {key: entry(e) for key, e in getattr(self, name).items()}}
+        return dataclasses.replace(self, **changed)
 
     def uncalibrated(self) -> tuple[str, ...]:
         """The flat keys of every entry a fit could not establish (what the scheduler refuses to use)."""

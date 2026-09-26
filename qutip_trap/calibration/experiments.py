@@ -23,12 +23,13 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from qutip_trap.calibration.surrogate import SurrogateReport, surrogate_table
-from qutip_trap.control.table import CalEntry, CalibrationTable, Waveform, usable
+from qutip_trap.control.table import CalEntry, CalibrationTable, EntryGroup, Waveform, usable
 from qutip_trap.experiments.result import ExperimentResult
 from qutip_trap.machine import Machine
 from qutip_trap.options import Physics
@@ -56,7 +57,7 @@ ORDER: tuple[str, ...] = (
 )
 """The dependency order (``ms_scan`` runs the amplitude, detuning and phase scans of the entangling gate)."""
 
-UPSTREAM: dict[str, tuple[str, ...]] = {
+UPSTREAM: dict[str, tuple[EntryGroup, ...]] = {
     "crystal_image": (),
     "field_scan": (),
     "micromotion_scan": ("field",),
@@ -72,7 +73,7 @@ UPSTREAM: dict[str, tuple[str, ...]] = {
 }
 """The table entry groups each experiment reads: a fit refuses to run while one of them is ``uncalibrated``."""
 
-PRODUCES: dict[str, tuple[str, ...]] = {
+PRODUCES: dict[str, tuple[EntryGroup, ...]] = {
     "crystal_image": (),
     "field_scan": ("field",),
     "micromotion_scan": ("micromotion",),
@@ -166,46 +167,19 @@ def _uncalibrated(entry: CalEntry, experiment: str, t0_s: float, sample_id: int)
 
 
 def refused_table(
-    table: CalibrationTable, groups: Sequence[str], experiment: str, t0_s: float, sample_id: int
+    table: CalibrationTable, groups: Sequence[EntryGroup], experiment: str, t0_s: float, sample_id: int
 ) -> CalibrationTable:
     """``table`` with every entry of the groups a REFUSED ``experiment`` would have written marked ``uncalibrated``."""
+    mark = partial(_uncalibrated, experiment=experiment, t0_s=t0_s, sample_id=sample_id)
     for group in groups:
-        if group == "field":
-            table = replace(table, field=_uncalibrated(table.field, experiment, t0_s, sample_id))
-        elif group == "ms":
-            table = replace(
-                table,
-                ms={
-                    pair: replace(
-                        wf,
-                        phi_s=_uncalibrated(wf.phi_s, experiment, t0_s, sample_id),
-                        phi_m=_uncalibrated(wf.phi_m, experiment, t0_s, sample_id),
-                    )
-                    for pair, wf in table.ms.items()
-                },
-            )
-        else:
-            entries: dict[Any, CalEntry] = getattr(table, group)
-            changes: dict[str, Any] = {
-                group: {k: _uncalibrated(e, experiment, t0_s, sample_id) for k, e in entries.items()}
-            }
-            table = replace(table, **changes)
+        table = table.with_group(group, mark)
     return table
 
 
-def upstream_status(table: CalibrationTable, needs: Sequence[str]) -> str | None:
-    """The first uncalibrated upstream entry group an experiment reads, or None when every one is usable."""
+def upstream_status(table: CalibrationTable, needs: Sequence[EntryGroup]) -> EntryGroup | None:
+    """The first upstream entry group an experiment reads with an uncalibrated entry, or None when every one is usable."""
     for name in needs:
-        if name == "field":
-            if not usable(table.field):
-                return "field"
-            continue
-        if name == "ms":
-            if any(not usable(w.phi_s) for w in table.ms.values()):
-                return "ms"
-            continue
-        entries = getattr(table, name)
-        if any(not usable(e) for e in entries.values()):
+        if not all(e.usable for e in table.group(name).values()):
             return name
     return None
 
@@ -293,11 +267,11 @@ def full_calibration(
         "nbar": nbar_belief,
     }
 
-    def refuse(name: str, keys: Sequence[str], reason: str) -> None:
+    def refuse(name: str, groups: Sequence[EntryGroup], reason: str) -> None:
         nonlocal table
         refused[name] = reason
         notes.append(f"{name} refused: {reason}")
-        table = refused_table(table, keys, name, t0_s, sid)
+        table = refused_table(table, groups, name, t0_s, sid)
 
     def check(name: str) -> bool:
         bad = upstream_status(table, UPSTREAM[name])
