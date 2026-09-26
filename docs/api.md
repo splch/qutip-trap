@@ -115,11 +115,11 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 
 **`qutip_trap.calibration`**
 - `calibrate(machine, *, method="closed_form", experiments=("all",), seed=0, t0_s=None, cache=DEFAULT_CACHE, **scans)`: the `CalibrationReport` whose `table` the scheduler reads; `CalibrationMethod`, `CalibrationCache`.
-- `surrogate`: `surrogate_table`, the closed-form table with exact spot checks, and its `SurrogateReport`.
+- `surrogate`: `surrogate_table`, the closed-form table with exact spot checks under the machine's `physics`, and its `SurrogateReport`.
 - `experiments`: `full_calibration`, `CalibrationScans`, `CalibrationReport`, `CalibrationError`, the dependency order `ORDER`, `UPSTREAM`, `PRODUCES`, `ALIASES`.
-- `entangling`: `exact_gate_check` (a `GateCheck`), `calibrate_entangling_angle`, `thermal_robustness`; `readout`: `calibrate_detection`, `DetectionCalibration`.
+- `entangling`: `exact_gate_check` (a `GateCheck`), `calibrate_entangling_angle`, `thermal_robustness`, `parity_after_analysis_pulse`, `ms_schedule`, `zz_echo_schedule`, each under a required `physics`, playing the scheduler's own schedule of the gate; `readout`: `calibrate_detection`, `DetectionCalibration`.
 
-**`qutip_trap.control.table`**: `CalibrationTable` (`with_params`, `updated_with`, `entries`, `kind_of`, `uncalibrated`, `to_dict`, `from_dict`), `CalEntry`, `Waveform`, `Segment`, `EntryKind`, `ENTRY_KINDS`.
+**`qutip_trap.control.table`**: `CalibrationTable` (`with_params`, `updated_with`, `entries`, `group`, `with_group`, `kind_of`, `uncalibrated`, `to_dict`, `from_dict`), `CalEntry`, `Waveform`, `Segment`, `EntryKind`, `ENTRY_KINDS`, `EntryGroup`.
 
 **`qutip_trap.benchmarks`**
 - `rb`: `randomized_benchmarking(machine, qubits, lengths, *, n_sequences=4, shots=200, ...)`, single, simultaneous, two-qubit or Knill-style: an `RBResult` of `RBSequence` records.
@@ -136,7 +136,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 
 **`qutip_trap.run.pipeline`**: `compile_calibrate_schedule(machine, circuit, *, seed=0)`, the prefix `run`, `schedule` and `estimate` share (a `Prefix`); `execute`, the whole run.
 
-**`qutip_trap.control.schedule`**: `schedule(circuit, device, table, ...)`, native gates to pulses with absolute times; `Schedule`, `ScheduledEvent`, `PlayedGate`, `GateTarget`, `PhaseFrame`, `GateDrive`, `resolve_drives`, `ScheduleError`.
+**`qutip_trap.control.schedule`**: `schedule(circuit, device, table, ...)`, native gates to pulses with absolute times, the entangling tones referenced to the chain's response under `hardware_chain` (the run's `Physics.hardware_chain`); `Schedule`, `ScheduledEvent`, `PlayedGate`, `GateTarget`, `PhaseFrame`, `GateDrive`, `resolve_drives`, `ScheduleError`.
 
 **`qutip_trap.control.pulses`**: `Pulse`, `Drive`, `Tone`, `LightShiftCouplings`.
 
@@ -161,7 +161,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 **`qutip_trap.noise.scattering`**: `scattering_channels`, `scattering_estimates`, `InternalLevels`, `internal_levels`.
 
 **`qutip_trap.run`**
-- `job`: `prepare(device, space, table, ...)`, the initial state of a run; `space`: `select_space`, the Section 5.2 mode classes as a `SpaceSelection`.
+- `job`: `prepare(device, space, table, ...)`, the initial state of a run; `space`: `select_space`, the Section 5.2 mode classes as a `SpaceSelection`, and `mode_cap` (a `ModeCap`), the per-mode truncation the run and the spot check share.
 - `gate_local`: `gate_steps`, `GateStep`, `GateLocalReport`, `GateLocalStep`, the walk of Section 5.4.
 
 ## Results and records
