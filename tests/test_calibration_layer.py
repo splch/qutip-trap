@@ -11,10 +11,10 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.calibration import CalibrationCache, calibrate
+from qutip_trap.calibration import CalibrationCache, cached_surrogate, calibrate
 from qutip_trap.calibration.entangling import frame_rotated, spot_check_space
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
-from qutip_trap.control.compiler import compile_report
+from qutip_trap.control.compiler import Circuit, Operation, compile_report
 from qutip_trap.control.hardware import physical_schedule
 from qutip_trap.control.native import gpi2
 from qutip_trap.control.schedule import (
@@ -26,6 +26,7 @@ from qutip_trap.control.schedule import (
     entangling_pulses,
     frame_after,
     ms_spin_phases,
+    resolve_drives,
     schedule,
     single_qubit_pulse,
     stark_phase_rad,
@@ -244,6 +245,41 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
         fx.device, roles=dataclasses.replace(fx.device.roles, entangling={0: fx.entangling_drives[0]})
     )
     assert calibrate(Machine(single), cache=cache, **kw).table is not t1
+
+
+def test_a_run_and_a_caller_asking_for_the_same_pairs_share_one_cache_entry() -> None:
+    """A run's request (its circuit's pairs as written, the explicit drive maps) and a caller's (a list of the same pairs in
+    another order and orientation) are one request: one surrogate is built for both, its pairs keyed (lower, higher);
+    no pairs is every pair, and a pair that is not two distinct ions of the crystal is refused."""
+    fx = yb171_chain(3)
+    machine = Machine(fx.device)
+    cheap = dict(detection_records=200, detection_windows_s=(20e-6,), spot_check=False)
+    cache = CalibrationCache()
+    circuit = Circuit(
+        3, (Operation("ms", (1, 2), (0.0, 0.0, 1.0)), Operation("ms", (1, 0), (0.0, 0.0, 1.0))), (0, 1, 2)
+    )
+    drives, ent = resolve_drives(fx.device)
+    ran = cached_surrogate(
+        fx.device,
+        seed=0,
+        t0_s=machine.physics.t0_s,
+        cache=cache,
+        gate_drives=drives,
+        entangling_drives=ent,
+        options=machine.numerics,
+        builder_options=machine.physics.builder,
+        hardware_chain=machine.physics.hardware_chain,
+        pairs=circuit.entangling_pairs(),
+        **cheap,
+    )
+    asked = calibrate(machine, cache=cache, pairs=[[0, 1], [2, 1]], **cheap)
+    assert asked.surrogate is ran and len(cache.reports) == 1
+    assert set(ran.table.ms) == set(ran.mode_classes) == {(0, 1), (1, 2)}
+    every = calibrate(machine, cache=cache, **cheap).surrogate
+    assert calibrate(machine, cache=cache, pairs=[(0, 2), (1, 2), (0, 1)], **cheap).surrogate is every
+    assert len(cache.reports) == 2
+    with pytest.raises(ValueError, match="two distinct ions"):
+        calibrate(machine, cache=cache, pairs=[(1, 1)], **cheap)
 
 
 # ---- the dependency graph ---------------------------------------------------------------------------------------------------------------

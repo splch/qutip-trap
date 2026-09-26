@@ -92,6 +92,24 @@ def surrogate_waveform(
     return solve_amplitude_modulation(modes, mu_hz=mu, duration_s=duration_s), modes
 
 
+def canonical_pairs(device: Device, pairs: Sequence[Sequence[int]] | None) -> tuple[tuple[int, int], ...]:
+    """The entangling pairs of a calibration request in one form: each pair of distinct ions of the crystal as (lower ion,
+    higher ion), each once, in increasing order; None is every pair of the crystal. A pair's waveform serves either key
+    order (``CalibrationTable.waveform_for``), so two requests that name the same pairs are one request."""
+    n = device.crystal.n_ions
+    if pairs is None:
+        return tuple((a, b) for a in range(n) for b in range(a + 1, n))
+    out: set[tuple[int, int]] = set()
+    for pair in pairs:
+        ions = sorted(int(q) for q in pair)
+        if len(ions) != 2 or ions[0] == ions[1] or ions[0] < 0 or ions[1] >= n:
+            raise ValueError(
+                f"an entangling pair is two distinct ions of the {n}-ion crystal, not {tuple(pair)}"
+            )
+        out.add((ions[0], ions[1]))
+    return tuple(sorted(out))
+
+
 def surrogate_table(
     device: Device,
     *,
@@ -108,7 +126,8 @@ def surrogate_table(
     hardware_chain: bool = True,
 ) -> SurrogateReport:
     """The surrogate CalibrationTable for ``device``: ``pairs`` restricts the entangling waveforms (default:
-    every pair of the crystal), ``spot_check=False`` stores the closed-form waveforms as seeds, the explicit drive maps
+    every pair of the crystal; each keyed as ``canonical_pairs`` orders it), ``spot_check=False`` stores the closed-form
+    waveforms as seeds, the explicit drive maps
     override the device's roles; the spot checks integrate with ``options`` (its caps too) and play through the control
     electronics under ``hardware_chain`` (``Physics.hardware_chain``)."""
     from qutip_trap.options import Numerics
@@ -200,9 +219,7 @@ def surrogate_table(
     runs: dict[tuple[int, int], CalibrationRun] = {}
     classes_by_pair: dict[tuple[int, int], dict[int, ModeClass3]] = {}
     frozen_chi: dict[tuple[int, int], dict[int, float]] = {}
-    wanted = list(pairs) if pairs is not None else [(a, b) for a in range(n) for b in range(a + 1, n)]
-    for pair in wanted:
-        a, b = int(pair[0]), int(pair[1])
+    for a, b in canonical_pairs(device, pairs):
         if a not in ent:
             notes.append(f"pair {(a, b)}: ion {a} has no entangling drive; no waveform is solved for it")
             continue

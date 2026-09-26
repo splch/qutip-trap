@@ -13,10 +13,10 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from qutip_trap.calibration.experiments import CalibrationReport, full_calibration
+from qutip_trap.calibration.surrogate import SurrogateReport, canonical_pairs, surrogate_table
 from qutip_trap.hashing import canonical_digest
 
 if TYPE_CHECKING:
-    from qutip_trap.calibration.surrogate import SurrogateReport
     from qutip_trap.control.schedule import GateDrive
     from qutip_trap.device.model import Device, ResolvedRoles
     from qutip_trap.machine import Machine
@@ -74,21 +74,28 @@ def cached_surrogate(
     cache: CalibrationCache | None = DEFAULT_CACHE,
     gate_drives: Mapping[int, GateDrive] | None = None,
     entangling_drives: Mapping[int, GateDrive] | None = None,
+    pairs: Sequence[Sequence[int]] | None = None,
     **kwargs: Any,
 ) -> SurrogateReport:
-    """``surrogate_table`` through ``cache`` (None: always built); explicit drive maps override the device's roles."""
-    from qutip_trap.calibration.surrogate import surrogate_table
-
+    """``surrogate_table`` through ``cache`` (None: always built); explicit drive maps override the device's roles. The
+    request is keyed and built with its pairs as ``canonical_pairs`` orders them, so a run's circuit pairs and a caller's
+    list of the same pairs share one entry."""
     roles = device.roles.resolve(device, gate_drives=gate_drives, entangling_drives=entangling_drives)
+    request = {**kwargs, "pairs": canonical_pairs(device, pairs)}
 
     def build() -> SurrogateReport:
         return surrogate_table(
-            device, seed=seed, t0_s=t0_s, gate_drives=roles.gate, entangling_drives=roles.entangling, **kwargs
+            device,
+            seed=seed,
+            t0_s=t0_s,
+            gate_drives=roles.gate,
+            entangling_drives=roles.entangling,
+            **request,
         )
 
     if cache is None:
         return build()
-    return cache.report(device, roles, "closed_form", seed=seed, t0_s=t0_s, kwargs=kwargs, build=build)
+    return cache.report(device, roles, "closed_form", seed=seed, t0_s=t0_s, kwargs=request, build=build)
 
 
 CalibrationMethod = Literal["closed_form", "experiments"]
@@ -101,24 +108,31 @@ def calibrate(
     *,
     method: CalibrationMethod = "closed_form",
     experiments: Sequence[str] = ("all",),
+    pairs: Sequence[Sequence[int]] | None = None,
     seed: int = 0,
     t0_s: float | None = None,
     cache: CalibrationCache | None = DEFAULT_CACHE,
     **scans: Any,
 ) -> CalibrationReport:
     """Calibrate a machine: the ``CalibrationReport`` whose ``table`` the scheduler reads. The machine supplies the drive
-    roles, the numerics and the physics (the builder options and the hardware chain); ``scans`` are the settings of
-    :func:`~qutip_trap.calibration.surrogate.surrogate_table` (``pairs``, ``detection_records``, ``detection_windows_s``,
-    ``spot_check``) or of :func:`~qutip_trap.calibration.experiments.full_calibration` (``pairs``, ``scans`` a
-    ``CalibrationScans``, and the surrogate's settings), ``experiments`` restricts the simulated experiments (the others
-    stay surrogate seeds), ``t0_s`` defaults to the machine's ``Physics.t0_s``. Reports are cached in ``cache`` (None
-    disables it); a device whose hash changed never hits a cached table."""
+    roles, the numerics and the physics (the builder options and the hardware chain); ``pairs`` restricts the entangling
+    waveforms (default: every pair of the crystal, in either key order); ``scans`` are the other settings of
+    :func:`~qutip_trap.calibration.surrogate.surrogate_table` (``detection_records``, ``detection_windows_s``,
+    ``spot_check``) or of :func:`~qutip_trap.calibration.experiments.full_calibration` (``scans`` a ``CalibrationScans``,
+    and the surrogate's settings), ``experiments`` restricts the simulated experiments (the others stay surrogate seeds),
+    ``t0_s`` defaults to the machine's ``Physics.t0_s``. Reports are cached in ``cache`` (None disables it), keyed by the
+    request with its pairs as ``canonical_pairs`` orders them; a device whose hash changed never hits a cached table."""
     from qutip_trap.noise.sampling import quiet_sample
 
     device = machine.device
     t0 = float(machine.physics.t0_s if t0_s is None else t0_s)
     physics = machine.physics
-    kwargs: dict[str, Any] = {"options": machine.numerics, "builder_options": physics.builder, **scans}
+    kwargs: dict[str, Any] = {
+        "options": machine.numerics,
+        "builder_options": physics.builder,
+        "pairs": canonical_pairs(device, pairs),
+        **scans,
+    }
     if method == "closed_form":
         sur = cached_surrogate(
             device, seed=seed, t0_s=t0, cache=cache, hardware_chain=physics.hardware_chain, **kwargs
