@@ -462,10 +462,11 @@ def carrier_step_kicks(
     a Bloch angle |K|), between which the spin-dependent force acts; the oscillation that remains is Roos 2008's Bessel
     regime. The switch-on kick is Roos's beat-phase spin-axis tilt, psi = (2 Omega/mu)|sin zeta| for equal tone phases; an
     envelope that rises from zero kicks nothing there, the carrier following it adiabatically. Theta_leg is the beat phase
-    as the builder plays it, 2 pi mu_leg t in absolute time less the per-gate reset the scheduler programs (``beat_reset``;
-    none for a detuning schedule, whose beat phase starts each segment at 2 pi mu_leg(0) times the segment's start and
-    advances by 2 pi int mu_leg). A modulator's first-order response of time constant ``response_s`` scales each leg's kick
-    by 1/sqrt(1 + (2 pi mu_leg tau)^2), the scheduler's response phase restoring its axis. Empty for a non-MS waveform."""
+    as the builder plays it, starting each segment at 2 pi mu_leg(0) times the segment's start in absolute time and
+    advancing by 2 pi int mu_leg dtau, less the per-gate reset the scheduler programs (``beat_reset``): 2 pi mu_leg(0)
+    t_start, a constant detuning's and a detuning schedule's alike. A modulator's first-order response of time constant
+    ``response_s`` scales each leg's kick by 1/sqrt(1 + (2 pi mu_leg tau)^2), the scheduler's response phase restoring its
+    axis. Empty for a non-MS waveform."""
     from qutip_trap.control.schedule import beat_phase_offset_rad
 
     if waveform.kind != "ms":
@@ -635,11 +636,12 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
             if p.gate_id is not None
             and (p.gate_id == gate.gate_id or p.gate_id.startswith(gate.gate_id + "/"))
         )
+        response_s = device.hardware.response_time_s(drive_kind)
         kicks = carrier_step_kicks(
             gate.waveform,
             gate.t_start_s,
             beat_reset=not device.hardware.phase_continuous,
-            response_s=device.hardware.response_time_s(drive_kind),
+            response_s=response_s,
         )
         # the run's gate reaches the angle of the modes it carries: a calibration measured the angle its own space
         # reached, the closed forms of a seed waveform assumed every mode

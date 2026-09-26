@@ -214,11 +214,11 @@ X_MODES = HilbertSpace(
 
 
 def _played_kets(
-    device: Device, wf: Waveform, t_start_s: float, *, space: HilbertSpace = X_COM_ALONE
+    device: Device, wf: Waveform, t_start_s: float, *, reset: bool, space: HilbertSpace = X_COM_ALONE
 ) -> list[np.ndarray]:
     """The joint kets after ``wf`` on the two-ion chain's modes of ``space`` (no light shift, the other modes switched off)
-    from the four computational inputs |ab>|0>, each as a (4, motion) array, its tones running since t = 0 on
-    phase-continuous tones and the gate started at ``t_start_s``."""
+    from the four computational inputs |ab>|0> in register order, each as a (4, motion) array, the gate started at
+    ``t_start_s`` on tones running since t = 0 (``reset=False``) or programmed from the gate's own start (``reset=True``)."""
     drives = raman_gate_drives(2)
     table = table_with_waveform((0, 1), wf, device=device, drives=drives, stark_hz={})
     spins, _ = ms_spin_phases(wf, (0, 1), (0.0, 0.0), PhaseFrame())
@@ -229,7 +229,7 @@ def _played_kets(
         t_start_s=t_start_s,
         table=table,
         gate_id="ms",
-        beat_phase_reset=False,
+        beat_phase_reset=reset,
         stark_compensation=False,
     )
     gate = PlayedGate("ms", "ms", (0, 1), wf, drives[0].beams, t_start_s, t_start_s + wf.duration_s)
@@ -242,6 +242,13 @@ def _played_kets(
         )
         out.append(np.asarray(traces.final.joint.full()).reshape(4, -1))
     return out
+
+
+def _internal_state(played: list[np.ndarray], ket: qt.Qobj) -> qt.Qobj:
+    """The internal state the play leaves from the two-ion input ``ket`` (motion |0>): by linearity sum_x <x|ket> times the
+    joint output of |x>, the motion traced out."""
+    joint = sum(complex(c) * out for c, out in zip(np.asarray(ket.full()).ravel(), played))
+    return qt.Qobj(joint @ joint.conj().T, dims=[[2, 2], [2, 2]])
 
 
 def _gate_distance(played: list[np.ndarray], reference: list[np.ndarray]) -> float:
@@ -274,7 +281,9 @@ def test_the_carrier_kicks_predict_how_far_the_start_phase_moves_a_gate() -> Non
     for name, wf in (("square", square), ("fm", fm)):
         mu = wf.segments[0].detuning_hz["blue"]
         t_g = 0.25 / float(mu(0.0) if callable(mu) else mu)
-        change = _gate_distance(_played_kets(device, wf, t_g), _played_kets(device, wf, 0.0))
+        change = _gate_distance(
+            _played_kets(device, wf, t_g, reset=False), _played_kets(device, wf, 0.0, reset=False)
+        )
         at_zero = carrier_step_kicks(wf, 0.0, beat_reset=False)
         at_quarter = carrier_step_kicks(wf, t_g, beat_reset=False)
         moved[name] = (
@@ -336,7 +345,7 @@ def test_a_resetting_chain_plays_an_fm_gate_a_quarter_beat_in_as_it_plays_at_t_z
     """The builder starts a detuning schedule's beat at 2 pi mu(0) t_start in absolute time, and the per-gate reset cancels
     it: Leung's FM pulse started a quarter beat into the schedule on hardware that programs each gate from its own start
     leaves every input where the pulse at t = 0 leaves it (trace distance below 1e-8 from |++>, |00>, |01> and |+ +i>,
-    where the running beat moves them by 8.3e-2), and the budget's tilt at t_g is its tilt at t = 0."""
+    where the running beat moves them by 8.3e-2), and the budget's carrier kicks at t_g are its kicks at t = 0."""
     device = chain_device(2)
     reset_hw = dataclasses.replace(
         device, hardware=dataclasses.replace(device.hardware, phase_continuous=False)
@@ -346,15 +355,18 @@ def test_a_resetting_chain_plays_an_fm_gate_a_quarter_beat_in_as_it_plays_at_t_z
     mu = fm.segments[0].detuning_hz["blue"]
     assert callable(mu)
     t_g = 0.25 / float(mu(0.0))
+    at_zero = _played_kets(reset_hw, fm, 0.0, reset=True)
+    at_quarter = _played_kets(reset_hw, fm, t_g, reset=True)
     plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
     plus_i = (qt.basis(2, 0) + 1j * qt.basis(2, 1)).unit()
     zero, one = qt.basis(2, 0), qt.basis(2, 1)
     for ket in (qt.tensor(plus, plus), qt.tensor(zero, zero), qt.tensor(zero, one), qt.tensor(plus, plus_i)):
-        at_zero = _played_from(reset_hw, fm, 0.0, ket, reset=True)
-        at_quarter = _played_from(reset_hw, fm, t_g, ket, reset=True)
-        assert qt.tracedist(at_zero, at_quarter) < 1e-8
-    assert roos_beat_phase_tilt(fm, t_g, beat_reset=True) == pytest.approx(
-        roos_beat_phase_tilt(fm, 0.0, beat_reset=True), abs=1e-15
+        assert qt.tracedist(_internal_state(at_zero, ket), _internal_state(at_quarter, ket)) < 1e-8
+    kicks_zero = carrier_step_kicks(fm, 0.0, beat_reset=True)
+    kicks_quarter = carrier_step_kicks(fm, t_g, beat_reset=True)
+    assert all(np.max(np.abs(kicks_quarter[i] - kicks_zero[i])) < 1e-12 for i in kicks_zero)
+    assert carrier_step_infidelity(fm, modes, kicks_quarter) == pytest.approx(
+        carrier_step_infidelity(fm, modes, kicks_zero), abs=1e-15
     )
 
 
@@ -370,7 +382,8 @@ def test_a_stepped_envelope_moves_by_its_kicks_less_than_its_switch_on_tilt() ->
     assert len(wf.segments) == 5
     t_g = 0.25 / 2.95e6
     change = _gate_distance(
-        _played_kets(device, wf, t_g, space=X_MODES), _played_kets(device, wf, 0.0, space=X_MODES)
+        _played_kets(device, wf, t_g, reset=False, space=X_MODES),
+        _played_kets(device, wf, 0.0, reset=False, space=X_MODES),
     )
     at_zero = carrier_step_kicks(wf, 0.0, beat_reset=False)
     at_quarter = carrier_step_kicks(wf, t_g, beat_reset=False)
