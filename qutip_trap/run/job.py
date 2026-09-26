@@ -465,8 +465,9 @@ def carrier_step_kicks(
     as the builder plays it, starting each segment at 2 pi mu_leg(0) times the segment's start in absolute time and
     advancing by 2 pi int mu_leg dtau, less the per-gate reset the scheduler programs (``beat_reset``): 2 pi mu_leg(0)
     t_start, a constant detuning's and a detuning schedule's alike. A modulator's first-order response of time constant
-    ``response_s`` scales each leg's kick by 1/sqrt(1 + (2 pi mu_leg tau)^2), the scheduler's response phase restoring its
-    axis. Empty for a non-MS waveform."""
+    ``response_s`` scales each leg's kick by |H(mu_leg)| = 1/sqrt(1 + (2 pi mu_leg tau)^2), the scheduler's response phase
+    restoring its axis (the |H|^2 law the two-ion Bell gate's rise-time sweep follows to 0.1 % at 5 to 10 ns and 7 % at
+    50 ns). Empty for a non-MS waveform."""
     from qutip_trap.control.schedule import beat_phase_offset_rad
 
     if waveform.kind != "ms":
@@ -643,6 +644,14 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
             beat_reset=not device.hardware.phase_continuous,
             response_s=response_s,
         )
+        if response_s > 0.0 and gate.waveform.kind == "ms":
+            mu0 = abs(_at(gate.waveform.segments[0].detuning_hz["blue"], 0.0))
+            softened = 1.0 / (1.0 + (TWO_PI * mu0 * response_s) ** 2)
+            omitted.append(
+                f"{gate.gate_id}: the carrier's kicks are the ones the device's chain plays, softened by its {response_s:.3g} s "
+                f"response to |H(mu)|^2 = {softened:.3g} of the programmed ones; a run that passes the chain by "
+                "(Physics.hardware_chain = False) plays them unsoftened"
+            )
         # the run's gate reaches the angle of the modes it carries: a calibration measured the angle its own space
         # reached, the closed forms of a seed waveform assumed every mode
         uncarried = {

@@ -63,6 +63,7 @@ from qutip_trap.species import species
 from qutip_trap.trap.crystal import Crystal, Mode
 from qutip_trap.units import ATOMIC_MASS_KG, HBAR_J_S, TWO_PI
 from tests.fixtures import (
+    REALISTIC_HARDWARE,
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,
@@ -326,6 +327,43 @@ def test_the_carrier_kicks_predict_how_far_the_start_phase_moves_a_gate() -> Non
         )
         (ms,) = intrinsic_budget(dev, sched, selection).entangling
         assert ms.carrier_steps == pytest.approx(want, rel=1e-6, abs=1e-15)
+
+
+def test_a_modulator_softens_the_budget_s_kicks_by_its_response_at_the_beat_note() -> None:
+    """Through the 50 ns modulator of the realistic chain the budget's carrier steps are the programmed kicks' term times
+    |H(mu)|^2 = (1 + (2 pi mu tau)^2)^(-1) = 0.53 at the square pulse's 2.99 MHz beat note, the response the scheduler
+    references the tones to, and the budget names that a run passing the chain by plays them unsoftened."""
+    device = dataclasses.replace(chain_device(2), hardware=REALISTIC_HARDWARE)
+    assert device.hardware.phase_continuous and device.hardware.aom_rise_s == 50e-9
+    modes = two_ion_modes(device).subset([X_COM_TWO_IONS])
+    square = Waveform.symmetric(
+        modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=EPSILON_HZ, kernel="rwa", all_modes=False
+    )
+    mu = float(square.segments[0].detuning_hz["blue"])
+    t_g = 0.25 / mu
+    drives = raman_gate_drives(2)
+    pulses = entangling_pulses(
+        square,
+        drives,
+        spin_phases_rad=ms_spin_phases(square, (0, 1), (0.0, 0.0), PhaseFrame())[0],
+        t_start_s=t_g,
+        table=table_with_waveform((0, 1), square, device=device, drives=drives, stark_hz={}),
+        gate_id="ms",
+    )
+    gate = PlayedGate("ms", "ms", (0, 1), square, drives[0].beams, t_g, t_g + square.duration_s)
+    sched = Schedule(tuple(pulses), (), (), {0: 0.0, 1: 0.0}, gates=(gate,), t0_s=t_g)
+    selection = select_space(
+        device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
+    )
+    budget = intrinsic_budget(device, sched, selection)
+    (ms,) = budget.entangling
+    softened = 1.0 / (1.0 + (TWO_PI * mu * 50e-9) ** 2)
+    assert softened == pytest.approx(0.53, abs=0.01)
+    programmed = carrier_step_kicks(square, t_g, beat_reset=False)
+    assert ms.carrier_steps == pytest.approx(
+        softened * carrier_step_infidelity(square, two_ion_modes(device), programmed), rel=1e-9
+    )
+    assert any("Physics.hardware_chain = False" in note for note in budget.omitted), budget.omitted
 
 
 def test_the_carrier_kicks_do_not_depend_on_the_order_the_pair_is_named_in() -> None:
