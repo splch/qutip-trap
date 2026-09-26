@@ -38,7 +38,7 @@ from qutip_trap.run.gate_local import (
 from qutip_trap.run.job import last_record, register_fidelity
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import best_contributions, select_space
-from tests.fixtures import BELL, WINDOWS, run, single_ion_raman_device, two_ion_surrogate
+from tests.fixtures import BELL, KX, WINDOWS, run, single_ion_raman_device, two_ion_surrogate
 
 GPI2 = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
 FAST = Numerics(branch_weight_min=1e-3)
@@ -210,6 +210,33 @@ def test_bell_circuit_gate_local_matches_joint_exact_within_the_reported_bound(t
             abs(a.probabilities.get(key, 0.0) - b.probabilities.get(key, 0.0))
             < 4.0 * a.error_bars[key] + bound
         )
+
+
+def test_a_frozen_spectator_driven_on_its_sideband_leaves_the_walk_unbounded() -> None:
+    """A Raman pulse exactly on the x mode's blue sideband, with no entangling gate to resolve the mode: the step freezes
+    it, its Section 5.2 excitation bound is infinite and so are the report's total and ``discrepancy_bound``, while the
+    frozen treatment misses the sideband flip entirely (population 6e-8 in |1> against 7.5e-3 with the mode resolved)."""
+    dev = single_ion_raman_device()
+    dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
+    drive = square_drive(dd, detuning_hz=dev.crystal.modes[KX].omega_hz, include_stark=False)
+    pulse = Pulse(drive, 0.0, 0.25 / dd.carrier_rabi_hz, "bsb", ())
+    n_modes = len(dev.crystal.modes)
+    states, report, _models = gate_local.evolve_gate_local(
+        dev,
+        Schedule((pulse,), (), (), {0: 0.0}),
+        [quiet_sample()],
+        SeedSpec(0),
+        Numerics(),
+        register0=qt.ket2dm(qt.basis(2, 0)),
+        nbar0=dict.fromkeys(range(n_modes), 0.0),
+        ion_dims=(2,),
+        setup=EngineSetup(),
+    )
+    (step,) = [s for s in report.steps if s.kind == "gate"]
+    assert step.resolved == () and KX in step.frozen_coupled and step.frozen_excitation[KX] == math.inf
+    assert any("sits on sideband +1 of frozen mode" in n for n in step.notes)
+    assert report.frozen_excitation_total == math.inf and report.discrepancy_bound == math.inf
+    assert float(qt.expect(qt.num(2), states[0][0][1])) < 1e-6
 
 
 def test_ensemble_register_by_kraus_sampling_agrees_with_the_density_matrix(two_ion) -> None:

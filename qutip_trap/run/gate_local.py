@@ -489,6 +489,8 @@ class GateLocalReport:
     residual_bound_total: float
     """sum over the gate steps of the residual-displacement bound (the first sample)."""
     frozen_excitation_total: float
+    """sum over the gate steps of ``GateLocalStep.frozen_excitation`` (the first sample): inf when a tone sits exactly on a
+    frozen spectator's sideband, where the Section 5.2 bound diverges."""
     dropped_crosstalk_total: float
     register: RegisterKind
     ensemble_size: int
@@ -513,7 +515,7 @@ class GateLocalReport:
     def discrepancy_bound(self) -> float:
         """The bound a JOINT_EXACT comparison of the final probabilities is held to (Section 9.8): the residual displacement,
         the frozen spectators' excitation, the dropped crosstalk, the dropped motional branches and the keyed tolerance's
-        change, summed over the steps."""
+        change, summed over the steps; inf when a frozen spectator is driven on its sideband, which no finite bound covers."""
         return (
             self.residual_bound_total
             + self.frozen_excitation_total
@@ -990,7 +992,7 @@ def evolve_gate_local(
                 largest = max(largest, space_used.dimension)
                 if s_idx == 0:
                     bound_total += rep.residual_bound
-                    frozen_total += sum(v for v in rep.frozen_excitation.values() if math.isfinite(v))
+                    frozen_total += sum(rep.frozen_excitation.values())
                     xt_total += rep.dropped_crosstalk
                     branch_total += rep.branch_error_bound
                     tolerance_total += rep.tolerance_change
