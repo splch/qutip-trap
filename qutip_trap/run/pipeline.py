@@ -568,6 +568,15 @@ class _GateLocal(_Level):
 # ---- the readout path: the POVM or the photon records (``Readout.mode``), resolved once per run -----------------------------
 
 
+class _ReadoutErrors(NamedTuple):
+    """One ion's readout errors (Section 13, row "Readout figure of merit")."""
+
+    eps_b: float
+    """P(declared dark | the bright qubit level)."""
+    eps_d: float
+    """P(declared bright | the other qubit level)."""
+
+
 class _ReadoutPath(Protocol):
     mode: ReadoutMode
     need_povm: bool
@@ -577,9 +586,10 @@ class _ReadoutPath(Protocol):
         self, stage: ReadoutStage, window_s: float, measured: Sequence[int]
     ) -> list[tuple[int, int]]: ...
 
-    def spam_errors(
-        self, stage: ReadoutStage, bits: np.ndarray, levels: np.ndarray, measured: Sequence[int]
-    ) -> tuple[tuple[float, float], ...]: ...
+    def spam_errors(self, stage: ReadoutStage, outcome: ReadoutOutcome) -> dict[int, _ReadoutErrors]:
+        """Per ion of the register, keyed by the ion, its readout errors; ``outcome`` is the readout of every kept shot
+        over every ion (``RunRecord.outcome``)."""
+        ...
 
     def describe(self, stage: ReadoutStage, povm_samples: int) -> list[str]: ...
 
@@ -595,12 +605,13 @@ class _FastReadout:
     ) -> list[tuple[int, int]]:
         return []
 
-    def spam_errors(
-        self, stage: ReadoutStage, bits: np.ndarray, levels: np.ndarray, measured: Sequence[int]
-    ) -> tuple[tuple[float, float], ...]:
-        """(eps_B, eps_D) per ion of the product POVM at zero crosstalk."""
+    def spam_errors(self, stage: ReadoutStage, outcome: ReadoutOutcome) -> dict[int, _ReadoutErrors]:
+        """The product POVM's errors at zero crosstalk, the ions in the POVM's order."""
         assert stage.product is not None  # the fast path builds the POVM
-        return stage.product.per_ion_errors()
+        return {
+            ion: _ReadoutErrors(eps_b, eps_d)
+            for ion, (eps_b, eps_d) in enumerate(stage.product.per_ion_errors())
+        }
 
     def describe(self, stage: ReadoutStage, povm_samples: int) -> list[str]:
         assert stage.product is not None
@@ -637,27 +648,27 @@ class _FullReadout:
             for q in measured
         ]
 
-    def spam_errors(
-        self, stage: ReadoutStage, bits: np.ndarray, levels: np.ndarray, measured: Sequence[int]
-    ) -> tuple[tuple[float, float], ...]:
-        """(eps_B, eps_D) per measured column from this run's own records (Section 8.6), nan for a level the circuit never
-        populated: the record path built no POVM."""
-        errs: list[tuple[float, float]] = []
-        for col, q in enumerate(measured):
-            bright = stage.schemes[q].bright_level
-            pair: list[float] = []
-            for lev, wrong_bit in ((bright, 1 - bright), (1 - bright, bright)):
-                mask = levels[:, col] == lev
-                pair.append(float(np.mean(bits[mask, col] == wrong_bit)) if np.any(mask) else math.nan)
-            errs.append((pair[0], pair[1]))
-        return tuple(errs)
+    def spam_errors(self, stage: ReadoutStage, outcome: ReadoutOutcome) -> dict[int, _ReadoutErrors]:
+        """This run's own estimate from the kept shots (Section 8.6): the discriminator's declared bit against the sampled
+        level, nan for a level the circuit never populated (the record path built no POVM)."""
+
+        def wrong(ion: int, level: int, wrong_bit: int) -> float:
+            mask = outcome.levels[:, ion] == level
+            return float(np.mean(outcome.bits[mask, ion] == wrong_bit)) if np.any(mask) else math.nan
+
+        errors: dict[int, _ReadoutErrors] = {}
+        for ion, scheme in enumerate(stage.schemes):
+            bright = scheme.bright_level
+            errors[ion] = _ReadoutErrors(wrong(ion, bright, 1 - bright), wrong(ion, 1 - bright, bright))
+        return errors
 
     def describe(self, stage: ReadoutStage, povm_samples: int) -> list[str]:
         name = type(stage.discriminator).__name__
         return [
-            f"SPAM definition: readout (eps_B, eps_D) of the {name} discriminator estimated from this run's own "
-            "photon records (readout='full' replaces the POVM rather than preceding it, Section 5.7); a qubit level the "
-            "circuit never populated reports nan; state preparation 1 - P(target) of the optical pump (Section 4.2.6)",
+            f"SPAM definition: readout (eps_B, eps_D) of the {name} discriminator estimated from this run's own photon "
+            "records, per ion its declared bit against its sampled level over the kept shots (readout='full' replaces the "
+            "POVM rather than preceding it, Section 5.7); a qubit level the circuit never populated reports nan; state "
+            "preparation 1 - P(target) of the optical pump (Section 4.2.6)",
             f"readout full path: one photon record per ion per shot generated from the {name} discriminator's window "
             f"({stage.discriminator.window_s:.4g} s) and discriminated, the neighbour coupling of Section 8.5 "
             f"{'applied at the configured PSF leakage' if stage.leakage else 'inactive (no PSF leakage configured)'} "
@@ -851,7 +862,6 @@ def execute(
     anomaly_bands = path.anomaly_bands(stage, window, measured)
     bits_kept: list[np.ndarray] = []
     sample_kept: list[int] = []
-    levels_kept: list[np.ndarray] = []
     heralds_kept: list[int] = []
     posteriors_kept: list[np.ndarray] = []
     records_kept: list[list[int]] = []
@@ -958,7 +968,6 @@ def execute(
                     continue
                 bits_kept.append(row)
                 sample_kept.append(s_idx)
-                levels_kept.append(np.asarray(outcome.levels[j, list(measured)], dtype=np.uint8).copy())
                 out_bits_kept.append(np.asarray(outcome.bits[j], dtype=np.uint8).copy())
                 out_levels_kept.append(np.asarray(outcome.levels[j], dtype=np.uint8).copy())
                 out_times_kept.append(np.asarray(outcome.time_used_s[j], dtype=float).copy())
@@ -1007,10 +1016,9 @@ def execute(
     counts, probabilities = aggregate(bits)
     n_eff = effective_sample_size(bits_per_sample)
     spam: dict[str, tuple[float, float]] = {}
-    levels_arr = np.asarray(levels_kept, dtype=np.uint8).reshape(-1, len(measured))
-    for i, (eps_b, eps_d) in enumerate(path.spam_errors(stage, bits, levels_arr, measured)):
-        spam[f"q{i}"] = (float(eps_b), float(eps_d))
-        spam[f"q{i}.state_preparation"] = (float(prep_run.preparation_error(i)), 0.0)
+    for ion, errors in path.spam_errors(stage, outcome_all).items():
+        spam[f"q{ion}"] = (float(errors.eps_b), float(errors.eps_d))
+        spam[f"q{ion}.state_preparation"] = (float(prep_run.preparation_error(ion)), 0.0)
     approximations = list(evo.approximations)
     methods = evo.methods
     if not physics.noise:

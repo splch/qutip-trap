@@ -343,6 +343,32 @@ def test_register_fidelity_when_the_circuit_measures_a_subset(two_ion) -> None:
     assert 0.98 < fid <= 1.0 + 1e-12
 
 
+def test_both_readout_paths_key_the_spam_by_ion_when_one_qubit_is_measured(two_ion) -> None:
+    """A GPi2 on qubit 1 with qubit 1 alone measured: both paths report every ion's readout and preparation errors under
+    its own key, and the full path's q1 is ion 1's declared bit against its sampled level, not the measured column's
+    position."""
+    fx, sur = two_ion
+    circuit = Circuit(2, (Operation("gpi2", (1,), (0.0,)),), (1,))
+    kw = dict(table=sur.table, numerics=Numerics(branch_weight_min=1e-3))
+    fast = run(circuit, fx.device, 1000, **kw)
+    full = run(circuit, fx.device, 1000, readout=Readout(mode="full"), **kw)
+    assert full.qubits == fast.qubits == (1,)
+    keys = {"q0", "q0.state_preparation", "q1", "q1.state_preparation"}
+    assert set(fast.spam) == set(full.spam) == keys
+    rec = last_record(full)
+    for ion in (0, 1):
+        assert full.spam[f"q{ion}.state_preparation"] == (rec.preparation.preparation_error(ion), 0.0)
+    out, bright = rec.outcome, rec.readout.schemes[1].bright_level
+    on_bright = out.levels[:, 1] == bright
+    on_other = out.levels[:, 1] == 1 - bright
+    assert on_bright.sum() > 300 and on_other.sum() > 300, "the GPi2 populates both levels of ion 1"
+    assert full.spam["q1"] == (
+        float(np.mean(out.bits[on_bright, 1] == 1 - bright)),
+        float(np.mean(out.bits[on_other, 1] == bright)),
+    )
+    assert fast.spam["q1"] == fast.spam["q0"], "the product POVM of two identical ions"
+
+
 def test_run_record_outcome_covers_every_kept_shot(two_ion) -> None:
     """Over several readout batches the RunRecord's outcome spans every kept shot and ion in the Result's row order and
     equals ``Result.bitstrings``."""

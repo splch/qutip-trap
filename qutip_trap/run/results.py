@@ -380,7 +380,8 @@ class Result:
     """Shots of the shot clock the collision process discarded (Section 6.7): they have no row."""
     run_state: RunState
     spam: dict[str, tuple[float, float]]
-    """Per qubit (eps_B, eps_D) with the definition used (Section 13, "Readout figure of merit")."""
+    """Per ion i of the register, measured or not, ``q{i}`` -> (eps_B, eps_D) with the definition the diagnostics state
+    (Section 13, "Readout figure of merit") and ``q{i}.state_preparation`` -> (eps_prep, 0)."""
     final_state: Qobj | None
     """The recombined register density matrix in QuTiP's tensor order (ion 0 the FIRST factor, the most-significant index bit);
     ``bitstrings``, ``counts`` and ``probabilities`` use the Section 13 order (qubit 0 the least-significant bit), and
