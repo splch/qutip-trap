@@ -239,18 +239,17 @@ def current_values(
     return vals
 
 
-def _scaled_radial_frequencies(
-    trap: core.Trap, species: core.Species, scale: float
-) -> tuple[float, float, float]:
-    """The secular frequencies after the rf amplitude is scaled: q -> scale q on both radial axes at fixed a, beta by the
-    core's monodromy (exact), nu = beta Omega_rf/2; the axial axis (q_z = 0) does not move (Section 4.1.1)."""
+def _scaled_radial_frequencies(trap: core.Trap, scale: float) -> tuple[float, float, float]:
+    """The secular frequencies after the rf amplitude is scaled, for the ion mass they are quoted for: that mass's (a, q)
+    from the explicit frequencies, q -> scale q on both radial axes at fixed a, beta by the core's monodromy (exact),
+    nu = beta Omega_rf/2; the axial axis (q_z = 0) does not move (Section 4.1.1)."""
     assert trap.rf is not None and trap.omega_hz is not None
-    mp = trap.mathieu(species)
+    a, q = core.mathieu_from_secular(trap.omega_hz, trap.rf.frequency_hz)
     omega_rf = float(trap.rf.omega_rad_s)
     out: list[float] = []
     for k in range(3):
-        a_k = float(mp.diagonal_a[k])
-        q_k = float(mp.q_effective[k]) * scale
+        a_k = float(a[k])
+        q_k = float(q[k]) * scale
         if q_k == 0.0:
             out.append(float(trap.omega_hz[k]))
             continue
@@ -318,7 +317,7 @@ def apply_overrides(
             stray_field_v_per_m=(stray[0], stray[1], stray[2]),
             axis_angle_rad=axis,
         )
-        omega = list(_scaled_radial_frequencies(probe, dev.crystal.species[0], ov["trap.rf_amplitude_scale"]))
+        omega = list(_scaled_radial_frequencies(probe, ov["trap.rf_amplitude_scale"]))
     if trap_keys:
         trap = dataclasses.replace(
             trap,

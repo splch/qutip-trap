@@ -281,3 +281,24 @@ def test_downward_propagation_through_the_calibration_emulation(bell: tuple[Reco
     assert not fresh.stale and fresh.table_hash == preset.device.hash()
     card = layer_card_view(fresh, None)
     assert card.overrides and any("V_rf" in r.value.detail for r in card.overrides)
+
+
+def test_the_rf_scaling_rescales_the_frequencies_of_the_mass_they_are_quoted_for() -> None:
+    """The rf-amplitude knob scales the (a, q) of the explicit frequencies' own reference mass: at scale 1 it returns them
+    unchanged whatever the crystal's first ion, and a stronger rf raises both radial frequencies and not the axial one."""
+    trap = core.Trap(
+        omega_hz=(3.0e6, 2.9e6, 1.0e6),
+        axis_angle_rad=0.0,
+        rf=core.RfDrive(voltage_peak_v=300.0, frequency_hz=60e6),
+        dc=None,
+        geometry=None,
+        stray_field_v_per_m=(0.0, 0.0, 0.0),
+        shim_voltages_v={},
+        reference_mass_u=87.9056,
+    )
+    same = knobs._scaled_radial_frequencies(trap, 1.0)
+    assert same == pytest.approx(trap.omega_hz, rel=1e-9)
+    stronger = knobs._scaled_radial_frequencies(trap, 1.1)
+    assert (
+        stronger[0] > trap.omega_hz[0] and stronger[1] > trap.omega_hz[1] and stronger[2] == trap.omega_hz[2]
+    )

@@ -285,10 +285,11 @@ class TrapLayer:
     c0: tuple[float, float, float] | None
     mathieu_note: str
     stray_field_v_per_m: tuple[float, float, float]
-    residual_field_v_per_m: tuple[float, float, float] | None
+    residual_field_v_per_m: tuple[float, float, float]
     micromotion_amplitude_m: tuple[float, float, float] | None
-    displacement_m: tuple[float, float, float] | None
-    """u_0 = Q E/(m omega^2): where the stray field parks the ion (Section 4.1.1, Berkeland)."""
+    displacement_m: tuple[float, float, float]
+    """Where the stray field parks the first ion: the crystal's linear response K^{-1} e E (Section 4.1.7), which is
+    Q E/(m omega^2) along each principal axis of an equal-mass chain (Berkeland)."""
     stability: StabilityMap
     ion_height_m: float | None
     trap_depth_ev: float | None
@@ -318,26 +319,14 @@ def trap_layer(device: core.Device, derived: Mapping[str, float]) -> TrapLayer:
         except ValueError as exc:
             note = f"Mathieu parameters unavailable: {exc}"
     stray = vec3(trap.stray_field_v_per_m)
-    residual: tuple[float, float, float] | None = None
-    try:
-        residual = vec3(trap.residual_field_v_per_m())
-    except (ValueError, NotImplementedError, AttributeError):
-        residual = None
+    residual = vec3(trap.residual_field_v_per_m())
     amp: tuple[float, float, float] | None = None
     if trap.rf is not None:
         try:
             amp = vec3(trap.micromotion_amplitude_m(sp))
         except (ValueError, NotImplementedError) as exc:
             notes.append(f"excess micromotion amplitude unavailable: {exc}")
-    disp: tuple[float, float, float] | None = None
-    if trap.omega_hz is not None:
-        m_kg = float(sp.mass_u) * core.ATOMIC_MASS_KG
-        disp = vec3(
-            [
-                float(core.E_C * e / (m_kg * (TWO_PI * w) ** 2)) if w > 0 else 0.0
-                for e, w in zip(stray, trap.omega_hz)
-            ]
-        )
+    disp = vec3(device.crystal.field_displacement_m(np.asarray(stray, dtype=float))[0])
     height = derived.get("ion_height_m")
     depth = derived.get("trap_depth_ev")
     return TrapLayer(
@@ -387,8 +376,8 @@ class CrystalLayer:
     entangling_beams: tuple[int, int] | None
     delta_k_rad_per_m: tuple[float, float, float] | None
     eta: np.ndarray | None
-    """(N, 3N) Lamb-Dicke parameters for the entangling pair's Delta k (``Crystal.lamb_dicke_matrix``), C0 inside when the
-    trap has an rf record."""
+    """(N, 3N) Lamb-Dicke parameters for the entangling pair's Delta k, each ion with its own species' C0 when the trap has
+    an rf record (``light.raman.lamb_dicke_parameters``); None when the trap record cannot be evaluated."""
     c0_applied: bool
     length_scale_m: float | None
     spacing_m: float | None
@@ -424,14 +413,15 @@ def crystal_layer(preset: core.DevicePreset) -> CrystalLayer:
     if pair is not None:
         dkv = np.asarray(device.beams[pair[0]].k_vector() - device.beams[pair[1]].k_vector(), dtype=float)
         dk = vec3(dkv)
-        mp = None
-        if device.trap.rf is not None:
-            try:
-                mp = device.trap.mathieu(crystal.species[0])
-                c0_applied = True
-            except ValueError as exc:
-                notes.append(f"C0 not applied to eta: {exc}")
-        eta = np.asarray(crystal.lamb_dicke_matrix(dkv, micromotion=mp), dtype=float)
+        try:
+            rows = [core.lamb_dicke_parameters(device, i, dkv) for i in range(crystal.n_ions)]
+        except (
+            ValueError
+        ) as exc:  # a trap record the Mathieu map cannot evaluate: shown on the page, eta withheld
+            notes.append(f"eta unavailable: {exc}")
+        else:
+            eta = np.array([[etas[m] for m in range(len(crystal.modes))] for etas, _ in rows], dtype=float)
+            c0_applied = rows[0][1]
     else:
         notes.append(
             "no entangling Raman pair on this device: eta is shown per gate drive on the light page only"
@@ -616,7 +606,7 @@ def _scattering_curve(
             new_beams[b] = dataclasses.replace(new_beams[b], wavelength_m=float(lam))
         try:
             dd = core.derive_raman_drive(dataclasses.replace(device, beams=tuple(new_beams)), ion, beams)
-        except Exception:  # within ten linewidths of a line, or a coupling the elimination refuses
+        except ZeroDivisionError:  # a tune-out wavelength: no two-photon coupling at the ion
             continue
         sc = dd.scattering
         if sc is None:
@@ -1072,7 +1062,7 @@ def readout_layer(preset: core.DevicePreset, *, saturation_sweep: bool = True) -
     for i in range(device.crystal.n_ions):
         try:
             keys = core.detection_beams(device, i)
-        except ValueError as exc:
+        except core.NoDetectionBeamError as exc:
             notes.append(f"ion {i}: {exc}; readout rates unavailable")
             continue
         sp = device.crystal.species[i]

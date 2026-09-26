@@ -336,7 +336,7 @@ def readout_errors_for(device: Device, table: CalibrationTable | None = None) ->
     micromotion factor included, at the table's threshold and window when calibrated, else at the detector's window and the
     true model's optimal threshold; (0, 0) for an ion no detection beam addresses."""
     from qutip_trap.control.table import usable
-    from qutip_trap.light.roles import detection_beams
+    from qutip_trap.light.roles import NoDetectionBeamError, detection_beams
     from qutip_trap.readout.detection import RecordModel
     from qutip_trap.readout.discriminate import ThresholdDiscriminator, optimize_threshold
 
@@ -348,7 +348,7 @@ def readout_errors_for(device: Device, table: CalibrationTable | None = None) ->
     for i in range(device.crystal.n_ions):
         try:
             detection_beams(device, i)
-        except ValueError:
+        except NoDetectionBeamError:
             eps_b.append(0.0)
             eps_d.append(0.0)
             bright.append(1)
