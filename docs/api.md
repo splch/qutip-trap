@@ -76,7 +76,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 - `species.zeeman`: `ZeemanSpectrum`, `ClockPoint`, `clock_points`; `species.metastable`: `MetastableChannels`.
 
 **`qutip_trap.trap`**
-- `model`: `Trap`, from secular frequencies or from voltages and geometry; `pseudopotential`: `RfDrive`, `DcElectrodes`; `surface`: `Electrodes`, `GaplessPlaneTrap`.
+- `model`: `Trap`, from secular frequencies (with `reference_mass_u`, the ion mass they are quoted for) or from voltages and geometry; `pseudopotential`: `RfDrive`, `DcElectrodes`; `surface`: `Electrodes`, `GaplessPlaneTrap`.
 - `mathieu`: `monodromy(a, q)`, `is_stable(a, q)`, `mathieu_parameters`, `MathieuParameters`, `UnstableMathieuError`.
 - `crystal`: `solve_crystal(trap, species)`, `Crystal` (with `field_displacement_m`, each ion's shift under a uniform field), `Mode`, `ZigzagError`, `equilibrium_dimensionless`, `axial_modes_dimensionless`.
 - `heating`: `heating_rate_quanta_per_s`, `s_e_from_heating_rate`; `anharmonic`: `AnharmonicTerms`, `anharmonic_estimate`; `micromotion`: `MicromotionIndex`.
@@ -89,7 +89,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 **`qutip_trap.noise`**
 - `model`: `NoiseModel`, noise as spectra, drifts and event rates (`NoiseModel()` is quiet; `summary(device)` lists its channels, `approximations(device)` what a run leaves out of it).
 - `spectra`: `NoiseSpectrum` with `white_spectrum`, `ou_spectrum`, `gaussian_spectrum` and `power_law_spectrum`, `Drift`, `Mains`, `Collisions`.
-- `sampling`: `NoiseSample`, one draw of every quasi-static parameter, and `quiet_sample`; `collisions`: `CollisionEvent`, `collision_rate_per_ion`.
+- `sampling`: `NoiseSample`, one draw of every quasi-static parameter, and `quiet_sample`; `stray_field_offset_v_per_m(sample)` reads its stray-field drift; `collisions`: `CollisionEvent`, `collision_rate_per_ion`.
 
 **`qutip_trap.readout`**
 - `detection`: `Detector`, `CameraGeometry`, `RecordModel`, `PhotonRecord`; `presets`: `ApparatusPreset`, `MYERSON_CA40_PMT`, `CRAIN_YB171_SNSPD`.

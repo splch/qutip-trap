@@ -46,8 +46,8 @@ records:
     tag: verified
     section: "13; 4.1.7"
     source: "Wineland 1998 Eq. 33; Monroe 2020; Home 2013 Eq. 19; Morigi-Walther Eq. 12"
-    equation: "eta_{i,m} = (Delta k . e_m) c_{i,m} sqrt(hbar/(2 m_i omega_m)) with the ion's own mass and the mass-weighted unit-norm eigenvector component; C0 applied once in Crystal.lamb_dicke"
-    corrected_form: "Sorensen-Molmer's and Leung's per-ion COM eta already contains 1/sqrt N; Srinivas puts the total two-ion mass inside r0"
+    equation: "eta_{i,m} = (Delta k . e_m) c_{i,m} sqrt(hbar/(2 m_i omega_m)) with the ion's own mass and the mass-weighted unit-norm eigenvector component; C0 applied once in Crystal.lamb_dicke; C0 is the ion's own species' (a, q): explicit frequencies scale from Trap.reference_mass_u as m_ref/m_i (a 40Ca+ ion beside 88Sr+ in a (3.0, 2.9, 1.0) MHz, 60 MHz trap takes 1.019948, not 88Sr+'s 1.003867)"
+    corrected_form: "Sorensen-Molmer's and Leung's per-ion COM eta already contains 1/sqrt N; Srinivas puts the total two-ion mass inside r0; the reference species' (a, q) labelled with another ion's mass gave it the reference's C0 (eta 1.6 % low) and a 2.2x micromotion amplitude"
   - id: conv.mode_index
     symbol: "mode: int"
     tag: corrected
@@ -544,7 +544,7 @@ records:
     tag: recomputed here
     section: "4.3.6; 9.2"
     source: "Berkeland 1998; qutip_trap.dynamics.hamiltonian"
-    equation: "171Yb+ at omega_x/2pi = 3 MHz in a 30 MHz rf trap with a 50 V/m stray field along x: beta = 0.409 for the counter-propagating 355 nm pair (u_0 = 80 nm, q = 0.28), J_0 = 0.9586; the unlocked drive's carrier pi time is pi/(J_0 Omega e^{-eta^2/2}) to 1e-5 in population, the rf-locked modulated drive e^{i beta cos(Omega_rf t + delta)} agrees to 1e-4, C0 sits inside eta (0.11289 against 0.11113 without the rf record)"
+    equation: "171Yb+ at omega_x/2pi = 3 MHz in a 30 MHz rf trap with a 50 V/m stray field along x: beta = 0.409 for the counter-propagating 355 nm pair (u_0 = 80 nm, q = 0.28), J_0 = 0.9586; the unlocked drive's carrier pi time is pi/(J_0 Omega e^{-eta^2/2}) to 1e-5 in population, the rf-locked modulated drive e^{i beta cos(Omega_rf t + delta)} agrees to 1e-4, C0 sits inside eta (0.11289 against 0.11113 without the rf record); a sampled stray-field drift adds to the 50 V/m in the index as it moves the ion: -9.94 V/m along x gives beta = 0.3277 and J_0 = 0.9733, Berkeland's value at 40.06 V/m"
     corrected_form: "an unlocked drive with micromotion='modulated' and no sampled rf phase is refused: the default is the J_0 average (Section 4.3.6)"
   - id: anchor.m2.harty_randomized_benchmarking
     symbol: "EPG"
