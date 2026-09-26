@@ -14,6 +14,12 @@ SOURCES: Final[dict[str, str]] = {
         "Han et al., arXiv:2501.09973 (2025): MCDHF/MRCI g_J of the 171Yb+ ground state, 2.002615(70), and the second-order "
         "Zeeman coefficient 31.0869(22) mHz/uT^2."
     ),
+    "Galstyan2026": (
+        "K. P. Galstyan, I. V. Zalivako, A. S. Borisenko, Y. P. Anosov, N. N. Kolachevsky, High-precision measurement of "
+        "the Lande gJ-factor of the 2D3/2 state in the 171Yb+ ion, Atoms 14, 75 (2026); doi:10.3390/atoms14090075: the "
+        "microwave-measured g_F(D3/2, F = 1)/g_F(S1/2, F = 1) = 0.998060(5), which with Han et al. 2025's g(S1/2) = "
+        "2.002615(70) gives g(D3/2) = 0.79917(3), and the D3/2 hyperfine splitting 857178077(3) Hz."
+    ),
     "Meggers1967": (
         "W. F. Meggers, The second spectrum of ytterbium (Yb II), J. Res. Natl. Bur. Stand. 71A, 396 (1967): the observed "
         "Zeeman g-values of the Yb II levels (Tables 1 and 2), which NIST ASD lists through Martin, Zalubas and Hagan 1978."

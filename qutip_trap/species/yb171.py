@@ -3,10 +3,12 @@
 Level energies are NIST ASD 5.12 values in cm^-1; the hyperfine constants, lifetimes and branchings are the primary
 measurements. The ground-state g_J is Han et al. 2025's calculation, and the 6p 2P levels carry the Lande values
 ([background]): NIST ASD's 0.667 and 1.333 for them are 2/3 and 4/3, the Lande factors at g_S = 2, which Meggers 1967's
-Zeeman observations match to their three digits. The 5d 2D, 4f13 6s2 2F7/2 and 4f13 5d6s bracket levels keep Meggers's
-observed g as NIST ASD lists it, a measurement good to a few 1e-3 (his ground state's 1.998 is 4.6e-3 below the calculated
-2.002615) that departs from the Lande values in the third digit. Not tabulated: the D5/2 and F7/2 decay branchings
-(Feldker et al. 2018, Tan et al. 2021) and the 1[5/2]5/2 lifetime.
+Zeeman observations match to their three digits. The 5d 2D3/2 g_J, 0.79917(3), is Galstyan et al. 2026's: their
+microwave-measured F = 1 g_F ratio to the ground state times Han's value, 2.8e-3 below Meggers's observed 0.802. The
+5d 2D5/2, 4f13 6s2 2F7/2 and 4f13 5d6s bracket levels keep Meggers's observed g as NIST ASD lists it, a measurement good to
+a few 1e-3 (his ground state's 1.998 is 4.6e-3 below the calculated 2.002615) that departs from the Lande values in the
+third digit. Not tabulated: the D5/2 and F7/2 decay branchings (Feldker et al. 2018, Tan et al. 2021) and the 1[5/2]5/2
+lifetime.
 """
 
 from __future__ import annotations
@@ -117,11 +119,14 @@ _ENTRIES: tuple[Cited, ...] = (
     ),
     _c(
         "D32.g_J",
-        0.802,
+        0.79917,
         "",
-        "Meggers1967",
-        note="the observed Zeeman g as NIST ASD 5.12 lists it, corrected there from a printed 1.802; the Lande value is "
-        "0.79954",
+        "Galstyan2026",
+        tag="verified",
+        uncertainty=3e-5,
+        note="the measured g_F(D3/2, F = 1)/g_F(S1/2, F = 1) = 0.998060(5) times S12.g_J, so CONDITIONAL on Han et al. "
+        "2025's calculated 2.002615(70), which sets the uncertainty; Meggers 1967's observed 0.802 (NIST ASD 5.12) is "
+        "2.8e-3 above and the Lande value 0.79954 3.7e-4 above",
     ),
     _c("D52.energy_cm", 24332.69, "cm^-1", "NIST_ASD_5_12"),
     _c(
@@ -331,7 +336,7 @@ def species() -> Species:
         ),
         B_hfs_hz=0.0,
         g_J=t[_P + "D32.g_J"].value,
-        citations=("NIST_ASD_5_12", "Olmschenk2007", "Meggers1967"),
+        citations=("NIST_ASD_5_12", "Olmschenk2007", "Galstyan2026", "Han2025"),
     )
     p32 = Level(
         name="P3/2",

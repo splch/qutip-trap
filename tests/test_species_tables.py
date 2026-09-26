@@ -112,7 +112,8 @@ def test_yb171_ground_state_constants() -> None:
 
 def test_yb171_6p_levels_are_lande_and_the_observed_g_values_are_cited_as_measurements() -> None:
     """The 6p 2P levels take the Lande values 0.665894 and 1.334106, 0.17 % and 0.08 % from NIST ASD's 0.667 and 1.333 (the
-    g_S = 2 values 2/3 and 4/3); the 5d 2D, 2F7/2 and bracket levels keep Meggers 1967's observed g."""
+    g_S = 2 values 2/3 and 4/3); 5d 2D3/2 takes Galstyan et al. 2026's measured 0.79917(3), and 5d 2D5/2, 2F7/2 and the
+    bracket levels keep Meggers 1967's observed g."""
     yb = species("171Yb+")
     half = Fraction(1, 2)
     for name, j, asd, gap in (("P1/2", half, 0.667, 1.66e-3), ("P3/2", Fraction(3, 2), 1.333, 8.30e-4)):
@@ -123,8 +124,14 @@ def test_yb171_6p_levels_are_lande_and_the_observed_g_values_are_cited_as_measur
         assert abs(level.g_J - asd) / asd == pytest.approx(gap, rel=1e-2)
     table = MODULES["171Yb+"].TABLE
     assert not any(k in table for k in ("yb171.P12.g_J", "yb171.P32.g_J"))
+    d32 = table["yb171.D32.g_J"]
+    assert d32.value == 0.79917 == yb.level("D3/2").g_J and d32.uncertainty == 3e-5
+    assert (
+        d32.source == "Galstyan2026"
+        and d32.tag == "verified"
+        and "Galstyan2026" in yb.level("D3/2").citations
+    )
     for key, value, level in (
-        ("D32.g_J", 0.802, "D3/2"),
         ("D52.g_J", 1.202, "D5/2"),
         ("F72.g_J", 1.145, "F7/2"),
         ("bracket_3D32_12.g_J", 1.320, "3D[3/2]1/2"),

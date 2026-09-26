@@ -243,6 +243,24 @@ def test_171yb_g_f_slope_and_the_adjacent_splitting() -> None:
     assert d1 * 1e-6 == pytest.approx(1.4012, rel=2e-3)
 
 
+def test_171yb_d32_g_j_reproduces_galstyans_measured_g_f_ratio_to_the_ground_state() -> None:
+    """Galstyan et al. 2026 measure g_F(D3/2, F = 1)/g_F(S1/2, F = 1) = 0.998060(5) by microwave spectroscopy; the table's
+    D3/2 and S1/2 g_J give that ratio of the diagonalized |1,1> - |1,0> slopes to within its 5e-6, where Meggers's observed
+    0.802 gives 1.001594."""
+    yb = species("171Yb+")
+
+    def slope(level: str) -> float:
+        _nu, d1, _d2 = yb.transition_frequency_hz(f"{level} F=1 mF=0", f"{level} F=1 mF=1", 1e-6)
+        return float(d1)
+
+    assert slope("D3/2") / slope("S1/2") == pytest.approx(0.998060, abs=5e-6)
+    g_i = g_I_steck(yb.mu_I_nuclear_magnetons, 0.5)
+    meggers = lande_g_f(1, Fraction(3, 2), Fraction(1, 2), 0.802, g_i) / lande_g_f(
+        1, Fraction(1, 2), Fraction(1, 2), yb.level("S1/2").g_J, g_i
+    )
+    assert meggers == pytest.approx(1.001594, abs=1e-6)
+
+
 def test_g_f_matches_the_diagonalized_slope_for_a_high_spin_level() -> None:
     """The weak-field 43Ca+ S1/2 |4,1> - |4,0> slope is g_F(F = 4) mu_B/h to 1e-5."""
     ca = species("43Ca+")
