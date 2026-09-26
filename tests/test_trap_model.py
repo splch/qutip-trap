@@ -335,8 +335,10 @@ def test_a_derived_drive_raises_on_an_rf_record_it_cannot_evaluate_instead_of_re
 
 
 def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_the_compensating_shim() -> None:
-    """The modulated drive's first micromotion-sideband weight flips sign across the compensating field (5e-3), vanishes at
-    zero field and equals 2 i J_1(beta) e^{i delta}/J_0(beta) up to complex conjugation (5e-3)."""
+    """On the sigma_+ carrier element <up, 0|H|down, 0>, whose coefficient carries e^{+i beta cos(Omega_rf t + delta)} with the
+    sign of the drive's e^{+i Delta k . x}, the first micromotion-sideband weight is 2 i J_1(beta) e^{i delta}/J_0(beta)
+    (1e-9), flips sign across the compensating field (1e-9) and vanishes at zero field; the sigma_- element carries minus
+    it."""
     base = single_ion_raman_device(
         rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0)
     )
@@ -345,11 +347,11 @@ def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_th
     omega_rf = base.trap.rf.omega_rad_s
     period = TWO_PI / omega_rf
     times = np.linspace(0.0, period, 129)[:-1]
-    element: tuple[int, int] | None = None
+    up_0 = int(np.ravel_multi_index((1, 0), space.dims))
+    down_0 = int(np.ravel_multi_index((0, 0), space.dims))
 
-    def first_harmonic(stray_x: float) -> complex:
-        """(2/T) int c(t) e^{-i Omega_rf t} dt / <c>: the drive coefficient's first micromotion-sideband weight."""
-        nonlocal element
+    def first_harmonic(stray_x: float, element: tuple[int, int] = (up_0, down_0)) -> complex:
+        """(2/T) int c(t) e^{-i Omega_rf t} dt / <c> of the element: its first micromotion-sideband weight."""
         trap = dataclasses.replace(base.trap, stray_field_v_per_m=(stray_x, 0.0, 0.0))
         dev = dataclasses.replace(base, trap=trap, crystal=solve_crystal(trap, base.crystal.species))
         dd = derive_raman_drive(dev, 0, (0, 1), scattering=False)
@@ -360,29 +362,23 @@ def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_th
             space,
             options=BuilderOptions(micromotion="modulated"),
         )
-        matrices = [built.drive_parts["p"](float(t)).full() for t in times]
-        if element is None:
-            flat = int(np.argmax(np.abs(matrices[0])))
-            element = (flat // matrices[0].shape[1], flat % matrices[0].shape[1])
-        vals = np.array([complex(m[element]) for m in matrices])
+        vals = np.array([complex(built.drive_parts["p"](float(t)).full()[element]) for t in times])
         dc = complex(np.mean(vals))
         assert abs(dc) > 0.0
         return complex(2.0 * np.mean(vals * np.exp(-1j * omega_rf * times)) / dc)
 
-    s_plus = first_harmonic(+50.0)
-    assert abs(s_plus) > 1e-3
-    assert first_harmonic(-50.0) == pytest.approx(-s_plus, rel=5e-3, abs=1e-9), (
-        "a pi step across compensation"
-    )
-    assert first_harmonic(0.0) == pytest.approx(0j, abs=1e-9)
     dd = derive_raman_drive(base, 0, (0, 1), scattering=False)
     assert dd.micromotion is not None
     beta, offset = dd.micromotion.as_modulation()
     assert dd.micromotion.in_phase < 0.0 and offset == pytest.approx(-math.pi, abs=1e-12)
     assert (beta, offset) == micromotion_index(base, 0, np.asarray(dd.delta_k, dtype=float))
     expected = 2j * jv(1, beta) * np.exp(1j * offset) / jv(0, beta)
-    got = s_plus if abs(s_plus - expected) < abs(s_plus.conjugate() - expected) else s_plus.conjugate()
-    assert got == pytest.approx(expected, rel=5e-3, abs=1e-9)
+    s_plus = first_harmonic(+50.0)
+    assert abs(s_plus) > 1e-3
+    assert s_plus == pytest.approx(expected, rel=1e-9)
+    assert first_harmonic(-50.0) == pytest.approx(-expected, rel=1e-9), "a pi step across compensation"
+    assert first_harmonic(0.0) == pytest.approx(0j, abs=1e-9)
+    assert first_harmonic(+50.0, (down_0, up_0)) == pytest.approx(-expected, rel=1e-9)
 
 
 # ---- the equilibrium's response to an added field --------------------------------------------------------------------------
