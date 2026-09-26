@@ -63,6 +63,9 @@ QUICK_ANGLES: tuple[tuple[str, float], ...] = (
 
 Handler = Callable[[Any], None]
 
+Dragged = GateSpec | Placed
+"""What a Draggable of the builder carries as its ``data``: a palette gate's spec, or a gate already on the wires."""
+
 
 # ---- tiles ---------------------------------------------------------------------------------------------------------------------------
 
@@ -244,7 +247,7 @@ def _placed_controls(
         draggable = ft.Draggable(
             content=face,
             group=DRAG_GROUP,
-            data=f"placed:{placed.index}",
+            data=placed,
             content_feedback=ft.Container(
                 content=tile(
                     spec, label=end if end not in (None, "dot", "plus", "cross") else None, params=op.params
@@ -442,7 +445,7 @@ def _palette(pick: Callable[[GateSpec], None]) -> ft.Control:
                         key=f"palette:{spec.name}",
                     ),
                     group=DRAG_GROUP,
-                    data=f"palette:{spec.name}",
+                    data=spec,
                     content_feedback=ft.Container(content=tile(spec, params=spec.defaults), opacity=0.85),
                 )
             )
@@ -772,19 +775,16 @@ def CircuitBuilder(store: Store, session: Session) -> ft.Control:
         set_wire(w)
 
     def accept(e: ft.DragTargetEvent, at_wire: int, column: int) -> None:
-        data = str(getattr(e.src, "data", "") or "")
-        kind, _, what = data.partition(":")
+        dragged: Dragged = e.src.data
         try:
-            if kind == "palette" and what in vm.GATES:
-                spec = vm.GATES[what]
-                c, qubits = qubits_for(spec, at_wire, circuit)
+            if isinstance(dragged, GateSpec):
+                c, qubits = qubits_for(dragged, at_wire, circuit)
                 at = vm.insert_index(vm.layout(c), at_wire, column)
-                commit(vm.insert_gate(c, at, spec, qubits), at)
-            elif kind == "placed":
-                k = int(what)
-                op = circuit.ops[k]
+                commit(vm.insert_gate(c, at, dragged, qubits), at)
+            else:
+                op = circuit.ops[dragged.index]
                 at = vm.insert_index(lay, at_wire, column)
-                moved, new_k = vm.move_to(circuit, k, at, vm.qubits_for_move(op, at_wire, n))
+                moved, new_k = vm.move_to(circuit, dragged.index, at, vm.qubits_for_move(op, at_wire, n))
                 commit(moved, new_k)
         except (ValueError, IndexError) as exc:
             fail(exc)
