@@ -54,14 +54,14 @@ from qutip_trap.dynamics.truncation import warn_cap_clamped
 from qutip_trap.hashing import canonical_digest
 from qutip_trap.options import Numerics
 from qutip_trap.run.space import (
-    _D_MIN,
+    D_MIN,
     ModeClass3,
     ModeContribution,
-    _peak_rabi_rad_s,
     best_contributions,
     cap_for,
     classify,
     frozen_excitation_bounds,
+    peak_rabi_rad_s,
 )
 
 if TYPE_CHECKING:
@@ -327,7 +327,7 @@ def step_space(
     neighbours: set[int] = set()
     dropped_xt = 0.0
     for p in step.pulses:
-        theta = _peak_rabi_rad_s(p) * p.duration_s
+        theta = peak_rabi_rad_s(p) * p.duration_s
         for j, eps in p.drive.crosstalk.items():
             if abs(complex(eps)) >= options.crosstalk_threshold:
                 neighbours.add(int(j))
@@ -354,7 +354,7 @@ def step_space(
         if classes[m] != "resolved":
             continue
         c = best[m]
-        tr = cap_for(c.radius, nbar_now[m], c.eta_max, d_min=_D_MIN, d_max=d_ceiling, tail=tail)
+        tr = cap_for(c.radius, nbar_now[m], c.eta_max, d_min=D_MIN, d_max=d_ceiling, tail=tail)
         n_hi = tr.expected_n_range[1]
         tracked = model.reduced.get(m)
         if tracked is not None:
@@ -365,7 +365,7 @@ def step_space(
         # the margin above the populated range: the Section 5.1.1 fixture, or the margin derived for the declared element
         # tolerance (``margin_element_tol``; the engine's margin check reads the same rule)
         margin = required_margin_under(c.eta_max, options, n_hi)
-        d_want = max(n_hi + 1 + margin, _D_MIN)
+        d_want = max(n_hi + 1 + margin, D_MIN)
         d = min(d_want, d_ceiling)
         if caps is not None and m in caps:
             d = int(caps[m])

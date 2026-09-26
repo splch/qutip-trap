@@ -85,10 +85,12 @@ def _integrated_segments(sched: Schedule) -> list[tuple[float, list[Pulse]]]:
     """(duration, active pulses) of every segment the engine integrates: its cuts at every pulse and idle boundary, each
     interval with a pulse active once, however many pulses play in it (an entangling segment's per-ion pulses); an idle
     interval takes the constant Hamiltonian's closed form."""
-    from qutip_trap.dynamics.engine import JointExactEngine, _segments
+    from qutip_trap.dynamics.engine import JointExactEngine, active_segments
 
     return [
-        (b - a, active) for a, b, active in _segments(sched, JointExactEngine._segment_edges(sched)) if active
+        (b - a, active)
+        for a, b, active in active_segments(sched, JointExactEngine.segment_edges(sched))
+        if active
     ]
 
 
@@ -234,7 +236,7 @@ class Machine:
         """What a run would cost before anything is integrated: the schedule, the space Section 5.2 declares for it, the level
         the guards resolve to (and why), and the Section 11.2 wall-time guess."""
         from qutip_trap.prep.recipe import recipe_of, run_preparation
-        from qutip_trap.run.job import _raman_pair_hint
+        from qutip_trap.run.job import raman_pair_hint
         from qutip_trap.run.pipeline import compile_calibrate_schedule
         from qutip_trap.run.space import SpaceSelection, select_space
 
@@ -242,7 +244,7 @@ class Machine:
         device = prefix.device
         opts = self.numerics
         prep_run = run_preparation(
-            device, recipe_of(device, raman_pair=_raman_pair_hint(prefix.entangling_drives))
+            device, recipe_of(device, raman_pair=raman_pair_hint(prefix.entangling_drives))
         )
         if opts.space is None:
             selection = select_space(

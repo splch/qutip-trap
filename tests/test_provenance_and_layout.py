@@ -33,13 +33,19 @@ def test_control_never_imports_calibration() -> None:
         assert not any(n.startswith("qutip_trap.calibration") for n in _imports(path)), path
 
 
-def test_the_control_and_calibration_layers_import_no_private_name_of_another_module() -> None:
-    """A name another module needs is public: no module of either layer imports a ``_name`` from the package."""
-    for layer in ("control", "calibration"):
-        for path in (PKG / layer).glob("*.py"):
+def test_the_control_calibration_and_run_layers_import_no_private_name_of_another_module() -> None:
+    """A name another module needs is public: no module of these layers, and no top-level module, imports a ``_name`` from
+    the package."""
+    for paths in (
+        *((PKG / layer).glob("*.py") for layer in ("control", "calibration", "run")),
+        PKG.glob("*.py"),
+    ):
+        for path in paths:
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("qutip_trap"):
-                    private = [a.name for a in node.names if a.name.startswith("_")]
+                    private = [
+                        a.name for a in node.names if a.name.startswith("_") and not a.name.endswith("__")
+                    ]
                     assert not private, (path, node.module, private)
 
 

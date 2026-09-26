@@ -52,7 +52,7 @@ order) a dropped mode may carry. The loop pair alone reads ~1e-33 for a coupled 
 dropping that mode takes its Debye-Waller factor out of every carrier pulse: the calibration absorbs the factor's mean, not
 its spread. (3e-4/2)^2 = 2.3e-8 of infidelity matches the 1e-6 of the alpha^2 row; above it the mode is frozen instead."""
 
-_D_MIN = 6
+D_MIN = 6
 """The smallest Fock dimension a resolved mode is given."""
 
 
@@ -154,8 +154,8 @@ def mode_cap(mode: int, contribution: ModeContribution, nbar: float, options: Nu
     mode's entry in ``options.caps`` in its place; the declared expected range stops below the cap."""
     tail = float(options.boundary_population_max)
     radius, eta_max = contribution.radius, contribution.eta_max
-    d_wanted, n_max_wanted = cap_requirement(radius, nbar, eta_max, d_min=_D_MIN, tail=tail)
-    rule = cap_for(radius, nbar, eta_max, d_min=_D_MIN, d_max=int(options.mode_dimension_max), tail=tail)
+    d_wanted, n_max_wanted = cap_requirement(radius, nbar, eta_max, d_min=D_MIN, tail=tail)
+    rule = cap_for(radius, nbar, eta_max, d_min=D_MIN, d_max=int(options.mode_dimension_max), tail=tail)
     caps = options.caps
     if caps is not None and mode in caps:
         d, clamped = int(caps[mode]), False
@@ -277,7 +277,9 @@ def coupled_modes(device: Device, pulses: Sequence[Pulse]) -> set[int]:
     return out
 
 
-def _peak_rabi_rad_s(pulse: Pulse) -> float:
+def peak_rabi_rad_s(pulse: Pulse) -> float:
+    """The largest Rabi frequency (rad/s) any tone of the pulse reaches: a callable envelope sampled at 101 points over the
+    pulse, a sampled one's largest entry, a constant's value."""
     peak = 0.0
     for tone in pulse.drive.tones:
         env = tone.envelope_hz
@@ -322,7 +324,7 @@ def frozen_excitation_bounds(
         dk = pulse.drive.delta_k(device.beams)
         if float(np.linalg.norm(dk)) == 0.0:
             continue
-        omega_peak = _peak_rabi_rad_s(pulse)
+        omega_peak = peak_rabi_rad_s(pulse)
         if omega_peak == 0.0:
             continue
         mus = _tone_detunings_rad_s(pulse)

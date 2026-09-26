@@ -514,7 +514,7 @@ class JointExactEngine:
         return not static_ops and not pulse_channels_possible
 
     @staticmethod
-    def _segment_edges(sched: Schedule) -> list[float]:
+    def segment_edges(sched: Schedule) -> list[float]:
         """Cuts at every pulse and idle boundary from the schedule's declared start (``Schedule.t0_s``, else min(0, the first
         cut)) to ``pulses_end_s``."""
         starts = [p.t_start_s for p in sched.pulses] + [a for a, _ in sched.idle]
@@ -567,7 +567,7 @@ class JointExactEngine:
         segments: list[SegmentReport] = []
         solves = 0
         hits = 0
-        for a, b, active in _segments(sched, self._segment_edges(sched)):
+        for a, b, active in active_segments(sched, self.segment_edges(sched)):
             if static_ops or (active and pulse_channels_possible):
                 raise ValueError(
                     "the segment carries collapse operators, so its propagator is not a unitary: propagate states through "
@@ -660,9 +660,9 @@ class JointExactEngine:
         map_used = "serial"
         propagator_solves = 0
         propagator_hits = 0
-        edges = self._segment_edges(sched)
+        edges = self.segment_edges(sched)
         t0 = edges[0]
-        segments_of_run = _segments(sched, edges)
+        segments_of_run = active_segments(sched, edges)
         carried = _carried_modes(space)
         e_ops: dict[str, qt.Qobj] = {f"P1[{i}]": space.projector(i, 1) for i in space.ion_labels}
         for m in carried:
@@ -1217,8 +1217,9 @@ def required_margin_under(eta: float, options: Numerics, n_hi: int) -> int:
     )
 
 
-def _segments(sched: Schedule, edges: Sequence[float]) -> list[tuple[float, float, list[Pulse]]]:
-    """(start, end, the pulses active over the whole of it) of every segment between consecutive (increasing) cuts."""
+def active_segments(sched: Schedule, edges: Sequence[float]) -> list[tuple[float, float, list[Pulse]]]:
+    """(start, end, the pulses active over the whole of it) of every segment between consecutive (increasing) cuts, the
+    ``segment_edges`` the engine integrates between."""
     return [
         (a, b, [p for p in sched.pulses if p.t_start_s <= a + 1e-15 and p.t_end_s >= b - 1e-15])
         for a, b in zip(edges[:-1], edges[1:])

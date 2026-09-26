@@ -50,13 +50,13 @@ from qutip_trap.run.job import (
     ReadoutStage,
     RunError,
     RunRecord,
-    _raman_pair_hint,
     effective_sample_size,
     enumerate_branches,
     internal_probabilities,
     intrinsic_budget,
     level_maps,
     prepare,
+    raman_pair_hint,
     readout_stage,
 )
 from qutip_trap.run.levels import FidelityLevel, decide_level
@@ -730,7 +730,7 @@ def execute(
     device = prefix.device
     sched = prefix.schedule
     prep_run = run_preparation(
-        device, recipe_of(device, raman_pair=_raman_pair_hint(prefix.entangling_drives))
+        device, recipe_of(device, raman_pair=raman_pair_hint(prefix.entangling_drives))
     )
     if device.preparation is None:
         notes.append("preparation recipe inferred by prep.recipe.standard_recipe (the device carries none)")

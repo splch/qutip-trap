@@ -109,7 +109,7 @@ def level_maps(device: Device, space: HilbertSpace) -> dict[int, InternalLevels]
     return out
 
 
-def _raman_pair_hint(drives: Mapping[int, GateDrive]) -> tuple[int, int] | None:
+def raman_pair_hint(drives: Mapping[int, GateDrive]) -> tuple[int, int] | None:
     """The Raman pair of the entangling drives (the global beams), the natural cooling pair of the standard recipe."""
     for spec in drives.values():
         if spec.kind == "raman" and len(spec.beams) == 2:
