@@ -24,7 +24,6 @@ import numpy as np
 
 from qutip_trap_app import core
 from qutip_trap_app.record import (
-    CircuitRecord,
     JobSpec,
     OpRecord,
     ProcessMatrixRecord,
@@ -223,7 +222,7 @@ def request_angle(record: Record, gate_id: str, chi_rad: float) -> GateRequest:
     )
     job = dataclasses.replace(
         record.job,
-        circuit=CircuitRecord(record.compiled.native.n_qubits, tuple(ops), record.compiled.native.measure),
+        circuit=dataclasses.replace(record.compiled.native, ops=tuple(ops)),
         requests=tuple(record.job.requests) + (note,),
         label=f"request: XX({chi_rad:.4g}) on {gate_id}",
     )

@@ -1,6 +1,6 @@
 """The application state behind the screens: the learner persists as a document, a run scores the prediction made for it and
-a new prediction is asked only for a new run, the progress rows keep moving between worker events, cancel marks every
-running job, and the zoom bar's parent route needs no hidden global."""
+a new prediction is asked only for a new run, a job keeps the circuit's named registers, the progress rows keep moving
+between worker events, cancel marks every running job, and the zoom bar's parent route needs no hidden global."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import pytest
 
 from qutip_trap_app.provenance import ProvenanceIndex
-from qutip_trap_app.record import LiveRun, Record
+from qutip_trap_app.record import CircuitRecord, LiveRun, Record
 from qutip_trap_app.viewmodel.learn import Attempt, MasteryLog, review_gap_days
 from qutip_trap_app.views.shell import parent_route
 from qutip_trap_app.views.state import (
@@ -95,6 +95,21 @@ def test_a_run_scores_its_own_prediction_and_a_new_run_is_predicted_again(
     )
     store.circuit_text = store.circuit_text + "\n"
     assert store.prediction_pending(), "an edited circuit is a new run: predict again"
+
+
+def test_the_job_keeps_the_circuits_named_registers(index: ProvenanceIndex) -> None:
+    """A program measuring into named classical registers crosses the job boundary whole: the record's circuit turns back
+    into the circuit the text parses to, registers included, and back into the same record."""
+    session = Session(Store(), index)
+    session.edit_circuit(
+        'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg a[1];\ncreg b[1];\nh q[0];\ncx q[0],q[1];\n'
+        "measure q[1] -> a[0];\nmeasure q[0] -> b[0];\n"
+    )
+    circuit = session.parse_circuit()
+    assert dict(circuit.registers) == {"a": (1,), "b": (0,)}
+    job = session.build_job()
+    assert job.circuit.to_core() == circuit
+    assert CircuitRecord.from_core(job.circuit.to_core()) == job.circuit
 
 
 def test_progress_rows_keep_moving_between_worker_events(index: ProvenanceIndex) -> None:
