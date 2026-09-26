@@ -65,7 +65,7 @@ from qutip_trap.machine import Machine
 from qutip_trap.noise.model import NoiseModel, servo_residual
 from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, correlated_normals, quiet_sample
 from qutip_trap.noise.spectra import Drift
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.provenance import load_ledger
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
@@ -252,6 +252,23 @@ def test_calibration_cache_hits_the_same_device_and_misses_a_changed_one(two_ion
         fx.device, roles=dataclasses.replace(fx.device.roles, entangling={0: fx.entangling_drives[0]})
     )
     assert calibrate(Machine(single), cache=cache, **kw).table is not t1
+
+
+def test_a_machine_under_other_physics_gets_its_own_calibration() -> None:
+    """The spot checks play the gate under the machine's physics, so a machine that compensates no light shift, echoes its
+    crosstalk or plays no hardware chain is calibrated apart from the default one, and the same physics hits the cache."""
+    fx = yb171_chain(2)
+    cheap = dict(pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False)
+    cache = CalibrationCache()
+    variants = (
+        Physics(),
+        Physics(stark_compensation=False),
+        Physics(crosstalk_suppression="local"),
+        Physics(hardware_chain=False),
+    )
+    reports = [calibrate(Machine(fx.device, physics=p), cache=cache, **cheap).surrogate for p in variants]
+    assert len(cache.reports) == len(variants) and len({id(r) for r in reports}) == len(variants)
+    assert calibrate(Machine(fx.device, physics=variants[1]), cache=cache, **cheap).surrogate is reports[1]
 
 
 def test_a_run_and_a_caller_asking_for_the_same_pairs_share_one_cache_entry() -> None:
