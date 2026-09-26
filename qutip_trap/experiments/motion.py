@@ -354,8 +354,9 @@ def heating_rate(
     delay (Section 4.1.5, Turchette Eqs. 8-11): nbar(delay) by the sideband ratio, the rate by weighted linear regression.
     ``ion`` probes (default the one with the largest participation), ``nbar0`` is the prepared occupation (default the
     device recipe's), ``ndot_seed`` sizes the truncation (default the noise model's rate), ``mode_hz`` and ``rabi_hz_belief``
-    place and time the probes (default the crystal's and the physical values). Data rows (delay_s, nbar, sigma, P_rsb,
-    P_bsb); fitted ndot_per_s and nbar0 (the intercept)."""
+    place and time the probes (default the crystal's and the physical values). The probe runs in the interaction frame
+    whatever frame the builder options name, their other options kept. Data rows (delay_s, nbar, sigma, P_rsb, P_bsb);
+    fitted ndot_per_s and nbar0 (the intercept)."""
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.dynamics.operators import required_margin
@@ -374,8 +375,8 @@ def heating_rate(
     if not delays or delays[0] < 0.0:
         raise ValueError("delays are non-negative")
     # the thermal probe is a density matrix, integrated by mesolve whatever options it was handed, in the interaction frame
-    # (H_0 removed) unless the machine or the call set the builder options
-    builder = lab.builder if lab.builder is not None else BuilderOptions(frame="interaction")
+    # (H_0 removed, so that the idle costs nothing) with the machine's or the call's other builder options
+    builder = replace(lab.builder if lab.builder is not None else BuilderOptions(), frame="interaction")
     lab = replace(
         lab, nbar={**lab.nbar, mode: nb0}, builder=builder, options=_density_matrix_options(lab.options)
     )

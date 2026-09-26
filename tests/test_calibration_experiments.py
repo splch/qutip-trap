@@ -14,6 +14,7 @@ from qutip_trap.calibration import calibrate
 from qutip_trap.calibration.experiments import CalibrationReport
 from qutip_trap.control.table import CalEntry
 from qutip_trap.device.presets import ideal_hardware, yb171_chain
+from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.experiments.fitting import readout_errors_for, thermal_rabi_model
 from qutip_trap.experiments.imaging import crystal_image
 from qutip_trap.experiments.light import crosstalk_scan, field_scan, stark_scan
@@ -36,12 +37,19 @@ from qutip_trap.experiments.result import (
     SidebandSpectrum,
     ThermometryResult,
 )
-from qutip_trap.experiments.single_ion import _Lab, rabi_scan, ramsey, ramsey_frequency, sideband_spectroscopy
+from qutip_trap.experiments.single_ion import (
+    _Averaged,
+    _Lab,
+    rabi_scan,
+    ramsey,
+    ramsey_frequency,
+    sideband_spectroscopy,
+)
 from qutip_trap.light.raman import crosstalk_ratios, derive_raman_drive, differential_stark_shift_hz
 from qutip_trap.light.roles import detection_beams
 from qutip_trap.machine import Machine
 from qutip_trap.noise.spectra import white_spectrum
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.run.job import RunError, readout_stage
 from qutip_trap.trap.crystal import solve_crystal
@@ -459,6 +467,32 @@ def test_heating_rate_scan_recovers_the_noise_models_rate(single) -> None:
     )
     ndot, s = noisy_res.fitted["ndot_per_s"]
     assert abs(ndot - truth) < 4.0 * s and 0.0 < s < 0.3 * truth
+
+
+def test_the_heating_probe_runs_in_the_interaction_frame_with_the_other_builder_options(
+    single, monkeypatch
+) -> None:
+    """The heating scan's thermal probe runs in the interaction frame whatever frame the call's or the machine's builder
+    options name, and keeps their other options; where those options replaced the frame, the probe ran in the Schroedinger
+    frame, three delays over 1/ndot taking 3.3 times longer on the same populations."""
+    dev, _dd = single
+    played: list[BuilderOptions | None] = []
+
+    def spy(lab, ion, pulses, setup, **kw):
+        played.append(lab.builder)
+        return _Averaged(np.array([0.0]), {f"P1[{ion}]": np.array([0.25])}, 0.0)
+
+    monkeypatch.setattr("qutip_trap.experiments.motion._run", spy)
+    options = BuilderOptions(include_stark=False, micromotion="none")
+    delays = [0.0, 1e-3, 2e-3]
+    heating_rate(Machine(dev), 1, delays, nbar0=0.1, builder_options=options)
+    heating_rate(Machine(dev, physics=Physics(builder=options)), 1, delays, nbar0=0.1)
+    heating_rate(Machine(dev), 1, delays, nbar0=0.1)
+    assert (
+        played
+        == [dataclasses.replace(options, frame="interaction")] * 12
+        + [BuilderOptions(frame="interaction")] * 6
+    )
 
 
 # ---- the field, Stark and crosstalk scans (Section 7.5 items 7, 8, 9) -------------------------------------------------------
