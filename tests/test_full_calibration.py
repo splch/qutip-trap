@@ -328,15 +328,27 @@ def test_stark_scan_refuses_a_fringe_above_the_delay_grids_nyquist_frequency(two
         assert coarse.fitted[f"stark_shift_hz[{b}]"][0] == pytest.approx(-38.4, abs=1e-9)
 
 
-def test_stark_scan_does_not_leak_its_mode_switch_into_the_ramsey_setup(two_ion, monkeypatch) -> None:
-    """``stark_scan(mode="beat_note")`` runs without forwarding its ``mode`` to the Ramsey setup (which reads ``mode`` as a mode
-    index), and an unknown mode is refused."""
+def test_stark_scans_beat_note_mode_splits_the_light_shift_from_the_coupling_shift(
+    two_ion, monkeypatch
+) -> None:
+    """With the beat note at +-delta the fringe shift is the light shift plus the coupling shift Omega^2/(2 mu), odd in the
+    beat note mu: on exact fringes the even part returns the light shift and the odd part the expected coupling shift, both
+    to 1e-9 (a 5 kHz probe resolves the 2.4 kHz coupling shift); an unknown mode is refused."""
     fx, _sur = two_ion
-    monkeypatch.setattr("qutip_trap.experiments.light.ramsey", _exact_fringe(-38.4))
+    omega = derive_raman_drive(fx.device, 0, fx.gate_drives[0].beams, scattering=False).carrier_rabi_hz
+
+    def fringe(machine, ion, delays_s, **kw):
+        mu = float(kw["delay_pulses"](0.0, 1.0)[0].drive.tones[0].detuning_hz)
+        return _exact_fringe(-38.4 + omega**2 / (2.0 * mu))(machine, ion, delays_s, **kw)
+
+    monkeypatch.setattr("qutip_trap.experiments.light.ramsey", fringe)
     res = stark_scan(
-        Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=1e3, shots=None, mode="beat_note"
+        Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), probe_hz=5e3, shots=None, mode="beat_note"
     )
-    assert "stark_shift_hz" in res.fitted and "coupling_shift_hz" in res.fitted
+    assert res.converged, res.notes
+    assert res.fitted["stark_shift_hz"][0] == pytest.approx(-38.4, abs=1e-9)
+    coupling = res.fitted["coupling_shift_hz"][0]
+    assert coupling == pytest.approx(res.fitted["coupling_shift_expected_hz"][0], rel=1e-9) and coupling > 2e3
     with pytest.raises(ValueError, match="per_beam"):
         stark_scan(Machine(fx.device), 0, np.linspace(0.0, 2e-3, 9), mode="nonsense")
 
