@@ -10,9 +10,10 @@ shot clock (``conv.shot_blocks_per_sample``), and the error bars use the effecti
 
 from __future__ import annotations
 
+import cmath
 import itertools
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -48,7 +49,7 @@ from qutip_trap.units import TWO_PI
 if TYPE_CHECKING:
     from qutip_trap.control.compiler import Circuit
     from qutip_trap.control.shaping import GateModes
-    from qutip_trap.control.table import CalibrationTable, Segment, Waveform
+    from qutip_trap.control.table import CalibrationTable, Leg, Segment, Waveform
     from qutip_trap.device.model import Device
     from qutip_trap.light.beams import Beam
 
@@ -420,6 +421,46 @@ def roos_bessel_saturation(waveform: Waveform) -> float:
     return math.sin(math.pi * f / 2.0) ** 2
 
 
+def _at_start(value: float | Callable[[float], float]) -> float:
+    """A segment's constant, or its callable's value at the segment start."""
+    return float(value(0.0)) if callable(value) else float(value)
+
+
+def roos_beat_phase_tilt(waveform: Waveform, t_start_s: float, *, beat_reset: bool) -> float:
+    """Roos's spin-axis tilt of an MS gate started at ``t_start_s``, as the infidelity sin^2(psi) (Section 4.4.1; Roos 2008,
+    New J. Phys. 10, 013002). Switching the bichromatic field on leaves the carrier-frame rotation of the switch-on, which
+    tilts the force's spin axis per ion by psi = |A_blue e^{-i zeta_blue} - A_red e^{-i zeta_red}|/mu: A_leg = Omega_leg
+    e^{i phi_leg} the amplitude the leg switches on with in the per-tone Omega (the first segment's at its start), zeta_leg
+    the leg's beat phase 2 pi mu_leg t_start less the per-gate reset the scheduler programs (``beat_reset``: none for a
+    detuning schedule), mu the starting detuning. For equal tone phases psi = (2 Omega/mu)|sin zeta|, Roos's (4 Omega_R/mu)
+    sin(zeta) with Omega_R = Omega/2. The amplitude is the switch-on one, not a pulse average: an envelope that rises from
+    zero switches on at zero amplitude and the carrier follows it adiabatically, and a stepped envelope's later steps, each
+    at its own beat phase, largely cancel over the gate. The worst ion; zero for a non-MS waveform."""
+    from qutip_trap.control.schedule import beat_phase_offset_rad
+
+    if waveform.kind != "ms":
+        return 0.0
+    first = waveform.segments[0]
+    mu = abs(_at_start(first.detuning_hz["blue"]))
+    if mu == 0.0:
+        raise RunError(
+            "an MS waveform starts with a tone on the carrier: Roos's tilt (2 Omega/mu) needs mu != 0"
+        )
+    psi = 0.0
+    legs: tuple[tuple[Leg, float], ...] = (("blue", 1.0), ("red", -1.0))
+    for ion in first.ions:
+        switch_on = 0j
+        for leg, sign in legs:
+            detuning = first.detuning_hz[leg]
+            zeta = TWO_PI * _at_start(detuning) * t_start_s
+            if beat_reset:
+                zeta -= beat_phase_offset_rad(detuning, t_start_s)
+            phase = float(first.phase_rad[(ion, leg)]) - zeta
+            switch_on += sign * _at_start(first.amplitude_hz[(ion, leg)]) * cmath.exp(1j * phase)
+        psi = max(psi, abs(switch_on) / mu)
+    return math.sin(psi) ** 2
+
+
 def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> dict[str, float]:
     """The closed-form error scales reported beside the result (Section 9.6). Per entangling gate: the residual displacement
     sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale
@@ -450,24 +491,9 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
         chi_frozen = sum(
             abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class.get(m) == "frozen"
         )
-        # Roos's spin-axis tilt psi = (2 Omega/mu) sin(zeta) in the per-tone Omega (his 4 Omega_R/mu, Omega_R = Omega/2), zeta
-        # the beat phase at the gate start (Section 4.4.1): zero when the hardware resets the beat note per gate
-        tilt = 0.0
-        if device.hardware.phase_continuous:
-            mu0 = gate.waveform.segments[0].detuning_hz.get("blue", 0.0)
-            if not callable(mu0) and float(mu0) != 0.0:
-                zeta = (2.0 * math.pi * abs(float(mu0)) * gate.t_start_s) % (2.0 * math.pi)
-                mean_amp = float(
-                    np.mean(
-                        [
-                            abs(float(a)) if not callable(a) else abs(float(a(0.0)))
-                            for seg in gate.waveform.segments
-                            for a in seg.amplitude_hz.values()
-                        ]
-                    )
-                )
-                psi = 2.0 * mean_amp / abs(float(mu0)) * abs(math.sin(zeta))
-                tilt = math.sin(psi) ** 2
+        tilt = roos_beat_phase_tilt(
+            gate.waveform, gate.t_start_s, beat_reset=not device.hardware.phase_continuous
+        )
         out[f"{gate.gate_id}.residual_displacement"] = eps_ent
         out[f"{gate.gate_id}.debye_waller"] = dw
         out[f"{gate.gate_id}.carrier_scale"] = carrier

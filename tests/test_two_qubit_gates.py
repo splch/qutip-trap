@@ -3,6 +3,7 @@ pulse (one 100 us loop on the two-ion chain's x-COM mode at d_m = 12) against th
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -28,6 +29,8 @@ from qutip_trap.control.shaping import (
     integrals_sampled,
     integrals_segmented,
     solve_amplitude_modulation,
+    solve_fourier_amplitude_modulation,
+    solve_frequency_modulation,
     symmetric_pulse,
     waveform_from_segmented,
 )
@@ -48,7 +51,12 @@ from qutip_trap.published import (
     roos_force_saturation,
     thermal_debye_waller_infidelity,
 )
-from qutip_trap.run.job import intrinsic_budget, roos_bessel_saturation, sideband_lamb_dicke_deficit
+from qutip_trap.run.job import (
+    intrinsic_budget,
+    roos_beat_phase_tilt,
+    roos_bessel_saturation,
+    sideband_lamb_dicke_deficit,
+)
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import species
 from qutip_trap.trap.crystal import Crystal, Mode
@@ -193,6 +201,122 @@ def test_sine_motion_phase_tilts_the_spin_axis_by_the_carrier_rotation(anchor) -
     assert tr.final.motional.nbar[ANCHOR_MODE] < 1e-4, (
         "the loop itself closes: the leakage is the axis tilt, not a residual displacement"
     )
+
+
+X_COM_ALONE = HilbertSpace((2, 2), (ModeTruncation(X_COM_TWO_IONS, 14, (0, 5), 0.12),), None, (0, 1, 2, 4, 5))
+X_MODES = HilbertSpace(
+    (2, 2),
+    (ModeTruncation(2, 10, (0, 3), 0.12), ModeTruncation(X_COM_TWO_IONS, 10, (0, 3), 0.12)),
+    None,
+    (0, 1, 4, 5),
+)
+
+
+def _played_from(
+    device: Device,
+    wf: Waveform,
+    t_start_s: float,
+    ket: qt.Qobj,
+    *,
+    reset: bool,
+    space: HilbertSpace = X_COM_ALONE,
+) -> qt.Qobj:
+    """The internal state after ``wf`` on the two-ion chain's modes of ``space`` (no light shift, the other modes switched
+    off) from ``ket``|0>, its tones running since t = 0 and the gate started at ``t_start_s``."""
+    drives = raman_gate_drives(2)
+    table = table_with_waveform((0, 1), wf, device=device, drives=drives, stark_hz={})
+    spins, _ = ms_spin_phases(wf, (0, 1), (0.0, 0.0), PhaseFrame())
+    pulses = entangling_pulses(
+        wf,
+        drives,
+        spin_phases_rad=spins,
+        t_start_s=t_start_s,
+        table=table,
+        gate_id="ms",
+        beat_phase_reset=reset,
+        stark_compensation=False,
+    )
+    gate = PlayedGate("ms", "ms", (0, 1), wf, drives[0].beams, t_start_s, t_start_s + wf.duration_s)
+    sched = Schedule(tuple(pulses), (), (), {0: 0.0, 1: 0.0}, gates=(gate,), t0_s=t_start_s)
+    engine = JointExactEngine(builder_options=BuilderOptions(include_stark=False, frozen_debye_waller=False))
+    traces = engine.run_pulses(
+        device, sched, space.initial_state(ket), space, quiet_sample(), SeedSpec(0), Numerics()
+    )
+    return traces.final.internal
+
+
+def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with() -> None:
+    """Roos's spin-axis tilt at beat phase zeta = pi/2 against the exact engine on the two-ion chain's x-COM mode: the |++>
+    output moves from the zeta = 0 one by the budget's sin^2(psi), psi = (2 Omega_on/mu) sin(zeta), for a square pulse
+    (1.77e-3 against 1.81e-3) and for Leung's FM pulse on hardware that resets the beat note per gate, which leaves a
+    detuning schedule running (6.95e-3 against 6.48e-3); the Fourier-sine AM switches on at zero amplitude, the carrier
+    follows it adiabatically and its output does not move (below 1e-5), where its time-mean amplitude would give 4.4e-3."""
+    device = chain_device(2)
+    assert device.hardware.phase_continuous
+    reset_hw = dataclasses.replace(
+        device, hardware=dataclasses.replace(device.hardware, phase_continuous=False)
+    )
+    modes = two_ion_modes(device).subset([X_COM_TWO_IONS])
+    square = Waveform.symmetric(
+        modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=EPSILON_HZ, kernel="rwa", all_modes=False
+    )
+    fourier = solve_fourier_amplitude_modulation(modes, mu_hz=2.99e6, duration_s=100e-6, n_basis=4).waveform
+    fm = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=5, mu0_hz=3.012e6).waveform
+    plus = qt.tensor((qt.basis(2, 0) + qt.basis(2, 1)).unit(), (qt.basis(2, 0) + qt.basis(2, 1)).unit())
+    moved: dict[str, tuple[float, float]] = {}
+    for name, wf, dev in (("square", square, device), ("fourier", fourier, device), ("fm", fm, reset_hw)):
+        mu = wf.segments[0].detuning_hz["blue"]
+        t_g = 0.25 / float(mu(0.0) if callable(mu) else mu)
+        reset = not dev.hardware.phase_continuous
+        at_zero = _played_from(dev, wf, 0.0, plus, reset=reset)
+        at_quarter = _played_from(dev, wf, t_g, plus, reset=reset)
+        assert float(np.real((at_zero * at_zero).tr())) > 1.0 - 1e-6, "the |++> output is pure"
+        change = 1.0 - float(np.real((at_zero * at_quarter).tr()))
+        moved[name] = (change, roos_beat_phase_tilt(wf, t_g, beat_reset=reset))
+    assert moved["square"][1] == pytest.approx(1.81e-3, rel=1e-2)
+    assert moved["square"][0] == pytest.approx(moved["square"][1], rel=0.05), moved
+    assert moved["fm"][1] == pytest.approx(6.48e-3, rel=1e-2)
+    assert moved["fm"][0] == pytest.approx(moved["fm"][1], rel=0.1), moved
+    assert moved["fourier"][1] == 0.0 and moved["fourier"][0] < 1e-5, moved
+    # the budget reads the device's hardware: on phase-continuous tones the square pulse at t_g, on the resetting chain none
+    for dev, want in ((device, moved["square"][1]), (reset_hw, 0.0)):
+        t_g = 0.25 / float(square.segments[0].detuning_hz["blue"])
+        drives = raman_gate_drives(2)
+        gate = PlayedGate("ms", "ms", (0, 1), square, drives[0].beams, t_g, t_g + square.duration_s)
+        pulses = entangling_pulses(
+            square,
+            drives,
+            spin_phases_rad=ms_spin_phases(square, (0, 1), (0.0, 0.0), PhaseFrame())[0],
+            t_start_s=t_g,
+            table=table_with_waveform((0, 1), square, device=dev, drives=drives, stark_hz={}),
+            gate_id="ms",
+            beat_phase_reset=not dev.hardware.phase_continuous,
+        )
+        sched = Schedule(tuple(pulses), (), (), {0: 0.0, 1: 0.0}, gates=(gate,), t0_s=t_g)
+        selection = select_space(
+            dev, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
+        )
+        assert intrinsic_budget(dev, sched, selection)["ms.beat_phase_tilt"] == pytest.approx(want, abs=1e-15)
+
+
+@pytest.mark.slow
+def test_a_stepped_envelope_moves_less_than_its_switch_on_tilt() -> None:
+    """Five-segment AM closing both x modes (33, 107, 148, 107, 33 kHz): started at zeta = pi/2 its |++> output moves by
+    1.2e-4, inside the switch-on tilt sin^2(2 Omega_on/mu) = 5.2e-4, while the later steps' own tilts, each at its own beat
+    phase, largely cancel over the gate; the mean segment amplitude would give 3.4e-3."""
+    device = chain_device(2)
+    modes = two_ion_modes(device).subset([2, X_COM_TWO_IONS])
+    wf = solve_amplitude_modulation(modes, mu_hz=2.95e6, duration_s=150e-6, kernel="rwa").waveform
+    assert len(wf.segments) == 5
+    plus = qt.tensor((qt.basis(2, 0) + qt.basis(2, 1)).unit(), (qt.basis(2, 0) + qt.basis(2, 1)).unit())
+    t_g = 0.25 / 2.95e6
+    at_zero = _played_from(device, wf, 0.0, plus, reset=False, space=X_MODES)
+    at_quarter = _played_from(device, wf, t_g, plus, reset=False, space=X_MODES)
+    change = 1.0 - float(np.real((at_zero * at_quarter).tr()))
+    tilt = roos_beat_phase_tilt(wf, t_g, beat_reset=False)
+    omega_on = float(wf.segments[0].amplitude_hz[(0, "blue")])
+    assert tilt == pytest.approx(math.sin(2.0 * omega_on / 2.95e6) ** 2, rel=1e-9)
+    assert 2e-5 < change < tilt, (change, tilt)
 
 
 def test_the_carrier_saturates_the_force_at_twice_the_per_tone_rabi_frequency_over_mu() -> None:
