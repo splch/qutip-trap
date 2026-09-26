@@ -106,14 +106,15 @@ def _direct_alpha_chi(env: SegmentedEnvelope, modes: GateModes, kernel: str) -> 
                 edges[j + 1],
                 lambda tp, k=k: edges[k],
                 lambda tp, k=k: min(edges[k + 1], tp),
-                epsabs=1e-12,
-                epsrel=1e-11,
+                epsabs=1e-10,
+                epsrel=1e-10,
             )
             total += val
     chi = modes.eta[0][0] * modes.eta[1][0] * total
     return complex(alpha), float(chi)
 
 
+@pytest.mark.filterwarnings("error::scipy.integrate.IntegrationWarning")
 @pytest.mark.parametrize("kernel", ["rwa", "choi"])
 @pytest.mark.parametrize("phi_m", [0.0, SINE_MOTION_PHASE_RAD, 0.7])
 def test_segmented_integrals_match_direct_quadrature(kernel: str, phi_m: float) -> None:
@@ -131,6 +132,7 @@ def test_segmented_integrals_match_direct_quadrature(kernel: str, phi_m: float) 
     assert ints.chi_by_mode[(0, 1, 0)] == pytest.approx(chi, rel=1e-9)
 
 
+@pytest.mark.filterwarnings("error::scipy.integrate.IntegrationWarning")
 def test_sampled_integrals_match_analytic_on_a_smooth_envelope() -> None:
     """The sampled (Simpson) integrals of a sin^2 envelope match the closed-form alpha to 1e-8 and the nested-quadrature chi to
     1e-7 on the rwa kernel."""
@@ -174,8 +176,8 @@ def test_sampled_integrals_match_analytic_on_a_smooth_envelope() -> None:
         tau,
         lambda t2: 0.0,
         lambda t2: t2,
-        epsabs=1e-13,
-        epsrel=1e-11,
+        epsabs=1e-7,
+        epsrel=1e-10,
     )
     assert ints.chi_of(0, 1) == pytest.approx(0.06 * 0.06 * val, rel=1e-7)
 
