@@ -60,7 +60,7 @@ _WEIGHT_MIN = 1e-3
 
 class _LabOptions(TypedDict, total=False):
     """The keywords every experiment takes beside its own: the calibration ``table`` it reads (default the machine's),
-    the solver ``options`` (default the machine's numerics; None the experiment's defaults), the ``builder_options``
+    the solver ``options`` (default the machine's numerics; None the defaults, ``Numerics()``), the ``builder_options``
     (default the machine's), the noise ``sample`` it runs under, ``shots`` per point (None: exact populations),
     ``readout`` (read through the device's readout errors), the ``seed`` and ``stream`` of the shot noise, the thermal
     occupation ``nbar`` per mode and ``qubit_shifts_hz`` per ion (the true transition minus the frame)."""
@@ -100,7 +100,8 @@ class _Lab:
 
     device: Device
     table: CalibrationTable | None
-    options: Numerics | None
+    options: Numerics
+    """The call's numerics, the machine's when it gives none, ``Numerics()`` for None."""
     physics: Physics
     """The machine's: the hardware chain and the channel switches the experiment's engines play under."""
     builder: BuilderOptions | None
@@ -111,8 +112,11 @@ class _Lab:
 
     @classmethod
     def of(cls, machine: Machine, kw: _LabOptions) -> _Lab:
+        from qutip_trap.options import Numerics
+
         _check_lab(kw)
         table = kw.get("table", machine.table)
+        options = kw.get("options", machine.numerics)
         sample = kw.get("sample")
         shots = kw.get("shots")
         obs = Observation(
@@ -125,7 +129,7 @@ class _Lab:
         return cls(
             device=machine.device,
             table=table,
-            options=kw.get("options", machine.numerics),
+            options=options if options is not None else Numerics(),
             physics=machine.physics,
             builder=kw.get("builder_options", machine.physics.builder),
             sample=sample,
@@ -326,7 +330,6 @@ def _run(
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
     from qutip_trap.noise.sampling import NoiseSample, key_frozen_n, quiet_sample
-    from qutip_trap.options import Numerics
 
     device = lab.device
     n = device.crystal.n_ions
@@ -344,7 +347,6 @@ def _run(
         scattering_recoil=phys.scattering_recoil,
         intensity_noise_channels=phys.intensity_noise_channels,
     )
-    options = lab.options or Numerics()
     base_sample = lab.sample or quiet_sample()
     seeds = SeedSpec(lab.obs.seed)
     branches, dropped = _branches(setup.space, lab.nbar, setup.etas, weight_min, fock_branches)
@@ -361,7 +363,7 @@ def _run(
             ou_grids=dict(base_sample.ou_grids),
             t_s=base_sample.t_s,
         )
-        tr = engine.run_pulses(device, schedule, state, setup.space, sample, seeds, options)
+        tr = engine.run_pulses(device, schedule, state, setup.space, sample, seeds, lab.options)
         if times is None:
             times = np.asarray(tr.times_s, dtype=float)
         for key, arr in tr.expectations.items():

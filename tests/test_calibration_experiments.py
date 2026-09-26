@@ -228,10 +228,8 @@ def test_the_machine_supplies_the_laboratory_defaults_and_an_unknown_keyword_rai
     assert lab.device is machine.device and lab.obs.shots == 5 and lab.table is machine.table
     assert lab.options == machine.numerics and lab.builder is None
     given = _Lab.of(machine, {"table": None, "options": Numerics(atol=1e-12)})
-    assert (
-        given.table is None and given.options is not None and given.options.atol == 1e-12
-    )  # the call's keywords win
-    assert _Lab.of(machine, {"options": None}).options is None  # None: the experiment's own defaults
+    assert given.table is None and given.options.atol == 1e-12  # the call's keywords win
+    assert _Lab.of(machine, {"options": None}).options == Numerics()  # None: the defaults
     with pytest.raises(TypeError, match="shot"):
         rabi_scan(machine, 0, DURATIONS, shot=5)
     with pytest.raises(TypeError, match="numerics"):

@@ -326,14 +326,13 @@ def mode_spectroscopy(
     )
 
 
-def _density_matrix_options(options: Numerics | None) -> Numerics:
-    """``options`` (or the defaults) integrating by ``mesolve`` at any dimension: a thermal density matrix cannot take
-    the trajectory route."""
-    from qutip_trap.options import Numerics
-
-    base = options if options is not None else Numerics()
+def _density_matrix_options(options: Numerics) -> Numerics:
+    """``options`` integrating by ``mesolve`` at any dimension: a thermal density matrix cannot take the trajectory
+    route."""
     return replace(
-        base, lindblad_method="mesolve", mesolve_dimension_max=max(int(base.mesolve_dimension_max), 1_000_000)
+        options,
+        lindblad_method="mesolve",
+        mesolve_dimension_max=max(int(options.mesolve_dimension_max), 1_000_000),
     )
 
 

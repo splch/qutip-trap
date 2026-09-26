@@ -13,6 +13,7 @@ import qutip as qt
 from scipy.special import jv
 
 from qutip_trap.calibration import CalibrationCache, calibrate
+from qutip_trap.calibration.entangling import exact_gate_check
 from qutip_trap.calibration.experiments import (
     ALIASES,
     ORDER,
@@ -38,7 +39,7 @@ from qutip_trap.run.job import RunError, last_record, register_fidelity
 from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.pseudopotential import RfDrive
 from qutip_trap.units import TWO_PI
-from tests.fixtures import BELL, WINDOWS, run, two_ion_surrogate
+from tests.fixtures import BELL, FAST, WINDOWS, run, two_ion_surrogate
 
 GPI = Circuit(2, (Operation("gpi", (0,), (0.0,)),), (0,))
 SCANS = CalibrationScans(
@@ -512,6 +513,26 @@ def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_d
     _wf, _ent, _sq, _t, built, _space = _entangling_setup(fx.device, (0, 1), dict(kw))
     for m, w in zip(built.modes, built.omega_rad_s):
         assert w / TWO_PI == pytest.approx(fx.device.crystal.modes[m].omega_hz + 1234.0, rel=1e-12)
+
+
+def test_the_entangling_scans_cut_the_thermal_mixture_where_the_labs_numerics_do(
+    two_ion, monkeypatch
+) -> None:
+    """The entangling scans play the gate with the lab's numerics, whose branch_weight_min cuts the thermal mixture as it
+    does for ``run``: the machine's 1e-6 when the call gives no options, the defaults' 1e-6 for options=None (where the scans
+    cut at their own 1e-3, three branches of the calibration's mixture in place of ten), a call's own when given."""
+    fx, sur = two_ion
+    seen: list[Numerics] = []
+    real_check = exact_gate_check
+
+    def spy(*args, **kw):
+        seen.append(kw["options"])
+        return real_check(*args, **kw)
+
+    monkeypatch.setattr("qutip_trap.calibration.entangling.exact_gate_check", spy)
+    for options in ({}, {"options": None}, {"options": FAST}):
+        ms_scan(Machine(fx.device), (0, 1), [1.0], [0.0], table=sur.table, **options)
+    assert [o.branch_weight_min for o in seen] == [1e-6, 1e-6, 1e-3]
 
 
 @pytest.mark.slow

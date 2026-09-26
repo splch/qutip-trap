@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
-    from qutip_trap.options import Numerics
 
 
 class _GateSetup(NamedTuple):
@@ -98,13 +97,6 @@ def _gate_lab(
     return lab, _entangling_setup(lab.device, pair, setup)
 
 
-def _solver_options(lab: _Lab) -> Numerics:
-    """The lab's solver options, else the defaults with the thermal branches of the initial mixture cut at 1e-3."""
-    from qutip_trap.options import Numerics
-
-    return lab.options if lab.options is not None else Numerics(branch_weight_min=1e-3)
-
-
 def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, int]) -> GateCheck:
     """The gate played once from |00> on the exact space (``calibration.entangling.exact_gate_check``)."""
     from qutip_trap.calibration.entangling import exact_gate_check
@@ -117,7 +109,7 @@ def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, i
         g.table,
         space=g.space,
         nbar=lab.nbar,
-        options=_solver_options(lab),
+        options=lab.options,
         builder_options=lab.builder,
         hardware_chain=lab.physics.hardware_chain,
         sample=lab.sample,
@@ -155,7 +147,7 @@ def _parity_populations(
         analysis_phase_rad=analysis_phase_rad,
         analysis_rabi_hz=rabi,
         nbar=lab.nbar,
-        options=_solver_options(lab),
+        options=lab.options,
         builder_options=lab.builder,
         hardware_chain=lab.physics.hardware_chain,
         sample=lab.sample,
