@@ -216,7 +216,7 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:
 
 def test_sample_of_shot_follows_the_kept_shots_through_the_discards(two_ion) -> None:
     """Every collision of a dark-ion-only process discards its shot (Section 6.7): with three dynamical samples of 20
-    shots each and shots discarded in the first two blocks, every kept row maps to the block of the shot clock it was read
+    shots each and shots discarded before the last block, every kept row maps to the block of the shot clock it was read
     in (conv.shot_blocks_per_sample), and the record carries the map."""
     fx, sur = two_ion
     col = Collisions(3e-7 * TORR_PA, {"H2": 1.0}, {"dark_ion": 1.0})

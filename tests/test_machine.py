@@ -382,9 +382,8 @@ def test_cancel_stops_the_worker_at_its_next_pulse_report(machine) -> None:
     release = mp.get_context("spawn").Event()
     held = HeldAtFirstPulse(m.device, m.table, m.physics, SERIAL, m.readout, m.level, release=release)
     job = submit(held, BELL, 2000, seed=1)
-    deadline = (
-        time.monotonic() + 600.0
-    )  # a hang guard only: the worker is held, so the order does not depend on time
+    # a hang guard only: the worker holds at its first pulse report, so what the parent sees does not depend on time
+    deadline = time.monotonic() + 600.0
     while (first := job.progress) is None:
         assert job.status() == "running" and time.monotonic() < deadline, job.status()
         time.sleep(0.05)
