@@ -574,9 +574,12 @@ def full_calibration(
                 res_par = parity_scan(lab, pair, phases, **{**gate_kw, "stream": f"parity_scan[{pair}]"})
                 results[f"parity_scan[{pair}]"] = res_par
                 if res_par.converged:
+                    # the fit is unconstrained, so a shot-noise-limited contrast can read above 1: its sigma says how far
+                    contrast, s_contrast = res_par.fitted["contrast"]
+                    bound, s_bound = res_par.fitted["bell_fidelity_bound"]
                     notes.append(
-                        f"pair {pair}: parity contrast {res_par.fitted['contrast'][0]:.4f}, Bell fidelity bound "
-                        f"{res_par.fitted['bell_fidelity_bound'][0]:.4f}"
+                        f"pair {pair}: parity contrast {contrast:.4f} +- {s_contrast:.2g}, Bell fidelity bound "
+                        f"{bound:.4f} +- {s_bound:.2g}"
                     )
     # 7. detection
     if "detection_histogram" in wanted:
