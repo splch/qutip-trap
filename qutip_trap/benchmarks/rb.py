@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
@@ -234,6 +234,28 @@ def fit_decay(
 
 
 @dataclass(frozen=True)
+class RBPrediction:
+    """What the channels and the SPAM predict for a benchmark's decay (``BenchmarkBudget.predicted``; the budget's notes give
+    the rules)."""
+
+    r_channel: float
+    """The channels composed to first order per unit, reduced to the benchmarked qubits; for simultaneous RB the mean of
+    ``r_channel_per_qubit``."""
+    p_channel: float
+    """1 - r_channel 2^n/(2^n - 1)."""
+    F0_spam: float
+    """The survival at m = 0 that SPAM alone predicts."""
+    B_depolarizing: float
+    """1/2^n."""
+    A_spam: float
+    """F0_spam - B_depolarizing."""
+    r_channel_per_qubit: dict[int, float] = field(default_factory=dict)
+    """Simultaneous RB: per benchmarked qubit, the channels reduced to that one qubit, per Clifford."""
+    r_channel_joint_layer: float | None = None
+    """Simultaneous RB: the channels reduced to every benchmarked qubit over one layer of n Cliffords."""
+
+
+@dataclass(frozen=True)
 class RBResult:
     """A randomized-benchmarking run (module docstring): the joint survival P(every benchmarked qubit reads its target
     bit) per (length, sequence) with its shot-noise error, the mean per length with its error, the A p^m + B fit, the
@@ -254,7 +276,7 @@ class RBResult:
     fit: dict[str, tuple[float, float]]
     """A, p, B and chi2_per_dof of the joint survival."""
     error_per_clifford: tuple[float, float]
-    """r in the unit of ``budget.predicted['r_channel']``: (1 - p)(2^n - 1)/2^n for one qubit and for a pair; for
+    """r in the unit of ``budget.predicted.r_channel``: (1 - p)(2^n - 1)/2^n for one qubit and for a pair; for
     simultaneous RB the mean over the qubits of the marginal r_q = (1 - p_q)/2."""
     depolarizing_entanglement_infidelity: tuple[float, float]
     """(4^n - 1)(1 - p)/4^n, not r; for simultaneous RB the mean of the marginal (4 - 1)(1 - p_q)/4."""
@@ -270,7 +292,7 @@ class RBResult:
     marginal_fit: tuple[dict[str, tuple[float, float]], ...] = ()
     marginal_error_per_clifford: tuple[tuple[float, float], ...] = ()
     """Per qubit r_q = (1 - p_q)/2 from its marginal decay: its gates' cost under simultaneous operation."""
-    budget: BenchmarkBudget | None = None
+    budget: BenchmarkBudget[RBPrediction] | None = None
     notes: tuple[str, ...] = ()
 
     @property
@@ -414,7 +436,7 @@ def randomized_benchmarking(
         notes.append(
             "simultaneous RB (Gambetta et al. 2012): error_per_clifford is the mean over the benchmarked qubits of the"
             " per-qubit MARGINAL r_q = (1 - p_q)/2 (marginal_error_per_clifford), one Clifford on one qubit the unit and"
-            " the same unit as budget.predicted['r_channel'] and as the r a qubit measures alone; joint_error_per_layer"
+            " the same unit as budget.predicted.r_channel and as the r a qubit measures alone; joint_error_per_layer"
             " = (1 - p)(2^n - 1)/2^n of the JOINT survival is the error per LAYER of n Cliffords (sum_q r_q to first"
             " order), a correlation diagnostic and not an n-qubit Clifford error rate"
         )
@@ -468,7 +490,7 @@ def _rb_budget(
     qs: tuple[int, ...],
     knill: bool,
     simultaneous: bool,
-) -> BenchmarkBudget:
+) -> BenchmarkBudget[RBPrediction]:
     """The RB budget: r_channel composed from the channels to first order, the intrinsic scales per unit and the SPAM
     survival F0 at m = 0 (module docstring)."""
     n_q = len(qs)
@@ -493,18 +515,19 @@ def _rb_budget(
         e_target = 0.5 * (eb + ed) if knill else ed
         e_other = 0.5 * (eb + ed) if knill else eb
         f0 *= (1.0 - prep) * (1.0 - e_target) + prep * e_other
-    predicted = {
-        "r_channel": r_channel,
-        "p_channel": 1.0 - r_channel * 2**n_channel / (2**n_channel - 1),
-        "r_intrinsic": float(intrinsic["total"]),
-        "F0_spam": f0,
-        "B_depolarizing": 1.0 / 2**n_q,
-        "A_spam": f0 - 1.0 / 2**n_q,
-    }
+    predicted = RBPrediction(
+        r_channel=r_channel,
+        p_channel=1.0 - r_channel * 2**n_channel / (2**n_channel - 1),
+        F0_spam=f0,
+        B_depolarizing=1.0 / 2**n_q,
+        A_spam=f0 - 1.0 / 2**n_q,
+        r_channel_per_qubit=per_qubit,
+        r_channel_joint_layer=float(n_q * r_channel_joint) if simultaneous else None,
+    )
     notes = [
         "r_channel = sum over native gate kinds of (pieces per unit) x (average infidelity of the kind's GATE_LOCAL "
         "channel reduced to the benchmarked qubits), the first-order composition; p_channel = 1 - r 2^n/(2^n - 1)",
-        "r_intrinsic = the closed-form intrinsic scales per unit summed over each kind's WHOLE schedule entry, "
+        "intrinsic_total = the closed-form intrinsic scales per unit summed over each kind's WHOLE schedule entry, "
         "including the crosstalk it inflicts on ions outside the benchmarked set, so it bounds a LARGER error than "
         "r_channel (which is reduced to the benchmarked qubits) measures, and it bounds the coherent errors rather "
         "than valuing them",
@@ -512,11 +535,8 @@ def _rb_budget(
         "alone predicts; B_depolarizing = 1/2^n",
     ]
     if simultaneous:
-        predicted["r_channel_joint_layer"] = float(n_q * r_channel_joint)
-        for q, v in per_qubit.items():
-            predicted[f"r_channel.q{q}"] = v
         notes[0] = (
-            "r_channel is the mean over the benchmarked qubits of r_channel.q{i} = sum over native gate kinds of "
+            "r_channel is the mean over the benchmarked qubits of r_channel_per_qubit[i] = sum over native gate kinds of "
             "(pieces per Clifford of the sequence) x (average infidelity of the kind's GATE_LOCAL channel reduced to "
             "THAT ONE qubit), a one-qubit average gate infidelity per Clifford: the unit of the marginal r_q that "
             "simultaneous RB fits. r_channel_joint_layer composes the channels reduced to ALL benchmarked qubits over "

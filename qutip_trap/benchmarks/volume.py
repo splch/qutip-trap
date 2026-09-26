@@ -144,6 +144,25 @@ def heavy_output_probability(result: Result, heavy: frozenset[str]) -> tuple[flo
 
 
 @dataclass(frozen=True)
+class QVPrediction:
+    """What the channels and the readout predict for the quantum-volume circuits (``BenchmarkBudget.predicted``; the
+    budget's notes give the rules)."""
+
+    eps_gates: float
+    """1 - the product over the circuits' native pieces of (1 - the kind's reduced channel infidelity)."""
+    eps_readout: float
+    """sum over the qubits of (eps_B + eps_D)/2."""
+    eps_circuit: float
+    """1 - (1 - eps_gates)(1 - eps_readout)."""
+    heavy_output_probability: float
+    """The depolarizing composition, mean over circuits of h_ideal (1 - eps_circuit) + eps_circuit/2."""
+    register_fidelity: float
+    """1 - eps_gates."""
+    ideal_heavy_output_probability: float
+    """The circuits' mean ideal heavy-output probability."""
+
+
+@dataclass(frozen=True)
 class QVResult:
     """A quantum-volume run (Cross et al. 2019): per circuit the heavy-output probability, its sigma and its ideal value;
     the mean with Eq. (32)'s ``sigma`` (the criterion) and the standard error of the mean (a diagnostic: the
@@ -172,7 +191,7 @@ class QVResult:
     pulses_per_circuit: float
     circuits: tuple[QVCircuit, ...]
     results: tuple[Result, ...]
-    budget: BenchmarkBudget | None = None
+    budget: BenchmarkBudget[QVPrediction] | None = None
     notes: tuple[str, ...] = ()
 
     @property
@@ -262,7 +281,7 @@ def quantum_volume(
 
 def _qv_budget(
     machine: Machine, results: Sequence[Result], qs: tuple[int, ...], ideal_h: np.ndarray
-) -> BenchmarkBudget:
+) -> BenchmarkBudget[QVPrediction]:
     """The QV budget: the depolarizing prediction of the heavy-output probability from the channels and the readout."""
     counts, intrinsic = gather_counts_and_intrinsic(results, [1] * len(results))
     spam = spam_of(results[0], qs)
@@ -279,15 +298,14 @@ def _qv_budget(
         spam=spam,
         channels=channels,
         channel_infidelity=infid,
-        predicted={
-            "eps_gates": eps_gates,
-            "eps_readout": eps_ro,
-            "eps_circuit": eps,
-            "heavy_output_probability": float(np.mean(ideal_h * (1.0 - eps) + 0.5 * eps)),
-            "register_fidelity": 1.0 - eps_gates,
-            "ideal_heavy_output_probability": float(ideal_h.mean()),
-            "intrinsic_total": float(intrinsic["total"]),
-        },
+        predicted=QVPrediction(
+            eps_gates=eps_gates,
+            eps_readout=eps_ro,
+            eps_circuit=eps,
+            heavy_output_probability=float(np.mean(ideal_h * (1.0 - eps) + 0.5 * eps)),
+            register_fidelity=1.0 - eps_gates,
+            ideal_heavy_output_probability=float(ideal_h.mean()),
+        ),
         notes=(
             "eps_gates = 1 - prod over the circuit's native pieces of (1 - reduced average infidelity of the kind's GATE_LOCAL"
             " channel at the FULL entangling angle): every partially entangling MS is charged at the full gate's channel",

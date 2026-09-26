@@ -115,7 +115,7 @@ from qutip_trap.benchmarks.rb import randomized_benchmarking
 from qutip_trap.benchmarks.volume import quantum_volume
 
 rb = randomized_benchmarking(pinned, (0,), (1, 128, 512), n_sequences=1, shots=2000, fix_offset=True)
-print(rb.fidelity_form(), "| r per Clifford:", rb.error_per_clifford, "| predicted:", rb.budget.predicted["r_channel"])
+print(rb.fidelity_form(), "| r per Clifford:", rb.error_per_clifford, "| predicted:", rb.budget.predicted.r_channel)
 
 ghz = ghz_fidelity(pinned, (0, 1), shots=400, analysis_phases_rad=np.linspace(0.0, np.pi, 4, endpoint=False))
 print("bound (P0 + P1 + C)/2:", ghz.fidelity_bound, "| exact:", ghz.register_fidelity_max_phase, ghz.register_fidelity)

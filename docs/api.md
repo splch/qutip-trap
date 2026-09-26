@@ -125,7 +125,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 - `rb`: `randomized_benchmarking(machine, qubits, lengths, *, n_sequences=4, shots=200, ...)`, single, simultaneous, two-qubit or Knill-style: an `RBResult` of `RBSequence` records.
 - `ghz`: `ghz_fidelity(machine, qubits, ...)` (a `GHZResult`), `ghz_circuit`, `parity_circuit`; `volume`: `quantum_volume` (a `QVResult` of `QVCircuit`), `random_square_circuit`.
 - `clifford`: `SINGLE_QUBIT_CLIFFORDS`, `TwoQubitClifford`, `random_two_qubit_clifford`, `decompose_two_qubit_clifford`, `CLASS_SIZES`, `TWO_QUBIT_GROUP_ORDER`.
-- `budget`: `gate_channel(machine, kind)`, a native gate kind's `GateChannel` of `StepChannel` steps, and `BenchmarkBudget`, the budget beside every benchmark.
+- `budget`: `gate_channel(machine, kind)`, a native gate kind's `GateChannel` of `StepChannel` steps, and `BenchmarkBudget`, the budget beside every benchmark, its `intrinsic_total` the runs' intrinsic budget per unit and its `predicted` the benchmark's own record (`rb.RBPrediction`, `ghz.GHZPrediction`, `volume.QVPrediction`).
 - `error_model`: `error_model(machine, *, qubits=None)`, an `ErrorModel` with `to_ionq_noise`, `to_quantinuum_error_params` and `to_qdk_qubit_params`.
 
 **`qutip_trap.published`**: the published closed forms the app compares with: `HartyParameters`, `simulate_epg_sets`, `ms_alpha`, `ms_gamma`, `kirchmair_populations`, `roos_force_saturation`, `thermal_debye_waller_infidelity`, `ThermalReference`, `ballance_thermal_error`.

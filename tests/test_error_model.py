@@ -57,7 +57,7 @@ def test_the_rb_budget_composes_the_same_per_kind_infidelities(machine: Machine,
     rb = randomized_benchmarking(machine, (0,), (1, 2), n_sequences=1, shots=20, budget=True)
     assert rb.budget is not None
     composed = sum(rb.budget.counts[k] * model.infidelity[k] for k in rb.budget.channel_infidelity)
-    assert rb.budget.predicted["r_channel"] == pytest.approx(composed, rel=1e-9)
+    assert rb.budget.predicted.r_channel == pytest.approx(composed, rel=1e-9)
     for kind, value in rb.budget.channel_infidelity.items():
         assert model.infidelity[kind] == value  # one cache, one number
 

@@ -87,6 +87,21 @@ def parity_of(result: Result) -> tuple[float, float]:
 
 
 @dataclass(frozen=True)
+class GHZPrediction:
+    """What the channels and the readout predict for the GHZ benchmark (``BenchmarkBudget.predicted``; the budget's notes
+    give the rules)."""
+
+    F_gates: float
+    """The product floor of the circuit's channels."""
+    P0_plus_P1: float
+    """F_gates with the readout loss of the populations."""
+    contrast: float
+    """F_gates with the readout loss of the parity."""
+    fidelity_bound: float
+    """(P0_plus_P1 + contrast)/2."""
+
+
+@dataclass(frozen=True)
 class GHZResult:
     """The GHZ-state benchmark (module docstring): the populations P0 = P(0...0) and P1 = P(1...1) with their shot-noise
     sigmas, the parity fringe (n_phases, 3: phase, parity, sigma) with its fit (contrast, phi0_rad, offset, chi2_per_dof),
@@ -106,7 +121,7 @@ class GHZResult:
     """max_theta <GHZ_theta| rho |GHZ_theta>, the quantity ``fidelity_bound`` estimates; never below ``register_fidelity``."""
     converged: bool
     results: tuple[Result, ...]
-    budget: BenchmarkBudget | None = None
+    budget: BenchmarkBudget[GHZPrediction] | None = None
     notes: tuple[str, ...] = ()
 
     @property
@@ -193,7 +208,7 @@ def ghz_fidelity(
     )
 
 
-def _ghz_budget(machine: Machine, res_pop: Result, qs: tuple[int, ...]) -> BenchmarkBudget:
+def _ghz_budget(machine: Machine, res_pop: Result, qs: tuple[int, ...]) -> BenchmarkBudget[GHZPrediction]:
     """The GHZ budget: the product floor of the circuit's channels and the readout losses (module docstring)."""
     counts, intrinsic = gather_counts_and_intrinsic([res_pop], [1])
     spam = spam_of(res_pop, qs)
@@ -212,13 +227,12 @@ def _ghz_budget(machine: Machine, res_pop: Result, qs: tuple[int, ...]) -> Bench
         spam=spam,
         channels=channels,
         channel_infidelity=infid,
-        predicted={
-            "F_gates": f_gates,
-            "P0_plus_P1": f_gates * pop_factor,
-            "contrast": f_gates * contrast_factor,
-            "fidelity_bound": 0.5 * f_gates * (pop_factor + contrast_factor),
-            "intrinsic_total": float(intrinsic["total"]),
-        },
+        predicted=GHZPrediction(
+            F_gates=f_gates,
+            P0_plus_P1=f_gates * pop_factor,
+            contrast=f_gates * contrast_factor,
+            fidelity_bound=0.5 * f_gates * (pop_factor + contrast_factor),
+        ),
         notes=(
             "F_gates = prod over the GHZ circuit's native pieces of (1 - reduced average infidelity of the kind's GATE_LOCAL "
             "channel): the crosstalk-free product floor of Section 7.9 with the simulator's own channels",

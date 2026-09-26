@@ -465,10 +465,10 @@ def test_single_qubit_rb_decays_at_the_channel_scale_with_the_budget_alongside(t
         assert step.ions == (0, 1), "the crosstalk neighbour joins the gate-local space"
         # reduced to qubit 0 the neighbour's crosstalk rotation is not an error; on the full step it is
         assert 0.0 < b.channel_infidelity[kind] < step.summary.average_gate_infidelity
-    r_channel = b.predicted["r_channel"]
+    r_channel = b.predicted.r_channel
     assert 1e-6 < r_channel < 1e-4 and 0.2 * r_channel < r < 5.0 * r_channel, (r, r_channel)
-    assert b.predicted["r_intrinsic"] > r_channel, "the intrinsic scales bound the coherent errors"
-    f0 = b.predicted["F0_spam"]
+    assert b.intrinsic_total > r_channel, "the intrinsic scales bound the coherent errors"
+    f0 = b.predicted.F0_spam
     assert 0.999 < f0 < 1.0 and abs(rb.mean_survival[0] - f0) < 3.0 * rb.mean_sigma[0] + 2e-4
     assert "first-order composition" in b.notes[0]
     d = rb.results[0].diagnostics
@@ -493,7 +493,7 @@ def test_two_qubit_rb_and_the_entangling_channel(two_ion: Machine) -> None:
     assert ms.local_dimension > 100 and ms.ions == (0, 1) and ms.engine_runs >= 4
     assert 1e-5 < ms.summary.average_gate_infidelity < 1e-3
     assert ms.summary.depolarizing_rate == pytest.approx(1.25 * ms.summary.average_gate_infidelity, rel=1e-6)
-    assert 0.2 * b.predicted["r_channel"] < r < 5.0 * b.predicted["r_channel"] + 3.0 * sr, (r, b.predicted)
+    assert 0.2 * b.predicted.r_channel < r < 5.0 * b.predicted.r_channel + 3.0 * sr, (r, b.predicted)
 
 
 @pytest.mark.slow
@@ -514,18 +514,19 @@ def test_simultaneous_rb_reports_marginals_in_the_budget_s_own_unit(two_ion: Mac
     b = rb.budget
     assert b is not None
     assert set(b.counts) == {"gpi2[0]", "gpi2[1]", "gpi[0]", "gpi[1]"}
-    per_qubit = [b.predicted["r_channel.q0"], b.predicted["r_channel.q1"]]
-    assert b.predicted["r_channel"] == pytest.approx(float(np.mean(per_qubit)), rel=1e-12)
+    per_qubit = [b.predicted.r_channel_per_qubit[0], b.predicted.r_channel_per_qubit[1]]
+    assert b.predicted.r_channel == pytest.approx(float(np.mean(per_qubit)), rel=1e-12)
     # the per-qubit composition is the marginal's own unit; three lengths to 128 at 600 shots on one sequence is a cheap
     # fit, so the band is a factor three
-    assert b.predicted["r_channel"] / 3.0 < r < 3.0 * b.predicted["r_channel"], (r, b.predicted)
+    assert b.predicted.r_channel / 3.0 < r < 3.0 * b.predicted.r_channel, (r, b.predicted)
     # the joint-layer composition is n_q times the composition reduced to ALL benchmarked qubits: the joint decay's unit,
     # above the per-qubit one (a two-qubit average gate infidelity per layer against a one-qubit one per Clifford)
-    assert b.predicted["r_channel_joint_layer"] == pytest.approx(
+    assert b.predicted.r_channel_joint_layer is not None
+    assert b.predicted.r_channel_joint_layer == pytest.approx(
         2.0 * sum(b.counts[k] * b.channel_infidelity[k] for k in b.channel_infidelity), rel=1e-12
     )
-    assert b.predicted["r_channel_joint_layer"] > b.predicted["r_channel"]
-    assert b.predicted["r_channel_joint_layer"] / 4.0 < joint[0] < 4.0 * b.predicted["r_channel_joint_layer"]
+    assert b.predicted.r_channel_joint_layer > b.predicted.r_channel
+    assert b.predicted.r_channel_joint_layer / 4.0 < joint[0] < 4.0 * b.predicted.r_channel_joint_layer
     assert 1.4 * r < joint[0] < 3.0 * r, "the measured joint is the measured marginals summed"
     assert any("Gambetta" in n for n in rb.notes)
 
@@ -596,8 +597,8 @@ def test_ghz_fidelity_bound_and_exact_register_fidelity(two_ion: Machine) -> Non
     assert any("UPPER bound" in n for n in g.notes)
     b = g.budget
     assert b is not None and b.unit == "circuit" and "ms[0,1]" in b.channels and b.counts["ms[0,1]"] == 1.0
-    assert 0.99 < b.predicted["F_gates"] < 1.0 and b.predicted["fidelity_bound"] < b.predicted["F_gates"]
-    assert abs(b.predicted["F_gates"] - g.register_fidelity) < 5e-3
+    assert 0.99 < b.predicted.F_gates < 1.0 and b.predicted.fidelity_bound < b.predicted.F_gates
+    assert abs(b.predicted.F_gates - g.register_fidelity) < 5e-3
     assert g.parity.shape == (8, 3) and np.all(np.abs(g.parity[:, 1]) <= 1.0)
 
 
@@ -619,11 +620,8 @@ def test_quantum_volume_style_run_at_width_two(two_ion: Machine) -> None:
     assert not qv.passed and qv.log2_quantum_volume is None
     assert qv.passed == (qv.threshold_cleared and qv.protocol_circuit_count_met)
     b = qv.budget
-    assert (
-        b is not None
-        and b.predicted["heavy_output_probability"] < b.predicted["ideal_heavy_output_probability"]
-    )
-    assert 0.0 < b.predicted["eps_gates"] < 0.05 and b.predicted["register_fidelity"] > 0.95
+    assert b is not None and b.predicted.heavy_output_probability < b.predicted.ideal_heavy_output_probability
+    assert 0.0 < b.predicted.eps_gates < 0.05 and b.predicted.register_fidelity > 0.95
     for qc in qv.circuits:
         assert len(qc.heavy) == 2 and len(qc.layers) == 2
         assert all(u.shape == (4, 4) for _pair, u in qc.layers[0])

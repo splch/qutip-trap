@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -232,45 +232,54 @@ def gate_channel(machine: Machine, kind: str) -> GateChannel:
 
 
 @dataclass(frozen=True)
-class BenchmarkBudget:
+class BenchmarkBudget[P]:
     """What the simulator's own physics accounts for, beside a benchmark's measured number (module docstring): per native
     gate kind the average pieces per ``unit`` (``clifford``, ``computational gate`` or ``circuit``), the intrinsic scales
-    per unit (and their ``total``), the channels and their average infidelities reduced to the benchmarked ``qubits``; per
-    qubit ``q{i}`` -> (eps_B, eps_D) and ``q{i}.state_preparation`` -> (eps_prep, 0); the predictions and their rules."""
+    per unit, the channels and their average infidelities reduced to the benchmarked ``qubits``; per qubit ``q{i}`` ->
+    (eps_B, eps_D) and ``q{i}.state_preparation`` -> (eps_prep, 0); the benchmark's own typed predictions and their
+    rules."""
 
     unit: str
     qubits: tuple[int, ...]
     counts: dict[str, float]
     intrinsic: dict[str, float]
+    """Per native gate kind, the closed-form intrinsic scales per unit (``intrinsic_by_kind``)."""
     spam: dict[str, tuple[float, float]]
     channels: dict[str, GateChannel]
     channel_infidelity: dict[str, float]
-    predicted: dict[str, float]
+    predicted: P
     notes: tuple[str, ...]
 
+    @property
+    def intrinsic_total(self) -> float:
+        """The intrinsic scales per unit over every kind: the runs' ``IntrinsicBudget.total`` per unit."""
+        return float(sum(self.intrinsic.values()))
 
-def gather_counts_and_intrinsic(
-    results: Sequence[Result], units: Sequence[int]
-) -> tuple[dict[str, float], dict[str, float]]:
+
+class PerUnit(NamedTuple):
+    """Per native gate kind, the average piece count and the average intrinsic scale per benchmark unit."""
+
+    counts: dict[str, float]
+    intrinsic: dict[str, float]
+
+
+def gather_counts_and_intrinsic(results: Sequence[Result], units: Sequence[int]) -> PerUnit:
     """Per kind, the average piece count and the average intrinsic scale per unit over several runs (``units[k]``
-    benchmark units in run ``k``), and the intrinsic ``total`` per unit."""
+    benchmark units in run ``k``)."""
     counts: dict[str, float] = {}
     intrinsic: dict[str, float] = {}
     total_units = float(sum(units))
     if total_units <= 0.0:
         raise ValueError("at least one benchmark unit")
-    intrinsic_total = 0.0
     for res in results:
         kinds = kinds_of_schedule(last_record(res).schedule)
         for kind in kinds.values():
             counts[kind] = counts.get(kind, 0.0) + 1.0
         for kind, val in intrinsic_by_kind(res.diagnostics.intrinsic_budget, kinds).items():
             intrinsic[kind] = intrinsic.get(kind, 0.0) + val
-        intrinsic_total += res.diagnostics.intrinsic_budget.total
-    counts = {k: v / total_units for k, v in counts.items()}
-    intrinsic = {k: v / total_units for k, v in intrinsic.items()}
-    intrinsic["total"] = intrinsic_total / total_units
-    return counts, intrinsic
+    return PerUnit(
+        {k: v / total_units for k, v in counts.items()}, {k: v / total_units for k, v in intrinsic.items()}
+    )
 
 
 def spam_of(result: Result, qubits: Sequence[int]) -> dict[str, tuple[float, float]]:
