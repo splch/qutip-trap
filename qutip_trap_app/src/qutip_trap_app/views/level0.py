@@ -43,7 +43,7 @@ from qutip_trap_app.views.common import (
 )
 from qutip_trap_app.views.level4 import CurrentDeviceCard
 from qutip_trap_app.views.presets import comparison_table
-from qutip_trap_app.views.state import MAX_SHOTS, Engine, Session, Store
+from qutip_trap_app.views.state import ENGINES, MAX_SHOTS, Session, Store
 
 
 @ft.component
@@ -62,8 +62,7 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
             store.error = f"shots are capped at {MAX_SHOTS}: every shot is read out one by one"
 
     def set_engine(e: Any) -> None:
-        engine: Engine = "full" if e.control.value == "full" else "replay"
-        store.engine = engine
+        store.engine = ENGINES[str(e.control.value)]
 
     def set_readout(e: Any) -> None:
         readout: ReadoutMode = "full" if e.control.value == "full" else "fast"
@@ -83,7 +82,7 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
             ),
             ft.Dropdown(
                 label="engine",
-                value=store.engine,
+                value=store.engine.key,
                 options=[
                     ft.DropdownOption(key="replay", text="Channel replay · fast, derived"),
                     ft.DropdownOption(key="full", text="Full simulation · slow, exact"),
@@ -101,7 +100,7 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
                     ft.DropdownOption(key="full", text="Full · photon counts"),
                 ],
                 on_select=set_readout,
-                disabled=store.engine == "replay",
+                disabled=not store.engine.keeps_photon_records,
                 width=210,
                 tooltip="fast draws each shot's bits from the readout errors; full keeps every ion's photon count (Section 5.7) and needs the full simulation",
                 **input_style(),

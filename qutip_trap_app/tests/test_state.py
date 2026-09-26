@@ -16,6 +16,8 @@ from qutip_trap_app.viewmodel.learn import Attempt, MasteryLog, review_gap_days
 from qutip_trap_app.viewmodel.machine import shot
 from qutip_trap_app.views.shell import parent_route
 from qutip_trap_app.views.state import (
+    FULL,
+    REPLAY,
     JobStatus,
     Learner,
     Session,
@@ -130,10 +132,10 @@ def test_the_readout_picked_for_the_full_simulation_reaches_the_shots(
         return Ticket(f"t{len(submitted)}", request)
 
     monkeypatch.setattr(session.worker, "submit", submit)
-    store.engine, store.readout = "full", "full"
-    store.engine = "replay"
+    store.engine, store.readout = FULL, "full"
+    store.engine = REPLAY
     session.submit_run()
-    store.engine = "full"
+    store.engine = FULL
     session.submit_run()
     assert [(request, job.readout) for request, job in submitted] == [("replay", "fast"), ("run_job", "full")]
     # the worker's path: build the device, complete the job with it, run

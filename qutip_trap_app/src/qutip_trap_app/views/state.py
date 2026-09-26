@@ -39,7 +39,6 @@ from qutip_trap_app.viewmodel.learn import (
 from qutip_trap_app.viewmodel.presets import PRESETS, PresetResult, PresetSpec
 from qutip_trap_app.workers import Event, SimulationWorker
 
-Engine = Literal["replay", "full"]
 ThemeChoice = Literal["system", "light", "dark"]
 Request = Literal[
     "run_job",
@@ -54,6 +53,24 @@ Request = Literal[
     "recalibrate",
 ]
 """The worker requests the screens submit."""
+
+
+@dataclass(frozen=True)
+class Engine:
+    """How a Run is computed: the worker request it submits and whether its shots keep photon records."""
+
+    key: str
+    """The engine dropdown's key."""
+    request: Request
+    keeps_photon_records: bool
+
+
+REPLAY = Engine("replay", "replay", keeps_photon_records=False)
+"""The channel replay: each gate's extracted channel on the register, read out through the calibration table's errors."""
+FULL = Engine("full", "run_job", keeps_photon_records=True)
+"""The full simulation: the Hamiltonian integrated; its full readout keeps every ion's photon record."""
+ENGINES: dict[str, Engine] = {e.key: e for e in (REPLAY, FULL)}
+"""The engines by dropdown key, where the dropdown's string becomes an engine."""
 
 REQUEST_LABELS: dict[Request, str] = {
     "replay": "channel replay",
@@ -201,7 +218,7 @@ class Store:
     circuit_undo: tuple[tuple[str, CircuitFormat], ...] = ()
     """The circuit texts (with their formats) before each edit made in the builder, oldest first."""
     shots: int = 200
-    engine: Engine = "replay"
+    engine: Engine = REPLAY
     readout: ReadoutMode = "fast"
     """The readout picked for the full simulation; the run gets the one ``run_readout`` says."""
     prediction: str | None = None
@@ -277,7 +294,7 @@ class Store:
     def run_readout(self) -> ReadoutMode:
         """The readout the next run is made with: the one picked, on the full simulation; the fast path on the channel
         replay, which reads its shots out through the calibration table's errors and has no photon records to keep."""
-        return self.readout if self.engine == "full" else "fast"
+        return self.readout if self.engine.keeps_photon_records else "fast"
 
     def device_ref(self, n_ions: int | None = None) -> DeviceRef:
         """The current device as a reference: the preset, its arguments, the overrides, and the hash when a derived layer
@@ -418,7 +435,7 @@ class Session:
         self._remember_circuit()
         self._set_circuit(spec.circuit_text, "openqasm2")
         self.store.shots = int(spec.shots)
-        self.store.engine = "full"
+        self.store.engine = FULL
         self.store.preset_kwargs = dict(spec.preset_kwargs)
         self.store.active_preset = preset_id
         self.store.prediction = None
@@ -472,7 +489,7 @@ class Session:
             return None
         self.store.error = ""
         self.store.last_run_text = self.store.circuit_text
-        request: Request = "replay" if self.store.engine == "replay" else "run_job"
+        request = self.store.engine.request
         return self._track(JobStatus(self.worker.submit(request, job=job).id, request, job=job))
 
     def submit_preset(self, preset_id: str) -> JobStatus | None:
