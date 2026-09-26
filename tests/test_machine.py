@@ -18,13 +18,16 @@ from qutip_trap.control.schedule import schedule
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine
+from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.dynamics.truncation import TruncationWarning, warn_if_boundary_exceeds
-from qutip_trap.machine import Estimate, Machine
+from qutip_trap.machine import Estimate, Machine, _segment_cost_s, _wall_time_guess
 from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import ThresholdDiscriminator
+from qutip_trap.run.gate_local import gate_steps
 from qutip_trap.run.job import last_record
 from qutip_trap.run.levels import FidelityLevel
 from qutip_trap.run.results import Progress
+from qutip_trap.run.space import drive_operator_nonzeros
 from qutip_trap.run.spec import SPEC_SCHEMA_VERSION, Job, JobCancelled, RunSpec, submit
 from tests.fixtures import BELL, FAST, WINDOWS, run
 
@@ -119,6 +122,31 @@ def test_estimate_matches_the_diagnostics_of_the_run_that_follows(machine, bell)
     # a forced GATE_LOCAL estimate reports that level with the reason auto would have given
     forced = dataclasses.replace(m, level=FidelityLevel.GATE_LOCAL).estimate(BELL)
     assert forced.level is FidelityLevel.GATE_LOCAL and "would choose JOINT_EXACT" in forced.reason
+
+
+def test_the_gate_local_guess_plays_every_step_on_its_own_local_space(machine) -> None:
+    """Section 11.2 at GATE_LOCAL: the Bell circuit's MS step plays on the pair and the resolved modes (on two ions, the
+    joint space) once per tomography input, prod_i d_i = 4, and every carrier step on its ion's internal space, so the
+    guess does not see an ion no step touches: under a four-ion declared space with the same modes it is the same."""
+    _preset, m = machine
+    est = dataclasses.replace(m, level=FidelityLevel.GATE_LOCAL).estimate(BELL)
+    sched = m.schedule(BELL)
+    gates = [s for s in gate_steps(sched) if s.kind == "gate"]
+    (ms,) = [s for s in gates if s.played]
+    carriers = [s for s in gates if not s.played]
+    assert ms.ions == (0, 1) and len(carriers) == 5 and all(len(s.ions) == 1 for s in carriers)
+    pair = 4 * _segment_cost_s(est.nnz, ms.duration_s)
+    assert est.wall_time_s == pytest.approx(
+        pair + sum(2 * _segment_cost_s(2, s.duration_s) for s in carriers), rel=1e-12
+    )
+    resolved = tuple(t.mode for t in est.space.resolved)
+    four = HilbertSpace(
+        (2, 2, 2, 2), est.space.resolved, None, tuple(k for k in range(12) if k not in resolved)
+    )
+    nnz_four = drive_operator_nonzeros(four)
+    assert nnz_four == 8 * est.nnz, "N 2^N prod_m d_m^2 at N = 4 against N = 2"
+    guess_four = _wall_time_guess(four, nnz_four, sched, FidelityLevel.GATE_LOCAL)
+    assert guess_four == pytest.approx(est.wall_time_s, rel=1e-12)
 
 
 def test_hash_changes_when_and_only_when_device_table_or_policy_change(machine) -> None:

@@ -3,6 +3,7 @@ level policy; ``run`` takes a circuit to a ``Result`` (PLAN.md Section 3.4)."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -31,8 +32,6 @@ COST_PER_NONZERO_S = 0.58e-9
 """Section 11.2's CSR constant b: seconds per drive-operator non-zero per right-hand-side evaluation."""
 EVALUATIONS_PER_PULSE_SECOND = 1.5e9
 """Section 11.2: 1 to 2 x 10^5 right-hand-side evaluations per 100 us pulse with dop853 (the midpoint)."""
-TOMOGRAPHY_INPUTS_PER_STEP = 4
-"""GATE_LOCAL: the Pi d_i basis kets of a two-ion step the isometry route propagates (Section 5.4)."""
 
 
 @dataclass(frozen=True)
@@ -55,27 +54,32 @@ class Estimate:
     notes: tuple[str, ...] = ()
 
 
-def _wall_time_guess(dimension: int, nnz: int, sched: Schedule, level: FidelityLevel) -> float:
-    """Section 11.2: cost = a + b x (drive-operator non-zeros) x evaluations, summed over the pulses; a GATE_LOCAL walk plays
-    each gate on a local space of its ions and propagates the tomography inputs."""
+def _segment_cost_s(nnz: float, duration_s: float) -> float:
+    """Section 11.2: a + b x (drive-operator non-zeros) x evaluations for one integration of ``duration_s``."""
+    return COST_FIXED_S + COST_PER_NONZERO_S * nnz * EVALUATIONS_PER_PULSE_SECOND * max(0.0, duration_s)
+
+
+def _wall_time_guess(space: HilbertSpace, nnz: int, sched: Schedule, level: FidelityLevel) -> float:
+    """Section 11.2's cost summed over the schedule. JOINT_EXACT integrates every pulse on the declared space, whose merged
+    drive operator has ``nnz`` = N 2^N prod_m d_m^2 non-zeros. A GATE_LOCAL walk integrates every gate step (Section 5.4)
+    on the local space of its k ions, k 2^k prod_m d_m^2 non-zeros with the declared space's resolved modes when the step
+    plays an entangling gate and k 2^k on the internal space otherwise, once per tomography input (the step's prod_i d_i
+    basis kets)."""
+    from qutip_trap.run.gate_local import gate_steps
+
+    if level is FidelityLevel.JOINT_EXACT:
+        return float(sum(_segment_cost_s(nnz, p.t_end_s - p.t_start_s) for p in sched.pulses))
+    n = space.n_ions
+    modes_squared = nnz // (n * 2**n)
     total = 0.0
-    for pulse in sched.pulses:
-        duration = max(0.0, pulse.t_end_s - pulse.t_start_s)
-        evaluations = EVALUATIONS_PER_PULSE_SECOND * duration
-        if level is FidelityLevel.GATE_LOCAL:
-            k = len(pulse.drive.ions)
-            local_nnz = nnz * (k * 2**k) / max(1, _ions_of(dimension, nnz))
-            total += TOMOGRAPHY_INPUTS_PER_STEP * (
-                COST_FIXED_S + COST_PER_NONZERO_S * local_nnz * evaluations
-            )
-        else:
-            total += COST_FIXED_S + COST_PER_NONZERO_S * nnz * evaluations
+    for step in gate_steps(sched):
+        if step.kind == "idle":
+            continue
+        k = len(step.ions)
+        local_nnz = k * 2**k * (modes_squared if step.played else 1)
+        inputs = math.prod(space.ion_dim(i) for i in step.ions)
+        total += inputs * _segment_cost_s(local_nnz, step.duration_s)
     return float(total)
-
-
-def _ions_of(dimension: int, nnz: int) -> float:
-    """nnz/dimension, the scale the local-space guess divides the joint non-zeros by."""
-    return max(1.0, nnz / max(1, dimension)) if dimension else 1.0
 
 
 @dataclass(frozen=True)
@@ -203,7 +207,7 @@ class Machine:
             n_pulses=prefix.report.n_pulses,
             n_entangling=prefix.report.n_entangling,
             duration_s=float(sched.pulses_end_s),
-            wall_time_s=_wall_time_guess(decision.dimension, decision.nnz, sched, decision.level),
+            wall_time_s=_wall_time_guess(selection.space, decision.nnz, sched, decision.level),
             notes=prefix.notes + selection.notes,
         )
 
