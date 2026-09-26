@@ -587,13 +587,13 @@ records:
     section: "4.2.3; 9.3"
     source: "Cirac 1992 Eqs. 29-32"
     equation: "mesolve on {sqrt(eta^2 A_+) a^dag, sqrt(eta^2 A_-) a} with A_+ = 3e4, A_- = 4e5 s^-1, eta = 0.1, n_0 = 5, 40 Fock levels reproduces the closed form to 3.73e-13 in <n> over 3 ms; the birth-death generator has zero column sums and the geometric stationary distribution (A_+/A_-)^n; A_- <= A_+ raises CoolingError rather than returning a negative occupation"
-  - id: conv.large_mode_atol_floor
-    symbol: "atol = 1e-8 above d_m ~ 100, only when atol is the default"
-    tag: corrected
+  - id: conv.integrator_tolerances
+    symbol: "atol 1e-10, rtol 1e-8 at every mode dimension; the ladder on a stiff abort"
+    tag: recomputed here
     section: "5.3; 5.5; 9.9"
     source: "qutip_trap.dynamics.evolve"
-    equation: "the keying of Section 5.3 relaxes atol to LARGE_MODE_ATOL = 1e-8 above LARGE_MODE_DIMENSION = 100 when and only when the caller left Numerics.atol at its 1e-10 default; a deliberately tightened or loosened atol is used as given, on the integrator ladder and the trajectory path alike (dynamics.evolve.keyed_atol). dynamics.evolve.convergence_check(run, numerics) runs a closure at both tolerance pairs and reports max_t |delta p| per observable with a summary string, and it is applied to the Section 9.2 carrier and blue-sideband fixtures (both converge below 1e-6)"
-    corrected_form: "max(atol, 1e-8) would clamp a deliberately tightened atol back to 1e-8 in a Section 5.5 convergence run and report a spuriously small change; the d_m = 121, 151 and 201 cases integrate on the first rung at the keyed 1e-8, and a stiff abort at d_m = 121 with atol 1e-10 does not reproduce on a one-mode detuned spin-dependent force"
+    equation: "every integration starts at Numerics.atol and rtol whatever the mode dimension, on the ket, density-matrix and trajectory paths alike, and climbs the ladder dop853 -> vern9 -> vern9 at atol >= 1e-8 with max_step a fourteenth of the fastest period only on QuTiP's IntegratorException (dynamics.evolve.ladder). dynamics.evolve.convergence_check(run, numerics) runs a closure at both tolerance pairs and reports max_t |delta p| per observable with a summary string, and it is applied to the Section 9.2 carrier and blue-sideband fixtures (both converge below 1e-6)"
+    corrected_form: "no large-mode atol floor: on the one-mode detuned spin-dependent force at d_m = 121, 151 and 201 the default 1e-10 integrates on dop853 without a retry in 4.8, 7.7 and 11.6 s against 4.7, 6.1 and 12.6 s at a 1e-8 floor, and lands 8x closer to an atol 1e-12 reference (8e-9 to 1.0e-8 against 5e-8 to 9e-8); a stiff abort at d_m = 121 with atol 1e-10 does not reproduce, dop853 aborts at atol 1e-9 for d_m = 81, 141, 151 and 181 and the ladder then finishes on vern9; a floor also made a convergence re-run 1000x tighter in atol instead of 10x"
   - id: conv.level_a_rates_participation
     symbol: "heating_{i,m} = c_{i,m}^2 [S_i(+nu) + 2D_i], cooling_{i,m} = c_{i,m}^2 [S_i(-nu) + 2D_i]"
     tag: derived

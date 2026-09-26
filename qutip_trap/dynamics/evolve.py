@@ -12,6 +12,7 @@ import math
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 import numpy as np
 import qutip as qt
@@ -19,22 +20,29 @@ from qutip.solver.integrator import IntegratorException
 
 from qutip_trap.options import Numerics
 
-LARGE_MODE_DIMENSION = 100
-"""Above this per-mode dimension the default atol relaxes to ``LARGE_MODE_ATOL`` (dop853 aborts as 'probably stiff' at
-d_m = 121 with atol 1e-10)."""
-LARGE_MODE_ATOL = 1e-8
-"""The relaxed atol above ``LARGE_MODE_DIMENSION``; an atol the caller chose is kept."""
-_DEFAULT_ATOL = Numerics().atol
+
+class Rung(NamedTuple):
+    """One rung of the integrator ladder: the QuTiP method, its atol, and a max_step (0 = the integrator's own)."""
+
+    method: str
+    atol: float
+    max_step: float
 
 
-def keyed_atol(options: Numerics, largest_mode_dimension: int) -> float:
-    """The atol an integration starts from on a space whose largest resolved mode has ``largest_mode_dimension`` Fock
-    levels (0 without one): ``LARGE_MODE_ATOL`` above ``LARGE_MODE_DIMENSION`` where ``options`` keeps the default atol,
-    else ``options.atol``, so a tightened or a deliberately set atol is kept. The ladder of ``evolve`` and the engine's
-    trajectory path both start from it."""
-    if largest_mode_dimension > LARGE_MODE_DIMENSION and options.atol == _DEFAULT_ATOL:
-        return LARGE_MODE_ATOL
-    return options.atol
+def ladder(options: Numerics, omega_max_rad_s: float | None) -> tuple[Rung, ...]:
+    """The escalation of Section 5.3: every configured integrator at ``options.atol``, then the last one again at an atol
+    of at least 1e-8 with max_step a fourteenth of the fastest period ``2 pi/omega_max``. ``evolve`` and the engine's
+    trajectory path climb it on the integrator's own ``IntegratorException``."""
+    atol = options.atol
+    max_step = (2.0 * math.pi / omega_max_rad_s / 14.0) if omega_max_rad_s else 0.0
+    rungs = [Rung(m, atol, 0.0) for m in options.integrators]
+    rungs.append(Rung(options.integrators[-1], max(atol, 1e-8), max_step))
+    return tuple(rungs)
+
+
+def retry_note(rung: Rung, exc: Exception) -> str:
+    """The note a failed rung leaves in the retries a solve reports."""
+    return f"{rung.method}@atol={rung.atol:g},max_step={rung.max_step:g}: {type(exc).__name__}: {exc}"
 
 
 @dataclass(frozen=True)
@@ -94,12 +102,11 @@ def evolve(
     e_ops: Mapping[str, qt.Qobj] | None = None,
     options: Numerics | None = None,
     omega_max_rad_s: float | None = None,
-    largest_mode_dimension: int = 0,
     propagator: bool = False,
 ) -> Evolution:
     """Integrate from ``times_s[0]`` to ``times_s[-1]`` through the ladder, storing the state at every time.
 
-    The ladder starts from ``keyed_atol(options, largest_mode_dimension)``. ``propagator=True`` integrates an
+    ``propagator=True`` integrates an
     operator-valued ``state0`` (the identity) under ``sesolve``, so the stored states are the propagators U(t, t_0). Only
     the integrator's own ``IntegratorException`` escalates; anything else propagates.
     """
@@ -107,21 +114,29 @@ def evolve(
     times = np.asarray(times_s, dtype=float)
     if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
         raise ValueError("times_s must be an increasing array with at least two points")
-    atol = keyed_atol(opts, largest_mode_dimension)
-    ladder: list[tuple[str, float, float]] = [(m, atol, 0.0) for m in opts.integrators]
-    last = opts.integrators[-1]
-    max_step = (2.0 * math.pi / omega_max_rad_s / 14.0) if omega_max_rad_s else 0.0
-    ladder.append((last, max(atol, 1e-8), max_step))
     retries: list[str] = []
     result = None
-    used = ladder[-1]
-    for method, a, ms in ladder:
+    rungs = ladder(opts, omega_max_rad_s)
+    used = rungs[-1]
+    for rung in rungs:
         try:
-            result = _solve(H, state0, times, c_ops, e_ops, method, a, opts.rtol, opts.nsteps, ms, propagator)
-            used = (method, a, ms)
+            result = _solve(
+                H,
+                state0,
+                times,
+                c_ops,
+                e_ops,
+                rung.method,
+                rung.atol,
+                opts.rtol,
+                opts.nsteps,
+                rung.max_step,
+                propagator,
+            )
+            used = rung
             break
         except IntegratorException as exc:
-            retries.append(f"{method}@atol={a:g},max_step={ms:g}: {type(exc).__name__}: {exc}")
+            retries.append(retry_note(rung, exc))
     if result is None:
         raise RuntimeError("every rung of the integrator ladder failed: " + " | ".join(retries))
     expect: dict[str, np.ndarray] = {}
@@ -132,8 +147,8 @@ def evolve(
         final=result.final_state,
         states=tuple(result.states),
         expect=expect,
-        integrator=used[0],
-        atol=used[1],
+        integrator=used.method,
+        atol=used.atol,
         retries=tuple(retries),
     )
 

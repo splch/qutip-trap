@@ -9,6 +9,7 @@ import math
 import numpy as np
 import pytest
 import qutip as qt
+from qutip.solver.integrator import IntegratorException
 
 import qutip_trap as trap
 from qutip_trap.control.pulses import Drive, Pulse, Tone
@@ -16,8 +17,6 @@ from qutip_trap.control.schedule import Schedule
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec, _pure_branches
 from qutip_trap.dynamics.evolve import (
-    LARGE_MODE_ATOL,
-    LARGE_MODE_DIMENSION,
     convergence_check,
     evolve,
     tightened,
@@ -327,56 +326,32 @@ def test_convergence_check_rejects_a_mismatched_observable_set_and_a_bad_factor(
         convergence_check(wobbly, Numerics())
 
 
-def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
-    """At d_m = 121 the default atol relaxes to LARGE_MODE_ATOL (at d_m = 100 it stays 1e-10) while a tightened (1e-11) or
-    loosened (1e-6) one is kept."""
-    d = 121
-    assert d > LARGE_MODE_DIMENSION
-    h = WX * qt.num(d)
-    psi0 = qt.basis(d, 1)
-    times = np.linspace(0.0, 1e-6, 5)
-    default = evolve(h, psi0, times, options=Numerics(), largest_mode_dimension=d)
-    assert default.atol == LARGE_MODE_ATOL
-    at_threshold = evolve(h, psi0, times, options=Numerics(), largest_mode_dimension=LARGE_MODE_DIMENSION)
-    assert at_threshold.atol == 1e-10
-    tight = tightened(Numerics())
-    got = evolve(h, psi0, times, options=tight, largest_mode_dimension=d)
-    assert got.atol == tight.atol == pytest.approx(1e-11, rel=1e-12)
-    loose = evolve(h, psi0, times, options=Numerics(atol=1e-6), largest_mode_dimension=d)
-    assert loose.atol == 1e-6
-
-
-@pytest.mark.parametrize("d", [LARGE_MODE_DIMENSION, LARGE_MODE_DIMENSION + 1])
-def test_the_ket_and_trajectory_paths_key_the_large_mode_atol_alike(raman, d: int) -> None:
-    """A pi/2 pulse on a mode of d levels runs at one atol on the ket path and on the trajectory path: the default relaxes
-    to LARGE_MODE_ATOL above d_m = 100 while a tightened (1e-11) or an explicit (1e-9) atol is kept, so the tightened
-    re-run of a convergence check on trajectories tightens atol too."""
+def test_the_trajectory_path_climbs_the_integrator_ladder(raman, monkeypatch) -> None:
+    """A trajectory segment whose first integrator aborts finishes on the next rung of the ladder, as a ket does, and
+    reports the failed rung."""
     dev, dd, _space = raman
-    space = HilbertSpace((2,), (ModeTruncation(KX, d, (0, 0), 0.2),), None, (0, 2))
-    state = space.initial_state([0])
+    space = HilbertSpace((2,), (ModeTruncation(KX, 12, (0, 0), 0.2),), None, (0, 2))
     t_half = 0.25 / dd.carrier_rabi_hz
     sched = Schedule((Pulse(square_drive(dd, include_stark=False), 0.0, t_half, "p", ()),), (), (), {0: 0.0})
-    default = LARGE_MODE_ATOL if d > LARGE_MODE_DIMENSION else Numerics().atol
-    atols = {}
-    for label, opts, expected in (
-        ("default", Numerics(), default),
-        ("tightened", tightened(Numerics()), tightened(Numerics()).atol),
-        ("explicit", Numerics(atol=1e-9), 1e-9),
-    ):
-        _, ket = _run(dev, sched, state, space, opts)
-        on_trajectories = dataclasses.replace(opts, lindblad_method="mcsolve", ntraj=2, map="serial")
-        _, traj = _run(_heated(dev), sched, state, space, on_trajectories, device_channels=True)
-        seg_ket, seg_traj = ket.last_report.segments[0], traj.last_report.segments[0]
-        assert (seg_ket.method, seg_traj.method) == ("sesolve", "mcsolve")
-        assert seg_ket.atol == seg_traj.atol == expected, (label, seg_ket.atol, seg_traj.atol)
-        atols[label] = seg_traj.atol
-    assert atols["tightened"] < atols["default"], "the tightened re-run tightens atol, not only rtol"
+    run = qt.MCSolver.run
+
+    def stiff_on_dop853(self, *args, **kwargs):
+        if self.options["method"] == "dop853":
+            raise IntegratorException("probably stiff")
+        return run(self, *args, **kwargs)
+
+    monkeypatch.setattr(qt.MCSolver, "run", stiff_on_dop853)
+    opts = Numerics(lindblad_method="mcsolve", ntraj=2, map="serial")
+    _, eng = _run(_heated(dev), sched, space.initial_state([0]), space, opts, device_channels=True)
+    seg = eng.last_report.segments[0]
+    assert (seg.method, seg.integrator, seg.atol) == ("mcsolve", "vern9", Numerics().atol)
+    assert len(seg.retries) == 1 and seg.retries[0].startswith("dop853@")
 
 
 @pytest.mark.slow
 def test_the_ladder_at_the_large_caps() -> None:
-    """A spin-dependent force at d_m = 101, 121, 151 and 201 integrates on dop853 with no retry, atol LARGE_MODE_ATOL and norm 1
-    to 1e-7, and at d_m = 100 atol stays 1e-10."""
+    """A spin-dependent force at d_m = 101, 121, 151 and 201 integrates on dop853 with no retry at the default atol 1e-10
+    (no large-mode floor: 1e-8 there is 8x less accurate at the same speed) and norm 1 to 1e-7, and a tightened atol is kept."""
     eta, om_drive = 0.1, TWO_PI * 250e3
     delta = WX - TWO_PI * 20e3
     for d in (101, 121, 151, 201):
@@ -396,19 +371,14 @@ def test_the_ladder_at_the_large_caps() -> None:
             ]
         )
         psi0 = qt.tensor(qt.basis(2, 1), qt.basis(d, 0))
-        ev = evolve(h, psi0, [0.0, 10e-6], options=Numerics(), largest_mode_dimension=d, omega_max_rad_s=WX)
+        ev = evolve(h, psi0, [0.0, 10e-6], options=Numerics(), omega_max_rad_s=WX)
         assert ev.integrator == "dop853" and ev.retries == (), (d, ev.retries)
-        assert ev.atol == LARGE_MODE_ATOL, d
+        assert ev.atol == Numerics().atol, d
         assert ev.final.norm() == pytest.approx(1.0, abs=1e-7), d
-    d = LARGE_MODE_DIMENSION
-    at_threshold = evolve(
-        WX * qt.num(d),
-        qt.basis(d, 1),
-        np.linspace(0.0, 1e-6, 3),
-        options=Numerics(),
-        largest_mode_dimension=d,
+    tight = evolve(
+        WX * qt.num(201), qt.basis(201, 1), np.linspace(0.0, 1e-6, 3), options=tightened(Numerics())
     )
-    assert at_threshold.atol == 1e-10
+    assert tight.atol == pytest.approx(1e-11, rel=1e-12)
 
 
 # ---- the per-time Fock marginals and the wall times of Traces -----------------------------------------------------------------

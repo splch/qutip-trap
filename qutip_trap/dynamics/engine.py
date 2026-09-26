@@ -22,8 +22,10 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import numpy as np
 import qutip as qt
+from qutip.solver.integrator import IntegratorException
 
 from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
+from qutip_trap.dynamics.evolve import Rung, evolve, ladder, retry_note
 from qutip_trap.dynamics.operators import _highest_populated, _thermal_levels, required_margin
 from qutip_trap.dynamics.parallel import worker_count
 from qutip_trap.dynamics.rotating import RotatingSegment, _diagonal_energies, eigen_frequency, rotating_frame
@@ -358,11 +360,10 @@ class JointExactEngine:
         return self.builder_options or BuilderOptions()
 
     def _segment_propagator(
-        self, built: BuiltHamiltonian, times: np.ndarray, options: Numerics, largest_mode: int
+        self, built: BuiltHamiltonian, times: np.ndarray, options: Numerics
     ) -> tuple[_Propagator, bool]:
         """U(t_k, t_0) at every stored time of a segment on an internal-state-only space, from the cache or by one integration
         of the identity through the ladder. Returns (propagator, cache hit)."""
-        from qutip_trap.dynamics.evolve import evolve
 
         h = built.H
         key = (
@@ -371,7 +372,6 @@ class JointExactEngine:
             options.atol,
             options.rtol,
             options.integrators,
-            largest_mode,
         )
         cached = self._propagators.get(key)
         if cached is not None:
@@ -384,7 +384,6 @@ class JointExactEngine:
             times,
             options=options,
             omega_max_rad_s=built.omega_max_rad_s or None,
-            largest_mode_dimension=largest_mode,
             propagator=True,
         )
         prop = _Propagator(
@@ -591,7 +590,7 @@ class JointExactEngine:
             if built.H.isconstant:
                 u_seg = _constant_unitary(built.H(a), b - a)
             if u_seg is None:
-                prop, hit = self._segment_propagator(built, times, options, 0)
+                prop, hit = self._segment_propagator(built, times, options)
                 hits += int(hit)
                 solves += int(not hit)
                 u_seg = prop.unitaries[-1]
@@ -640,7 +639,6 @@ class JointExactEngine:
         growth_retries: int,
         growth_notes: tuple[str, ...] = (),
     ) -> Traces:
-        from qutip_trap.dynamics.evolve import evolve, keyed_atol
         from qutip_trap.dynamics.hamiltonian import _kernel_label, build_hamiltonian
         from qutip_trap.dynamics.truncation import boundary_populations
         from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT
@@ -699,8 +697,6 @@ class JointExactEngine:
                 )
         method_used = "sesolve" if kets is not None else "mesolve"
         first = True
-        largest_mode = max([m.d for m in space.resolved], default=0)
-        atol_mc = keyed_atol(options, largest_mode)
         # improved_sampling splits the whole evolution into its no-jump member and the rest, so it applies only when the
         # trajectory path is entered exactly once
         n_mc_segments = 0
@@ -769,7 +765,6 @@ class JointExactEngine:
                     e_ops,
                     options,
                     lindblad,
-                    largest_mode,
                 )
             seg: _SegmentTraces
             if closed is not None:
@@ -788,7 +783,7 @@ class JointExactEngine:
                 and space.enr_group is None
             ):
                 # an internal-state-only space: one propagator serves every initial state
-                prop, hit = self._segment_propagator(built, times, options, largest_mode)
+                prop, hit = self._segment_propagator(built, times, options)
                 propagator_hits += int(hit)
                 propagator_solves += int(not hit)
                 acc = _WeightedKets(space, e_ops, times.size, sel, stored_modes)
@@ -813,7 +808,6 @@ class JointExactEngine:
                         e_ops=e_ops,
                         options=options,
                         omega_max_rad_s=built.omega_max_rad_s or None,
-                        largest_mode_dimension=largest_mode,
                     )
                     if rot is None:
                         states_back: list[qt.Qobj] = list(ev.states)
@@ -847,7 +841,6 @@ class JointExactEngine:
                     e_ops=e_ops,
                     options=options,
                     omega_max_rad_s=built.omega_max_rad_s or None,
-                    largest_mode_dimension=largest_mode,
                 )
                 rho = ev.final
                 seg = _dm_traces(space, ev.states, ev.expect, sel, stored_modes)
@@ -861,9 +854,10 @@ class JointExactEngine:
                     )
                 improved_seg = improved_run and len(kets) == 1
                 n_traj_seg = options.ntraj
+                rungs = ladder(options, built.omega_max_rad_s or None)
+                h_mc = built.H if rot is None else rot.H
+                c_mc = c_ops if rot is None else list(rot.c_ops)
                 mc_opts = {
-                    "method": options.integrators[0],
-                    "atol": atol_mc,
                     "rtol": options.rtol,
                     "nsteps": options.nsteps,
                     "store_final_state": True,
@@ -881,16 +875,16 @@ class JointExactEngine:
                 # capped by ntraj and floored; phase two replays a keyed seed list of that length
                 if len(kets) == 1 and options.trajectory_target_tol is not None and e_ops:
                     if target_tol_estimate is None:
-                        probe = qt.MCSolver(
-                            built.H if rot is None else rot.H,
-                            c_ops if rot is None else list(rot.c_ops),
-                            options={
+                        probe, _rung, _probe_retries = _mc_run(
+                            h_mc,
+                            c_mc,
+                            {
                                 **mc_opts,
                                 "keep_runs_results": False,
                                 "store_states": False,
                                 "improved_sampling": False,
                             },
-                        ).run(
+                            rungs,
                             kets[0] if rot is None else rot.frame.to_frame(kets[0], float(times[0])),
                             times,
                             ntraj=options.ntraj,
@@ -915,11 +909,6 @@ class JointExactEngine:
                 workers_used = max(workers_used, seg_workers)
                 if seg_map != "serial":
                     map_used = seg_map
-                solver = qt.MCSolver(
-                    built.H if rot is None else rot.H,
-                    c_ops if rot is None else list(rot.c_ops),
-                    options=mc_opts,
-                )
                 kets_in = kets if rot is None else [rot.frame.to_frame(k, float(times[0])) for k in kets]
                 # one trajectory per ket of the ensemble with its keyed seed; the results come back in completion order
                 # and are matched to their kets by seed
@@ -927,20 +916,25 @@ class JointExactEngine:
                     seeds.child(sample.sample_id, k_traj, 0, 0, f"mcsolve[{seg_index}]")
                     for k_traj in range(n_stoch)
                 ]
+                state_in: Any
+                ntraj_in: int | list[int]
                 if improved_seg:
-                    res = solver.run(
-                        kets_in[0], times, ntraj=n_stoch, e_ops=list(e_ops.values()), seeds=seeds_k
-                    )
+                    state_in, ntraj_in = kets_in[0], n_stoch
                 elif len(kets) == 1:
-                    res = solver.run(kets_in[0], times, ntraj=1, e_ops=list(e_ops.values()), seeds=seeds_k)
+                    state_in, ntraj_in = kets_in[0], 1
                 else:
-                    res = solver.run(
-                        [(psi, 1.0 / len(kets)) for psi in kets_in],
-                        times,
-                        ntraj=[1] * len(kets),
-                        e_ops=list(e_ops.values()),
-                        seeds=seeds_k,
-                    )
+                    state_in, ntraj_in = [(psi, 1.0 / len(kets)) for psi in kets_in], [1] * len(kets)
+                res, rung, retries_seg = _mc_run(
+                    h_mc,
+                    c_mc,
+                    mc_opts,
+                    rungs,
+                    state_in,
+                    times,
+                    ntraj=ntraj_in,
+                    e_ops=list(e_ops.values()),
+                    seeds=seeds_k,
+                )
                 by_seed = {tuple(int(x) for x in sd.spawn_key): j for j, sd in enumerate(res.seeds)}
                 # (trajectory, weight, index into res.col_* or None for the deterministic member)
                 members: list[tuple[Any, float, int | None]] = []
@@ -981,7 +975,7 @@ class JointExactEngine:
                         for t_c, which in zip(res.col_times[j_m], res.col_which[j_m]):
                             jumps.append((float(t_c), f"traj{k_traj}:{seg_ops[int(which)].channel}"))
                 kets, weights, seg = new_kets, [w_m for _t, w_m, _j in members], acc.traces()
-                integrator, atol_used = options.integrators[0], atol_mc
+                integrator, atol_used = rung.method, rung.atol
                 seg_method = "mcsolve"
                 method_used = "mcsolve"
             for k in e_ops:
@@ -1141,6 +1135,31 @@ class JointExactEngine:
             },
             wall_time_s=wall_by_pulse,
         )
+
+
+def _mc_run(
+    h: Any,
+    c_ops: Sequence[Any],
+    mc_opts: Mapping[str, Any],
+    rungs: Sequence[Rung],
+    state: Any,
+    times: np.ndarray,
+    **run_kw: Any,
+) -> tuple[Any, Rung, tuple[str, ...]]:
+    """``MCSolver.run(state, times, **run_kw)`` at each rung of the integrator ladder in turn (Section 5.3): the result of
+    the first rung whose integrator does not raise ``IntegratorException``, that rung, and the failed rungs' notes."""
+    retries: list[str] = []
+    for rung in rungs:
+        opts = {**mc_opts, "method": rung.method, "atol": rung.atol}
+        if rung.max_step > 0.0:
+            opts["max_step"] = rung.max_step
+        try:
+            return qt.MCSolver(h, list(c_ops), options=opts).run(state, times, **run_kw), rung, tuple(retries)
+        except IntegratorException as exc:
+            retries.append(retry_note(rung, exc))
+    raise RuntimeError(
+        "every rung of the integrator ladder failed on the trajectory path: " + " | ".join(retries)
+    )
 
 
 def _lindblad_method(options: Numerics, dimension: int) -> Literal["mesolve", "mcsolve"]:
@@ -1371,7 +1390,6 @@ def _closed_form_segment(
     e_ops: Mapping[str, qt.Qobj],
     options: Numerics,
     lindblad: str,
-    largest_mode_dimension: int,
 ) -> _ClosedForm | None:
     """Propagate a segment with the constant Hamiltonian ``h`` over ``times`` without an ODE solve of its oscillation.
 
@@ -1452,7 +1470,6 @@ def _closed_form_segment(
         e_ops=None,
         options=options,
         omega_max_rad_s=None,
-        largest_mode_dimension=largest_mode_dimension,
     )
     phases = np.exp(-1j * np.outer(taus, energies))
     states = [
