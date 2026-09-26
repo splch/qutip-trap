@@ -37,7 +37,7 @@ from qutip_trap.light.raman import (
     derive_optical_drive,
     derive_raman_drive,
 )
-from qutip_trap.light.roles import detection_beams
+from qutip_trap.light.roles import NoDetectionBeamError, detection_beams
 from qutip_trap.options import Numerics, Physics
 from qutip_trap.prep.recipe import preparation_occupations, recipe_of
 from qutip_trap.readout.detection import RecordModel
@@ -297,7 +297,7 @@ def surrogate_table(
     detection: dict[str, CalEntry] = {}
     try:
         det_idx = detection_beams(device, 0)
-    except ValueError as exc:
+    except NoDetectionBeamError as exc:
         notes.append(f"no detection calibration: {exc}")
         det_idx = ()
     if det_idx:
