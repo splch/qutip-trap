@@ -324,6 +324,34 @@ def test_every_step_reports_its_register_and_the_channels_compose_it(two_ion) ->
     assert np.max(np.abs(steps[-1].register_after - np.asarray(rec.register_state.full()))) < 1e-10
 
 
+def test_an_idle_step_reports_the_tracked_branches_it_drops(two_ion) -> None:
+    """On a device without heating the idle after the MS gate evolves each tracked mode's state as its pure branches above
+    branch_weight_min = 1e-3 and drops the rest (1.3e-5 of weight on the x-COM mode, whose nbar goes from 0.0172637 to
+    0.0172369), which the step reports as its dropped weight, in its notes and so in the run's approximations, and as 2w in
+    the walk's branch-error bound; the walk's dropped weight is the steps' sum."""
+    fx, _sur, kw = two_ion
+    res = run(BELL, fx.device, 100, level="GATE_LOCAL", **kw)
+    gl = res.diagnostics.gate_local
+    assert gl is not None
+    k = next(i for i, s in enumerate(gl.steps) if s.kind == "gate" and s.resolved)
+    ms, idle = gl.steps[k], gl.steps[k + 1]
+    assert idle.kind == "idle" and idle.resolved == (2, 3) and idle.n_branches >= 2
+    assert idle.dropped_branch_weight == pytest.approx(1.46e-5, rel=0.05), idle.dropped_branch_weight
+    assert idle.branch_error_bound == 2.0 * idle.dropped_branch_weight
+    assert ms.nbar_after[3] == pytest.approx(0.0172637, abs=1e-7) and idle.nbar_after[3] == pytest.approx(
+        0.0172369, abs=1e-7
+    )
+    dropped = [n for n in idle.notes if "pure branches" in n and "dropped" in n]
+    assert len(dropped) == 2 and all(n in res.diagnostics.approximations for n in dropped), idle.notes
+    assert gl.dropped_branch_weight == pytest.approx(
+        sum(s.dropped_branch_weight for s in gl.steps), rel=1e-12
+    )
+    assert gl.branch_error_total == pytest.approx(sum(s.branch_error_bound for s in gl.steps), rel=1e-12)
+    assert gl.dropped_branch_weight > idle.dropped_branch_weight, (
+        "the gate steps' tomography drops branches too"
+    )
+
+
 def test_idle_channel_of_a_detuned_qubit_is_the_phase_rotation(two_ion) -> None:
     """A 400 Hz qubit offset over an idle makes the one-qubit channel the single Kraus operator e^{-i pi delta t sigma_z} (to
     1e-7, one exact segment) with infidelity below 1e-10."""

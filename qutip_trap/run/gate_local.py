@@ -48,6 +48,7 @@ from qutip_trap.dynamics.tomography import (
     fingerprint_options,
     fingerprint_sample,
     local_ideal,
+    motional_branches,
 )
 from qutip_trap.dynamics.truncation import warn_cap_clamped
 from qutip_trap.hashing import canonical_digest
@@ -407,6 +408,9 @@ def step_space(
 # ---- the report -----------------------------------------------------------------------------------------------------------------
 
 
+ROUNDOFF_WEIGHT = 1e-12
+"""A tracked state's weight left below ``branch_weight_min`` under this is its eigen-decomposition's round-off (the state's
+rank), not a dropped branch."""
 REGISTER_STORE_DIM_MAX = 256
 """``GateLocalStep.register_after`` is stored up to this register dimension (eight qubits, one megabyte per step)."""
 
@@ -463,8 +467,10 @@ class GateLocalStep:
     """How the channel was extracted (``TomographyRecord.route``): "propagator" on an internal-state-only space, "isometry"
     on a unitary step with resolved modes, "states" on a dissipative step."""
     branch_error_bound: float = 0.0
-    """2 x the dropped motional-branch weight of the step's tomography: the diamond-norm bound of the branch floor and the
-    tail rule (``tomography_dropped_weight_max``)."""
+    """2 x ``dropped_branch_weight``: the diamond-norm bound of dropping and renormalizing motional branches."""
+    dropped_branch_weight: float = 0.0
+    """The motional-branch weight the step dropped and renormalized: its tomography's branch floor and tail rule
+    (``tomography_dropped_weight_max``) on a gate step, the tracked modes' pure-branch floor on an idle step."""
     tolerance_change: float = 0.0
     """The channel's change when its dominant branch is re-integrated ten times tighter than the map-accuracy-keyed
     tolerance (``tomography_tolerance_keyed``); 0 where the tolerance was not keyed."""
@@ -507,7 +513,10 @@ class GateLocalReport:
     idle_cache_hits: int = 0
     """One-ion idle channels served from the cache over every sample and idle step."""
     branch_error_total: float = 0.0
-    """sum over the gate steps of ``GateLocalStep.branch_error_bound`` (the first sample)."""
+    """sum over the steps of ``GateLocalStep.branch_error_bound`` (the first sample)."""
+    dropped_branch_weight: float = 0.0
+    """sum over the steps of ``GateLocalStep.dropped_branch_weight`` (the first sample): the motional-branch weight the walk
+    dropped and renormalized, as ``Diagnostics.dropped_branch_weight`` is the initial mixture's at JOINT_EXACT."""
     tolerance_change_total: float = 0.0
     """sum over the gate steps of ``GateLocalStep.tolerance_change`` (the first sample)."""
 
@@ -679,7 +688,10 @@ def _idle_step(
     snapshot: bool = True,
 ) -> tuple[MotionalModel, GateLocalStep, int, int]:
     """Free evolution over an idle interval: per ion its exact one-qubit channel (cached, ``_idle_key``), per tracked mode its
-    master equation, per occupation-tracked mode nbar + ndot t. Returns (model, report, engine runs, cache hits)."""
+    master equation, per occupation-tracked mode nbar + ndot t. A unitary idle evolves a tracked state as its pure branches
+    above ``branch_weight_min``, the rule the gate step's tomography applies to the same state (``motional_branches``), the
+    dropped weight reported in the step's notes, ``dropped_branch_weight`` and its 2w in ``branch_error_bound``; a
+    dissipative one integrates the density matrix whole. Returns (model, report, engine runs, cache hits)."""
     n_modes = len(device.crystal.modes)
     sched = Schedule((), ((step.t_start_s, step.t_end_s),), (), {}, t0_s=step.t_start_s)
     runs = 0
@@ -719,6 +731,9 @@ def _idle_step(
         applied.append(AppliedChannel((q,), np.asarray(rec.choi, dtype=complex)))
     reduced: dict[int, qt.Qobj] = {}
     nbar: dict[int, float] = dict(model.nbar)
+    notes: list[str] = []
+    n_branches = 1
+    dropped_total = 0.0
     dt = step.duration_s
     for m in range(n_modes):
         rho_m = model.reduced.get(m)
@@ -734,18 +749,36 @@ def _idle_step(
             tuple(k for k in range(n_modes) if k != m),
             ions=(0,),
         )
-        state = space_m.initial_state(qt.basis(int(ion_dims[0]), 0), states={m: rho_m}, thermal={})
-        traces = engine.run_pulses(device, sched, state, space_m, sample, seeds, options)
-        runs += 1
-        rep = engine.last_report
-        assert rep is not None
-        workers = max(workers, rep.workers)
-        for seg in rep.segments:
-            if seg.integrator not in integrators:
-                integrators.append(seg.integrator)
-        if rep.method != "sesolve":
-            method = rep.method
-        out = traces.final.motional.reduced[m]
+        ground = qt.basis(int(ion_dims[0]), 0)
+        dropped = 0.0
+        if engine.is_unitary(device, space_m):
+            branches, dropped, _branch_notes = motional_branches(
+                space_m, MotionalModel(reduced={m: rho_m}, nbar={}, frozen=()), (), options.branch_weight_min
+            )
+            inputs = [(b.weight, space_m.initial_state(ground, states={m: b.kets[m]})) for b in branches]
+        else:
+            inputs = [(1.0, space_m.initial_state(ground, states={m: rho_m}, thermal={}))]
+        out = qt.Qobj(np.zeros((d_m, d_m), dtype=complex), dims=[[d_m], [d_m]])
+        for weight, state in inputs:
+            traces = engine.run_pulses(device, sched, state, space_m, sample, seeds, options)
+            runs += 1
+            rep = engine.last_report
+            assert rep is not None
+            workers = max(workers, rep.workers)
+            for seg in rep.segments:
+                if seg.integrator not in integrators:
+                    integrators.append(seg.integrator)
+            if rep.method != "sesolve":
+                method = rep.method
+            out = out + weight * traces.final.motional.reduced[m]
+        n_branches = max(n_branches, len(inputs))
+        if dropped > ROUNDOFF_WEIGHT:
+            dropped_total += dropped
+            notes.append(
+                f"mode {m}: the tracked state evolved over the idle as {len(inputs)} pure branches; branches below "
+                f"branch_weight_min = {options.branch_weight_min:g} dropped, weight {dropped:.3e} (renormalized); "
+                f"error bound 2w = {2.0 * dropped:.3e}"
+            )
         reduced[m] = out
         nbar[m] = float(np.real(qt.expect(qt.num(d_m), out)))
     new_model = MotionalModel(
@@ -761,7 +794,7 @@ def _idle_step(
         resolved=tuple(sorted(reduced)),
         frozen_coupled=(),
         n_inputs=sum(int(d) ** 2 for d in ion_dims),
-        n_branches=1,
+        n_branches=n_branches,
         n_traj=1,
         method=method,
         integrators=tuple(integrators),
@@ -779,9 +812,11 @@ def _idle_step(
         dropped_crosstalk=0.0,
         boundary_population={},
         margin_reached={},
-        notes=(),
+        notes=tuple(notes),
         workers=workers,
         route=route,
+        branch_error_bound=2.0 * dropped_total,
+        dropped_branch_weight=dropped_total,
         register_after=_register_snapshot(register) if snapshot else None,
         channels=tuple(applied),
     )
@@ -886,6 +921,7 @@ def _gate_step(
         workers=1 if hit else rec.workers,
         route=rec.route,
         branch_error_bound=float(rec.branch_error_bound),
+        dropped_branch_weight=float(rec.dropped_branch_weight),
         tolerance_change=float(rec.tolerance_change or 0.0),
         tolerances=rec.tolerances,
         element_error=element_error,
@@ -935,6 +971,7 @@ def evolve_gate_local(
     frozen_total = 0.0
     xt_total = 0.0
     branch_total = 0.0
+    dropped_weight_total = 0.0
     tolerance_total = 0.0
     notes: list[str] = []
     for s_idx, smp in enumerate(samples):
@@ -970,6 +1007,9 @@ def evolve_gate_local(
                 runs_total += runs
                 idle_hits_total += idle_hits
                 workers_max = max(workers_max, rep.workers)
+                if s_idx == 0:
+                    branch_total += rep.branch_error_bound
+                    dropped_weight_total += rep.dropped_branch_weight
             else:
                 model, rep, runs, hit, space_used = _gate_step(
                     device,
@@ -995,6 +1035,7 @@ def evolve_gate_local(
                     frozen_total += sum(rep.frozen_excitation.values())
                     xt_total += rep.dropped_crosstalk
                     branch_total += rep.branch_error_bound
+                    dropped_weight_total += rep.dropped_branch_weight
                     tolerance_total += rep.tolerance_change
                     if rep.summary is not None:
                         summaries[rep.gate_id] = rep.summary
@@ -1024,6 +1065,7 @@ def evolve_gate_local(
         workers=workers_max,
         idle_cache_hits=idle_hits_total,
         branch_error_total=branch_total,
+        dropped_branch_weight=dropped_weight_total,
         tolerance_change_total=tolerance_total,
     )
     return out_states, report, models
