@@ -1052,6 +1052,7 @@ def execute(
         sentence = device.noise.provenance_sentence()
         if sentence:
             approximations.append(f"noise provenance (Section 6.1): {sentence}")
+        approximations.extend(device.noise.approximations(device))
     approximations.extend(path.describe(stage, reading.povm_samples))
     if stage.depumping:
         approximations.append(

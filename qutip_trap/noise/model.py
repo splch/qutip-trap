@@ -10,12 +10,13 @@ T^2/(rad/s), per-ion transition trajectories through d nu/dB and d^2 nu/dB^2, it
 L = sqrt(gamma_phi/2) sigma_z with gamma_phi = 2 pi^2 (d nu/dB)^2 S_B,white; ``mains`` T per harmonic; ``laser_phase``
 rad^2/(rad/s) on single-photon optical drives; ``laser_intensity`` (dI/I)^2/(rad/s), its white level the intensity-noise
 channel; ``rf_amplitude_noise`` (dV/V)^2/(rad/s) on the transverse modes, its white level the motional dephasing operator
-with 2/tau = omega_m^2 S_V,white; ``rf_phase_noise`` is recorded and not applied; ``rabi_amplitude`` (rad/s)^2/(rad/s) is
-read by ``noise/decoupling.py``; ``beam_phase_noise`` rad^2/(rad/s) per beam. Drifts: ``rf_amplitude_drift`` and
+with 2/tau = omega_m^2 S_V,white; ``rf_phase_noise`` is recorded and not applied; ``rabi_amplitude`` (rad/s)^2/(rad/s)
+is read by ``noise/decoupling.py``; ``beam_phase_noise`` rad^2/(rad/s) per beam. Drifts: ``rf_amplitude_drift`` and
 ``rabi_drift`` fractional, ``mode_drift_differential`` Hz per mode, ``beam_phase_drift`` rad per beam, ``field_drift`` T
 (exact transition offsets at the shifted field), ``stray_field_drift`` V/m (a laboratory-frame field that shifts every ion
 by the crystal's linear response, ``Crystal.field_displacement_m``), ``pointing_drift`` m per beam transverse to it,
-``laser_frequency_drift`` Hz (not seen by an rf-referenced Raman beat note).
+``laser_frequency_drift`` Hz (not seen by an rf-referenced Raman beat note). What a run leaves out of the configured noise,
+or draws more simply than the apparatus does, is ``NoiseModel.approximations``.
 """
 
 from __future__ import annotations
@@ -255,6 +256,37 @@ class NoiseModel:
                 f"{undeclared} non-zero rate(s) carry no apparatus tag (NoiseSpectrum/Drift.provenance)"
             )
         return "; ".join(parts)
+
+    def approximations(self, device: Device) -> tuple[str, ...]:
+        """What a run on ``device`` leaves out of the noise configured here, or draws more simply than the apparatus does
+        (Section 6.2), one sentence each; empty when nothing configured is affected."""
+        out: list[str] = []
+        if self.rf_phase_noise is not None and not self.rf_phase_noise.is_zero():
+            out.append(
+                "noise: rf_phase_noise is recorded and not applied: the Omega_rf +- omega_m sideband heating of an ion off "
+                "the rf null needs the stray field's rf gradient, which the trap record does not carry (Section 6.2)"
+            )
+        if self.rf_amplitude_noise is not None:
+            spectrum = self.rf_amplitude_noise
+            pumped = [
+                m
+                for m, mode in enumerate(device.crystal.modes)
+                if mode.family in RF_DERIVED_FAMILIES and float(spectrum.value(2.0 * mode.omega_rad_s)) > 0.0
+            ]
+            if pumped:
+                out.append(
+                    f"noise: rf_amplitude_noise has density at twice the frequency of mode(s) {pumped}, and the parametric "
+                    "heating it drives there is not in the run's noise model: its white level is the motional dephasing "
+                    "and its band the frequency modulation delta(t) omega_m a^dag a, without the a^2 + a^dag^2 part "
+                    "(Section 6.2)"
+                )
+        if not self.mode_drift_differential.quiet:
+            out.append(
+                "noise: mode_drift_differential is drawn as independent per-mode offsets because the device carries no "
+                "d omega_m/dV per electrode, so a multi-mode FM or AM-FM robustness result is optimistic by up to sqrt(M) "
+                "for a gate closing M modes (Section 6.2)"
+            )
+        return tuple(out)
 
     def summary(self, device: Device) -> dict[str, tuple[float, str]]:
         """The channels that follow from what was set, name -> (value, unit): per mode the heating rate (quanta/s) and the

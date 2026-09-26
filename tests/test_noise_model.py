@@ -390,6 +390,31 @@ def test_noise_rates_carry_provenance_and_the_model_says_how_many_apparatus() ->
     assert "stitched from 3 apparatus" in three.provenance_sentence()
 
 
+def test_the_model_says_which_configured_noise_a_run_leaves_out_or_draws_independently() -> None:
+    """The rf phase noise the run does not apply, rf amplitude noise with density at twice a transverse mode's frequency
+    (whose parametric heating is not modelled) and the independent per-mode differential drift are each one sentence; a
+    band below every 2 omega_m and the quiet model say nothing."""
+    dev = chain_device(2)
+    assert NoiseModel().approximations(dev) == ()
+    phase = NoiseModel(rf_phase_noise=white_spectrum(1e-12, "rad^2/(rad/s)"))
+    (note,) = phase.approximations(dev)
+    assert "rf_phase_noise is recorded and not applied" in note and "rf gradient" in note
+    transverse = [m for m, mode in enumerate(dev.crystal.modes) if mode.family != "axial"]
+    low = ou_spectrum(1e-8, 1e-3, "(dV/V)^2/(rad/s)", omega_max_rad_s=1e6)
+    assert 2.0 * min(dev.crystal.modes[m].omega_rad_s for m in transverse) > low.omega_max_rad_s
+    assert NoiseModel(rf_amplitude_noise=low).approximations(dev) == ()
+    for spectrum in (
+        dataclasses.replace(low, white_level=1e-12),
+        ou_spectrum(1e-8, 1e-8, "(dV/V)^2/(rad/s)", omega_max_rad_s=1e8),
+    ):
+        (note,) = NoiseModel(rf_amplitude_noise=spectrum).approximations(dev)
+        assert f"twice the frequency of mode(s) {transverse}" in note and "parametric heating" in note
+    drift = NoiseModel(mode_drift_differential=Drift(5.0, 1.0, None))
+    (note,) = drift.approximations(dev)
+    assert "independent per-mode offsets" in note and "sqrt(M)" in note
+    assert len(dataclasses.replace(drift, rf_phase_noise=phase.rf_phase_noise).approximations(dev)) == 2
+
+
 # ---- the sampled beam-path phase in the builder (Section 7.10) ------------------------------------------------------------
 
 DURATION_S = 2e-6

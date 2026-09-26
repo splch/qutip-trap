@@ -117,6 +117,26 @@ def test_heating_channels_route_to_trajectories_above_the_mesolve_dimension(two_
     assert all(t.final.joint is not None for t in rec.traces)
 
 
+def test_a_run_says_which_configured_noise_it_leaves_out_or_draws_independently(two_ion) -> None:
+    """A run whose noise model sets rf phase noise and a differential mode drift carries the noise model's two sentences in
+    its approximations (Section 6.2); the quiet model's run carries neither."""
+    fx, sur = two_ion
+    circuit = Circuit(1, (Operation("gpi2", (0,), (0.0,)),), (0,))
+    kw = dict(table=sur.table, numerics=Numerics(branch_weight_min=1e-3, samples=1))
+    noisy = _noisy(
+        fx.device,
+        rf_phase_noise=white_spectrum(1e-12, "rad^2/(rad/s)"),
+        mode_drift_differential=Drift(5.0, 1.0, None),
+    )
+    approximations = run(circuit, noisy, 20, **kw).diagnostics.approximations
+    for note in noisy.noise.approximations(noisy):
+        assert approximations.count(note) == 1
+    assert any("rf_phase_noise is recorded and not applied" in a for a in approximations)
+    assert any("independent per-mode offsets" in a for a in approximations)
+    quiet = run(circuit, fx.device, 20, **kw).diagnostics.approximations
+    assert not any("rf_phase_noise" in a or "per-mode offsets" in a for a in quiet)
+
+
 # eight trajectories at dimension 1287: heavy, so it runs alone and the engine's trajectory pool takes every core
 @pytest.mark.slow
 @pytest.mark.heavy
