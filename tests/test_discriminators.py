@@ -34,7 +34,8 @@ from tests.fixtures import (
     yb_detection_beam,
 )
 
-pytestmark = pytest.mark.filterwarnings("ignore::RuntimeWarning")
+pytestmark = pytest.mark.filterwarnings("error::RuntimeWarning")
+"""The likelihoods are summed in log space: an overflow or an invalid value in them is a failure, not a warning."""
 
 
 def _myerson_direct_sum(counts: np.ndarray, sub_bin_s: float, model: RecordModel) -> tuple[float, float]:

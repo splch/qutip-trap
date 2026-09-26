@@ -600,8 +600,7 @@ class CameraGeometry:
         if self.numerical_aperture is not None:
             k_na = 2.0 * math.pi * self.numerical_aperture / self.wavelength_m
             v = k_na * np.asarray(r_m)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                core = np.where(v > 1e-12, (2.0 * j1(v) / np.where(v > 1e-12, v, 1.0)) ** 2, 1.0)
+            core = np.where(v > 1e-12, (2.0 * j1(v) / np.where(v > 1e-12, v, 1.0)) ** 2, 1.0)
             return np.asarray(k_na**2 / (4.0 * math.pi) * core)
         s = float(self.psf_sigma_m or 0.0)
         return np.asarray(np.exp(-0.5 * (np.asarray(r_m) / s) ** 2) / (2.0 * math.pi * s**2))
