@@ -81,19 +81,16 @@ def calibrated():
 
 
 SIGMA = 2.0
-"""The agreement bound in units of each entry's own sigma (at seed 11 the field, qubit frequencies, modes, occupations, Rabi
-frequencies and crosstalk ratios land at or below 0.77 sigma)."""
-
-SIGMA_STARK = 2.5
-"""The light shift at seed 11: ion 0 realizes 2.00 sigma (-44.306 +- 4.92 Hz against the derived -54.1445) and ion 1 0.74
-sigma, with opposite signs, so it is scatter and not a bias."""
+"""The agreement bound in units of each entry's own sigma (at seed 11 the occupation of mode 3 lands at 1.54 sigma, the qubit
+frequency of ion 0 at 1.54 and its light shift at 1.49, -46.80 +- 4.94 Hz against the derived -54.1445, every other entry at
+or below 0.88 sigma)."""
 
 
 @pytest.mark.slow
 @pytest.mark.timeout(3600)
 def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncertainty(calibrated) -> None:
-    """Every calibrated entry agrees with the device's derived value within SIGMA of its reported uncertainty (SIGMA_STARK for
-    the light shifts), the waveform closes at chi = pi/4 to 1e-9 and the heating entries stay zero seeds on the quiet device."""
+    """Every calibrated entry agrees with the device's derived value within SIGMA of its reported uncertainty, the waveform
+    closes at chi = pi/4 to 1e-9 and the heating entries stay zero seeds on the quiet device."""
     fx, report = calibrated
     t = report.table
     dev = fx.device
@@ -132,7 +129,7 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
         s = t.stark[key]
         assert (
             s.status == "calibrated"
-            and abs(s.value - dd.stark_shift_hz) < SIGMA_STARK * s.uncertainty
+            and abs(s.value - dd.stark_shift_hz) < SIGMA * s.uncertainty
             and s.uncertainty < 10.0
         )
         j = 1 - i
