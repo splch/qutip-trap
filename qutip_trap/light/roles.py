@@ -18,6 +18,10 @@ RESONANT_WINDOW = 2e-3
 """Relative wavelength window within which a beam counts as resonant with a tabulated line."""
 
 
+class NoDetectionBeamError(ValueError):
+    """No beam of the device is near the ion's cycling line: the device has no detection light for that ion."""
+
+
 def resonant_beams(device: Device, *, window: float = RESONANT_WINDOW) -> tuple[int, ...]:
     """Indices of the beams within ``window`` of any tabulated E1 transition of any species in the crystal."""
     out: list[int] = []
@@ -41,7 +45,8 @@ def gate_beams(device: Device, *, window: float = RESONANT_WINDOW) -> tuple[int,
 
 def detection_beams(device: Device, ion: int, *, window: float = RESONANT_WINDOW) -> tuple[int, ...]:
     """The beams near the species' cycling line and its tabulated repump lines (the light that makes the ion fluoresce);
-    a repump the species table does not tabulate as a transition is skipped."""
+    a repump the species table does not tabulate as a transition is skipped. Raises ``NoDetectionBeamError`` when no beam
+    is near either."""
     species = device.crystal.species[ion]
     lower, upper = parse_transition_label(species.cycling)
     lines = [species.transition(species.cycling).wavelength_vac_m]
@@ -53,7 +58,9 @@ def detection_beams(device: Device, ion: int, *, window: float = RESONANT_WINDOW
         if any(abs(beam.wavelength_m - lam) < window * lam for lam in lines):
             out.append(k)
     if not out:
-        raise ValueError(f"no beam of the device is near the {species.name} cycling line {lower}-{upper}")
+        raise NoDetectionBeamError(
+            f"no beam of the device is near the {species.name} cycling line {lower}-{upper}"
+        )
     return tuple(out)
 
 

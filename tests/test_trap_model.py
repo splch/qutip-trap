@@ -16,16 +16,17 @@ from qutip_trap.device.presets import secular_trap
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian, micromotion_index
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import derive_raman_drive, lamb_dicke_parameters, square_drive
+from qutip_trap.light.roles import NoDetectionBeamError, detection_beams
 from qutip_trap.run.job import detection_micromotion
 from qutip_trap.species import species
-from qutip_trap.trap.crystal import solve_crystal
+from qutip_trap.trap.crystal import build_crystal, solve_crystal
 from qutip_trap.trap.mathieu import UnstableMathieuError, beta_exact, c0_wronskian
 from qutip_trap.trap.micromotion import MicromotionIndex, modulation_index, second_order_doppler_fraction
 from qutip_trap.trap.model import Trap
 from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
 from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import ATOMIC_MASS_KG, E_C, TWO_PI
-from tests.fixtures import KX, chain_device, quiet_device, single_ion_raman_device
+from tests.fixtures import KX, chain_device, microwave_device, quiet_device, single_ion_raman_device
 from tests.oracles import five_wire_null_height_m
 
 K_369 = TWO_PI / 369.5e-9
@@ -531,6 +532,35 @@ def test_second_order_doppler_and_the_pseudopotential_error_estimate() -> None:
     assert not any(k.startswith("second_order_doppler") for k in plain.values)
     assert "pseudopotential_error" not in plain.values
     assert any("need the rf record" in n for n in plain.notes)
+
+
+def test_derived_raises_on_a_trap_record_it_cannot_evaluate_and_notes_only_an_absent_input() -> None:
+    """A 5 MHz rf drive under the 3 MHz radial frequency, or a 40Ca+ ion at q = 1.2 beside the 171Yb+ the frequencies are
+    quoted for, is a record derived() cannot evaluate: it raises instead of noting the secular frequencies, the Mathieu
+    parameters or the micromotion amplitude away (the devices carry no gate beam, whose derivation would raise on its
+    own). The absent inputs are still notes: no rf record, no detection beam."""
+    base = microwave_device()
+    unstable = dataclasses.replace(base.trap, rf=RfDrive(100.0, 5e6))
+    dev = dataclasses.replace(base, trap=unstable, crystal=solve_crystal(unstable, base.crystal.species))
+    with pytest.raises(UnstableMathieuError):
+        dev.derived()
+    yb, ca = species("171Yb+"), species("40Ca+")
+    quoted = dataclasses.replace(_yb_trap(5.0), reference_mass_u=yb.mass_u)
+    assert quoted.mathieu(yb).q[0, 0] == pytest.approx(0.2785, abs=1e-3)
+    omega = TWO_PI * np.array(
+        [[1.0e6, 1.0e6, 0.2e6], [4.3e6, 4.3e6, 0.2e6 * math.sqrt(yb.mass_u / ca.mass_u)]]
+    )
+    mixed = quiet_device(build_crystal((yb, ca), omega), quoted, Field(5.0, (1.0, 0.0, 0.0)), ())
+    with pytest.raises(UnstableMathieuError):
+        mixed.derived()
+    plain = base.derived()
+    assert [plain.values[f"secular_hz[{ax}]"] for ax in "xyz"] == [3.0e6, 2.9e6, 1.0e6]
+    assert any("need the rf record" in n for n in plain.notes)
+    assert any(
+        n.startswith("ion 0: no beam of the device is near the 171Yb+ cycling line") for n in plain.notes
+    )
+    with pytest.raises(NoDetectionBeamError):
+        detection_beams(base, 0)
 
 
 def test_the_pseudopotential_error_grows_linearly_with_the_stray_field() -> None:
