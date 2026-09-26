@@ -40,6 +40,7 @@ from qutip_trap.experiments.result import (
 from qutip_trap.experiments.single_ion import (
     _Averaged,
     _Lab,
+    _run,
     rabi_scan,
     ramsey,
     ramsey_frequency,
@@ -565,6 +566,36 @@ def test_crosstalk_scan_recovers_the_derived_ratio_and_a_zero_phase(two_ion) -> 
     phase, s_phi = res.fitted["phase_rad[1]"]
     assert abs(phase) < 4.0 * s_phi and s_phi < 0.2, (phase, s_phi)
     assert res.fitted["rate_hz"][0] == pytest.approx(dd.carrier_rabi_hz, rel=5e-3)
+
+
+def test_the_crosstalk_phase_pulses_last_a_quarter_period_of_the_believed_rabi_frequency(
+    two_ion, monkeypatch
+) -> None:
+    """The pi/2 pulses of the crosstalk-phase sequence on neighbour j last 1/(4 f) at ``rabi_hz_belief[j]``, the table's
+    Rabi frequency of j, as every experiment times its pulses; they lasted a quarter period of the physical one, the belief
+    never read. A belief that misses a neighbour the light reaches is refused."""
+    fx, dd = two_ion
+    real_run = _run
+    halves: list[float] = []
+
+    def spy(lab, ion, pulses, setup, **kw):
+        halves.extend(p.duration_s for p in pulses if p.gate_id in ("xt_phase_1", "xt_phase_2"))
+        return real_run(lab, ion, pulses, setup, **kw)
+
+    monkeypatch.setattr("qutip_trap.experiments.light._run", spy)
+    eps = abs(crosstalk_ratios(fx.device, 0, fx.gate_drives[0].beams)[1])
+    physical = derive_raman_drive(fx.device, 1, fx.gate_drives[1].beams, scattering=False).carrier_rabi_hz
+    res = crosstalk_scan(
+        Machine(fx.device),
+        0,
+        np.linspace(0.0, 0.5 / (eps * dd.carrier_rabi_hz), 5),
+        analysis_phases_rad=[0.0, 2.1, 4.2],
+        rabi_hz_belief={1: 1.05 * physical},
+    )
+    assert "phase_rad[1]" in res.fitted and len(halves) == 6
+    assert all(t == pytest.approx(0.25 / (1.05 * physical), rel=1e-12) for t in halves), (halves, physical)
+    with pytest.raises(ValueError, match=r"neighbours \[1\]"):
+        crosstalk_scan(Machine(fx.device), 0, np.linspace(0.0, 1e-3, 5), rabi_hz_belief={0: physical})
 
 
 # ---- micromotion compensation (Section 7.5; Berkeland 1998) ------------------------------------------------------------------

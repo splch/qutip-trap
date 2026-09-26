@@ -520,7 +520,7 @@ def full_calibration(
                 lab,
                 i,
                 ts,
-                rabi_hz_belief=f_i,
+                rabi_hz_belief={j: _belief(table, j, drives[j]) for j in range(n) if j != i},
                 analysis_phases_rad=np.linspace(
                     0.0, 2.0 * math.pi, sc.crosstalk_phase_points, endpoint=False
                 ),

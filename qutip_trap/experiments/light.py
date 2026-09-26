@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, Unpack
 
@@ -252,23 +252,29 @@ def crosstalk_scan(
     durations_s: Sequence[float],
     *,
     analysis_phases_rad: Sequence[float] | np.ndarray | None = None,
-    rabi_hz_belief: float | None = None,
+    rabi_hz_belief: Mapping[int, float] | None = None,
     **kw: Unpack[_LabOptions],
 ) -> ExperimentResult:
     """Drive ``ion`` on its carrier and fit the Rabi rate on every neighbour its light reaches (Section 7.5 item 8):
     epsilon_ij = f_j/f_i, the rates fitted with nbar fixed at ``nbar``. The crosstalk axis on each neighbour comes from
-    pi/2 - crosstalk pi - pi/2(phi) over ``analysis_phases_rad`` (default eight), the pi/2 pulses at the neighbour's own
-    Rabi frequency (``rabi_hz_belief`` is not read). Data rows (t, P1 of the driven ion and each neighbour); fitted rate_hz
-    and per neighbour j rate_hz[j], eps[j], phase_total_rad[j] (the axis in j's frame) and phase_rad[j] (minus the
-    geometric phase Delta k . (x_j - x_i), i.e. arg epsilon_ij)."""
+    pi/2 - crosstalk pi - pi/2(phi) over ``analysis_phases_rad`` (default eight), the pi/2 pulses of the neighbour's own
+    drive lasting 1/(4 f) at ``rabi_hz_belief[j]``, the table's Rabi frequency of neighbour j (default every neighbour's
+    physical one). Data rows (t, P1 of the driven ion and each neighbour); fitted rate_hz and per neighbour j rate_hz[j],
+    eps[j], phase_total_rad[j] (the axis in j's frame) and phase_rad[j] (minus the geometric phase Delta k . (x_j - x_i),
+    i.e. arg epsilon_ij)."""
     from qutip_trap.control.pulses import Pulse
     from qutip_trap.light.raman import lamb_dicke_parameters
 
-    del rabi_hz_belief
     lab = _Lab.of(machine, kw)
     device = lab.device
     setup = _setup(lab, ion, _Probe(crosstalk=True))
     neighbours = sorted(setup.drive.crosstalk)
+    if rabi_hz_belief is not None:
+        missing = [j for j in neighbours if j not in rabi_hz_belief]
+        if missing:
+            raise ValueError(
+                f"rabi_hz_belief gives no Rabi frequency for the neighbours {missing} the light of ion {ion} reaches"
+            )
     ts = np.array(sorted(float(t) for t in durations_s))
     if ts.size < 4 or ts[0] < 0.0:
         raise ValueError("durations_s: at least four non-negative durations")
@@ -320,7 +326,7 @@ def crosstalk_scan(
         # equatorial state onto the pole for an axis parallel to the preparation pulse's and gives no fringe)
         t_x = 0.5 / f_j
         own = _setup(lab, j, _Probe(), setup.space)
-        t_h = 0.25 / own.rabi_hz
+        t_h = 0.25 / (float(rabi_hz_belief[j]) if rabi_hz_belief is not None else own.rabi_hz)
         signal: list[float] = []
         sig: list[float | None] = []
         for k, phi in enumerate(phases):
