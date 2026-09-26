@@ -109,6 +109,7 @@ class ShotView:
     heralds: tuple[str, ...]
     sample_index: int
     photon_counts: tuple[Shown, ...] | None
+    """Every ion's photon count, ion 0 first, when the run kept its records (the full readout)."""
     time_used_s: tuple[float, ...]
     """Detection time the discriminator used, per ion (the adaptive discriminators stop early)."""
     detection_window: Shown

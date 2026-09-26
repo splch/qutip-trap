@@ -587,6 +587,8 @@ class ReadoutRecord:
     """(shots, n_ions) the projectively sampled internal level per ion (the joint outcome behind the declared bits)."""
     time_used_s: np.ndarray
     photon_records: np.ndarray | None
+    """(shots, n_ions) the photon count of every ion's record, ion 0 first, when the run kept its records (the full
+    readout), the declared bits being the discriminator's reading of the measured ions' records; None on the fast path."""
     posteriors: np.ndarray | None
 
 
@@ -1346,12 +1348,16 @@ def gate_local_record(report: core.GateLocalReport) -> GateLocalRecord:
 def readout_record(result: core.Result, rec: core.RunRecord) -> ReadoutRecord:
     stage = rec.readout
     disc = stage.discriminator
+    outcome = rec.outcome
     return ReadoutRecord(
         window_s=float(disc.window_s),
         threshold=float(disc.n_c) if isinstance(disc, core.ThresholdDiscriminator) else None,
-        levels=np.asarray(rec.outcome.levels),
-        time_used_s=np.asarray(rec.outcome.time_used_s, dtype=float),
-        photon_records=None if result.photon_records is None else np.asarray(result.photon_records),
+        levels=np.asarray(outcome.levels),
+        time_used_s=np.asarray(outcome.time_used_s, dtype=float),
+        # the RunRecord's records cover every ion (the Result's only the measured ones), like the levels beside them
+        photon_records=None
+        if outcome.records is None
+        else np.array([[r.total for r in shot] for shot in outcome.records], dtype=int),
         posteriors=None if result.posteriors is None else np.asarray(result.posteriors, dtype=float),
     )
 

@@ -1,8 +1,10 @@
-"""Off the happy path: circuits with fewer qubits than the device has ions, circuits measuring a subset, and worker results
-that arrive after progress events. Each record is pushed through the pure view-models the screens read, so that a shape
-mismatch fails here and not on a screen."""
+"""Off the happy path: circuits with fewer qubits than the device has ions, circuits measuring a subset (read out fast or
+with every photon record kept), and worker results that arrive after progress events. Each record is pushed through the
+pure view-models the screens read, so that a shape mismatch fails here and not on a screen."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from fixtures import FAST, SEED
@@ -22,10 +24,14 @@ ONE_QUBIT = Circuit(1, (Operation("h", (0,), ()),), (0,))
 SUBSET = load_openqasm2(
     'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg c[1];\nh q[0];\ncx q[0],q[1];\nmeasure q[0] -> c[0];\n'
 )
+LAST_ONLY = load_openqasm2(
+    'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg c[1];\nx q[1];\nmeasure q[1] -> c[0];\n'
+)
+"""Ion 1 flipped bright and measured alone; ion 0 stays dark and unmeasured."""
 SHOTS = 40
 
 
-def _job(circuit: Circuit):
+def _job(circuit: Circuit, **run_fields: Any):
     # the app never runs fewer than two ions (Session.build_job): a one-qubit circuit lands on the two-ion chain
     return job_for_preset(
         "yb171_chain",
@@ -35,6 +41,7 @@ def _job(circuit: Circuit):
         seed=SEED,
         options=FAST,
         detection_records=500,
+        **run_fields,
     )
 
 
@@ -58,6 +65,12 @@ def subset_full() -> tuple[Record, LiveRun]:
     return execute(job, preset)
 
 
+@pytest.fixture(scope="module")
+def last_only_photon_records() -> tuple[Record, LiveRun]:
+    job, preset = _job(LAST_ONLY, readout="full")
+    return execute(job, preset)
+
+
 def _every_view(record: Record) -> None:
     h = histogram(record)
     assert {b.key for b in h.bars} == set(record.results.probabilities) | set(
@@ -68,6 +81,7 @@ def _every_view(record: Record) -> None:
     for k in range(record.results.bitstrings.shape[0]):
         s = shot(record, k)
         assert len(s.levels) == record.n_ions and len(s.time_used_s) == record.n_ions
+        assert s.photon_counts is None or len(s.photon_counts) == record.n_ions
     for g in timeline(record):
         reg = register_after(record, g.index)
         assert reg.rho.shape == (2**record.n_ions,) * 2 and len(reg.bloch) == record.n_ions
@@ -93,6 +107,27 @@ def test_a_circuit_measuring_a_subset(subset_full: tuple[Record, LiveRun]) -> No
     assert record.n_qubits == 2 and record.results.bitstrings.shape == (SHOTS, 1)
     assert set(record.results.counts) <= {"0", "1"} and set(record.results.target_probabilities) == {"0", "1"}
     assert record.results.register_fidelity is not None and record.results.register_fidelity > 0.98
+    _every_view(record)
+
+
+def test_a_full_readout_opens_every_ions_photon_count(
+    last_only_photon_records: tuple[Record, LiveRun],
+) -> None:
+    """A shot of a full readout opens one photon count per ion, labelled by its ion: the measured q1's bit is the
+    threshold's reading of ion 1's count, and the dark, unmeasured ion 0 was counted too."""
+    record, _live = last_only_photon_records
+    assert record.job.readout == "full" and record.results.bitstrings.shape == (SHOTS, 1)
+    threshold = record.readout.threshold
+    assert threshold is not None
+    split = 0
+    for k in range(SHOTS):
+        s = shot(record, k)
+        assert s.photon_counts is not None and [c.detail for c in s.photon_counts] == ["ion 0", "ion 1"]
+        dark, bright = (int(c.value) for c in s.photon_counts)
+        if not s.heralds:
+            assert s.bitstring.value == str(int(bright > threshold))
+        split += dark <= threshold < bright
+    assert split > SHOTS // 2, "the two ions' counts differ, so a swapped label could not pass"
     _every_view(record)
 
 
