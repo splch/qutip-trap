@@ -6,8 +6,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import multiprocessing as mp
 import time
 import warnings
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pytest
@@ -340,31 +343,60 @@ def test_submit_result_equals_run_and_carries_its_record(machine) -> None:
     assert job.result() is result, "a finished job returns the same result again"
 
 
-def test_cancel_stops_the_worker_within_one_pulse(machine) -> None:
-    """Under the serial map a cancel after the first pulse report stops the worker within one more pulse and 120 s."""
+@dataclasses.dataclass(frozen=True)
+class HeldAtFirstPulse(Machine):
+    """A machine whose run holds at its first pulse report until ``release`` is set, so that a test knows which report
+    the worker made last when it cancels."""
+
+    release: Any = None
+    """A spawn-context ``multiprocessing.Event``, handed to the worker with the machine."""
+
+    def run(
+        self,
+        circuit: Circuit,
+        shots: int,
+        *,
+        seed: int = 0,
+        keep_final_state: bool = False,
+        progress: Callable[[Progress], None] | None = None,
+    ) -> trap.Result:
+        assert progress is not None, "the Job's worker always reports"
+        held = False
+
+        def hold_after_the_first_pulse(p: Progress) -> None:
+            nonlocal held
+            progress(p)
+            if p.stage == "pulse" and not held:
+                held = True
+                self.release.wait()
+
+        return super().run(
+            circuit, shots, seed=seed, keep_final_state=keep_final_state, progress=hold_after_the_first_pulse
+        )
+
+
+def test_cancel_stops_the_worker_at_its_next_pulse_report(machine) -> None:
+    """Under the serial map the worker holds at its first pulse report until the parent has cancelled; it then stops at its
+    next report, one pulse later, the job ends cancelled with that report the last one, and the worker exits cleanly."""
     _preset, m = machine
-    job = submit(dataclasses.replace(m, numerics=SERIAL), BELL, 2000, seed=1)
-    deadline = time.monotonic() + 300.0
-    while time.monotonic() < deadline:
-        p = job.progress
-        if p is not None and p.stage == "pulse" and p.done >= 1:
-            break
-        if job.status() != "running":
-            pytest.fail(f"the run ended before its first pulse report: {job.status()}")
+    release = mp.get_context("spawn").Event()
+    held = HeldAtFirstPulse(m.device, m.table, m.physics, SERIAL, m.readout, m.level, release=release)
+    job = submit(held, BELL, 2000, seed=1)
+    deadline = (
+        time.monotonic() + 600.0
+    )  # a hang guard only: the worker is held, so the order does not depend on time
+    while (first := job.progress) is None:
+        assert job.status() == "running" and time.monotonic() < deadline, job.status()
         time.sleep(0.05)
-    else:
-        pytest.fail("no pulse progress arrived")
-    first = job.progress
-    assert first is not None
+    assert first.stage == "pulse" and first.done == 1, first
     job.cancel()
     assert job.cancel_requested and job.status() == "cancelled"
-    t0 = time.monotonic()
-    with pytest.raises(JobCancelled, match="cancelled"):
-        job.result(timeout_s=300.0)
-    stopped_after_s = time.monotonic() - t0
-    last = job.progress
-    assert last is not None and last.done <= first.done + 1, (first, last)
-    assert not job._process.is_alive() and stopped_after_s < 120.0
+    release.set()
+    with pytest.raises(JobCancelled, match=f"cancelled at pulse 2/{first.total}"):
+        job.result(timeout_s=600.0)
+    assert job.progress == dataclasses.replace(first, done=2, elapsed_s=job.progress.elapsed_s)
+    job._process.join()
+    assert job._process.exitcode == 0, "the worker returned; it was not killed"
     with pytest.raises(JobCancelled):
         job.result()
 
