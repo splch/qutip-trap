@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from qutip_trap.run.gate_local import GateLocalReport
     from qutip_trap.run.job import RunRecord
 
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 """The ``schema_version`` ``Result.to_dict`` writes and ``Result.from_dict`` reads."""
 
 
@@ -96,21 +96,33 @@ class RunState:
 
 @dataclass(frozen=True)
 class EntanglingScales:
-    """One played entangling gate's closed-form error scales (Section 9.6, ``run.job.intrinsic_budget``): the terms ``total``
-    sums, each an entanglement infidelity, and two numbers reported beside them."""
+    """One played entangling gate's closed-form error scales (Section 9.6, ``run.job.intrinsic_budget``): the seven terms
+    ``total`` sums, each an entanglement infidelity, and three numbers reported beside them, which it does not."""
 
     gate_id: str
     residual_displacement: float
     """sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1) at closure over the gate's modes: the open loops (Section 4.4.7)."""
     debye_waller: float
-    """The n = 0-referenced thermal Debye-Waller loss summed over the resolved and frozen modes (Ballance 2016)."""
+    """The spread of the two-body angle over the thermal Fock states of the modes whose occupation the run carries
+    (resolved, ENR and frozen), referenced to the ground state the calibration measured at: Ballance 2016's
+    (pi^2/4) eta^4 nbar (2 nbar + 1) for one mode, weighted by each ion's own eta and summed over the modes with their
+    cross terms (``run.job.sideband_nonlinearity``)."""
+    nonlinear_displacement: float
+    """The spin-dependent displacement the first sideband's eta^3 Lamb-Dicke nonlinearity leaves along the gate's own
+    phase-space excursion, sum_m (2 nbar_m + 1) Var_s(gamma_{s,m}) (``run.job.sideband_nonlinearity``)."""
     carrier_scale: float
-    """(Omega_peak/(2 mu_min))^2: the scale of the off-resonant carrier's oscillation inside the segments."""
+    """(Omega_peak/(2 mu_min))^2: a scale, not an estimate of what the off-resonant carrier leaves inside the segments.
+    Once its kicks are counted (``carrier_steps``) that is 7e-8 to 1.5e-6 wherever it can be isolated, 1200 to 3700 times
+    below this scale, and on a kicked pulse it is below the kick term's own accuracy (the term exceeds the first-order play
+    by 0.7 to 8 %). Summed because the budget has no estimate yet of what this scale covers in the validation circuits:
+    the crosstalk rotations of consecutive pulses adding coherently, the carrier kicks of successive MS gates composing for
+    the circuit's input, and the carrier pulses the motion's Debye-Waller factor under-rotates on a derived Rabi entry."""
     carrier_steps: float
     """The rotations the carrier leaves at the envelope's switch-on, amplitude steps and switch-off, propagated through
     the gate (``run.job.carrier_step_infidelity``); the switch-on alone is Roos's beat-phase spin-axis tilt."""
     bessel_saturation: float
-    """Roos's force saturation, sin^2(pi f/2) with f = 1 - (J_0 + J_2)(2 Omega/mu)."""
+    """Roos's force saturation sin^2(pi f/2) (``force_deficit``) for a waveform whose amplitude no calibration set; 0 for a
+    calibrated one, whose calibration measured the angle the saturated force reached."""
     frozen_angle: float
     """sin^2 of the angle the closed forms put on the modes the run does not carry, for a waveform whose amplitude no
     calibration set (the run's gate misses it); 0 for a calibrated one, whose calibration measured the angle it reached."""
@@ -118,13 +130,17 @@ class EntanglingScales:
     """Reported, not summed: the worst sideband matrix element's Lamb-Dicke deficit at the highest Fock index carried."""
     frozen_angle_rad: float
     """Reported, not summed: the signed angle sum_m chi_m of the modes the run does not carry, radians."""
+    force_deficit: float
+    """Reported, not summed: Roos's f = 1 - (J_0 + J_2)(2 Omega/mu) at the peak amplitude (``run.job.roos_force_deficit``),
+    the fraction of the force the carrier saturates away, which a calibration absorbs into the amplitude it sets."""
 
     @property
     def total(self) -> float:
-        """The terms the budget sums: all but the Lamb-Dicke deficit and the angle in radians."""
+        """The terms the budget sums: all but the Lamb-Dicke deficit, the angle in radians and the force deficit."""
         return (
             self.residual_displacement
             + self.debye_waller
+            + self.nonlinear_displacement
             + self.carrier_scale
             + self.carrier_steps
             + self.bessel_saturation

@@ -436,10 +436,20 @@ def trajectory_sampled(
     env: SampledEnvelope, modes: GateModes, ion: int, mode: int, kernel: Kernel = "rwa"
 ) -> np.ndarray:
     """alpha_im(t) on the grid: the phase-space trajectory (Leung's robustness cost is its time average)."""
+    cum = cumulative_simpson(
+        trajectory_rate_sampled(env, modes, ion, mode, kernel), x=env.times_s, initial=0.0
+    )
+    return np.asarray(cum, dtype=complex)
+
+
+def trajectory_rate_sampled(
+    env: SampledEnvelope, modes: GateModes, ion: int, mode: int, kernel: Kernel = "rwa"
+) -> np.ndarray:
+    """d alpha_im/dt = i eta_im Omega_i(t) f_m(t) on the grid: the force whose running integral is
+    ``trajectory_sampled``."""
     k = modes.index(mode)
     f = _kernel_samples(kernel, modes.omega_rad_s[k], env.times_s, env.beat_phase_rad, env.phi_m_rad)
-    cum = cumulative_simpson(env.amplitude_rad_s[ion] * f, x=env.times_s, initial=0.0)
-    return np.asarray(1j * modes.eta[ion][k] * cum, dtype=complex)
+    return np.asarray(1j * modes.eta[ion][k] * env.amplitude_rad_s[ion] * f, dtype=complex)
 
 
 # ---- closed forms of the square pulse ---------------------------------------------------------------------------------------

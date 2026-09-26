@@ -17,6 +17,7 @@ from qutip_trap.calibration.entangling import (
     ms_schedule,
     spot_check_space,
 )
+from qutip_trap.calibration.surrogate import surrogate_waveform
 from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.schedule import PhaseFrame, PlayedGate, Schedule, entangling_pulses, ms_spin_phases
 from qutip_trap.control.shaping import (
@@ -36,7 +37,7 @@ from qutip_trap.control.shaping import (
 )
 from qutip_trap.control.table import Waveform
 from qutip_trap.device.model import Device, Field
-from qutip_trap.device.presets import secular_trap
+from qutip_trap.device.presets import secular_trap, yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.dynamics.operators import rabi_matrix_element
@@ -55,8 +56,9 @@ from qutip_trap.run.job import (
     carrier_step_infidelity,
     carrier_step_kicks,
     intrinsic_budget,
-    roos_bessel_saturation,
+    roos_force_deficit,
     sideband_lamb_dicke_deficit,
+    sideband_nonlinearity,
 )
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import species
@@ -71,6 +73,7 @@ from tests.fixtures import (
     raman_gate_drives,
     table_with_waveform,
     two_ion_modes,
+    two_ion_surrogate,
 )
 from tests.oracles import (
     entanglement_infidelity_from_displacements,
@@ -797,48 +800,53 @@ def test_the_section_11_1_fixture_is_the_plan_s_pulse() -> None:
 
 @pytest.mark.slow
 def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intrinsic_budget() -> None:
-    """The exact play of the calibrated reference pulse misses MS(0, 0, pi/2) by 4.66e-5 (2 %), inside the budget: its
-    carrier_scale (Omega_tone/(2 mu))^2 = 1.151e-4 at the tones' detuning mu = nu - eps, the off-resonant term
-    (Omega_tone/(2 nu))^2 = 1.143e-4 to 0.7 %, with no carrier kicks (the tones start at beat phase 0 and stop after a
-    whole number of beat periods) and the budget's other terms at their closed forms. The 4.66e-5 is not the carrier's:
-    it is the first sideband's Lamb-Dicke nonlinearity along the gate's own excursion, which appears at lamb_dicke_order =
-    3 (``test_the_same_identity_reaches_1e_6_with_lamb_dicke_order_and_rwa_on``) and which the budget names as not
-    estimated."""
+    """The exact play of the calibrated reference pulse misses MS(0, 0, pi/2) by 4.66e-5 (2 %), which the budget's
+    nonlinear displacement predicts to 1.1 % (4.711e-5), erring high: the first sideband's eta^3 nonlinearity along the
+    gate's own excursion, which appears at lamb_dicke_order = 3 (``test_the_same_identity_reaches_1e_6_with_lamb_dicke_
+    order_and_rwa_on``). The carrier has nothing left to explain: the tones start at beat phase 0 and stop after a whole
+    number of beat periods, so nothing kicks, and with the carrier and both first sidebands kept the calibrated pulse
+    reaches the matrix to 4.3e-8, far below its carrier_scale (Omega_tone/(2 mu))^2 = 1.151e-4. The calibration absorbed
+    Roos's force saturation (f = 2.30e-4, reported beside the total), the ground state has no Debye-Waller spread, and the
+    budget reads the play's own space, the x-COM carried and the x-rocking mode frozen."""
     device, modes, waveform, sched, infidelity = _exact_play(BuilderOptions(include_stark=False))
+    *_, space = _single_mode_fixture()
     omega_tone = TWO_PI * float(waveform.segments[0].amplitude_hz[(0, "blue")])
     nu = modes.omega_rad_s[0]
     off_resonant = (omega_tone / (2.0 * nu)) ** 2
     # 1.1430e-4 at the calibrated amplitude (1.1228e-4 at the closed-form one)
     assert off_resonant == pytest.approx(1.1430e-4, rel=2e-3)
-    assert off_resonant == pytest.approx(1.1e-4, abs=5e-6)
     assert infidelity == pytest.approx(4.659e-5, rel=2e-2), infidelity
-    assert infidelity < off_resonant
-    selection = select_space(
-        device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
-    )
+    selection = SpaceSelection.supplied(space, Numerics(), dict.fromkeys(range(6), 0.0), 6)
+    assert selection.mode_class[X_COM_TWO_IONS] == "resolved" and selection.mode_class[2] == "frozen"
     budget = intrinsic_budget(device, sched, selection, hardware_chain=True)
     (ms,) = budget.entangling
     assert ms.gate_id == "ms11"
+    # the eta^3 displacement: (pi^2/8) eta^4 = 4.703e-5 in the rwa at the closed-form amplitude, 4.711e-5 with the
+    # counter-rotating force, at the angle the calibrated gate reaches
+    assert ms.nonlinear_displacement == pytest.approx(infidelity, rel=2e-2)
+    assert ms.nonlinear_displacement > infidelity
+    assert ms.nonlinear_displacement == pytest.approx(
+        (math.pi**2 / 8.0) * abs(modes.eta[0][0]) ** 4, rel=3e-3
+    )
+    assert not any("Lamb-Dicke nonlinearity" in note for note in budget.omitted), budget.omitted
     # (Omega_tone/(2 mu))^2 at mu/2pi = 2.99 MHz: the off-resonant term above to (nu/mu)^2 - 1 = 0.67 %
     mu = TWO_PI * float(waveform.segments[0].detuning_hz["blue"])
     assert ms.carrier_scale == pytest.approx((omega_tone / (2.0 * mu)) ** 2, rel=1e-12)
     assert ms.carrier_scale == pytest.approx(1.1507e-4, rel=2e-3)
-    assert ms.carrier_scale == pytest.approx(off_resonant, rel=1e-2)
-    assert infidelity < ms.carrier_scale
     # the reset beat note starts at phase 0 and mu tau = 2 pi 299: neither end kicks
     assert ms.carrier_steps < 1e-20
-    # the loop closes, so the residual displacement is below 1e-3, and the ground state has no thermal Debye-Waller loss
+    # the ground state has no thermal Debye-Waller spread; the x-COM loop closes and the frozen x-rocking mode's open loop
+    # is the residual displacement (4.4e-4)
     assert ms.debye_waller == 0.0
     assert ms.residual_displacement < 1e-3
     # the sideband element's Lamb-Dicke deficit: 1 - <n+1|D(i eta)|n>/(eta sqrt(n+1)) at the cap's top n = 11, reported
-    # beside the budget and NOT summed (its mean is the s^2 calibration's rescaling, its thermal spread the Debye-Waller
-    # term); the spread the gate's own excursion adds is named as not estimated
+    # beside the budget and NOT summed (its mean is the s^2 calibration's rescaling; its spread over the thermal states
+    # and along the excursion are the Debye-Waller and nonlinear-displacement terms)
     assert ms.sideband_lamb_dicke_deficit == pytest.approx(3.0554e-2, rel=1e-2)
-    assert any("Lamb-Dicke nonlinearity" in note for note in budget.omitted), budget.omitted
-    # a calibrated waveform on a space that carries every mode it drives: no angle left out
+    # a calibrated waveform on a space that carries every mode it puts an angle on: no angle left out
     assert ms.frozen_angle == 0.0 and ms.frozen_angle_rad == 0.0
-    # the Bessel force saturation is Roos Eq. 17: f = 1 - (J_0 + J_2)(2 Omega/mu) in the per-tone Omega at the tone
-    # amplitude and the tone-to-carrier detuning, entered as the uncalibrated angle error's infidelity sin^2(pi f/2)
+    # Roos Eq. 17: f = 1 - (J_0 + J_2)(2 Omega/mu) in the per-tone Omega at the tone amplitude and the tone-to-carrier
+    # detuning; the calibration measured the angle the saturated force reached, so no infidelity is summed for it
     gate = sched.gates[0]
     seg = gate.waveform.segments[0]
     omega_hz = max(abs(float(a)) for a in seg.amplitude_hz.values())
@@ -847,21 +855,22 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     # x = 2 Omega/mu = 0.0429 at Omega/2pi = 64.1 kHz against mu/2pi = 2.99 MHz: f = x^2/8
     assert mu_hz == pytest.approx(2.99e6, rel=1e-6)
     assert f == pytest.approx((2.0 * omega_hz / mu_hz) ** 2 / 8.0, rel=1e-3) and 2e-4 < f < 3e-4, f
-    assert ms.bessel_saturation == pytest.approx(math.sin(math.pi * f / 2.0) ** 2, rel=1e-9)
-    assert ms.bessel_saturation == pytest.approx(roos_bessel_saturation(gate.waveform), rel=1e-12)
-    assert ms.bessel_saturation < 1e-5, "far inside the off-resonant carrier term"
+    assert ms.force_deficit == pytest.approx(f, rel=1e-12)
+    assert ms.force_deficit == pytest.approx(roos_force_deficit(gate.waveform), rel=1e-12)
+    assert ms.bessel_saturation == 0.0
     summed = (
         ms.residual_displacement
         + ms.debye_waller
+        + ms.nonlinear_displacement
         + ms.carrier_scale
         + ms.carrier_steps
         + ms.bessel_saturation
         + ms.frozen_angle
     )
-    assert ms.total == summed, "the gate's total sums its six MS terms"
+    assert ms.total == summed, "the gate's total sums its seven MS terms"
     others = sum(r.total for r in (*budget.carriers, *budget.scattering))
     assert budget.total == pytest.approx(ms.total + others)
-    assert budget.total < ms.sideband_lamb_dicke_deficit, (
+    assert infidelity < budget.total < ms.sideband_lamb_dicke_deficit, (
         "the Lamb-Dicke deficit (3e-2 at the cap's top) is reported, not summed"
     )
 
@@ -880,6 +889,196 @@ def test_the_same_identity_reaches_1e_6_with_lamb_dicke_order_and_rwa_on() -> No
     assert first_order < 1e-6, first_order
     *_, third_order = _exact_play(BuilderOptions(lamb_dicke_order=3, include_stark=False))
     assert third_order == pytest.approx(4.70e-5, rel=2e-2), third_order
+
+
+RWA_ORDERS = {
+    order: BuilderOptions(lamb_dicke_order=order, rwa=True, frame="interaction", include_stark=False)
+    for order in (1, 3)
+}
+"""The rwa builders that isolate the first sideband's eta^3 term on one mode: no carrier, no counter-rotating force."""
+
+
+def test_the_nonlinear_displacement_is_the_first_sideband_s_eta3_term_on_one_mode() -> None:
+    """The first sideband's eta^3 term isolated in the rwa on the x-COM alone (the calibrated gate's |00> infidelity under
+    lamb_dicke_order = 3 less that under 1, each builder calibrated) against the budget's nonlinear displacement of the
+    calibrated waveform: the Section 11.1 pulse 4.718e-5 against 4.711e-5, Leung's five-vertex FM gate 2.077e-5 against
+    2.087e-5 and a four-component Fourier-sine AM gate 1.271e-4 against 1.261e-4, each to 1 %; and the Section 11.1 pulse
+    at nbar = 0.5, where the Debye-Waller spread of the angle adds as much again, 1.856e-4 against 1.883e-4."""
+    device = chain_device(2)
+    drives = raman_gate_drives(2)
+    rabi, _stark = derived_seeds(device, drives)
+    modes = two_ion_modes(device).subset([X_COM_TWO_IONS])
+    pulses = {
+        "section 11.1": (
+            symmetric_pulse(
+                modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=EPSILON_HZ, all_modes=False
+            ).waveform,
+            4.718e-5,
+        ),
+        "fm": (
+            solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=5, mu0_hz=3.012e6).waveform,
+            2.077e-5,
+        ),
+        "fourier": (
+            solve_fourier_amplitude_modulation(modes, mu_hz=2.99e6, duration_s=100e-6, n_basis=4).waveform,
+            1.271e-4,
+        ),
+    }
+    for name, (seed, pin) in pulses.items():
+        space, _classes = spot_check_space(device, modes, seed, (0, 1), Numerics(caps={X_COM_TWO_IONS: 30}))
+        table = table_with_waveform((0, 1), seed, rabi_hz=rabi)
+        runs = {
+            order: calibrate_entangling_angle(
+                device,
+                seed,
+                (0, 1),
+                drives,
+                table,
+                space=space,
+                physics=Physics(builder=builder),
+                tolerance_rad=1e-7,
+                max_iterations=10,
+            )
+            for order, builder in RWA_ORDERS.items()
+        }
+        assert all(run.converged for run in runs.values()), name
+        measured = runs[1].checks[-1].fidelity - runs[3].checks[-1].fidelity
+        calibrated = runs[3].waveform
+        predicted = sideband_nonlinearity(
+            calibrated,
+            modes,
+            carried={X_COM_TWO_IONS},
+            spread={X_COM_TWO_IONS},
+            angle_rad=calibrated.chi_total_rad,
+        )
+        assert measured == pytest.approx(pin, rel=1e-2), (name, measured)
+        assert predicted.displacement == pytest.approx(measured, rel=1e-2), (name, predicted, measured)
+        assert predicted.debye_waller == 0.0, "the ground state spreads nothing"
+        if name != "section 11.1":
+            continue
+        # the thermal gate mode: (2 nbar + 1) on the displacement and Ballance's n = 0-referenced spread of the angle
+        warm = dataclasses.replace(modes, nbar=(0.5,))
+        thermal = {
+            order: exact_gate_check(
+                device,
+                runs[order].waveform,
+                (0, 1),
+                drives,
+                table,
+                space=space,
+                physics=Physics(builder=RWA_ORDERS[order]),
+                nbar={X_COM_TWO_IONS: 0.5},
+            )[0].fidelity
+            for order in RWA_ORDERS
+        }
+        warm_measured = thermal[1] - thermal[3]
+        warm_predicted = sideband_nonlinearity(
+            calibrated,
+            warm,
+            carried={X_COM_TWO_IONS},
+            spread={X_COM_TWO_IONS},
+            angle_rad=calibrated.chi_total_rad,
+        )
+        assert warm_predicted.debye_waller == pytest.approx(
+            (math.pi**2 / 4.0) * abs(modes.eta[0][0]) ** 4 * 0.5 * 2.0, rel=2e-3
+        ), "Ballance's (pi^2/4) eta^4 nbar (2 nbar + 1) at chi = pi/4"
+        assert warm_predicted.displacement == pytest.approx(2.0 * predicted.displacement, rel=1e-9)
+        warm_total = warm_predicted.debye_waller + warm_predicted.displacement
+        assert warm_measured == pytest.approx(1.856e-4, rel=1e-2), warm_measured
+        assert warm_total == pytest.approx(warm_measured, rel=3e-2), (warm_predicted, warm_measured)
+        assert warm_total > warm_measured
+
+
+@pytest.mark.slow
+def test_the_nonlinear_displacement_holds_on_two_modes_where_the_carrier_kicks_nothing() -> None:
+    """The Bell run's five-segment AM re-solved at mu/2pi = 3.05 MHz, where every segment edge falls on a whole number of beat
+    periods (mu T/5 = 61) so that the resetting tones of ``presets.yb171_chain(2)`` kick nothing: the calibrated gate's |00>
+    infidelity under the exact builder less that with the carrier and both first sidebands alone (2.737e-5) is the budget's
+    nonlinear displacement over both x modes, the cross-mode excursion included, to 1 % (2.714e-5); the first-order play
+    itself leaves 3.5e-7, what the carrier does inside the segments."""
+    device = yb171_chain(2).device
+    assert not device.hardware.phase_continuous
+    table = two_ion_surrogate(2000).table
+    modes = gate_modes(device, (0, 1), (0, 1), eta_min=1e-9)
+    assert modes.modes == (2, 3)
+    seed = solve_amplitude_modulation(modes, mu_hz=3.05e6, duration_s=100e-6).waveform
+    assert len(seed.segments) == 5
+    assert all(np.max(np.abs(k)) < 1e-12 for k in carrier_step_kicks(seed, 0.0, beat_reset=True).values())
+    space, _classes = spot_check_space(device, modes, seed, (0, 1), Numerics())
+    runs = {
+        name: calibrate_entangling_angle(
+            device,
+            seed,
+            (0, 1),
+            dict(device.roles.entangling),
+            table,
+            space=space,
+            physics=Physics(builder=builder),
+            tolerance_rad=1e-7,
+            max_iterations=10,
+        )
+        for name, builder in (("first", BuilderOptions(lamb_dicke_order=1)), ("exact", BuilderOptions()))
+    }
+    first = 1.0 - runs["first"].checks[-1].fidelity
+    exact = 1.0 - runs["exact"].checks[-1].fidelity
+    assert first < 1e-6, first
+    assert exact - first == pytest.approx(2.737e-5, rel=1e-2), (exact, first)
+    calibrated = runs["exact"].waveform
+    predicted = sideband_nonlinearity(
+        calibrated,
+        modes,
+        carried=set(modes.modes),
+        spread=set(modes.modes),
+        angle_rad=calibrated.chi_total_rad,
+    )
+    assert predicted.displacement == pytest.approx(exact - first, rel=1.5e-2), (predicted, exact - first)
+
+
+@pytest.mark.slow
+def test_a_calibration_absorbs_the_carrier_s_saturation_of_the_force() -> None:
+    """With the carrier and both first sidebands alone (lamb_dicke_order = 1), the Bell run's closed-form five-segment AM
+    reaches (pi/4)(1 - f)^2 at f = 2.34e-3, inside Roos's range over its segments (2.02e-3 weighted by their force, 2.78e-3
+    at the peak, which the budget reports as the force deficit), an angle error of 1.35e-5 where the budget's
+    sin^2(pi f/2) for a seed is 1.91e-5; its calibration reaches pi/4 to 1e-7 rad, so a calibrated gate has no saturation
+    left to sum."""
+    device = yb171_chain(2).device
+    table = two_ion_surrogate(2000).table
+    shaped, modes = surrogate_waveform(device, (0, 1), (0, 1), nbar=dict.fromkeys(range(6), 0.0))
+    seed = shaped.waveform
+    assert seed.phi_m.status == "seed" and len(seed.segments) == 5
+    space, _classes = spot_check_space(device, modes, seed, (0, 1), Numerics())
+    run = calibrate_entangling_angle(
+        device,
+        seed,
+        (0, 1),
+        dict(device.roles.entangling),
+        table,
+        space=space,
+        physics=Physics(builder=BuilderOptions(lamb_dicke_order=1)),
+        tolerance_rad=1e-7,
+        max_iterations=10,
+    )
+    reached = run.checks[0].chi_rad
+    f_measured = 1.0 - math.sqrt(reached / CHI_MAXIMAL_RAD)
+    peak = roos_force_deficit(seed)
+    weight = [(float(s.amplitude_hz[(0, "blue")]) ** 2 * s.duration_s, s) for s in seed.segments]
+    mean = sum(
+        w
+        * (
+            1.0
+            - roos_force_saturation(
+                TWO_PI * float(s.amplitude_hz[(0, "blue")]), TWO_PI * float(s.detuning_hz["blue"])
+            )
+        )
+        for w, s in weight
+    ) / sum(w for w, _s in weight)
+    assert mean < f_measured < peak, (mean, f_measured, peak)
+    assert f_measured == pytest.approx(2.34e-3, rel=1e-2) and peak == pytest.approx(2.78e-3, rel=1e-2)
+    assert math.sin(CHI_MAXIMAL_RAD - reached) ** 2 == pytest.approx(1.35e-5, rel=2e-2)
+    assert math.sin(CHI_MAXIMAL_RAD - reached) ** 2 < math.sin(math.pi * peak / 2.0) ** 2, (
+        "the seed's term errs high"
+    )
+    assert run.converged and abs(run.checks[-1].chi_rad - CHI_MAXIMAL_RAD) < 1e-7
 
 
 def test_sideband_lamb_dicke_deficit_against_eta_sqrt_n_plus_one() -> None:

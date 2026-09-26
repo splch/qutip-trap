@@ -13,9 +13,9 @@ from __future__ import annotations
 import cmath
 import itertools
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import qutip as qt
@@ -363,9 +363,8 @@ def sideband_lamb_dicke_deficit(modes: GateModes, selection: SpaceSelection) -> 
     """The sideband matrix element's Lamb-Dicke deficit f = 1 - Omega_{n+1,n}/(Omega eta sqrt(n + 1)) (Wineland et al. 1998,
     NIST J. Res. 103, 259, Eq. 18), the worst case over the gate's ions and its resolved and frozen modes at the highest Fock
     index each carries. Reported, not summed into the budget total: its thermal mean is the force rescaling the s^2
-    calibration absorbs (named as not estimated for a waveform no calibration set) and its thermal spread is the
-    Debye-Waller term the total carries; the spread the gate's own excursion adds, the eta^3 nonlinearity, is named as not
-    estimated."""
+    calibration absorbs (named as not estimated for a waveform no calibration set), and its spread over the thermal Fock
+    states and along the gate's own excursion are the two terms of ``sideband_nonlinearity`` the total carries."""
     from qutip_trap.dynamics.operators import rabi_matrix_element
 
     worst = 0.0
@@ -408,12 +407,26 @@ def _min_detuning_hz(segments: Sequence[Segment]) -> float:
     return mu_min
 
 
-def roos_bessel_saturation(waveform: Waveform) -> float:
-    """Section 9.6's Bessel force saturation as an infidelity: the carrier's strong-drive correction scales the
-    spin-dependent force by (J_0 + J_2)(2 Omega/mu) in the per-tone Omega (Roos 2008, New J. Phys. 10, 013002, Eq. 17,
-    whose 4 Omega_R/mu reads Omega_R = Omega/2), so a pulse solved for chi = pi/4 with the linear force reaches chi (1 - f)^2
-    with f = 1 - (J_0 + J_2), and 1 - F = sin^2(pi f / 2); at the largest tone amplitude and the smallest tone-to-carrier
-    detuning of the played waveform. Zero for a non-MS waveform."""
+def _max_detuning_hz(segments: Sequence[Segment]) -> float:
+    """The largest |tone-to-carrier detuning| over a waveform's segments (a callable detuning sampled at 101 points per
+    segment)."""
+    mu_max = 0.0
+    for seg in segments:
+        grid = np.linspace(0.0, seg.duration_s, 101)
+        for det in seg.detuning_hz.values():
+            vals = [abs(float(det(x))) for x in grid] if callable(det) else [abs(float(det))]
+            mu_max = max(mu_max, max(vals))
+    return mu_max
+
+
+def roos_force_deficit(waveform: Waveform) -> float:
+    """Section 9.6's Bessel force saturation: the carrier's strong-drive correction scales the spin-dependent force by
+    (J_0 + J_2)(2 Omega/mu) in the per-tone Omega (Roos 2008, New J. Phys. 10, 013002, Eq. 17, whose 4 Omega_R/mu reads
+    Omega_R = Omega/2), so a pulse solved for chi = pi/4 with the linear force reaches chi (1 - f)^2; f = 1 - (J_0 + J_2) at
+    the largest tone amplitude and the smallest tone-to-carrier detuning of the played waveform, 0 for a non-MS waveform.
+    With the first-order builder (the carrier and both first sidebands, no Lamb-Dicke correction) the closed-form
+    five-segment AM of ``presets.yb171_chain(2)`` reaches the f of 2.34e-3 against 2.78e-3 at its peak (2.02e-3 weighted by
+    the segments' force), and its calibration reaches pi/4 to 8e-8 rad."""
     from qutip_trap.published import roos_force_saturation
 
     if waveform.kind != "ms":
@@ -426,8 +439,7 @@ def roos_bessel_saturation(waveform: Waveform) -> float:
         raise RunError(
             "an MS waveform carries a tone on the carrier: Roos's saturation (J_0 + J_2)(2 Omega/mu) needs mu != 0"
         )
-    f = 1.0 - roos_force_saturation(TWO_PI * peak, TWO_PI * mu_min)
-    return math.sin(math.pi * f / 2.0) ** 2
+    return 1.0 - roos_force_saturation(TWO_PI * peak, TWO_PI * mu_min)
 
 
 def _at(value: float | Callable[[float], float], tau: float) -> float:
@@ -600,20 +612,141 @@ def carrier_step_infidelity(waveform: Waveform, modes: GateModes, kicks: Mapping
     return float(total)
 
 
+NONLINEARITY_POINTS_PER_PERIOD = 20
+"""Grid points per period of the fastest oscillation the eta^3 integrand carries (omega_max + 3 mu_max) in
+``sideband_nonlinearity``: at 16.7 points the Section 11.1 pulse's displacement term sits 6e-5 below its value on ten times
+as many."""
+
+
+class SidebandNonlinearity(NamedTuple):
+    """The two parts of an MS gate's first-sideband Lamb-Dicke nonlinearity (``sideband_nonlinearity``), each an
+    entanglement infidelity."""
+
+    debye_waller: float
+    """The spread of the gate's two-body phase over the thermal Fock states, referenced to the ground state."""
+    displacement: float
+    """The spin-dependent displacement the nonlinearity leaves on the modes at the gate's end."""
+
+
+def sideband_nonlinearity(
+    waveform: Waveform,
+    modes: GateModes,
+    *,
+    carried: Collection[int],
+    spread: Collection[int],
+    angle_rad: float,
+) -> SidebandNonlinearity:
+    """The first sideband's Lamb-Dicke nonlinearity along an MS pair gate's own excursion, to first order in it.
+
+    The drive's force term carries sin X_i, X_i = sum_m eta_im (a_m e^{-i omega_m t} + h.c.), whose -X_i^3/6 the first-order
+    gate leaves out (Section 4.4.3). In the frame of the first-order gate each force eigenstate s of the pair sees
+    X_i + xi_{i,s}(t), xi_{i,s} = 2 sum_m eta_im Re(beta_{s,m} e^{-i omega_m t}) the classical excursion of its branch,
+    beta_{s,m} = sum_i s_i alpha_im over the ``carried`` modes (those whose motion the run integrates). The xi X^2 part is a
+    phase proportional to every n_k: the gate phase moves by n_k v_k, v_k = 2 |chi| (eta_ak^2 I_ab + eta_bk^2 I_ba)/(I_ab +
+    I_ba) with I_ab = sum_m Im int conj(alpha_am') alpha_bm dt, so a gate calibrated at |00>|0> loses DW = sum_k v_k^2
+    nbar_k (nbar_k + 1) + (sum_k v_k nbar_k)^2 over the ``spread`` modes (those whose occupation the run carries):
+    Ballance's (pi^2/4) eta^4 nbar (2 nbar + 1) for one mode at chi = pi/4, weighted by each ion's own eta_ik^2. The xi^2 X
+    part displaces branch s by gamma_{s,m} = -(1/2) sum_i s_i int alpha_im' xi_{i,s}^2 dt and leaves (2 nbar_m + 1)
+    Var_s(gamma_{s,m}) on each carried mode. The trajectories are the exact first-order kernel's, rescaled by
+    sqrt(|chi|/|chi_1|) from their own angle chi_1 to ``angle_rad``, the angle the gate reaches on the carried modes (for a
+    calibrated waveform the one its calibration measured), since the motion follows the force the calibration restored.
+
+    Against the exact engine, the calibrated gate's |00> infidelity under lamb_dicke_order = 3 less the linear first
+    sideband's (rwa, one mode, each builder calibrated): the Section 11.1 pulse 4.711e-5 against 4.718e-5, Leung's FM gate
+    2.087e-5 against 2.077e-5, a four-component Fourier-sine AM gate 1.261e-4 against 1.271e-4, and at nbar = 0.5 on the
+    gate mode (the Debye-Waller spread included) 1.883e-4 against 1.856e-4, 1.358e-4 against 1.341e-4 and 3.462e-4 against
+    3.417e-4. On two modes (the exact engine less lamb_dicke_order = 1 at one amplitude, the best XX angle each), the Bell
+    run's five-segment AM re-solved at 3.05 MHz, where the resetting tones kick nothing: 2.714e-5 against 2.740e-5 at n = 0,
+    3.235e-5 against 3.231e-5 at the run's occupations; the three-ion seven-segment AM re-solved at 3.115 MHz, its tilt
+    mode frozen: 1.053e-5 against 1.163e-5 (on its x-COM alone, in the rwa, 5.80e-6 against 5.87e-6), and its thermal
+    increase at the run's occupations 3.86e-6 against 3.71e-6, where Ballance's form at the largest eta of each mode
+    would add 7.71e-6."""
+    from scipy.integrate import simpson
+
+    from qutip_trap.control.shaping import (
+        SegmentedEnvelope,
+        envelope_of,
+        trajectory_rate_sampled,
+        trajectory_sampled,
+    )
+
+    if waveform.kind != "ms":
+        raise ValueError(
+            f"the sideband nonlinearity is derived for the MS force, not a {waveform.kind} waveform"
+        )
+    moving = modes.subset([m for m in modes.modes if m in carried])
+    if not moving.modes:
+        # no mode's motion is integrated: the run's gate has no excursion to spread or displace
+        return SidebandNonlinearity(0.0, 0.0)
+    a, b = modes.ions
+    fastest_hz = max(moving.omega_rad_s) / TWO_PI + 3.0 * _max_detuning_hz(waveform.segments)
+    n = 2 * math.ceil(0.5 * NONLINEARITY_POINTS_PER_PERIOD * waveform.duration_s * fastest_hz) + 1
+    env = envelope_of(waveform, moving.ions, n_samples=n)
+    grid = env.sampled(n) if isinstance(env, SegmentedEnvelope) else env
+    t = np.asarray(grid.times_s, dtype=float)
+    alpha = {
+        (i, m): trajectory_sampled(grid, moving, i, m, "choi") for i in moving.ions for m in moving.modes
+    }
+    rate = {
+        (i, m): trajectory_rate_sampled(grid, moving, i, m, "choi") for i in moving.ions for m in moving.modes
+    }
+
+    def pair_integral(i: int, j: int) -> float:
+        """sum_m Im int conj(alpha_im') alpha_jm dt; the pair's first-order angle is -(I_ij + I_ji)."""
+        return float(sum(np.imag(simpson(np.conj(rate[(i, m)]) * alpha[(j, m)], x=t)) for m in moving.modes))
+
+    i_ab, i_ba = pair_integral(a, b), pair_integral(b, a)
+    chi = abs(angle_rad)
+    chi_1 = abs(i_ab + i_ba)
+    if chi == 0.0 or chi_1 == 0.0:
+        raise RunError(f"the waveform on {modes.ions} carries no entangling angle: it is not a gate")
+    nbar = {m: float(modes.nbar[k]) for k, m in enumerate(modes.modes)}
+    v = {
+        m: 2.0 * chi * (modes.eta[a][k] ** 2 * i_ab + modes.eta[b][k] ** 2 * i_ba) / (i_ab + i_ba)
+        for k, m in enumerate(modes.modes)
+        if m in spread
+    }
+    debye_waller = sum(v[m] ** 2 * nbar[m] * (nbar[m] + 1.0) for m in v) + sum(v[m] * nbar[m] for m in v) ** 2
+    scale = math.sqrt(chi / chi_1)
+    rotation = {m: np.exp(-1j * moving.omega_rad_s[k] * t) for k, m in enumerate(moving.modes)}
+    gamma: dict[int, list[complex]] = {m: [] for m in moving.modes}
+    for s_a, s_b in itertools.product((1.0, -1.0), repeat=2):
+        sign = {a: s_a, b: s_b}
+        beta = {m: scale * (s_a * alpha[(a, m)] + s_b * alpha[(b, m)]) for m in moving.modes}
+        xi_sq = {
+            i: (
+                2.0
+                * sum(moving.eta[i][k] * np.real(beta[m] * rotation[m]) for k, m in enumerate(moving.modes))
+            )
+            ** 2
+            for i in moving.ions
+        }
+        for m in moving.modes:
+            integrand = sum(sign[i] * scale * rate[(i, m)] * xi_sq[i] for i in moving.ions)
+            gamma[m].append(-0.5 * complex(simpson(integrand, x=t)))
+    displacement = 0.0
+    for m in moving.modes:
+        g = np.asarray(gamma[m])
+        displacement += (2.0 * nbar[m] + 1.0) * float(np.mean(np.abs(g) ** 2) - abs(np.mean(g)) ** 2)
+    return SidebandNonlinearity(float(debye_waller), float(displacement))
+
+
 def intrinsic_budget(
     device: Device, sched: Schedule, selection: SpaceSelection, *, hardware_chain: bool
 ) -> IntrinsicBudget:
     """The closed-form error scales reported beside the result (Section 9.6), as typed records that say which terms the
     total sums, and the errors it leaves out named. Per entangling gate (``EntanglingScales``): the residual displacement
-    sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the scale (Omega_peak/(2 mu_min))^2 of
-    the off-resonant carrier's oscillation with mu_min the tones' smallest detuning from the carrier, the rotations the
-    carrier leaves at the envelope's switch-on, steps and switch-off (``carrier_step_infidelity``), Roos's Bessel
-    saturation, the angle a waveform no calibration set puts on the modes the run does not carry, and (reported, not
-    summed) the Lamb-Dicke deficit and that angle in radians. Per single-qubit carrier pulse, every GPi and GPi2 piece of
-    the schedule's targets (``CarrierScales``): the sideband scale eta^2 (Omega/nu)^2 of the most strongly driven mode and
-    the addressing crosstalk sum_j sin^2(eps_ij theta/2). Per pulse and addressed ion the scattering estimates
-    (``ScatteringScales``). ``hardware_chain`` is the run's ``Physics.hardware_chain``: the carrier's kicks are softened
-    by the response of a chain the run plays, never by one it passes by."""
+    sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the first sideband's Lamb-Dicke nonlinearity (``sideband_nonlinearity``: the
+    n = 0-referenced Debye-Waller spread and the displacement it leaves along the gate's excursion), the scale
+    (Omega_peak/(2 mu_min))^2 of the off-resonant carrier's oscillation with mu_min the tones' smallest detuning from the
+    carrier, the rotations the carrier leaves at the envelope's switch-on, steps and switch-off
+    (``carrier_step_infidelity``), and, for a waveform no calibration set, Roos's Bessel saturation and the angle it puts on
+    the modes the run does not carry; reported, not summed: the Lamb-Dicke deficit, that angle in radians and Roos's force
+    deficit. Per single-qubit carrier pulse, every GPi and GPi2 piece of the schedule's targets (``CarrierScales``): the
+    sideband scale eta^2 (Omega/nu)^2 of the most strongly driven mode and the addressing crosstalk sum_j sin^2(eps_ij
+    theta/2). Per pulse and addressed ion the scattering estimates (``ScatteringScales``). ``hardware_chain`` is the run's
+    ``Physics.hardware_chain``: the carrier's kicks are softened by the response of a chain the run plays, never by one it
+    passes by."""
     from qutip_trap.control.shaping import waveform_integrals
     from qutip_trap.light.raman import lamb_dicke_parameters
     from qutip_trap.run.space import DROP_CHI_MAX_RAD, gate_modes_for
@@ -623,14 +756,7 @@ def intrinsic_budget(
     for gate in sched.gates:
         modes = gate_modes_for(device, gate, selection.nbar)
         ints = waveform_integrals(gate.waveform, modes)
-        dw = 0.0
-        for k, m in enumerate(modes.modes):
-            if selection.mode_class[m] in ("resolved", "frozen"):
-                eta = max(abs(modes.eta[i][k]) for i in modes.ions)
-                dw += ballance_thermal_error(eta, modes.nbar[k])
-        # the off-resonant carrier: a tone mu from the carrier rotates the spin through (Omega/mu) sin(mu t), an infidelity
-        # scale (Omega/(2 mu))^2 at the largest tone amplitude and the smallest tone detuning
-        # (anchor.m6.section_11_1_native_identity)
+        # a scale, not an estimate of the off-resonant carrier: EntanglingScales.carrier_scale says what it stands for
         carrier = (
             _peak_amplitude_hz(gate.waveform.segments) / (2.0 * _min_detuning_hz(gate.waveform.segments))
         ) ** 2
@@ -648,11 +774,33 @@ def intrinsic_budget(
         )
         # the run's gate reaches the angle of the modes it carries: a calibration measured the angle its own space
         # reached, the closed forms of a seed waveform assumed every mode
-        uncarried = {
-            m: v for m, v in gate.waveform.chi_m.items() if selection.mode_class[m] not in ("resolved", "enr")
-        }
+        carried = {m for m in modes.modes if selection.mode_class[m] in ("resolved", "enr")}
+        uncarried = {m: v for m, v in gate.waveform.chi_m.items() if m not in carried}
         angle = float(sum(uncarried.values()))
         calibrated = gate.waveform.phi_m.status == "calibrated"
+        # the modes whose occupation the run carries: the integrated ones and the frozen modes' Fock branches
+        spread = {m for m in modes.modes if selection.mode_class[m] in ("resolved", "enr", "frozen")}
+        if gate.waveform.kind == "ms":
+            nonlinearity = sideband_nonlinearity(
+                gate.waveform,
+                modes,
+                carried=carried,
+                spread=spread,
+                angle_rad=gate.waveform.chi_total_rad - (0.0 if calibrated else angle),
+            )
+        else:
+            nonlinearity = SidebandNonlinearity(
+                sum(
+                    ballance_thermal_error(max(abs(modes.eta[i][k]) for i in modes.ions), modes.nbar[k])
+                    for k, m in enumerate(modes.modes)
+                    if m in spread
+                ),
+                0.0,
+            )
+            omitted.append(
+                f"{gate.gate_id}: the {gate.waveform.kind} force's Lamb-Dicke nonlinearity along its excursion is not "
+                "estimated, and its thermal spread is Ballance's at each mode's largest eta"
+            )
         if calibrated and abs(angle) >= DROP_CHI_MAX_RAD:
             omitted.append(
                 f"{gate.gate_id}: the calibrated waveform's angle on the modes the run does not carry "
@@ -664,23 +812,22 @@ def intrinsic_budget(
                 f"{gate.gate_id}: no calibration set the waveform's amplitude, so its angle also misses the Debye-Waller "
                 "rescaling of the force (the mean Lamb-Dicke deficit a calibration absorbs), which is not estimated"
             )
+        # a calibration measured the angle the gate reached, the carrier's saturation of the force with it
+        deficit = roos_force_deficit(gate.waveform)
         entangling.append(
             EntanglingScales(
                 gate_id=gate.gate_id,
                 residual_displacement=float(ints.residual_error(modes)),
-                debye_waller=dw,
+                debye_waller=nonlinearity.debye_waller,
+                nonlinear_displacement=nonlinearity.displacement,
                 carrier_scale=carrier,
                 carrier_steps=carrier_step_infidelity(gate.waveform, modes, kicks),
-                bessel_saturation=roos_bessel_saturation(gate.waveform),
+                bessel_saturation=0.0 if calibrated else math.sin(math.pi * deficit / 2.0) ** 2,
                 frozen_angle=0.0 if calibrated else math.sin(angle) ** 2,
                 sideband_lamb_dicke_deficit=sideband_lamb_dicke_deficit(modes, selection),
                 frozen_angle_rad=angle,
+                force_deficit=deficit,
             )
-        )
-    if sched.gates:
-        omitted.append(
-            "the first sideband's Lamb-Dicke nonlinearity along each entangling gate's own phase-space excursion (order "
-            "eta^3 in the drive) is not estimated"
         )
     carrier_ids = {pid for t in sched.targets if t.native[0] in ("gpi", "gpi2") for pid in t.pulse_ids}
     carriers: list[CarrierScales] = []

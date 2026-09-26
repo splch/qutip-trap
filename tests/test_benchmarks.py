@@ -236,17 +236,20 @@ def test_gate_piece_of_finds_multi_piece_gate_ids_by_longest_prefix() -> None:
 
 def test_the_per_kind_intrinsic_scales_are_the_budget_s_own_summed_terms() -> None:
     """``intrinsic_by_kind`` charges each record's summed terms to its piece, so the kinds add up to the budget's total and
-    the reported-only numbers (the 2.1e-2 Lamb-Dicke deficit, the angle in radians, the Rayleigh probability) stay out."""
+    the reported-only numbers (the 2.1e-2 Lamb-Dicke deficit, the angle in radians, the force deficit, the Rayleigh
+    probability) stay out. The MS record is a calibrated gate's: no Bessel or frozen-angle infidelity."""
     ms = EntanglingScales(
         gate_id="ms[2]",
         residual_displacement=1e-6,
         debye_waller=4e-6,
+        nonlinear_displacement=1.7e-5,
         carrier_scale=1.4e-3,
         carrier_steps=1.3e-4,
-        bessel_saturation=2e-5,
+        bessel_saturation=0.0,
         frozen_angle=0.0,
         sideband_lamb_dicke_deficit=2.1e-2,
         frozen_angle_rad=0.3,
+        force_deficit=2.8e-3,
     )
     carrier = CarrierScales("gpi2[0]", 3e-4, 1.8e-5)
     scatter = ScatteringScales("ms[2]/seg0/ion0", 0, 5e-6, 5e-6, 2e-3, 1e-11)
@@ -254,10 +257,57 @@ def test_the_per_kind_intrinsic_scales_are_the_budget_s_own_summed_terms() -> No
     by_kind = intrinsic_by_kind(budget, {"ms[2]": "ms[0,1]", "gpi2[0]": "gpi2[0]"})
     assert by_kind == pytest.approx({"ms[0,1]": ms.total + scatter.total, "gpi2[0]": 2.0 * carrier.total})
     assert sum(by_kind.values()) == pytest.approx(budget.total, rel=1e-15)
-    assert ms.total == pytest.approx(1e-6 + 4e-6 + 1.4e-3 + 1.3e-4 + 2e-5)
+    assert ms.total == pytest.approx(1e-6 + 4e-6 + 1.7e-5 + 1.4e-3 + 1.3e-4)
     assert scatter.total == pytest.approx(1e-5 + 1e-11)
     with pytest.raises(ValueError, match="belongs to no piece"):
         intrinsic_by_kind(budget, {"ms[2]": "ms[0,1]"})
+
+
+SUMMED_TERMS: dict[type, frozenset[str]] = {
+    EntanglingScales: frozenset(
+        {
+            "residual_displacement",
+            "debye_waller",
+            "nonlinear_displacement",
+            "carrier_scale",
+            "carrier_steps",
+            "bessel_saturation",
+            "frozen_angle",
+        }
+    ),
+    CarrierScales: frozenset({"crosstalk", "sideband_scale"}),
+    ScatteringScales: frozenset({"p_raman", "p_leak", "rayleigh_dephasing"}),
+}
+"""The terms each budget record's ``total`` sums; every other float field is reported beside it."""
+
+
+def test_each_budget_record_sums_exactly_its_declared_terms() -> None:
+    """Raising a summed term of a budget record raises its ``total`` by as much and raising a reported number leaves it: the
+    records say which of their fields the budget sums, so a consumer reads ``total`` and adds nothing itself."""
+    records = (
+        EntanglingScales(
+            gate_id="ms[2]",
+            residual_displacement=1e-6,
+            debye_waller=4e-6,
+            nonlinear_displacement=1.7e-5,
+            carrier_scale=1.4e-3,
+            carrier_steps=1.3e-4,
+            bessel_saturation=1.9e-5,
+            frozen_angle=2.1e-2,
+            sideband_lamb_dicke_deficit=2.1e-2,
+            frozen_angle_rad=0.146,
+            force_deficit=2.8e-3,
+        ),
+        CarrierScales("gpi2[0]", 3e-4, 1.8e-5),
+        ScatteringScales("ms[2]/seg0/ion0", 0, 5e-6, 5e-6, 2e-8, 1e-11),
+    )
+    for record in records:
+        floats = [f.name for f in dataclasses.fields(record) if f.type == "float"]
+        assert SUMMED_TERMS[type(record)] <= set(floats), type(record)
+        for name in floats:
+            raised = dataclasses.replace(record, **{name: getattr(record, name) + 1.0})
+            step = 1.0 if name in SUMMED_TERMS[type(record)] else 0.0
+            assert raised.total - record.total == pytest.approx(step, abs=1e-12), (type(record), name)
 
 
 def test_depolarizing_kraus_normalizations_and_the_qiskit_lambda_conversion() -> None:

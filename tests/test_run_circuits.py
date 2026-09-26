@@ -106,8 +106,10 @@ def test_bell_state_probabilities_match_the_ideal_distribution_within_readout_an
 
 def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None:
     """The register infidelity against the compiled circuit's ideal state lies between 1e-5 and the reported intrinsic
-    budget, and above 0.3 times the gate's own exact-check infidelity, which the budget's carrier steps are (1.3e-4: the
-    kicks the carrier leaves at the five-segment pulse's amplitude steps)."""
+    budget, and above 0.3 times the gate's own exact-check infidelity (1.32e-4), which the gate's own terms bound from
+    above by 17 %: the kicks the carrier leaves at the five-segment pulse's amplitude steps (1.34e-4, 8 % above the
+    first-order play's), the first sideband's eta^3 displacement along the excursion (1.70e-5) and the Debye-Waller
+    spread (4.2e-6), the last two at the run's occupations where the check is at n = 0."""
     fx, sur, res = bell
     fid = register_fidelity(res)
     budget = res.diagnostics.intrinsic_budget
@@ -117,7 +119,12 @@ def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None:
     gate_inf = 1.0 - sur.entangling[(0, 1)].checks[-1].fidelity
     assert 1.0 - fid > 0.3 * gate_inf
     (ms,) = budget.entangling
-    assert ms.carrier_steps == pytest.approx(gate_inf, rel=0.05), (ms, gate_inf)
+    own = ms.carrier_steps + ms.nonlinear_displacement + ms.debye_waller
+    assert gate_inf < own < 1.2 * gate_inf, (ms, gate_inf)
+    assert ms.nonlinear_displacement == pytest.approx(1.70e-5, rel=0.02), ms
+    assert ms.bessel_saturation == 0.0 and ms.force_deficit > 0.0, (
+        "the calibration absorbed the force saturation"
+    )
     # against the uncompiled target the frame matters: (|00> + |11>)/sqrt2 differs from the played state by the frame's sign
     target = np.array([1.0, 0.0, 0.0, 1.0], dtype=complex) / math.sqrt(2.0)
     assert register_fidelity(res, target) < 0.05 or register_fidelity(res, target) > 0.95
@@ -575,8 +582,8 @@ def test_three_ion_ghz_circuit_resolves_two_modes_and_freezes_the_tilt() -> None
         "the single-qubit pulses' addressing crosstalk is budgeted"
     )
     # the kicks the carrier leaves at the seven-segment pulse's amplitude steps are each spot check's whole infidelity
-    # (4.72e-3 at the run's occupations against 4.70e-3 at n = 0), where the oscillating carrier's (Omega/(2 mu))^2 is
-    # 2.5e-3: 1 - F = 1.49e-2 inside the budget's 1.66e-2
+    # (4.72e-3 at the run's occupations against 4.70e-3 at n = 0; the eta^3 displacement adds 3.5e-6): 1 - F = 1.49e-2
+    # inside the budget's 1.65e-2, whose carrier_scale (2.5e-3 per gate) covers the kicks' composition over the two gates
     for gate, pair in zip(budget.entangling, ((0, 1), (1, 2))):
         spot = 1.0 - sur.entangling[pair].checks[-1].fidelity
         assert gate.carrier_steps == pytest.approx(spot, rel=0.05), (gate, spot)
@@ -672,6 +679,9 @@ def test_a_four_ion_circuit_runs_through_the_pipeline_at_the_row_2b_dimension(fo
     (ms,) = budget.entangling
     assert sur.table.waveform_for((0, 1)).phi_m.status == "seed" and 0.1 < ms.frozen_angle_rad < 0.2, ms
     assert ms.frozen_angle == pytest.approx(math.sin(ms.frozen_angle_rad) ** 2, rel=1e-12)
+    # and no calibration absorbed the carrier's saturation of the force: the seed sums Roos's sin^2(pi f/2) (1.9e-4)
+    assert ms.bessel_saturation == pytest.approx(math.sin(math.pi * ms.force_deficit / 2.0) ** 2, rel=1e-12)
+    assert ms.bessel_saturation > 1e-4, ms
     assert any(note.startswith("ms[2]: no calibration set") for note in budget.omitted), budget.omitted
     assert 1.0 - register_fidelity(result) < budget.total, budget.total
     assert result.bitstrings.shape == (200, 4)

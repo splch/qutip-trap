@@ -314,12 +314,14 @@ BUDGET = IntrinsicBudget(
             gate_id="ms[2]",
             residual_displacement=1e-6,
             debye_waller=4e-6,
+            nonlinear_displacement=1.7e-5,
             carrier_scale=1.4e-3,
             carrier_steps=1.3e-4,
-            bessel_saturation=2e-5,
+            bessel_saturation=0.0,
             frozen_angle=0.0,
             sideband_lamb_dicke_deficit=2.1e-2,
             frozen_angle_rad=3e-5,
+            force_deficit=2.8e-3,
         ),
     ),
     carriers=(CarrierScales("gpi2[0]", 3e-4, 1.8e-5), CarrierScales("gpi2[0]", 3e-4, 1.8e-5)),
@@ -340,7 +342,7 @@ def test_the_envelope_round_trips() -> None:
     )
     d = result.to_dict()
     assert json.loads(json.dumps(d)) == d, "plain JSON values only"
-    assert d["schema_version"] == RESULT_SCHEMA_VERSION == 3
+    assert d["schema_version"] == RESULT_SCHEMA_VERSION == 4
     assert d["diagnostics"]["intrinsic_budget"]["total"] == BUDGET.total
     assert d["device_hash"] == "fixture" and d["machine_hash"] == "m" * 64
     assert d["heralds"] == {"collision": 2, "dark_or_lost": 2, "count_anomaly": 1}
@@ -376,8 +378,8 @@ def test_the_envelope_round_trips() -> None:
         again.heralds, result.heralds
     )
     assert full["per_shot"]["sample_of_shot"] is None and again.sample_of_shot is None
-    with pytest.raises(ValueError, match="schema version 3"):
-        Result.from_dict({**d, "schema_version": 2})
+    with pytest.raises(ValueError, match="schema version 4"):
+        Result.from_dict({**d, "schema_version": 3})
 
 
 def test_dump_job_writes_the_v0_4_body_and_load_job_reads_v0_3_and_v0_4() -> None:
