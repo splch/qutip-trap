@@ -39,7 +39,7 @@ from qutip_trap.light.beams import Beam
 from qutip_trap.light.raman import lamb_dicke_parameters
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import RunError
 from qutip_trap.run.levels import within_budget
 from qutip_trap.run.space import (
@@ -647,27 +647,36 @@ def test_frozen_spectator_run_reproduces_the_joint_run_within_the_reported_bound
     runs = {}
     for name, space in (("frozen", frozen_space), ("joint", joint_space)):
         runs[name] = calibrate_entangling_angle(
-            dev, wf, (0, 1), drives, table, space=space, tolerance_rad=2e-4, options=opts
+            dev, wf, (0, 1), drives, table, space=space, physics=Physics(), tolerance_rad=2e-4, options=opts
         )
         assert runs[name].converged
     chi_f, chi_j = runs["frozen"].checks[-1].chi_rad, runs["joint"].checks[-1].chi_rad
     assert abs(chi_f - math.pi / 4.0) < 2e-4 and abs(chi_j - math.pi / 4.0) < 2e-4
     # the frozen run's bound: the frozen mode's residual displacement, off-resonant excitation and absorbed chi_m
-    sched_pulses = list(ms_schedule(runs["frozen"].waveform, (0, 1), drives, table).pulses)
+    sched_pulses = list(
+        ms_schedule(dev, runs["frozen"].waveform, (0, 1), drives, table, physics=Physics()).pulses
+    )
     excitation, _guard = frozen_excitation_bounds(dev, sched_pulses, [y_com], {y_com: 0.0})
     bound = contrib[y_com].alpha2_weighted + excitation[y_com] + contrib[y_com].chi_rad
     # play each calibrated waveform on its own space from |00>: the populations agree within the bound
     pops = {}
     for name, space in (("frozen", frozen_space), ("joint", joint_space)):
         check, _tr = exact_gate_check(
-            dev, runs[name].waveform, (0, 1), drives, table, space=space, options=opts
+            dev, runs[name].waveform, (0, 1), drives, table, space=space, physics=Physics(), options=opts
         )
         pops[name] = check.populations
     for key in ("P00", "P11", "P01", "P10"):
         assert abs(pops["frozen"][key] - pops["joint"][key]) < bound, (key, pops, bound)
     # and the joint gate played on the frozen run's amplitudes differs by the absorbed chi_m at most
     cross, _tr = exact_gate_check(
-        dev, runs["frozen"].waveform, (0, 1), drives, table, space=joint_space, options=opts
+        dev,
+        runs["frozen"].waveform,
+        (0, 1),
+        drives,
+        table,
+        space=joint_space,
+        physics=Physics(),
+        options=opts,
     )
     assert abs(cross.chi_rad - chi_f) < 2.0 * contrib[y_com].chi_rad + 1e-3
 

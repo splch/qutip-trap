@@ -43,7 +43,7 @@ from qutip_trap.dynamics.operators import rabi_matrix_element
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.beams import Beam
 from qutip_trap.noise.sampling import quiet_sample
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.published import (
     kirchmair_populations,
     ms_alpha,
@@ -129,7 +129,7 @@ def _run(
 ):
     # the closed forms carry no light shift: derived Rabi entries, no Stark entry, and an engine without the table
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2), stark_hz={})
-    sched = ms_schedule(wf, (0, 1), raman_gate_drives(2), table)
+    sched = ms_schedule(dev, wf, (0, 1), raman_gate_drives(2), table, physics=Physics(builder=opts))
     eng = JointExactEngine(builder_options=opts, store_per_segment=store)
     tr = eng.run_pulses(
         dev,
@@ -554,7 +554,7 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
     space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
-    check, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space)
+    check, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space, physics=Physics())
     rock = 2
     # the worst ion's alpha, equal for both by symmetry
     closed_form = sum(abs(wf.alpha_m[rock]) ** 2 for _ in (0, 1))
@@ -574,7 +574,9 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
     space_am = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table_am = table_with_waveform((0, 1), am.waveform, device=dev, drives=raman_gate_drives(2))
-    check_am, tr = exact_gate_check(dev, am.waveform, (0, 1), drives, table_am, space=space_am)
+    check_am, tr = exact_gate_check(
+        dev, am.waveform, (0, 1), drives, table_am, space=space_am, physics=Physics()
+    )
     assert check_am.leakage < 2e-4
     assert all(v < 5e-4 for v in check_am.residual_quanta.values())
     assert check_am.fidelity > 0.999
@@ -593,10 +595,18 @@ def test_ms_gate_from_the_scheduler_matches_the_native_matrix_up_to_the_open_spe
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
     space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
-    base, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space)
+    base, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space, physics=Physics())
     for phases in ((0.3, 1.1), (-0.7, 2.0)):
         check, _ = exact_gate_check(
-            dev, wf, (0, 1), drives, table, space=space, phases_rad=phases, chi_target_rad=base.chi_rad
+            dev,
+            wf,
+            (0, 1),
+            drives,
+            table,
+            space=space,
+            physics=Physics(),
+            phases_rad=phases,
+            chi_target_rad=base.chi_rad,
         )
         assert check.fidelity == pytest.approx(1.0 - base.leakage, abs=2e-3)
         target_wrong = qt.Qobj(native_ms(phases[0], phases[1], -2.0 * base.chi_rad) @ KET00)
@@ -642,8 +652,8 @@ def _exact_play(builder: BuilderOptions):
         drives,
         table_with_waveform((0, 1), waveform0, rabi_hz=rabi),
         space=space,
+        physics=Physics(builder=builder),
         tolerance_rad=1e-7,
-        builder_options=builder,
         max_iterations=8,
     )
     assert run.converged

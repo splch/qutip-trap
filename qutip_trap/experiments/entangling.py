@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.space import HilbertSpace
     from qutip_trap.machine import Machine
+    from qutip_trap.options import Physics
 
 
 class _GateSetup(NamedTuple):
@@ -99,8 +100,14 @@ def _gate_lab(
     return lab, _entangling_setup(lab.device, pair, setup)
 
 
+def _lab_physics(lab: _Lab) -> Physics:
+    """The physics the lab's engines play: the machine's under the call's builder options (``builder_options``)."""
+    return replace(lab.physics, builder=lab.builder)
+
+
 def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, int]) -> GateCheck:
-    """The gate played once from |00> on the exact space (``calibration.entangling.exact_gate_check``)."""
+    """The gate played once from |00> on the exact space as a run plays it under the lab's physics
+    (``calibration.entangling.exact_gate_check``)."""
     from qutip_trap.calibration.entangling import exact_gate_check
 
     check, _traces = exact_gate_check(
@@ -110,12 +117,12 @@ def _gate_check(lab: _Lab, g: _GateSetup, waveform: Waveform, pair: tuple[int, i
         g.entangling,
         g.table,
         space=g.space,
+        physics=_lab_physics(lab),
         nbar=lab.nbar,
         options=lab.options,
-        builder_options=lab.builder,
-        hardware_chain=lab.physics.hardware_chain,
         sample=lab.sample,
         qubit_shifts_hz=lab.qubit_shifts_hz,
+        single_qubit_drives=g.single,
     )
     return check
 
@@ -128,17 +135,11 @@ def _parity_populations(
     spin_phases_rad: tuple[float, float] = (0.0, 0.0),
     internal: Sequence[int] | None = None,
 ) -> np.ndarray:
-    """(P00, P01, P10, P11) after the gate and a pi/2 analysis pulse of the single-qubit drives on both ions, at the
-    table's Rabi frequencies with the table's Stark shifts compensated."""
+    """(P00, P01, P10, P11) after the gate and a pi/2 analysis pulse of the single-qubit drives on both ions, as a run plays
+    GPi2 after the gate under the lab's physics: at the table's Rabi frequencies, with its Stark shifts and crosstalk
+    (``calibration.entangling.parity_after_analysis_pulse``)."""
     from qutip_trap.calibration.entangling import parity_after_analysis_pulse
-    from qutip_trap.control.schedule import carrier_rabi_hz
-    from qutip_trap.control.table import usable
 
-    rabi = {q: carrier_rabi_hz(g.table, q, g.single[q]) for q in pair}
-    stark: dict[int, float] = {}
-    for q in pair:
-        entry = g.table.stark.get((q, g.single[q].table_key_beam))
-        stark[q] = float(entry.value) if usable(entry) and entry is not None else 0.0
     _par, pops = parity_after_analysis_pulse(
         lab.device,
         g.waveform,
@@ -146,15 +147,12 @@ def _parity_populations(
         g.entangling,
         g.table,
         space=g.space,
+        physics=_lab_physics(lab),
         analysis_phase_rad=analysis_phase_rad,
-        analysis_rabi_hz=rabi,
         nbar=lab.nbar,
         options=lab.options,
-        builder_options=lab.builder,
-        hardware_chain=lab.physics.hardware_chain,
         sample=lab.sample,
-        analysis_drives=g.single,
-        analysis_stark_hz=stark,
+        single_qubit_drives=g.single,
         spin_phases_rad=spin_phases_rad,
         internal=internal,
         qubit_shifts_hz=lab.qubit_shifts_hz,

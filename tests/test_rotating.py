@@ -29,7 +29,7 @@ from qutip_trap.dynamics.rotating import (
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -151,7 +151,7 @@ def ms_fixture():
     modes = two_ion_modes(dev)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=50e3, all_modes=True)
     table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
-    sched = ms_schedule(wf, (0, 1), drives, table)
+    sched = ms_schedule(dev, wf, (0, 1), drives, table, physics=Physics())
     space = HilbertSpace((2, 2), CAPS, None, (0, 1, 4, 5))
     return dev, sched, space
 

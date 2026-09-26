@@ -18,12 +18,14 @@ from qutip_trap.calibration.entangling import (
     spot_check_space,
     thermal_robustness,
 )
+from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.schedule import schedule
 from qutip_trap.control.shaping import (
     CHI_MAXIMAL_RAD,
     closure_duration_s,
     closure_rabi_rad_s,
+    gate_modes,
     solve_amplitude_modulation,
     solve_fourier_amplitude_modulation,
     solve_frequency_modulation,
@@ -31,17 +33,19 @@ from qutip_trap.control.shaping import (
     waveform_integrals,
 )
 from qutip_trap.control.table import Waveform
+from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.dynamics.truncation import TruncationWarning
 from qutip_trap.experiments.entangling import ms_scan, parity_scan
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.published import ballance_thermal_error, thermal_debye_waller_infidelity
 from qutip_trap.run.space import select_space
 from qutip_trap.units import TWO_PI
 from tests.fixtures import (
+    REALISTIC_HARDWARE,
     X_COM_TWO_IONS,
     chain_device,
     derived_seeds,
@@ -97,7 +101,9 @@ def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
     )
     space = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
-    run = calibrate_entangling_angle(dev, am.waveform, (0, 1), drives, table, space=space, tolerance_rad=1e-4)
+    run = calibrate_entangling_angle(
+        dev, am.waveform, (0, 1), drives, table, space=space, physics=Physics(), tolerance_rad=1e-4
+    )
     assert run.converged and len(run.checks) <= 3
     assert 0.005 < run.surrogate_error < 0.03
     assert run.checks[-1].chi_rad == pytest.approx(CHI_MAXIMAL_RAD, abs=1e-4)
@@ -112,8 +118,95 @@ def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
         drives,
         table_with_waveform((0, 1), run.waveform, rabi_hz=RABI, stark_hz=STARK),
         space=space,
+        physics=Physics(),
     )
     assert again.chi_rad == pytest.approx(CHI_MAXIMAL_RAD, abs=2e-4)
+
+
+MACHINE_PHYSICS = (
+    Physics(),
+    Physics(stark_compensation=False),
+    Physics(crosstalk_suppression="local"),
+    Physics(crosstalk_suppression="neighbour"),
+    Physics(hardware_chain=False),
+)
+"""The physics a machine may run under that changes the MS gate it schedules."""
+
+
+@pytest.fixture(scope="module")
+def realistic_pair():
+    """The two-ion chain behind the 50 ns modulator, its entangling drives and its closed-form table."""
+    fx = yb171_chain(2)
+    dev = dataclasses.replace(fx.device, hardware=REALISTIC_HARDWARE)
+    sur = surrogate_table(
+        dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), spot_check=False
+    )
+    return dev, fx.entangling_drives, sur.table
+
+
+@pytest.mark.parametrize("physics", MACHINE_PHYSICS)
+def test_the_ms_spot_check_plays_the_pulses_a_run_plays_under_the_machines_physics(
+    realistic_pair, physics: Physics
+) -> None:
+    """The MS spot check plays the pulses a machine with the same physics schedules for MS at the waveform's own angle, the
+    uncompensated light shift, either crosstalk echo and the chain's phase reference among them, in the frame the run
+    leaves, and it stops at the gate's last pulse."""
+    dev, ent, table = realistic_pair
+    wf = table.waveform_for((0, 1))
+    assert wf is not None
+    checked = ms_schedule(dev, wf, (0, 1), ent, table, physics=physics)
+    gate = Operation("ms", (0, 1), (0.0, 0.0, 2.0 * abs(wf.chi_total_rad)))
+    run = Machine(dev, table=table, physics=physics).schedule(Circuit(2, (gate,), ()))
+    assert [(p.drive, p.t_start_s, p.t_end_s) for p in checked.pulses] == [
+        (p.drive, p.t_start_s, p.t_end_s) for p in run.pulses
+    ]
+    assert checked.phase_frame == run.phase_frame
+    assert checked.pulses_end_s == max(p.t_end_s for p in run.pulses) < run.pulses_end_s
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("physics", MACHINE_PHYSICS[1:4])
+def test_a_surrogate_calibrated_under_the_machines_physics_gives_its_run_the_maximal_angle(
+    physics: Physics,
+) -> None:
+    """Calibrated under the machine's physics, the surrogate's waveform gives the MS(pi/2) its run plays |chi| = pi/4 to 1e-5
+    (measured 8e-9, 6e-9 and 6e-7), where a check blind to that physics left the uncompensated gate 1.10e-3 rad short, the
+    locally echoed one 6.1e-4 short and the neighbour-echoed one 4.8e-4 long."""
+    fx = yb171_chain(2)
+    sur = surrogate_table(
+        fx.device, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), physics=physics
+    )
+    wf = sur.table.waveform_for((0, 1))
+    assert wf is not None
+    machine = Machine(fx.device, table=sur.table, physics=physics)
+    sched = machine.schedule(Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), ()))
+    nb = {m: e.value for m, e in sur.table.nbar.items()}
+    space = spot_check_space(
+        fx.device, gate_modes(fx.device, (0, 1), (0, 1), nbar=nb), wf, (0, 1), Numerics()
+    )[0]
+    traces = machine.engine.run_pulses(
+        fx.device, sched, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics()
+    )
+    p11 = float(np.real(traces.final.internal.full()[3, 3]))
+    assert math.asin(math.sqrt(p11)) == pytest.approx(math.pi / 4, abs=1e-5)
+
+
+def test_the_gate_local_spot_check_carries_every_ion_the_neighbour_echo_plays_on() -> None:
+    """On the four-ion chain the pair's GATE_LOCAL spot-check space carries every ion the check plays pulses on: under the
+    neighbour echo, whose Z(pi) plays on both spectators, all four ions (dimension 21120, above the guards, so the
+    closed-form waveform is stored as a seed), where the pair alone (dimension 5280) could not play the echo."""
+    fx = yb171_chain(4)
+    echoed = surrogate_table(
+        fx.device,
+        pairs=[(1, 2)],
+        detection_records=200,
+        detection_windows_s=(20e-6,),
+        options=Numerics(joint_dimension_max=6000),
+        physics=Physics(crosstalk_suppression="neighbour"),
+    )
+    (local,) = [n for n in echoed.notes if "GATE_LOCAL space (dims" in n]
+    assert "dims [2, 2, 2, 2, " in local and "dimension 21120" in local, local
+    assert (1, 2) not in echoed.entangling and echoed.table.waveform_for((1, 2)) is not None
 
 
 def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -> None:
@@ -128,7 +221,7 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
     space0 = spot_check_space(dev, modes, wf0, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), wf0, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(
-        dev, wf0, (0, 1), drives, table, space=space0, builder_options=opts, tolerance_rad=1e-5
+        dev, wf0, (0, 1), drives, table, space=space0, physics=Physics(builder=opts), tolerance_rad=1e-5
     )
     assert run.converged
     wf = run.waveform
@@ -142,7 +235,7 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
         modes=modes,
         gate_mode=X_COM_TWO_IONS,
         nbars=(0.0, 0.5, 1.0, 2.0),
-        builder_options=opts,
+        physics=Physics(builder=opts),
     )
     base = 1.0 - curve[0][1].fidelity
     assert base < 2e-4, "the exact sidebands' n-dependence leaves a small residual even at n = 0"
@@ -189,7 +282,8 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
 
 def _fock_check(dev, wf, drives, space, state, opts):
     """The exact gate from an explicit joint state (a Fock input): populations, chi and leakage as exact_gate_check reads them."""
-    sched = ms_schedule(wf, (0, 1), drives, table_with_waveform((0, 1), wf, rabi_hz=RABI, stark_hz=STARK))
+    table = table_with_waveform((0, 1), wf, rabi_hz=RABI, stark_hz=STARK)
+    sched = ms_schedule(dev, wf, (0, 1), drives, table, physics=Physics(builder=opts))
     tr = JointExactEngine(builder_options=opts).run_pulses(
         dev, sched, state, space, quiet_sample(), SeedSpec(0), Numerics()
     )
@@ -226,6 +320,7 @@ def test_the_fm_fourier_and_pm_solutions_are_verified_by_exact_integration(famil
         drives,
         table_with_waveform((0, 1), sp.waveform, rabi_hz=RABI, stark_hz=STARK),
         space=space,
+        physics=Physics(),
     )
     assert check.chi_rad / sp.chi_rad == pytest.approx(ratio, rel=0.01), (family, check.chi_rad)
     assert check.leakage < leak, (family, check.leakage)
@@ -259,7 +354,7 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     space = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(
-        dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4
+        dev, am.waveform, (0, 1), drives, table0, space=space, physics=Physics(), tolerance_rad=2e-4
     )
     table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI, stark_hz=STARK)
     scan = ms_scan(

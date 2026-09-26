@@ -37,7 +37,6 @@ from qutip_trap.options import Physics
 if TYPE_CHECKING:
     from qutip_trap.control.schedule import GateDrive
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.options import Numerics
 
@@ -204,15 +203,15 @@ def full_calibration(
     pairs: Sequence[tuple[int, int]] | None = None,
     scans: CalibrationScans | None = None,
     options: Numerics | None = None,
-    builder_options: BuilderOptions | None = None,
     physics: Physics | None = None,
     surrogate: SurrogateReport | None = None,
     **surrogate_kwargs: Any,
 ) -> CalibrationReport:
     """Calibrate ``device`` by simulated experiments in the dependency order (module docstring), starting
     from ``surrogate`` (default: ``surrogate_table`` with ``surrogate_kwargs``) and restricted to ``experiments``; the
-    experiments run under ``physics`` (default ``Physics()``: the hardware chain and the channel switches). Every result
-    enters the table as its own proposal (``CalibrationTable.updated_with``), stamped at ``t0_s`` and the sample's id."""
+    surrogate's spot checks and the experiments play under ``physics`` (the machine's; default ``Physics()``: the builder
+    options, the hardware chain, the Stark compensation, the crosstalk echo and the channel switches). Every result enters
+    the table as its own proposal (``CalibrationTable.updated_with``), stamped at ``t0_s`` and the sample's id."""
     from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
     from qutip_trap.experiments.entangling import ms_phase_scan, ms_scan, parity_scan, shift_detuning
@@ -241,8 +240,7 @@ def full_calibration(
         t0_s=t0_s,
         pairs=pairs,
         options=options,
-        builder_options=builder_options,
-        hardware_chain=lab.physics.hardware_chain,
+        physics=lab.physics,
         **surrogate_kwargs,
     )
     table = sur.table
@@ -263,7 +261,6 @@ def full_calibration(
         "sample": sample,
         "seed": seed,
         "options": options,
-        "builder_options": builder_options,
         "nbar": nbar_belief,
     }
 

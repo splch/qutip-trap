@@ -274,8 +274,7 @@ def test_a_run_and_a_caller_asking_for_the_same_pairs_share_one_cache_entry() ->
         gate_drives=drives,
         entangling_drives=ent,
         options=machine.numerics,
-        builder_options=machine.physics.builder,
-        hardware_chain=machine.physics.hardware_chain,
+        physics=machine.physics,
         pairs=circuit.entangling_pairs(),
         **cheap,
     )

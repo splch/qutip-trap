@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap.calibration.entangling import CalibrationRun, calibrate_entangling_angle, spot_check_space
+from qutip_trap.calibration.entangling import (
+    CalibrationRun,
+    calibrate_entangling_angle,
+    ms_schedule,
+    spot_check_space,
+)
 from qutip_trap.calibration.readout import DetectionCalibration, calibrate_detection
 from qutip_trap.control.schedule import GateDrive, resolve_drives
 from qutip_trap.control.shaping import (
@@ -33,6 +38,7 @@ from qutip_trap.light.raman import (
     derive_raman_drive,
 )
 from qutip_trap.light.roles import detection_beams
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.prep.recipe import preparation_occupations, recipe_of
 from qutip_trap.readout.detection import RecordModel
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
@@ -41,8 +47,6 @@ from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.hamiltonian import BuilderOptions
-    from qutip_trap.options import Numerics
     from qutip_trap.run.space import ModeClass3
 
 CROSSTALK_MIN = 1e-6
@@ -122,17 +126,15 @@ def surrogate_table(
     detection_records: int = 10_000,
     detection_windows_s: Sequence[float] | None = None,
     options: Numerics | None = None,
-    builder_options: BuilderOptions | None = None,
-    hardware_chain: bool = True,
+    physics: Physics | None = None,
 ) -> SurrogateReport:
     """The surrogate CalibrationTable for ``device``: ``pairs`` restricts the entangling waveforms (default:
     every pair of the crystal; each keyed as ``canonical_pairs`` orders it), ``spot_check=False`` stores the closed-form
-    waveforms as seeds, the explicit drive maps
-    override the device's roles; the spot checks integrate with ``options`` (its caps too) and play through the control
-    electronics under ``hardware_chain`` (``Physics.hardware_chain``)."""
-    from qutip_trap.options import Numerics
-
+    waveforms as seeds, the explicit drive maps override the device's roles; the spot checks integrate with ``options``
+    (its caps too) and play the gate a run plays under ``physics`` (the machine's; default ``Physics()``: the Stark
+    compensation, the crosstalk echo, the hardware chain and the builder options)."""
     opts = options or Numerics()
+    phys = physics if physics is not None else Physics()
     drives, ent = resolve_drives(device, gate_drives, entangling_drives)
     crystal = device.crystal
     n = crystal.n_ions
@@ -242,8 +244,19 @@ def surrogate_table(
         }
         inside, dim, nnz = within_budget(space, opts)
         if spot_check and not inside:
-            # the pair's GATE_LOCAL space: the two ions and the resolved modes, the rest of the chain absent
-            space, _classes_local = space_for(ions=(a, b))
+            # the pair's GATE_LOCAL space: the ions the check plays pulses on (the pair, and every spectator a neighbour
+            # echo plays on) and the resolved modes, the rest of the chain absent
+            played = ms_schedule(
+                device,
+                shaped.waveform,
+                (a, b),
+                ent,
+                base,
+                physics=phys,
+                options=opts,
+                single_qubit_drives=drives,
+            )
+            space, _classes_local = space_for(ions=sorted({i for p in played.pulses for i in p.drive.ions}))
             inside, dim_local, nnz_local = within_budget(space, opts)
             notes.append(
                 f"pair {(a, b)}: the joint spot-check space (dimension {dim}, {nnz} drive non-zeros) exceeds the JOINT_EXACT "
@@ -263,10 +276,10 @@ def surrogate_table(
                 ent,
                 base,
                 space=space,
+                physics=phys,
                 chi_target_rad=CHI_MAXIMAL_RAD,
                 options=opts,
-                builder_options=builder_options,
-                hardware_chain=hardware_chain,
+                single_qubit_drives=drives,
             )
             runs[(a, b)] = run
             ms[(a, b)] = run.waveform

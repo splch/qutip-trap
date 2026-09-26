@@ -115,8 +115,9 @@ def calibrate(
     **scans: Any,
 ) -> CalibrationReport:
     """Calibrate a machine: the ``CalibrationReport`` whose ``table`` the scheduler reads. The machine supplies the drive
-    roles, the numerics and the physics (the builder options and the hardware chain); ``pairs`` restricts the entangling
-    waveforms (default: every pair of the crystal, in either key order); ``scans`` are the other settings of
+    roles, the numerics and the physics every spot check and experiment plays under (the builder options, the hardware
+    chain, the Stark compensation and the crosstalk echo); ``pairs`` restricts the entangling waveforms (default: every pair
+    of the crystal, in either key order); ``scans`` are the other settings of
     :func:`~qutip_trap.calibration.surrogate.surrogate_table` (``detection_records``, ``detection_windows_s``,
     ``spot_check``) or of :func:`~qutip_trap.calibration.experiments.full_calibration` (``scans`` a ``CalibrationScans``,
     and the surrogate's settings), ``experiments`` restricts the simulated experiments (the others stay surrogate seeds),
@@ -126,17 +127,14 @@ def calibrate(
 
     device = machine.device
     t0 = float(machine.physics.t0_s if t0_s is None else t0_s)
-    physics = machine.physics
     kwargs: dict[str, Any] = {
         "options": machine.numerics,
-        "builder_options": physics.builder,
+        "physics": machine.physics,
         "pairs": canonical_pairs(device, pairs),
         **scans,
     }
     if method == "closed_form":
-        sur = cached_surrogate(
-            device, seed=seed, t0_s=t0, cache=cache, hardware_chain=physics.hardware_chain, **kwargs
-        )
+        sur = cached_surrogate(device, seed=seed, t0_s=t0, cache=cache, **kwargs)
         return CalibrationReport(
             table=sur.table,
             surrogate=sur,
@@ -150,9 +148,7 @@ def calibrate(
         raise ValueError("method is 'closed_form' or 'experiments'")
 
     def build() -> CalibrationReport:
-        return full_calibration(
-            device, seed=seed, t0_s=t0, experiments=experiments, physics=physics, **kwargs
-        )
+        return full_calibration(device, seed=seed, t0_s=t0, experiments=experiments, **kwargs)
 
     if cache is None:
         return build()
@@ -162,6 +158,6 @@ def calibrate(
         "experiments",
         seed=seed,
         t0_s=t0,
-        kwargs={"experiments": tuple(experiments), "physics": physics, **kwargs},
+        kwargs={"experiments": tuple(experiments), **kwargs},
         build=build,
     )

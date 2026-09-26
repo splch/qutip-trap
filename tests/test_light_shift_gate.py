@@ -41,7 +41,7 @@ from qutip_trap.light.raman import (
     two_photon_self_couplings_hz,
 )
 from qutip_trap.noise.sampling import NoiseSample, key_qubit_offset_hz, quiet_sample
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.space import waveform_contributions
 from qutip_trap.species import MODULES, species
 from qutip_trap.species.model import Level, Species
@@ -186,7 +186,15 @@ def test_a_believed_light_shift_leaves_the_sigma_z_force_at_its_beat_note(ca_dev
         assert tone.detuning_hz == mu and p.drive.stark_shift_hz == pytest.approx(shift, rel=1e-12)
     checks = [
         exact_gate_check(
-            dev, wf, (0, 1), ent, table, space=space, chi_target_rad=math.pi / 8, single_qubit_drives=sq
+            dev,
+            wf,
+            (0, 1),
+            ent,
+            table,
+            space=space,
+            physics=Physics(),
+            chi_target_rad=math.pi / 8,
+            single_qubit_drives=sq,
         )[0]
         for table in (believed, table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark))
     ]
@@ -229,7 +237,15 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
     )
     table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
     check, trace = exact_gate_check(
-        dev, wf, (0, 1), ent, table, space=space, chi_target_rad=math.pi / 8, single_qubit_drives=sq
+        dev,
+        wf,
+        (0, 1),
+        ent,
+        table,
+        space=space,
+        physics=Physics(),
+        chi_target_rad=math.pi / 8,
+        single_qubit_drives=sq,
     )
     assert max(trace.boundary_population.values()) < 1e-10, (
         "the Fock cap holds the sigma_z force's excursion, which is TWICE the +-1 assumption of the closed-form "
@@ -239,8 +255,11 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
         "the surrogate over-predicts the angle by the Debye-Waller corrections at eta = 0.145"
     )
     assert check.fidelity > 0.97 and check.leakage < 0.02
-    with pytest.raises(ValueError, match="spin-echo"):
-        exact_gate_check(dev, wf, (0, 1), ent, table, space=space, chi_target_rad=math.pi / 8)
+    # the echo pulses are the device's roles unless given, and this device's three far-detuned beams name no drive
+    with pytest.raises(ScheduleError, match="do not identify a single-qubit gate drive"):
+        exact_gate_check(
+            dev, wf, (0, 1), ent, table, space=space, physics=Physics(), chi_target_rad=math.pi / 8
+        )
     inside = Waveform.symmetric(
         modes,
         gate_mode=X_COM,
@@ -257,6 +276,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
         ent,
         table_with_waveform((0, 1), inside, rabi_hz=rabi, stark_hz=stark),
         space=space,
+        physics=Physics(),
         chi_target_rad=math.pi / 8,
         single_qubit_drives=sq,
     )
@@ -274,6 +294,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
         ent,
         table_with_waveform((0, 1), am.waveform, rabi_hz=rabi, stark_hz=stark),
         space=space_am,
+        physics=Physics(),
         chi_target_rad=math.pi / 8,
         single_qubit_drives=sq,
         tolerance_rad=3e-4,

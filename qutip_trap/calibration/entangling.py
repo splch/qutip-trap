@@ -3,9 +3,11 @@
 The surrogate's closed-form waveform is played on the pair through the JOINT_EXACT engine from |00>|n = 0>, |chi| is read
 from P_11 = sin^2 chi (an equatorial two-body rotation takes |00> to cos chi |00> -/+ i e^{...} sin chi |11>, so P_01 + P_10
 is the leakage from open loops and off-resonant excitation), every amplitude is rescaled by sqrt(chi_target/chi) (the s^2
-law) and the check repeats. A sigma_z-force waveform (light shift, microwave gradient) is checked in the scheduler's own
-spin echo, the sequence a run plays for ZZ. For the |00> input the final mean excitation of a mode is sum_j |alpha_jm|^2,
-eps_ent at nbar = 0. The corrected Waveform is returned, never written into a table.
+law) and the check repeats. Every check plays the scheduler's own schedule of the gate as a run plays it under the
+machine's ``Physics`` (the Stark compensation, the crosstalk echo, the hardware chain and the builder options): an MS
+waveform as MS(0, 0, 2|chi|), a sigma_z-force waveform (light shift, microwave gradient) in its spin echo, the sequence a
+run plays for ZZ. For the |00> input the final mean excitation of a mode is sum_j |alpha_jm|^2, eps_ent at nbar = 0. The
+corrected Waveform is returned, never written into a table.
 """
 
 from __future__ import annotations
@@ -21,16 +23,7 @@ import qutip as qt
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.native import zz as native_zz
-from qutip_trap.control.schedule import (
-    GateDrive,
-    PhaseFrame,
-    Schedule,
-    entangling_pulses,
-    frame_after,
-    ms_spin_phases,
-    schedule,
-    single_qubit_pulse,
-)
+from qutip_trap.control.schedule import GateDrive, Schedule, schedule
 from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, scaled
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, Traces
@@ -42,7 +35,7 @@ from qutip_trap.run.space import ModeClass3, classify, mode_cap, waveform_contri
 if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
-    from qutip_trap.dynamics.hamiltonian import BuilderOptions
+    from qutip_trap.options import Physics
 
 
 def spot_check_space(
@@ -84,33 +77,66 @@ def spot_check_space(
     return HilbertSpace(tuple([2] * len(local)), tuple(resolved), None, frozen, local, dropped), classes
 
 
-def ms_schedule(
+def _scheduled(
+    device: Device,
+    operations: Sequence[Operation],
     waveform: Waveform,
     pair: tuple[int, int],
     gate_drives: Mapping[int, GateDrive],
     table: CalibrationTable,
     *,
-    phases_rad: tuple[float, float] = (0.0, 0.0),
-    response_delay_s: float = 0.0,
+    physics: Physics,
+    options: Numerics | None = None,
+    single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> Schedule:
-    """The bare MS(phi_0, phi_1, .) pulse train of ``waveform`` on ``pair`` (no rescaling) as the scheduler would play it;
-    ``response_delay_s`` is the modulator delay the tone phases compensate (``control.schedule.response_phase_rad``)."""
-    n = max(pair) + 1
-    if waveform.kind == "ms":
-        spins, _chi = ms_spin_phases(waveform, pair, phases_rad, PhaseFrame())
-    else:
-        spins = {pair[0]: 0.0, pair[1]: 0.0}
-    pulses = entangling_pulses(
-        waveform,
-        dict(gate_drives),
-        spin_phases_rad=spins,
-        t_start_s=0.0,
-        table=table,
-        gate_id="ms",
-        response_delay_s=response_delay_s,
+    """The native ``operations`` on the crystal as a run schedules them with ``waveform`` in the table for ``pair``
+    (``run.pipeline.compile_calibrate_schedule``): under ``physics``'s Stark compensation, crosstalk echo and hardware chain
+    and the numerics' addressing, with ``gate_drives`` for the entangling gate and ``single_qubit_drives`` (default the
+    device's roles) for every carrier pulse, at the table's Stark shifts, crosstalk and frame and the chain's dead time
+    between pulses. The schedule ends with the last pulse: the dead time after it belongs to what a run plays next."""
+    sched = schedule(
+        Circuit(device.crystal.n_ions, tuple(operations), ()),
+        device,
+        table.with_params(ms={pair: waveform}),
+        gate_drives=None if single_qubit_drives is None else dict(single_qubit_drives),
+        entangling_drives=dict(gate_drives),
+        parallel=(options or Numerics()).addressing,
+        crosstalk_suppression=physics.crosstalk_suppression,
+        stark_compensation=physics.stark_compensation,
+        hardware_chain=physics.hardware_chain,
     )
-    frame = frame_after(pulses, PhaseFrame())
-    return Schedule(tuple(pulses), (), (), frame.as_dict(n))
+    end = max(p.t_end_s for p in sched.pulses)
+    return replace(sched, idle=tuple((a, b) for a, b in sched.idle if a < end))
+
+
+def ms_schedule(
+    device: Device,
+    waveform: Waveform,
+    pair: tuple[int, int],
+    gate_drives: Mapping[int, GateDrive],
+    table: CalibrationTable,
+    *,
+    physics: Physics,
+    options: Numerics | None = None,
+    phases_rad: tuple[float, float] = (0.0, 0.0),
+    single_qubit_drives: Mapping[int, GateDrive] | None = None,
+) -> Schedule:
+    """The scheduler's own MS(phi_0, phi_1, 2 |chi|) on ``pair`` with ``waveform`` in the table, the angle at which it plays
+    the waveform unscaled, as a run plays it (``_scheduled``): the tones detuned by the believed light shift, the gate
+    split around the crosstalk echo and the tone phases referenced to the chain's response as ``physics`` says."""
+    theta = 2.0 * abs(waveform.chi_total_rad)
+    gate = Operation("ms", pair, (float(phases_rad[0]), float(phases_rad[1]), theta))
+    return _scheduled(
+        device,
+        (gate,),
+        waveform,
+        pair,
+        gate_drives,
+        table,
+        physics=physics,
+        options=options,
+        single_qubit_drives=single_qubit_drives,
+    )
 
 
 def zz_echo_schedule(
@@ -118,21 +144,27 @@ def zz_echo_schedule(
     waveform: Waveform,
     pair: tuple[int, int],
     gate_drives: Mapping[int, GateDrive],
-    single_qubit_drives: Mapping[int, GateDrive],
     table: CalibrationTable,
+    *,
+    physics: Physics,
+    options: Numerics | None = None,
+    single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> Schedule:
     """The scheduler's own ZZ(-4 chi) on ``pair`` with ``waveform`` in the table, the angle at which it plays the waveform
-    unscaled: the sigma_z sigma_z spin echo of a light-shift or gradient waveform (the waveform, GPi(0) on both ions, the
-    waveform again, GPi(pi) on both), whose single-qubit sigma_z phases cancel while the two-body angle doubles. The echo
-    pulses are ``single_qubit_drives``'s with the table's Stark shifts, crosstalk and frame, under the chain's addressing
-    rule and dead time, exactly as a run plays them."""
-    circuit = Circuit(device.crystal.n_ions, (Operation("zz", pair, (-4.0 * waveform.chi_total_rad,)),), ())
-    return schedule(
-        circuit,
+    unscaled, as a run plays it (``_scheduled``): the sigma_z sigma_z spin echo of a light-shift or gradient waveform
+    (the waveform, GPi(0) on both ions, the waveform again, GPi(pi) on both), whose single-qubit sigma_z phases cancel while
+    the two-body angle doubles, the echo pulses ``single_qubit_drives``'s."""
+    gate = Operation("zz", pair, (-4.0 * waveform.chi_total_rad,))
+    return _scheduled(
         device,
-        table.with_params(ms={pair: waveform}),
-        gate_drives=dict(single_qubit_drives),
-        entangling_drives=dict(gate_drives),
+        (gate,),
+        waveform,
+        pair,
+        gate_drives,
+        table,
+        physics=physics,
+        options=options,
+        single_qubit_drives=single_qubit_drives,
     )
 
 
@@ -190,38 +222,52 @@ def exact_gate_check(
     table: CalibrationTable,
     *,
     space: HilbertSpace,
+    physics: Physics,
     phases_rad: tuple[float, float] = (0.0, 0.0),
     chi_target_rad: float = CHI_MAXIMAL_RAD,
     nbar: Mapping[int, float] | None = None,
     sample: NoiseSample | None = None,
     options: Numerics | None = None,
-    builder_options: BuilderOptions | None = None,
-    hardware_chain: bool = True,
     qubit_shifts_hz: Mapping[int, float] | None = None,
     channels: Sequence[object] = (),
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> tuple[GateCheck, Traces]:
-    """Play ``waveform`` on ``pair`` through the JOINT_EXACT engine and read chi, leakage, residual quanta and the fidelity.
+    """Play ``waveform`` on ``pair`` through the JOINT_EXACT engine as a run plays it under ``physics`` (the machine's: the
+    scheduler's own schedule of the gate, the builder options and the hardware chain) and read chi, leakage, residual
+    quanta and the fidelity.
 
-    An MS waveform is played once from |00>: P_11 = sin^2 chi, its tone phases compensating the modulator delay of the chain
-    the check plays through. A light-shift or gradient waveform (a sigma_z force) is played as the scheduler plays it, in
-    its own spin echo (``zz_echo_schedule``, the GPi pulses of ``single_qubit_drives``), from |+x +x> and read in the x
+    An MS waveform is played as MS(phi_0, phi_1, 2|chi|) (``ms_schedule``) from |00>: P_11 = sin^2 chi. A light-shift or
+    gradient waveform (a sigma_z force) is played in its spin echo (``zz_echo_schedule``) from |+x +x> and read in the x
     basis of the frame the scheduler absorbed: P_11 = sin^2(2 chi) with chi the two-body angle of ONE pulse, so the reported
-    ``chi_rad`` is per pulse and the fidelity is against ZZ(4 chi_target). ``hardware_chain`` is ``Physics.hardware_chain``:
-    the control electronics the run plays the gate through.
+    ``chi_rad`` is per pulse and the fidelity is against ZZ(4 chi_target). The echo pulses, of the spin echo and of the
+    crosstalk suppression, are ``single_qubit_drives``'s (default the device's roles).
     """
     n_ions = space.n_ions
+    opts = options or Numerics()
     sigma_z = waveform.kind != "ms"
     if sigma_z:
-        if single_qubit_drives is None:
-            raise ValueError(
-                "a sigma_z-force waveform is checked in the scheduler's spin-echo pair: pass single_qubit_drives for the "
-                "GPi pulses"
-            )
-        sched = zz_echo_schedule(device, waveform, pair, gate_drives, single_qubit_drives, table)
+        sched = zz_echo_schedule(
+            device,
+            waveform,
+            pair,
+            gate_drives,
+            table,
+            physics=physics,
+            options=opts,
+            single_qubit_drives=single_qubit_drives,
+        )
     else:
-        delay = float(device.hardware.aom_rise_s) if hardware_chain else 0.0
-        sched = ms_schedule(waveform, pair, gate_drives, table, phases_rad=phases_rad, response_delay_s=delay)
+        sched = ms_schedule(
+            device,
+            waveform,
+            pair,
+            gate_drives,
+            table,
+            physics=physics,
+            options=opts,
+            phases_rad=phases_rad,
+            single_qubit_drives=single_qubit_drives,
+        )
     # the pair's FACTOR positions: the device ions on a full space, their positions in ``space.ions`` on a GATE_LOCAL space
     fa, fb = space.ion_factor(pair[0]), space.ion_factor(pair[1])
     internal: list[int] | qt.Qobj
@@ -234,16 +280,14 @@ def exact_gate_check(
     state = space.initial_state(internal, thermal=dict(nbar or {}))
     n0 = {m: float(state.motional.nbar.get(m, 0.0)) for m in [t.mode for t in space.resolved]}
     engine = JointExactEngine(
-        builder_options=builder_options,
+        builder_options=physics.builder,
         store_per_segment=2,
         channels=tuple(channels),  # type: ignore[arg-type]
         qubit_shifts_hz=dict(qubit_shifts_hz or {}),
-        hardware_chain=hardware_chain,
+        hardware_chain=physics.hardware_chain,
         table=table,
     )
-    traces = engine.run_pulses(
-        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or Numerics()
-    )
+    traces = engine.run_pulses(device, sched, state, space, sample or quiet_sample(), SeedSpec(0), opts)
     rho = traces.final.internal
     frame_local = {space.ion_factor(q): th for q, th in sched.phase_frame.items() if space.has_ion(q)}
     # populations in the frame the scheduler absorbed, in the computational basis (MS) or the x basis (sigma_z force):
@@ -322,16 +366,16 @@ def calibrate_entangling_angle(
     table: CalibrationTable,
     *,
     space: HilbertSpace,
+    physics: Physics,
     chi_target_rad: float = CHI_MAXIMAL_RAD,
     tolerance_rad: float = 1e-4,
     max_iterations: int = 6,
     options: Numerics | None = None,
-    builder_options: BuilderOptions | None = None,
-    hardware_chain: bool = True,
     single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> CalibrationRun:
-    """Correct the waveform's amplitude until the exact |chi| from |00>|0> (Ballance's reference) equals ``chi_target_rad``:
-    Newton on the s^2 law, chi ~ Omega^2; the phase entries are stamped ``calibrated`` by ``exact_spot_check``."""
+    """Correct the waveform's amplitude until the exact |chi| from |00>|0> (Ballance's reference) of the gate a run plays
+    under ``physics`` (``exact_gate_check``) equals ``chi_target_rad``: Newton on the s^2 law, chi ~ Omega^2; the phase
+    entries are stamped ``calibrated`` by ``exact_spot_check``."""
     current = waveform
     checks: list[GateCheck] = []
     factors: list[float] = []
@@ -348,8 +392,7 @@ def calibrate_entangling_angle(
             space=space,
             chi_target_rad=chi_target_rad,
             options=options,
-            builder_options=builder_options,
-            hardware_chain=hardware_chain,
+            physics=physics,
             single_qubit_drives=single_qubit_drives,
         )
         checks.append(check)
@@ -388,11 +431,13 @@ def thermal_robustness(
     modes: GateModes,
     gate_mode: int,
     nbars: Sequence[float],
+    physics: Physics,
     options: Numerics | None = None,
-    builder_options: BuilderOptions | None = None,
+    single_qubit_drives: Mapping[int, GateDrive] | None = None,
 ) -> list[tuple[float, GateCheck]]:
-    """The gate's exact populations and fidelity against the gate mode's thermal occupation: per nbar, a thermal initial
-    state of the gate mode (every other mode in its ground state) on the spot-check space sized for it."""
+    """The exact populations and fidelity of the gate a run plays under ``physics`` (``exact_gate_check``) against the gate
+    mode's thermal occupation: per nbar, a thermal initial state of the gate mode (every other mode in its ground state) on
+    the spot-check space sized for it."""
     opts = options or Numerics()
     out: list[tuple[float, GateCheck]] = []
     for nb in nbars:
@@ -407,7 +452,8 @@ def thermal_robustness(
             space=space,
             nbar={gate_mode: nb},
             options=opts,
-            builder_options=builder_options,
+            physics=physics,
+            single_qubit_drives=single_qubit_drives,
         )
         out.append((float(nb), check))
     return out
@@ -421,57 +467,48 @@ def parity_after_analysis_pulse(
     table: CalibrationTable,
     *,
     space: HilbertSpace,
+    physics: Physics,
     analysis_phase_rad: float,
-    analysis_rabi_hz: Mapping[int, float],
     nbar: Mapping[int, float] | None = None,
     options: Numerics | None = None,
-    builder_options: BuilderOptions | None = None,
-    hardware_chain: bool = True,
     sample: NoiseSample | None = None,
-    analysis_drives: Mapping[int, GateDrive] | None = None,
+    single_qubit_drives: Mapping[int, GateDrive] | None = None,
     spin_phases_rad: tuple[float, float] = (0.0, 0.0),
     internal: Sequence[int] | None = None,
-    analysis_stark_hz: Mapping[int, float] | None = None,
     qubit_shifts_hz: Mapping[int, float] | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Parity P_00 + P_11 - P_01 - P_10 after the gate and a pi/2 analysis pulse of phase ``analysis_phase_rad`` on both ions
-    (the parity scan): the analysis pulses use ``analysis_drives`` (default the gate drives' beams) at the given carrier Rabi
-    frequencies with the believed Stark shifts ``analysis_stark_hz`` compensated. ``spin_phases_rad`` are the MS gate's
-    (phi_0, phi_1), ``internal`` the register's initial levels (default |0...0>), ``qubit_shifts_hz`` the true transition
-    minus the table's frame per ion, so that a phase scan measures the axis in the frame the run applies."""
+    (the parity scan): MS(phi_0, phi_1, 2 |chi|) and GPi2(analysis phase) on each ion of the pair as a run plays them under
+    ``physics`` (``_scheduled``), the analysis pulses ``single_qubit_drives``'s (default the device's roles) at the
+    table's Rabi frequencies with its Stark shifts and crosstalk, in the frame the gate left. ``spin_phases_rad`` are the MS
+    gate's (phi_0, phi_1), ``internal`` the register's initial levels (default |0...0>), ``qubit_shifts_hz`` the true
+    transition minus the table's frame per ion, so that a phase scan measures the axis in the frame the run applies."""
     n_ions = space.n_ions
-    sched_ms = ms_schedule(waveform, pair, gate_drives, table, phases_rad=spin_phases_rad)
-    dead = float(device.hardware.dead_time_s)
-    t = sched_ms.duration_s + dead
-    pulses = list(sched_ms.pulses)
-    sq = dict(analysis_drives) if analysis_drives is not None else dict(gate_drives)
-    frame = PhaseFrame(dict(sched_ms.phase_frame))
-    for q in pair:
-        pulses.append(
-            single_qubit_pulse(
-                q,
-                math.pi / 2.0,
-                frame.pulse_phase(q, analysis_phase_rad),
-                sq[q],
-                float(analysis_rabi_hz[q]),
-                t,
-                stark_shift_hz=float((analysis_stark_hz or {}).get(q, 0.0)),
-                gate_id=f"analysis/ion{q}",
-            )
-        )
-    sched = Schedule(
-        tuple(pulses), ((sched_ms.duration_s, t),) if dead > 0 else (), (), {q: 0.0 for q in range(n_ions)}
+    opts = options or Numerics()
+    theta = 2.0 * abs(waveform.chi_total_rad)
+    operations = (
+        Operation("ms", pair, (float(spin_phases_rad[0]), float(spin_phases_rad[1]), theta)),
+        *(Operation("gpi2", (q,), (float(analysis_phase_rad),)) for q in pair),
+    )
+    sched = _scheduled(
+        device,
+        operations,
+        waveform,
+        pair,
+        gate_drives,
+        table,
+        physics=physics,
+        options=opts,
+        single_qubit_drives=single_qubit_drives,
     )
     levels = [0] * n_ions if internal is None else [int(x) for x in internal]
     state = space.initial_state(levels, thermal=dict(nbar or {}))
     engine = JointExactEngine(
-        builder_options=builder_options,
-        hardware_chain=hardware_chain,
+        builder_options=physics.builder,
+        hardware_chain=physics.hardware_chain,
         table=table,
         qubit_shifts_hz=dict(qubit_shifts_hz or {}),
     )
-    traces = engine.run_pulses(
-        device, sched, state, space, sample or quiet_sample(), SeedSpec(0), options or Numerics()
-    )
-    pops = _populations(traces.final.internal, n_ions, pair[0], pair[1])
+    traces = engine.run_pulses(device, sched, state, space, sample or quiet_sample(), SeedSpec(0), opts)
+    pops = _populations(traces.final.internal, n_ions, space.ion_factor(pair[0]), space.ion_factor(pair[1]))
     return pops["P00"] + pops["P11"] - pops["P01"] - pops["P10"], pops

@@ -23,7 +23,7 @@ from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.io.ionq import load_ionq_json
 from qutip_trap.noise.sampling import quiet_sample
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -49,7 +49,7 @@ def calibrated():
     space = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE)
     run = calibrate_entangling_angle(
-        dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4
+        dev, am.waveform, (0, 1), drives, table0, space=space, physics=Physics(), tolerance_rad=2e-4
     )
     assert run.converged
     table = table_with_waveform((0, 1), run.waveform, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE)

@@ -22,7 +22,7 @@ from qutip_trap.noise.summary import (
     pauli_string,
     pauli_twirl,
 )
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -49,7 +49,15 @@ def _gate(loops: int, epsilon_hz: float):
 
 def _check(dev, wf, space, table, channels=()):
     check, _ = exact_gate_check(
-        dev, wf, (0, 1), raman_gate_drives(2), table, space=space, channels=channels, options=FAST
+        dev,
+        wf,
+        (0, 1),
+        raman_gate_drives(2),
+        table,
+        space=space,
+        physics=Physics(),
+        channels=channels,
+        options=FAST,
     )
     return check
 

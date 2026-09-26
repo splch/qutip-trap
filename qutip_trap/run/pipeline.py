@@ -111,6 +111,8 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
     if table is None:
         from qutip_trap.calibration import cached_surrogate
 
+        # the machine's own calibration, the entry ``calibrate(machine)`` builds for these pairs (the internal-levels
+        # adjustment above changes only the scattering the run evolves)
         sur = cached_surrogate(
             device,
             seed=seed,
@@ -118,8 +120,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
             gate_drives=drives,
             entangling_drives=ent_drives,
             options=numerics,
-            builder_options=physics.builder,
-            hardware_chain=physics.hardware_chain,
+            physics=machine.physics,
             pairs=compiled.entangling_pairs(),
         )
         table = sur.table

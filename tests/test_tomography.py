@@ -47,7 +47,7 @@ from qutip_trap.noise.summary import (
     entanglement_infidelity,
     pauli_twirl,
 )
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from tests.fixtures import (
     X_COM_TWO_IONS,
     chain_device,
@@ -276,7 +276,7 @@ def one_mode_entangling():
     modes = two_ion_modes(dev)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=100e3, all_modes=True)
     table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
-    sched = ms_schedule(wf, (0, 1), drives, table)
+    sched = ms_schedule(dev, wf, (0, 1), drives, table, physics=Physics())
     space = HilbertSpace((2, 2), (ModeTruncation(2, 15, (0, 3), 0.13),), None, (0, 1, 3, 4, 5))
     model = MotionalModel(
         reduced={}, nbar={0: 0.0, 1: 0.0, 2: 0.05, 3: 0.05, 4: 0.0, 5: 0.0}, frozen=(0, 1, 3, 4, 5)

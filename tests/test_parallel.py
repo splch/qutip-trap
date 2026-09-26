@@ -24,7 +24,7 @@ from qutip_trap.dynamics.tomography import cp_residual
 from qutip_trap.light.raman import derive_raman_drive, square_drive
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
-from qutip_trap.options import Numerics
+from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import last_record
 from tests.fixtures import (
     BELL,
@@ -118,7 +118,7 @@ def heating_fixture():
     modes = two_ion_modes(noisy)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, epsilon_hz=50e3, all_modes=True)
     table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
-    sched = ms_schedule(wf, (0, 1), drives, table)
+    sched = ms_schedule(dev, wf, (0, 1), drives, table, physics=Physics())
     space = HilbertSpace(
         (2, 2), (ModeTruncation(2, 10, (0, 3), 0.13), ModeTruncation(3, 11, (0, 4), 0.13)), None, (0, 1, 4, 5)
     )

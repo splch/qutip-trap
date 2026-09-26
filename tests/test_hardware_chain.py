@@ -226,18 +226,19 @@ def test_a_calibration_through_no_chain_plays_the_gate_its_spot_check_measured()
     filter the run never applies tilted it to 0.994686."""
     fx = yb171_chain(2)
     dev = dataclasses.replace(fx.device, hardware=REALISTIC_HARDWARE)
+    unchained = Physics(hardware_chain=False)
     sur = surrogate_table(
-        dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), hardware_chain=False
+        dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,), physics=unchained
     )
     wf = sur.table.waveform_for((0, 1))
     assert wf is not None
     nb = {m: e.value for m, e in sur.table.nbar.items()}
     space, _classes = spot_check_space(dev, gate_modes(dev, (0, 1), (0, 1), nbar=nb), wf, (0, 1), Numerics())
     measured, _ = exact_gate_check(
-        dev, wf, (0, 1), fx.entangling_drives, sur.table, space=space, hardware_chain=False
+        dev, wf, (0, 1), fx.entangling_drives, sur.table, space=space, physics=unchained
     )
     assert measured.fidelity == pytest.approx(0.999868, abs=5e-6)
-    machine = Machine(dev, table=sur.table, physics=Physics(hardware_chain=False))
+    machine = Machine(dev, table=sur.table, physics=unchained)
     unscaled = Operation("ms", (0, 1), (0.0, 0.0, 2.0 * abs(wf.chi_total_rad)))
     sched = machine.schedule(Circuit(2, (unscaled,), ()))
     traces = machine.engine.run_pulses(
@@ -272,20 +273,20 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
         )
         return dev, wf, sur.table, space
 
-    def check(setup, **kw):
+    def check(setup, physics):
         dev, wf, table, space = setup
-        return exact_gate_check(dev, wf, (0, 1), fx.entangling_drives, table, space=space, **kw)[0]
+        return exact_gate_check(dev, wf, (0, 1), fx.entangling_drives, table, space=space, physics=physics)[0]
 
     realistic = calibrated(REALISTIC_HARDWARE)
     ideal = calibrated(ideal_hardware(phase_continuous=True))
-    real, perfect = check(realistic), check(ideal)
+    real, perfect = check(realistic, Physics()), check(ideal, Physics())
     assert real.fidelity == pytest.approx(0.999923, abs=5e-6), real.fidelity
     assert perfect.fidelity == pytest.approx(0.999868, abs=5e-6), perfect.fidelity
     assert real.leakage == pytest.approx(3.315e-5, rel=5e-3), real.leakage
     assert perfect.leakage == pytest.approx(4.485e-5, rel=5e-3), perfect.leakage
-    # the same waveform through the same chain with the reference switched off
+    # the same waveform through the same chain with the reference switched off: programmed for no chain, played through one
     dev, wf, table, space = realistic
-    bare = ms_schedule(wf, (0, 1), fx.entangling_drives, table)
+    bare = ms_schedule(dev, wf, (0, 1), fx.entangling_drives, table, physics=Physics(hardware_chain=False))
     traces = JointExactEngine(table=table).run_pulses(
         dev, bare, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics()
     )
@@ -297,14 +298,14 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
     rwa = BuilderOptions(frame="interaction", rwa=True)
     floor = [
         calibrate_entangling_angle(
-            d, w, (0, 1), fx.entangling_drives, t, space=s, builder_options=rwa, tolerance_rad=1e-6
+            d, w, (0, 1), fx.entangling_drives, t, space=s, physics=Physics(builder=rwa), tolerance_rad=1e-6
         ).checks[-1]
         for d, w, t, s in (realistic, ideal)
     ]
     assert floor[0].fidelity <= floor[1].fidelity + 1e-9, floor
     assert floor[1].fidelity - floor[0].fidelity < 2e-8, floor
     # an ideal modulator's response is the identity, so the chain switch cannot matter there
-    assert check(ideal, hardware_chain=False).fidelity == pytest.approx(perfect.fidelity, abs=1e-9)
+    assert check(ideal, Physics(hardware_chain=False)).fidelity == pytest.approx(perfect.fidelity, abs=1e-9)
 
 
 def test_stark_shift_follows_the_played_light_into_the_tail() -> None:
