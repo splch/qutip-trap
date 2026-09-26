@@ -5,7 +5,8 @@ Single-qubit gates: GPi(phi) and GPi2(phi) are resonant carrier pulses of area p
 of duration area/(2 pi f_Rabi) with f_Rabi the TABLE's carrier Rabi frequency, never the device's true value; an entry the
 calibration could not establish refuses to schedule. RZ(theta) is a frame update, phi -> phi - theta on every later pulse
 of the ion (time order); the frame at the end is ``Schedule.phase_frame``. The hardware's dead time follows every pulse as
-an idle interval. Single-qubit gates on distinct ions run sequentially, or in parallel when the chain allows it.
+an idle interval. Single-qubit gates on distinct ions run sequentially, or in parallel when the chain allows it, and so do
+the pulses one gate plays on several ions (the ZZ wrappers and echoes, the crosstalk echoes).
 
 Entangling gates play the pair's calibrated ``Waveform`` as one ``Pulse`` per (ion, segment) with the red and blue tones
 at the segment's phi_s -/+ phi_m plus the gate phase in the ion's frame. The force acts about phi_s + pi/2, so
@@ -29,7 +30,8 @@ piece's ideal unitary a ``GateTarget``.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -43,7 +45,7 @@ from qutip_trap.light.roles import gate_beams
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
     from qutip_trap.control.table import CalibrationTable, Segment
     from qutip_trap.device.model import Device
@@ -546,6 +548,81 @@ def ms_spin_phases(
 CrosstalkSuppression = Literal["none", "neighbour", "local"]
 
 
+class _Timeline(ABC):
+    """When the scheduler's pulses start (module docstring): the hardware's dead time follows every pulse as an idle
+    interval, and the addressing rule decides whether pulses on distinct ions wait for each other. ``schedule`` builds one
+    per schedule from ``parallel``."""
+
+    def __init__(self, dead_time_s: float) -> None:
+        self.dead_time_s = float(dead_time_s)
+        self.idle: list[tuple[float, float]] = []
+
+    def rest(self, end_s: float) -> float:
+        """The dead time after a pulse ending at ``end_s``, recorded as an idle interval (none for a zero dead time); returns
+        the earliest start of the next pulse."""
+        if self.dead_time_s > 0.0:
+            self.idle.append((end_s, end_s + self.dead_time_s))
+        return end_s + self.dead_time_s
+
+    @abstractmethod
+    def start(self, qubits: tuple[int, ...], *, entangling: bool) -> float:
+        """The earliest start of a gate on ``qubits``; an entangling gate also waits for the previous one."""
+
+    @abstractmethod
+    def advance(self, qubits: tuple[int, ...], end_s: float, *, entangling: bool) -> None:
+        """Move the clocks past a gate on ``qubits`` that ended at ``end_s``, leaving the dead time idle."""
+
+    @abstractmethod
+    def on_each(self, ions: Sequence[int], start_s: float, play: Callable[[int, float], float]) -> float:
+        """``play(ion, t) -> end`` on every one of ``ions`` (at least one) from ``start_s``; returns the last end."""
+
+
+class _SerialTimeline(_Timeline):
+    """One pulse at a time, on a chain without parallel addressing: one clock every gate waits on, and the pulses a gate
+    plays on several ions one after another with the dead time between them."""
+
+    def __init__(self, t0_s: float, dead_time_s: float) -> None:
+        super().__init__(dead_time_s)
+        self.clock_s = float(t0_s)
+
+    def start(self, qubits: tuple[int, ...], *, entangling: bool) -> float:
+        return self.clock_s
+
+    def advance(self, qubits: tuple[int, ...], end_s: float, *, entangling: bool) -> None:
+        self.clock_s = self.rest(end_s)
+
+    def on_each(self, ions: Sequence[int], start_s: float, play: Callable[[int, float], float]) -> float:
+        end = play(ions[0], start_s)
+        for q in ions[1:]:
+            end = play(q, self.rest(end))
+        return end
+
+
+class _ParallelTimeline(_Timeline):
+    """A clock per ion, on a chain with parallel addressing: single-qubit pulses on distinct ions overlap and the pulses a gate
+    plays on several ions share one window; an entangling gate still waits for the previous one on any pair (the entangling
+    gates share the global beam pair)."""
+
+    def __init__(self, qubits: Sequence[int], t0_s: float, dead_time_s: float) -> None:
+        super().__init__(dead_time_s)
+        self.clock_s = {q: float(t0_s) for q in qubits}
+        self.entangling_clock_s = float(t0_s)
+
+    def start(self, qubits: tuple[int, ...], *, entangling: bool) -> float:
+        t = max(self.clock_s[q] for q in qubits)
+        return max(t, self.entangling_clock_s) if entangling else t
+
+    def advance(self, qubits: tuple[int, ...], end_s: float, *, entangling: bool) -> None:
+        t = self.rest(end_s)
+        for q in qubits:
+            self.clock_s[q] = t
+        if entangling:
+            self.entangling_clock_s = t
+
+    def on_each(self, ions: Sequence[int], start_s: float, play: Callable[[int, float], float]) -> float:
+        return max(play(q, start_s) for q in ions)
+
+
 def schedule(
     circuit: Circuit,
     device: Device,
@@ -581,11 +658,13 @@ def schedule(
         raise ScheduleError("crosstalk suppression is scheduled on the serial path")
     drives, ent_drives = resolve_drives(device, gate_drives, entangling_drives)
     dead = float(device.hardware.dead_time_s)
+    timeline: _Timeline = (
+        _ParallelTimeline(range(circuit.n_qubits), t0_s, dead) if parallel else _SerialTimeline(t0_s, dead)
+    )
     reset = not bool(device.hardware.phase_continuous)
     delay = float(device.hardware.aom_rise_s)
     frame = PhaseFrame()
     pulses: list[Pulse] = []
-    idle: list[tuple[float, float]] = []
     gates: list[PlayedGate] = []
     targets: list[GateTarget] = []
 
@@ -667,32 +746,20 @@ def schedule(
         return p
 
     def carriers(
-        ions: Sequence[int], area: float, phase: float, start: float, tag: str, chained: bool = False
-    ) -> float:
-        """The same carrier pulse on ``ions`` from ``start`` (``chained``: each after the previous one); the last end."""
-        end = start
-        for q in ions:
-            p = carrier(q, area, phase, start, f"{tag}/ion{q}")
-            end = max(end, p.t_end_s)
-            if chained:
-                start = max(start, p.t_end_s)
-        return end
-
-    def echo_train(
         ions: Sequence[int], sequence: Sequence[tuple[float, float]], start: float, tag: str
     ) -> float:
-        """Per ion, the (area, phase) pulses of ``sequence`` one after another with the dead time between them; the last
-        end."""
-        end = start
-        for q in ions:
-            t_q = start
-            for area, phase in sequence:
-                t_q = carrier(q, area, phase, t_q, f"{tag}/ion{q}").t_end_s + dead
-            end = max(end, t_q - dead)
-        return end
+        """The (area, phase) carrier pulses of ``sequence`` on every one of ``ions`` from ``start`` under the addressing
+        rule, one after another on each ion with the dead time between them; the last end."""
 
-    clock: dict[int, float] = {q: t0_s for q in range(circuit.n_qubits)}
-    global_clock = t0_s
+        def train(q: int, t: float) -> float:
+            (area, phase), *later = sequence
+            end = carrier(q, area, phase, t, f"{tag}/ion{q}").t_end_s
+            for area, phase in later:
+                end = carrier(q, area, phase, timeline.rest(end), f"{tag}/ion{q}").t_end_s
+            return end
+
+        return timeline.on_each(ions, start, train)
+
     last_unitary = max([k for k, op in enumerate(circuit.ops) if not op.is_non_unitary], default=-1)
     measured: list[int] = list(circuit.measure)
     for k, op in enumerate(circuit.ops):
@@ -700,21 +767,6 @@ def schedule(
             raise ScheduleError(f"{op.name!r} at position {k}: {MID_CIRCUIT_REFUSAL}")
         if op.name == "measure":
             measured.extend(q for q in op.qubits if q not in measured)
-
-    def advance(qubits: tuple[int, ...], end: float, *, serialized: bool = False) -> None:
-        """Move the clocks past a gate that ended at ``end``, leaving the hardware's dead time idle: every gate waits on
-        ``global_clock`` unless ``parallel``, where the per-ion clocks carry single-qubit gates and an entangling gate
-        (``serialized``) also moves ``global_clock``, so the next one waits even on a disjoint pair."""
-        nonlocal global_clock
-        if dead > 0.0:
-            idle.append((end, end + dead))
-        if parallel:
-            for q in qubits:
-                clock[q] = end + dead
-            if serialized:
-                global_clock = end + dead
-        else:
-            global_clock = end + dead
 
     for k, op in enumerate(circuit.ops):
         if op.name == "rz":
@@ -724,14 +776,9 @@ def schedule(
             continue  # a trailing measure: recorded above, scheduled as the terminal event below
         if op.name in ("gpi", "gpi2"):
             q = op.qubits[0]
-            p = carrier(
-                q,
-                NATIVE_AREAS[op.name],
-                op.params[0],
-                clock[q] if parallel else global_clock,
-                f"{op.name}[{k}]",
-            )
-            advance((q,), p.t_end_s)
+            start = timeline.start((q,), entangling=False)
+            p = carrier(q, NATIVE_AREAS[op.name], op.params[0], start, f"{op.name}[{k}]")
+            timeline.advance((q,), p.t_end_s, entangling=False)
             continue
         a, b = op.qubits
         wf = table.waveform_for((a, b))
@@ -739,7 +786,7 @@ def schedule(
             raise ScheduleError(
                 f"no entangling waveform in the calibration table for ions {(a, b)} (CalibrationTable.ms)"
             )
-        start = max(global_clock, clock[a], clock[b]) if parallel else global_clock
+        start = timeline.start((a, b), entangling=True)
         if op.name == "ms":
             phi0, phi1, theta = op.params
             if theta < 0.0:
@@ -754,7 +801,7 @@ def schedule(
             if crosstalk_suppression == "none":
                 play = _rescaled(wf, 0.5 * theta, chi_abs)
                 end = entangle((a, b), play, spins, start, f"ms[{k}]", "ms", ("ms", (*phases, theta)))
-                advance((a, b), end, serialized=True)
+                timeline.advance((a, b), end, entangling=True)
                 continue
             half = _rescaled(wf, 0.25 * theta, chi_abs)
             half_native = ("ms", (*phases, 0.5 * theta))
@@ -770,42 +817,31 @@ def schedule(
                     }
                 )
                 sequence = [(NATIVE_AREAS["gpi"], 0.0), (NATIVE_AREAS["gpi"], 0.5 * math.pi)]
-            t = entangle((a, b), half, spins, start, f"ms[{k}]/half1", "ms", half_native)
-            idle.append((t, t + dead))
-            t = t + dead
+            t = timeline.rest(entangle((a, b), half, spins, start, f"ms[{k}]/half1", "ms", half_native))
             if echo_ions:
-                t = echo_train(echo_ions, sequence, t, f"ms[{k}]/echo")
-                idle.append((t, t + dead))
-                t = t + dead
+                t = timeline.rest(carriers(echo_ions, sequence, t, f"ms[{k}]/echo"))
             t = entangle((a, b), half, spins, t, f"ms[{k}]/half2", "ms", half_native)
             if crosstalk_suppression == "local":
-                idle.append((t, t + dead))
-                t = t + dead
-                t = echo_train(echo_ions, sequence, t, f"ms[{k}]/unecho")
+                t = carriers(echo_ions, sequence, timeline.rest(t), f"ms[{k}]/unecho")
             else:
                 # a physical Z(pi) is a frame operation on every later pulse of the spectator: absorb it
                 for j in echo_ions:
                     frame = frame.rz(j, math.pi)
-            advance((a, b), t, serialized=True)
+            timeline.advance((a, b), t, entangling=True)
             continue
         (theta,) = op.params
         if wf.kind == "ms":
             # GPi2(3 pi/2) on both, MS(0, 0, theta), GPi2(pi/2) on both; the MS waits for both wrapper pulses
-            start = carriers(
-                (a, b), NATIVE_AREAS["gpi2"], 1.5 * math.pi, start, f"zz[{k}]/wrap_in", not parallel
-            )
-            start = start + dead
-            idle.append((start - dead, start))
+            wrap_in = [(NATIVE_AREAS["gpi2"], 1.5 * math.pi)]
+            t = timeline.rest(carriers((a, b), wrap_in, start, f"zz[{k}]/wrap_in"))
             spins, chi_abs = ms_spin_phases(wf, (a, b), (0.0, 0.0), frame)
             play = _rescaled(wf, 0.5 * abs(theta), chi_abs)
             if theta < 0.0:
                 spins[b] += math.pi
             ms_native = ("ms", (frame.pulse_phase(a, 0.0), frame.pulse_phase(b, 0.0), theta))
-            end = entangle((a, b), play, spins, start, f"zz[{k}]/ms", "zz", ms_native)
-            start = end + dead
-            idle.append((start - dead, start))
-            end = carriers((a, b), NATIVE_AREAS["gpi2"], 0.5 * math.pi, start, f"zz[{k}]/wrap_out")
-            advance((a, b), end, serialized=True)
+            t = timeline.rest(entangle((a, b), play, spins, t, f"zz[{k}]/ms", "zz", ms_native))
+            end = carriers((a, b), [(NATIVE_AREAS["gpi2"], 0.5 * math.pi)], t, f"zz[{k}]/wrap_out")
+            timeline.advance((a, b), end, entangling=True)
             continue
         # the sigma_z sigma_z spin echo of a light-shift or microwave-gradient waveform:
         # two half-angle loops, each exp(+i chi_half sigma_z sigma_z) = zz(theta/2), around a pi on both ions
@@ -818,16 +854,11 @@ def schedule(
         half = _rescaled(wf, 0.25 * abs(theta), abs(chi))
         spins = {a: 0.0, b: 0.0}
         loop_native: tuple[str, tuple[float, ...]] = ("zz", (0.5 * theta,))
-        entangle((a, b), half, spins, start, f"zz[{k}]/loop1", "zz", loop_native)
-        start += half.duration_s + dead
-        idle.append((start - dead, start))
-        start = carriers((a, b), NATIVE_AREAS["gpi"], 0.0, start, f"zz[{k}]/echo") + dead
-        idle.append((start - dead, start))
-        entangle((a, b), half, spins, start, f"zz[{k}]/loop2", "zz", loop_native)
-        start += half.duration_s + dead
-        idle.append((start - dead, start))
-        end = carriers((a, b), NATIVE_AREAS["gpi"], math.pi, start, f"zz[{k}]/unecho")
-        advance((a, b), end, serialized=True)
+        t = timeline.rest(entangle((a, b), half, spins, start, f"zz[{k}]/loop1", "zz", loop_native))
+        t = timeline.rest(carriers((a, b), [(NATIVE_AREAS["gpi"], 0.0)], t, f"zz[{k}]/echo"))
+        t = timeline.rest(entangle((a, b), half, spins, t, f"zz[{k}]/loop2", "zz", loop_native))
+        end = carriers((a, b), [(NATIVE_AREAS["gpi"], math.pi)], t, f"zz[{k}]/unecho")
+        timeline.advance((a, b), end, entangling=True)
     events: list[ScheduledEvent] = []
     if measured:
         window_entry = table.detection.get("window_s")
@@ -836,12 +867,12 @@ def schedule(
             if window_entry is not None and window_entry.status != "uncalibrated" and window_entry.value > 0.0
             else float(device.detector.window_s)
         )
-        ends = [p.t_end_s for p in pulses] + [b for _, b in idle]
+        ends = [p.t_end_s for p in pulses] + [b for _, b in timeline.idle]
         t_meas = max(ends) if ends else t0_s
         events.append(ScheduledEvent("measure", tuple(sorted(measured)), t_meas, t_meas + window))
     return Schedule(
         tuple(pulses),
-        tuple(idle),
+        tuple(timeline.idle),
         tuple(events),
         frame.as_dict(circuit.n_qubits),
         gates=tuple(gates),

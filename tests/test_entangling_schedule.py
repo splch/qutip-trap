@@ -154,8 +154,8 @@ def test_zz_wrapper_construction_matrix_and_schedule(calibrated) -> None:
     )
     ket = np.asarray(internal.full()).ravel()
     budget = 1.0 - run.checks[-1].fidelity
-    # the wrapper construction costs a factor 2.46 over the bare MS (measured 5.599e-04 against the spot check's
-    # 2.2725e-04: four GPi2 pulses and three dead times around the entangling block)
+    # the wrapper construction costs a factor 1.83 over the bare MS (measured 4.154e-04 against the spot check's
+    # 2.2729e-04: four GPi2 pulses played one at a time, each piece followed by the dead time)
     infidelity = 1.0 - _fidelity(rho, native_zz(math.pi / 2), ket, sch.phase_frame)
     assert infidelity < 2.6 * budget, (infidelity, budget)
     assert _fidelity(rho, native_zz(-math.pi / 2), ket, sch.phase_frame) < 0.05
@@ -357,3 +357,87 @@ def test_parallel_true_is_refused_when_the_device_model_does_not_allow_it(four_i
         fx.device, hardware=dataclasses.replace(fx.device.hardware, parallel_addressing=True)
     )
     assert schedule(circ, dev, table, parallel=False).pulses
+
+
+# ---- the dead time after every pulse ----------------------------------------------------------------------------------
+
+
+def _pieces(sch):
+    """The gate pieces of a schedule (one GateTarget per carrier pulse or entangling play) in time order."""
+    return sorted(sch.targets, key=lambda t: (t.t_start_s, t.ions))
+
+
+@pytest.fixture(scope="module")
+def multi_ion_gates():
+    """The gates that play pulses on several ions, each as (circuit, device, table, schedule keywords): ZZ on an MS waveform
+    (the GPi2 wrappers), ZZ on a light-shift waveform (the pi echoes) and MS under the two crosstalk echoes on a three-ion
+    chain whose pair leaks 1 % onto ion 2."""
+    dev2 = chain_device(2)
+    modes2 = two_ion_modes(dev2)
+    ms_wf = Waveform.symmetric(modes2, gate_mode=X_COM_TWO_IONS, epsilon_hz=20e3)
+    ls_wf = Waveform.symmetric(modes2, gate_mode=X_COM_TWO_IONS, epsilon_hz=20e3, kind="light_shift")
+    couplings = LightShiftCouplings((-2.0, 0.0), 0.0, 1e9)
+    ls_roles = {i: GateDrive("light_shift", (0, 1), light_shift=couplings) for i in (0, 1)}
+    dev_ls = dataclasses.replace(dev2, roles=dataclasses.replace(dev2.roles, entangling=ls_roles))
+    dev3 = chain_device(3)
+    modes3 = gate_modes(dev3, (0, 1), (0, 1))
+    rabi3, stark3 = derived_seeds(dev3, raman_gate_drives(3))
+    wf3 = Waveform.symmetric(modes3, gate_mode=modes3.modes[-1], epsilon_hz=20e3)
+    table3 = table_with_waveform((0, 1), wf3, rabi_hz=rabi3, stark_hz=stark3)
+    leak = dataclasses.replace(table3.rabi[(0, 0)], value=0.01, experiment="crosstalk_scan")
+    table3 = dataclasses.replace(table3, crosstalk={(0, 2): leak, (1, 2): leak})
+    ms3 = Circuit(3, (Operation("ms", (0, 1), (0.0, 0.0, MS)),), (0, 1, 2))
+    return {
+        "zz_ms": (
+            Circuit(2, (Operation("zz", (0, 1), (MS,)),), (0, 1)),
+            dev2,
+            table_with_waveform((0, 1), ms_wf, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE),
+            {},
+        ),
+        "zz_light_shift": (
+            Circuit(2, (Operation("zz", (0, 1), (-MS,)),), (0, 1)),
+            dev_ls,
+            table_with_waveform((0, 1), ls_wf, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE),
+            {},
+        ),
+        "ms_local": (ms3, dev3, table3, {"crosstalk_suppression": "local"}),
+        "ms_neighbour": (ms3, dev3, table3, {"crosstalk_suppression": "neighbour"}),
+    }
+
+
+@pytest.mark.parametrize("dead_s", [1e-6, 0.0])
+@pytest.mark.parametrize(
+    ("case", "n_pieces"), [("zz_ms", 5), ("zz_light_shift", 6), ("ms_local", 6), ("ms_neighbour", 4)]
+)
+def test_a_serial_chain_plays_one_piece_at_a_time_with_the_dead_time_after_every_piece(
+    multi_ion_gates, case: str, n_pieces: int, dead_s: float
+) -> None:
+    """Without parallel addressing every gate piece (a carrier pulse on one ion, an entangling play on the pair) starts one
+    dead time after the previous one ends, the wrappers and echoes on two ions and the spectator's two echo pulses
+    included, and every dead time is one idle interval: after each piece, none at all for a zero dead time."""
+    circuit, dev, table, kw = multi_ion_gates[case]
+    dev = dataclasses.replace(dev, hardware=dataclasses.replace(dev.hardware, dead_time_s=dead_s))
+    assert not dev.hardware.parallel_addressing
+    sch = schedule(circuit, dev, table, **kw)
+    pieces = _pieces(sch)
+    assert len(pieces) == n_pieces
+    for prev, nxt in zip(pieces, pieces[1:]):
+        assert nxt.t_start_s == pytest.approx(prev.t_end_s + dead_s, abs=1e-15), (prev.gate_id, nxt.gate_id)
+    expected = [(p.t_end_s, p.t_end_s + dead_s) for p in pieces] if dead_s > 0.0 else []
+    assert len(sch.idle) == len(expected) and np.allclose(sch.idle, expected, rtol=0.0, atol=1e-15), sch.idle
+    assert sch.pulses_end_s == pytest.approx(pieces[-1].t_end_s + dead_s, abs=1e-15)
+
+
+def test_parallel_addressing_plays_the_zz_wrappers_on_both_ions_in_one_window(multi_ion_gates) -> None:
+    """With parallel addressing the GPi2 wrappers of ZZ on an MS waveform share one window before the MS and one after it,
+    each window and the MS followed by one recorded dead time."""
+    circuit, dev, table, _kw = multi_ion_gates["zz_ms"]
+    dev = dataclasses.replace(dev, hardware=dataclasses.replace(dev.hardware, parallel_addressing=True))
+    sch = schedule(circuit, dev, table)
+    dead = dev.hardware.dead_time_s
+    spans = {tag: _span(sch, f"zz[0]/{tag}/") for tag in ("wrap_in", "ms", "wrap_out")}
+    for tag in ("wrap_in", "wrap_out"):
+        assert len({p.t_start_s for p in sch.pulses if f"/{tag}/" in (p.gate_id or "")}) == 1, tag
+    assert spans["ms"][0] == pytest.approx(spans["wrap_in"][1] + dead)
+    assert spans["wrap_out"][0] == pytest.approx(spans["ms"][1] + dead)
+    assert np.allclose(sch.idle, [(s[1], s[1] + dead) for s in spans.values()], rtol=0.0, atol=1e-15)
