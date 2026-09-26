@@ -150,7 +150,9 @@ class JobSpec:
     options: core.Numerics
     """The numerics the run integrates with, its explicit Fock caps too (None lets the Section 5.5 cap rule decide)."""
     level: FidelityLevelRequest = "auto"
-    readout: Literal["fast", "full"] = "fast"
+    readout: core.ReadoutMode = "fast"
+    """``fast`` applies the readout POVM to each shot's outcome; ``full`` generates every ion's photon record and reads it
+    (Section 5.7)."""
     waveform_overrides: dict[str, float] = field(default_factory=dict)
     """A detuning set by hand at Level 2 (Section 14.4): per entangling pair ``"a,b"``, the beat-note offset in Hz added to
     every blue leg and subtracted from every red leg of the pair's calibrated waveform, which the scheduler plays as written."""

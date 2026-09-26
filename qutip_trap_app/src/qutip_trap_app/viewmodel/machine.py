@@ -133,7 +133,7 @@ def shot(record: Record, index: int) -> ShotView:
     note = (
         "photon records kept: this shot's counts are the record the discriminator read"
         if counts is not None
-        else "fast readout path: the bits were drawn from the POVM (Section 5.7); run with readout='full' to keep photon records"
+        else "fast readout, no photon counts: pick the full simulation and full readout"
     )
     return ShotView(
         bitstring=Shown("bitstring", key),

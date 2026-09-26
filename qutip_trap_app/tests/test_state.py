@@ -1,16 +1,19 @@
 """The application state behind the screens: the learner persists as a document, a run scores the prediction made for it and
-a new prediction is asked only for a new run, a job keeps the circuit's named registers, the progress rows keep moving
-between worker events, cancel marks every running job, and the zoom bar's parent route needs no hidden global."""
+a new prediction is asked only for a new run, a job keeps the circuit's named registers and gets the readout picked for
+it, the progress rows keep moving between worker events, cancel marks every running job, and the zoom bar's parent route
+needs no hidden global."""
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
 from qutip_trap_app.provenance import ProvenanceIndex
-from qutip_trap_app.record import CircuitRecord, LiveRun, Record
+from qutip_trap_app.record import CircuitRecord, JobSpec, LiveRun, Record, complete_job, execute
 from qutip_trap_app.viewmodel.learn import Attempt, MasteryLog, review_gap_days
+from qutip_trap_app.viewmodel.machine import shot
 from qutip_trap_app.views.shell import parent_route
 from qutip_trap_app.views.state import (
     JobStatus,
@@ -20,7 +23,7 @@ from qutip_trap_app.views.state import (
     learner_document,
     learner_from_document,
 )
-from qutip_trap_app.workers import Event
+from qutip_trap_app.workers import Event, Ticket
 
 
 @pytest.fixture(scope="module")
@@ -110,6 +113,34 @@ def test_the_job_keeps_the_circuits_named_registers(index: ProvenanceIndex) -> N
     job = session.build_job()
     assert job.circuit.to_core() == circuit
     assert CircuitRecord.from_core(job.circuit.to_core()) == job.circuit
+
+
+def test_the_readout_picked_for_the_full_simulation_reaches_the_shots(
+    index: ProvenanceIndex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The readout picked on the full simulation is the job's, and a shot of that job opens its photon counts; the channel
+    replay reads its shots out through the calibration table's errors, so its jobs read out fast whatever was picked."""
+    session = Session(Store(), index)
+    store = session.store
+    store.shots = 20
+    submitted: list[tuple[str, JobSpec]] = []
+
+    def submit(request: str, **payload: Any) -> Ticket:
+        submitted.append((request, payload["job"]))
+        return Ticket(f"t{len(submitted)}", request)
+
+    monkeypatch.setattr(session.worker, "submit", submit)
+    store.engine, store.readout = "full", "full"
+    store.engine = "replay"
+    session.submit_run()
+    store.engine = "full"
+    session.submit_run()
+    assert [(request, job.readout) for request, job in submitted] == [("replay", "fast"), ("run_job", "full")]
+    # the worker's path: build the device, complete the job with it, run
+    job = submitted[-1][1]
+    preset = job.device.build(check=False)
+    record, _live = execute(complete_job(job, preset), preset)
+    assert shot(record, 0).photon_counts is not None
 
 
 def test_progress_rows_keep_moving_between_worker_events(index: ProvenanceIndex) -> None:

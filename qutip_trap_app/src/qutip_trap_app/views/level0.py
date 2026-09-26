@@ -13,6 +13,7 @@ from typing import Any
 
 import flet as ft
 
+from qutip_trap_app.core import ReadoutMode
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
 from qutip_trap_app.viewmodel.learn import score_histogram_prediction, sketch_distribution
@@ -64,6 +65,10 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
         engine: Engine = "full" if e.control.value == "full" else "replay"
         store.engine = engine
 
+    def set_readout(e: Any) -> None:
+        readout: ReadoutMode = "full" if e.control.value == "full" else "fast"
+        store.readout = readout
+
     def load(e: Any) -> None:
         choice = str(e.control.value)
         if choice == "bell":
@@ -86,6 +91,19 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
                 on_select=set_engine,
                 width=270,
                 tooltip="channel replay applies each gate's extracted channel (Section 14.2 row 0); the full simulation integrates the Hamiltonian",
+                **input_style(),
+            ),
+            ft.Dropdown(
+                label="readout",
+                value=store.run_readout(),
+                options=[
+                    ft.DropdownOption(key="fast", text="Fast · bits only"),
+                    ft.DropdownOption(key="full", text="Full · photon counts"),
+                ],
+                on_select=set_readout,
+                disabled=store.engine == "replay",
+                width=210,
+                tooltip="fast draws each shot's bits from the readout errors; full keeps every ion's photon count (Section 5.7) and needs the full simulation",
                 **input_style(),
             ),
             ft.Dropdown(

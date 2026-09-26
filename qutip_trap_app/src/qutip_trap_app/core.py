@@ -55,7 +55,7 @@ from qutip_trap.noise.sampling import (
 from qutip_trap.noise.scattering import scattering_channels
 from qutip_trap.noise.spectra import NoiseSpectrum, white_spectrum
 from qutip_trap.noise.summary import choi_from_unitary, entanglement_infidelity
-from qutip_trap.options import Numerics, Physics, Readout
+from qutip_trap.options import Numerics, Physics, Readout, ReadoutMode
 from qutip_trap.prep.closed_forms import doppler_force_nbar, lamb_dicke_parameter, stenholm_coefficients, x0_m
 from qutip_trap.prep.recipe import PreparationRun, run_preparation, standard_recipe
 from qutip_trap.prep.sideband import apply_pulses, mean_occupation, thermal_distribution
@@ -125,6 +125,7 @@ __all__ = [
     "Progress",
     "Pulse",
     "Readout",
+    "ReadoutMode",
     "RecordModel",
     "Result",
     "RfDrive",

@@ -18,7 +18,7 @@ from typing import Any, Literal, assert_never, get_args
 
 import flet as ft
 
-from qutip_trap_app.core import Circuit, Numerics
+from qutip_trap_app.core import Circuit, Numerics, ReadoutMode
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import ConvergenceRecord, DeviceRef, JobSpec, Record, TableRecord, job_for_preset
@@ -202,6 +202,8 @@ class Store:
     """The circuit texts (with their formats) before each edit made in the builder, oldest first."""
     shots: int = 200
     engine: Engine = "replay"
+    readout: ReadoutMode = "fast"
+    """The readout picked for the full simulation; the run gets the one ``run_readout`` says."""
     prediction: str | None = None
     """The learner's histogram pick for the next run (a sketch id), "skipped" when declined, None when not yet made."""
     scored_prediction: str | None = None
@@ -271,6 +273,11 @@ class Store:
             ),
             None,
         )
+
+    def run_readout(self) -> ReadoutMode:
+        """The readout the next run is made with: the one picked, on the full simulation; the fast path on the channel
+        replay, which reads its shots out through the calibration table's errors and has no photon records to keep."""
+        return self.readout if self.engine == "full" else "fast"
 
     def device_ref(self, n_ions: int | None = None) -> DeviceRef:
         """The current device as a reference: the preset, its arguments, the overrides, and the hash when a derived layer
@@ -445,6 +452,7 @@ class Session:
             preset_kwargs=self.store.preset_kwargs,
             overrides=self.store.device_overrides,
             build=False,
+            readout=self.store.run_readout(),
             label=label,
         )
         ref = self.store.device_ref(n)
