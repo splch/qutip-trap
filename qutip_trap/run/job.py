@@ -434,8 +434,9 @@ def roos_beat_phase_tilt(waveform: Waveform, t_start_s: float, *, beat_reset: bo
     the leg's beat phase 2 pi mu_leg t_start less the per-gate reset the scheduler programs (``beat_reset``: none for a
     detuning schedule), mu the starting detuning. For equal tone phases psi = (2 Omega/mu)|sin zeta|, Roos's (4 Omega_R/mu)
     sin(zeta) with Omega_R = Omega/2. The amplitude is the switch-on one, not a pulse average: an envelope that rises from
-    zero switches on at zero amplitude and the carrier follows it adiabatically, and a stepped envelope's later steps, each
-    at its own beat phase, largely cancel over the gate. The worst ion; zero for a non-MS waveform."""
+    zero switches on at zero amplitude and the carrier follows it adiabatically. A stepped envelope's later steps leave
+    rotations of their own, each at its own beat phase, which this scale leaves out (the spot check measures them at the
+    calibrated start). The worst ion; zero for a non-MS waveform."""
     from qutip_trap.control.schedule import beat_phase_offset_rad
 
     if waveform.kind != "ms":

@@ -301,8 +301,8 @@ def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with()
 @pytest.mark.slow
 def test_a_stepped_envelope_moves_less_than_its_switch_on_tilt() -> None:
     """Five-segment AM closing both x modes (33, 107, 148, 107, 33 kHz): started at zeta = pi/2 its |++> output moves by
-    1.2e-4, inside the switch-on tilt sin^2(2 Omega_on/mu) = 5.2e-4, while the later steps' own tilts, each at its own beat
-    phase, largely cancel over the gate; the mean segment amplitude would give 3.4e-3."""
+    1.2e-4, inside the switch-on tilt sin^2(2 Omega_on/mu) = 5.2e-4, which the later steps, each at its own beat phase,
+    partly cancel here; the mean segment amplitude would give 3.4e-3."""
     device = chain_device(2)
     modes = two_ion_modes(device).subset([2, X_COM_TWO_IONS])
     wf = solve_amplitude_modulation(modes, mu_hz=2.95e6, duration_s=150e-6, kernel="rwa").waveform
