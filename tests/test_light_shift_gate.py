@@ -149,13 +149,13 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
     detuning side < 0.05), and the AM pulse calibrated exactly reaches > 0.99 with leakage < 5e-3, the fidelity a run
     playing ZZ(pi/2) from the calibrated table reaches to 1e-5."""
     dev, ent, sq, modes = ca_device
-    # the table's 729 nm E2 entries are the derived values (200144 Hz at 166 mW in a 200 um waist, a -132.45 Hz light
+    # the table's 729 nm E2 entries are the derived values (200144 Hz at 166 mW in a 200 um waist, a -132.46 Hz light
     # shift), so the played chain is the identity
     rabi, stark = derived_seeds(dev, sq)
     assert rabi[(0, 2)] == pytest.approx(2.00144e5, rel=1e-4), (
         "the derived E2 Rabi frequency, not a supplied one"
     )
-    assert stark[(0, 2)] == pytest.approx(-132.45, rel=1e-4)
+    assert stark[(0, 2)] == pytest.approx(-132.464, rel=1e-4)
     wf = Waveform.symmetric(
         modes,
         gate_mode=X_COM,
@@ -226,7 +226,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
         tolerance_rad=3e-4,
     )
     assert run.converged and run.checks[-1].fidelity > 0.99 and run.checks[-1].leakage < 5e-3
-    # the spot check is the scheduler's own echo, whose GPi pulses carry the table's -132.45 Hz E2 Stark shift and follow
+    # the spot check is the scheduler's own echo, whose GPi pulses carry the table's -132.46 Hz E2 Stark shift and follow
     # the frame: a run playing ZZ(pi/2) from the calibrated table reaches the fidelity the spot check measured (a check
     # with bare echo pulses measured 0.998065 where the scheduler played 0.997421, an angle 8.0e-4 rad short)
     table = table_with_waveform((0, 1), run.waveform, rabi_hz=rabi, stark_hz=stark)
