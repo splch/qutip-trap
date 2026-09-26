@@ -592,7 +592,7 @@ records:
     tag: corrected
     section: "5.3; 5.5; 9.9"
     source: "qutip_trap.dynamics.evolve"
-    equation: "the keying of Section 5.3 relaxes atol to LARGE_MODE_ATOL = 1e-8 above LARGE_MODE_DIMENSION = 100 when and only when the caller left Numerics.atol at its 1e-10 default; a deliberately tightened or loosened atol is used as given. dynamics.evolve.convergence_check(run, numerics) runs a closure at both tolerance pairs and reports max_t |delta p| per observable with a summary string, and it is applied to the Section 9.2 carrier and blue-sideband fixtures (both converge below 1e-6)"
+    equation: "the keying of Section 5.3 relaxes atol to LARGE_MODE_ATOL = 1e-8 above LARGE_MODE_DIMENSION = 100 when and only when the caller left Numerics.atol at its 1e-10 default; a deliberately tightened or loosened atol is used as given, on the integrator ladder and the trajectory path alike (dynamics.evolve.keyed_atol). dynamics.evolve.convergence_check(run, numerics) runs a closure at both tolerance pairs and reports max_t |delta p| per observable with a summary string, and it is applied to the Section 9.2 carrier and blue-sideband fixtures (both converge below 1e-6)"
     corrected_form: "max(atol, 1e-8) would clamp a deliberately tightened atol back to 1e-8 in a Section 5.5 convergence run and report a spuriously small change; the d_m = 121, 151 and 201 cases integrate on the first rung at the keyed 1e-8, and a stiff abort at d_m = 121 with atol 1e-10 does not reproduce on a one-mode detuned spin-dependent force"
   - id: conv.level_a_rates_participation
     symbol: "heating_{i,m} = c_{i,m}^2 [S_i(+nu) + 2D_i], cooling_{i,m} = c_{i,m}^2 [S_i(-nu) + 2D_i]"
