@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from qutip_trap.run.gate_local import GateLocalReport
     from qutip_trap.run.job import RunRecord
 
+RESULT_SCHEMA_VERSION = 2
+"""The ``schema_version`` ``Result.to_dict`` writes and ``Result.from_dict`` reads."""
+
 
 def bitstring_key(bits: np.ndarray) -> str:
     """The histogram key of one shot: qubit 0 rightmost (least significant)."""
@@ -149,8 +152,9 @@ class Diagnostics:
     convergence: ConvergenceReport | None = None
     """Section 5.5's tolerance-convergence report when ``convergence_check`` was set; None means not asked for."""
     shots_per_sample_realized: tuple[int, ...] = ()
-    """The shots each dynamical sample took, in sample order: sample k owns the contiguous shot block
-    [sum_{j<k} M_j, sum_{j<=k} M_j) (``shots_per_sample`` is the floor ``shots // samples``)."""
+    """The shots of the shot clock each dynamical sample took, in sample order, the discarded ones included: sample k owns
+    the contiguous block [sum_{j<k} M_j, sum_{j<=k} M_j) of the clock (``shots_per_sample`` is the floor
+    ``shots // samples``); ``Result.sample_of_shot`` maps each KEPT shot to its sample."""
     level_reason: str = ""
     """Why the run integrated at ``level`` (``run.levels.LevelDecision.reason``)."""
 
@@ -373,6 +377,7 @@ class Result:
     outside the [1e-6, 1 - 1e-6] quantile band of BOTH the bright and the dark count distribution of the ion's model, so
     neither hypothesis explains it: a cosmic ray, an afterpulse burst or a stray-light flash); Sections 6.7, 8.6."""
     discarded_shots: int
+    """Shots of the shot clock the collision process discarded (Section 6.7): they have no row."""
     run_state: RunState
     spam: dict[str, tuple[float, float]]
     """Per qubit (eps_B, eps_D) with the definition used (Section 13, "Readout figure of merit")."""
@@ -399,6 +404,11 @@ class Result:
     """Wall time of the run, seconds; 0 when unknown."""
     record: RunRecord | None = field(default=None, repr=False, compare=False)
     """Everything the run produced besides the Result (``run.job.RunRecord``); None for a Result not made by a run."""
+    sample_of_shot: np.ndarray | None = None
+    """Per row of ``bitstrings``, the index of the dynamical sample the shot was drawn from (Section 8.6), below
+    ``Diagnostics.samples``: ``noise_samples[sample_of_shot[k]]`` is row k's parameter draw. The run records it where it
+    keeps the shot, so a discarded shot moves no later row to another sample; None when no dynamical sample stands behind
+    the rows (imported shots, a record read without its per-shot arrays)."""
 
     def __post_init__(self) -> None:
         arr = np.asarray(self.bitstrings)
@@ -415,6 +425,13 @@ class Result:
             raise ValueError("probabilities must be counts / shots")
         if len(self.heralds) != arr.shape[0]:
             raise ValueError("one herald flag per shot")
+        if self.sample_of_shot is not None:
+            samples = np.asarray(self.sample_of_shot, dtype=np.int64)
+            if samples.shape != (arr.shape[0],):
+                raise ValueError("sample_of_shot holds one sample index per shot")
+            if samples.size and not 0 <= int(samples.min()) <= int(samples.max()) < self.diagnostics.samples:
+                raise ValueError("sample_of_shot indexes the run's dynamical samples")
+            object.__setattr__(self, "sample_of_shot", samples)
         if self.qubits is not None:
             qubits = tuple(int(q) for q in self.qubits)
             if len(qubits) != arr.shape[1] or len(set(qubits)) != len(qubits):
@@ -576,16 +593,17 @@ class Result:
     # ---- the versioned record ---------------------------------------------------------------------------------------------
 
     def to_dict(self, *, per_shot: bool = False) -> dict[str, Any]:
-        """The result as plain JSON-able values (schema version 1): the identity (``schema_version``,
+        """The result as plain JSON-able values (``RESULT_SCHEMA_VERSION``): the identity (``schema_version``,
         ``qutip_trap_version``, ``device_hash``, ``machine_hash``, ``shots``, ``root_seed``, ``created_at``, ``duration_s``),
         then counts, probabilities, error bars, SPAM, the herald tallies, the run state and the diagnostics summary;
-        ``per_shot=True`` adds the per-shot arrays (bitstrings, heralds, photon records, posteriors). Not carried: the noise
-        samples, the final state, the run record, the calibration waveforms, the GATE_LOCAL and convergence reports."""
+        ``per_shot=True`` adds the per-shot arrays (bitstrings, heralds, the sample of each shot, photon records,
+        posteriors). Not carried: the noise samples, the final state, the run record, the calibration waveforms, the
+        GATE_LOCAL and convergence reports."""
         from qutip_trap import __version__
 
         heralds = np.asarray(self.heralds, dtype=int)
         out: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": RESULT_SCHEMA_VERSION,
             "qutip_trap_version": __version__,
             "device_hash": self.diagnostics.calibration.device_hash,
             "machine_hash": self.machine_hash,
@@ -616,6 +634,9 @@ class Result:
             out["per_shot"] = {
                 "bitstrings": np.asarray(self.bitstrings, dtype=int).tolist(),
                 "heralds": heralds.tolist(),
+                "sample_of_shot": None
+                if self.sample_of_shot is None
+                else np.asarray(self.sample_of_shot, dtype=int).tolist(),
                 "photon_records": None
                 if self.photon_records is None
                 else np.asarray(self.photon_records).tolist(),
@@ -627,17 +648,22 @@ class Result:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Result:
-        """The inverse of :meth:`to_dict` for schema version 1: the per-shot arrays when the record carries them, else
-        bitstrings rebuilt from the counts (one row per counted shot, in key order) with zero heralds."""
-        if d["schema_version"] != 1:
-            raise ValueError(f"Result.from_dict reads schema version 1, got {d['schema_version']!r}")
+        """The inverse of :meth:`to_dict`: the per-shot arrays when the record carries them, else bitstrings rebuilt from
+        the counts (one row per counted shot, in key order) with zero heralds and no sample map."""
+        if d["schema_version"] != RESULT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Result.from_dict reads schema version {RESULT_SCHEMA_VERSION}, got {d['schema_version']!r}"
+            )
         n = int(d["n_qubits"])
         per_shot = d.get("per_shot")
+        samples: np.ndarray | None = None
         if per_shot is not None:
             bits = np.asarray(per_shot["bitstrings"], dtype=np.uint8).reshape(-1, n)
             heralds = np.asarray(per_shot["heralds"], dtype=np.uint8)
             records = per_shot["photon_records"]
             posteriors = per_shot["posteriors"]
+            if per_shot["sample_of_shot"] is not None:
+                samples = np.asarray(per_shot["sample_of_shot"], dtype=np.int64)
         else:
             rows = [
                 np.array([int(ch) for ch in key[::-1]], dtype=np.uint8)
@@ -672,15 +698,5 @@ class Result:
             machine_hash=d["machine_hash"],
             created_at=str(d["created_at"]),
             duration_s=float(d["duration_s"]),
+            sample_of_shot=samples,
         )
-
-    @property
-    def sample_of_shot(self) -> np.ndarray:
-        """Per shot, the index of the dynamical sample it was drawn from (Section 8.6): ``noise_samples[sample_of_shot[k]]``
-        is shot k's parameter draw. Shots are allocated in contiguous blocks, so this is the block index built from
-        ``Diagnostics.shots_per_sample_realized``; a run with one sample maps every shot to 0."""
-        realized = self.diagnostics.shots_per_sample_realized
-        if not realized:
-            return np.zeros(self.shots, dtype=np.int64)
-        out = np.concatenate([np.full(int(m), s, dtype=np.int64) for s, m in enumerate(realized)])
-        return out[: self.shots]

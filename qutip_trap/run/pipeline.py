@@ -850,6 +850,7 @@ def execute(
     measured = tuple(sorted(declared)) if declared else tuple(range(n_ions))
     anomaly_bands = path.anomaly_bands(stage, window, measured)
     bits_kept: list[np.ndarray] = []
+    sample_kept: list[int] = []
     levels_kept: list[np.ndarray] = []
     heralds_kept: list[int] = []
     posteriors_kept: list[np.ndarray] = []
@@ -956,6 +957,7 @@ def execute(
                     discarded += 1
                     continue
                 bits_kept.append(row)
+                sample_kept.append(s_idx)
                 levels_kept.append(np.asarray(outcome.levels[j, list(measured)], dtype=np.uint8).copy())
                 out_bits_kept.append(np.asarray(outcome.bits[j], dtype=np.uint8).copy())
                 out_levels_kept.append(np.asarray(outcome.levels[j], dtype=np.uint8).copy())
@@ -1154,4 +1156,5 @@ def execute(
         created_at=created_at,
         duration_s=float(time.perf_counter() - started),
         record=record,
+        sample_of_shot=np.asarray(sample_kept, dtype=np.int64),
     )

@@ -16,9 +16,11 @@ from qutip_trap.device.presets import yb171_chain
 from qutip_trap.noise.spectra import Collisions, Drift, white_spectrum
 from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import effective_sample_size, last_record, register_fidelity
+from qutip_trap.run.results import Result
 from tests.fixtures import BELL, run, two_ion_surrogate
 
 TORR_PA = 133.32236842105263
+ONE = Circuit(2, (Operation("gpi2", (0,), (0.0,)),), (0, 1))
 
 
 @pytest.fixture(scope="module")
@@ -210,6 +212,26 @@ def test_collisions_herald_and_discard_shots_and_flag_ions(two_ion) -> None:
     quiet = run(BELL, fx.device, 120, **kw)
     assert quiet.discarded_shots == 0 and not quiet.run_state.dark and quiet.heralds.sum() == 0
     assert quiet.run_state.order == tuple(range(2))
+
+
+def test_sample_of_shot_follows_the_kept_shots_through_the_discards(two_ion) -> None:
+    """Every collision of a dark-ion-only process discards its shot (Section 6.7): with three dynamical samples of 20
+    shots each and shots discarded in the first two blocks, every kept row maps to the block of the shot clock it was read
+    in (conv.shot_blocks_per_sample), and the record carries the map."""
+    fx, sur = two_ion
+    col = Collisions(3e-7 * TORR_PA, {"H2": 1.0}, {"dark_ion": 1.0})
+    dev = _noisy(fx.device, collisions=col, field_drift=Drift(4e-7, 10.0, None))
+    res = run(ONE, dev, 60, table=sur.table, numerics=Numerics(branch_weight_min=1e-2, samples=3))
+    discarded = {shot for shot, _event in res.run_state.events}
+    assert res.diagnostics.shots_per_sample_realized == (20, 20, 20)
+    assert res.discarded_shots == len(discarded) and min(discarded) < 40, sorted(discarded)
+    kept = [k for k in range(60) if k not in discarded]
+    assert res.sample_of_shot is not None and res.sample_of_shot.tolist() == [k // 20 for k in kept]
+    back = Result.from_dict(res.to_dict(per_shot=True))
+    assert back.sample_of_shot is not None and np.array_equal(back.sample_of_shot, res.sample_of_shot)
+    assert Result.from_dict(res.to_dict()).sample_of_shot is None, (
+        "rows rebuilt from the counts have no sample"
+    )
 
 
 def test_crosstalk_suppression_schedules_the_echoes_of_section_6_6() -> None:

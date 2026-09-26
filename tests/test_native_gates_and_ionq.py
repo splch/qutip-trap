@@ -22,7 +22,14 @@ from qutip_trap.io.ionq import (
     load_ionq_json,
     load_job,
 )
-from qutip_trap.run.results import Result, aggregate, bits_from_decimal, bitstring_key, decimal_key
+from qutip_trap.run.results import (
+    RESULT_SCHEMA_VERSION,
+    Result,
+    aggregate,
+    bits_from_decimal,
+    bitstring_key,
+    decimal_key,
+)
 from tests.fixtures import make_result
 
 
@@ -214,16 +221,19 @@ X_ON_QUBIT_ZERO = np.array([[1, 0, 0]] * 4, dtype=np.uint8)
 """``x q[0]`` on three qubits, four shots: a Bell state cannot tell the two character orders apart, this can."""
 
 
-def test_sample_of_shot_is_the_contiguous_block_map() -> None:
-    """Shots are allocated in contiguous blocks (``conv.shot_blocks_per_sample``): samples of 2, 2 and 1 shots map the
-    shots to [0, 0, 1, 1, 2]."""
+def test_sample_of_shot_names_a_dynamical_sample_per_row() -> None:
+    """``Result.sample_of_shot`` holds one index per row below ``Diagnostics.samples`` (the run's own map is tested
+    through discards in test_run_noise.py); a result with no sample behind its rows carries None."""
     result = make_result(BITS)
-    assert result.sample_of_shot.tolist() == [0, 0, 0, 0, 0]
-    uneven = dataclasses.replace(
-        result,
-        diagnostics=dataclasses.replace(result.diagnostics, shots_per_sample_realized=(2, 2, 1)),
-    )
-    assert uneven.sample_of_shot.tolist() == [0, 0, 1, 1, 2]
+    assert result.sample_of_shot is None and Result.from_ionq_v1_shots(["0", "3"], 2).sample_of_shot is None
+    three = dataclasses.replace(result.diagnostics, samples=3)
+    mapped = dataclasses.replace(result, diagnostics=three, sample_of_shot=[0, 0, 2, 2, 1])
+    assert mapped.sample_of_shot is not None and mapped.sample_of_shot.dtype == np.int64
+    assert mapped.sample_of_shot.tolist() == [0, 0, 2, 2, 1]
+    with pytest.raises(ValueError, match="one sample index per shot"):
+        dataclasses.replace(mapped, sample_of_shot=[0, 1])
+    with pytest.raises(ValueError, match="dynamical samples"):
+        dataclasses.replace(mapped, sample_of_shot=[0, 0, 3, 2, 1])
 
 
 def test_x_on_qubit_zero_reads_1_in_the_v1_formats_and_100_in_the_v2_envelope() -> None:
@@ -305,7 +315,8 @@ def test_the_envelope_round_trips() -> None:
     )
     d = result.to_dict()
     assert json.loads(json.dumps(d)) == d, "plain JSON values only"
-    assert d["schema_version"] == 1 and d["device_hash"] == "fixture" and d["machine_hash"] == "m" * 64
+    assert d["schema_version"] == RESULT_SCHEMA_VERSION == 2
+    assert d["device_hash"] == "fixture" and d["machine_hash"] == "m" * 64
     assert d["heralds"] == {"collision": 2, "dark_or_lost": 2, "count_anomaly": 1}
     assert (
         d["diagnostics"]["level"] == "JOINT_EXACT"
@@ -337,8 +348,9 @@ def test_the_envelope_round_trips() -> None:
     assert np.array_equal(again.bitstrings, result.bitstrings) and np.array_equal(
         again.heralds, result.heralds
     )
-    with pytest.raises(ValueError, match="schema version 1"):
-        Result.from_dict({**d, "schema_version": 2})
+    assert full["per_shot"]["sample_of_shot"] is None and again.sample_of_shot is None
+    with pytest.raises(ValueError, match="schema version 2"):
+        Result.from_dict({**d, "schema_version": 1})
 
 
 def test_dump_job_writes_the_v0_4_body_and_load_job_reads_v0_3_and_v0_4() -> None:
