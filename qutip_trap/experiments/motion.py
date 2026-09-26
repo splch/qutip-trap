@@ -34,7 +34,7 @@ from qutip_trap.experiments.result import (
     SidebandSpectrum,
     ThermometryResult,
 )
-from qutip_trap.experiments.single_ion import _WEIGHT_MIN, _Lab, _LabOptions, _Probe, _run, _Setup, _setup
+from qutip_trap.experiments.single_ion import _Lab, _LabOptions, _Probe, _run, _Setup, _setup
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
@@ -56,14 +56,13 @@ def _excitation(
     probe: _Probe,
     detuning_hz: float,
     duration_s: float,
-    weight_min: float = _WEIGHT_MIN,
 ) -> float:
     """P1 after one pulse of ``probe`` at ``detuning_hz`` on the space of ``base``."""
     from qutip_trap.control.pulses import Pulse
 
     setup = _setup(lab, ion, replace(probe, detuning_hz=detuning_hz), base.space)
     pulse = Pulse(setup.drive, 0.0, duration_s, "sideband_probe", ())
-    return _run(lab, ion, [pulse], setup, weight_min=weight_min).final_p1(ion)
+    return _run(lab, ion, [pulse], setup).final_p1(ion)
 
 
 def _sideband_nbar(
@@ -99,8 +98,8 @@ def thermometry(
     sig: list[float | None] = []
     ratios: list[tuple[float, float, float, float]] = []
     for k, t in enumerate([duration, *(float(x) for x in check_durations_s)]):
-        p_r, s_r = lab.obs.p1(_excitation(lab, ion, base, probe, -f_mode, t, 1e-6), ion, "thermometry_red", k)
-        p_b, s_b = lab.obs.p1(_excitation(lab, ion, base, probe, f_mode, t, 1e-6), ion, "thermometry_blue", k)
+        p_r, s_r = lab.obs.p1(_excitation(lab, ion, base, probe, -f_mode, t), ion, "thermometry_red", k)
+        p_b, s_b = lab.obs.p1(_excitation(lab, ion, base, probe, f_mode, t), ion, "thermometry_blue", k)
         rows += [(-f_mode, t, p_r), (f_mode, t, p_b)]
         sig += [s_r, s_b]
         if p_b > 0.0:

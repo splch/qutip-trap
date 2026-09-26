@@ -209,15 +209,16 @@ def test_rabi_scan_with_thermometry_nbar_fits_the_bare_rabi_frequency_through_ev
 
 
 def test_a_fock_sum_that_keeps_no_branch_is_refused_rather_than_run_as_the_vacuum(two_ion) -> None:
-    """A spectator at nbar = 2000 has no Fock state at the experiments' 1e-3 branch cut (P_0 = 5.0e-4), and two coupled modes
-    at nbar = 32 keep their states (P_0 = 0.030) but no product of them (9.2e-4): the scan refuses both, as ``run`` refuses
-    its own initial mixture, rather than flop the spectator's ground state at weight one or sum no branch at all."""
+    """At a 1e-3 branch cut (the lab's numerics) a spectator at nbar = 2000 has no Fock state (P_0 = 5.0e-4), and two coupled
+    modes at nbar = 32 keep their states (P_0 = 0.030) but no product of them (9.2e-4): the scan refuses both, as ``run``
+    refuses its own initial mixture, rather than flop the spectator's ground state at weight one or sum no branch at all."""
     fx, dd = two_ion
     ts = np.linspace(0.0, 5.0 / dd.carrier_rabi_hz, 5)
+    machine = Machine(fx.device, numerics=FAST)
     with pytest.raises(RunError, match="keeps no Fock state of mode 3"):
-        rabi_scan(Machine(fx.device), 0, ts, nbar={3: 2000.0}, include_stark=False)
+        rabi_scan(machine, 0, ts, nbar={3: 2000.0}, include_stark=False)
     with pytest.raises(RunError, match=r"keeps no branch of the thermal mixture of modes \[2, 3\]"):
-        rabi_scan(Machine(fx.device), 0, ts, nbar={2: 32.0, 3: 32.0}, include_stark=False)
+        rabi_scan(machine, 0, ts, nbar={2: 32.0, 3: 32.0}, include_stark=False)
 
 
 # ---- the laboratory on a machine: keywords, typed results, requested against realized ----------------------------------------

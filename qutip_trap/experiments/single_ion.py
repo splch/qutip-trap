@@ -51,10 +51,6 @@ if TYPE_CHECKING:
     from qutip_trap.noise.sampling import NoiseSample
     from qutip_trap.options import Numerics, Physics
 
-_WEIGHT_MIN = 1e-3
-"""The weight below which a branch of the thermal initial mixture is dropped (the dropped weight is noted)."""
-
-
 # ---- the laboratory context -------------------------------------------------------------------------------------------------
 
 
@@ -331,12 +327,12 @@ def _run(
     *,
     store_times: Sequence[float] = (),
     idle: tuple[tuple[float, float], ...] = (),
-    weight_min: float = _WEIGHT_MIN,
     fock_branches: bool = True,
     device_channels: bool = False,
 ) -> _Averaged:
-    """Play ``pulses`` from |0...0> x thermal(nbar) on the setup's space, averaged over the branches of the initial mixture;
-    ``device_channels`` assembles the device's collapse operators."""
+    """Play ``pulses`` from |0...0> x thermal(nbar) on the setup's space, averaged over the branches of the initial mixture
+    cut at the lab's ``Numerics.branch_weight_min`` (the mixture ``run`` plays); ``device_channels`` assembles the device's
+    collapse operators."""
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
     from qutip_trap.noise.sampling import NoiseSample, key_frozen_n, quiet_sample
@@ -359,7 +355,9 @@ def _run(
     )
     base_sample = lab.sample or quiet_sample()
     seeds = SeedSpec(lab.obs.seed)
-    branches, dropped = _branches(setup.space, lab.nbar, setup.etas, weight_min, fock_branches)
+    branches, dropped = _branches(
+        setup.space, lab.nbar, setup.etas, lab.options.branch_weight_min, fock_branches
+    )
     times: np.ndarray | None = None
     acc: dict[str, np.ndarray] = {}
     for weight, res_fock, frozen_fock in branches:
@@ -432,7 +430,7 @@ def rabi_scan(
     notes: list[str] = []
     if avg.dropped_weight > 0.0:
         notes.append(
-            f"initial-mixture branches below {_WEIGHT_MIN:g} dropped: weight {avg.dropped_weight:.2e}"
+            f"initial-mixture branches below {lab.options.branch_weight_min:g} dropped: weight {avg.dropped_weight:.2e}"
         )
     if ts.size >= 4:
         if eta == 0.0 and nbar_fixed is None:
