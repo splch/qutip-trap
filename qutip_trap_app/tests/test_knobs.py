@@ -97,16 +97,22 @@ def test_rf_amplitude_scales_q_at_fixed_a_and_beta_follows_the_mathieu_equation(
     pair = knobs.entangling_pair(preset)
     assert pair is not None
     dk = base.device.beams[pair[0]].k_vector() - base.device.beams[pair[1]].k_vector()
-    eta0 = base.device.crystal.lamb_dicke_matrix(dk, micromotion=None)
-    eta1 = scaled.device.crystal.lamb_dicke_matrix(dk, micromotion=None)
+    eta0 = [
+        base.device.crystal.lamb_dicke(0, k, dk, micromotion=None)
+        for k in range(len(base.device.crystal.modes))
+    ]
+    eta1 = [
+        scaled.device.crystal.lamb_dicke(0, k, dk, micromotion=None)
+        for k in range(len(scaled.device.crystal.modes))
+    ]
     radial = [
-        k for k, m in enumerate(base.device.crystal.modes) if m.family != "axial" and abs(eta0[0, k]) > 1e-6
+        k for k, m in enumerate(base.device.crystal.modes) if m.family != "axial" and abs(eta0[k]) > 1e-6
     ]
     assert radial, "the Raman pair couples to the radial modes"
     for k in radial:
         w0, w1 = base.device.crystal.modes[k].omega_hz, scaled.device.crystal.modes[k].omega_hz
         assert w1 > w0
-        assert eta1[0, k] / eta0[0, k] == pytest.approx(math.sqrt(w0 / w1), rel=1e-6), (
+        assert eta1[k] / eta0[k] == pytest.approx(math.sqrt(w0 / w1), rel=1e-6), (
             "eta falls as 1/sqrt(omega_m)"
         )
     assert scaled.device.hash() != base.device.hash() != preset.device.hash()

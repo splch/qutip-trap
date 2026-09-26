@@ -394,15 +394,6 @@ class Crystal:
         c0 = 1.0 if micromotion is None else self.c0_for(ion, mode, micromotion)
         return projection * x0 * c0
 
-    def lamb_dicke_matrix(self, delta_k: np.ndarray, *, micromotion: MathieuParameters | None) -> np.ndarray:
-        """eta_{i,m} for every ion and mode, shape (N, 3N)."""
-        return np.array(
-            [
-                [self.lamb_dicke(i, k, delta_k, micromotion=micromotion) for k in range(len(self.modes))]
-                for i in range(self.n_ions)
-            ]
-        )
-
     def field_displacement_m(self, field_v_per_m: np.ndarray) -> np.ndarray:
         """The (N, 3) laboratory-frame shift of every equilibrium position under an added uniform field, to first order:
         K^{-1} e E with K the Hessian the crystal was solved with, sum_m (c_i^{(m)}/sqrt(m_i)) sum_j (c_j^{(m)} . e E)/
