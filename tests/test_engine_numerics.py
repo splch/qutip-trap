@@ -162,8 +162,8 @@ def test_heating_idle_in_the_rotating_frame_matches_the_master_equation(raman) -
 
 def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(raman) -> None:
     """A thermal mode under a carrier pulse evolves as sesolve eigen-branches that reproduce the master equation (P1 and state to
-    1e-6, n to 1e-5) and drop weight below the threshold with a note, also with the device's channels on when all their rates
-    are zero; a heated mixture keeps mesolve."""
+    1e-6, n to 1e-5) and drop weight below the threshold with a note (a threshold that keeps none is refused), also with the
+    device's channels on when all their rates are zero; a heated mixture keeps mesolve."""
     dev, dd, space = raman
     om = 2.0 * math.pi * dd.carrier_rabi_hz
     state = space.initial_state([0], thermal={KX: 0.8})
@@ -172,6 +172,8 @@ def test_a_mixture_without_dissipation_is_evolved_as_weighted_pure_branches(rama
     rebuilt = sum((w * k.proj() for k, w in zip(kets, weights)), 0.0 * kets[0].proj())
     assert (rebuilt - state.joint).norm() < 1e-12
     kets3, weights3, dropped3 = _pure_branches(state.joint, 0.05)
+    with pytest.raises(ValueError, match="keeps no branch"):
+        _pure_branches(qt.qeye(32) / 32.0, 0.05)
     assert len(kets3) < len(kets) and dropped3 > 0.0 and abs(sum(weights3) - 1.0) < 1e-12
     pulse = Pulse(square_drive(dd, include_stark=False), 0.0, 2.5 * math.pi / om, "p", ())
     sched = Schedule((pulse,), (), (), {0: 0.0})

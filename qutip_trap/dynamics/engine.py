@@ -1342,7 +1342,8 @@ def _mixture(kets: list[qt.Qobj], weights: list[float]) -> qt.Qobj:
 
 def _pure_branches(rho: qt.Qobj, weight_min: float) -> tuple[list[qt.Qobj], list[float], float]:
     """A density matrix as its eigen-decomposition into pure branches, heaviest first: (kets, weights >= ``weight_min``
-    renormalized, dropped weight); a product of thermal states is a mixture of Fock states (the Fock sum of Section 5.3)."""
+    renormalized, dropped weight); a product of thermal states is a mixture of Fock states (the Fock sum of Section 5.3).
+    A cutoff above every branch's weight is refused, never replaced by the heaviest branch alone."""
     mat = np.asarray(rho.full())
     mat = 0.5 * (mat + mat.conj().T)
     w, v = np.linalg.eigh(mat)
@@ -1350,7 +1351,10 @@ def _pure_branches(rho: qt.Qobj, weight_min: float) -> tuple[list[qt.Qobj], list
     order = [int(k) for k in np.argsort(-w)]
     keep = [k for k in order if w[k] >= weight_min * trace]
     if not keep:
-        keep = [order[0]]
+        raise ValueError(
+            f"branch_weight_min = {weight_min:g} keeps no branch of the initial mixture: its heaviest branch has weight "
+            f"{float(w[order[0]]) / trace:.3g}; lower branch_weight_min"
+        )
     total = float(np.sum(w[keep]))
     dims = [list(rho.dims[0]), [1] * len(rho.dims[0])]
     kets = [qt.Qobj(v[:, k].reshape(-1, 1), dims=dims) for k in keep]
