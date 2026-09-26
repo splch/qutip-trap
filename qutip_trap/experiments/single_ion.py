@@ -87,7 +87,8 @@ def _check_lab(kw: Mapping[str, Any]) -> None:
 
 def sub_stream(kw: Mapping[str, Any], label: str) -> dict[str, Any]:
     """The keywords of a sub-experiment with its own shot-noise stream: ``label`` appended to the parent's (Section 3.4),
-    for an experiment that repeats a scan (a Ramsey per beam of the Stark scan)."""
+    for an experiment that repeats a scan (a Ramsey per probe sign of the Ramsey-frequency experiment, per beam of the Stark
+    scan)."""
     parent = str(kw.get("stream", ""))
     return {**kw, "stream": f"{parent}/{label}" if parent else label}
 
@@ -561,7 +562,8 @@ def ramsey_frequency(
 ) -> ExperimentResult:
     """The qubit frequency for the table: ``frame_hz`` (the drive's reference) plus the offset x of the transition from it,
     from two Ramsey scans at drive detunings +-``probe_hz`` whose fringes |probe -+ x| resolve its sign (while |x| <
-    probe). Fitted: qubit_freq_hz, qubit_offset_hz, fringe_plus_hz and fringe_minus_hz."""
+    probe), each scan with its own shot noise (the sub-streams ``plus`` and ``minus``), so that the half-difference carries
+    the uncertainty of two independent fits. Fitted: qubit_freq_hz, qubit_offset_hz, fringe_plus_hz and fringe_minus_hz."""
     _check_lab(kw)
     probe = abs(float(probe_hz))
     plus, minus = (
@@ -573,9 +575,9 @@ def ramsey_frequency(
             rabi_hz_belief=rabi_hz_belief,
             rabi_hz=rabi_hz,
             include_stark=include_stark,
-            **kw,
+            **sub_stream(kw, label),
         )
-        for sign in (1.0, -1.0)
+        for sign, label in ((1.0, "plus"), (-1.0, "minus"))
     )
 
     def fringe(res: ExperimentResult) -> tuple[float, float]:

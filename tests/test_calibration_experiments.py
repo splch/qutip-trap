@@ -121,6 +121,30 @@ def test_microwave_ramsey_frequency() -> None:
         rabi_scan(Machine(dev), 0, [0.0, 1e-6, 2e-6, 3e-6])
 
 
+def test_the_two_probe_scans_of_ramsey_frequency_draw_independent_shot_noise() -> None:
+    """At zero qubit offset the +probe and -probe scans have the same exact populations, and each draws its own shot noise:
+    over 40 seeds their residuals are uncorrelated and the offset scatters as its reported uncertainty. Drawn from one
+    stream they were identical (correlation 1), and the offset scattered by 0 Hz against a reported 5.3 Hz."""
+    machine = Machine(microwave_device())
+    delays = np.linspace(0.0, 2e-3, 9)
+    kw: dict[str, Any] = {"rabi_hz": 2e4, "probe_hz": 1000.0}
+    exact = ramsey_frequency(machine, 0, delays, **kw)
+    n = len(delays)
+    assert np.allclose(exact.data[:n, 1], exact.data[n:, 1], atol=1e-9)
+    live = np.abs(exact.data[:n, 1] - 0.5) < 0.45  # the delays whose binomial draw is not degenerate
+    plus, minus, offsets, sigmas = [], [], [], []
+    for seed in range(40):
+        res = ramsey_frequency(machine, 0, delays, shots=200, seed=seed, **kw)
+        plus.append((res.data[:n, 1] - exact.data[:n, 1])[live])
+        minus.append((res.data[n:, 1] - exact.data[n:, 1])[live])
+        offset, sigma = res.fitted["qubit_offset_hz"]
+        offsets.append(offset)
+        sigmas.append(sigma)
+    correlation = float(np.corrcoef(np.concatenate(plus), np.concatenate(minus))[0, 1])
+    assert abs(correlation) < 0.3, correlation
+    assert 0.5 < float(np.std(offsets)) / float(np.mean(sigmas)) < 2.0, (np.std(offsets), np.mean(sigmas))
+
+
 def test_sideband_spectroscopy_finds_the_blue_sideband_and_the_dark_red_one(single) -> None:
     """From n = 0 the blue sideband, found at 3.0 MHz to 10 kHz, flops above 0.9 while the red one stays below 1e-3."""
     dev, dd = single
