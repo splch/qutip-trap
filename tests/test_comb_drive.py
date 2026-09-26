@@ -352,7 +352,7 @@ def test_the_factory_reports_the_guards_it_cannot_evaluate() -> None:
 
 def test_the_tone_set_and_the_static_shift_share_one_operator_and_one_grid() -> None:
     """Widening the cut moves the two neighbouring beat notes (-/+80 MHz) from the folded sum into the tone list without adding
-    drive terms to the built Hamiltonian."""
+    drive terms to the built Hamiltonian, and the frame's highest frequency moves from the 3 MHz mode to nu_rep."""
     dev, dd, comb, nu_q = _fixture()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -365,7 +365,6 @@ def test_the_tone_set_and_the_static_shift_share_one_operator_and_one_grid() -> 
     built = build_hamiltonian(dev, (Pulse(wide, 0.0, 1e-6, "comb", ()),), space, sample=quiet_sample())
     built_one = build_hamiltonian(dev, (Pulse(one, 0.0, 1e-6, "comb", ()),), space, sample=quiet_sample())
     assert built.n_drive_terms == built_one.n_drive_terms
-    # the highest frame frequency jumps from the mode scale to nu_rep once a neighbour is retained
-    assert built.omega_max_rad_s > 10.0 * built_one.omega_max_rad_s or np.isclose(
-        built.omega_max_rad_s, built_one.omega_max_rad_s
-    )
+    # the highest frame frequency: the mode alone, then the retained neighbours' beat notes at +-nu_rep
+    assert built_one.omega_max_rad_s == pytest.approx(dev.crystal.modes[KX].omega_rad_s, rel=1e-12)
+    assert built.omega_max_rad_s == pytest.approx(TWO_PI * comb.rep_rate_hz, rel=1e-12)
