@@ -178,7 +178,7 @@ class OffsetFn:
         return float(self.fn(tau)) + self.offset
 
 
-def _shift_detuning(waveform: Waveform, offset_hz: float) -> Waveform:
+def shift_detuning(waveform: Waveform, offset_hz: float) -> Waveform:
     """Every blue leg + offset, every red leg - offset: the symmetric detuning scan of Section 7.5."""
     from qutip_trap.control.table import Segment
 
@@ -232,7 +232,7 @@ def ms_scan(
 
     def amplitude_row(off: float) -> None:
         """One amplitude scan at detuning offset ``off``, appended to the rows."""
-        wf_off = _shift_detuning(g.waveform, off)
+        wf_off = shift_detuning(g.waveform, off)
         for s in scales:
             check = _gate_check(lab, g, scaled(wf_off, s), pair)
             p, sg = lab.obs.joint(_pops4(check.populations), pair, "ms_scan", len(rows))

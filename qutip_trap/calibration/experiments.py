@@ -241,7 +241,7 @@ def full_calibration(
     enters the table as its own proposal (``CalibrationTable.updated_with``), stamped at ``t0_s`` and the sample's id."""
     from qutip_trap.control.schedule import resolve_drives
     from qutip_trap.control.shaping import phase_shifted, scaled
-    from qutip_trap.experiments.entangling import _shift_detuning, ms_phase_scan, ms_scan, parity_scan
+    from qutip_trap.experiments.entangling import ms_phase_scan, ms_scan, parity_scan, shift_detuning
     from qutip_trap.experiments.imaging import crystal_image
     from qutip_trap.experiments.light import crosstalk_scan, field_scan, stark_scan
     from qutip_trap.experiments.micromotion import micromotion_scan
@@ -533,7 +533,7 @@ def full_calibration(
                     s_cl, s_unc = res.fitted["closure_scale"]
                     # the offset the SCALE was measured at (the fitted closure offset when the parabola converged)
                     off = res.fitted.get("closure_offset_used_hz", (0.0, 0.0))[0]
-                    current = scaled(_shift_detuning(wf, off), s_cl)
+                    current = scaled(shift_detuning(wf, off), s_cl)
                     chi = math.copysign(math.pi / 4.0, wf.chi_total_rad)
                     current = replace(
                         current,
