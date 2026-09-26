@@ -298,6 +298,32 @@ def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with()
         assert intrinsic_budget(dev, sched, selection)["ms.beat_phase_tilt"] == pytest.approx(want, abs=1e-15)
 
 
+def test_a_resetting_chain_plays_an_fm_gate_a_quarter_beat_in_as_it_plays_at_t_zero() -> None:
+    """The builder starts a detuning schedule's beat at 2 pi mu(0) t_start in absolute time, and the per-gate reset cancels
+    it: Leung's FM pulse started a quarter beat into the schedule on hardware that programs each gate from its own start
+    leaves every input where the pulse at t = 0 leaves it (trace distance below 1e-8 from |++>, |00>, |01> and |+ +i>,
+    where the running beat moves them by 8.3e-2), and the budget's tilt at t_g is its tilt at t = 0."""
+    device = chain_device(2)
+    reset_hw = dataclasses.replace(
+        device, hardware=dataclasses.replace(device.hardware, phase_continuous=False)
+    )
+    modes = two_ion_modes(device).subset([X_COM_TWO_IONS])
+    fm = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=5, mu0_hz=3.012e6).waveform
+    mu = fm.segments[0].detuning_hz["blue"]
+    assert callable(mu)
+    t_g = 0.25 / float(mu(0.0))
+    plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+    plus_i = (qt.basis(2, 0) + 1j * qt.basis(2, 1)).unit()
+    zero, one = qt.basis(2, 0), qt.basis(2, 1)
+    for ket in (qt.tensor(plus, plus), qt.tensor(zero, zero), qt.tensor(zero, one), qt.tensor(plus, plus_i)):
+        at_zero = _played_from(reset_hw, fm, 0.0, ket, reset=True)
+        at_quarter = _played_from(reset_hw, fm, t_g, ket, reset=True)
+        assert qt.tracedist(at_zero, at_quarter) < 1e-8
+    assert roos_beat_phase_tilt(fm, t_g, beat_reset=True) == pytest.approx(
+        roos_beat_phase_tilt(fm, 0.0, beat_reset=True), abs=1e-15
+    )
+
+
 @pytest.mark.slow
 def test_a_stepped_envelope_moves_less_than_its_switch_on_tilt() -> None:
     """Five-segment AM closing both x modes (33, 107, 148, 107, 33 kHz): started at zeta = pi/2 its |++> output moves by

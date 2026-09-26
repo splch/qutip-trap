@@ -436,11 +436,12 @@ def compensation_phase_rad(shift_hz: float | Callable[[float], float], t_start_s
 
 def beat_phase_offset_rad(detuning_hz: float | Callable[[float], float], t_gate_start_s: float) -> float:
     """The tone phase that resets a continuously running beat note to zero at the GATE start (hardware that programs each
-    gate from its own start): phi_prog + 2 pi mu t_g makes the tone e^{-i(2 pi mu (t - t_g) - phi_prog)}; the red and blue
-    legs shift oppositely, so the spin phase (their half-sum) is untouched. A frequency-modulated leg needs none."""
-    if callable(detuning_hz):
-        return 0.0
-    return (TWO_PI * float(detuning_hz) * float(t_gate_start_s)) % TWO_PI
+    gate from its own start): 2 pi mu(0) t_g, the phase the builder's absolute-time beat has reached at the gate start for
+    a constant detuning (mu t) and a detuning schedule (int mu dtau from mu(0) t_start) alike, so phi_prog + 2 pi mu(0) t_g
+    plays every segment of the gate as it plays from t_g = 0; the red and blue legs shift oppositely, so the spin phase
+    (their half-sum) is untouched."""
+    mu0 = float(detuning_hz(0.0)) if callable(detuning_hz) else float(detuning_hz)
+    return (TWO_PI * mu0 * float(t_gate_start_s)) % TWO_PI
 
 
 def response_phase_rad(detuning_hz: float | Callable[[float], float], delay_s: float) -> float:

@@ -255,7 +255,8 @@ def test_branch_enumeration_weights_and_cutoff() -> None:
 
 def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase() -> None:
     """Programming each gate's tones from its own start shifts the red and blue legs by opposite phases 2 pi mu t_g and
-    leaves their half-sum, the spin phase, unchanged (to 1e-9); phase-continuous hardware leaves the legs alone."""
+    leaves their half-sum, the spin phase, unchanged (to 1e-9); phase-continuous hardware leaves the legs alone, and a
+    detuning schedule is shifted by the phase of its starting detuning."""
     device = dataclasses.replace(yb171_chain(2).device, preparation=None)
     modes = two_ion_modes(device)
     wf = Waveform.symmetric(modes, gate_mode=3, epsilon_hz=20e3)
@@ -291,9 +292,9 @@ def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase()
     assert beat_phase_offset_rad(-mu, 3e-6) == pytest.approx(
         (-beat_phase_offset_rad(mu, 3e-6)) % (2 * math.pi), abs=1e-9
     )
-    assert beat_phase_offset_rad(lambda tau: 1.0, 3.0) == 0.0, (
-        "an FM leg is integrated from the pulse start by the builder"
-    )
+    assert beat_phase_offset_rad(lambda tau: mu + 1e9 * tau, 3e-6) == pytest.approx(
+        beat_phase_offset_rad(mu, 3e-6), abs=1e-12
+    ), "the builder starts a detuning schedule's beat at 2 pi mu(0) t_start, which the reset cancels"
 
 
 # ---- circuits on fewer qubits than ions -------------------------------------------------------------------------------------
