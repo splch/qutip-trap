@@ -19,6 +19,7 @@ from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions, build_hamiltonian
 from qutip_trap.dynamics.kernels import (
     FactorizedOperator,
+    _ApplicationPlan,
     factorized_qobj,
     kernel_costs_us,
     prefer_factorized,
@@ -392,13 +393,13 @@ def _counted_coefficient(t: float, Om: float, mu: float, tag: object = None) -> 
 
 
 # The four rows under dop853 at atol 1e-10, rtol 1e-8: (right-hand-side evaluations, factorized us per evaluation, CSR us
-# per evaluation, factorized wall time in seconds) on the reference machine. The evaluation counts are set by the
-# integrator's arithmetic; the costs and the wall time are the machine's.
+# per evaluation) on the reference machine. The evaluation counts are set by the integrator's arithmetic; the costs are
+# the machine's, so only their ratio is compared.
 REFERENCE_ROWS = {
-    (1, 12): (19283, 13.2, 1.9, 0.25),
-    (2, 8): (21067, 21.5, 16.7, 0.35),
-    (3, 6): (24366, 45.4, 195.2, 1.11),
-    (3, 8): (35177, 89.5, 1207.9, 3.15),
+    (1, 12): (19283, 13.2, 1.9),
+    (2, 8): (21067, 21.5, 16.7),
+    (3, 6): (24366, 45.4, 195.2),
+    (3, 8): (35177, 89.5, 1207.9),
 }
 
 
@@ -431,10 +432,27 @@ def _ms_hamiltonian(nmodes: int, nmax: int, factorized: bool) -> qt.QobjEvo:
 
 
 @pytest.mark.slow
-@pytest.mark.heavy  # wall times against the reference machine's: measured alone, never beside other workers
-def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_time() -> None:
-    """On the four Section 11.1 rows both kernels reach the same state (2e-7) in the reference evaluation counts (20%), with the
-    cost ratio within a factor of two, the factorized wall time within a factor of eight, and the crossover."""
+@pytest.mark.heavy  # the two kernels' wall times against each other: measured alone, never beside other workers
+def test_section_11_1_rows_factorized_against_assembled_final_states_and_cost(monkeypatch) -> None:
+    """On the four Section 11.1 rows both kernels reach the same state (2e-7) in the reference evaluation counts (20%); the
+    factorized solve applies every drive term through its factor plan, sum_m d_m multiply-adds per amplitude of the source
+    level against the prod_m d_m of the assembled term, and never assembles it; the cost ratio stays within a factor of two
+    of the reference machine's, and the crossover holds."""
+    plan_calls = [0]
+    assemblies = [0]
+    transform = _ApplicationPlan._transform
+    to_array = FactorizedOperator.to_array
+
+    def counted_transform(plan, *args, **kwargs):
+        plan_calls[0] += 1
+        return transform(plan, *args, **kwargs)
+
+    def counted_to_array(op):
+        assemblies[0] += 1
+        return to_array(op)
+
+    monkeypatch.setattr(_ApplicationPlan, "_transform", counted_transform)
+    monkeypatch.setattr(FactorizedOperator, "to_array", counted_to_array)
     walls: dict[tuple[int, int, bool], float] = {}
     per_eval: dict[tuple[int, int, bool], float] = {}
     for nmodes, nmax in [(1, 12), (2, 8), (3, 6), (3, 8)]:
@@ -443,7 +461,7 @@ def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_ti
         psi0 = qt.tensor(qt.basis(2, 1), qt.basis(2, 1), *[qt.basis(nmax, 0)] * nmodes)
         for factorized in (False, True):
             h = _ms_hamiltonian(nmodes, nmax, factorized)
-            COEFFICIENT_CALLS[0] = 0
+            COEFFICIENT_CALLS[0] = plan_calls[0] = assemblies[0] = 0
             t0 = time.perf_counter()
             res = qt.sesolve(
                 h,
@@ -463,18 +481,28 @@ def test_section_11_1_rows_factorized_against_assembled_final_states_and_wall_ti
             walls[(nmodes, nmax, factorized)] = wall
             per_eval[(nmodes, nmax, factorized)] = 1e6 * wall / max(evals[factorized], 1)
             finals[factorized] = res.final_state
+            if factorized:
+                # one application of the factor plan per coefficient call, and the matrix never assembled
+                assert plan_calls[0] == COEFFICIENT_CALLS[0] and assemblies[0] == 0, (
+                    nmodes,
+                    nmax,
+                    plan_calls[0],
+                    COEFFICIENT_CALLS[0],
+                    assemblies[0],
+                )
+                # an application slices the ion factor and runs one dense product per mode factor on the D/2 amplitudes
+                # of the source level
+                for term in (el[0].data for el in h.to_list() if isinstance(el, list)):
+                    steps = term._plan.steps
+                    assert [kind for kind, *_rest in steps] == ["dense"] * nmodes, (nmodes, nmax)
+                    macs = sum(lead * d * d * trail for _kind, lead, d, trail, *_mats in steps)
+                    assert macs == psi0.shape[0] // 2 * nmodes * nmax, (nmodes, nmax, macs)
         assert (finals[True] - finals[False]).norm() < 2e-7, (nmodes, nmax)
-        n_ref, us_fact, us_csr, wall_fact = REFERENCE_ROWS[(nmodes, nmax)]
+        n_ref, us_fact, us_csr = REFERENCE_ROWS[(nmodes, nmax)]
         # the two kernels take the same steps here; on the Linux runner the integrator's step choice differs by 8%
         assert evals[True] == pytest.approx(evals[False], rel=0.1), (nmodes, nmax, evals)
         assert evals[True] == pytest.approx(n_ref, rel=0.2), (nmodes, nmax, evals[True], n_ref)
         ratio = per_eval[(nmodes, nmax, True)] / per_eval[(nmodes, nmax, False)]
         assert ratio == pytest.approx(us_fact / us_csr, rel=1.0), (nmodes, nmax, ratio, us_fact / us_csr)
-        assert 0.125 * wall_fact < walls[(nmodes, nmax, True)] < 8.0 * wall_fact, (
-            nmodes,
-            nmax,
-            walls[(nmodes, nmax, True)],
-            wall_fact,
-        )
     assert walls[(3, 8, True)] < 0.5 * walls[(3, 8, False)], walls
     assert walls[(1, 12, False)] < walls[(1, 12, True)], walls
