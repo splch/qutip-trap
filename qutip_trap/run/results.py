@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -171,6 +171,18 @@ class ScatteringScales:
 BudgetRecord = EntanglingScales | CarrierScales | ScatteringScales
 
 
+def gate_piece_of(gate_id: str, gate_ids: Iterable[str]) -> str | None:
+    """The schedule ``gate_id`` a budget record's gate id belongs to: the longest gate id that equals it or prefixes it at a
+    slash (an entangling segment's per-ion pulse ``ms[2]/seg0/ion0``; a gate id may itself contain a slash: the ZZ
+    wrapper's ``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/wrap_in/ion0``)."""
+    best: str | None = None
+    for gid in gate_ids:
+        if gate_id == gid or (gate_id.startswith(gid) and gate_id[len(gid)] == "/"):
+            if best is None or len(gid) > len(best):
+                best = gid
+    return best
+
+
 @dataclass(frozen=True)
 class IntrinsicBudget:
     """The closed-form error scales a run reports beside its result (Section 9.6, ``run.job.intrinsic_budget``): per played
@@ -199,6 +211,18 @@ class IntrinsicBudget:
         out: dict[str, float] = {}
         for r in self.records:
             out[r.gate_id] = out.get(r.gate_id, 0.0) + r.total
+        return out
+
+    def by_piece(self, gate_ids: Iterable[str]) -> dict[str, float]:
+        """``by_gate`` charged to the schedule pieces ``gate_ids`` its gate ids belong to (``gate_piece_of``); a record that
+        belongs to none raises."""
+        pieces = tuple(gate_ids)
+        out: dict[str, float] = {}
+        for gid, val in self.by_gate().items():
+            piece = gate_piece_of(gid, pieces)
+            if piece is None:
+                raise ValueError(f"the budget record {gid!r} belongs to no piece of the schedule")
+            out[piece] = out.get(piece, 0.0) + val
         return out
 
     def to_dict(self) -> dict[str, Any]:

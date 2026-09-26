@@ -12,7 +12,6 @@ import pytest
 
 from qutip_trap.benchmarks.budget import (
     BenchmarkBudget,
-    gate_piece_of,
     intrinsic_by_kind,
     kinds_of_schedule,
     one_gate_circuit,
@@ -56,7 +55,13 @@ from qutip_trap.noise.summary import (
 )
 from qutip_trap.options import Numerics
 from qutip_trap.run.job import last_record
-from qutip_trap.run.results import CarrierScales, EntanglingScales, IntrinsicBudget, ScatteringScales
+from qutip_trap.run.results import (
+    CarrierScales,
+    EntanglingScales,
+    IntrinsicBudget,
+    ScatteringScales,
+    gate_piece_of,
+)
 from tests.fixtures import FAST, make_result, two_ion_surrogate
 
 

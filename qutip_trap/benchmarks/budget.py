@@ -19,7 +19,7 @@ Every prediction states its composition rule in ``notes``; none of it is fed bac
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -57,29 +57,15 @@ def kinds_of_schedule(schedule: Schedule) -> dict[str, str]:
     return {t.gate_id: kind_of(t.native[0], t.ions) for t in schedule.targets}
 
 
-def gate_piece_of(gate_id: str, gate_ids: Iterable[str]) -> str | None:
-    """The schedule ``gate_id`` a budget record's gate id belongs to: the longest gate id that equals it or prefixes it at a
-    slash (an entangling segment's per-ion pulse ``ms[2]/seg0/ion0``; a gate id may itself contain a slash: the ZZ
-    wrapper's ``zz[k]/ms``, ``zz[k]/loop1``, ``zz[k]/wrap_in/ion0``)."""
-    best: str | None = None
-    for gid in gate_ids:
-        if gate_id == gid or (gate_id.startswith(gid) and gate_id[len(gid)] == "/"):
-            if best is None or len(gid) > len(best):
-                best = gid
-    return best
-
-
 def intrinsic_by_kind(budget: IntrinsicBudget, kinds: Mapping[str, str]) -> dict[str, float]:
     """The closed-form intrinsic scales of one run summed per kind: every record's summed terms (``IntrinsicBudget.by_gate``)
-    charged to the schedule piece its gate id belongs to, so the kinds add up to the run's total. Each record is summed over
+    charged to the schedule piece its gate id belongs to (``IntrinsicBudget.by_piece``), so the kinds add up to the run's
+    total. Each record is summed over
     the kind's whole schedule entry, the crosstalk it inflicts outside the benchmarked set included (``gpi2[0]``'s
     ``crosstalk`` is the neighbour's rotation error), so the total bounds a larger error than the channel infidelities,
     which are reduced to the benchmarked qubits."""
     out: dict[str, float] = {}
-    for gid, val in budget.by_gate().items():
-        piece = gate_piece_of(gid, kinds)
-        if piece is None:
-            raise ValueError(f"the budget record {gid!r} belongs to no piece of the schedule")
+    for piece, val in budget.by_piece(kinds).items():
         out[kinds[piece]] = out.get(kinds[piece], 0.0) + val
     return out
 
