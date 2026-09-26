@@ -385,6 +385,42 @@ def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_th
     assert got == pytest.approx(expected, rel=5e-3, abs=1e-9)
 
 
+# ---- the equilibrium's response to an added field --------------------------------------------------------------------------
+
+
+def _field_response_fd(trap: Trap, ions: tuple, field: np.ndarray, step: float = 1e-3) -> np.ndarray:
+    """The re-solved crystal's position shift per unit of ``field`` added to the stray field (a central difference)."""
+
+    def positions(sign: float) -> np.ndarray:
+        stray = np.asarray(trap.stray_field_v_per_m) + sign * step * field
+        return solve_crystal(dataclasses.replace(trap, stray_field_v_per_m=tuple(stray)), ions).positions_m
+
+    return (positions(1.0) - positions(-1.0)) / (2.0 * step)
+
+
+def test_the_field_displacement_is_the_linear_response_of_the_re_solved_crystal_on_every_trap_path() -> None:
+    """On the explicit, rod and surface paths, mixed crystals included, ``field_displacement_m`` is the shift of the re-solved
+    equilibrium (1e-6): rigid along z, where the dc curvature is mass-independent, the lighter and stiffer 40Ca+ displaced
+    less transversely, and an equal-mass chain in rotated axes moves rigidly by K^{-1} e E."""
+    sr, ca, yb = species("88Sr+"), species("40Ca+"), species("171Yb+")
+    field = np.array([3.0, -2.0, 5.0])
+    explicit = dataclasses.replace(secular_trap((3.0e6, 2.9e6, 1.0e6)), rf=RfDrive(0.0, 60e6))
+    surface = _house_surface(sr.mass_u * ATOMIC_MASS_KG)
+    for trap, ions in ((explicit, (sr, ca)), (_rod(), (yb, ca)), (surface, (sr, ca)), (surface, (sr, sr))):
+        shift = solve_crystal(trap, ions).field_displacement_m(field)
+        expected = _field_response_fd(trap, ions, field)
+        assert shift == pytest.approx(expected, rel=1e-6, abs=1e-6 * float(np.max(np.abs(expected))))
+        assert shift[0, 2] == pytest.approx(shift[1, 2], rel=1e-12)
+        if ions[1] is ca:
+            assert np.all(np.abs(shift[1, :2]) < np.abs(shift[0, :2]))
+    rotated = dataclasses.replace(secular_trap((3.0e6, 2.9e6, 1.0e6)), axis_angle_rad=0.3)
+    chain = solve_crystal(rotated, (yb, yb, yb))
+    axes = chain.principal_axes
+    spring = yb.mass_u * ATOMIC_MASS_KG * (TWO_PI * np.asarray(rotated.omega_hz)) ** 2
+    rigid = axes @ (axes.T @ (E_C * field) / spring)
+    assert chain.field_displacement_m(field) == pytest.approx(np.tile(rigid, (3, 1)), rel=1e-12, abs=1e-20)
+
+
 # ---- the trap quantities of Device.derived() ------------------------------------------------------------------------------
 
 

@@ -13,8 +13,9 @@ channel; ``rf_amplitude_noise`` (dV/V)^2/(rad/s) on the transverse modes, its wh
 with 2/tau = omega_m^2 S_V,white; ``rf_phase_noise`` is recorded and not applied; ``rabi_amplitude`` (rad/s)^2/(rad/s) is
 read by ``noise/decoupling.py``; ``beam_phase_noise`` rad^2/(rad/s) per beam. Drifts: ``rf_amplitude_drift`` and
 ``rabi_drift`` fractional, ``mode_drift_differential`` Hz per mode, ``beam_phase_drift`` rad per beam, ``field_drift`` T
-(exact transition offsets at the shifted field), ``stray_field_drift`` V/m (a displacement e E/(m omega^2) of every ion),
-``pointing_drift`` m per beam transverse to it, ``laser_frequency_drift`` Hz (not seen by an rf-referenced Raman beat note).
+(exact transition offsets at the shifted field), ``stray_field_drift`` V/m (a laboratory-frame field that shifts every ion
+by the crystal's linear response, ``Crystal.field_displacement_m``), ``pointing_drift`` m per beam transverse to it,
+``laser_frequency_drift`` Hz (not seen by an rf-referenced Raman beat note).
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ from qutip_trap.noise.sampling import (
     time_grid,
 )
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, NoiseSpectrum, white_spectrum
-from qutip_trap.units import E_C, GAUSS_PER_TESLA, TWO_PI
+from qutip_trap.units import GAUSS_PER_TESLA, TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
@@ -396,15 +397,12 @@ class NoiseModel:
                     if offset[ax] != 0.0:
                         values[key_beam_offset_m(b, ax)] = float(offset[ax])
         if not self.stray_field_drift.quiet:
-            omegas = device.trap.omega_hz
-            if omegas is not None:
-                for i in range(device.crystal.n_ions):
-                    mass = float(device.crystal.masses_kg[i])
-                    for ax in range(3):
-                        e_field = amp_fn("stray_field_drift", ax)
-                        w = TWO_PI * float(omegas[ax])
-                        if e_field != 0.0:
-                            values[key_position_offset_m(i, ax)] = float(E_C * e_field / (mass * w * w))
+            e_field = np.array([amp_fn("stray_field_drift", ax) for ax in range(3)])
+            shift = device.crystal.field_displacement_m(e_field)
+            for i in range(device.crystal.n_ions):
+                for ax in range(3):
+                    if shift[i, ax] != 0.0:
+                        values[key_position_offset_m(i, ax)] = float(shift[i, ax])
 
     def _synthesize(
         self,

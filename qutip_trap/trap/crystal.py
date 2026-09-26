@@ -403,6 +403,26 @@ class Crystal:
             ]
         )
 
+    def field_displacement_m(self, field_v_per_m: np.ndarray) -> np.ndarray:
+        """The (N, 3) laboratory-frame shift of every equilibrium position under an added uniform field, to first order:
+        K^{-1} e E with K the Hessian the crystal was solved with, sum_m (c_i^{(m)}/sqrt(m_i)) sum_j (c_j^{(m)} . e E)/
+        (sqrt(m_j) omega_m^2) over the mass-weighted mode patterns.
+
+        An equal-mass chain moves rigidly by e E_a/(m omega_a^2) along each principal axis; in a mixed crystal the axial
+        shift is still rigid (the dc curvature is mass-independent) while the unequal transverse springs are coupled by the
+        Coulomb interaction.
+        """
+        e = np.asarray(field_v_per_m, dtype=float)
+        if e.shape != (3,):
+            raise ValueError("the field is a laboratory-frame 3-vector in V/m")
+        force = E_C * e
+        inv_sqrt_m = 1.0 / np.sqrt(self.masses_kg)
+        shift = np.zeros((self.n_ions, 3))
+        for m in self.modes:
+            weighted = m.displacement_pattern() * inv_sqrt_m[:, None]
+            shift += weighted * float(np.sum(weighted @ force)) / m.omega_rad_s**2
+        return shift
+
     def uniform_field_weight(self, mode: int) -> float:
         """(sum_i c_i^{(k)}/sqrt(m_i))^2 in kg^-1: the mode's coupling to a uniform electric field (Kielpinski Eq. 20).
 

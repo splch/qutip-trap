@@ -35,13 +35,19 @@ from qutip_trap.noise.sampling import (
     key_beam_phase_rad,
     key_beam_phase_trajectory_rad,
     key_mode_offset_hz,
+    key_position_offset_m,
     key_qubit_offset_hz,
     key_qubit_trajectory_hz,
     quiet_sample,
 )
 from qutip_trap.noise.spectra import Collisions, Drift, Mains, ou_spectrum, power_law_spectrum, white_spectrum
 from qutip_trap.options import Numerics
+from qutip_trap.species import species
+from qutip_trap.trap.crystal import solve_crystal
 from qutip_trap.trap.heating import heating_rate_quanta_per_s, s_e_from_heating_rate, thermal_collapse_rates
+from qutip_trap.trap.model import Trap
+from qutip_trap.trap.pseudopotential import DcElectrodes, RfDrive
+from qutip_trap.trap.surface import Electrodes
 from qutip_trap.units import ATOMIC_MASS_KG, GAUSS_PER_TESLA
 from tests.fixtures import chain_device, single_ion_raman_device
 
@@ -258,6 +264,44 @@ def test_sample_sequence_draws_drifts_at_the_shot_clock_with_their_correlation_a
     c = np.array([p[2].values[KEY_FIELD_OFFSET_T] - 5e-7 for p in pairs])
     assert np.corrcoef(a, b)[0, 1] > 0.99 and abs(np.corrcoef(a, c)[0, 1]) < 0.15
     assert not noisy.noise.is_quiet()
+
+
+def test_a_stray_field_drift_moves_every_ion_by_the_crystal_response_on_any_trap() -> None:
+    """A stray-field drift on a voltage-defined rod trap holding 171Yb+ and 40Ca+ (no secular frequencies to read) shifts
+    the ions by the re-solved crystal's response to one uniform field (1e-6): the same axial shift on both ions and a smaller
+    transverse one on the stiffer 40Ca+."""
+    yb, ca = species("171Yb+"), species("40Ca+")
+    trap = Trap(
+        omega_hz=None,
+        axis_angle_rad=0.0,
+        rf=RfDrive(300.0, 20e6),
+        dc=DcElectrodes({"endcaps": 8.0}),
+        geometry=Electrodes("rod_quadrupole", {"R_m": 1.0e-3, "Z0_m": 2.0e-3, "kappa": 0.3}),
+        stray_field_v_per_m=(0.0, 0.0, 0.0),
+        shim_voltages_v={},
+    )
+    ions = (yb, ca)
+    dev = dataclasses.replace(
+        chain_device(2),
+        trap=trap,
+        crystal=solve_crystal(trap, ions),
+        noise=NoiseModel(stray_field_drift=Drift(10.0, 1.0, None)),
+    )
+    sample = dev.noise.sample(np.random.default_rng(3), device=dev)
+    shift = np.array([[sample.values[key_position_offset_m(i, ax)] for ax in range(3)] for i in range(2)])
+    step = 1e-3  # V/m along each axis: the re-solved crystal's response matrix by central differences
+
+    def positions(field: np.ndarray) -> np.ndarray:
+        return solve_crystal(dataclasses.replace(trap, stray_field_v_per_m=tuple(field)), ions).positions_m
+
+    response = np.stack(
+        [(positions(step * e) - positions(-step * e)).ravel() / (2.0 * step) for e in np.eye(3)], axis=1
+    )
+    field, *_ = np.linalg.lstsq(response, shift.ravel(), rcond=None)
+    assert 1.0 < float(np.linalg.norm(field)) < 100.0, "a field of the drift's 10 V/m scale"
+    assert shift.ravel() == pytest.approx(response @ field, rel=1e-6, abs=1e-6 * float(np.max(np.abs(shift))))
+    assert shift[0, 2] == pytest.approx(shift[1, 2], rel=1e-12)
+    assert np.all(np.abs(shift[1, :2]) < np.abs(shift[0, :2]))
 
 
 def test_sampled_bands_become_per_ion_trajectories_through_the_sensitivities_plus_the_mains() -> None:
