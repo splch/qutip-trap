@@ -329,6 +329,33 @@ def test_a_deliberate_tolerance_survives_the_large_mode_atol_keying() -> None:
     assert loose.atol == 1e-6
 
 
+@pytest.mark.parametrize("d", [LARGE_MODE_DIMENSION, LARGE_MODE_DIMENSION + 1])
+def test_the_ket_and_trajectory_paths_key_the_large_mode_atol_alike(raman, d: int) -> None:
+    """A pi/2 pulse on a mode of d levels runs at one atol on the ket path and on the trajectory path: the default relaxes
+    to LARGE_MODE_ATOL above d_m = 100 while a tightened (1e-11) or an explicit (1e-9) atol is kept, so the tightened
+    re-run of a convergence check on trajectories tightens atol too."""
+    dev, dd, _space = raman
+    space = HilbertSpace((2,), (ModeTruncation(KX, d, (0, 0), 0.2),), None, (0, 2))
+    state = space.initial_state([0])
+    t_half = 0.25 / dd.carrier_rabi_hz
+    sched = Schedule((Pulse(square_drive(dd, include_stark=False), 0.0, t_half, "p", ()),), (), (), {0: 0.0})
+    default = LARGE_MODE_ATOL if d > LARGE_MODE_DIMENSION else Numerics().atol
+    atols = {}
+    for label, opts, expected in (
+        ("default", Numerics(), default),
+        ("tightened", tightened(Numerics()), tightened(Numerics()).atol),
+        ("explicit", Numerics(atol=1e-9), 1e-9),
+    ):
+        _, ket = _run(dev, sched, state, space, opts)
+        on_trajectories = dataclasses.replace(opts, lindblad_method="mcsolve", ntraj=2, map="serial")
+        _, traj = _run(_heated(dev), sched, state, space, on_trajectories, device_channels=True)
+        seg_ket, seg_traj = ket.last_report.segments[0], traj.last_report.segments[0]
+        assert (seg_ket.method, seg_traj.method) == ("sesolve", "mcsolve")
+        assert seg_ket.atol == seg_traj.atol == expected, (label, seg_ket.atol, seg_traj.atol)
+        atols[label] = seg_traj.atol
+    assert atols["tightened"] < atols["default"], "the tightened re-run tightens atol, not only rtol"
+
+
 @pytest.mark.slow
 def test_the_ladder_at_the_large_caps() -> None:
     """A spin-dependent force at d_m = 101, 121, 151 and 201 integrates on dop853 with no retry, atol LARGE_MODE_ATOL and norm 1

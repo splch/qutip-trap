@@ -27,6 +27,16 @@ LARGE_MODE_ATOL = 1e-8
 _DEFAULT_ATOL = Numerics().atol
 
 
+def keyed_atol(options: Numerics, largest_mode_dimension: int) -> float:
+    """The atol an integration starts from on a space whose largest resolved mode has ``largest_mode_dimension`` Fock
+    levels (0 without one): ``LARGE_MODE_ATOL`` above ``LARGE_MODE_DIMENSION`` where ``options`` keeps the default atol,
+    else ``options.atol``, so a tightened or a deliberately set atol is kept. The ladder of ``evolve`` and the engine's
+    trajectory path both start from it."""
+    if largest_mode_dimension > LARGE_MODE_DIMENSION and options.atol == _DEFAULT_ATOL:
+        return LARGE_MODE_ATOL
+    return options.atol
+
+
 @dataclass(frozen=True)
 class Evolution:
     """One integration: the final state, the state and the expectation values at every requested time, and the rung that
@@ -84,25 +94,20 @@ def evolve(
     e_ops: Mapping[str, qt.Qobj] | None = None,
     options: Numerics | None = None,
     omega_max_rad_s: float | None = None,
-    largest_mode_dimension: int | None = None,
+    largest_mode_dimension: int = 0,
     propagator: bool = False,
 ) -> Evolution:
     """Integrate from ``times_s[0]`` to ``times_s[-1]`` through the ladder, storing the state at every time.
 
-    ``propagator=True`` integrates an operator-valued ``state0`` (the identity) under ``sesolve``, so the stored states are
-    the propagators U(t, t_0). Only the integrator's own ``IntegratorException`` escalates; anything else propagates.
+    The ladder starts from ``keyed_atol(options, largest_mode_dimension)``. ``propagator=True`` integrates an
+    operator-valued ``state0`` (the identity) under ``sesolve``, so the stored states are the propagators U(t, t_0). Only
+    the integrator's own ``IntegratorException`` escalates; anything else propagates.
     """
     opts = options or Numerics()
     times = np.asarray(times_s, dtype=float)
     if times.ndim != 1 or times.size < 2 or np.any(np.diff(times) <= 0.0):
         raise ValueError("times_s must be an increasing array with at least two points")
-    atol = opts.atol
-    if (
-        largest_mode_dimension is not None
-        and largest_mode_dimension > LARGE_MODE_DIMENSION
-        and opts.atol == _DEFAULT_ATOL
-    ):
-        atol = LARGE_MODE_ATOL
+    atol = keyed_atol(opts, largest_mode_dimension)
     ladder: list[tuple[str, float, float]] = [(m, atol, 0.0) for m in opts.integrators]
     last = opts.integrators[-1]
     max_step = (2.0 * math.pi / omega_max_rad_s / 14.0) if omega_max_rad_s else 0.0

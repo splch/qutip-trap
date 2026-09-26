@@ -640,7 +640,7 @@ class JointExactEngine:
         growth_retries: int,
         growth_notes: tuple[str, ...] = (),
     ) -> Traces:
-        from qutip_trap.dynamics.evolve import LARGE_MODE_ATOL, LARGE_MODE_DIMENSION, evolve
+        from qutip_trap.dynamics.evolve import evolve, keyed_atol
         from qutip_trap.dynamics.hamiltonian import _kernel_label, build_hamiltonian
         from qutip_trap.dynamics.truncation import boundary_populations
         from qutip_trap.noise.sampling import KEY_BRANCH_WEIGHT
@@ -700,7 +700,7 @@ class JointExactEngine:
         method_used = "sesolve" if kets is not None else "mesolve"
         first = True
         largest_mode = max([m.d for m in space.resolved], default=0)
-        atol_mc = options.atol if largest_mode <= LARGE_MODE_DIMENSION else max(options.atol, LARGE_MODE_ATOL)
+        atol_mc = keyed_atol(options, largest_mode)
         # improved_sampling splits the whole evolution into its no-jump member and the rest, so it applies only when the
         # trajectory path is entered exactly once
         n_mc_segments = 0
