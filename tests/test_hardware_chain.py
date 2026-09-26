@@ -8,15 +8,24 @@ import math
 
 import numpy as np
 import pytest
+import qutip as qt
 
-from qutip_trap.calibration.entangling import exact_gate_check, spot_check_space
+from qutip_trap.calibration.entangling import (
+    calibrate_entangling_angle,
+    exact_gate_check,
+    frame_rotated,
+    ms_schedule,
+    spot_check_space,
+)
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains, apply_hardware_chain
+from qutip_trap.control.native import ms
 from qutip_trap.control.pulses import Pulse
 from qutip_trap.control.schedule import Schedule, response_phase_rad
 from qutip_trap.control.shaping import gate_modes
 from qutip_trap.device.presets import ideal_hardware, yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
+from qutip_trap.dynamics.hamiltonian import BuilderOptions
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.microwave import square_microwave_drive
 from qutip_trap.light.raman import derive_raman_drive, square_drive
@@ -173,42 +182,59 @@ def test_response_phase_reference_is_the_first_order_filter_phase_at_the_beat_no
 
 @pytest.mark.slow
 def test_calibrated_gate_survives_the_modulator_response_with_the_phase_reference() -> None:
-    """With a 50 ns modulator rise the chain plus the Roos beat-phase reference reaches F = 0.999923 (leakage 3.315e-5)
-    against 0.999868 (4.485e-5) for an ideal modulator, to 5e-6 and 0.5 %."""
+    """Through a 50 ns modulator the calibrated five-segment AM gate needs the beat-phase reference: without it the
+    switch-on transient keeps the filter's arctan(2 pi mu tau) lag and Roos's spin-axis tilt returns (1 - F = 3.0e-3). With
+    it the chain reaches F = 0.999923 (leakage 3.315e-5) against 0.999868 (4.485e-5) for an ideal modulator, to 5e-6 and
+    0.5 %: the first-order response weights the off-resonant carrier transient of every segment edge by
+    |H(mu)| = (1 + (2 pi mu tau)^2)^(-1/2) = 0.72 at the 3.06 MHz beat note, the edge shaping an ideal modulator's square
+    segments lack. Without that carrier (the sideband RWA, each chain calibrated anew) the realistic chain is no better
+    than the ideal one, and the two agree to 2e-8."""
     fx = yb171_chain(2)
 
-    def check(hardware, chain: bool):
+    def calibrated(hardware):
         dev = dataclasses.replace(fx.device, hardware=hardware)
         sur = surrogate_table(dev, pairs=[(0, 1)], detection_records=200, detection_windows_s=(20e-6,))
         wf = sur.table.waveform_for((0, 1))
         assert wf is not None
         nb = {m: e.value for m, e in sur.table.nbar.items()}
-        modes = gate_modes(dev, (0, 1), (0, 1), nbar=nb)
-        space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
-        out, _ = exact_gate_check(
-            dev,
-            wf,
-            (0, 1),
-            fx.entangling_drives,
-            sur.table,
-            space=space,
-            hardware_chain=chain,
+        space, _classes = spot_check_space(
+            dev, gate_modes(dev, (0, 1), (0, 1), nbar=nb), wf, (0, 1), Numerics()
         )
-        return out
+        return dev, wf, sur.table, space
 
-    realistic = check(REALISTIC_HARDWARE, True)
-    ideal = check(ideal_hardware(phase_continuous=True), True)
-    assert realistic.fidelity == pytest.approx(0.999923, abs=5e-6), realistic.fidelity
-    assert ideal.fidelity == pytest.approx(0.999868, abs=5e-6), ideal.fidelity
-    assert realistic.leakage == pytest.approx(3.315e-5, rel=5e-3), realistic.leakage
-    assert ideal.leakage == pytest.approx(4.485e-5, rel=5e-3), ideal.leakage
-    assert realistic.fidelity > ideal.fidelity, (
-        "the arctan reference over-compensates the ideal modulator's (absent) delay slightly in the ion's favour"
+    def check(setup, **kw):
+        dev, wf, table, space = setup
+        return exact_gate_check(dev, wf, (0, 1), fx.entangling_drives, table, space=space, **kw)[0]
+
+    realistic = calibrated(REALISTIC_HARDWARE)
+    ideal = calibrated(ideal_hardware(phase_continuous=True))
+    real, perfect = check(realistic), check(ideal)
+    assert real.fidelity == pytest.approx(0.999923, abs=5e-6), real.fidelity
+    assert perfect.fidelity == pytest.approx(0.999868, abs=5e-6), perfect.fidelity
+    assert real.leakage == pytest.approx(3.315e-5, rel=5e-3), real.leakage
+    assert perfect.leakage == pytest.approx(4.485e-5, rel=5e-3), perfect.leakage
+    # the same waveform through the same chain with the reference switched off
+    dev, wf, table, space = realistic
+    bare = ms_schedule(wf, (0, 1), fx.entangling_drives, table)
+    traces = JointExactEngine(table=table).run_pulses(
+        dev, bare, space.initial_state([0, 0]), space, quiet_sample(), SeedSpec(0), Numerics()
     )
+    target = frame_rotated(qt.Qobj(ms(0.0, 0.0, math.pi / 2)[:, :1], dims=[[2, 2], [1, 1]]), bare.phase_frame)
+    unreferenced = float(np.real(qt.expect(traces.final.internal, target)))
+    assert 1.0 - unreferenced == pytest.approx(2.999e-3, rel=5e-3), unreferenced
+    # the chain is otherwise transparent to the gate: without the off-resonant carrier it gains nothing (measured
+    # 1 - F = 6.3544e-6 against 6.3459e-6)
+    rwa = BuilderOptions(frame="interaction", rwa=True)
+    floor = [
+        calibrate_entangling_angle(
+            d, w, (0, 1), fx.entangling_drives, t, space=s, builder_options=rwa, tolerance_rad=1e-6
+        ).checks[-1]
+        for d, w, t, s in (realistic, ideal)
+    ]
+    assert floor[0].fidelity <= floor[1].fidelity + 1e-9, floor
+    assert floor[1].fidelity - floor[0].fidelity < 2e-8, floor
     # an ideal modulator's response is the identity, so the chain switch cannot matter there
-    assert check(ideal_hardware(phase_continuous=True), False).fidelity == pytest.approx(
-        ideal.fidelity, abs=1e-9
-    )
+    assert check(ideal, hardware_chain=False).fidelity == pytest.approx(perfect.fidelity, abs=1e-9)
 
 
 def test_stark_shift_follows_the_played_light_into_the_tail() -> None:
