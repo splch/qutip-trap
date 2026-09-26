@@ -81,6 +81,23 @@ def _histogram_distance(a: Record, b: Record) -> tuple[float, float]:
     return tv, 0.5 * math.sqrt(var)
 
 
+def bound_judgement(disc: float | None, bound: float | None) -> tuple[bool | None, str | None]:
+    """(within?, the note saying so) for a register-population discrepancy against the shallow engine's bound: no verdict
+    without both numbers, or when the bound is infinite (a frozen spectator driven on its sideband leaves GATE_LOCAL and the
+    replay unbounded)."""
+    if disc is None or bound is None:
+        return None, None
+    if not math.isfinite(bound):
+        return None, (
+            f"register populations differ by {disc:.3e}; the shallow run has no finite bound (a frozen spectator driven on "
+            "its sideband), so the difference is not judged"
+        )
+    within = disc <= bound
+    return within, (
+        f"register populations differ by {disc:.3e} against the bound {bound:.3e}: {'within' if within else 'OUTSIDE'}"
+    )
+
+
 def verify_deeper(
     record: Record,
     *,
@@ -173,12 +190,10 @@ def verify_deeper(
         bound = record.gate_local.discrepancy_bound + record.diagnostics.dropped_branch_weight
     else:
         bound = None
-    within = None if (bound is None or disc is None) else disc <= bound
+    within, bound_note = bound_judgement(disc, bound)
     notes = [f"deep engine actually run: {deep_record.diagnostics.level}"]
-    if disc is not None and bound is not None:
-        notes.append(
-            f"register populations differ by {disc:.3e} against the bound {bound:.3e}: {'within' if within else 'OUTSIDE'}"
-        )
+    if bound_note is not None:
+        notes.append(bound_note)
     notes.append(f"histograms differ by {tv:.3g} against a shot-noise scale of {scale:.3g}")
     report = VerifyReport(
         shallow_level=shallow,

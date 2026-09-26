@@ -410,11 +410,6 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
         lines = [
             f"{report.shallow_level} against {report.deep_level or 'the Section 5.5 re-checks'} on {report.shots} shots ({report.wall_time_s:.0f} s)",
         ]
-        if report.discrepancy_populations is not None and report.bound is not None:
-            lines.append(
-                f"register populations differ by {report.discrepancy_populations:.2e}; the bound is {report.bound:.2e}: "
-                f"{'within' if report.within_bound else 'OUTSIDE'}"
-            )
         lines.append(
             f"histograms differ by {report.discrepancy_histogram:.3f} against a shot-noise scale of {report.statistical_scale:.3f}"
         )

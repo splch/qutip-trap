@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
+
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.replay import ChannelLibrary
-from qutip_trap_app.verify import deeper_level, verify_deeper
+from qutip_trap_app.verify import bound_judgement, deeper_level, verify_deeper
 
 
 def test_verify_replay_against_the_deeper_engine(bell_replay: tuple[Record, ChannelLibrary]) -> None:
@@ -25,3 +27,11 @@ def test_verify_joint_exact_runs_the_rechecks(bell: tuple[Record, LiveRun]) -> N
     assert report.deep_level is None and report.convergence is not None and report.truncation is not None
     assert report.convergence.converged and report.truncation.converged
     assert rec is not None and rec.zooms, "the re-checks' zooms are cached in the record"
+
+
+def test_an_infinite_bound_gives_no_verdict() -> None:
+    """A finite bound judges the discrepancy; an infinite one (an unbounded frozen spectator) gives no verdict and says so."""
+    assert bound_judgement(1e-3, 2e-3)[0] is True and bound_judgement(3e-3, 2e-3)[0] is False
+    within, note = bound_judgement(1e-3, math.inf)
+    assert within is None and note is not None and "no finite bound" in note
+    assert bound_judgement(None, 1.0) == (None, None)
