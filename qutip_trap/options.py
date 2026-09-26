@@ -185,8 +185,8 @@ class Physics:
     intensity_noise_channels: bool = True
     """The white part of the laser-intensity spectrum as the channel sqrt(D) H_drive(t) (Section 6.4)."""
     hardware_chain: bool = True
-    """Pass the schedule through the control electronics of Section 7.10 before integrating, the scheduler referencing the
-    entangling tones to its response."""
+    """Pass the schedule through the control electronics of Section 7.10 before integrating: the scheduler references the
+    entangling tones to the chain's response and the intrinsic budget softens the carrier's kicks by it."""
     stark_compensation: bool = True
     """Detune every spin-flip tone by the light shift the table believes; a sigma_z force keeps its beat note (Section 7.5
     item 7)."""
