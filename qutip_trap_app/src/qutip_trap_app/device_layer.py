@@ -1402,20 +1402,20 @@ def derive_device_layer(
     if cooling is not None:
         for pump in cooling.pumps:
             spam[f"q{pump.ion}.state_preparation"] = (pump.preparation_error, 0.0)
-    budget: dict[str, float] = {}
+    # per gate, the closed-form error scales: an MS gate's residual displacement and its ions' scattering, a GPi2's scattering
+    estimates: dict[str, float] = {}
     for g in gates:
-        gid = f"ms[{g.pair[0]},{g.pair[1]}]"
-        if g.residual_error is not None:
-            budget[f"{gid}.residual_displacement"] = g.residual_error
-        for d in light.drives:
-            if d.role == "entangling gates" and d.ion in g.pair:
-                budget[f"{gid}.scattering_ion{d.ion}"] = (
-                    d.error_per_pi_pulse * g.duration_s / d.pi_time_s if d.pi_time_s > 0 else 0.0
-                )
+        terms = [] if g.residual_error is None else [g.residual_error]
+        terms += [
+            d.error_per_pi_pulse * g.duration_s / d.pi_time_s if d.pi_time_s > 0 else 0.0
+            for d in light.drives
+            if d.role == "entangling gates" and d.ion in g.pair
+        ]
+        if terms:
+            estimates[f"ms[{g.pair[0]},{g.pair[1]}]"] = float(sum(terms))
     for d in light.drives:
         if d.role == "single-qubit gates":
-            budget[f"gpi2[{d.ion}].scattering"] = 0.5 * d.error_per_pi_pulse
-    budget["total"] = float(sum(budget.values()))
+            estimates[f"gpi2[{d.ion}]"] = 0.5 * d.error_per_pi_pulse
     table_hash = (
         table.device_hash
         if table is not None
@@ -1434,7 +1434,7 @@ def derive_device_layer(
         cooling_error=cooling_error,
         readout=readout,
         gates=gates,
-        card=device_card(device, spam=spam, intrinsic_budget=budget, tomography={}),
+        card=device_card(device, spam=spam, gate_estimates=estimates, tomography={}),
         table_hash=table_hash,
         stale=table_hash is not None and table_hash != device.hash(),
         notes=tuple(notes) + tuple(str(n) for n in preset.notes[-1:]) if overrides else tuple(notes),

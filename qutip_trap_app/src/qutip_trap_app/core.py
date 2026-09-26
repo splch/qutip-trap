@@ -78,7 +78,14 @@ from qutip_trap.run.gate_local import GateLocalReport, GateStep, gate_steps
 from qutip_trap.run.job import RunRecord, last_record, prepare, register_fidelity
 from qutip_trap.run.levels import FidelityLevel
 from qutip_trap.run.pipeline import compile_calibrate_schedule
-from qutip_trap.run.results import Diagnostics, Progress, Result, aggregate, binomial_error_bars
+from qutip_trap.run.results import (
+    Diagnostics,
+    IntrinsicBudget,
+    Progress,
+    Result,
+    aggregate,
+    binomial_error_bars,
+)
 from qutip_trap.run.space import SpaceSelection, select_space
 from qutip_trap.species import species
 from qutip_trap.species.model import Species
@@ -138,6 +145,7 @@ __all__ = [
     "HilbertSpace",
     "ideal_probabilities",
     "integrals_segmented",
+    "IntrinsicBudget",
     "is_stable",
     "JointExactEngine",
     "KEY_BRANCH_WEIGHT",

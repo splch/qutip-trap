@@ -381,7 +381,7 @@ def replay(
         frozen_contribution={
             int(m): (float(c[0]), float(c[1])) for m, c in selection.frozen_contribution.items()
         },
-        intrinsic_budget={},
+        intrinsic_budget=core.IntrinsicBudget(),
         approximations=(
             "CHANNEL_REPLAY: every gate applied as its extracted Section 6.8 channel; the correlations between gates are traced out "
             f"and bounded by the derivation residual {total:.3e} (Section 9.8); the readout is the table's (eps_B, eps_D)",
@@ -399,7 +399,7 @@ def replay(
         device_card=device_card(
             device,
             spam=spam,
-            intrinsic_budget={},
+            gate_estimates={},
             tomography={g.gate_id: g.average_gate_infidelity for g in applied},
         ),
         compiled=compiled_record(report),

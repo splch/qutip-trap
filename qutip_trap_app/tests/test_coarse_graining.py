@@ -113,7 +113,7 @@ def test_bell_physics_reads_correctly_from_the_record(chained: tuple[Record, Liv
     assert abs(float(final.fidelity.value) - record.results.register_fidelity) < 1e-6, (
         "the view's target state (the gate targets with their frames) agrees with the core's ideal_register_state"
     )
-    assert 1.0 - record.results.register_fidelity < record.diagnostics.intrinsic_budget["total"], (
+    assert 1.0 - record.results.register_fidelity < record.diagnostics.intrinsic_budget.total, (
         "inside the closed-form budget (Section 9.6)"
     )
     frame = phase_register(record)

@@ -639,7 +639,8 @@ class DiagnosticsRecord:
     dropped_branch_weight: float
     dropped_contribution: tuple[float, float]
     frozen_contribution: dict[int, tuple[float, float]]
-    intrinsic_budget: dict[str, float]
+    intrinsic_budget: core.IntrinsicBudget
+    """The run's closed-form error scales (Section 9.6), empty for a channel replay."""
     approximations: tuple[str, ...]
     kernel: str
     workers: int
@@ -1053,10 +1054,11 @@ def device_card(
     device: core.Device,
     *,
     spam: Mapping[str, tuple[float, float]],
-    intrinsic_budget: Mapping[str, float],
+    gate_estimates: Mapping[str, float],
     tomography: Mapping[str, float],
 ) -> DeviceCard:
-    """The Level 0 device card from the device and the run's SPAM, closed-form error scales and tomography infidelities."""
+    """The Level 0 device card from the device and the run's SPAM, closed-form error scale per gate and tomography
+    infidelities."""
     derived = device.derived()
     crystal = device.crystal
     modes = tuple(
@@ -1077,12 +1079,6 @@ def device_card(
         for k, b in enumerate(device.beams)
     )
     det = device.detector
-    estimates: dict[str, float] = {}
-    for key, value in intrinsic_budget.items():
-        if key == "total" or "." not in key:
-            continue
-        gate = key.split(".")[0]
-        estimates[gate] = estimates.get(gate, 0.0) + float(value)
     omega = device.trap.omega_hz
     return DeviceCard(
         species=tuple(s.name for s in crystal.species),
@@ -1105,7 +1101,7 @@ def device_card(
         ),
         native_gates=NATIVE_GATE_SET,
         spam={str(k): (float(v[0]), float(v[1])) for k, v in spam.items()},
-        gate_error_estimates=estimates,
+        gate_error_estimates={str(k): float(v) for k, v in gate_estimates.items()},
         gate_error_tomography={str(k): float(v) for k, v in tomography.items() if not math.isnan(v)},
     )
 
@@ -1409,7 +1405,7 @@ def diagnostics_record(
         dropped_branch_weight=float(diag.dropped_branch_weight),
         dropped_contribution=(float(diag.dropped_contribution[0]), float(diag.dropped_contribution[1])),
         frozen_contribution={int(m): (float(c[0]), float(c[1])) for m, c in diag.frozen_contribution.items()},
-        intrinsic_budget={str(k): float(v) for k, v in diag.intrinsic_budget.items()},
+        intrinsic_budget=diag.intrinsic_budget,
         approximations=tuple(str(a) for a in diag.approximations),
         kernel=str(diag.kernel),
         workers=int(diag.workers),
@@ -1453,7 +1449,9 @@ def build_record(
         device_card=device_card(
             device,
             spam=result.spam,
-            intrinsic_budget=result.diagnostics.intrinsic_budget,
+            gate_estimates=result.diagnostics.intrinsic_budget.by_piece(
+                t.gate_id for t in rec.schedule.targets
+            ),
             tomography=tomography,
         ),
         compiled=compiled_record(rec.compile),
