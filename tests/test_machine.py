@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from qutip.solver.integrator.scipy_integrator import IntegratorScipyDop853
 
 import qutip_trap as trap
 from qutip_trap.control.compiler import Circuit, Operation, compile_to_native
@@ -23,7 +24,15 @@ from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine
 from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.dynamics.truncation import TruncationWarning, warn_if_boundary_exceeds
-from qutip_trap.machine import Estimate, Machine, _segment_cost_s, _wall_time_guess
+from qutip_trap.machine import (
+    EVALUATIONS_PER_PULSE_SECOND,
+    Estimate,
+    Machine,
+    _evaluation_cost_s,
+    _integrated_segments,
+    _segment_cost_s,
+    _wall_time_guess,
+)
 from qutip_trap.options import Numerics, Physics, Readout
 from qutip_trap.readout.discriminate import ThresholdDiscriminator
 from qutip_trap.run.gate_local import gate_steps
@@ -127,10 +136,59 @@ def test_estimate_matches_the_diagnostics_of_the_run_that_follows(machine, bell)
     assert forced.level is FidelityLevel.GATE_LOCAL and "would choose JOINT_EXACT" in forced.reason
 
 
+def test_the_joint_exact_guess_integrates_each_segment_once(machine) -> None:
+    """Section 11.2 at JOINT_EXACT: the Bell circuit's 15 pulses are the engine's 10 integrated segments, the MS gate's
+    five, each playing both ions' pulses at once, and the five carrier pulses, each costing a + (seconds per evaluation) x
+    the evaluations of its duration; every segment drives four terms (sigma_+ D and its conjugate on each ion, a carrier's
+    on its ion and its crosstalk neighbour), held factorized at dimension 572."""
+    _preset, m = machine
+    est = m.estimate(BELL)
+    sched = m.schedule(BELL)
+    segments = _integrated_segments(sched)
+    assert len(sched.pulses) == 15 and len(segments) == 10
+    assert sorted(len(active) for _duration, active in segments) == [1] * 5 + [2] * 5
+    per_evaluation = _evaluation_cost_s(est.space.dims, [0, 1], [2, 3])
+    assert est.dimension == 572 and per_evaluation == pytest.approx(4 * 11.1e-6, rel=0.01)
+    assert est.wall_time_s == pytest.approx(
+        sum(_segment_cost_s(per_evaluation, duration) for duration, _active in segments), rel=1e-12
+    )
+
+
+def test_the_evaluations_per_pulse_second_are_what_the_engine_counts(machine, monkeypatch) -> None:
+    """``EVALUATIONS_PER_PULSE_SECOND`` against the right-hand-side evaluations the engine makes on the Bell circuit in its
+    rotating frame, counted on QuTiP's dop853 right-hand side over every branch of an in-process run: 3.2e8 per second of
+    integrated pulse against the constant's 2.8e8 (to 25 %)."""
+    _preset, m = machine
+    calls = [0]
+    rhs = IntegratorScipyDop853._mul_np_vec
+
+    def counted(self: IntegratorScipyDop853, t: float, vec: np.ndarray) -> np.ndarray:
+        calls[0] += 1
+        return rhs(self, t, vec)
+
+    monkeypatch.setattr(IntegratorScipyDop853, "_mul_np_vec", counted)
+    serial = dataclasses.replace(m, numerics=dataclasses.replace(m.numerics, workers=1))
+    res = serial.run(BELL, 20)
+    pulse_s = sum(duration for duration, _active in _integrated_segments(serial.schedule(BELL)))
+    per_second = calls[0] / (res.diagnostics.branches * pulse_s)
+    assert per_second == pytest.approx(EVALUATIONS_PER_PULSE_SECOND, rel=0.25), per_second
+
+
+@pytest.mark.heavy  # a wall time against the cost model: measured alone, never beside other workers
+def test_the_wall_time_guess_against_the_measured_integration(machine) -> None:
+    """Section 11.2's guess for the Bell circuit against the engine's timing of one pass (the first branch's segments):
+    1.55 s against 1.07 s on the reference machine, within a factor of three either way."""
+    _preset, m = machine
+    est = m.estimate(BELL)
+    measured = sum(last_record(m.run(BELL, 20)).traces[0].wall_time_s.values())
+    assert est.wall_time_s / 3.0 < measured < 3.0 * est.wall_time_s, (est.wall_time_s, measured)
+
+
 def test_the_gate_local_guess_plays_every_step_on_its_own_local_space(machine) -> None:
-    """Section 11.2 at GATE_LOCAL: the Bell circuit's MS step plays on the pair and the resolved modes (on two ions, the
-    joint space) once per tomography input, prod_i d_i = 4, and every carrier step on its ion's internal space, so the
-    guess does not see an ion no step touches: under a four-ion declared space with the same modes it is the same."""
+    """Section 11.2 at GATE_LOCAL: the Bell circuit's MS step plays its five segments on the pair and the resolved modes (on
+    two ions, the joint space) once per tomography input, prod_i d_i = 4, and every carrier step on its ion's internal
+    space, so the guess does not see an ion no step touches: under a four-ion declared space with the same modes it is the
+    same."""
     _preset, m = machine
     est = dataclasses.replace(m, level=FidelityLevel.GATE_LOCAL).estimate(BELL)
     sched = m.schedule(BELL)
@@ -138,18 +196,20 @@ def test_the_gate_local_guess_plays_every_step_on_its_own_local_space(machine) -
     (ms,) = [s for s in gates if s.played]
     carriers = [s for s in gates if not s.played]
     assert ms.ions == (0, 1) and len(carriers) == 5 and all(len(s.ions) == 1 for s in carriers)
-    pair = 4 * _segment_cost_s(est.nnz, ms.duration_s)
+    pair_evaluation = _evaluation_cost_s(est.space.dims, [0, 1], [2, 3])
+    pair = 4 * sum(_segment_cost_s(pair_evaluation, 0.2 * ms.duration_s) for _segment in range(5))
+    internal = _evaluation_cost_s([2], [0], [])
     assert est.wall_time_s == pytest.approx(
-        pair + sum(2 * _segment_cost_s(2, s.duration_s) for s in carriers), rel=1e-12
+        pair + sum(2 * _segment_cost_s(internal, s.duration_s) for s in carriers), rel=1e-12
     )
     resolved = tuple(t.mode for t in est.space.resolved)
     four = HilbertSpace(
         (2, 2, 2, 2), est.space.resolved, None, tuple(k for k in range(12) if k not in resolved)
     )
-    nnz_four = drive_operator_nonzeros(four)
-    assert nnz_four == 8 * est.nnz, "N 2^N prod_m d_m^2 at N = 4 against N = 2"
-    guess_four = _wall_time_guess(four, nnz_four, sched, FidelityLevel.GATE_LOCAL)
-    assert guess_four == pytest.approx(est.wall_time_s, rel=1e-12)
+    assert drive_operator_nonzeros(four) == 8 * est.nnz, "N 2^N prod_m d_m^2 at N = 4 against N = 2"
+    assert _wall_time_guess(four, sched, FidelityLevel.GATE_LOCAL) == pytest.approx(
+        est.wall_time_s, rel=1e-12
+    )
 
 
 def test_hash_changes_when_and_only_when_device_table_or_policy_change(machine) -> None:

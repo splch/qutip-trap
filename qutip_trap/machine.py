@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from qutip_trap.benchmarks.error_model import ErrorModel
     from qutip_trap.calibration import CalibrationMethod
     from qutip_trap.control.compiler import Circuit, CompileReport
+    from qutip_trap.control.pulses import Pulse
     from qutip_trap.control.schedule import Schedule
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
@@ -27,18 +28,22 @@ if TYPE_CHECKING:
 
 
 COST_FIXED_S = 0.02
-"""Section 11.2's fitted per-segment constant a of cost = a + b x elements x evaluations."""
-COST_PER_NONZERO_S = 0.58e-9
-"""Section 11.2's CSR constant b: seconds per drive-operator non-zero per right-hand-side evaluation."""
-EVALUATIONS_PER_PULSE_SECOND = 1.5e9
-"""Section 11.2: 1 to 2 x 10^5 right-hand-side evaluations per 100 us pulse with dop853 (the midpoint)."""
+"""Section 11.2's fitted per-segment constant a of cost = a + (seconds per evaluation) x evaluations."""
+EVALUATIONS_PER_PULSE_SECOND = 2.8e8
+"""Right-hand-side evaluations per second of pulse the engine makes in its exact rotating frame (Section 11.3 item 10), with
+dop853 at atol 1e-10 and rtol 1e-8, counted on QuTiP's dop853 right-hand side: 1.9 to 3.2 x 10^8 over the segments of the
+Bell circuit on ``presets.yb171_chain(2)`` (dimension 572: 3.2e8 on its 20 us MS segments, 2.3e8 on its 1.7 us carrier
+pulses), the three-ion GHZ circuit (1144: 2.7e8 and 2.0e8) and the four-ion row-2b Bell pair (2304: 2.5e8 and 1.9e8); the
+Schroedinger picture needs 3 to 8 times more (Section 11.2). With the kernel costs of ``dynamics.kernels`` per evaluation
+the guess is 1.4, 1.8 and 2.1 times the measured integration of one pass through those runs on the reference machine of
+Section 11.1 (1.55 s against 1.07 s, 4.19 against 2.37, 3.28 against 1.54)."""
 
 
 @dataclass(frozen=True)
 class Estimate:
     """What a run would do before anything is integrated (``Machine.estimate``): the level and why, the declared joint
     space with the class of every mode, its dimension and drive-operator non-zeros, the pulse counts, the schedule's length
-    and a wall-time guess from the Section 11.2 cost model (an order of magnitude; a run is usually faster)."""
+    and a wall-time guess from the Section 11.2 cost model."""
 
     level: FidelityLevel
     reason: str
@@ -51,34 +56,88 @@ class Estimate:
     duration_s: float
     """The schedule's length, seconds."""
     wall_time_s: float
+    """Section 11.2's cost of one pass through the schedule (``_wall_time_guess``), seconds: 1.4 to 2.1 times the measured
+    integration on the runs ``EVALUATIONS_PER_PULSE_SECOND`` is counted on, and the order of a run's wall time when its
+    branches and samples fit on the workers at once."""
     notes: tuple[str, ...] = ()
 
 
-def _segment_cost_s(nnz: float, duration_s: float) -> float:
-    """Section 11.2: a + b x (drive-operator non-zeros) x evaluations for one integration of ``duration_s``."""
-    return COST_FIXED_S + COST_PER_NONZERO_S * nnz * EVALUATIONS_PER_PULSE_SECOND * max(0.0, duration_s)
+def _evaluation_cost_s(dims: Sequence[int], ion_factors: Sequence[int], mode_factors: Sequence[int]) -> float:
+    """Seconds per right-hand-side evaluation of the drive terms on the ions at ``ion_factors`` of a space of ``dims``: two
+    per ion (sigma_+^i (x) prod_m D_m over ``mode_factors`` and its conjugate), each at the kernel the builder's ``auto``
+    rule holds it in (``dynamics.kernels.kernel_costs_us``: the factorized application where it is the cheaper, the
+    assembled CSR product otherwise and on a space without resolved modes)."""
+    from qutip_trap.dynamics.kernels import kernel_costs_us
+
+    total_us = 0.0
+    for f in ion_factors:
+        assembled, factorized = kernel_costs_us(dims, f, mode_factors)
+        total_us += 2.0 * (min(assembled, factorized) if mode_factors else assembled)
+    return 1e-6 * total_us
 
 
-def _wall_time_guess(space: HilbertSpace, nnz: int, sched: Schedule, level: FidelityLevel) -> float:
-    """Section 11.2's cost summed over the schedule. JOINT_EXACT integrates every pulse on the declared space, whose merged
-    drive operator has ``nnz`` = N 2^N prod_m d_m^2 non-zeros. A GATE_LOCAL walk integrates every gate step (Section 5.4)
-    on the local space of its k ions, k 2^k prod_m d_m^2 non-zeros with the declared space's resolved modes when the step
-    plays an entangling gate and k 2^k on the internal space otherwise, once per tomography input (the step's prod_i d_i
-    basis kets)."""
+def _segment_cost_s(evaluation_s: float, duration_s: float) -> float:
+    """Section 11.2's a + (seconds per evaluation) x evaluations for one integration of ``duration_s``."""
+    return COST_FIXED_S + evaluation_s * EVALUATIONS_PER_PULSE_SECOND * max(0.0, duration_s)
+
+
+def _integrated_segments(sched: Schedule) -> list[tuple[float, list[Pulse]]]:
+    """(duration, active pulses) of every segment the engine integrates: its cuts at every pulse and idle boundary, each
+    interval with a pulse active once, however many pulses play in it (an entangling segment's per-ion pulses); an idle
+    interval takes the constant Hamiltonian's closed form."""
+    from qutip_trap.dynamics.engine import JointExactEngine, _segments
+
+    return [
+        (b - a, active) for a, b, active in _segments(sched, JointExactEngine._segment_edges(sched)) if active
+    ]
+
+
+def _wall_time_guess(space: HilbertSpace, sched: Schedule, level: FidelityLevel) -> float:
+    """Section 11.2's cost summed over what the level integrates, for one pass through the schedule (one branch of one
+    dynamical sample; a run's branches and samples share the workers). JOINT_EXACT integrates every segment of the schedule
+    once on the declared space, its drive terms on the addressed ions and the crosstalk neighbours over every resolved mode.
+    A GATE_LOCAL walk integrates every gate step (Section 5.4) on the local space of its k ions, with the declared space's
+    resolved modes when the step plays an entangling gate and none otherwise, once per tomography input (the step's
+    prod_i d_i basis kets), segment by segment."""
+    from qutip_trap.control.schedule import Schedule
     from qutip_trap.run.gate_local import gate_steps
 
     if level is FidelityLevel.JOINT_EXACT:
-        return float(sum(_segment_cost_s(nnz, p.t_end_s - p.t_start_s) for p in sched.pulses))
-    n = space.n_ions
-    modes_squared = nnz // (n * 2**n)
+        mode_factors = [space.mode_factor(t.mode) for t in space.resolved]
+        return float(
+            sum(
+                _segment_cost_s(
+                    _evaluation_cost_s(
+                        space.dims,
+                        [
+                            space.ion_factor(i)
+                            for p in active
+                            for i in (*p.drive.ions, *(j for j in p.drive.crosstalk if space.has_ion(j)))
+                        ],
+                        mode_factors,
+                    ),
+                    duration,
+                )
+                for duration, active in _integrated_segments(sched)
+            )
+        )
     total = 0.0
     for step in gate_steps(sched):
         if step.kind == "idle":
             continue
         k = len(step.ions)
-        local_nnz = k * 2**k * (modes_squared if step.played else 1)
-        inputs = math.prod(space.ion_dim(i) for i in step.ions)
-        total += inputs * _segment_cost_s(local_nnz, step.duration_s)
+        dims = [space.ion_dim(i) for i in step.ions] + ([t.d for t in space.resolved] if step.played else [])
+        segments = _integrated_segments(Schedule(step.pulses, (), (), {}))
+        cost = sum(
+            _segment_cost_s(
+                _evaluation_cost_s(
+                    dims, [step.ions.index(i) for p in active for i in p.drive.ions], range(k, len(dims))
+                ),
+                duration,
+            )
+            for duration, active in segments
+        )
+        total += math.prod(space.ion_dim(i) for i in step.ions) * cost
     return float(total)
 
 
@@ -207,7 +266,7 @@ class Machine:
             n_pulses=prefix.report.n_pulses,
             n_entangling=prefix.report.n_entangling,
             duration_s=float(sched.pulses_end_s),
-            wall_time_s=_wall_time_guess(selection.space, decision.nnz, sched, decision.level),
+            wall_time_s=_wall_time_guess(selection.space, sched, decision.level),
             notes=prefix.notes + selection.notes,
         )
 
