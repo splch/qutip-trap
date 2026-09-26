@@ -4,7 +4,6 @@ dark states, optical pumping, the Floquet fallback, the 40Ca+ S-P-D dark resonan
 from __future__ import annotations
 
 import math
-import sys
 
 import numpy as np
 import pytest
@@ -13,6 +12,7 @@ from scipy.linalg import expm
 from scipy.optimize import brentq
 
 from qutip_trap.dynamics.multilevel import SINK, MultiLevelOptions, assign_frames
+from qutip_trap.dynamics.steady import steady_state_reached
 from qutip_trap.light.beams import Beam, PolarizationModulation
 from qutip_trap.light.bloch import BlochModel, CeilingViolation, beam_for_transition, shifted_beam
 from qutip_trap.species import species
@@ -687,12 +687,11 @@ def test_ca40_dark_resonance_at_the_two_photon_resonance() -> None:
     assert any("S1/2-P3/2" in a and "excluded" in a for a in model(-0.5 * g).build.approximations)
 
 
-@pytest.mark.skipif(
-    sys.platform != "darwin",
-    reason="two trap states leave the Liouvillian a two-dimensional null space, so the direct steady state is not "
-    "unique and other LAPACK builds return populations of +-7e14",
-)
 def test_ca40_pi_only_repump_leaves_the_m_three_halves_states_as_traps() -> None:
+    """A pi-polarized 866 nm repump reaches neither D3/2 mJ = +-3/2: the two are closed classes of their own, the null space
+    of the Liouvillian is two-dimensional, and the steady state is the one reached from the unpolarized ground level, half
+    in each trap by the mirror symmetry of the beams (1e-6), with no photons scattered; from S1/2 mJ = -1/2 alone the
+    population ends 0.52375 in mJ = +3/2 (1e-5), as the evolution itself does."""
     ca = species("40Ca+")
     st = AtomicStructure(ca, 1e-6, (0.0, 0.0, 1.0))
     t397 = ca.transition("S1/2-P1/2")
@@ -719,8 +718,40 @@ def test_ca40_pi_only_repump_leaves_the_m_three_halves_states_as_traps() -> None
         power_w=2.0 * t866.i_sat_w_m2 * math.pi * WAIST**2 / 2.0,
         waist_m=WAIST,
     )
-    ss = BlochModel(st, [b1, b2], levels=("S1/2", "P1/2", "D3/2")).steadystate()
-    assert ss.populations["D3/2 mJ=-3/2"] + ss.populations["D3/2 mJ=3/2"] > 0.999
+    model = BlochModel(st, [b1, b2], levels=("S1/2", "P1/2", "D3/2"))
+    ss = model.steadystate()
+    assert ss.closed_classes == (("D3/2 mJ=-3/2",), ("D3/2 mJ=3/2",))
+    assert ss.populations["D3/2 mJ=-3/2"] == pytest.approx(0.5, abs=1e-6)
+    assert ss.populations["D3/2 mJ=3/2"] == pytest.approx(0.5, abs=1e-6)
+    assert ss.total_photon_rate_per_s == pytest.approx(0.0, abs=1e-3)
+    liouvillian = np.asarray(model.build.liouvillian().full())
+    assert np.linalg.norm(liouvillian @ ss.rho.full().ravel(order="F")) < 1e-9 * np.linalg.norm(liouvillian)
+    rho0 = model.build.projector("S1/2 mJ=-1/2")
+    reached = steady_state_reached(model.build.H, model.build.c_ops, rho0)
+    late = model.evolve(rho0, np.array([0.0, 2e-3]))
+    for trap in ("D3/2 mJ=-3/2", "D3/2 mJ=3/2"):
+        assert model.build.populations(reached)[trap] == pytest.approx(late.populations[trap][-1], abs=1e-6)
+    assert model.build.populations(reached)["D3/2 mJ=3/2"] == pytest.approx(0.52375, abs=1e-5)
+
+
+def test_a_unique_steady_state_is_the_direct_solve_and_the_one_reached_from_any_state() -> None:
+    """With both 866 nm polarizations present every D3/2 sublevel is repumped: one closed class, the direct solve, and the
+    state reached from S1/2 mJ = +1/2 equal to it (1e-10)."""
+    ca = species("40Ca+")
+    st = AtomicStructure(ca, 4.0, (0.0, 0.0, 1.0))
+    g = ca.transition("S1/2-P1/2").gamma_rad_s
+    pol = tuple(linear_polarization((1.0, 0.0, 0.0), math.pi / 4.0, (0.0, 0.0, 1.0)))
+    beams = [
+        beam_for_transition(
+            st, lower, "P1/2 mJ=-1/2", -0.5 * g, (1.0, 0.0, 0.0), pol, power_w=power, waist_m=WAIST
+        )
+        for lower, power in (("S1/2 mJ=-1/2", 1e-6), ("D3/2 mJ=-1/2", 3e-6))
+    ]
+    model = BlochModel(st, beams, levels=("S1/2", "P1/2", "D3/2"))
+    ss = model.steadystate()
+    assert ss.closed_classes == () and ss.total_photon_rate_per_s > 1e5
+    reached = steady_state_reached(model.build.H, model.build.c_ops, model.build.projector("S1/2 mJ=1/2"))
+    assert np.max(np.abs(reached.full() - ss.rho.full())) < 1e-10
 
 
 # ---- laser linewidth on the optical coherences ----------------------------------------------------------------------

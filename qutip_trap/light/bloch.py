@@ -30,7 +30,7 @@ from qutip_trap.dynamics.multilevel import (
     MultiLevelOptions,
     build_multilevel,
 )
-from qutip_trap.dynamics.steady import spectrum_es, steady_state_direct
+from qutip_trap.dynamics.steady import closed_classes, spectrum_es, steady_state_direct, steady_state_reached
 from qutip_trap.light.beams import Beam, PolarizationModulation
 from qutip_trap.light.recoil import angular_factor
 from qutip_trap.readout.fluorescence import DarkStateReport, saturation_ceiling
@@ -110,6 +110,9 @@ class SteadyStateReport:
     period_s: float | None
     nbar: float | None
     """Mean phonon number of the mode, when the build has one."""
+    closed_classes: tuple[tuple[str, ...], ...] = ()
+    """The sets of states no beam or decay leads out of, when there are several: the steady state then depends on the
+    initial state and is the one reached from the lowest level unpolarized. Empty when the steady state is unique."""
 
 
 @dataclass(frozen=True)
@@ -303,8 +306,33 @@ class BlochModel:
             )
         return CeilingReport(tuple(ground), tuple(excited), ceiling, p_e)
 
+    def static_steady_state(self) -> tuple[qt.Qobj, tuple[tuple[str, ...], ...]]:
+        """The steady state of a static build and its closed classes of states when there are several: the direct solve
+        for a unique steady state, else the state reached from the lowest level unpolarized (``steady_state_reached``); a
+        build with a mode and several closed classes is refused."""
+        b = self.build
+        assert isinstance(b.H, qt.Qobj)
+        classes = closed_classes(b.H, b.c_ops)
+        if len(classes) == 1:
+            return steady_state_direct(b.H, b.c_ops), ()
+        if b.space is not None:
+            raise NotImplementedError(
+                f"the steady state is not unique: {len(classes)} closed sets of states, and the state reached from an "
+                "initial state is built for internal-only models"
+            )
+        named = tuple(tuple(b.labels[i] for i in c) for c in classes)
+        atomic = [lab for lab in b.labels if lab != SINK]
+        lowest = min(atomic, key=lambda lab: self.structure.state(lab).energy_hz)
+        ground = b.states_of(b.level_of(lowest))
+        rho0 = sum((b.projector(lab) for lab in ground), start=qt.qzero(b.n_internal)) / len(ground)
+        return steady_state_reached(b.H, b.c_ops, rho0), named
+
     def _report(
-        self, rho: qt.Qobj, method: Literal["steadystate", "floquet", "time-average"], period: float | None
+        self,
+        rho: qt.Qobj,
+        method: Literal["steadystate", "floquet", "time-average"],
+        period: float | None,
+        closed: tuple[tuple[str, ...], ...] = (),
     ) -> SteadyStateReport:
         rates = self.photon_rates(rho)
         pops = self.build.populations(rho)
@@ -322,15 +350,17 @@ class BlochModel:
             method=method,
             period_s=period,
             nbar=None if self.build.space is None else float(np.real(qt.expect(self.build.number(), rho))),
+            closed_classes=closed,
         )
 
     def steadystate(self, *, n_average: int = 64, settle_gammas: float = 1000.0) -> SteadyStateReport:
-        """The direct steady state on a static frame, the period-averaged Floquet fixed point otherwise, and for
-        incommensurate beats the average of the second half of ``settle_gammas`` lifetimes of propagation."""
+        """The direct steady state on a static frame (``static_steady_state``), the period-averaged Floquet fixed point
+        otherwise, and for incommensurate beats the average of the second half of ``settle_gammas`` lifetimes of
+        propagation."""
         b = self.build
         if b.static:
-            assert isinstance(b.H, qt.Qobj)
-            return self._report(steady_state_direct(b.H, b.c_ops), "steadystate", None)
+            rho, closed = self.static_steady_state()
+            return self._report(rho, "steadystate", None, closed)
         if b.space is not None:
             raise NotImplementedError(
                 "the periodic (Floquet) steady state is built for internal-only spaces; with a mode restrict the beams "
@@ -665,7 +695,7 @@ def rate_coefficients_from_spectrum(model: BlochModel, mode: ModeSpec) -> Spectr
     if b.space is not None or not b.static:
         raise NotImplementedError("the spectrum path runs on the static internal-only model")
     assert isinstance(b.H, qt.Qobj)
-    rho = steady_state_direct(b.H, b.c_ops)
+    rho, _closed = model.static_steady_state()
     f = model.force_operator(mode)
     df = f - float(np.real(qt.expect(f, rho)))
     s = spectrum_es(b.H, b.c_ops, np.array([mode.omega_rad_s, -mode.omega_rad_s]), df, df, rho_ss=rho)
@@ -698,8 +728,8 @@ def _static_steady_state(model: BlochModel, what: str) -> qt.Qobj:
     b = model.build
     if b.space is not None or not b.static:
         raise NotImplementedError(f"the {what} needs the static internal-only steady state")
-    assert isinstance(b.H, qt.Qobj)
-    return steady_state_direct(b.H, b.c_ops)
+    rho, _closed = model.static_steady_state()
+    return rho
 
 
 def emission_diffusion_two_d(
