@@ -12,7 +12,7 @@ import pytest
 import qutip as qt
 
 from qutip_trap.calibration import CalibrationCache, calibrate
-from qutip_trap.calibration.entangling import frame_rotated, gate_space
+from qutip_trap.calibration.entangling import frame_rotated, spot_check_space
 from qutip_trap.calibration.experiments import UPSTREAM, full_calibration, upstream_status
 from qutip_trap.control.compiler import compile_report
 from qutip_trap.control.hardware import physical_schedule
@@ -392,7 +392,7 @@ def test_compensated_tones_are_referenced_to_the_pulse_start_and_the_frame_insid
     modes = gate_modes(
         fx.device, (0, 1), fx.entangling_drives[0].beams, nbar={m: e.value for m, e in table.nbar.items()}
     )
-    space = gate_space(modes, 2, waveform=wf)
+    space = spot_check_space(fx.device, modes, wf, (0, 1), Numerics())[0]
     engine = JointExactEngine(table=table)
     ideal = qt.Qobj(np.kron(gpi2(0.0), np.eye(2)), dims=[[2, 2], [2, 2]])
     ket0 = qt.tensor(qt.basis(2, 0), qt.basis(2, 0))

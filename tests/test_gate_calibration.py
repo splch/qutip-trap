@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -13,10 +14,12 @@ from qutip_trap.calibration.entangling import (
     GateCheck,
     calibrate_entangling_angle,
     exact_gate_check,
-    gate_space,
     ms_schedule,
+    spot_check_space,
     thermal_robustness,
 )
+from qutip_trap.control.compiler import Circuit, Operation
+from qutip_trap.control.schedule import schedule
 from qutip_trap.control.shaping import (
     CHI_MAXIMAL_RAD,
     closure_duration_s,
@@ -30,11 +33,13 @@ from qutip_trap.control.shaping import (
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
 from qutip_trap.dynamics.hamiltonian import BuilderOptions
+from qutip_trap.dynamics.truncation import TruncationWarning
 from qutip_trap.experiments.entangling import ms_scan, parity_scan
 from qutip_trap.machine import Machine
 from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.options import Numerics
 from qutip_trap.published import ballance_thermal_error, thermal_debye_waller_infidelity
+from qutip_trap.run.space import select_space
 from qutip_trap.units import TWO_PI
 from tests.fixtures import (
     X_COM_TWO_IONS,
@@ -50,6 +55,35 @@ RABI, STARK = derived_seeds(chain_device(2), raman_gate_drives(2))
 identity)."""
 
 
+def test_the_spot_check_space_is_the_space_the_run_selects_for_the_gate() -> None:
+    """The spot check sizes its space by the run's rule under the same numerics: at the default ones, at a tighter boundary
+    threshold and under a lower ceiling every mode of the pair's AM gate gets the class, cap, expected range and eta that
+    ``select_space`` declares for a run playing that gate from the same occupations; the tighter threshold grows every cap,
+    the ceiling clamps them."""
+    dev = chain_device(2)
+    nbar = {m: 0.05 for m in range(len(dev.crystal.modes))}
+    modes = two_ion_modes(dev, nbar=nbar)
+    am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
+    table = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
+    played = schedule(Circuit(2, (Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2)),), ()), dev, table)
+    caps: dict[str, dict[int, int]] = {}
+    for name, numerics in (
+        ("default", Numerics()),
+        ("tail", Numerics(boundary_population_max=1e-9)),
+        ("ceiling", Numerics(mode_dimension_max=8)),
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", TruncationWarning)  # the ceiling clamps, which the run reports
+            run = select_space(dev, played, numerics, nbar=nbar)
+        space, classes = spot_check_space(dev, modes, am.waveform, (0, 1), numerics)
+        assert classes == {m: run.mode_class[m] for m in modes.modes}, name
+        assert space.resolved == run.space.resolved, name
+        caps[name] = {t.mode: t.d for t in space.resolved}
+    assert set(caps["default"]) == set(modes.modes) and max(caps["default"].values()) > 8
+    assert all(caps["tail"][m] > d for m, d in caps["default"].items())
+    assert caps["ceiling"] == {m: min(d, 8) for m, d in caps["default"].items()}
+
+
 def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
     """The closed-form AM waveform is 0.5 to 3 % strong in chi, and at most three exact spot checks bring it to pi/4 within
     1e-4 (fidelity > 0.9995, leakage < 2e-4), which the corrected waveform replays to 2e-4."""
@@ -61,7 +95,7 @@ def test_surrogate_plus_exact_spot_check_converges_to_pi_over_four() -> None:
     assert (
         ints.chi_of(0, 1) == pytest.approx(CHI_MAXIMAL_RAD, rel=1e-9) and ints.residual_error(modes) < 1e-18
     )
-    space = gate_space(modes, 2, waveform=am.waveform)
+    space = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(dev, am.waveform, (0, 1), drives, table, space=space, tolerance_rad=1e-4)
     assert run.converged and len(run.checks) <= 3
@@ -91,7 +125,7 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
     drives = raman_gate_drives(2)
     wf0 = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3, kernel="rwa")
     opts = BuilderOptions(frame="interaction", rwa=True, frozen_debye_waller=False)
-    space0 = gate_space(modes, 2, waveform=wf0)
+    space0 = spot_check_space(dev, modes, wf0, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), wf0, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(
         dev, wf0, (0, 1), drives, table, space=space0, builder_options=opts, tolerance_rad=1e-5
@@ -116,8 +150,11 @@ def test_thermal_robustness_curve_follows_the_n0_referenced_debye_waller_law() -
     # leakage (residual spin-motion entanglement) grows linearly with n
     chis: dict[int, float] = {}
     leaks: dict[int, float] = {}
+    (rule_cap,) = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0].resolved
     for n in range(4):
-        space_n = gate_space(modes, 2, waveform=wf, extra_levels=n + 2)
+        # the cap rule sizes the n = 0 input: a Fock |n> input gets n + 2 levels more
+        fock_cap = Numerics(caps={X_COM_TWO_IONS: rule_cap.d + n + 2})
+        space_n = spot_check_space(dev, modes, wf, (0, 1), fock_cap)[0]
         state = space_n.initial_state([0, 0], fock={X_COM_TWO_IONS: n})
         check_n = _fock_check(dev, wf, drives, space_n, state, opts)
         p00, p11 = check_n.populations["P00"], check_n.populations["P11"]
@@ -181,7 +218,7 @@ def test_the_fm_fourier_and_pm_solutions_are_verified_by_exact_integration(famil
     else:
         sp = solve_phase_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
         ratio, leak = 0.9528, 3e-2
-    space = gate_space(modes, 2, waveform=sp.waveform)
+    space = spot_check_space(dev, modes, sp.waveform, (0, 1), Numerics())[0]
     check, tr = exact_gate_check(
         dev,
         sp.waveform,
@@ -219,7 +256,7 @@ def test_ms_scan_finds_the_closure_amplitude_and_parity_scan_the_contrast() -> N
     # the experiments read the roles
     dev = dataclasses.replace(dev, roles=dataclasses.replace(dev.roles, gate=drives))
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
-    space = gate_space(modes, 2, waveform=am.waveform)
+    space = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI, stark_hz=STARK)
     run = calibrate_entangling_angle(
         dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4

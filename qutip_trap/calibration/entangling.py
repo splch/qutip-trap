@@ -31,13 +31,13 @@ from qutip_trap.control.schedule import (
     schedule,
     single_qubit_pulse,
 )
-from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, excursion_by_mode, scaled
+from qutip_trap.control.shaping import CHI_MAXIMAL_RAD, GateModes, scaled
 from qutip_trap.control.table import Waveform
 from qutip_trap.dynamics.engine import EngineReport, JointExactEngine, SeedSpec, Traces
-from qutip_trap.dynamics.operators import populated_range, required_margin
 from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.noise.sampling import NoiseSample, quiet_sample
 from qutip_trap.options import Numerics
+from qutip_trap.run.space import _D_MIN, ModeClass3, cap_for, classify, waveform_contributions
 
 if TYPE_CHECKING:
     from qutip_trap.control.table import CalibrationTable
@@ -45,34 +45,51 @@ if TYPE_CHECKING:
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
 
 
-def gate_space(
+def spot_check_space(
+    device: Device,
     modes: GateModes,
-    n_ions: int,
+    waveform: Waveform,
+    pair: tuple[int, int],
+    options: Numerics,
     *,
-    nbar: Mapping[int, float] | None = None,
-    waveform: Waveform | None = None,
-    frozen: Sequence[int] = (),
-    n_modes_total: int | None = None,
-    d_min: int = 6,
-    d_max: int = 64,
-    extra_levels: int = 0,
-    force_weight: float | None = None,
-) -> HilbertSpace:
-    """A joint space resolving every mode of ``modes``: the cap holds the populated range of the displaced thermal mode at
-    the pulse's coherent excursion (the extreme spin branch moves by sum_i |alpha_im(t)|, from the closed-form trajectories
-    of ``waveform``) plus the margin for the mode's eta; every other crystal mode is frozen.
-    ``force_weight`` is the per-ion spectral radius of the force operator (``control.shaping.excursion_by_mode``)."""
-    nb = dict(nbar or {})
+    ions: Sequence[int] | None = None,
+) -> tuple[HilbertSpace, dict[int, ModeClass3]]:
+    """The joint space of a pair's spot check by the run's rule (``run.space.select_space``): every mode of ``modes`` classed
+    by the closed-form contribution of ``waveform`` at the occupations ``modes`` carries, a resolved one capped by the cap
+    rule at the numerics' boundary threshold and ceiling (``options.caps`` override it), a dropped one out of the dynamics,
+    every other crystal mode frozen; over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone (the pair's
+    GATE_LOCAL space). Returns the space and the class of every mode of ``modes``."""
+    contributions = waveform_contributions(waveform, modes, pair)
+    classes: dict[int, ModeClass3] = {}
     resolved: list[ModeTruncation] = []
-    excursion = excursion_by_mode(waveform, modes, force_weight=force_weight) if waveform is not None else {}
     for k, m in enumerate(modes.modes):
-        eta_max = max(abs(modes.eta[i][k]) for i in modes.ions)
-        n_hi = populated_range(float(excursion.get(m, 0.0)), max(nb.get(m, 0.0), 0.0))
-        d = min(max(n_hi + 1 + required_margin(eta_max) + extra_levels, d_min), d_max)
-        resolved.append(ModeTruncation(m, d, (0, min(n_hi, d - 1)), max(eta_max * 1.5, 1e-3)))
-    total = n_modes_total if n_modes_total is not None else 3 * n_ions
-    frozen_all = tuple(sorted(set(frozen) | {m for m in range(total) if m not in modes.modes}))
-    return HilbertSpace(tuple(2 for _ in range(n_ions)), tuple(resolved), None, frozen_all)
+        c = contributions[m]
+        classes[m] = classify(
+            c,
+            coupled=True,
+            freeze_alpha_max=options.freeze_alpha_max,
+            freeze_chi_max_rad=options.freeze_chi_max_rad,
+        )
+        if classes[m] == "resolved":
+            tr = cap_for(
+                c.radius,
+                modes.nbar[k],
+                c.eta_max,
+                d_min=_D_MIN,
+                d_max=options.mode_dimension_max,
+                tail=options.boundary_population_max,
+            )
+            d = int(options.caps[m]) if options.caps is not None and m in options.caps else tr.d
+            resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
+    held = {t.mode for t in resolved}
+    frozen = tuple(m for m in range(len(device.crystal.modes)) if m not in held)
+    dropped = tuple(m for m in modes.modes if classes[m] == "dropped")
+    if ions is None:
+        return HilbertSpace(
+            tuple([2] * device.crystal.n_ions), tuple(resolved), None, frozen, (), dropped
+        ), classes
+    local = tuple(sorted(int(i) for i in ions))
+    return HilbertSpace(tuple([2] * len(local)), tuple(resolved), None, frozen, local, dropped), classes
 
 
 def ms_schedule(
@@ -379,13 +396,16 @@ def thermal_robustness(
     modes: GateModes,
     gate_mode: int,
     nbars: Sequence[float],
+    options: Numerics | None = None,
     builder_options: BuilderOptions | None = None,
 ) -> list[tuple[float, GateCheck]]:
     """The gate's exact populations and fidelity against the gate mode's thermal occupation: per nbar, a thermal initial
-    state of the gate mode on a joint space grown with it."""
+    state of the gate mode (every other mode in its ground state) on the spot-check space sized for it."""
+    opts = options or Numerics()
     out: list[tuple[float, GateCheck]] = []
     for nb in nbars:
-        space = gate_space(modes, device.crystal.n_ions, nbar={gate_mode: nb}, waveform=waveform)
+        occupied = replace(modes, nbar=tuple(float(nb) if m == gate_mode else 0.0 for m in modes.modes))
+        space, _classes = spot_check_space(device, occupied, waveform, pair, opts)
         check, _ = exact_gate_check(
             device,
             waveform,
@@ -394,6 +414,7 @@ def thermal_robustness(
             table,
             space=space,
             nbar={gate_mode: nb},
+            options=opts,
             builder_options=builder_options,
         )
         out.append((float(nb), check))

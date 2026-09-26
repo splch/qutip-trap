@@ -47,8 +47,8 @@ class _GateSetup(NamedTuple):
 def _entangling_setup(device: Device, pair: tuple[int, int], kw: Mapping[str, Any]) -> _GateSetup:
     """The pair's waveform from ``kw["table"]``, the device's drives, and the gate modes and space built at the mode
     frequencies the machine believes (``kw["mode_frequencies_hz"]``, never the crystal's hidden truth) unless ``kw["modes"]``
-    and ``kw["space"]`` are given."""
-    from qutip_trap.calibration.entangling import gate_space
+    and ``kw["space"]`` are given; the space follows the run's rule under ``kw["options"]``."""
+    from qutip_trap.calibration.entangling import spot_check_space
     from qutip_trap.control.shaping import gate_modes
 
     table = kw.get("table")
@@ -73,7 +73,8 @@ def _entangling_setup(device: Device, pair: tuple[int, int], kw: Mapping[str, An
     modes = supplied or gate_modes(
         device, pair, (beams[0], beams[1]), nbar=nbar, mode_frequencies_hz=mode_hz or None
     )
-    space = kw.get("space") or gate_space(modes, device.crystal.n_ions, nbar=nbar, waveform=waveform)
+    occupied = replace(modes, nbar=tuple(nbar.get(m, 0.0) for m in modes.modes))
+    space = kw.get("space") or spot_check_space(device, occupied, waveform, pair, kw["options"])[0]
     return _GateSetup(waveform, ent, sq, table, modes, space)
 
 
@@ -93,6 +94,7 @@ def _gate_lab(
         "modes": modes,
         "space": space,
         "mode_frequencies_hz": mode_frequencies_hz,
+        "options": _solver_options(lab),
     }
     return lab, _entangling_setup(lab.device, pair, setup)
 

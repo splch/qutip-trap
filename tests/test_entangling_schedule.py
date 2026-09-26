@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import qutip as qt
 
-from qutip_trap.calibration.entangling import calibrate_entangling_angle, frame_rotated, gate_space
+from qutip_trap.calibration.entangling import calibrate_entangling_angle, frame_rotated, spot_check_space
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import equal_up_to_global_phase, gpi2, rz, xx
 from qutip_trap.control.native import ms as native_ms
@@ -46,7 +46,7 @@ def calibrated():
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
-    space = gate_space(modes, 2, waveform=am.waveform)
+    space = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table0 = table_with_waveform((0, 1), am.waveform, rabi_hz=RABI_TABLE, stark_hz=STARK_TABLE)
     run = calibrate_entangling_angle(
         dev, am.waveform, (0, 1), drives, table0, space=space, tolerance_rad=2e-4

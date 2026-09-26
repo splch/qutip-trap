@@ -9,7 +9,7 @@ import math
 import numpy as np
 import pytest
 
-from qutip_trap.calibration.entangling import exact_gate_check, gate_space
+from qutip_trap.calibration.entangling import exact_gate_check, spot_check_space
 from qutip_trap.calibration.surrogate import surrogate_table
 from qutip_trap.control.hardware import TAIL_TIME_CONSTANTS, _trains, apply_hardware_chain
 from qutip_trap.control.pulses import Pulse
@@ -184,7 +184,7 @@ def test_calibrated_gate_survives_the_modulator_response_with_the_phase_referenc
         assert wf is not None
         nb = {m: e.value for m, e in sur.table.nbar.items()}
         modes = gate_modes(dev, (0, 1), (0, 1), nbar=nb)
-        space = gate_space(modes, 2, waveform=wf, nbar=nb)
+        space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
         out, _ = exact_gate_check(
             dev,
             wf,

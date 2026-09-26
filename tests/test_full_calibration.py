@@ -549,6 +549,7 @@ def test_the_entangling_setup_refuses_to_swallow_the_mode_frequencies_it_would_d
     kw = dict(
         table=sur.table,
         mode_frequencies_hz={m: e.value + 1234.0 for m, e in sur.table.modes.items()},
+        options=Numerics(),
     )
     _wf, _ent, _sq, _t, built, _space = _entangling_setup(fx.device, (0, 1), dict(kw))
     for m, w in zip(built.modes, built.omega_rad_s):

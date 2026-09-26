@@ -13,8 +13,8 @@ from scipy.integrate import cumulative_simpson, simpson
 from qutip_trap.calibration.entangling import (
     calibrate_entangling_angle,
     exact_gate_check,
-    gate_space,
     ms_schedule,
+    spot_check_space,
 )
 from qutip_trap.control.native import ms as native_ms
 from qutip_trap.control.schedule import PhaseFrame, PlayedGate, Schedule, entangling_pulses, ms_spin_phases
@@ -373,7 +373,7 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
-    space = gate_space(modes, 2, waveform=wf)
+    space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
     check, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space)
     rock = 2
@@ -393,7 +393,7 @@ def test_spectator_loop_error_and_am_closure_exactly() -> None:
     assert derived == pytest.approx(sum(abs(ints.alpha[(i, rock)]) ** 2 for i in (0, 1)), rel=1e-9)
     assert check.leakage > 5e-3 and check.fidelity < 0.995
     am = solve_amplitude_modulation(modes, mu_hz=2.914e6, duration_s=100e-6)
-    space_am = gate_space(modes, 2, waveform=am.waveform)
+    space_am = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     table_am = table_with_waveform((0, 1), am.waveform, device=dev, drives=raman_gate_drives(2))
     check_am, tr = exact_gate_check(dev, am.waveform, (0, 1), drives, table_am, space=space_am)
     assert check_am.leakage < 2e-4
@@ -412,7 +412,7 @@ def test_ms_gate_from_the_scheduler_matches_the_native_matrix_up_to_the_open_spe
     modes = two_ion_modes(dev)
     drives = raman_gate_drives(2)
     wf = Waveform.symmetric(modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=20e3)
-    space = gate_space(modes, 2, waveform=wf)
+    space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
     table = table_with_waveform((0, 1), wf, device=dev, drives=raman_gate_drives(2))
     base, _ = exact_gate_check(dev, wf, (0, 1), drives, table, space=space)
     for phases in ((0.3, 1.1), (-0.7, 2.0)):
@@ -447,9 +447,7 @@ def _single_mode_fixture():
     waveform = symmetric_pulse(
         modes, gate_mode=X_COM_TWO_IONS, loops=1, epsilon_hz=EPSILON_HZ, all_modes=False
     ).waveform
-    space = gate_space(
-        modes, 2, waveform=waveform, frozen=(0, 1, 2, 4, 5), n_modes_total=6, d_min=12, d_max=12
-    )
+    space, _classes = spot_check_space(device, modes, waveform, (0, 1), Numerics(caps={X_COM_TWO_IONS: 12}))
     return device, drives, modes, waveform, space
 
 

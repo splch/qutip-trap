@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap.calibration.entangling import CalibrationRun, calibrate_entangling_angle
+from qutip_trap.calibration.entangling import CalibrationRun, calibrate_entangling_angle, spot_check_space
 from qutip_trap.calibration.readout import DetectionCalibration, calibrate_detection
 from qutip_trap.control.schedule import GateDrive, resolve_drives
 from qutip_trap.control.shaping import (
@@ -27,7 +27,6 @@ from qutip_trap.control.shaping import (
     symmetric_pulse,
 )
 from qutip_trap.control.table import CalEntry, CalibrationTable, Waveform
-from qutip_trap.dynamics.space import HilbertSpace, ModeTruncation
 from qutip_trap.light.raman import (
     crosstalk_ratios,
     derive_optical_drive,
@@ -38,13 +37,13 @@ from qutip_trap.prep.recipe import preparation_occupations, recipe_of
 from qutip_trap.readout.detection import RecordModel
 from qutip_trap.readout.fluorescence import detection_rates_for_ion
 from qutip_trap.run.levels import within_budget
-from qutip_trap.run.space import ModeContribution, cap_for, classify, waveform_contributions
 from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.device.model import Device
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
     from qutip_trap.options import Numerics
+    from qutip_trap.run.space import ModeClass3
 
 CROSSTALK_MIN = 1e-6
 """Rabi ratios below this are not stored (a beam of finite waist gives every ion some light)."""
@@ -62,7 +61,7 @@ class SurrogateReport:
 
     table: CalibrationTable
     entangling: dict[tuple[int, int], CalibrationRun]
-    mode_classes: dict[tuple[int, int], dict[int, str]]
+    mode_classes: dict[tuple[int, int], dict[int, ModeClass3]]
     frozen_chi_rad: dict[tuple[int, int], dict[int, float]]
     """Per pair, the chi_m of the modes frozen in its spot check (the loss the calibration target absorbed)."""
     detection: DetectionCalibration | None
@@ -91,40 +90,6 @@ def surrogate_waveform(
     gap = min(b - a for a, b in zip(freqs[:-1], freqs[1:]))
     mu = freqs[-1] + MU_ABOVE_TOP_FRACTION * gap
     return solve_amplitude_modulation(modes, mu_hz=mu, duration_s=duration_s), modes
-
-
-def spot_check_space(
-    modes: GateModes,
-    contributions: Mapping[int, ModeContribution],
-    n_ions: int,
-    n_modes_total: int,
-    *,
-    freeze_alpha_max: float,
-    freeze_chi_max_rad: float,
-    tail: float,
-    caps: Mapping[int, int] | None = None,
-    ions: Sequence[int] | None = None,
-) -> tuple[HilbertSpace, dict[int, str]]:
-    """The reduced joint space of a pair's spot check: its resolved modes by the mode classes, everything else frozen;
-    over every ion of the crystal (JOINT_EXACT), or over ``ions`` alone (the pair's GATE_LOCAL space). ``tail`` is the
-    boundary threshold the caps are sized at (the engine's margin check reads the same one)."""
-    classes: dict[int, str] = {}
-    resolved: list[ModeTruncation] = []
-    for k, m in enumerate(modes.modes):
-        c = contributions[m]
-        cls = classify(
-            c, coupled=True, freeze_alpha_max=freeze_alpha_max, freeze_chi_max_rad=freeze_chi_max_rad
-        )
-        classes[m] = cls
-        if cls == "resolved":
-            tr = cap_for(c.radius, modes.nbar[k], c.eta_max, d_min=6, d_max=64, tail=tail)
-            d = int(caps[m]) if caps is not None and m in caps else tr.d
-            resolved.append(ModeTruncation(m, d, (0, min(tr.expected_n_range[1], d - 1)), tr.eta_max))
-    frozen = tuple(m for m in range(n_modes_total) if m not in {t.mode for t in resolved})
-    if ions is not None:
-        local = tuple(sorted(int(i) for i in ions))
-        return HilbertSpace(tuple([2] * len(local)), tuple(resolved), None, frozen, ions=local), classes
-    return HilbertSpace(tuple([2] * n_ions), tuple(resolved), None, frozen), classes
 
 
 def surrogate_table(
@@ -233,7 +198,7 @@ def surrogate_table(
     # entangling waveforms per pair: closed-form solution, mode classes, exact spot check on the resolved space
     ms: dict[tuple[int, int], Waveform] = {}
     runs: dict[tuple[int, int], CalibrationRun] = {}
-    classes_by_pair: dict[tuple[int, int], dict[int, str]] = {}
+    classes_by_pair: dict[tuple[int, int], dict[int, ModeClass3]] = {}
     frozen_chi: dict[tuple[int, int], dict[int, float]] = {}
     wanted = list(pairs) if pairs is not None else [(a, b) for a in range(n) for b in range(a + 1, n)]
     for pair in wanted:
@@ -252,17 +217,7 @@ def surrogate_table(
         except ClosureError as exc:
             notes.append(f"pair {(a, b)}: no closed-form waveform ({exc}); skipped")
             continue
-        space_for = partial(
-            spot_check_space,
-            modes,
-            waveform_contributions(shaped.waveform, modes, (a, b)),
-            n,
-            len(crystal.modes),
-            freeze_alpha_max=opts.freeze_alpha_max,
-            freeze_chi_max_rad=opts.freeze_chi_max_rad,
-            tail=opts.boundary_population_max,
-            caps=opts.caps,
-        )
+        space_for = partial(spot_check_space, device, modes, shaped.waveform, (a, b), opts)
         space, classes = space_for()
         classes_by_pair[(a, b)] = classes
         frozen_chi[(a, b)] = {

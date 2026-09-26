@@ -16,13 +16,13 @@ from qutip_trap.calibration.entangling import (
     calibrate_entangling_angle,
     exact_gate_check,
     frame_rotated,
-    gate_space,
+    spot_check_space,
 )
 from qutip_trap.control.compiler import Circuit, Operation
 from qutip_trap.control.native import zz as native_zz
 from qutip_trap.control.pulses import Drive, Pulse, Tone
 from qutip_trap.control.schedule import GateDrive, ScheduleError, schedule
-from qutip_trap.control.shaping import gate_modes, solve_amplitude_modulation
+from qutip_trap.control.shaping import excursion_by_mode, gate_modes, solve_amplitude_modulation
 from qutip_trap.control.table import CalEntry, Segment, Waveform
 from qutip_trap.device.model import BeamRoles, Device, Field, GradientField
 from qutip_trap.device.presets import secular_trap
@@ -42,6 +42,7 @@ from qutip_trap.light.raman import (
 )
 from qutip_trap.noise.sampling import NoiseSample, key_qubit_offset_hz, quiet_sample
 from qutip_trap.options import Numerics
+from qutip_trap.run.space import waveform_contributions
 from qutip_trap.species import MODULES, species
 from qutip_trap.species.model import Level, Species
 from qutip_trap.species.zeeman import HyperfineZeeman
@@ -166,12 +167,12 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
     )
     assert wf.kind == "light_shift" and wf.segments[0].legs == ("blue",)
     assert wf.chi_total_rad < 0.0
-    space = gate_space(modes, 2, waveform=wf)
-    plain = gate_space(modes, 2, waveform=wf, force_weight=1.0)
-    assert [t.d for t in space.resolved] >= [t.d for t in plain.resolved]
-    assert space.dims != plain.dims, (
-        "the light-shift force operator's spectral radius is 2 for weights (-2, 0), so the cap the excursion asks for is "
-        "larger than the +-1 assumption's"
+    space = spot_check_space(dev, modes, wf, (0, 1), Numerics())[0]
+    plain = excursion_by_mode(wf, modes, force_weight=1.0)
+    sized = waveform_contributions(wf, modes, (0, 1))
+    assert all(sized[m].radius == pytest.approx(2.0 * plain[m], rel=1e-12) for m in modes.modes), (
+        "the light-shift force operator's spectral radius is 2 for weights (-2, 0), so the cap rule sizes the space for "
+        "twice the excursion of the +-1 assumption"
     )
     table = table_with_waveform((0, 1), wf, rabi_hz=rabi, stark_hz=stark)
     check, trace = exact_gate_check(
@@ -212,7 +213,7 @@ def test_light_shift_zz_gate_in_the_echo_form(ca_device) -> None:
         modes, mu_hz=3.02e6, duration_s=100e-6, kind="light_shift", chi_target_rad=math.pi / 8
     )
     assert am.chi_rad < 0.0 and all(abs(a) < 1e-10 for a in am.integrals.alpha.values())
-    space_am = gate_space(modes, 2, waveform=am.waveform)
+    space_am = spot_check_space(dev, modes, am.waveform, (0, 1), Numerics())[0]
     run = calibrate_entangling_angle(
         dev,
         am.waveform,
