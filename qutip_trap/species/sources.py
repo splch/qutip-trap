@@ -14,6 +14,10 @@ SOURCES: Final[dict[str, str]] = {
         "Han et al., arXiv:2501.09973 (2025): MCDHF/MRCI g_J of the 171Yb+ ground state, 2.002615(70), and the second-order "
         "Zeeman coefficient 31.0869(22) mHz/uT^2."
     ),
+    "Meggers1967": (
+        "W. F. Meggers, The second spectrum of ytterbium (Yb II), J. Res. Natl. Bur. Stand. 71A, 396 (1967): the observed "
+        "Zeeman g-values of the Yb II levels (Tables 1 and 2), which NIST ASD lists through Martin, Zalubas and Hagan 1978."
+    ),
     "Pinnington1997": (
         "E. H. Pinnington, G. Rieger, J. A. Kernahan, Beam-laser measurements of the lifetimes of the 6p levels in Yb II, "
         "Phys. Rev. A 56, 2421 (1997): tau(6p 2P1/2) = 8.07(9) ns, tau(6p 2P3/2) = 6.15(9) ns."

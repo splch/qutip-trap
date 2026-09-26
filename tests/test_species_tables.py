@@ -110,6 +110,29 @@ def test_yb171_ground_state_constants() -> None:
     assert yb.mass_u == pytest.approx(170.93578, abs=1e-5), "the ION mass"
 
 
+def test_yb171_6p_levels_are_lande_and_the_observed_g_values_are_cited_as_measurements() -> None:
+    """The 6p 2P levels take the Lande values 0.665894 and 1.334106, 0.17 % and 0.08 % from NIST ASD's 0.667 and 1.333 (the
+    g_S = 2 values 2/3 and 4/3); the 5d 2D, 2F7/2 and bracket levels keep Meggers 1967's observed g."""
+    yb = species("171Yb+")
+    half = Fraction(1, 2)
+    for name, j, asd, gap in (("P1/2", half, 0.667, 1.66e-3), ("P3/2", Fraction(3, 2), 1.333, 8.30e-4)):
+        level = yb.level(name)
+        assert level.g_J == lande_g_j(1, half, j) and "PLAN_background" in level.citations
+        g_s_two = 1.0 + float((j * (j + 1) + half * (half + 1) - 2) / (2 * j * (j + 1)))
+        assert round(g_s_two, 3) == asd, "NIST ASD's value is the Lande factor at g_S = 2"
+        assert abs(level.g_J - asd) / asd == pytest.approx(gap, rel=1e-2)
+    table = MODULES["171Yb+"].TABLE
+    assert not any(k in table for k in ("yb171.P12.g_J", "yb171.P32.g_J"))
+    for key, value, level in (
+        ("D32.g_J", 0.802, "D3/2"),
+        ("D52.g_J", 1.202, "D5/2"),
+        ("F72.g_J", 1.145, "F7/2"),
+        ("bracket_3D32_12.g_J", 1.320, "3D[3/2]1/2"),
+    ):
+        c = table[f"yb171.{key}"]
+        assert c.value == value == yb.level(level).g_J and c.source == "Meggers1967" and "observed" in c.note
+
+
 def test_yb171_i_sat_anchor() -> None:
     """171Yb+ 369.5 nm: gamma = 19.72 MHz with a 19.62 MHz partial rate (1e-3) gives I_sat = 50.83 mW/cm^2 (0.01), and
     the partial rate passed in Hz instead of rad/s would give 8.09."""

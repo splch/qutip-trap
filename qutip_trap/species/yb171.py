@@ -1,9 +1,12 @@
 """171Yb+ species table (PLAN.md Section 4.5.6).
 
 Level energies are NIST ASD 5.12 values in cm^-1; the hyperfine constants, lifetimes and branchings are the primary
-measurements; g_J of the ground state is Han et al. 2025's calculation. Not tabulated: the D5/2 and F7/2 decay
-branchings (Feldker et al. 2018, Tan et al. 2021) and the 1[5/2]5/2 lifetime; every g_J but the ground state's is a
-NIST ASD literal.
+measurements. The ground-state g_J is Han et al. 2025's calculation, and the 6p 2P levels carry the Lande values
+([background]): NIST ASD's 0.667 and 1.333 for them are 2/3 and 4/3, the Lande factors at g_S = 2, which Meggers 1967's
+Zeeman observations match to their three digits. The 5d 2D, 4f13 6s2 2F7/2 and 4f13 5d6s bracket levels keep Meggers's
+observed g as NIST ASD lists it, a measurement good to a few 1e-3 (his ground state's 1.998 is 4.6e-3 below the calculated
+2.002615) that departs from the Lande values in the third digit. Not tabulated: the D5/2 and F7/2 decay branchings
+(Feldker et al. 2018, Tan et al. 2021) and the 1[5/2]5/2 lifetime.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from qutip_trap.species.table import (
     ion_mass_u,
     wavelength_vac_m,
 )
+from qutip_trap.units import lande_g_j
 
 NAME = "171Yb+"
 _P = "yb171."
@@ -80,7 +84,6 @@ _ENTRIES: tuple[Cited, ...] = (
         note="F' = 1 above F' = 0 (= A for I = J = 1/2): the 2.1 GHz optical-pumping sideband and the detuning of the "
         "dominant detection error",
     ),
-    _c("P12.g_J", 0.667, "", "NIST_ASD_5_12", note="the Lande value 2/3"),
     _c(
         "P12.lifetime_olmschenk_s",
         8.12e-9,
@@ -112,9 +115,22 @@ _ENTRIES: tuple[Cited, ...] = (
         uncertainty=0.02e9,
         note="F = 2 above F = 1; A = splitting/2 for J = 3/2, I = 1/2",
     ),
-    _c("D32.g_J", 0.802, "", "NIST_ASD_5_12"),
+    _c(
+        "D32.g_J",
+        0.802,
+        "",
+        "Meggers1967",
+        note="the observed Zeeman g as NIST ASD 5.12 lists it, corrected there from a printed 1.802; the Lande value is "
+        "0.79954",
+    ),
     _c("D52.energy_cm", 24332.69, "cm^-1", "NIST_ASD_5_12"),
-    _c("D52.g_J", 1.202, "", "NIST_ASD_5_12"),
+    _c(
+        "D52.g_J",
+        1.202,
+        "",
+        "Meggers1967",
+        note="the observed Zeeman g as NIST ASD 5.12 lists it; the Lande value is 1.20046",
+    ),
     _c(
         "D52.lifetime_s",
         7.2e-3,
@@ -134,7 +150,6 @@ _ENTRIES: tuple[Cited, ...] = (
         note="INVERTED: the printed splitting is -190.104(3) MHz and A = splitting/3 for I = 1/2, J = 5/2",
     ),
     _c("P32.energy_cm", 30392.23, "cm^-1", "NIST_ASD_5_12"),
-    _c("P32.g_J", 1.333, "", "NIST_ASD_5_12"),
     _c(
         "P32.lifetime_s",
         6.15e-9,
@@ -187,7 +202,13 @@ _ENTRIES: tuple[Cited, ...] = (
         "NIST_ASD_5_12",
         note="the F7/2 trap state, cleared at 638.6 nm",
     ),
-    _c("F72.g_J", 1.145, "", "NIST_ASD_5_12"),
+    _c(
+        "F72.g_J",
+        1.145,
+        "",
+        "Meggers1967",
+        note="the observed Zeeman g as NIST ASD 5.12 lists it; the Lande value of the 4f13 6s2 2F7/2 hole is 1.14319",
+    ),
     _c(
         "F72.lifetime_s",
         9.96e7,
@@ -222,7 +243,13 @@ _ENTRIES: tuple[Cited, ...] = (
         uncertainty=1.1e6,
         note="INVERTED (F = 0 above F = 1), so A < 0",
     ),
-    _c("bracket_3D32_12.g_J", 1.320, "", "NIST_ASD_5_12"),
+    _c(
+        "bracket_3D32_12.g_J",
+        1.320,
+        "",
+        "Meggers1967",
+        note="the observed Zeeman g as NIST ASD 5.12 lists it; the level is jK-coupled and has no LS Lande value",
+    ),
     _c(
         "bracket_3D32_12.lifetime_s",
         37.7e-9,
@@ -249,7 +276,13 @@ _ENTRIES: tuple[Cited, ...] = (
         "NIST_ASD_5_12",
         note="4f13(2F7/2)5d6s 1[5/2]5/2, the 638.6 nm clear-out target",
     ),
-    _c("bracket_1D52_52.g_J", 1.113, "", "NIST_ASD_5_12"),
+    _c(
+        "bracket_1D52_52.g_J",
+        1.113,
+        "",
+        "Meggers1967",
+        note="the observed Zeeman g as NIST ASD 5.12 lists it; the level is jK-coupled and has no LS Lande value",
+    ),
 )
 
 TABLE: dict[str, Cited] = {c.ledger_id: c for c in _ENTRIES}
@@ -286,8 +319,8 @@ def species() -> Species:
             t[_P + "P12.hfs_splitting_hz"], nuclear_spin, half, inverted=False
         ),
         B_hfs_hz=0.0,
-        g_J=t[_P + "P12.g_J"].value,
-        citations=("NIST_ASD_5_12", "Pinnington1997", "Olmschenk2007"),
+        g_J=lande_g_j(1, half, half),
+        citations=("NIST_ASD_5_12", "Pinnington1997", "Olmschenk2007", "PLAN_background"),
     )
     d32 = Level(
         name="D3/2",
@@ -298,7 +331,7 @@ def species() -> Species:
         ),
         B_hfs_hz=0.0,
         g_J=t[_P + "D32.g_J"].value,
-        citations=("NIST_ASD_5_12", "Olmschenk2007"),
+        citations=("NIST_ASD_5_12", "Olmschenk2007", "Meggers1967"),
     )
     p32 = Level(
         name="P3/2",
@@ -306,8 +339,8 @@ def species() -> Species:
         lifetime_s=t[_P + "P32.lifetime_s"].value,
         A_hfs_hz=t[_P + "P32.A_hfs_hz"].value,
         B_hfs_hz=0.0,  # I = 1/2 has no electric-quadrupole hyperfine term
-        g_J=t[_P + "P32.g_J"].value,
-        citations=("NIST_ASD_5_12", "Pinnington1997", "Feldker2018", "Berends1992"),
+        g_J=lande_g_j(1, half, Fraction(3, 2)),
+        citations=("NIST_ASD_5_12", "Pinnington1997", "Feldker2018", "Berends1992", "PLAN_background"),
     )
     d52 = Level(
         name="D5/2",
@@ -316,7 +349,7 @@ def species() -> Species:
         A_hfs_hz=t[_P + "D52.A_hfs_hz"].value,
         B_hfs_hz=0.0,
         g_J=t[_P + "D52.g_J"].value,
-        citations=("NIST_ASD_5_12", "Taylor1997", "Tan2021"),
+        citations=("NIST_ASD_5_12", "Taylor1997", "Tan2021", "Meggers1967"),
     )
     f72 = Level(
         name="F7/2",
@@ -325,7 +358,7 @@ def species() -> Species:
         A_hfs_hz=t[_P + "F72.A_hfs_hz"].value,
         B_hfs_hz=0.0,
         g_J=t[_P + "F72.g_J"].value,
-        citations=("NIST_ASD_5_12", "Lange2021", "Taylor1999"),
+        citations=("NIST_ASD_5_12", "Lange2021", "Taylor1999", "Meggers1967"),
     )
     # the 297.143 nm 3[3/2]1/2 -> S1/2 channel carries A tau of the decay and is declared, not tabulated
     b_297 = t[_P + "bracket_3D32_12.A_297nm_per_s"].value * t[_P + "bracket_3D32_12.lifetime_s"].value
@@ -338,7 +371,7 @@ def species() -> Species:
         ),
         B_hfs_hz=0.0,
         g_J=t[_P + "bracket_3D32_12.g_J"].value,
-        citations=("NIST_ASD_5_12", "Olmschenk2007", "Pinnington1994", "SansonettiMartin2005"),
+        citations=("NIST_ASD_5_12", "Olmschenk2007", "Pinnington1994", "SansonettiMartin2005", "Meggers1967"),
         untabulated_branching=(("S1/2 at 297.143 nm (NIST ASD A = 2.61e7 s^-1)", b_297),),
     )
 
