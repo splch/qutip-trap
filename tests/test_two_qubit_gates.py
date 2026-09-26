@@ -52,8 +52,9 @@ from qutip_trap.published import (
     thermal_debye_waller_infidelity,
 )
 from qutip_trap.run.job import (
+    carrier_step_infidelity,
+    carrier_step_kicks,
     intrinsic_budget,
-    roos_beat_phase_tilt,
     roos_bessel_saturation,
     sideband_lamb_dicke_deficit,
 )
@@ -212,17 +213,12 @@ X_MODES = HilbertSpace(
 )
 
 
-def _played_from(
-    device: Device,
-    wf: Waveform,
-    t_start_s: float,
-    ket: qt.Qobj,
-    *,
-    reset: bool,
-    space: HilbertSpace = X_COM_ALONE,
-) -> qt.Qobj:
-    """The internal state after ``wf`` on the two-ion chain's modes of ``space`` (no light shift, the other modes switched
-    off) from ``ket``|0>, its tones running since t = 0 and the gate started at ``t_start_s``."""
+def _played_kets(
+    device: Device, wf: Waveform, t_start_s: float, *, space: HilbertSpace = X_COM_ALONE
+) -> list[np.ndarray]:
+    """The joint kets after ``wf`` on the two-ion chain's modes of ``space`` (no light shift, the other modes switched off)
+    from the four computational inputs |ab>|0>, each as a (4, motion) array, its tones running since t = 0 on
+    phase-continuous tones and the gate started at ``t_start_s``."""
     drives = raman_gate_drives(2)
     table = table_with_waveform((0, 1), wf, device=device, drives=drives, stark_hz={})
     spins, _ = ms_spin_phases(wf, (0, 1), (0.0, 0.0), PhaseFrame())
@@ -233,24 +229,36 @@ def _played_from(
         t_start_s=t_start_s,
         table=table,
         gate_id="ms",
-        beat_phase_reset=reset,
+        beat_phase_reset=False,
         stark_compensation=False,
     )
     gate = PlayedGate("ms", "ms", (0, 1), wf, drives[0].beams, t_start_s, t_start_s + wf.duration_s)
     sched = Schedule(tuple(pulses), (), (), {0: 0.0, 1: 0.0}, gates=(gate,), t0_s=t_start_s)
     engine = JointExactEngine(builder_options=BuilderOptions(include_stark=False, frozen_debye_waller=False))
-    traces = engine.run_pulses(
-        device, sched, space.initial_state(ket), space, quiet_sample(), SeedSpec(0), Numerics()
-    )
-    return traces.final.internal
+    out = []
+    for levels in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        traces = engine.run_pulses(
+            device, sched, space.initial_state(list(levels)), space, quiet_sample(), SeedSpec(0), Numerics()
+        )
+        out.append(np.asarray(traces.final.joint.full()).reshape(4, -1))
+    return out
 
 
-def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with() -> None:
-    """Roos's spin-axis tilt at beat phase zeta = pi/2 against the exact engine on the two-ion chain's x-COM mode with
-    phase-continuous tones: the |++> output moves from the zeta = 0 one by the budget's sin^2(psi), psi = (2 Omega_on/mu)
-    sin(zeta), for a square pulse (1.77e-3 against 1.81e-3) and for Leung's FM pulse at its starting detuning (6.95e-3
-    against 6.48e-3); the Fourier-sine AM switches on at zero amplitude, the carrier follows it adiabatically and its output
-    does not move (below 1e-5), where its time-mean amplitude would give 4.4e-3."""
+def _gate_distance(played: list[np.ndarray], reference: list[np.ndarray]) -> float:
+    """1 - F_e of one play of a gate against another from the same inputs: F_e = sum_k |sum_x <V x, k|psi_x>|^2/16 over the
+    motional Fock states k, V the reference play's spin unitary (its loops close, so V|x> = <0|ref_x>)."""
+    ideal = [r[:, 0] / np.linalg.norm(r[:, 0]) for r in reference]
+    overlap = sum(np.conj(ideal[x]) @ played[x] for x in range(4))
+    return 1.0 - float(np.sum(np.abs(overlap) ** 2) / 16.0)
+
+
+def test_the_carrier_kicks_predict_how_far_the_start_phase_moves_a_gate() -> None:
+    """The carrier's kicks against the exact engine on the two-ion chain's x-COM mode with phase-continuous tones: the gate
+    started at beat phase pi/2 differs from the one started at 0 by ``carrier_step_infidelity`` of the two starts' kick
+    difference, for a square pulse (1.8167e-3 against 1.8163e-3: the switch-on kick, Roos's tilt psi = 2 Omega/mu, and the
+    switch-off kick, which the start phase moves alike) and for Leung's FM pulse (6.99e-3 against 7.14e-3); the Fourier-sine
+    AM switches on and off at zero amplitude and kicks nothing. The budget reads the device's hardware: on phase-continuous
+    tones the square pulse at pi/2 carries its kicks, on the resetting chain none."""
     device = chain_device(2)
     assert device.hardware.phase_continuous
     reset_hw = dataclasses.replace(
@@ -262,24 +270,36 @@ def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with()
     )
     fourier = solve_fourier_amplitude_modulation(modes, mu_hz=2.99e6, duration_s=100e-6, n_basis=4).waveform
     fm = solve_frequency_modulation(modes, duration_s=100e-6, n_vertices=5, mu0_hz=3.012e6).waveform
-    plus = qt.tensor((qt.basis(2, 0) + qt.basis(2, 1)).unit(), (qt.basis(2, 0) + qt.basis(2, 1)).unit())
     moved: dict[str, tuple[float, float]] = {}
-    for name, wf in (("square", square), ("fourier", fourier), ("fm", fm)):
+    for name, wf in (("square", square), ("fm", fm)):
         mu = wf.segments[0].detuning_hz["blue"]
         t_g = 0.25 / float(mu(0.0) if callable(mu) else mu)
-        at_zero = _played_from(device, wf, 0.0, plus, reset=False)
-        at_quarter = _played_from(device, wf, t_g, plus, reset=False)
-        assert float(np.real((at_zero * at_zero).tr())) > 1.0 - 1e-6, "the |++> output is pure"
-        change = 1.0 - float(np.real((at_zero * at_quarter).tr()))
-        moved[name] = (change, roos_beat_phase_tilt(wf, t_g, beat_reset=False))
-    assert moved["square"][1] == pytest.approx(1.81e-3, rel=1e-2)
-    assert moved["square"][0] == pytest.approx(moved["square"][1], rel=0.05), moved
-    assert moved["fm"][1] == pytest.approx(6.48e-3, rel=1e-2)
-    assert moved["fm"][0] == pytest.approx(moved["fm"][1], rel=0.1), moved
-    assert moved["fourier"][1] == 0.0 and moved["fourier"][0] < 1e-5, moved
-    # the budget reads the device's hardware: on phase-continuous tones the square pulse at t_g, on the resetting chain none
-    for dev, want in ((device, moved["square"][1]), (reset_hw, 0.0)):
-        t_g = 0.25 / float(square.segments[0].detuning_hz["blue"])
+        change = _gate_distance(_played_kets(device, wf, t_g), _played_kets(device, wf, 0.0))
+        at_zero = carrier_step_kicks(wf, 0.0, beat_reset=False)
+        at_quarter = carrier_step_kicks(wf, t_g, beat_reset=False)
+        moved[name] = (
+            change,
+            carrier_step_infidelity(wf, modes, {i: at_quarter[i] - at_zero[i] for i in at_zero}),
+        )
+    omega = float(square.segments[0].amplitude_hz[(0, "blue")])
+    psi = 2.0 * omega / float(square.segments[0].detuning_hz["blue"])
+    # the switch-on and switch-off kicks +-psi on each ion, a quarter turn of the angle apart: psi^2 of the pair, to the
+    # 0.3 % the counter-rotating force adds to chi
+    assert moved["square"][1] == pytest.approx(psi**2, rel=5e-3)
+    assert moved["square"][1] == pytest.approx(1.816e-3, rel=1e-3)
+    assert moved["square"][0] == pytest.approx(moved["square"][1], rel=5e-3), moved
+    assert moved["fm"][0] == pytest.approx(moved["fm"][1], rel=0.05), moved
+    assert all(
+        np.max(np.abs(k)) < 1e-12 for k in carrier_step_kicks(fourier, 1.0e-7, beat_reset=False).values()
+    )
+    # the budget over every mode the pair drives (the square pulse leaves the rocking mode's loop open, which moves the
+    # kicked branches apart) and on the device's own hardware
+    t_g = 0.25 / float(square.segments[0].detuning_hz["blue"])
+    kicked = carrier_step_infidelity(
+        square, two_ion_modes(device), carrier_step_kicks(square, t_g, beat_reset=False)
+    )
+    assert kicked > moved["square"][1]
+    for dev, want in ((device, kicked), (reset_hw, 0.0)):
         drives = raman_gate_drives(2)
         gate = PlayedGate("ms", "ms", (0, 1), square, drives[0].beams, t_g, t_g + square.duration_s)
         pulses = entangling_pulses(
@@ -296,7 +316,20 @@ def test_the_beat_phase_tilt_is_set_by_the_amplitude_the_gate_switches_on_with()
             dev, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
         )
         (ms,) = intrinsic_budget(dev, sched, selection).entangling
-        assert ms.beat_phase_tilt == pytest.approx(want, abs=1e-15)
+        assert ms.carrier_steps == pytest.approx(want, rel=1e-6, abs=1e-15)
+
+
+def test_the_carrier_kicks_do_not_depend_on_the_order_the_pair_is_named_in() -> None:
+    """A gate on the pair named (1, 0), as a CNOT from ion 1 to ion 0 plays it, carries the same kick term as on (0, 1): the
+    pair's angle is read in either order (5-segment AM at a quarter beat period, 1.23e-4)."""
+    device = chain_device(2)
+    modes = two_ion_modes(device).subset([2, X_COM_TWO_IONS])
+    wf = solve_amplitude_modulation(modes, mu_hz=2.95e6, duration_s=150e-6, kernel="rwa").waveform
+    kicks = carrier_step_kicks(wf, 0.25 / 2.95e6, beat_reset=False)
+    reversed_pair = GateModes((1, 0), modes.modes, modes.omega_rad_s, modes.eta, modes.nbar)
+    forward = carrier_step_infidelity(wf, modes, kicks)
+    assert forward == pytest.approx(1.23e-4, rel=0.02)
+    assert carrier_step_infidelity(wf, reversed_pair, kicks) == pytest.approx(forward, rel=1e-12)
 
 
 def test_a_resetting_chain_plays_an_fm_gate_a_quarter_beat_in_as_it_plays_at_t_zero() -> None:
@@ -326,23 +359,27 @@ def test_a_resetting_chain_plays_an_fm_gate_a_quarter_beat_in_as_it_plays_at_t_z
 
 
 @pytest.mark.slow
-def test_a_stepped_envelope_moves_less_than_its_switch_on_tilt() -> None:
-    """Five-segment AM closing both x modes (33, 107, 148, 107, 33 kHz): started at zeta = pi/2 its |++> output moves by
-    1.2e-4, inside the switch-on tilt sin^2(2 Omega_on/mu) = 5.2e-4, which the later steps, each at its own beat phase,
-    partly cancel here; the mean segment amplitude would give 3.4e-3."""
+def test_a_stepped_envelope_moves_by_its_kicks_less_than_its_switch_on_tilt() -> None:
+    """Five-segment AM closing both x modes (33, 107, 148, 107, 33 kHz) on phase-continuous tones: started at zeta = pi/2 it
+    differs from the zeta = 0 start by 1.17e-4, the kick term of the two starts' kicks (1.23e-4, 5 %), where the switch-on
+    alone, Roos's tilt sin^2(2 Omega_on/mu) = 5.2e-4, would claim 4.5 times more: the later steps, each at its own beat
+    phase, partly cancel it."""
     device = chain_device(2)
     modes = two_ion_modes(device).subset([2, X_COM_TWO_IONS])
     wf = solve_amplitude_modulation(modes, mu_hz=2.95e6, duration_s=150e-6, kernel="rwa").waveform
     assert len(wf.segments) == 5
-    plus = qt.tensor((qt.basis(2, 0) + qt.basis(2, 1)).unit(), (qt.basis(2, 0) + qt.basis(2, 1)).unit())
     t_g = 0.25 / 2.95e6
-    at_zero = _played_from(device, wf, 0.0, plus, reset=False, space=X_MODES)
-    at_quarter = _played_from(device, wf, t_g, plus, reset=False, space=X_MODES)
-    change = 1.0 - float(np.real((at_zero * at_quarter).tr()))
-    tilt = roos_beat_phase_tilt(wf, t_g, beat_reset=False)
+    change = _gate_distance(
+        _played_kets(device, wf, t_g, space=X_MODES), _played_kets(device, wf, 0.0, space=X_MODES)
+    )
+    at_zero = carrier_step_kicks(wf, 0.0, beat_reset=False)
+    at_quarter = carrier_step_kicks(wf, t_g, beat_reset=False)
+    predicted = carrier_step_infidelity(wf, modes, {i: at_quarter[i] - at_zero[i] for i in at_zero})
+    assert change == pytest.approx(predicted, rel=0.1), (change, predicted)
     omega_on = float(wf.segments[0].amplitude_hz[(0, "blue")])
+    tilt = math.sin(abs(at_quarter[0][0])) ** 2
     assert tilt == pytest.approx(math.sin(2.0 * omega_on / 2.95e6) ** 2, rel=1e-9)
-    assert 2e-5 < change < tilt, (change, tilt)
+    assert 2e-5 < change < tilt / 3.0, (change, tilt)
 
 
 def test_the_carrier_saturates_the_force_at_twice_the_per_tone_rabi_frequency_over_mu() -> None:
@@ -709,9 +746,13 @@ def test_the_section_11_1_fixture_is_the_plan_s_pulse() -> None:
 
 @pytest.mark.slow
 def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intrinsic_budget() -> None:
-    """The exact play of the calibrated reference pulse misses MS(0, 0, pi/2) by 4.66e-5 (2 %), inside the off-resonant
-    carrier term (Omega_tone/(2 nu))^2 = 1.143e-4, which the budget's carrier_scale (Omega_tone/(2 mu))^2 = 1.151e-4
-    reports at the tones' detuning mu = nu - eps, with the budget's other terms at their closed forms."""
+    """The exact play of the calibrated reference pulse misses MS(0, 0, pi/2) by 4.66e-5 (2 %), inside the budget: its
+    carrier_scale (Omega_tone/(2 mu))^2 = 1.151e-4 at the tones' detuning mu = nu - eps, the off-resonant term
+    (Omega_tone/(2 nu))^2 = 1.143e-4 to 0.7 %, with no carrier kicks (the tones start at beat phase 0 and stop after a
+    whole number of beat periods) and the budget's other terms at their closed forms. The 4.66e-5 is not the carrier's:
+    it is the first sideband's Lamb-Dicke nonlinearity along the gate's own excursion, which appears at lamb_dicke_order =
+    3 (``test_the_same_identity_reaches_1e_6_with_lamb_dicke_order_and_rwa_on``) and which the budget names as not
+    estimated."""
     device, modes, waveform, sched, infidelity = _exact_play(BuilderOptions(include_stark=False))
     omega_tone = TWO_PI * float(waveform.segments[0].amplitude_hz[(0, "blue")])
     nu = modes.omega_rad_s[0]
@@ -719,10 +760,8 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     # 1.1430e-4 at the calibrated amplitude (1.1228e-4 at the closed-form one)
     assert off_resonant == pytest.approx(1.1430e-4, rel=2e-3)
     assert off_resonant == pytest.approx(1.1e-4, abs=5e-6)
-    # the identity holds inside it, and is not trivially small: it IS the off-resonant carrier, twice over (two ions)
     assert infidelity == pytest.approx(4.659e-5, rel=2e-2), infidelity
     assert infidelity < off_resonant
-    assert infidelity > 0.25 * off_resonant
     selection = select_space(
         device, sched, Numerics(caps={X_COM_TWO_IONS: 12}), nbar=dict.fromkeys(range(6), 0.0)
     )
@@ -735,12 +774,18 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
     assert ms.carrier_scale == pytest.approx(1.1507e-4, rel=2e-3)
     assert ms.carrier_scale == pytest.approx(off_resonant, rel=1e-2)
     assert infidelity < ms.carrier_scale
+    # the reset beat note starts at phase 0 and mu tau = 2 pi 299: neither end kicks
+    assert ms.carrier_steps < 1e-20
     # the loop closes, so the residual displacement is below 1e-3, and the ground state has no thermal Debye-Waller loss
     assert ms.debye_waller == 0.0
     assert ms.residual_displacement < 1e-3
     # the sideband element's Lamb-Dicke deficit: 1 - <n+1|D(i eta)|n>/(eta sqrt(n+1)) at the cap's top n = 11, reported
-    # beside the budget and NOT summed (its mean is the s^2 calibration's rescaling, its spread the Debye-Waller term)
+    # beside the budget and NOT summed (its mean is the s^2 calibration's rescaling, its thermal spread the Debye-Waller
+    # term); the spread the gate's own excursion adds is named as not estimated
     assert ms.sideband_lamb_dicke_deficit == pytest.approx(3.0554e-2, rel=1e-2)
+    assert any("Lamb-Dicke nonlinearity" in note for note in budget.omitted), budget.omitted
+    # a calibrated waveform on a space that carries every mode it drives: no angle left out
+    assert ms.frozen_angle == 0.0 and ms.frozen_angle_rad == 0.0
     # the Bessel force saturation is Roos Eq. 17: f = 1 - (J_0 + J_2)(2 Omega/mu) in the per-tone Omega at the tone
     # amplitude and the tone-to-carrier detuning, entered as the uncalibrated angle error's infidelity sin^2(pi f/2)
     gate = sched.gates[0]
@@ -758,10 +803,11 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
         ms.residual_displacement
         + ms.debye_waller
         + ms.carrier_scale
+        + ms.carrier_steps
         + ms.bessel_saturation
-        + ms.beat_phase_tilt
+        + ms.frozen_angle
     )
-    assert ms.total == summed, "the gate's total sums its five MS terms"
+    assert ms.total == summed, "the gate's total sums its six MS terms"
     others = sum(r.total for r in (*budget.carriers, *budget.scattering))
     assert budget.total == pytest.approx(ms.total + others)
     assert budget.total < ms.sideband_lamb_dicke_deficit, (
@@ -771,12 +817,18 @@ def test_the_section_11_1_pulse_reproduces_the_native_ms_matrix_inside_its_intri
 
 @pytest.mark.slow
 def test_the_same_identity_reaches_1e_6_with_lamb_dicke_order_and_rwa_on() -> None:
-    """With lamb_dicke_order = 1 and the RWA the same pulse reproduces the native matrix to 2.32e-10 (20 %), below 1e-6."""
+    """With lamb_dicke_order = 1 and the RWA the same pulse reproduces the native matrix to 2.32e-10 (20 %), below 1e-6; with
+    the carrier and both first sidebands kept it still does (4.3e-8), and the exact play's 4.66e-5 appears only at
+    lamb_dicke_order = 3 (4.70e-5): the first sideband's eta^3 nonlinearity along the gate's excursion, not the carrier."""
     *_, infidelity = _exact_play(
         BuilderOptions(lamb_dicke_order=1, rwa=True, frame="interaction", include_stark=False)
     )
     assert infidelity < 1e-6, infidelity
     assert infidelity == pytest.approx(2.32e-10, rel=0.2), infidelity
+    *_, first_order = _exact_play(BuilderOptions(lamb_dicke_order=1, include_stark=False))
+    assert first_order < 1e-6, first_order
+    *_, third_order = _exact_play(BuilderOptions(lamb_dicke_order=3, include_stark=False))
+    assert third_order == pytest.approx(4.70e-5, rel=2e-2), third_order
 
 
 def test_sideband_lamb_dicke_deficit_against_eta_sqrt_n_plus_one() -> None:

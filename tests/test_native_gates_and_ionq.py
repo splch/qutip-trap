@@ -309,7 +309,19 @@ def test_from_ionq_v1_shots_closes_the_round_trip() -> None:
 
 
 BUDGET = IntrinsicBudget(
-    entangling=(EntanglingScales("ms[2]", 1e-6, 4e-6, 1.4e-3, 2e-5, 0.0, 2.1e-2, 0.0),),
+    entangling=(
+        EntanglingScales(
+            gate_id="ms[2]",
+            residual_displacement=1e-6,
+            debye_waller=4e-6,
+            carrier_scale=1.4e-3,
+            carrier_steps=1.3e-4,
+            bessel_saturation=2e-5,
+            frozen_angle=0.0,
+            sideband_lamb_dicke_deficit=2.1e-2,
+            frozen_angle_rad=3e-5,
+        ),
+    ),
     carriers=(CarrierScales("gpi2[0]", 3e-4, 1.8e-5), CarrierScales("gpi2[0]", 3e-4, 1.8e-5)),
     scattering=(ScatteringScales("ms[2]/ion0", 0, 5e-6, 5e-6, 2e-8, 1e-11),),
 )

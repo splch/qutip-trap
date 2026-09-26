@@ -179,8 +179,8 @@ def test_every_calibrated_entry_agrees_with_the_derived_truth_within_its_uncerta
 
 @pytest.mark.slow
 def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity(calibrated) -> None:
-    """A Bell circuit from the calibrated table has 1 - F inside the intrinsic budget plus the fits' own over-rotation, frame
-    and entangling-gate terms, above the surrogate table's and within 5e-3 of it, with P_00 + P_11 > 0.98."""
+    """A Bell circuit from the calibrated table has 1 - F inside the intrinsic budget plus the fits' own over-rotation and frame
+    terms, above the surrogate table's and within 5e-3 of it, with P_00 + P_11 > 0.98."""
     fx, report = calibrated
     kw = dict(
         keep_final_state=True,
@@ -197,12 +197,6 @@ def test_a_bell_circuit_from_the_calibrated_table_reaches_the_predicted_fidelity
         r = t.rabi[(i, fx.gate_drives[i].table_key_beam)]
         cal += 5 * (0.5 * math.pi * r.uncertainty / r.value) ** 2
         cal += (2.0 * math.pi * t.qubit_freq[i].uncertainty * 200e-6) ** 2
-    # and the entangling gate's, which carries the table's whole excess over the surrogate's (1.5e-3 of it): the closure
-    # scale's sigma_s (ms_scan stores it on phi_m) turns the angle by (pi/2) sigma_s, the spin phase's sigma moves the Bell
-    # state's |11> phase
-    ms = t.waveform_for((0, 1))
-    assert ms is not None
-    cal += (0.5 * math.pi * ms.phi_m.uncertainty) ** 2 + ms.phi_s.uncertainty**2
     # the upper bound, at the calibration's own contribution with no slack factor: 1 - F must lie inside the intrinsic
     # budget the noise model predicts plus the fits' own uncertainty
     assert 1.0 - fid < budget + cal, (fid, budget, cal)

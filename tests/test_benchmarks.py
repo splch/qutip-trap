@@ -231,15 +231,25 @@ def test_gate_piece_of_finds_multi_piece_gate_ids_by_longest_prefix() -> None:
 
 def test_the_per_kind_intrinsic_scales_are_the_budget_s_own_summed_terms() -> None:
     """``intrinsic_by_kind`` charges each record's summed terms to its piece, so the kinds add up to the budget's total and
-    the reported-only numbers (the 2.1e-2 Lamb-Dicke deficit, the frozen angle, the Rayleigh probability) stay out."""
-    ms = EntanglingScales("ms[2]", 1e-6, 4e-6, 1.4e-3, 2e-5, 0.0, 2.1e-2, 0.3)
+    the reported-only numbers (the 2.1e-2 Lamb-Dicke deficit, the angle in radians, the Rayleigh probability) stay out."""
+    ms = EntanglingScales(
+        gate_id="ms[2]",
+        residual_displacement=1e-6,
+        debye_waller=4e-6,
+        carrier_scale=1.4e-3,
+        carrier_steps=1.3e-4,
+        bessel_saturation=2e-5,
+        frozen_angle=0.0,
+        sideband_lamb_dicke_deficit=2.1e-2,
+        frozen_angle_rad=0.3,
+    )
     carrier = CarrierScales("gpi2[0]", 3e-4, 1.8e-5)
     scatter = ScatteringScales("ms[2]/seg0/ion0", 0, 5e-6, 5e-6, 2e-3, 1e-11)
     budget = IntrinsicBudget((ms,), (carrier, carrier), (scatter,))
     by_kind = intrinsic_by_kind(budget, {"ms[2]": "ms[0,1]", "gpi2[0]": "gpi2[0]"})
     assert by_kind == pytest.approx({"ms[0,1]": ms.total + scatter.total, "gpi2[0]": 2.0 * carrier.total})
     assert sum(by_kind.values()) == pytest.approx(budget.total, rel=1e-15)
-    assert ms.total == pytest.approx(1e-6 + 4e-6 + 1.4e-3 + 2e-5)
+    assert ms.total == pytest.approx(1e-6 + 4e-6 + 1.4e-3 + 1.3e-4 + 2e-5)
     assert scatter.total == pytest.approx(1e-5 + 1e-11)
     with pytest.raises(ValueError, match="belongs to no piece"):
         intrinsic_by_kind(budget, {"ms[2]": "ms[0,1]"})

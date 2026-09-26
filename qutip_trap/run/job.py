@@ -55,7 +55,7 @@ from qutip_trap.units import TWO_PI
 
 if TYPE_CHECKING:
     from qutip_trap.control.compiler import Circuit
-    from qutip_trap.control.shaping import GateModes
+    from qutip_trap.control.shaping import Envelope, GateIntegrals, GateModes
     from qutip_trap.control.table import CalibrationTable, Leg, Segment, Waveform
     from qutip_trap.device.model import Device
     from qutip_trap.light.beams import Beam
@@ -363,7 +363,9 @@ def sideband_lamb_dicke_deficit(modes: GateModes, selection: SpaceSelection) -> 
     """The sideband matrix element's Lamb-Dicke deficit f = 1 - Omega_{n+1,n}/(Omega eta sqrt(n + 1)) (Wineland et al. 1998,
     NIST J. Res. 103, 259, Eq. 18), the worst case over the gate's ions and its resolved and frozen modes at the highest Fock
     index each carries. Reported, not summed into the budget total: its thermal mean is the force rescaling the s^2
-    calibration absorbs and its spread is the Debye-Waller term the total already carries."""
+    calibration absorbs (named as not estimated for a waveform no calibration set) and its thermal spread is the
+    Debye-Waller term the total carries; the spread the gate's own excursion adds, the eta^3 nonlinearity, is named as not
+    estimated."""
     from qutip_trap.dynamics.operators import rabi_matrix_element
 
     worst = 0.0
@@ -428,61 +430,191 @@ def roos_bessel_saturation(waveform: Waveform) -> float:
     return math.sin(math.pi * f / 2.0) ** 2
 
 
-def _at_start(value: float | Callable[[float], float]) -> float:
-    """A segment's constant, or its callable's value at the segment start."""
-    return float(value(0.0)) if callable(value) else float(value)
+def _at(value: float | Callable[[float], float], tau: float) -> float:
+    """A segment's constant, or its callable's value at the segment-local time ``tau``."""
+    return float(value(tau)) if callable(value) else float(value)
 
 
-def roos_beat_phase_tilt(waveform: Waveform, t_start_s: float, *, beat_reset: bool) -> float:
-    """Roos's spin-axis tilt of an MS gate started at ``t_start_s``, as the infidelity sin^2(psi) (Section 4.4.1; Roos 2008,
-    New J. Phys. 10, 013002). Switching the bichromatic field on leaves the carrier-frame rotation of the switch-on, which
-    tilts the force's spin axis per ion by psi = |A_blue e^{-i zeta_blue} - A_red e^{-i zeta_red}|/mu: A_leg = Omega_leg
-    e^{i phi_leg} the amplitude the leg switches on with in the per-tone Omega (the first segment's at its start), zeta_leg
-    the leg's beat phase 2 pi mu_leg t_start less the per-gate reset the scheduler programs (``beat_reset``: none for a
-    detuning schedule), mu the starting detuning. For equal tone phases psi = (2 Omega/mu)|sin zeta|, Roos's (4 Omega_R/mu)
-    sin(zeta) with Omega_R = Omega/2. The amplitude is the switch-on one, not a pulse average: an envelope that rises from
-    zero switches on at zero amplitude and the carrier follows it adiabatically. A stepped envelope's later steps leave
-    rotations of their own, each at its own beat phase, which this scale leaves out (the spot check measures them at the
-    calibrated start). The worst ion; zero for a non-MS waveform."""
+BEAT_GRID_POINTS = 4097
+"""The points the beat phase of a detuning schedule is integrated over per segment, as the builder splines it."""
+
+
+def _beat_advance_rad(detuning_hz: float | Callable[[float], float], duration_s: float) -> float:
+    """2 pi int_0^T mu(tau) dtau over one segment: the beat phase a leg accumulates."""
+    if not callable(detuning_hz):
+        return TWO_PI * float(detuning_hz) * duration_s
+    grid = np.linspace(0.0, duration_s, BEAT_GRID_POINTS)
+    return TWO_PI * float(np.trapezoid([float(detuning_hz(x)) for x in grid], grid))
+
+
+def carrier_step_kicks(
+    waveform: Waveform, t_start_s: float, *, beat_reset: bool, response_s: float = 0.0
+) -> dict[int, np.ndarray]:
+    """Per ion, the rotation the off-resonant carrier leaves at every discontinuity of an MS waveform's envelope, in order:
+    the switch-on, each segment boundary, the switch-off (``len(segments) + 1`` complex kicks in the ion's spin frame, the
+    real part about the carrier axis sigma_{phi_s}, which anticommutes with the force, the imaginary part about the force
+    axis sigma_{phi_s + pi/2}; phi_s the half-sum of the first segment's leg phases).
+
+    A tone mu_leg from the carrier drives (Omega_leg/2)(e^{i(phi_leg - Theta_leg(t))} sigma_+ + h.c.), whose rotation angle
+    int Omega_leg e^{-i Theta_leg} dt oscillates as Omega_leg e^{-i Theta_leg}/(-i mu_leg) about a centre that jumps
+    whenever the tone's amplitude, phase or detuning does. In the frame that follows the oscillation the carrier is a train
+    of kicks exp(-(i/2)(K sigma_+ + h.c.)), K = sum_leg Delta[Omega_leg e^{i(phi_leg - Theta_leg)}/(i mu_leg)] (Hz over Hz,
+    a Bloch angle |K|), between which the spin-dependent force acts; the oscillation that remains is Roos 2008's Bessel
+    regime. The switch-on kick is Roos's beat-phase spin-axis tilt, psi = (2 Omega/mu)|sin zeta| for equal tone phases; an
+    envelope that rises from zero kicks nothing there, the carrier following it adiabatically. Theta_leg is the beat phase
+    as the builder plays it, 2 pi mu_leg t in absolute time less the per-gate reset the scheduler programs (``beat_reset``;
+    none for a detuning schedule, whose beat phase starts each segment at 2 pi mu_leg(0) times the segment's start and
+    advances by 2 pi int mu_leg). A modulator's first-order response of time constant ``response_s`` scales each leg's kick
+    by 1/sqrt(1 + (2 pi mu_leg tau)^2), the scheduler's response phase restoring its axis. Empty for a non-MS waveform."""
     from qutip_trap.control.schedule import beat_phase_offset_rad
 
     if waveform.kind != "ms":
+        return {}
+    segs = waveform.segments
+    legs: tuple[Leg, ...] = ("blue", "red")
+
+    def centre(seg: Segment, ion: int, leg: Leg, tau: float, theta: float) -> complex:
+        mu = _at(seg.detuning_hz[leg], tau)
+        if mu == 0.0:
+            raise RunError("an MS waveform carries a tone on the carrier: its kicks Omega/mu need mu != 0")
+        response = 1.0 / math.sqrt(1.0 + (TWO_PI * mu * response_s) ** 2)
+        amp = _at(seg.amplitude_hz[(ion, leg)], tau)
+        return response * amp * cmath.exp(1j * (float(seg.phase_rad[(ion, leg)]) - theta)) / (1j * mu)
+
+    out: dict[int, np.ndarray] = {}
+    for ion in waveform.ions:
+        spin = 0.5 * sum(float(segs[0].phase_rad[(ion, leg)]) for leg in legs)
+        kicks = np.zeros(len(segs) + 1, dtype=complex)
+        t = t_start_s
+        for k, seg in enumerate(segs):
+            for leg in legs:
+                det = seg.detuning_hz[leg]
+                theta = TWO_PI * _at(det, 0.0) * t - (
+                    beat_phase_offset_rad(det, t_start_s) if beat_reset else 0.0
+                )
+                kicks[k] += centre(seg, ion, leg, 0.0, theta)
+                kicks[k + 1] -= centre(
+                    seg, ion, leg, seg.duration_s, theta + _beat_advance_rad(det, seg.duration_s)
+                )
+            t += seg.duration_s
+        out[ion] = kicks * cmath.exp(-1j * spin)
+    return out
+
+
+def _prefix_integrals(envelope: Envelope, modes: GateModes, times_s: Sequence[float]) -> list[GateIntegrals]:
+    """The envelope's first-order integrals alpha_{i,m}(t) and chi_ab(t) up to each of ``times_s`` (Section 4.4.3, the exact
+    first-order kernel): a segmented envelope cut at its segment edges, a sampled one at the grid point nearest the time."""
+    from qutip_trap.control.shaping import GateIntegrals, SampledEnvelope, SegmentedEnvelope, integrals
+
+    zero = GateIntegrals(
+        {(i, m): 0j for i in modes.ions for m in modes.modes},
+        {pair: 0.0 for pair in modes.pairs()},
+        {},
+        "choi",
+    )
+    out: list[GateIntegrals] = []
+    for t in times_s:
+        prefix: SegmentedEnvelope | SampledEnvelope
+        if isinstance(envelope, SegmentedEnvelope):
+            n = int(np.searchsorted(envelope.edges_s, t + 1e-15, side="right")) - 1
+            if n <= 0:
+                out.append(zero)
+                continue
+            prefix = SegmentedEnvelope(
+                envelope.durations_s[:n],
+                {i: a[:n] for i, a in envelope.amplitude_rad_s.items()},
+                envelope.mu_rad_s,
+                envelope.phi_m_rad,
+                None if envelope.phase_rad is None else envelope.phase_rad[:n],
+            )
+        else:
+            # Simpson's rule needs an odd number of points: cut at the nearest even index
+            n = 2 * int(round(float(np.interp(t, envelope.times_s, np.arange(envelope.times_s.size))) / 2.0))
+            if n < 2:
+                out.append(zero)
+                continue
+            phi_m = envelope.phi_m_rad
+            prefix = SampledEnvelope(
+                envelope.times_s[: n + 1],
+                {i: a[: n + 1] for i, a in envelope.amplitude_rad_s.items()},
+                envelope.beat_phase_rad[: n + 1],
+                phi_m[: n + 1] if isinstance(phi_m, np.ndarray) else phi_m,
+            )
+        out.append(integrals(prefix, modes, "choi"))
+    return out
+
+
+def carrier_step_infidelity(waveform: Waveform, modes: GateModes, kicks: Mapping[int, np.ndarray]) -> float:
+    """The entanglement infidelity the carrier's kicks (``carrier_step_kicks``, or a difference of two gates' kicks) add to an
+    MS gate, to second order in the kicks, over the gate's modes at their thermal occupations nbar_m.
+
+    Moving a kick c_j sigma_c^i at time t_j (about the carrier axis) to the gate's start through the Lamb-Dicke propagator
+    U_0(t) = D(sum_i sigma^i alpha_i(t)) exp(i sum chi_ab(t) sigma^a sigma^b) flips ion i's force eigenvalue s_i before t_j,
+    leaving the kicked branch displaced by 2 s_i alpha_i(t_j) and phased by exp(2 i s_i s_k Lambda_ik(t_j)) with Lambda_ik =
+    chi_ik - sum_m Im(alpha_km conj alpha_im). Averaged over the 2^N inputs (Tr/2^N; the kicked term, off-diagonal in the
+    force basis, has no first-order overlap with the ideal output), each ion contributes
+
+        (1/4) sum_{j,j'} c_j c_j' prod_{k != i} cos[2 (Lambda_ik(t_j) - Lambda_ik(t_j'))] cos[4 Im(alpha_i(t_j') . conj
+        alpha_i(t_j))] exp[-2 sum_m (2 nbar_m + 1) |alpha_im(t_j) - alpha_im(t_j')|^2],
+
+    the thermal average entering through the displacement's characteristic function, and a kick about the force axis,
+    which commutes with U_0, adds (1/4)(sum_j c_j)^2. A kick where the loops are open and the angle is growing reaches a
+    distinguishable branch and adds incoherently; kicks where alpha = 0 add as rotations."""
+    from qutip_trap.control.shaping import envelope_of
+
+    if not kicks:
         return 0.0
-    first = waveform.segments[0]
-    mu = abs(_at_start(first.detuning_hz["blue"]))
-    if mu == 0.0:
-        raise RunError(
-            "an MS waveform starts with a tone on the carrier: Roos's tilt (2 Omega/mu) needs mu != 0"
-        )
-    psi = 0.0
-    legs: tuple[tuple[Leg, float], ...] = (("blue", 1.0), ("red", -1.0))
-    for ion in first.ions:
-        switch_on = 0j
-        for leg, sign in legs:
-            detuning = first.detuning_hz[leg]
-            zeta = TWO_PI * _at_start(detuning) * t_start_s
-            if beat_reset:
-                zeta -= beat_phase_offset_rad(detuning, t_start_s)
-            phase = float(first.phase_rad[(ion, leg)]) - zeta
-            switch_on += sign * _at_start(first.amplitude_hz[(ion, leg)]) * cmath.exp(1j * phase)
-        psi = max(psi, abs(switch_on) / mu)
-    return math.sin(psi) ** 2
+    ions = tuple(sorted(kicks))
+    envelope = envelope_of(waveform, ions)
+    edges = np.concatenate([[0.0], np.cumsum([seg.duration_s for seg in waveform.segments])])
+    parts = _prefix_integrals(envelope, modes, [float(t) for t in edges])
+    nbar = np.asarray(modes.nbar, dtype=float)
+    total = 0.0
+    for i in ions:
+        c = np.real(kicks[i])
+        f = np.imag(kicks[i])
+        alpha = np.array([[p.alpha[(i, m)] for m in modes.modes] for p in parts])
+        lam = {
+            k: np.array(
+                [
+                    p.chi_of(i, k)
+                    - sum(float(np.imag(p.alpha[(k, m)] * np.conj(p.alpha[(i, m)]))) for m in modes.modes)
+                    for p in parts
+                ]
+            )
+            for k in ions
+            if k != i
+        }
+        s = 0.0
+        for j in range(len(parts)):
+            for jj in range(len(parts)):
+                phase = math.prod(math.cos(2.0 * (v[j] - v[jj])) for v in lam.values())
+                cross = 4.0 * float(np.sum(np.imag(alpha[jj] * np.conj(alpha[j]))))
+                overlap = math.exp(
+                    -2.0 * float(np.sum((2.0 * nbar + 1.0) * np.abs(alpha[j] - alpha[jj]) ** 2))
+                )
+                s += c[j] * c[jj] * phase * math.cos(cross) * overlap
+        total += 0.25 * s + 0.25 * float(np.sum(f)) ** 2
+    return float(total)
 
 
 def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection) -> IntrinsicBudget:
     """The closed-form error scales reported beside the result (Section 9.6), as typed records that say which terms the
-    total sums. Per entangling gate (``EntanglingScales``): the residual displacement sum_{i,m} |alpha_{i,m}|^2
-    (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the off-resonant carrier scale (Omega_peak/(2 mu_min))^2 with
-    mu_min the tones' smallest detuning from the carrier, Roos's Bessel saturation and his beat-phase spin-axis tilt, and
-    (reported, not summed) the Lamb-Dicke deficit and the frozen modes' chi. Per single-qubit carrier pulse, every GPi and
-    GPi2 piece of the schedule's targets (``CarrierScales``): the sideband scale eta^2 (Omega/nu)^2 of the most strongly
-    driven mode and the addressing crosstalk sum_j sin^2(eps_ij theta/2). Per pulse and addressed ion the scattering
-    estimates (``ScatteringScales``)."""
+    total sums, and the errors it leaves out named. Per entangling gate (``EntanglingScales``): the residual displacement
+    sum_{i,m} |alpha_{i,m}|^2 (2 nbar_m + 1), the n = 0-referenced Debye-Waller loss, the scale (Omega_peak/(2 mu_min))^2 of
+    the off-resonant carrier's oscillation with mu_min the tones' smallest detuning from the carrier, the rotations the
+    carrier leaves at the envelope's switch-on, steps and switch-off (``carrier_step_infidelity``), Roos's Bessel
+    saturation, the angle a waveform no calibration set puts on the modes the run does not carry, and (reported, not
+    summed) the Lamb-Dicke deficit and that angle in radians. Per single-qubit carrier pulse, every GPi and GPi2 piece of
+    the schedule's targets (``CarrierScales``): the sideband scale eta^2 (Omega/nu)^2 of the most strongly driven mode and
+    the addressing crosstalk sum_j sin^2(eps_ij theta/2). Per pulse and addressed ion the scattering estimates
+    (``ScatteringScales``)."""
     from qutip_trap.control.shaping import waveform_integrals
     from qutip_trap.light.raman import lamb_dicke_parameters
-    from qutip_trap.run.space import gate_modes_for
+    from qutip_trap.run.space import DROP_CHI_MAX_RAD, gate_modes_for
 
     entangling: list[EntanglingScales] = []
+    omitted: list[str] = []
     for gate in sched.gates:
         modes = gate_modes_for(device, gate, selection.nbar)
         ints = waveform_integrals(gate.waveform, modes)
@@ -497,21 +629,53 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
         carrier = (
             _peak_amplitude_hz(gate.waveform.segments) / (2.0 * _min_detuning_hz(gate.waveform.segments))
         ) ** 2
+        drive_kind = next(
+            p.drive.kind
+            for p in sched.pulses
+            if p.gate_id is not None
+            and (p.gate_id == gate.gate_id or p.gate_id.startswith(gate.gate_id + "/"))
+        )
+        kicks = carrier_step_kicks(
+            gate.waveform,
+            gate.t_start_s,
+            beat_reset=not device.hardware.phase_continuous,
+            response_s=device.hardware.response_time_s(drive_kind),
+        )
+        # the run's gate reaches the angle of the modes it carries: a calibration measured the angle its own space
+        # reached, the closed forms of a seed waveform assumed every mode
+        uncarried = {
+            m: v for m, v in gate.waveform.chi_m.items() if selection.mode_class[m] not in ("resolved", "enr")
+        }
+        angle = float(sum(uncarried.values()))
+        calibrated = gate.waveform.phi_m.status == "calibrated"
+        if calibrated and abs(angle) >= DROP_CHI_MAX_RAD:
+            omitted.append(
+                f"{gate.gate_id}: the calibrated waveform's angle on the modes the run does not carry "
+                f"({sorted(uncarried)}: {angle:+.3g} rad) is taken as absorbed by its calibration, which holds when the "
+                "calibration left the same modes out"
+            )
+        if not calibrated:
+            omitted.append(
+                f"{gate.gate_id}: no calibration set the waveform's amplitude, so its angle also misses the Debye-Waller "
+                "rescaling of the force (the mean Lamb-Dicke deficit a calibration absorbs), which is not estimated"
+            )
         entangling.append(
             EntanglingScales(
                 gate_id=gate.gate_id,
                 residual_displacement=float(ints.residual_error(modes)),
                 debye_waller=dw,
                 carrier_scale=carrier,
+                carrier_steps=carrier_step_infidelity(gate.waveform, modes, kicks),
                 bessel_saturation=roos_bessel_saturation(gate.waveform),
-                beat_phase_tilt=roos_beat_phase_tilt(
-                    gate.waveform, gate.t_start_s, beat_reset=not device.hardware.phase_continuous
-                ),
+                frozen_angle=0.0 if calibrated else math.sin(angle) ** 2,
                 sideband_lamb_dicke_deficit=sideband_lamb_dicke_deficit(modes, selection),
-                frozen_chi_rad=float(
-                    sum(abs(v) for m, v in gate.waveform.chi_m.items() if selection.mode_class[m] == "frozen")
-                ),
+                frozen_angle_rad=angle,
             )
+        )
+    if sched.gates:
+        omitted.append(
+            "the first sideband's Lamb-Dicke nonlinearity along each entangling gate's own phase-space excursion (order "
+            "eta^3 in the drive) is not estimated"
         )
     carrier_ids = {pid for t in sched.targets if t.native[0] in ("gpi", "gpi2") for pid in t.pulse_ids}
     carriers: list[CarrierScales] = []
@@ -550,7 +714,7 @@ def intrinsic_budget(device: Device, sched: Schedule, selection: SpaceSelection)
                     rayleigh_dephasing=est[f"ion{ion}.rayleigh_dephasing"],
                 )
             )
-    return IntrinsicBudget(tuple(entangling), tuple(carriers), tuple(scattering))
+    return IntrinsicBudget(tuple(entangling), tuple(carriers), tuple(scattering), tuple(omitted))
 
 
 def effective_sample_size(bits_per_sample: Sequence[np.ndarray]) -> float:

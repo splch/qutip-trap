@@ -105,25 +105,30 @@ class EntanglingScales:
     debye_waller: float
     """The n = 0-referenced thermal Debye-Waller loss summed over the resolved and frozen modes (Ballance 2016)."""
     carrier_scale: float
-    """(Omega_peak/(2 mu_min))^2: the off-resonant carrier at the largest tone amplitude and the smallest tone detuning."""
+    """(Omega_peak/(2 mu_min))^2: the scale of the off-resonant carrier's oscillation inside the segments."""
+    carrier_steps: float
+    """The rotations the carrier leaves at the envelope's switch-on, amplitude steps and switch-off, propagated through
+    the gate (``run.job.carrier_step_infidelity``); the switch-on alone is Roos's beat-phase spin-axis tilt."""
     bessel_saturation: float
     """Roos's force saturation, sin^2(pi f/2) with f = 1 - (J_0 + J_2)(2 Omega/mu)."""
-    beat_phase_tilt: float
-    """Roos's spin-axis tilt at the switch-on, sin^2(psi)."""
+    frozen_angle: float
+    """sin^2 of the angle the closed forms put on the modes the run does not carry, for a waveform whose amplitude no
+    calibration set (the run's gate misses it); 0 for a calibrated one, whose calibration measured the angle it reached."""
     sideband_lamb_dicke_deficit: float
     """Reported, not summed: the worst sideband matrix element's Lamb-Dicke deficit at the highest Fock index carried."""
-    frozen_chi_rad: float
-    """Reported, not summed: sum |chi_m| over the modes the run freezes, radians."""
+    frozen_angle_rad: float
+    """Reported, not summed: the signed angle sum_m chi_m of the modes the run does not carry, radians."""
 
     @property
     def total(self) -> float:
-        """The terms the budget sums: all but the Lamb-Dicke deficit and the frozen angle."""
+        """The terms the budget sums: all but the Lamb-Dicke deficit and the angle in radians."""
         return (
             self.residual_displacement
             + self.debye_waller
             + self.carrier_scale
+            + self.carrier_steps
             + self.bessel_saturation
-            + self.beat_phase_tilt
+            + self.frozen_angle
         )
 
 
@@ -169,13 +174,15 @@ BudgetRecord = EntanglingScales | CarrierScales | ScatteringScales
 @dataclass(frozen=True)
 class IntrinsicBudget:
     """The closed-form error scales a run reports beside its result (Section 9.6, ``run.job.intrinsic_budget``): per played
-    entangling gate, per single-qubit carrier pulse and per (pulse, addressed ion) the scattering estimates. Each record
-    states which of its terms the budget sums (its ``total``), so a consumer reads ``total`` or ``by_gate`` and never adds
-    terms itself."""
+    entangling gate, per single-qubit carrier pulse and per (pulse, addressed ion) the scattering estimates, and the
+    errors the total leaves out. Each record states which of its terms the budget sums (its ``total``), so a consumer reads
+    ``total`` or ``by_gate`` and never adds terms itself."""
 
     entangling: tuple[EntanglingScales, ...] = ()
     carriers: tuple[CarrierScales, ...] = ()
     scattering: tuple[ScatteringScales, ...] = ()
+    omitted: tuple[str, ...] = ()
+    """The errors of this run the total leaves out, named for the run's approximations."""
 
     @property
     def records(self) -> tuple[BudgetRecord, ...]:
@@ -200,6 +207,7 @@ class IntrinsicBudget:
             "entangling": [asdict(r) for r in self.entangling],
             "carriers": [asdict(r) for r in self.carriers],
             "scattering": [asdict(r) for r in self.scattering],
+            "omitted": list(self.omitted),
             "total": self.total,
         }
 
@@ -210,6 +218,7 @@ class IntrinsicBudget:
             entangling=tuple(_record(EntanglingScales, r) for r in d["entangling"]),
             carriers=tuple(_record(CarrierScales, r) for r in d["carriers"]),
             scattering=tuple(_record(ScatteringScales, r) for r in d["scattering"]),
+            omitted=tuple(str(o) for o in d["omitted"]),
         )
 
 
