@@ -31,6 +31,7 @@ from qutip_trap_app.record import (
     RecordError,
     ReplayGate,
     ReplayRecord,
+    ReplayResidual,
     ResultsRecord,
     branch_loops,
     channel_summary_record,
@@ -265,13 +266,7 @@ def replay(
         rho = np.kron(rho, np.diag([1.0 - p, p]).astype(complex))
     applied: list[ReplayGate] = []
     states: list[np.ndarray] = []
-    terms = {
-        "residual_displacement": 0.0,
-        "frozen_excitation": 0.0,
-        "dropped_crosstalk": 0.0,
-        "cp_tp_projection": 0.0,
-        "frame_covariance": 0.0,
-    }
+    displacement = frozen = crosstalk = projection = covariance = 0.0
     for k, tg in enumerate(targets):
         name, params = tg.native
         if progress:
@@ -298,12 +293,12 @@ def replay(
                 big = embed_on_register(rot @ km @ rot.conj().T, piece.ions, n)
                 new += big @ rho @ big.conj().T
             rho = new
-            terms["residual_displacement"] += piece.residual_bound
-            terms["frozen_excitation"] += piece.frozen_excitation
-            terms["dropped_crosstalk"] += piece.dropped_crosstalk
-            terms["cp_tp_projection"] += piece.cp_residual + piece.tp_residual
-        cov = entry.covariance_residual or 0.0
-        terms["frame_covariance"] += cov
+            displacement += piece.residual_bound
+            frozen += piece.frozen_excitation
+            crosstalk += piece.dropped_crosstalk
+            projection += piece.cp_residual + piece.tp_residual
+        # a ZZ gate carries no frame phase, so no covariance check (None): it commutes with the frame
+        covariance += entry.covariance_residual or 0.0
         # the Stark frame the scheduler absorbed (Section 7.5 item 7) is inside the target unitary and the extracted channel
         states.append(rho.copy())
         applied.append(
@@ -338,7 +333,7 @@ def replay(
     bits = np.asarray(declared[:, [int(q) for q in measured]], dtype=np.uint8)
     counts, probabilities = core.aggregate(bits)
     shots = int(bits.shape[0])
-    total = float(sum(terms.values()))
+    residual = ReplayResidual(displacement, frozen, crosstalk, projection, covariance)
     notes = (
         prefix.notes
         + tuple(library.notes)
@@ -358,8 +353,7 @@ def replay(
         gates=tuple(applied),
         register_after=np.stack(states) if states else np.zeros((0, 2**n, 2**n), complex),
         channels={g.key: library.entries[g.key] for g in applied},
-        residual_terms=terms,
-        residual_total=total,
+        residual=residual,
     )
     diagnostics = DiagnosticsRecord(
         level="CHANNEL_REPLAY",
@@ -384,7 +378,7 @@ def replay(
         intrinsic_budget=core.IntrinsicBudget(),
         approximations=(
             "CHANNEL_REPLAY: every gate applied as its extracted Section 6.8 channel; the correlations between gates are traced out "
-            f"and bounded by the derivation residual {total:.3e} (Section 9.8); the readout is the table's (eps_B, eps_D)",
+            f"and bounded by the derivation residual {residual.total:.3e} (Section 9.8); the readout is the table's (eps_B, eps_D)",
         )
         + notes,
         kernel="none",

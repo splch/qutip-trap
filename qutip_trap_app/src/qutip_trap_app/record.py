@@ -714,6 +714,30 @@ class ReplayGate:
 
 
 @dataclass(frozen=True)
+class ReplayResidual:
+    """The channel replay's derivation residual (Section 9.8) by source, summed over the gates it applied."""
+
+    residual_displacement: float
+    """The pieces' open-loop residual bounds."""
+    frozen_excitation: float
+    """The frozen spectators' excitation the pieces report."""
+    dropped_crosstalk: float
+    """The crosstalk the pieces' local spaces leave out."""
+    cp_tp_projection: float
+    """The CP and TP residuals of each extracted channel."""
+    frame_covariance: float
+    """The frame-covariance check's residual, once per gate applied."""
+
+    @property
+    def total(self) -> float:
+        return float(sum(value for _name, value in self.terms()))
+
+    def terms(self) -> tuple[tuple[str, float], ...]:
+        """(name, value) of every term in declaration order."""
+        return tuple((f.name, float(getattr(self, f.name))) for f in dataclasses.fields(self))
+
+
+@dataclass(frozen=True)
 class ReplayRecord:
     """What the channel replay did: which channel each gate was played as, the register after each gate, and the
     channel-derivation residual the replay reports."""
@@ -722,8 +746,7 @@ class ReplayRecord:
     register_after: np.ndarray
     """(n_gates, 2^n, 2^n): the register after each gate piece, register order."""
     channels: dict[str, ChannelEntryRecord]
-    residual_terms: dict[str, float]
-    residual_total: float
+    residual: ReplayResidual
 
 
 # ---- what re-simulation caches on the record ---------------------------------------------------------------------------------------

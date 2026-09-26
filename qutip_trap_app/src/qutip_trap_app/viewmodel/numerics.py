@@ -185,8 +185,8 @@ def numerics_panel(
         if record.replay is None
         else Shown(
             "derivation_residual",
-            record.replay.residual_total,
-            ", ".join(f"{k} {v:.2e}" for k, v in record.replay.residual_terms.items()),
+            record.replay.residual.total,
+            ", ".join(f"{k} {v:.2e}" for k, v in record.replay.residual.terms()),
         )
     )
     return NumericsPanel(

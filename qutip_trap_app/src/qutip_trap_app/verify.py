@@ -185,7 +185,7 @@ def verify_deeper(
     disc = None if pa is None or pb is None else float(np.max(np.abs(pa - pb)))
     tv, scale = _histogram_distance(record, deep_record)
     if shallow == "CHANNEL_REPLAY" and record.replay is not None:
-        bound: float | None = record.replay.residual_total
+        bound: float | None = record.replay.residual.total
     elif shallow == "GATE_LOCAL" and record.gate_local is not None:
         bound = record.gate_local.discrepancy_bound + record.diagnostics.dropped_branch_weight
     else:

@@ -44,12 +44,12 @@ def test_replay_matches_joint_exact_within_its_residual(
             e.key,
             e.covariance_residual,
         )
-    assert rep.replay.residual_total > 0.0
+    assert rep.replay.residual.total > 0.0
     assert joint.results.final_state is not None and rep.results.final_state is not None
     p_joint = np.real(np.diag(joint.results.final_state))
     p_rep = np.real(np.diag(rep.results.final_state))
     discrepancy = float(np.max(np.abs(p_joint - p_rep)))
-    assert discrepancy <= rep.replay.residual_total, (discrepancy, rep.replay.residual_terms)
+    assert discrepancy <= rep.replay.residual.total, (discrepancy, rep.replay.residual)
     assert discrepancy > 0.0
     # the histogram agrees with the ideal one within statistics and the Bell physics reads the same at Level 1
     h = histogram(rep)
@@ -113,7 +113,7 @@ def test_hotter_motional_state_widens_residual_and_discrepancy_together(
     hot_joint, _live = execute(hot_job, hot_preset)
     hot_rep = replay(hot_job, hot_preset.device, hot_table, ChannelLibrary())
     assert hot_rep.replay is not None and cold_rep.replay is not None
-    assert hot_rep.replay.residual_total > cold_rep.replay.residual_total
+    assert hot_rep.replay.residual.total > cold_rep.replay.residual.total
     assert hot_joint.results.final_state is not None and hot_rep.results.final_state is not None
     assert cold_joint.results.final_state is not None and cold_rep.results.final_state is not None
     hot_disc = float(
@@ -127,4 +127,4 @@ def test_hotter_motional_state_widens_residual_and_discrepancy_together(
         )
     )
     assert hot_disc > cold_disc
-    assert hot_disc <= hot_rep.replay.residual_total, (hot_disc, hot_rep.replay.residual_terms)
+    assert hot_disc <= hot_rep.replay.residual.total, (hot_disc, hot_rep.replay.residual)
