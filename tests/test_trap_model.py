@@ -293,6 +293,47 @@ def test_micromotion_index_refuses_a_missing_geometry_instead_of_reporting_beta_
         micromotion_index(rod, 0, dk)
 
 
+def test_a_derived_drive_raises_on_an_rf_record_it_cannot_evaluate_instead_of_reading_c0_one() -> None:
+    """A 5 MHz rf drive under the 3 MHz radial frequency (outside the first stability region), rod dc voltages the map
+    cannot read and an rf phase imbalance without the rod factors raise in the derived drive; only a trap with no rf record
+    derives C0 = 1 and no micromotion."""
+    base = single_ion_raman_device(
+        rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0), stray=(50.0, 0.0, 0.0)
+    )
+    dd = derive_raman_drive(base, 0, (0, 1), scattering=False)
+    assert dd.c0_applied and dd.micromotion is not None
+    no_rf = derive_raman_drive(
+        dataclasses.replace(base, trap=dataclasses.replace(base.trap, rf=None)), 0, (0, 1), scattering=False
+    )
+    assert not no_rf.c0_applied and no_rf.micromotion is None
+    assert no_rf.etas[KX] < dd.etas[KX], "C0 > 1 on the rf-derived x mode"
+    unstable = dataclasses.replace(
+        base, trap=dataclasses.replace(base.trap, rf=RfDrive(frequency_hz=5e6, voltage_peak_v=100.0))
+    )
+    with pytest.raises(UnstableMathieuError):
+        derive_raman_drive(unstable, 0, (0, 1), scattering=False)
+    rod = dataclasses.replace(
+        base,
+        trap=dataclasses.replace(
+            base.trap,
+            omega_hz=None,
+            rf=RfDrive(frequency_hz=20e6, voltage_peak_v=300.0),
+            dc=DcElectrodes({"endcaps": 8.0, "extra": 1.0}),
+            geometry=Electrodes("rod_quadrupole", {"R_m": 1e-3, "Z0_m": 2e-3, "kappa": 0.3}),
+        ),
+    )
+    with pytest.raises(ValueError, match="one endcap voltage"):
+        derive_raman_drive(rod, 0, (0, 1), scattering=False)
+    imbalanced = dataclasses.replace(
+        base,
+        trap=dataclasses.replace(
+            base.trap, rf=RfDrive(frequency_hz=30e6, voltage_peak_v=100.0, phase_imbalance_rad=1e-3)
+        ),
+    )
+    with pytest.raises(ValueError, match="R_m and alpha"):
+        derive_raman_drive(imbalanced, 0, (0, 1), scattering=False)
+
+
 def test_the_modulated_builder_first_micromotion_sideband_changes_sign_across_the_compensating_shim() -> None:
     """The modulated drive's first micromotion-sideband weight flips sign across the compensating field (5e-3), vanishes at
     zero field and equals 2 i J_1(beta) e^{i delta}/J_0(beta) up to complex conjugation (5e-3)."""

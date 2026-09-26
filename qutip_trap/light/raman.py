@@ -88,11 +88,11 @@ def _structure(device: Device, ion: int) -> AtomicStructure:
 
 
 def mathieu_or_none(device: Device, ion: int) -> MathieuParameters | None:
-    """The trap's Mathieu record for the ion's species, or None when the trap has no rf record (C0 = 1, beta = 0)."""
-    try:
-        return device.trap.mathieu(device.crystal.species[ion])
-    except ValueError:
+    """The trap's Mathieu record for the ion's species, or None when the trap has no rf record (C0 = 1, beta = 0); a trap
+    whose record cannot be evaluated (an unstable (a, q), a rod geometry the map refuses) raises."""
+    if device.trap.rf is None:
         return None
+    return device.trap.mathieu(device.crystal.species[ion])
 
 
 def lamb_dicke_parameters(device: Device, ion: int, delta_k: np.ndarray) -> tuple[dict[int, float], bool]:
@@ -106,12 +106,10 @@ def lamb_dicke_parameters(device: Device, ion: int, delta_k: np.ndarray) -> tupl
 
 
 def _micromotion(device: Device, ion: int, delta_k: np.ndarray) -> MicromotionIndex | None:
-    if float(np.linalg.norm(delta_k)) == 0.0:
+    """The micromotion index along ``delta_k``, None for a drive with no wavevector or a trap with no rf record."""
+    if float(np.linalg.norm(delta_k)) == 0.0 or device.trap.rf is None:
         return None
-    try:
-        return device.trap.micromotion_beta(device.crystal.species[ion], delta_k)
-    except ValueError:
-        return None
+    return device.trap.micromotion_beta(device.crystal.species[ion], delta_k)
 
 
 def scattering_budget(device: Device, ion: int, beam_indices: Sequence[int]) -> ScatteringBudget:
