@@ -890,9 +890,8 @@ def tomography(
     On the trajectory path each input runs ceil(1/epsilon_map) trajectories.
     """
     sched = _as_schedule(pulse)
-    dissipative = bool(engine.channels) or bool(engine.device_channels)
     opts = options
-    if dissipative and _lindblad_method(options, space.dimension) == "mcsolve":
+    if not engine.is_unitary(device, space) and _lindblad_method(options, space.dimension) == "mcsolve":
         opts = replace(options, ntraj=int(math.ceil(1.0 / options.map_accuracy)))
     labels_kets = input_states(space.ion_dims)
     labels = tuple(lab for lab, _k in labels_kets)
