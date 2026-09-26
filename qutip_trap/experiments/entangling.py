@@ -94,7 +94,7 @@ def _gate_lab(
         "modes": modes,
         "space": space,
         "mode_frequencies_hz": mode_frequencies_hz,
-        "options": _solver_options(lab),
+        "options": lab.options,
     }
     return lab, _entangling_setup(lab.device, pair, setup)
 
