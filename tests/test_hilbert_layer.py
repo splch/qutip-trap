@@ -4,22 +4,27 @@ and Debye-Waller factors, spaces, marginals and the truncation monitor."""
 from __future__ import annotations
 
 import math
+import warnings
 
+import mpmath
 import numpy as np
 import pytest
 import qutip as qt
-from scipy.special import eval_genlaguerre
+from scipy.special import eval_genlaguerre, gammaln
+from scipy.stats import poisson
 
 from qutip_trap.dynamics.operators import (
     TABLE_ELEMENT_ERROR,
     TABLE_ETA,
     debye_waller_factor,
+    displaced_thermal_populations,
     displacement_element_analytic,
     displacement_leakage,
     displacement_matrix_analytic,
     displacement_operator,
     interior_element_error,
     interior_tolerance,
+    populated_range,
     rabi_matrix_element,
     rabi_table,
     required_margin,
@@ -124,6 +129,148 @@ def test_sideband_phase_and_operators_decompose_the_displacement() -> None:
     # the drive phase on the k-th sideband is arg (i eta)^k = k pi/2
     assert np.angle(displacement_element_analytic(2, 0, 0.3j)) == pytest.approx(math.pi, abs=1e-12)
     assert np.angle(displacement_element_analytic(1, 0, 0.3j)) == pytest.approx(math.pi / 2, abs=1e-12)
+
+
+# ---- Section 5.1.1: the analytic elements at any argument -------------------------------------------------------------------
+
+
+def _closed_form_mp(n_row: int, n_col: int, alpha: complex) -> complex:
+    """The Section 5.1.1 closed form in mpmath, carried 40 digits past the largest term of its alternating Laguerre sum."""
+    lo, hi = min(n_row, n_col), max(n_row, n_col)
+    k = hi - lo
+    ln_x = math.log(alpha.real**2 + alpha.imag**2)
+    largest = max(
+        math.lgamma(hi + 1) - math.lgamma(lo - j + 1) - math.lgamma(k + j + 1) - math.lgamma(j + 1) + j * ln_x
+        for j in range(lo + 1)
+    )
+    with mpmath.workdps(40 + max(0, math.ceil(largest / math.log(10.0)))):
+        a = mpmath.mpc(alpha.real, alpha.imag)
+        x = abs(a) ** 2
+        term = mpmath.binomial(hi, lo)  # (-1)^j C(n_< + k, n_< - j) x^j/j! at j = 0
+        laguerre = term
+        for j in range(lo):
+            term = -term * (lo - j) * x / ((j + 1) * (k + j + 1))
+            laguerre += term
+        power = a**k if n_row >= n_col else (-mpmath.conj(a)) ** k
+        return complex(
+            mpmath.sqrt(mpmath.factorial(lo) / mpmath.factorial(hi)) * mpmath.exp(-x / 2) * power * laguerre
+        )
+
+
+_SPREAD = (
+    (0, 0),
+    (1, 0),
+    (0, 3),
+    (10, 10),
+    (11, 10),
+    (40, 37),
+    (37, 40),
+    (300, 300),
+    (301, 300),
+    (1000, 1000),
+    (1001, 1000),
+    (1500, 1500),
+    (1500, 1450),
+    (1450, 1500),
+    (1500, 0),
+    (0, 1500),
+    (1500, 900),
+)
+"""Fock pairs from the corner to (1500, 1500): diagonal, first sideband, both triangles and the far off-diagonal."""
+
+
+@pytest.mark.parametrize("alpha_abs", [0.1, 1.0, 5.0, 20.0, 40.0])
+def test_analytic_elements_are_the_closed_form_to_rounding_at_any_argument(alpha_abs: float) -> None:
+    """At |alpha| = 0.1 to 40, imaginary (as a drive's i eta) and at a general phase, and Fock indices up to 1500, every
+    element is the high-precision closed form's to 1e-14 and every representable one to 1e-10 relative however small
+    (3e-193 at (1500, 0) and |alpha| = 20), with no RuntimeWarning. The matrix holds the same elements, to 1e-15 at an
+    imaginary alpha, whose phases i^k are exact, and to k eps at a general one, the conditioning of (alpha/|alpha|)^k."""
+    for alpha, phase_tol in (
+        (1j * alpha_abs, 1e-15),
+        (alpha_abs * complex(math.cos(0.7), math.sin(0.7)), 1e-12),
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            mat = displacement_matrix_analytic(1501, alpha)
+            for m, n in _SPREAD:
+                ref = _closed_form_mp(m, n, alpha)
+                got = displacement_element_analytic(m, n, alpha)
+                assert abs(got - ref) <= 1e-14, (alpha, m, n, got, ref)
+                if abs(ref) > 1e-280:
+                    assert abs(got - ref) <= 1e-10 * abs(ref), (alpha, m, n, got, ref)
+                assert abs(mat[m, n] - got) <= phase_tol * abs(got), (alpha, m, n, mat[m, n], got)
+    # the smallest element of the spread that a double still holds
+    assert 1e-194 < abs(displacement_element_analytic(1500, 0, 20j)) < 1e-192
+
+
+@pytest.mark.parametrize("d", sorted(TABLE_ELEMENT_ERROR))
+def test_the_recurrence_is_the_closed_form_over_the_section_5_1_1_table(d: int) -> None:
+    """Over the Section 5.1.1 table (d = 8 to 40 at eta = 0.1, 0.5 and 1), where every factor of the closed form is a double,
+    the recurrence's elements are the closed form's evaluated factor by factor (scipy's Laguerre polynomial) to 1e-14."""
+    idx = np.arange(d)
+    lo = np.minimum.outer(idx, idx)
+    k = np.abs(np.subtract.outer(idx, idx))
+    for eta in TABLE_ETA:
+        closed = (
+            np.exp(0.5 * (gammaln(lo + 1) - gammaln(lo + k + 1)) - eta**2 / 2.0)
+            * eval_genlaguerre(lo, k, eta**2)
+            * (1j * eta) ** k
+        )
+        assert np.max(np.abs(displacement_matrix_analytic(d, 1j * eta) - closed)) < 1e-14, (d, eta)
+
+
+def test_analytic_matrix_is_finite_and_warning_free_where_the_closed_form_overflowed() -> None:
+    """At a gate loop's far point (|alpha| = 38 at d = 1600, 50 at d = 2000), where the closed form's power overflowed into
+    its underflowed prefactor, and at d = 1100 (|alpha| = 0.1), where its Laguerre binomial passes 1e308, every element is
+    finite and at most 1 and no column's norm exceeds 1, with no RuntimeWarning; the Rabi table, the Debye-Waller factor and
+    the leakage read the same elements, and a non-finite |alpha|^2 is refused."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for d, alpha_abs in ((1600, 38.0), (2000, 50.0), (1100, 0.1)):
+            mat = displacement_matrix_analytic(d, 1j * alpha_abs)
+            assert np.all(np.isfinite(mat)), (d, alpha_abs)
+            assert np.max(np.abs(mat)) <= 1.0
+            assert np.max(np.sum(np.abs(mat) ** 2, axis=0)) <= 1.0 + 1e-13
+        table = rabi_table(1600, 38.0)
+        assert np.all(np.isfinite(table))
+        element = abs(displacement_element_analytic(1500, 1444, 38j))
+        assert table[1500, 1444] == pytest.approx(element, rel=1e-14)
+        carrier = displacement_element_analytic(1600, 1600, 38j)
+        assert carrier.imag == 0.0
+        assert debye_waller_factor(1600, 38.0) == pytest.approx(carrier.real, rel=1e-14)
+        sideband = abs(displacement_element_analytic(1601, 1600, 38j))
+        assert rabi_matrix_element(1601, 1600, 38.0) == pytest.approx(sideband, rel=1e-14)
+        assert 0.0 < displacement_leakage(38.0, 1444, 50) < 1.0
+    with pytest.raises(ValueError, match="finite"):
+        displacement_matrix_analytic(4, 1e200j)
+
+
+def test_interior_columns_of_a_large_truncated_analytic_matrix_have_unit_norm() -> None:
+    """A displaced Fock state D|n> whose classical band, up to (sqrt(n) + |alpha|)^2, ends well inside the truncation keeps
+    unit norm in the analytic matrix to 1e-13: n <= 300 at |alpha| = 20 and n <= 10 at |alpha| = 38 in d = 2000, and
+    n <= 1900 at |alpha| = 1 in d = 2100, past where the closed form's binomial overflowed."""
+    for d, alpha_abs, columns in (
+        (2000, 20.0, [0, 1, 50, 300]),
+        (2000, 38.0, [0, 1, 5, 10]),
+        (2100, 1.0, [0, 700, 1500, 1900]),
+    ):
+        norms = np.sum(np.abs(displacement_matrix_analytic(d, 1j * alpha_abs)[:, columns]) ** 2, axis=0)
+        assert np.max(np.abs(norms - 1.0)) < 1e-13, (d, alpha_abs, norms - 1.0)
+
+
+def test_populated_range_of_a_large_excursion_is_the_poisson_quantile() -> None:
+    """A coherent excursion |alpha| = 38 (a Section 5.5 cap rule over d = 9150 levels) populates Fock states up to the
+    Poisson(1444) 1e-6 quantile exactly, from finite populations summing to 1 and with no RuntimeWarning; a thermal
+    occupation of 0.02 on top widens it by a few levels."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cold = populated_range(38.0, 0.0)
+        warm = populated_range(38.0, 0.02)
+        populations = displaced_thermal_populations(38.0, 0.02, 9150)
+    tail = poisson(38.0**2).sf  # P(N > n)
+    assert tail(cold) < 1e-6 <= tail(cold - 1)
+    assert cold < warm <= cold + 10
+    assert np.all(np.isfinite(populations)) and populations.sum() == pytest.approx(1.0, abs=1e-12)
 
 
 # ---- Debye-Waller statistics (Sections 4.2.7, 9.2) ----------------------------------------------------------------------

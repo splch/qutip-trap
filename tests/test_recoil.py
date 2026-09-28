@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 from collections.abc import Sequence
 
 import numpy as np
@@ -246,6 +247,19 @@ def test_recoil_kernel_matrix_is_column_stochastic_with_mean_kick_alpha_eta_squa
     assert np.allclose(kernel.sum(axis=0)[:40], 1.0, atol=1e-12)
     for column in range(6):
         assert float(n @ kernel[:, column]) - column == pytest.approx(alpha * 0.01, abs=1e-12)
+
+
+def test_recoil_kernel_matrix_is_finite_and_column_stochastic_where_the_closed_form_overflowed() -> None:
+    """At d = 1100 the closed form's Laguerre binomial C(n + k, n) passes 1e308 (the kernel was nan there); the kernel of the
+    Section 5.1.1 recurrence is finite with no RuntimeWarning, no column sums above one, and every column whose kick stays
+    inside the space sums to one to 1e-13."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        kernel = recoil_kernel_matrix(1100, 1.0, minimal_quadrature(0.4))
+    assert np.all(np.isfinite(kernel))
+    sums = kernel.sum(axis=0)
+    assert np.max(sums) <= 1.0 + 1e-13
+    assert np.max(np.abs(sums[:800] - 1.0)) < 1e-13
 
 
 # ---- a crystal: per-ion participation and the joint kick ------------------------------------------------------------
