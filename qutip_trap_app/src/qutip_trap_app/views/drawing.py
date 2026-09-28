@@ -804,7 +804,9 @@ def bar_chart(
         interactive=interactive,
         on_event=on_event if on_tap is not None else None,
     )
-    return chart
+    # a chart of fixed width placed straight into a wrapping Row (a Flutter Wrap, which leaves the height unbounded) fails to
+    # lay out and renders as the grey error box; a container of the chart's own size gives it tight constraints anywhere
+    return chart if width is None else ft.Container(content=chart, width=width, height=height)
 
 
 def two_histograms(bright: np.ndarray, dark: np.ndarray, threshold: float | None) -> ft.Control:
