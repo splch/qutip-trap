@@ -395,6 +395,10 @@ def _learner_dialog(session: Session) -> ft.AlertDialog:
 
     def choose(k: str) -> None:
         session.set_learner(knowledge=k, asked=True)
+        # close at once: the re-render that removes the dialog also applies the new plan to the whole page behind it,
+        # which on a slow client lands seconds later
+        dialog.open = False
+        dialog.update()
 
     options: list[ft.Control] = [
         ft.OutlinedButton(
@@ -423,7 +427,7 @@ def _learner_dialog(session: Session) -> ft.AlertDialog:
         for k, option in KNOWLEDGE.items()
         if k != "unknown"
     ]
-    return ft.AlertDialog(
+    dialog = ft.AlertDialog(
         modal=True,
         title=ft.Text("Who is learning?"),
         content=ft.Column(
@@ -438,6 +442,7 @@ def _learner_dialog(session: Session) -> ft.AlertDialog:
             )
         ],
     )
+    return dialog
 
 
 @ft.component
