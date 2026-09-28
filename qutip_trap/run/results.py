@@ -51,14 +51,14 @@ def bits_from_decimal(key: str, n_qubits: int) -> np.ndarray:
 
 
 def aggregate(bitstrings: np.ndarray) -> tuple[dict[str, int], dict[str, float]]:
-    """Counts and probabilities keyed by :func:`bitstring_key`."""
+    """Counts and probabilities keyed by :func:`bitstring_key`, in ascending key order."""
     arr = np.asarray(bitstrings)
     if arr.ndim != 2:
         raise ValueError("bitstrings must be a (shots, n_qubits) array")
-    counts = Counter(bitstring_key(row) for row in arr)
+    counts = dict(sorted(Counter(bitstring_key(row) for row in arr).items()))
     n = arr.shape[0]
     probabilities = {k: v / n for k, v in counts.items()} if n else {}
-    return dict(counts), probabilities
+    return counts, probabilities
 
 
 @dataclass(frozen=True)
@@ -515,6 +515,10 @@ class Progress:
     def fraction(self) -> float:
         """``done / total``, 1 when the stage has no steps."""
         return self.done / self.total if self.total else 1.0
+
+    def __str__(self) -> str:
+        """One line per report, so that ``progress=print`` reads as a log: ``pulse 3/12 (0.8 s)``."""
+        return f"{self.stage} {self.done}/{self.total} ({self.elapsed_s:.1f} s)"
 
 
 def binomial_error_bars(probabilities: Mapping[str, float], n_eff: float) -> dict[str, float]:
