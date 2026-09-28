@@ -1192,6 +1192,19 @@ def _hamiltonian_page(ctx: Page) -> list[ft.Control]:
                                     if record.replay is not None
                                     else "the same worker call as a Level 3 re-simulation"
                                 ),
+                                *(
+                                    [
+                                        ft.OutlinedButton(
+                                            content=ft.Text("Run this job at the full engine"),
+                                            icon=ft.Icons.PLAY_ARROW,
+                                            on_click=lambda e: session.rerun_full(record),
+                                            disabled=bool(store.running()),
+                                            key="rerun-full",
+                                        )
+                                    ]
+                                    if record.replay is not None
+                                    else []
+                                ),
                             ],
                             wrap=True,
                             spacing=10,

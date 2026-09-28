@@ -42,7 +42,7 @@ from qutip_trap_app.views.common import (
     status_line,
 )
 from qutip_trap_app.views.presets import PresetList, PresetPage
-from qutip_trap_app.views.state import Session, Store, learner_document
+from qutip_trap_app.views.state import FULL, Session, Store, learner_document
 
 
 class KnowledgeOption(NamedTuple):
@@ -212,6 +212,8 @@ def TourActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.C
     def start(_e: Any) -> None:
         if key is None:
             session.load_bell_example()
+            # the later stops open a pulse's trace and the equation of a pulse, which only the full simulation records
+            store.engine = FULL
             page.navigate("/")
         else:
             page.navigate(routes.job(key))

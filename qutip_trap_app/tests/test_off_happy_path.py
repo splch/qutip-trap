@@ -17,7 +17,7 @@ from qutip_trap_app.replay import ChannelLibrary, replay
 from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.circuit import register_after, timeline
 from qutip_trap_app.viewmodel.machine import histogram, shot
-from qutip_trap_app.views.state import JobStatus, Session, Store
+from qutip_trap_app.views.state import FULL, JobStatus, Session, Store
 from qutip_trap_app.workers import Event, Ticket
 
 ONE_QUBIT = Circuit(1, (Operation("h", (0,), ()),), (0,))
@@ -303,3 +303,24 @@ def test_level3_finds_the_zoom_it_asked_for(bell: tuple[Record, LiveRun]) -> Non
     assert not fine_before and coarse is not None and coarse.n_store == 0, (
         "the recorded coarse trace until then"
     )
+
+
+def test_a_replay_record_reruns_at_the_full_engine_where_it_has_no_trace(
+    bell: tuple[Record, LiveRun],
+) -> None:
+    """A channel-replay record has no trace inside a pulse; the levels that need one rerun the record's own job at the full
+    engine, and the engine choice follows so the next Run is full too."""
+    record, _live = bell
+    submitted: list[tuple[str, dict[str, object]]] = []
+
+    class Recording(_FakeWorker):
+        def submit(self, request: str, **payload: object) -> Ticket:
+            submitted.append((request, payload))
+            return super().submit(request, **payload)
+
+    session = Session(Store(), ProvenanceIndex.load())
+    session.worker = Recording()
+    session.store.error = "stale"
+    status = session.rerun_full(record)
+    assert status.request == "run_job" and status.job is record.job and session.store.engine is FULL
+    assert submitted == [("run_job", {"job": record.job})] and session.store.error == ""

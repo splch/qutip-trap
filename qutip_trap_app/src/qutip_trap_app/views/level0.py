@@ -134,19 +134,6 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
         spec = PRESETS[store.active_preset]
         actions.append(status_line(f"{spec.title}: {spec.duration}"))
     body: list[ft.Control] = [CircuitBuilder(store, session), controls]
-    if store.error:
-        body.append(
-            ft.Row(
-                [
-                    ft.Icon(ft.Icons.ERROR_OUTLINE, size=16, color=ft.Colors.ERROR),
-                    ft.Text(
-                        store.error, color=ft.Colors.ERROR, size=theme.SIZE_SMALL, expand=True, key="error"
-                    ),
-                ],
-                spacing=6,
-                vertical_alignment=ft.CrossAxisAlignment.START,
-            )
-        )
     return card(
         "Circuit",
         ft.Column(body, spacing=12),

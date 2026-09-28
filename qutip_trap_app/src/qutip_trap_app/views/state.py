@@ -493,6 +493,16 @@ class Session:
         request = self.store.engine.request
         return self._track(JobStatus(self.worker.submit(request, job=job).id, request, job=job))
 
+    def rerun_full(self, record: Record) -> JobStatus:
+        """The record's own job again at the full engine: a channel-replay record stores no trace inside a pulse, and the
+        levels that open one (Level 3, the Hamiltonian page) offer this. The engine choice follows, so the next Run is
+        full too."""
+        self.store.engine = FULL
+        self.store.error = ""
+        return self._track(
+            JobStatus(self.worker.submit(FULL.request, job=record.job).id, FULL.request, job=record.job)
+        )
+
     def submit_preset(self, preset_id: str) -> JobStatus | None:
         """Run a published-experiment preset in the worker; a repeat while one runs is skipped."""
         spec = PRESETS[preset_id]

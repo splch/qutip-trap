@@ -199,6 +199,25 @@ def Level3Page(
             why = "this run was made by channel replay (a derived engine): it stores no per-time trace inside a pulse"
         else:
             why = "this GATE_LOCAL run stores no joint trace inside a pulse (a core gap, listed on the device card)"
+        actions: list[ft.Control] = []
+        if record.replay is not None and st is not None:
+            actions.append(
+                ft.FilledButton(
+                    content=ft.Text("Run this job at the full engine"),
+                    icon=ft.Icons.PLAY_ARROW,
+                    on_click=lambda e: session.rerun_full(record),
+                    disabled=bool(store.running()),
+                    tooltip="the same circuit, shots and seed, integrated pulse by pulse so that every pulse has a trace",
+                    key="rerun-full",
+                )
+            )
+        actions.append(
+            ft.FilledTonalButton(
+                content=ft.Text("Back to the machine"),
+                icon=ft.Icons.ARROW_BACK,
+                on_click=lambda e: page.navigate(routes.job(key)),
+            )
+        )
         return ft.Column(
             [
                 header,
@@ -208,20 +227,17 @@ def Level3Page(
                         [
                             ft.Text(why, size=theme.SIZE_BODY),
                             status_line(
-                                "set the engine to full simulation on Level 0, then zoom in"
-                                if st is not None
+                                "run it at the full engine to open its pulses"
+                                if record.replay is not None and st is not None
                                 else "place a gate on Level 0 and run again"
+                                if st is None
+                                else "set the engine to full simulation on Level 0, then zoom in"
                             ),
+                            ProgressRows(store, session),
                         ],
                         spacing=theme.GAP,
                     ),
-                    actions=[
-                        ft.FilledTonalButton(
-                            content=ft.Text("Back to the machine"),
-                            icon=ft.Icons.ARROW_BACK,
-                            on_click=lambda e: page.navigate(routes.job(key)),
-                        )
-                    ],
+                    actions=actions,
                     key="no-trace",
                 ),
             ],

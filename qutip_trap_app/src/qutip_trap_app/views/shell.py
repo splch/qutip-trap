@@ -284,6 +284,43 @@ def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
     )
 
 
+def error_banner(store: Store) -> ft.Control:
+    """The last error, on whichever level the learner is (a request refused on Level 1, a re-simulation that failed, a
+    setting that could not be saved), with a Dismiss; nothing when there is none."""
+    if not store.error:
+        return ft.Container()
+
+    def dismiss(_e: Any) -> None:
+        store.error = ""
+
+    return ft.Container(
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.ERROR_OUTLINE, size=18, color=ft.Colors.ON_ERROR_CONTAINER),
+                ft.Text(
+                    store.error,
+                    color=ft.Colors.ON_ERROR_CONTAINER,
+                    size=theme.SIZE_SMALL + 1,
+                    expand=True,
+                    selectable=True,
+                    key="error",
+                ),
+                ft.TextButton(
+                    content=ft.Text("Dismiss", color=ft.Colors.ON_ERROR_CONTAINER),
+                    on_click=dismiss,
+                    key="error-dismiss",
+                ),
+            ],
+            spacing=theme.GAP,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=ft.Colors.ERROR_CONTAINER,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+        margin=ft.Margin.symmetric(horizontal=theme.PAGE_PADDING - theme.GAP),
+        border_radius=ft.BorderRadius.all(8),
+    )
+
+
 @ft.component
 def RoutedContent(store: Store, session: Session, index: ProvenanceIndex, path: str) -> ft.Control:
     """The page for ``path``; the path is a prop rather than a hook so that a route change re-renders this component."""
@@ -498,6 +535,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         ft.Column(
             [
                 ZoomBar(store, session, path),
+                error_banner(store),
                 ft.Container(
                     content=RoutedContent(store, session, index, path),
                     expand=True,
