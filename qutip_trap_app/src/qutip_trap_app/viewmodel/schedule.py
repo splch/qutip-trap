@@ -8,7 +8,7 @@ played waveform's residual displacement alpha_m weighted by (2 nbar_m + 1) again
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import numpy as np
 
@@ -27,10 +27,54 @@ SIDEBAND_TOLERANCE_HZ = 2e5
 ToneRole = Literal["carrier", "blue", "red", "far"]
 
 
+class PulseName(NamedTuple):
+    """A pulse in words, read from the compiler's id (``ms[2]/seg0/ion0``, ``ms[2]/ion0``, or the gate's own id for a
+    lone carrier): the gate piece it plays, and which segment of how many and which ion when the id says."""
+
+    piece: str
+    segment: int | None
+    """1-based."""
+    segments: int | None
+    ion: int | None
+
+    def __str__(self) -> str:
+        words = [self.piece]
+        if self.segment is not None:
+            words.append(f"segment {self.segment} of {self.segments}")
+        if self.ion is not None:
+            words.append(f"ion {self.ion}")
+        return ", ".join(words)
+
+
+def _split_pulse_id(pulse_id: str) -> tuple[str, int | None, int | None]:
+    """(piece, 0-based segment, ion) of a compiler pulse id; the ion and segment parts are the id's last one or two."""
+    parts = pulse_id.split("/")
+    ion = seg = None
+    if len(parts) > 1 and parts[-1].startswith("ion") and parts[-1][3:].isdigit():
+        ion = int(parts.pop()[3:])
+        if len(parts) > 1 and parts[-1].startswith("seg") and parts[-1][3:].isdigit():
+            seg = int(parts.pop()[3:])
+    return "/".join(parts), seg, ion
+
+
+def pulse_name(record: Record, pulse_id: str) -> PulseName:
+    """The pulse ``pulse_id`` of ``record`` (a ``PulseRecord.gate_id``) in words ("ms[2], segment 1 of 5, ion 0")."""
+    piece, seg, ion = _split_pulse_id(pulse_id)
+    if seg is None:
+        return PulseName(piece, None, None, ion)
+    segments = {
+        s
+        for p in record.schedule.pulses
+        for q, s, _i in (_split_pulse_id(p.gate_id or ""),)
+        if q == piece and s is not None
+    }
+    return PulseName(piece, seg + 1, len(segments), ion)
+
+
 @dataclass(frozen=True)
 class Span:
     pulse_index: int
-    gate_id: str | None
+    name: PulseName
     kind: str
     t_start_s: float
     t_end_s: float
@@ -55,7 +99,7 @@ def time_axis(record: Record) -> TimeAxis:
         Lane(
             ion,
             tuple(
-                Span(p.index, p.gate_id, p.kind, p.t_start_s, p.t_end_s)
+                Span(p.index, pulse_name(record, p.gate_id or ""), p.kind, p.t_start_s, p.t_end_s)
                 for p in record.schedule.pulses
                 if ion in p.ions
             ),

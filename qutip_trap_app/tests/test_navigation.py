@@ -10,6 +10,7 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel.learn import BELL_TOUR, CONCEPTS
 from qutip_trap_app.viewmodel.presets import PresetResult
+from qutip_trap_app.viewmodel.schedule import PulseName, pulse_name, time_axis
 from qutip_trap_app.views import routes
 from qutip_trap_app.views.learn import ACTIVITIES
 from qutip_trap_app.views.shell import (
@@ -159,3 +160,17 @@ def test_the_rail_opens_each_level_at_the_place_the_learner_is(bell: tuple[Recor
         routes.schedule(key, pulse),
         routes.dynamics(key, pulse),
     )
+
+
+def test_a_pulse_reads_as_its_gate_segment_and_ion(bell: tuple[Record, LiveRun]) -> None:
+    """The compiler's pulse ids (``ms[2]/seg0/ion1``) reach the screens in words, with the segment counted from one."""
+    record, _live = bell
+    by_id = {p.gate_id: p for p in record.schedule.pulses}
+    assert pulse_name(record, "ms[2]/seg0/ion1") == PulseName("ms[2]", 1, 5, 1)
+    assert str(pulse_name(record, "ms[2]/seg4/ion0")) == "ms[2], segment 5 of 5, ion 0"
+    assert str(pulse_name(record, "gpi2[0]")) == "gpi2[0]", "a lone carrier is its gate"
+    assert "ms[2]/seg0/ion1" in by_id and "gpi2[0]" in by_id
+    lane = next(ln for ln in time_axis(record).lanes if ln.ion == 1)
+    assert [str(span.name) for span in lane.spans if span.name.piece == "ms[2]"] == [
+        f"ms[2], segment {k} of 5, ion 1" for k in range(1, 6)
+    ], "the lane names each MS segment it plays"

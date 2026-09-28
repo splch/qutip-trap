@@ -37,6 +37,7 @@ from qutip_trap_app.viewmodel.physics import (
     stale_status,
     trap_view,
 )
+from qutip_trap_app.viewmodel.schedule import pulse_name
 from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
@@ -1331,7 +1332,8 @@ def _hamiltonian_page(ctx: Page) -> list[ft.Control]:
             term_tiles.append(
                 ft.ExpansionTile(
                     title=ft.Text(
-                        f"drive term {t.index}: {'crosstalk onto' if t.is_crosstalk else 'addressed'} ion {t.ion} ({t.pulse})",
+                        f"drive term {t.index}: {'crosstalk onto' if t.is_crosstalk else 'addressed'} ion {t.ion} "
+                        f"({pulse_name(record, t.pulse)._replace(ion=None)})",
                         size=theme.SIZE_SMALL + 1,
                         weight=ft.FontWeight.W_600,
                         color=ft.Colors.PRIMARY if highlighted else None,

@@ -169,7 +169,7 @@ CONCEPTS: dict[str, Concept] = {c.id: c for c in (
               rubric="the two-qubit state is entangled: the reduced single-qubit states are maximally mixed while the joint state has purity one; concurrence near 1")),
     _c("pulse", 2, "A gate is light for a while", "pulse", ("conv.rabi_frequency", "conv.drive_coefficient_and_phase_continuity"), "7.4",
        "Every gate is a laser beam on an ion for a set time; how fast the arrow turns is set by the light's strength.",
-       "The schedule shows each pulse as a bar on the ion's lane; its height is the Rabi frequency, its length the duration.",
+       "The schedule shows each pulse as a bar on its ion's lane, as long as the pulse lasts; the pulse's card draws its Rabi frequency against time.",
        "theta = Omega t for a carrier pulse: a quarter turn needs Omega t = pi/2 (conv.rabi_frequency).",
        "estimate a pulse duration from a Rabi frequency",
        Prompt("pulse.q1", "choose", "Doubling the laser power (Rabi frequency x sqrt 2) makes a GPi2 pulse",

@@ -17,6 +17,7 @@ from qutip_trap_app.viewmodel.schedule import (
     ModeClosure,
     PulseView,
     closure,
+    pulse_name,
     pulse_view,
     time_axis,
 )
@@ -54,14 +55,14 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
             f"ion {ln.ion}",
             [
                 lane_box(
-                    span.gate_id or "",
+                    span.name.piece,
                     (span.t_start_s - t0) * scale,
                     max((span.t_end_s - span.t_start_s) * scale, 12.0),
                     color=ft.Colors.PRIMARY_CONTAINER
                     if span.kind == "raman"
                     else ft.Colors.TERTIARY_CONTAINER,
                     selected=span.pulse_index == selected,
-                    tooltip=f"pulse {span.pulse_index} ({span.kind}) {span.t_start_s * 1e6:.2f} to {span.t_end_s * 1e6:.2f} µs; gate {span.gate_id}",
+                    tooltip=f"pulse {span.pulse_index}: {span.name} ({span.kind}), {span.t_start_s * 1e6:.2f} to {span.t_end_s * 1e6:.2f} µs",
                     on_click=functools.partial(on_select, span.pulse_index),
                     key=f"pulse:{span.pulse_index}" if ln.ion == first_ion else None,
                 )
@@ -328,6 +329,7 @@ def Level2Page(
         why=lambda e: session.select_concept(2, "tone_and_sideband"),
         key="spectrum",
     )
+    name = pulse_name(record, pv.pulse.gate_id or "")
     envelope = drawing.line_chart(
         [(f"tone {t.index}", t.times_s * 1e6, t.envelope_samples / 1e3) for t in pv.tones],
         x_title="t (µs)",
@@ -335,7 +337,7 @@ def Level2Page(
         height=130,
     )
     pulse_card = card(
-        f"Pulse {sel}: {pv.pulse.gate_id} on {ions_text(pv.ions)}",
+        f"Pulse {sel}: {name}" + ("" if name.ion is not None else f" on {ions_text(pv.ions)}"),
         ft.Column(
             [
                 status_line(
@@ -363,10 +365,9 @@ def Level2Page(
         ],
         key="pulse",
     )
-    gate_id = pv.pulse.gate_id.split("/")[0] if pv.pulse.gate_id else None
     right: list[ft.Control] = []
-    if gate_id and any(g.gate_id == gate_id for g in record.schedule.gates):
-        right.append(_closure_card(store, session, record, gate_id, index))
+    if any(g.gate_id == name.piece for g in record.schedule.gates):
+        right.append(_closure_card(store, session, record, name.piece, index))
     return ft.Column(
         [
             level_header("The schedule", "What light hit which ion, when, and what did it talk to?"),
