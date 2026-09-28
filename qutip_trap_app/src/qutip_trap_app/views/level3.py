@@ -27,7 +27,7 @@ from qutip_trap_app.viewmodel.dynamics import (
 )
 from qutip_trap_app.viewmodel.learn import CONCEPTS, Attempt, now_days, score_closure
 from qutip_trap_app.viewmodel.numerics import NumericsPanel, numerics_panel
-from qutip_trap_app.views import drawing, theme
+from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     ProgressRows,
     card,
@@ -219,7 +219,7 @@ def Level3Page(
                         ft.FilledTonalButton(
                             content=ft.Text("Back to the machine"),
                             icon=ft.Icons.ARROW_BACK,
-                            on_click=lambda e: page.navigate(f"/job/{key}"),
+                            on_click=lambda e: page.navigate(routes.job(key)),
                         )
                     ],
                     key="no-trace",
@@ -236,7 +236,7 @@ def Level3Page(
     ask = pred_key not in store.closure_predictions and bool(dyn.loops)
 
     def set_sample(e: Any) -> None:
-        page.navigate(f"/job/{key}/dynamics/{pulse_param}/{int(e.control.value)}")
+        page.navigate(routes.dynamics(key, pulse_param, int(e.control.value)))
 
     def set_branch(e: Any) -> None:
         store.branch = int(e.control.value)
@@ -244,12 +244,12 @@ def Level3Page(
     def open_equation(_e: Any) -> None:
         store.hamiltonian_target = (key, step, sample, branch)
         store.selected_channel = None
-        page.navigate("/device/hamiltonian")
+        page.navigate(routes.device("hamiltonian"))
 
     def open_channel(channel: str) -> None:
         store.hamiltonian_target = (key, step, sample, branch)
         store.selected_channel = channel
-        page.navigate("/device/hamiltonian")
+        page.navigate(routes.device("hamiltonian"))
 
     controls = ft.Row(
         [

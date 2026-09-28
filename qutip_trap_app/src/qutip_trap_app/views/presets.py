@@ -12,7 +12,7 @@ import numpy as np
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE
 from qutip_trap_app.viewmodel.presets import PRESETS, ChartRecord, Comparison, PresetSpec, compare
-from qutip_trap_app.views import drawing, theme
+from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
     card,
@@ -148,7 +148,7 @@ def PresetList(store: Store, session: Session, index: ProvenanceIndex) -> ft.Con
                 session.load_circuit_preset(s.id)
                 page.navigate("/")
             else:
-                page.navigate(f"/learn/preset/{s.id}")
+                page.navigate(routes.preset(s.id))
 
         tiles.append(
             ft.ListTile(
@@ -231,7 +231,7 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
                     ft.TextButton(
                         content=ft.Text("All experiments"),
                         icon=ft.Icons.ARROW_BACK,
-                        on_click=lambda e: page.navigate("/learn/experiments"),
+                        on_click=lambda e: page.navigate(routes.learn("experiments")),
                     )
                 ],
                 key="preset-result",

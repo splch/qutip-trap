@@ -19,7 +19,7 @@ from qutip_trap_app.record import Record
 from qutip_trap_app.viewmodel.learn import score_histogram_prediction, sketch_distribution
 from qutip_trap_app.viewmodel.machine import Histogram, device_card_view, histogram, ideal_outcomes, shot
 from qutip_trap_app.viewmodel.presets import PRESETS, circuit_comparisons, circuit_presets
-from qutip_trap_app.views import drawing, theme
+from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.builder import CircuitBuilder, builder_toolbar
 from qutip_trap_app.views.common import (
     HAIRLINE,
@@ -420,7 +420,7 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
 
             def open_deep(_e: Any, k: str = deep_key) -> None:
                 store.current = k
-                ft.context.page.navigate(f"/job/{k}")
+                ft.context.page.navigate(routes.job(k))
 
             detail_controls.append(ft.TextButton(content=ft.Text("open the deeper run"), on_click=open_deep))
     body.append(details(store, session, 0, "level0.results", detail_controls))
@@ -519,7 +519,7 @@ def DeviceCardView(store: Store, session: Session, record: Record, index: Proven
             ft.TextButton(
                 content=ft.Text("Change the device"),
                 icon=ft.Icons.FUNCTIONS,
-                on_click=lambda e: page.navigate("/device/trap"),
+                on_click=lambda e: page.navigate(routes.device("trap")),
             )
         ],
         key="device",

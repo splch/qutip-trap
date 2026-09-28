@@ -20,7 +20,7 @@ from qutip_trap_app.viewmodel.schedule import (
     pulse_view,
     time_axis,
 )
-from qutip_trap_app.views import drawing, theme
+from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
     card,
@@ -263,7 +263,7 @@ def Level2Page(
     plain = store.learner.plan(2).plain_labels_first
 
     def on_select(k: int) -> None:
-        page.navigate(f"/job/{key}/schedule/{k}")
+        page.navigate(routes.schedule(key, k))
 
     tone_tiles: list[ft.Control] = []
     for t in pv.tones:
@@ -351,7 +351,7 @@ def Level2Page(
             ft.FilledButton(
                 content=ft.Text("Zoom in: inside this pulse"),
                 icon=ft.Icons.ZOOM_IN,
-                on_click=lambda e: page.navigate(f"/job/{key}/dynamics/{sel}/0"),
+                on_click=lambda e: page.navigate(routes.dynamics(key, sel)),
                 key="zoom-pulse",
             )
         ],

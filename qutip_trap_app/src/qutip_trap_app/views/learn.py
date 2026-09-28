@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from typing import Any, NamedTuple
+from urllib.parse import quote
 
 import flet as ft
 
@@ -27,7 +28,7 @@ from qutip_trap_app.viewmodel.learn import (
     now_days,
     review_gap_days,
 )
-from qutip_trap_app.views import theme
+from qutip_trap_app.views import routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
     PromptView,
@@ -68,10 +69,11 @@ KNOWLEDGE: dict[PriorKnowledge, KnowledgeOption] = {
 
 
 def _fill_route(route: str, key: str | None, gate: str, pulse: str) -> str:
+    """A tour stop's route with the record's ids filled in, each percent-encoded as ``views.routes`` builds them."""
     return (
-        route.replace("{id}", key or "-")
-        .replace("{gate}", gate)
-        .replace("{pulse}", pulse)
+        route.replace("{id}", quote(key or "-", safe=""))
+        .replace("{gate}", quote(gate, safe=""))
+        .replace("{pulse}", quote(pulse, safe=""))
         .replace("{sample}", "0")
     )
 
@@ -212,7 +214,7 @@ def TourActivity(store: Store, session: Session, index: ProvenanceIndex) -> ft.C
             session.load_bell_example()
             page.navigate("/")
         else:
-            page.navigate(f"/job/{key}")
+            page.navigate(routes.job(key))
 
     return card(
         "The tour: a Bell state in six stops",
@@ -494,7 +496,7 @@ def LearnPage(
     nav = page_tabs(
         items,
         tab,
-        lambda t: page.navigate("/learn" if t == "tour" else f"/learn/{t}"),
+        lambda t: page.navigate(routes.learn() if t == "tour" else routes.learn(t)),
         key_prefix="learn-tab",
     )
     return ft.Column(

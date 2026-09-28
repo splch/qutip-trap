@@ -9,6 +9,7 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import LiveRun, Record
 from qutip_trap_app.viewmodel.learn import BELL_TOUR, CONCEPTS
 from qutip_trap_app.viewmodel.presets import PresetResult
+from qutip_trap_app.views import routes
 from qutip_trap_app.views.learn import ACTIVITIES
 from qutip_trap_app.views.shell import child_route, crumbs_of, parent_route, parse_route, pulse_of_path
 from qutip_trap_app.views.state import JobStatus, Session, Store
@@ -45,7 +46,7 @@ def test_six_clicks_from_a_histogram_bar_to_a_matrix_element(bell: tuple[Record,
     assert back2 == clicks[1] and parse_route(back2).level == 1
     assert parent_route(store, clicks[1]) == f"/job/{key}"
     # zooming in from the machine opens the first gate, and the pulse the rail keeps is that gate's first pulse
-    assert clicks[1] == f"/job/{key}/circuit/{record.schedule.targets[0].gate_id}"
+    assert clicks[1] == routes.circuit(key, record.schedule.targets[0].gate_id)
     ms = next(g for g in record.schedule.gates)
     assert pulse_of_path(record, clicks[2]) == int(clicks[2].rsplit("/", 1)[1])
     assert [text for text, _route in crumbs_of(store, clicks[3])][:2] == ["Dynamics", f"job {key[:8]}"]
@@ -58,6 +59,21 @@ def test_six_clicks_from_a_histogram_bar_to_a_matrix_element(bell: tuple[Record,
             .replace("{sample}", "0")
         )
         assert parse_route(route).level == CONCEPTS[stop.concept_id].level, stop.route
+
+
+def test_a_gate_id_survives_its_route_whole() -> None:
+    """A gate id with brackets or a slash (the ZZ wrapper's pieces) is encoded when its route is built and decoded when it
+    is parsed, as a browser delivers it after a reload or from the address bar."""
+    for gate in ("ms[2]", "zz[3]/ms", "zz[3]/wrap_in/ion0"):
+        path = routes.circuit("0123abcd", gate)
+        assert "[" not in path and path.count("/") == 4, path
+        r = parse_route(path)
+        assert (r.level, r.job, r.gate) == (1, "0123abcd", gate)
+        assert crumbs_of(Store(), path)[-1] == (f"gate {gate}", path)
+    assert parse_route("/job/0123abcd/circuit/gpi2%5B0%5D").gate == "gpi2[0]", "the browser's own encoding"
+    zoomed = parse_route(routes.dynamics("0123abcd", 4, 2))
+    assert (zoomed.level, zoomed.pulse, zoomed.sample) == (3, "4", "2")
+    assert routes.learn() == "/learn" and routes.preset("harty_2014") == "/learn/preset/harty_2014"
 
 
 def test_learn_routes() -> None:
@@ -90,7 +106,7 @@ def test_a_request_run_lands_on_its_gate_and_a_preset_result_lands_in_the_store(
     session.page = FakePage()
     store.jobs = {"r1": JobStatus("r1", "request_run", target={"gate_id": "ms[2]", "kind": "angle"})}
     session.apply_events([Event("result", "r1", "request_run", payload=record)])
-    assert store.current == record.key() and navigated == [f"/job/{record.key()}/circuit/ms[2]"]
+    assert store.current == record.key() and navigated == [routes.circuit(record.key(), "ms[2]")]
     result = PresetResult("harty_2014", {"epg": 7.5e-7}, {"epg": 1e-7}, (), {}, (), 1.0)
     store.jobs = {**store.jobs, "p1": JobStatus("p1", "preset", target={"preset_id": "harty_2014"})}
     session.apply_events([Event("result", "p1", "preset", payload=result)])

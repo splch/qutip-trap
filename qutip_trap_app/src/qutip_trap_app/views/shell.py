@@ -5,6 +5,7 @@ DESIGN.md Sections 4, 5 and 10)."""
 from __future__ import annotations
 
 from typing import Any, NamedTuple
+from urllib.parse import unquote
 
 import flet as ft
 
@@ -13,12 +14,12 @@ from qutip_trap_app.record import Record
 from qutip_trap_app.viewmodel.learn import level_concepts
 from qutip_trap_app.viewmodel.numerics import NumericsPanel, numerics_panel
 from qutip_trap_app.viewmodel.presets import PRESETS
-from qutip_trap_app.views import theme
+from qutip_trap_app.views import routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
     ExplainDrawer,
-    card,
     content_margin,
+    empty_state,
     event_bool,
     numerics_strip,
     status_line,
@@ -84,7 +85,8 @@ class Route(NamedTuple):
 
 
 def parse_route(path: str) -> Route:
-    parts = [p for p in path.split("/") if p]
+    """The route of ``path``, every segment percent-decoded (``views.routes`` encodes them)."""
+    parts = [unquote(p) for p in path.split("/") if p]
     head = parts[0] if parts else ""
     if head == "learn":
         if len(parts) >= 3 and parts[1] == "preset":
@@ -140,13 +142,15 @@ def parent_route(store: Store, path: str) -> str | None:
     """Zoom out: the route one level up, "/" at the top, None off the ladder. The record behind the path names a pulse's
     gate."""
     r = parse_route(path)
-    if r.level == 3:
-        return f"/job/{r.job}/schedule/{r.pulse}"
-    if r.level == 2:
-        return f"/job/{r.job}/circuit/{_gate_of_pulse(store.records.get(r.job or ''), r.pulse or '')}"
+    if r.job is None:  # Level 0 before a run, the physics pages, Learn
+        return "/" if r.level == 0 else None
+    if r.level == 3 and r.pulse is not None:
+        return routes.schedule(r.job, r.pulse)
+    if r.level == 2 and r.pulse is not None:
+        return routes.circuit(r.job, _gate_of_pulse(store.records.get(r.job), r.pulse))
     if r.level == 1:
-        return f"/job/{r.job}"
-    return "/" if r.level == 0 else None
+        return routes.job(r.job)
+    return "/"
 
 
 def child_route(store: Store, path: str) -> str | None:
@@ -157,17 +161,17 @@ def child_route(store: Store, path: str) -> str | None:
     key = record.key()
     r = parse_route(path)
     if r.level == 0 and record.schedule.targets:
-        return f"/job/{key}/circuit/{record.schedule.targets[0].gate_id}"
+        return routes.circuit(key, record.schedule.targets[0].gate_id)
     if r.level == 1 and r.gate is not None:
         try:
             step = record.step_of_gate(r.gate)
         except KeyError:
             return None
-        return f"/job/{key}/schedule/{step.pulse_indices[0]}" if step.pulse_indices else None
-    if r.level == 2:
-        return f"/job/{key}/dynamics/{r.pulse}/0"
+        return routes.schedule(key, step.pulse_indices[0]) if step.pulse_indices else None
+    if r.level == 2 and r.pulse is not None:
+        return routes.dynamics(key, r.pulse)
     if r.level == 3:
-        return "/device/hamiltonian"
+        return routes.device("hamiltonian")
     return None
 
 
@@ -178,22 +182,22 @@ def crumbs_of(store: Store, path: str) -> list[tuple[str, str | None]]:
     if r.level == 4:
         return [(RAIL[4].label, None), (DEVICE_PAGES[r.page].title, None)]
     if r.level == -1:
-        trail: list[tuple[str, str | None]] = [("Learn", "/learn")]
+        trail: list[tuple[str, str | None]] = [("Learn", routes.learn())]
         if r.tab != "tour" or r.preset:
-            trail.append((ACTIVITIES[r.tab].label, f"/learn/{r.tab}"))
+            trail.append((ACTIVITIES[r.tab].label, routes.learn(r.tab)))
         if r.preset:
             trail.append((PRESETS[r.preset].title if r.preset in PRESETS else r.preset, None))
         return trail
     trail = [(RAIL[r.level].label, None)]
     if r.job is None:
         return trail
-    trail.append((f"job {r.job[:8]}", f"/job/{r.job}"))
+    trail.append((f"job {r.job[:8]}", routes.job(r.job)))
     if r.gate is not None:
-        trail.append((f"gate {r.gate}", f"/job/{r.job}/circuit/{r.gate}"))
+        trail.append((f"gate {r.gate}", routes.circuit(r.job, r.gate)))
     elif r.pulse is not None:
         gate = _gate_of_pulse(store.records.get(r.job), r.pulse)
-        trail.append((f"gate {gate}", f"/job/{r.job}/circuit/{gate}"))
-        trail.append((f"pulse {r.pulse}", f"/job/{r.job}/schedule/{r.pulse}"))
+        trail.append((f"gate {gate}", routes.circuit(r.job, gate)))
+        trail.append((f"pulse {r.pulse}", routes.schedule(r.job, r.pulse)))
         if r.level == 3:
             trail.append((f"sample {r.sample}", None))
     return trail
@@ -293,7 +297,19 @@ def RoutedContent(store: Store, session: Session, index: ProvenanceIndex, path: 
         return Level0Page(store, session, index)
     record = store.records.get(r.job)
     if record is None:
-        return card("Unknown job", status_line(f"no record {r.job} in this session; run a job on Level 0"))
+        page = ft.context.page
+        return empty_state(
+            "This job is not in the session",
+            f"job {r.job[:8]} is held by the session that ran it, and a reload or a new tab starts a fresh one",
+            icon=ft.Icons.SEARCH_OFF,
+            action=ft.FilledButton(
+                content=ft.Text("Run a job on the machine"),
+                icon=ft.Icons.BAR_CHART,
+                on_click=lambda e: page.navigate("/"),
+                key="unknown-job-home",
+            ),
+            key="unknown-job",
+        )
     if store.current != r.job:
         store.current = r.job
     if r.gate is not None:
@@ -366,26 +382,25 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
 
     def rail_change(e: Any) -> None:
         i = int(e.control.selected_index)
-        key = record.key() if record is not None else None
         pulse = pulse_of_path(record, path)
         if i == 5:
-            page.navigate("/learn")
+            page.navigate(routes.learn())
         elif i == 4:
-            page.navigate(f"/device/{store.device_page}")
+            page.navigate(routes.device(store.device_page))
         elif record is None:
             page.navigate("/")
         elif i == 0:
-            page.navigate(f"/job/{key}")
+            page.navigate(routes.job(record.key()))
         elif i == 1 and record.schedule.targets:
-            page.navigate(f"/job/{key}/circuit/{_gate_of_pulse(record, str(pulse))}")
+            page.navigate(routes.circuit(record.key(), _gate_of_pulse(record, str(pulse))))
         elif i == 2 and record.schedule.pulses:
-            page.navigate(f"/job/{key}/schedule/{pulse}")
+            page.navigate(routes.schedule(record.key(), pulse))
         elif i == 3 and record.schedule.pulses:
-            page.navigate(f"/job/{key}/dynamics/{pulse}/0")
+            page.navigate(routes.dynamics(record.key(), pulse))
         else:
             # a record with no gate (a bare measurement) has nothing on Levels 1 to 3: stay with the job, and re-render
             # so the rail's highlight follows the route rather than the click
-            page.navigate(f"/job/{key}")
+            page.navigate(routes.job(record.key()))
             store.tick = store.tick + 1
 
     def on_key(e: ft.KeyboardEvent) -> None:

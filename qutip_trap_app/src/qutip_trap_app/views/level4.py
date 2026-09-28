@@ -36,7 +36,7 @@ from qutip_trap_app.viewmodel.physics import (
     stale_status,
     trap_view,
 )
-from qutip_trap_app.views import drawing, theme
+from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
     ProgressRows,
@@ -1431,7 +1431,7 @@ def _hamiltonian_page(ctx: Page) -> list[ft.Control]:
                         ft.OutlinedButton(
                             content=ft.Text("Back to the dynamics of this pulse"),
                             icon=ft.Icons.ZOOM_OUT,
-                            on_click=lambda e: page.navigate(f"/job/{k}/dynamics/{pulse}/{sm}"),
+                            on_click=lambda e: page.navigate(routes.dynamics(k, pulse, sm)),
                         )
                     ]
                 )
@@ -1528,7 +1528,7 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
             ft.TextButton(
                 content=ft.Text("Change the device"),
                 icon=ft.Icons.FUNCTIONS,
-                on_click=lambda e: page.navigate("/device/trap"),
+                on_click=lambda e: page.navigate(routes.device("trap")),
             ),
         ],
         key="current-device",
@@ -1590,7 +1590,7 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
     nav = page_tabs(
         [(p, d.title) for p, d in DEVICE_PAGES.items()],
         page_name,
-        lambda p: page.navigate(f"/device/{p}"),
+        lambda p: page.navigate(routes.device(p)),
         key_prefix="device-page",
     )
     body: list[ft.Control] = [level_header(device_page.title, device_page.question), nav]

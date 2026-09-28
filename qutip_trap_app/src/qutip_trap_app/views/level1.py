@@ -26,7 +26,7 @@ from qutip_trap_app.viewmodel.circuit import (
     register_after,
     timeline,
 )
-from qutip_trap_app.views import drawing, theme
+from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     HAIRLINE,
     MUTED,
@@ -401,7 +401,7 @@ def Level1Page(
     plain = store.learner.plan(1).plain_labels_first
 
     def on_select(gid: str) -> None:
-        page.navigate(f"/job/{key}/circuit/{gid}")
+        page.navigate(routes.circuit(key, gid))
 
     def why_register(_e: Any) -> None:
         session.select_concept(
@@ -522,7 +522,7 @@ def Level1Page(
             ft.FilledButton(
                 content=ft.Text("Zoom in: the pulses"),
                 icon=ft.Icons.ZOOM_IN,
-                on_click=lambda e: page.navigate(f"/job/{key}/schedule/{first_pulse}"),
+                on_click=lambda e: page.navigate(routes.schedule(key, first_pulse)),
                 key="zoom-gate",
             )
         ],

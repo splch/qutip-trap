@@ -515,15 +515,21 @@ def status_line(text: str) -> ft.Control:
 
 
 def empty_state(
-    title: str, why: str, *, icon: ft.IconData = ft.Icons.BAR_CHART_OUTLINED, key: str | None = None
+    title: str,
+    why: str,
+    *,
+    icon: ft.IconData = ft.Icons.BAR_CHART_OUTLINED,
+    action: ft.Control | None = None,
+    key: str | None = None,
 ) -> ft.Control:
-    """Never a dead end: what belongs here and why it is empty."""
+    """Never a dead end: what belongs here, why it is empty, and the way forward when there is one to press."""
     return ft.Container(
         content=ft.Column(
             [
                 ft.Icon(icon, size=32, color=MUTED),
                 ft.Text(title, size=theme.SIZE_CARD_TITLE, weight=ft.FontWeight.W_600),
                 ft.Text(why, size=theme.SIZE_SMALL, color=MUTED, text_align=ft.TextAlign.CENTER),
+                *([action] if action is not None else []),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8,

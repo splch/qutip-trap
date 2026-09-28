@@ -37,6 +37,7 @@ from qutip_trap_app.viewmodel.learn import (
     plan_for,
 )
 from qutip_trap_app.viewmodel.presets import PRESETS, PresetResult, PresetSpec
+from qutip_trap_app.views import routes
 from qutip_trap_app.workers import Event, SimulationWorker
 
 ThemeChoice = Literal["system", "light", "dark"]
@@ -649,10 +650,10 @@ class Session:
                 store.records = {**store.records, key: payload}
                 store.current = key
                 self._forget_selections()
-                route = f"/job/{key}"
+                route = routes.job(key)
                 if status.request == "request_run":
                     store.scored_prediction = None
-                    route = f"/job/{key}/circuit/{status.target['gate_id']}"
+                    route = routes.circuit(key, status.target["gate_id"])
                 else:
                     # the last request was made against an earlier record (gate ids repeat across runs); the pick made
                     # before this run is scored beside its histogram, and the next run gets its own prompt
