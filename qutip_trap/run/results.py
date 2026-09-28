@@ -522,7 +522,7 @@ class Progress:
     integrated pulse segment counted across the in-process engine runs; ``branch``, one (sample, branch) engine run;
     ``sample``, one dynamical sample evolved; ``readout``, one sample read out), how many of its ``total`` steps are
     ``done``, and the seconds since the run started. A stage's counts are monotone and end at ``done == total``; a parallel
-    map reports each branch as it finishes and no pulses."""
+    map reports the branches as each chunk of them finishes (``dynamics.parallel.CHUNKS_PER_WORKER``) and no pulses."""
 
     stage: str
     done: int

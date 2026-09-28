@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import operator
 import time
@@ -265,8 +266,12 @@ class _BranchRun(NamedTuple):
 def _engine_task(
     payload: tuple[Any, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, Numerics],
 ) -> tuple[Traces, EngineReport]:
-    """One (sample, branch) engine run as a map task (module-level so that it pickles under ``map="parallel"``)."""
-    engine, device, sched, state, space, smp, seeds, opts = payload
+    """One (sample, branch) engine run as a map task (module-level so that it pickles under ``map="parallel"``). The runs of
+    a chunk share one device (and the digest it memoizes); each takes its own copy of the engine, as a run sent alone
+    receives it (``copy.copy`` goes through ``JointExactEngine.__getstate__``: no report, no propagator cache), so neither
+    its result nor its cache counts depend on the chunk it ran in."""
+    shipped, device, sched, state, space, smp, seeds, opts = payload
+    engine = copy.copy(shipped)
     traces = engine.run_pulses(device, sched, state, space, smp, seeds, opts)
     rep = engine.last_report
     assert rep is not None
@@ -302,7 +307,7 @@ def _run_engine_tasks(
     """The (sample, branch) engine runs of a JOINT_EXACT run: in-process on one engine when the map is serial, one worker is
     available or there is a single run (the engine's trajectory map then takes the workers), else spread over the workers
     (Section 11.3 item 9). Returns the (traces, report) pairs in order and the workers used. In-process runs report every
-    pulse and every run; a parallel map reports each run as it finishes, and no pulses."""
+    pulse and every run; a parallel map reports the runs as each chunk of them finishes, and no pulses."""
     workers = worker_count(opts)
     n_runs = len(payloads)
     if opts.map == "serial" or workers <= 1 or n_runs < 2:
@@ -452,15 +457,18 @@ class _JointExact(_Level):
         space, branches, state0, notes = self.space, self.branches, walk.state0, walk.notes
         engine = walk.setup.engine()
         total_weight = sum(b.weight for b in branches)
+        thermal = {m: float(state0.motional.nbar.get(m, 0.0)) for m in space.frozen}
+        # a frozen mode's Fock state reaches a branch through its sample, so the branches that share their internal
+        # levels and carried Fock states start from one state, built once
+        starts: dict[tuple[tuple[int, ...], tuple[tuple[int, int], ...]], State] = {}
         payloads: list[_BranchRun] = []
         for s_idx, smp in enumerate(walk.samples):
             for k, br in enumerate(branches):
-                st = space.initial_state(
-                    list(br.levels),
-                    fock={m: n for m, n in br.fock.items() if space.mode_class(m) in ("resolved", "enr")},
-                    thermal={m: float(state0.motional.nbar.get(m, 0.0)) for m in space.frozen},
-                    provenance=tuple(state0.provenance) + (f"m6.branch[{k}]",),
-                )
+                carried = {m: n for m, n in br.fock.items() if space.mode_class(m) in ("resolved", "enr")}
+                key = (br.levels, tuple(carried.items()))
+                if key not in starts:
+                    starts[key] = space.initial_state(list(br.levels), fock=carried, thermal=thermal)
+                st = replace(starts[key], provenance=tuple(state0.provenance) + (f"m6.branch[{k}]",))
                 values = dict(smp.values)
                 values.update(
                     {key_frozen_n(m): float(n) for m, n in br.fock.items() if space.mode_class(m) == "frozen"}

@@ -26,6 +26,7 @@ from qutip_trap.noise.sampling import quiet_sample
 from qutip_trap.noise.spectra import white_spectrum
 from qutip_trap.options import Numerics, Physics
 from qutip_trap.run.job import last_record
+from qutip_trap.run.pipeline import _engine_task
 from tests.fixtures import (
     BELL,
     X_COM_TWO_IONS,
@@ -47,6 +48,13 @@ def _square(x: int) -> int:
     return x * x
 
 
+def _append_and_count(item: tuple[list[int], int]) -> int:
+    """Append the item's number to the list it carries and return the list's length: what a task sees of a shared object."""
+    shared, k = item
+    shared.append(k)
+    return len(shared)
+
+
 def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -63,6 +71,24 @@ def test_map_tasks_keeps_the_input_order_and_stays_in_process_below_the_task_thr
     assert worker_count(Numerics(map="parallel")) == min(int(available_cpu_count()), memory_worker_cap())
     with pytest.raises(ValueError):
         Numerics(workers=0)
+
+
+def test_a_parallel_map_sends_its_items_in_chunks_whose_items_share_what_they_share_here() -> None:
+    """Seventy items over two workers travel in 2 x ``CHUNKS_PER_WORKER`` contiguous chunks of two or three and come back in
+    order; the items of a chunk share in the worker the one list they all carry, as the items of an in-process map share
+    it, the parent's list is never the one a worker changes, and ``on_done`` counts the items once per chunk up to all."""
+    shared: list[int] = []
+    items = [(shared, k) for k in range(70)]
+    done: list[int] = []
+    counts = map_tasks(_append_and_count, items, map_kind="parallel", workers=2, on_done=done.append)
+    n_chunks = 2 * par.CHUNKS_PER_WORKER
+    assert counts.count(1) == n_chunks and max(counts) == 3, "every chunk starts on its own copy of the list"
+    assert all(b in (1, a + 1) for a, b in zip(counts, counts[1:])), (
+        "a chunk's items run in order on that copy"
+    )
+    assert shared == []
+    assert len(done) == n_chunks and done == sorted(done) and done[-1] == 70
+    assert map_tasks(_append_and_count, items, map_kind="serial", workers=2) == list(range(1, 71))
 
 
 def test_the_worker_count_is_capped_by_the_parents_memory_footprint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,6 +253,24 @@ def test_propagator_cache_serves_repeated_segments_and_matches_the_ode_path(carr
     # the pi/2 pulse: P1 of ion 0 near one half, reduced by the frozen modes' Debye-Waller factors
     p1 = float(np.real(np.diag(finals[0].proj().ptrace(0).full())[1]))
     assert abs(p1 - 0.5) < 0.02
+
+
+def test_the_runs_of_a_chunk_share_their_inputs_but_each_takes_its_own_engine(carrier_fixture) -> None:
+    """Forty branch runs sharing one engine, device and space travel over two workers two or three to a chunk: each
+    integrates its own propagator, as a run sent alone does, never one from a cache another run of its chunk filled, and
+    ends in the final state of the same run on a fresh engine in-process, bit for bit."""
+    dev, sched, space = carrier_fixture
+    engine = JointExactEngine()
+    opts = Numerics(map="serial")
+    states = [space.initial_state([k % 2, (k // 2) % 2]) for k in range(40)]
+    items = [(engine, dev, sched, st, space, quiet_sample(), SeedSpec(0), opts) for st in states]
+    results = map_tasks(_engine_task, items, map_kind="parallel", workers=2)
+    assert [(rep.propagator_solves, rep.propagator_cache_hits) for _tr, rep in results] == [(1, 0)] * 40
+    assert engine.last_report is None and engine.progress is None
+    for (tr, _rep), st in zip(results, states):
+        alone = JointExactEngine().run_pulses(dev, sched, st, space, quiet_sample(), SeedSpec(0), opts)
+        assert tr.final.joint is not None and alone.final.joint is not None
+        assert np.array_equal(np.asarray(tr.final.joint.full()), np.asarray(alone.final.joint.full()))
 
 
 def test_tomography_of_a_carrier_step_integrates_one_propagator_per_branch(

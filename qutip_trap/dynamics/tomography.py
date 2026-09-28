@@ -20,6 +20,7 @@ the register leaves (``TomographyRecord.motional_for``).
 
 from __future__ import annotations
 
+import copy
 import itertools
 import math
 from collections.abc import Iterable, Mapping, Sequence
@@ -585,8 +586,11 @@ def _branch_sample(sample: NoiseSample, branch: MotionalBranch) -> NoiseSample:
 def _engine_run(
     payload: tuple[JointExactEngine, Device, Schedule, State, HilbertSpace, NoiseSample, SeedSpec, Numerics],
 ) -> tuple[Traces, EngineReport]:
-    """One engine run as a map task (module-level, so it pickles)."""
-    engine, device, sched, state, space, smp, seeds, opts = payload
+    """One engine run as a map task (module-level, so it pickles). The runs of a chunk share one device (and the digest it
+    memoizes); each takes its own copy of the engine, as a run sent alone receives it (``copy.copy`` goes through
+    ``JointExactEngine.__getstate__``: no report, no propagator cache)."""
+    shipped, device, sched, state, space, smp, seeds, opts = payload
+    engine = copy.copy(shipped)
     traces = engine.run_pulses(device, sched, state, space, smp, seeds, opts)
     rep = engine.last_report
     assert rep is not None
