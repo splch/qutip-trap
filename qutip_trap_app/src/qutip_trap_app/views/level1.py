@@ -30,6 +30,7 @@ from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     HAIRLINE,
     MUTED,
+    TILES_MAX,
     card,
     columns,
     content_widths,
@@ -470,7 +471,7 @@ def Level1Page(
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        stat_row(tiles),
+        stat_row(tiles[:TILES_MAX]),
     ]
     if selected.name.value == "ms" and len(selected.ions) == 2:
         gate_body.append(RequestOutcomeView(store, session, record, selected, index))
@@ -495,7 +496,8 @@ def Level1Page(
             session,
             1,
             "level1.gate",
-            [
+            ([stat_row(tiles[TILES_MAX:])] if len(tiles) > TILES_MAX else [])
+            + [
                 ft.Row(
                     [
                         ft.Text("target unitary", size=theme.SIZE_SMALL, weight=ft.FontWeight.W_600),

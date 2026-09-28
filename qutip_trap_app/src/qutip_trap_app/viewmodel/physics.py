@@ -104,8 +104,8 @@ def species_view(layer: DeviceLayer) -> SpeciesView:
         for tr in sp.transitions
     )
     qubit = (
-        Row("lower state", Shown("species", sp.qubit[0]), "designated"),
-        Row("upper state", Shown("species", sp.qubit[1]), "designated"),
+        Row("lower state", Shown("qubit_level", sp.qubit[0]), "designated"),
+        Row("upper state", Shown("qubit_level", sp.qubit[1]), "designated"),
         Row("qubit frequency at the field", Shown("qubit_frequency", sp.qubit_freq_hz), "derived"),
         Row(
             "first-order field sensitivity",
@@ -117,8 +117,8 @@ def species_view(layer: DeviceLayer) -> SpeciesView:
             Shown("field_curvature", sp.d2nu_db2_hz_per_g2, "d2nu/dB2 (Taylor c2 is half of it)"),
             "derived",
         ),
-        Row("cycling transition", Shown("species", sp.cycling), "designated"),
-        Row("repumps", Shown("species", ", ".join(sp.repumps) or "none"), "designated"),
+        Row("cycling transition", Shown("cycling_line", sp.cycling), "designated"),
+        Row("repumps", Shown("repump_lines", ", ".join(sp.repumps) or "none"), "designated"),
     )
     clocks = tuple(
         (
@@ -715,10 +715,18 @@ class ReadoutView:
     notes: tuple[str, ...]
 
 
+DETECTOR_NAMES: dict[str, str] = {
+    "pmt": "photomultiplier (PMT)",
+    "snspd": "superconducting nanowire (SNSPD)",
+    "camera": "camera",
+}
+"""A detector kind (``Detector.kind``) in words."""
+
+
 def readout_view(layer: DeviceLayer, table: TableRecord | None) -> ReadoutView:
     ro = layer.readout
     detector = [
-        Row("detector", Shown("species", ro.detector_kind), "device parameter"),
+        Row("detector", Shown("detector_kind", DETECTOR_NAMES[ro.detector_kind]), "device parameter"),
         Row("detection efficiency", Shown("detector_efficiency", ro.efficiency), "device parameter"),
         Row("background", Shown("background_rate", ro.background_cps), "device parameter"),
         Row("detection window", Shown("detection_window", ro.window_s), "device parameter"),
@@ -1152,6 +1160,10 @@ class LayerCardView:
     overrides: tuple[Row, ...]
 
 
+TABLE_SPAM_LABELS: dict[str, str] = {"eps_B": "bright read as dark", "eps_D": "dark read as bright"}
+"""The table's two readout errors in words."""
+
+
 def layer_card_view(layer: DeviceLayer, table: TableRecord | None) -> LayerCardView:
     """The device card of the current (possibly edited) device: Level 0's rows with closed-form estimates, the table's
     readout errors beside them, and the knob overrides."""
@@ -1162,7 +1174,11 @@ def layer_card_view(layer: DeviceLayer, table: TableRecord | None) -> LayerCardV
             e = table.entries.get(detection_key(key))
             if e is not None:
                 spam.append(
-                    Row(f"table {key}", Shown(qid, e.value, e.experiment), _table_status(table, layer))
+                    Row(
+                        f"{TABLE_SPAM_LABELS[key]}, calibrated",
+                        Shown(qid, e.value, e.experiment),
+                        _table_status(table, layer),
+                    )
                 )
     overrides = tuple(
         Row(knob(kid).label, Shown(_knob_quantity(kid), v, knob(kid).term), "override")

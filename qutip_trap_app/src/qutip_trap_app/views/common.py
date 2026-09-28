@@ -200,6 +200,10 @@ def stat_tile(
     )
 
 
+TILES_MAX = 6
+"""The stat tiles a card shows (DESIGN.md R3); the rest go behind its Details."""
+
+
 def stat_row(tiles: Sequence[ft.Control]) -> ft.Control:
     return ft.Row(list(tiles), wrap=True, spacing=theme.GAP * 2, run_spacing=theme.GAP)
 

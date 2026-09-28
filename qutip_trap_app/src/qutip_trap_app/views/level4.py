@@ -39,6 +39,7 @@ from qutip_trap_app.viewmodel.physics import (
 from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
+    TILES_MAX,
     ProgressRows,
     card,
     chip,
@@ -72,9 +73,9 @@ FORMULA = (
 
 
 def _tiles(rows: tuple[Row, ...], index: ProvenanceIndex, *, plain: bool) -> ft.Control:
-    """The first six rows as stat tiles (the rest are behind Details)."""
+    """The first ``TILES_MAX`` rows as stat tiles (the rest are behind Details)."""
     return stat_row(
-        [stat_tile(r.value, index, plain=plain, label=r.label, status=r.status) for r in rows[:6]]
+        [stat_tile(r.value, index, plain=plain, label=r.label, status=r.status) for r in rows[:TILES_MAX]]
     )
 
 
@@ -1050,11 +1051,16 @@ def _readout_page(ctx: Page) -> list[ft.Control]:
                 key=f"readout-ion-{i.ion}",
             )
         )
+    rows = v.detector + v.table
     detector = card(
         "Detector",
         ft.Column(
-            [_tiles(v.detector, index, plain=plain)]
-            + ([_tiles(v.table, index, plain=plain)] if v.table else []),
+            [_tiles(rows, index, plain=plain)]
+            + (
+                [details(store, session, 4, "level4.readout.detector", [_rows_table(rows, index)])]
+                if len(rows) > TILES_MAX
+                else []
+            ),
             spacing=12,
         ),
         why=lambda e: session.select_concept(4, "readout_rates"),
@@ -1492,16 +1498,16 @@ def CurrentDeviceCard(store: Store, session: Session, index: ProvenanceIndex) ->
     body = ft.Column(
         [
             _stale_badge(layer),
-            _tiles(v.overrides, index, plain=plain)
-            if v.overrides
-            else status_line("no knob changed: the preset as published"),
-            _tiles(v.spam + v.gate_errors, index, plain=plain),
+            *([] if v.overrides else [status_line("no knob changed: the preset as published")]),
+            # the knobs changed first, then the readout and gate errors they move: one row of tiles, the rest in Details
+            _tiles(v.overrides + v.spam + v.gate_errors, index, plain=plain),
             details(
                 store,
                 session,
                 4,
                 "level0.current_device",
-                [
+                ([_rows_table(v.overrides, index)] if v.overrides else [])
+                + [
                     _rows_table(v.rows, index),
                     ft.Column(
                         [

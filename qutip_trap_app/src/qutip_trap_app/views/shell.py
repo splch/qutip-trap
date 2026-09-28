@@ -547,7 +547,8 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         strip = numerics_strip(
             panel,
             index,
-            expanded=store.learner.plan(level).expanded
+            # open on Level 3 for everyone (DESIGN.md Section 5), else as the learner's plan has it until toggled
+            expanded=(store.learner.plan(level).expanded or level == 3)
             if store.numerics_open is None
             else store.numerics_open,
             on_change=toggle_numerics,

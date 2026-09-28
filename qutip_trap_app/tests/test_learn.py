@@ -67,7 +67,11 @@ def test_support_tracks_prior_knowledge() -> None:
     assert [p.explain_open for p in circuits] == [False, False, True, True, True], (
         "the hardware levels explained"
     )
-    assert [p.expanded for p in circuits] == [False, False, False, True, True]
+    assert [p.expanded for p in circuits] == [True, True, False, False, False], (
+        "the physicist's open tables on the circuit levels, the newcomer's closed ones on the hardware levels"
+    )
+    assert [p.plain_labels_first for p in circuits] == [False, False, True, True, True]
+    assert {p.explain_depth for p in circuits} == {"picture"}
 
 
 @pytest.mark.parametrize(

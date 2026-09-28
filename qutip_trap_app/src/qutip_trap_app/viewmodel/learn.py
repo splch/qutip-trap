@@ -355,7 +355,9 @@ def plan_for(knowledge: PriorKnowledge, level: int) -> LevelPlan:
     if knowledge in ("newcomer", "unknown"):
         return LevelPlan(True, "sentence", False, True)
     if knowledge == "circuits":
-        return LevelPlan(level >= 2, "picture", level >= 3, True)
+        # the physicist on the circuit levels 0 and 1, the newcomer on the hardware levels 2 to 4, at the picture depth
+        hardware = level >= 2
+        return LevelPlan(hardware, "picture", not hardware, hardware)
     return LevelPlan(False, "equation", True, False)
 
 
@@ -550,7 +552,8 @@ BELL_TOUR: tuple[TourStop, ...] = (
     TourStop("/job/{id}/schedule/{pulse}", "Two tones on either side of a mode", "tone_and_sideband",
              "the red and blue tones straddling the mode with the largest chi_m; the closure indicators"),
     TourStop("/job/{id}/dynamics/{pulse}/{sample}", "The loop that closes", "spin_dependent_force",
-             "<a>(t) tracing a loop and returning; P1 of both ions; the concurrence rising"),
+             "the spin-branch loops alpha(t) tracing out and closing (the spin-averaged <a>(t) cancels); P1 of both ions; "
+             "the concurrence rising"),
     TourStop("/device/hamiltonian", "The equation behind the loop", "hamiltonian",
              "the drive term for the zoomed pulse with its Rabi frequency, detuning and Lamb-Dicke parameter"),
     TourStop("/device/hamiltonian", "One matrix element", "lamb_dicke",
