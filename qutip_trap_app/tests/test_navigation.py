@@ -12,7 +12,14 @@ from qutip_trap_app.viewmodel.learn import BELL_TOUR, CONCEPTS
 from qutip_trap_app.viewmodel.presets import PresetResult
 from qutip_trap_app.views import routes
 from qutip_trap_app.views.learn import ACTIVITIES
-from qutip_trap_app.views.shell import child_route, crumbs_of, parent_route, parse_route, pulse_of_path
+from qutip_trap_app.views.shell import (
+    child_route,
+    crumbs_of,
+    ladder_routes,
+    parent_route,
+    parse_route,
+    pulse_of_path,
+)
 from qutip_trap_app.views.state import FinishedRun, JobStatus, Landing, Session, Store
 from qutip_trap_app.workers import Event
 
@@ -135,3 +142,20 @@ def test_a_request_run_lands_on_its_gate_and_a_preset_result_lands_in_the_store(
     store.jobs = {**store.jobs, "p1": JobStatus("p1", "preset", target={"preset_id": "harty_2014"})}
     session.apply_events([Event("result", "p1", "preset", payload=result)])
     assert store.preset_results["harty_2014"] is result
+
+
+def test_the_rail_opens_each_level_at_the_place_the_learner_is(bell: tuple[Record, LiveRun]) -> None:
+    """The rail keeps the learner's place on the time axis when it changes level, and disables Levels 1 to 3 before any
+    run (their destinations have nothing to open)."""
+    record, _live = bell
+    key = record.key()
+    assert ladder_routes(None, "/") == ("/", None, None, None)
+    ms = next(tg.gate_id for tg in record.schedule.targets if tg.gate_id.startswith("ms"))
+    pulse = pulse_of_path(record, routes.circuit(key, ms))
+    assert pulse > 0, "the MS gate is not the first pulse"
+    assert ladder_routes(record, routes.circuit(key, ms)) == (
+        routes.job(key),
+        routes.circuit(key, ms),
+        routes.schedule(key, pulse),
+        routes.dynamics(key, pulse),
+    )

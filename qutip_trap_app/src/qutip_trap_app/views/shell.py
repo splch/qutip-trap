@@ -170,6 +170,22 @@ def pulse_of_path(record: Record | None, path: str) -> int:
     return 0
 
 
+def ladder_routes(record: Record | None, path: str) -> tuple[str | None, ...]:
+    """What the rail's four levels of a run open, from the place on the time axis the path looks at (so that changing
+    level keeps it); None for a level with nothing to open, whose destination is disabled: Levels 1 to 3 before any run,
+    and for a run that plays no pulse (a bare measurement)."""
+    if record is None:
+        return ("/", None, None, None)
+    key = record.key()
+    pulse = pulse_of_path(record, path)
+    return (
+        routes.job(key),
+        routes.circuit(key, _gate_of_pulse(record, str(pulse))) if record.schedule.targets else None,
+        routes.schedule(key, pulse) if record.schedule.pulses else None,
+        routes.dynamics(key, pulse) if record.schedule.pulses else None,
+    )
+
+
 def parent_route(store: Store, path: str) -> str | None:
     """Zoom out: the route one level up, "/" at the top, None off the ladder. The record behind the path names a pulse's
     gate."""
@@ -490,28 +506,21 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
 
     ft.use_effect(arrived, dependencies=[path])
 
+    ladder = ladder_routes(record, path)
+    # why each destination is disabled, None where it opens something (Physics and Learn always do)
+    shut = "run a job first" if record is None else "this run plays no pulse"
+    why_shut = tuple(None if route is not None else shut for route in ladder) + (None, None)
+
     def rail_change(e: Any) -> None:
         i = int(e.control.selected_index)
-        pulse = pulse_of_path(record, path)
         if i == 5:
             page.navigate(routes.learn())
         elif i == 4:
             page.navigate(routes.device(session.device_page))
-        elif record is None:
-            page.navigate("/")
-        elif i == 0:
-            page.navigate(routes.job(record.key()))
-        elif i == 1 and record.schedule.targets:
-            page.navigate(routes.circuit(record.key(), _gate_of_pulse(record, str(pulse))))
-        elif i == 2 and record.schedule.pulses:
-            page.navigate(routes.schedule(record.key(), pulse))
-        elif i == 3 and record.schedule.pulses:
-            page.navigate(routes.dynamics(record.key(), pulse))
         else:
-            # a record with no gate (a bare measurement) has nothing on Levels 1 to 3: stay with the job, and re-render
-            # so the rail's highlight follows the route rather than the click
-            page.navigate(routes.job(record.key()))
-            store.changed()
+            route = ladder[i]
+            assert route is not None, "a level with nothing to open is a disabled destination"
+            page.navigate(route)
 
     keys = WEB_KEYS if page.web else DESKTOP_KEYS
 
@@ -555,8 +564,13 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             padding=ft.Padding.only(top=12, bottom=8),
         ),
         destinations=[
-            ft.NavigationRailDestination(icon=item.icon, selected_icon=item.selected_icon, label=item.label)
-            for item in RAIL
+            ft.NavigationRailDestination(
+                icon=item.icon if why is None else ft.Icon(item.icon, tooltip=why),
+                selected_icon=item.selected_icon,
+                label=item.label,
+                disabled=why is not None,
+            )
+            for item, why in zip(RAIL, why_shut, strict=True)
         ],
         trailing=ft.Container(
             content=ft.IconButton(

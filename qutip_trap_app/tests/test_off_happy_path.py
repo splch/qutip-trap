@@ -18,6 +18,7 @@ from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.circuit import register_after, timeline
 from qutip_trap_app.viewmodel.machine import histogram, shot
 from qutip_trap_app.views import routes
+from qutip_trap_app.views.shell import ladder_routes
 from qutip_trap_app.views.state import FULL, JobStatus, Session, Store
 from qutip_trap_app.workers import Event, Ticket
 
@@ -240,6 +241,9 @@ def test_a_record_without_a_step_says_so(no_gates_full: tuple[Record, LiveRun]) 
     with pytest.raises(KeyError, match="no step 0"):
         recorded_zoom(record, 0, 0, 0)
     _every_view(record)
+    assert ladder_routes(record, routes.job(record.key())) == (routes.job(record.key()), None, None, None), (
+        "the rail disables the levels a gate-less run has nothing on"
+    )
 
 
 def test_the_badge_never_passes_what_it_did_not_check(
