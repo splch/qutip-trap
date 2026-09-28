@@ -335,12 +335,17 @@ def numerics_strip(
 # ---- layout, headers, cards, disclosure, empty states ----------------------------------------------------------------
 
 
+CONTENT_MIN_WIDTH = 160.0
+"""The narrowest content column the layout computes with (a window this narrow shows little either way)."""
+
+
 def content_width(store: Any, page: Any, level: int = 0) -> float:
     """The width of the content column: the window less the rail, the explain drawer when open and the page margins,
     capped at the reading width. Every layout decision that depends on the room available reads this one number."""
     drawer = theme.DRAWER_WIDTH if store.learner.explain_is_open(level) else 0.0
+    # the room there is, however little: a floor above it would size drawings wider than the column that holds them
     return min(
-        max((page.width or 1200.0) - theme.RAIL_WIDTH - drawer - 2 * theme.PAGE_PADDING, 360.0),
+        max((page.width or 1200.0) - theme.RAIL_WIDTH - drawer - 2 * theme.PAGE_PADDING, CONTENT_MIN_WIDTH),
         theme.CONTENT_MAX_WIDTH,
     )
 
@@ -351,8 +356,19 @@ def content_widths(store: Any, page: Any, level: int = 0) -> tuple[float, float]
     return content - 2 * theme.CARD_PADDING - 64.0, max(content * 0.5 - 60.0, 240.0)
 
 
+COLUMN_GAP = 16.0
+"""The gap between two stacks of cards, and between the cards of a stack."""
+
 TWO_COLUMN_MIN_WIDTH = 960.0
 """Below this content width two stacks of cards go one above the other; above it they sit side by side."""
+
+
+def card_room(store: Any, page: Any, level: int, *, share: float = 1.0) -> float:
+    """The width inside a card whose stack takes ``share`` of the content column when two stacks sit side by side (the
+    whole column when they go one above the other, as ``columns`` decides): what a drawing of fixed size may take."""
+    content = content_width(store, page, level)
+    column = content if content < TWO_COLUMN_MIN_WIDTH else (content - COLUMN_GAP) * share
+    return column - 2 * theme.CARD_PADDING
 
 
 def columns(
@@ -369,14 +385,16 @@ def columns(
     stacks = [list(left), list(right)]
     if content_width(store, page, level) < TWO_COLUMN_MIN_WIDTH or not all(stacks):
         return ft.Column(
-            stacks[0] + stacks[1], spacing=16, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+            stacks[0] + stacks[1], spacing=COLUMN_GAP, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
         )
     return ft.Row(
         [
-            ft.Column(stack, spacing=16, expand=weight, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+            ft.Column(
+                stack, spacing=COLUMN_GAP, expand=weight, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+            )
             for stack, weight in zip(stacks, split)
         ],
-        spacing=16,
+        spacing=COLUMN_GAP,
         vertical_alignment=ft.CrossAxisAlignment.START,
     )
 

@@ -31,6 +31,7 @@ from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     ProgressRows,
     card,
+    card_room,
     columns,
     data_table,
     details,
@@ -364,7 +365,7 @@ def Level3Page(
     else:
         motion_children += [
             _closure_feedback(store, pred_key, dyn),
-            drawing.phase_space(loops, width=440, height=320),
+            drawing.phase_space(loops, width=min(440.0, card_room(store, page, 3, share=0.5)), height=320),
         ]
     motion_children.append(hint(store, 3, "spin_dependent_force"))
     motion_children.append(_series_chart(dyn.nbar, y_title="<n_m>", height=150))

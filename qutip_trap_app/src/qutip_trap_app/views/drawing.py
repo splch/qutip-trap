@@ -312,11 +312,13 @@ def level_diagram(
     levels: Sequence[tuple[str, float, float | None]],
     transitions: Sequence[tuple[str, str, str, float]],
     qubit_level: str,
+    *,
+    room: float,
 ) -> ft.Control:
     """Fine-structure levels as horizontal bars at a compressed energy scale (sqrt of the energy above the ground level, so
     the ground and the optical levels fit one picture; labelled not to scale), the tabulated transitions as arrows with their
-    wavelengths, the qubit level marked."""
-    width, height = 420.0, 300.0
+    wavelengths, the qubit level marked. At most 420 px wide, narrower when ``room`` (the card's width) is."""
+    width, height = min(420.0, room), 300.0
     names = [n for n, _e, _t in levels]
     energies = np.asarray([e for _n, e, _t in levels], dtype=float)
     scaled = np.sqrt(np.clip(energies, 0.0, None))
@@ -374,9 +376,10 @@ def level_diagram(
     return cv.Canvas(shapes, width=width, height=height)
 
 
-def sublevel_fan(rows: Sequence[tuple[str, float]], *, title: str) -> ft.Control:
-    """Zeeman sublevels of one level as bars at their energies relative to the lowest, labelled (to scale within the level)."""
-    width, height = 420.0, 150.0
+def sublevel_fan(rows: Sequence[tuple[str, float]], *, title: str, room: float) -> ft.Control:
+    """Zeeman sublevels of one level as bars at their energies relative to the lowest, labelled (to scale within the level);
+    at most 420 px wide, narrower when ``room`` is."""
+    width, height = min(420.0, room), 150.0
     if not rows:
         return ft.Container()
     energies = np.asarray([e for _l, e in rows], dtype=float)
@@ -402,10 +405,12 @@ def crystal_picture(
     *,
     species: Sequence[str] = (),
     title: str = "",
+    room: float,
 ) -> ft.Control:
     """The chain to scale along the trap axis (z) with the mode's displacement pattern as arrows: c_{i,m} along e_hat,
-    drawn in the z (horizontal) and x (vertical) plane; a y component is written beside the arrow."""
-    width, height = 520.0, 170.0
+    drawn in the z (horizontal) and x (vertical) plane; a y component is written beside the arrow. At most 520 px wide,
+    narrower when ``room`` is."""
+    width, height = min(520.0, room), 170.0
     pos = np.asarray(positions_m, dtype=float)
     z = pos[:, 2]
     span = float(np.max(z) - np.min(z)) if z.size > 1 else 1e-6
@@ -459,9 +464,12 @@ def stability_diagram(
     a_lower: np.ndarray,
     a_upper: np.ndarray,
     points: Sequence[tuple[str, float, float]],
+    *,
+    room: float,
 ) -> ft.Control:
-    """The first stability region of the Mathieu equation from the monodromy boundary, with the device's (q, a) per axis."""
-    width, height = 420.0, 260.0
+    """The first stability region of the Mathieu equation from the monodromy boundary, with the device's (q, a) per axis;
+    at most 420 px wide, narrower when ``room`` is."""
+    width, height = min(420.0, room), 260.0
     ok = np.isfinite(a_lower) & np.isfinite(a_upper)
     qs, lo, hi = q[ok], a_lower[ok], a_upper[ok]
     ymin = float(min(np.min(lo), -0.05)) if lo.size else -0.5
@@ -519,10 +527,13 @@ def beam_geometry(
     positions_m: np.ndarray,
     beams: Sequence[tuple[int, tuple[float, float, float], tuple[float, float, float], str, str]],
     field_direction: tuple[float, float, float],
+    *,
+    room: float,
 ) -> ft.Control:
     """Top view (z along the chain horizontal, x vertical): ions to scale, each beam as an arrow along k_hat through its
-    pointing, the quantization axis B drawn from the origin; a beam with a y component says so."""
-    width, height = 520.0, 260.0
+    pointing, the quantization axis B drawn from the origin; a beam with a y component says so. At most 520 px wide,
+    narrower when ``room`` is."""
+    width, height = min(520.0, room), 260.0
     pos = np.asarray(positions_m, dtype=float)
     span = max(float(np.max(pos[:, 2]) - np.min(pos[:, 2])) if pos.shape[0] > 1 else 1e-6, 1e-6)
     half = 1.6 * span

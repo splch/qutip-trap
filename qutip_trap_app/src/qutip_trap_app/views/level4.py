@@ -44,6 +44,7 @@ from qutip_trap_app.views.common import (
     TILES_MAX,
     ProgressRows,
     card,
+    card_room,
     chip,
     columns,
     data_table,
@@ -345,6 +346,7 @@ def _species_page(ctx: Page) -> list[ft.Control]:
         for lvl, label, e, sl, cu in v.sublevels
     ]
     qubit_fan = [(s[1], float(s[2].value or 0.0)) for s in v.sublevels if s[0] == qubit_level]
+    half = card_room(store, ft.context.page, 4, share=0.5)
     clock_rows: list[list[ft.Control | str]] = [
         [value_cell(b, index), value_cell(f, index), value_cell(c, index)] for b, f, c in v.clock_points
     ]
@@ -352,7 +354,7 @@ def _species_page(ctx: Page) -> list[ft.Control]:
         "The level diagram",
         ft.Column(
             [
-                drawing.level_diagram(levels, transitions, qubit_level),
+                drawing.level_diagram(levels, transitions, qubit_level, room=half),
                 hint(store, 4, "atomic_structure"),
                 details(
                     store,
@@ -383,6 +385,7 @@ def _species_page(ctx: Page) -> list[ft.Control]:
                 drawing.sublevel_fan(
                     qubit_fan,
                     title=f"{qubit_level} at {layer.species.field_gauss:g} G (to scale within the level)",
+                    room=half,
                 ),
                 drawing.line_chart(
                     [
@@ -429,7 +432,11 @@ def _trap_page(ctx: Page) -> list[ft.Control]:
     stability: ft.Control
     if v.stability_q is not None and v.stability_lower is not None and v.stability_upper is not None:
         stability = drawing.stability_diagram(
-            v.stability_q, v.stability_lower, v.stability_upper, v.operating_points
+            v.stability_q,
+            v.stability_lower,
+            v.stability_upper,
+            v.operating_points,
+            room=card_room(store, ft.context.page, 4, share=7 / 12),
         )
     else:
         stability = status_line("the stability map is being computed")
@@ -504,6 +511,7 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         else f"mode {m.index}: {mode_family_text(m.family, m.family_index)}, {m.frequency.value / 1e6:.4f} MHz"
         if isinstance(m.frequency.value, float)
         else "",
+        room=card_room(store, ft.context.page, 4),
     )
     mode_rows: list[list[ft.Control | str]] = [
         [
@@ -626,7 +634,12 @@ def _light_page(ctx: Page) -> list[ft.Control]:
         if role.startswith("single-qubit"):
             color = theme.series()[1]
         beams_geo.append((b.index, b.k_hat, b.pointing_m, color, f"beam {b.index}: {role}"))
-    geometry = drawing.beam_geometry(layer.crystal.positions_m, beams_geo, _field_direction(layer))
+    geometry = drawing.beam_geometry(
+        layer.crystal.positions_m,
+        beams_geo,
+        _field_direction(layer),
+        room=card_room(store, ft.context.page, 4, share=0.5),
+    )
     beam_rows: list[list[ft.Control | str]] = [
         [
             str(b.index),
