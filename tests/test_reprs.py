@@ -103,3 +103,18 @@ def test_a_result_prints_its_counts_and_summarises_without_a_record() -> None:
     )
     assert not any("total variation" in line for line in lines)
     assert lines[-1] == "0 approximations in diagnostics.approximations"
+
+
+def test_an_experiment_result_prints_its_fits_with_their_uncertainties() -> None:
+    from qutip_trap.experiments.result import RabiScan
+
+    scan = RabiScan(
+        data=np.zeros((5, 2)),
+        fitted={"f_rabi_hz": (160208.9, 17298.7), "contrast": (0.98, 0.02)},
+        model="thermal_rabi",
+        provenance_id="conv.rabi_frequency",
+        subject={"ion": 0, "beam": 2},
+    )
+    assert repr(scan) == (
+        "<RabiScan of ion 0, beam 2: f_rabi_hz = 1.602e+05 +- 1.7e+04, contrast = 0.98 +- 0.02; 5 points, quality exact>"
+    )

@@ -101,6 +101,16 @@ class ExperimentResult:
     created_at: str = field(default_factory=_now, compare=False)
     experiment: str = "experiment"
 
+    def __repr__(self) -> str:
+        """``<RabiScan of ion 0, beam 2: f_rabi_hz = 1.602e+05 +- 1.7e+05, contrast = 1 +- 0.37; 5 points, quality good>``:
+        the fitted parameters with their one-sigma uncertainties (every subclass prints this way)."""
+        subject = ", ".join(f"{k} {v}" for k, v in self.subject.items())
+        fits = ", ".join(f"{k} = {v:.4g} +- {u:.2g}" for k, (v, u) in self.fitted.items()) or "nothing fitted"
+        return (
+            f"<{type(self).__name__}{' of ' + subject if subject else ''}: {fits}; {len(self.data)} points, quality "
+            f"{self.quality}>"
+        )
+
     def value(self, key: str) -> float:
         return float(self.fitted[key][0])
 
@@ -147,7 +157,7 @@ class ExperimentResult:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class RabiScan(ExperimentResult):
     """``rabi_scan``: sets ``rabi[(ion, beam)]`` from ``f_rabi_hz``."""
 
@@ -164,7 +174,7 @@ class RabiScan(ExperimentResult):
         return {"rabi": {key: self._entry("f_rabi_hz", fitted_at_s, sample_id)}}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class RamseyFringe(ExperimentResult):
     """``ramsey`` (one fringe) and ``ramsey_frequency`` (two probes), which sets ``qubit_freq[ion]`` from ``qubit_freq_hz``."""
 
@@ -178,7 +188,7 @@ class RamseyFringe(ExperimentResult):
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class SidebandSpectrum(ExperimentResult):
     """``sideband_spectroscopy`` and ``mode_spectroscopy``: sets ``modes[mode]``, ``nbar[mode]`` and
     ``lamb_dicke[(ion, mode)]`` from ``mode_hz``, ``nbar`` and ``eta`` where fitted, the occupation under the sideband
@@ -205,7 +215,7 @@ class SidebandSpectrum(ExperimentResult):
         return out
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ThermometryResult(ExperimentResult):
     """``thermometry``: sets ``nbar[mode]``."""
 
@@ -215,7 +225,7 @@ class ThermometryResult(ExperimentResult):
         return {"nbar": {int(self.subject["mode"]): self._entry("nbar", fitted_at_s, sample_id)}}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class HeatingRateFit(ExperimentResult):
     """``heating_rate``: sets ``heating[mode]`` from ``ndot_per_s`` (quanta per second)."""
 
@@ -225,14 +235,14 @@ class HeatingRateFit(ExperimentResult):
         return {"heating": {int(self.subject["mode"]): self._entry("ndot_per_s", fitted_at_s, sample_id)}}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ParityScan(ExperimentResult):
     """``parity_scan``: the parity contrast and the Bell-fidelity bound; sets no entry."""
 
     experiment: str = "parity_scan"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class DetectionHistogram(ExperimentResult):
     """``detection_histogram``: sets ``detection[name]`` for the threshold, the window and (eps_B, eps_D) of the figure of
     merit, and for the three rates of the mean-count fit under that fit's provenance."""
@@ -248,7 +258,7 @@ class DetectionHistogram(ExperimentResult):
         return {"detection": entries}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class StarkScan(ExperimentResult):
     """``stark_scan``: sets ``stark[(ion, beam)]`` from ``stark_shift_hz``, the shift of the ion's gate beams."""
 
@@ -261,7 +271,7 @@ class StarkScan(ExperimentResult):
         return {"stark": {key: self._entry("stark_shift_hz", fitted_at_s, sample_id)}}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class CrosstalkScan(ExperimentResult):
     """``crosstalk_scan``: sets ``crosstalk[(ion, j)]`` from ``eps[j]`` and ``crosstalk_phase[(ion, j)]`` from
     ``phase_rad[j]`` for every neighbour j."""
@@ -286,7 +296,7 @@ class CrosstalkScan(ExperimentResult):
         return out
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class FieldScan(ExperimentResult):
     """``field_scan``: sets ``field`` from ``B_gauss``."""
 
@@ -296,7 +306,7 @@ class FieldScan(ExperimentResult):
         return {"field": self._entry("B_gauss", fitted_at_s, sample_id)}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class MicromotionScan(ExperimentResult):
     """``micromotion_scan``: sets ``micromotion["shim[name]"]`` for every shim the scan nulled and
     ``micromotion["beta[beam]"]``, the residual index it left."""
@@ -308,7 +318,7 @@ class MicromotionScan(ExperimentResult):
         return {"micromotion": {k: self._entry(k, fitted_at_s, sample_id) for k in keys}}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class CrystalImage(ExperimentResult):
     """``crystal_image``: the imaged chain against the nominal crystal; sets no entry."""
 

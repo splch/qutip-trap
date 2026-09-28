@@ -922,6 +922,15 @@ class RunRecord:
     gate_local: GateLocalReport | None = None
     """The GATE_LOCAL walk's report, None for a JOINT_EXACT run."""
 
+    def __repr__(self) -> str:
+        """``<RunRecord: 6 native gates, 15 pulses, 12 branches, 12 traces, fast readout>``: what the record holds, each
+        part one attribute away."""
+        walk = ", a GATE_LOCAL walk" if self.gate_local is not None else ""
+        return (
+            f"<RunRecord: {self.compile.n_pulses} native gates, {len(self.schedule.pulses)} pulses, {len(self.branches)} "
+            f"branches, {len(self.traces)} traces, {self.outcome.mode} readout{walk}>"
+        )
+
 
 def last_record(result: Result) -> RunRecord:
     """The RunRecord behind a Result of ``Machine.run`` (compile report, schedule, selection, traces, readout stage)."""

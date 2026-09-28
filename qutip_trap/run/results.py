@@ -219,6 +219,14 @@ class IntrinsicBudget:
     omitted: tuple[str, ...] = ()
     """The errors of this run the total leaves out, named for the run's approximations."""
 
+    def __repr__(self) -> str:
+        """``<IntrinsicBudget: total 0.0035 over 1 entangling, 5 carrier and 10 scattering records; 0 named omissions>``;
+        ``by_gate()`` and the records hold the parts."""
+        return (
+            f"<IntrinsicBudget: total {self.total:.2g} over {len(self.entangling)} entangling, {len(self.carriers)} carrier "
+            f"and {len(self.scattering)} scattering records; {len(self.omitted)} named omissions>"
+        )
+
     @property
     def records(self) -> tuple[BudgetRecord, ...]:
         return (*self.entangling, *self.carriers, *self.scattering)

@@ -116,6 +116,9 @@ class QutipTrapBackend(BackendV2):
         self.run_options: dict[str, Any] = dict(run_options)
         self._target = qutip_trap_target(machine.device.crystal.n_ions)
 
+    def __repr__(self) -> str:
+        return f"<QutipTrapBackend {self.name!r} on {self.machine.device!r}>"
+
     @property
     def table(self) -> CalibrationTable | None:
         return self.machine.table

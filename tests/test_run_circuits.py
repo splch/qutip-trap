@@ -131,6 +131,8 @@ def test_the_summary_reads_the_bell_run_against_its_ideal(bell) -> None:
         assert any(line.startswith(head) for line in lines), head
     assert f"{len(res.diagnostics.approximations)} approximations in diagnostics.approximations" in text
     assert repr(res).startswith("<Result: 2000 shots on 2 qubits at JOINT_EXACT, counts {'00': ")
+    assert repr(res.record).startswith("<RunRecord: 6 native gates, ") and len(repr(res.record)) < 200
+    assert repr(res.diagnostics.intrinsic_budget).startswith("<IntrinsicBudget: total ")
     assert list(res.counts) == sorted(res.counts)
 
 
