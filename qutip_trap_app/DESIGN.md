@@ -60,7 +60,7 @@ The ladder is also the app's answer to Hick's law (UX): the whole physics is nev
 
 ## 4. Usability
 
-**Routes and the zoom bar** (Section 14.6). `/job/{id}` is Level 0 and the home screen; `/job/{id}/circuit/{gate}`, `/job/{id}/schedule/{pulse}`, `/job/{id}/dynamics/{pulse}/{sample}` are Levels 1 to 3; `/device/{page}` are the Level 4 pages; `/learn` is the tour, the drills and the review tray. A breadcrumb zoom bar shows the path (job, gate, pulse, sample) and the level; zooming out is one click on any crumb, the Escape key, or Cmd/Ctrl and minus; zooming in is a click on the thing itself or Cmd/Ctrl and plus. Browser history works in the served mode because the routes are real.
+**Routes and the zoom bar** (Section 14.6). `/job/{id}` is Level 0 and the home screen; `/job/{id}/circuit/{gate}`, `/job/{id}/schedule/{pulse}`, `/job/{id}/dynamics/{pulse}/{sample}` are Levels 1 to 3; `/device/{page}` are the Level 4 pages; `/learn` is the tour, the drills and the review tray. A breadcrumb zoom bar shows the path (job, gate, pulse, sample) and the level; zooming out is one click on any crumb or Alt and up; zooming in is a click on the thing itself or Alt and down (the desktop window also takes Cmd/Ctrl and minus or plus, which a browser keeps for its own page zoom). Browser history works in the served mode because the routes are real.
 
 **One primary action per screen** (UX: exactly one primary button per view). Level 0: Run. Levels 1 to 3: Zoom in on the selected item, with Verify deeper as the secondary action. Level 4: Apply (a parameter change), which immediately re-derives the analytic layer and marks the calibrated numbers stale. Learn: Start the tour, or Review, whichever is due.
 
@@ -82,7 +82,7 @@ The ladder is also the app's answer to Hick's law (UX): the whole physics is nev
 
 **Empty, loading and error states are designed.** No job yet: the Bell preset ready to run with one sentence on what will appear. A view whose data the record does not hold says so rather than showing a blank. A failed re-simulation shows the recorded trace and the error message beside it.
 
-**Keyboard and screen readers.** A full tab path per screen, visible focus, Escape closes drawers and zooms out, every chart with a table alternative (the same `Shown` values), every chip with its text on focus.
+**Keyboard and screen readers.** A full tab path per screen, visible focus, Escape closes the explain drawer and nothing else (it also closes a menu and leaves a text field, where navigating away would lose what was typed), every chart with a table alternative (the same `Shown` values), every chip with its text on focus.
 
 ## 5. Screens
 

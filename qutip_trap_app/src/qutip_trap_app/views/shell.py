@@ -4,6 +4,7 @@ DESIGN.md Sections 4, 5 and 10)."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 from urllib.parse import unquote
 
@@ -51,6 +52,37 @@ RAIL: tuple[RailItem, ...] = (
     RailItem("Learn", ft.Icons.SCHOOL_OUTLINED, ft.Icons.SCHOOL),
 )
 """The rail: the five levels of the ladder, in order, and Learn."""
+
+
+@dataclass(frozen=True)
+class ZoomKeys:
+    """The keys that zoom out and in, chosen once for the platform and handed to the key handler and the zoom bar's
+    tooltips: Alt and an arrow everywhere, and on the desktop also Cmd/Ctrl and minus or plus, which a browser keeps for
+    its own page zoom (the app cannot claim them there)."""
+
+    modifier_plus_minus: bool
+
+    def zooms_out(self, e: ft.KeyboardEvent) -> bool:
+        return (e.alt and e.key == "Arrow Up") or (
+            self.modifier_plus_minus and (e.meta or e.ctrl) and e.key in ("-", "Minus", "Numpad Subtract")
+        )
+
+    def zooms_in(self, e: ft.KeyboardEvent) -> bool:
+        return (e.alt and e.key == "Arrow Down") or (
+            self.modifier_plus_minus and (e.meta or e.ctrl) and e.key in ("=", "+", "Equal", "Numpad Add")
+        )
+
+    @property
+    def out_hint(self) -> str:
+        return "Alt and up" + (", or Cmd/Ctrl and minus" if self.modifier_plus_minus else "")
+
+    @property
+    def in_hint(self) -> str:
+        return "Alt and down" + (", or Cmd/Ctrl and plus" if self.modifier_plus_minus else "")
+
+
+DESKTOP_KEYS = ZoomKeys(modifier_plus_minus=True)
+WEB_KEYS = ZoomKeys(modifier_plus_minus=False)
 
 
 class ThemeOption(NamedTuple):
@@ -207,7 +239,7 @@ def crumbs_of(store: Store, path: str) -> list[tuple[str, str | None]]:
 
 
 @ft.component
-def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
+def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Control:
     """The zoom buttons, the crumbs and the explain toggle on one 48 px line (the convergence badge lives in the numerics
     strip)."""
     ft.use_state(store)
@@ -243,7 +275,7 @@ def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
                 ft.IconButton(
                     icon=ft.Icons.ZOOM_OUT,
                     icon_size=20,
-                    tooltip="zoom out (Esc, or Cmd/Ctrl and minus)",
+                    tooltip=f"zoom out ({keys.out_hint})",
                     on_click=(lambda e: page.navigate(up)) if up else None,
                     disabled=up is None,
                     key="zoom-out",
@@ -251,7 +283,7 @@ def ZoomBar(store: Store, session: Session, path: str) -> ft.Control:
                 ft.IconButton(
                     icon=ft.Icons.ZOOM_IN,
                     icon_size=20,
-                    tooltip="zoom in (Cmd/Ctrl and plus)",
+                    tooltip=f"zoom in ({keys.in_hint})",
                     on_click=(lambda e: page.navigate(down)) if down else None,
                     disabled=down is None,
                     key="zoom-in",
@@ -440,22 +472,19 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             page.navigate(routes.job(record.key()))
             store.tick = store.tick + 1
 
+    keys = WEB_KEYS if page.web else DESKTOP_KEYS
+
     def on_key(e: ft.KeyboardEvent) -> None:
         up = parent_route(store, path)
         down = child_route(store, path)
         if e.key == "Escape":
-            # Escape closes the drawer first, then zooms out
-            if (
-                route.level >= 0
-                and store.learner.explain_is_open(level)
-                and store.learner.explain_open is not None
-            ):
+            # Escape closes the drawer and nothing else: it also closes a menu and leaves a text field, where zooming out
+            # would navigate away from what was being typed
+            if route.level >= 0 and store.learner.explain_is_open(level):
                 session.set_learner(explain_open=False)
-            elif up:
-                page.navigate(up)
-        elif (e.meta or e.ctrl) and e.key in ("-", "Minus", "Numpad Subtract") and up:
+        elif keys.zooms_out(e) and up:
             page.navigate(up)
-        elif (e.meta or e.ctrl) and e.key in ("=", "+", "Equal", "Numpad Add") and down:
+        elif keys.zooms_in(e) and down:
             page.navigate(down)
 
     def install_keys() -> Any:
@@ -534,7 +563,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         rail,
         ft.Column(
             [
-                ZoomBar(store, session, path),
+                ZoomBar(store, session, path, keys),
                 error_banner(store),
                 ft.Container(
                     content=RoutedContent(store, session, index, path),
