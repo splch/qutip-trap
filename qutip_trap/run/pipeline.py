@@ -1110,7 +1110,8 @@ def execute(
         effective_sample_size=n_eff,
         root_seed=int(seed),
         calibration=table,
-        approximations=tuple(approximations) + tuple(notes) + tuple(selection.notes) + budget.omitted,
+        # an engine report's notes are among its approximations too: each statement once, in the order first made
+        approximations=tuple(dict.fromkeys((*approximations, *notes, *selection.notes, *budget.omitted))),
         intrinsic_budget=budget,
         dropped_branch_weight=level.dropped_weight,
         frozen_excitation_bound=dict(selection.frozen_excitation),
