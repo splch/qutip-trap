@@ -34,20 +34,12 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from qutip_trap.control.pulses import ConstantFn, as_time_function
-
-if TYPE_CHECKING:
-    from qutip_trap.control.pulses import Pulse
-    from qutip_trap.control.schedule import Schedule
-from dataclasses import replace
-from typing import TYPE_CHECKING
-
-from qutip_trap.control.pulses import Drive, Pulse, ScaledFn
+from qutip_trap.control.pulses import ConstantFn, Drive, Pulse, ScaledFn, as_time_function
 from qutip_trap.control.schedule import MICROWAVE_BEAM_KEY, Schedule, stark_scaling_power
 from qutip_trap.control.table import CalibrationTable, usable
 
@@ -140,8 +132,11 @@ def physical_drive(
     truth: _Truth,
     notes: list[str],
     tag: str,
+    co_driven: frozenset[int],
 ) -> Drive:
-    """The drive as the ions see it: physical envelopes, light shift and crosstalk (module docstring)."""
+    """The drive as the ions see it: physical envelopes, light shift and crosstalk (module docstring). ``co_driven`` are
+    the ions that pulses on the same beams drive over the same interval (an entangling segment's per-ion pulses on the
+    global pair): the light they receive is their own pulses' drive, never this one's unlisted crosstalk."""
     if not drive.programmed:
         return drive
     if drive.kind not in ("raman", "optical_E1", "optical_E2"):
@@ -193,7 +188,9 @@ def physical_drive(
             notes.append(
                 f"{tag}: the device derives no light on ion {j} under beams {drive.beams}; the table's ratio kept"
             )
-    unlisted = {j: abs(v) for j, v in derived.items() if j not in xt and j not in drive.ions}
+    unlisted = {
+        j: abs(v) for j, v in derived.items() if j not in xt and j not in drive.ions and j not in co_driven
+    }
     if unlisted:
         worst = max(unlisted, key=lambda j: unlisted[j])
         if unlisted[worst] >= UNLISTED_CROSSTALK_REPORT:
@@ -211,6 +208,10 @@ def physical_schedule(
     notes: list[str] = []
     pulses: list[Pulse] = []
     changed = False
+    # the ions each (beams, interval) drives: an entangling segment plays one pulse per ion on the shared pair
+    driven: dict[tuple[tuple[int, ...], float, float], set[int]] = {}
+    for p in schedule.pulses:
+        driven.setdefault((p.drive.beams, p.t_start_s, p.t_end_s), set()).update(p.drive.ions)
     for p in schedule.pulses:
         if not p.drive.programmed:
             pulses.append(p)
@@ -218,7 +219,14 @@ def physical_schedule(
         changed = True
         local: list[str] = []
         d = physical_drive(
-            device, p.drive, p.duration_s, table, truth, local, p.gate_id or f"pulse@{p.t_start_s:.9g}"
+            device,
+            p.drive,
+            p.duration_s,
+            table,
+            truth,
+            local,
+            p.gate_id or f"pulse@{p.t_start_s:.9g}",
+            frozenset(driven[(p.drive.beams, p.t_start_s, p.t_end_s)]),
         )
         for note in local:
             if note not in notes:
