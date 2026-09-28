@@ -59,6 +59,11 @@ product = "qutip-trap-app"
 company = "qutip-trap"
 copyright = "Copyright (C) 2026 Spencer Churchill"
 
+[tool.flet.splash]
+# the page colours of views/theme.py, so a built app opens on its own background in either scheme
+color = "#F7F7F5"
+dark_color = "#131314"
+
 [tool.flet.app]
 path = "src"
 # the tests, the Flutter build tree and the provisioned test host never ship in a bundle
