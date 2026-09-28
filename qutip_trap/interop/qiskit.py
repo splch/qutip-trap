@@ -10,10 +10,11 @@
     job.results[0].diagnostics.level   # the qutip-trap Result behind every experiment
 
 The circuit crosses as OpenQASM 2 text, so the ``Target`` advertises exactly the gates the importer and the compiler
-accept. Bit order needs no conversion: both put qubit 0 in the least-significant (rightmost) position, provided qubit i
-is measured into clbit i, as ``measure_all`` does. Run options: ``shots``, ``seed``, ``level``, ``table`` and the option
-objects ``physics``, ``numerics``, ``readout`` as per-call overrides of the machine's. The simulation is synchronous, so the
-job comes back finished.
+accept. The counts are keyed by the classical bits, as Qiskit's are: every shot's bits are written into the clbits the
+circuit's measurements name (the last measurement into a clbit wins), clbit 0 the least-significant bit, so a circuit that
+measures qubit 0 into clbit 1 reports it in the second position, and one that measures nothing reports no counts. Run
+options: ``shots``, ``seed``, ``level``, ``table`` and the option objects ``physics``, ``numerics``, ``readout`` as per-call
+overrides of the machine's. The simulation is synchronous, so the job comes back finished.
 """
 
 from __future__ import annotations
@@ -170,13 +171,30 @@ class QutipTrapProvider:
         return QutipTrapBackend(PRESETS[name](**preset_kwargs).machine())
 
 
+def clbit_sources(circuit: QuantumCircuit) -> dict[int, int]:
+    """clbit index -> the qubit its last measurement reads, over the circuit's ``measure`` instructions."""
+    sources: dict[int, int] = {}
+    for inst in circuit.data:
+        if inst.operation.name == "measure":
+            sources[circuit.find_bit(inst.clbits[0]).index] = circuit.find_bit(inst.qubits[0]).index
+    return sources
+
+
 def _experiment(circuit: QuantumCircuit, res: Result) -> ExperimentResult:
-    """One Qiskit experiment from one qutip-trap ``Result``: hex keys in the same bit order, a header that pads them."""
-    counts = {hex(int(key, 2)): n for key, n in res.counts.items()}
+    """One Qiskit experiment from one qutip-trap ``Result``: every shot's measured bits written into the clbits the circuit
+    names (``clbit_sources``), hex keys over the classical memory, and the circuit's classical registers in the header."""
+    sources = clbit_sources(circuit)
+    column_of = {q: j for j, q in enumerate(res.column_qubits)}
+    counts: dict[str, int] = {}
+    if sources:
+        for row in res.bitstrings:
+            value = sum(int(row[column_of[q]]) << c for c, q in sources.items())
+            key = hex(value)
+            counts[key] = counts.get(key, 0) + 1
     header = {
         "name": circuit.name,
-        "memory_slots": res.n_qubits,
-        "creg_sizes": [["c", res.n_qubits]],
+        "memory_slots": circuit.num_clbits,
+        "creg_sizes": [[creg.name, creg.size] for creg in circuit.cregs],
         "n_qubits": circuit.num_qubits,
         "metadata": circuit.metadata,
     }
