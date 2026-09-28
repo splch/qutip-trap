@@ -149,6 +149,38 @@ def shown(
     return ft.Row(controls, spacing=6, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
 
+def shown_group(values: Sequence[Shown], index: ProvenanceIndex, *, plain: bool = True) -> ft.Control:
+    """Several values of one quantity, each naming what it belongs to (``Shown.of``): the quantity's label once, then
+    ``mode 2  11`` and its chip for every value, wrapping."""
+    q = CATALOGUE[values[0].quantity]
+    items: list[ft.Control] = [
+        ft.Text(
+            q.label if plain else q.term,
+            size=theme.SIZE_SMALL,
+            color=MUTED,
+            tooltip=q.term if plain else q.label,
+        )
+    ]
+    for s in values:
+        items.append(
+            ft.Row(
+                [
+                    ft.Text(s.of, size=theme.SIZE_SMALL, color=MUTED),
+                    ft.Text(
+                        fmt_shown(s), size=theme.SIZE_BODY, weight=ft.FontWeight.W_500, tooltip=hover_text(s)
+                    ),
+                    chip(q.ledger_id, index),
+                ],
+                spacing=4,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        )
+    return ft.Row(
+        items, wrap=True, spacing=14, run_spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER
+    )
+
+
 def shown_row(
     values: Sequence[Shown], index: ProvenanceIndex, *, empty: str = "", label: bool = True, spacing: int = 12
 ) -> ft.Control:
@@ -292,7 +324,7 @@ def numerics_strip(
     ]
     for group in (panel.caps, panel.boundary, panel.margins, panel.mode_classes):
         if group:
-            rows.append(ft.Row([shown(c, index) for c in group], wrap=True, spacing=18, run_spacing=6))
+            rows.append(shown_group(group, index))
     rows += [shown(s, index) for s in (panel.derivation_residual, panel.norm_deficit) if s is not None]
     for c in (panel.convergence, panel.tolerance_check):
         if c is not None:

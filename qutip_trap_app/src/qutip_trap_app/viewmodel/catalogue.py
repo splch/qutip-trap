@@ -28,6 +28,8 @@ class Shown:
     quantity: str
     value: float | int | str | bool | None
     detail: str = ""
+    of: str = ""
+    """What the value belongs to when a screen lists several of one quantity (``mode 2``, ``ion 0``): the row's name."""
 
     def __post_init__(self) -> None:
         if self.quantity not in CATALOGUE:
@@ -239,7 +241,7 @@ _ROWS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
     ("mode_class", "How each mode was treated", "resolved / frozen / dropped / enr", "", 3, "5.2", "conv.mode_classes_and_tolerances"),
     ("integrator", "The differential-equation solver used", "dop853 -> vern9 ladder", "", 3, "5.3", "conv.solver_integrators"),
     ("tolerance", "The solver's error tolerances", "(atol, rtol)", "", 3, "5.3", "conv.integrator_tolerances"),
-    ("trajectories", "Random histories averaged", "trajectories", "", 3, "3.4", "conv.trajectory_count_two_phases"),
+    ("trajectories", "Evolutions averaged, every branch times its trajectories", "evolved branches x trajectories", "", 3, "3.4", "conv.trajectory_count_two_phases"),
     ("branches", "Initial states summed exactly", "Fock-sum branches", "", 3, "5.3", "conv.fock_sum_branches"),
     ("samples", "Draws of the slowly drifting parameters", "quasi-static samples", "", 3, "3.4", "conv.shot_blocks_per_sample"),
     ("wall_time", "How long the computer took", "wall time", "s", 3, "11.1", "anchor.m9b.cost_model_constants"),

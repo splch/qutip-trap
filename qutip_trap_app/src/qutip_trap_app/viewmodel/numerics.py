@@ -14,6 +14,7 @@ from typing import Literal
 from qutip_trap_app import core
 from qutip_trap_app.record import ConvergenceRecord, Record, ZoomTrace
 from qutip_trap_app.resim import TruncationCheck
+from qutip_trap_app.viewmodel.builder import listed
 from qutip_trap_app.viewmodel.catalogue import Shown
 from qutip_trap_app.viewmodel.dynamics import norm_deficit
 
@@ -145,22 +146,31 @@ def numerics_panel(
         Shown(
             "truncation_cap",
             t.d,
-            f"mode {t.mode}: expected n in {t.expected_n_range}, eta_max {t.eta_max:.3g}",
+            f"expected n in {t.expected_n_range}, eta_max {t.eta_max:.3g}",
+            of=f"mode {t.mode}",
         )
         for t in sp.resolved
     )
     if sp.enr_group is not None:
-        caps += (Shown("truncation_cap", sp.enr_group[1], f"ENR group {sp.enr_group[0]}: N_exc"),)
+        caps += (
+            Shown(
+                "truncation_cap",
+                sp.enr_group[1],
+                "N_exc, the excitations the group may hold",
+                of=f"ENR group {listed([str(m) for m in sp.enr_group[0]])}",
+            ),
+        )
     boundary_src = zoom.trace.boundary_population if zoom is not None else d.boundary_population
     boundary = tuple(
-        Shown("boundary_population", v, f"mode {m}; policy threshold {POLICY_BOUNDARY_MAX:.0e}")
+        Shown("boundary_population", v, f"policy threshold {POLICY_BOUNDARY_MAX:.0e}", of=f"mode {m}")
         for m, v in sorted(boundary_src.items())
     )
     margins = tuple(
         Shown(
             "margin",
             d.margin_reached.get(m, lv),
-            f"mode {m}: declared margin {lv} level(s), smallest reached {d.margin_reached.get(m, lv)}",
+            f"declared margin {lv} level(s), smallest reached {d.margin_reached.get(m, lv)}",
+            of=f"mode {m}",
         )
         for m, lv in sorted(d.margin_levels.items())
     )
@@ -194,10 +204,10 @@ def numerics_panel(
         level=Shown("fidelity_level", d.level),
         dimension=Shown("dimension", sp.dimension),
         caps=caps,
-        mode_classes=tuple(Shown("mode_class", c, f"mode {m}") for m, c in sorted(sp.mode_class.items())),
+        mode_classes=tuple(Shown("mode_class", c, of=f"mode {m}") for m, c in sorted(sp.mode_class.items())),
         boundary=boundary,
         margins=margins,
-        integrator=Shown("integrator", d.integrator),
+        integrator=Shown("integrator", ", ".join(d.integrator.split(","))),
         tolerances=Shown("tolerance", f"atol {d.tolerances[0]:g}, rtol {d.tolerances[1]:g}"),
         samples=Shown("samples", d.samples),
         trajectories=Shown("trajectories", d.trajectories),

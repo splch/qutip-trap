@@ -55,6 +55,7 @@ from qutip_trap_app.views.common import (
     pill,
     section_title,
     shown,
+    shown_group,
     shown_row,
     stat_row,
     stat_tile,
@@ -1387,7 +1388,7 @@ def _hamiltonian_page(ctx: Page) -> list[ft.Control]:
                             [
                                 data_table(["mode", "class", "omega_m/2pi", "sample offset"], free_rows),
                                 shown_row(v.qubit_offsets + v.stark, index),
-                                shown_row(v.caps, index),
+                                *([shown_group(v.caps, index)] if v.caps else []),
                                 data_table(
                                     ["duration", "omega_max", "pulses", "drive terms", "kernel"], seg_rows
                                 ),

@@ -1135,7 +1135,7 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
         collapse=collapse,
         segments=segments,
         approximations=tuple(Shown("approximation", a) for a in ham.approximations),
-        caps=tuple(Shown("truncation_cap", d, f"mode {m}") for m, d in sorted(ham.caps.items())),
+        caps=tuple(Shown("truncation_cap", d, of=f"mode {m}") for m, d in sorted(ham.caps.items())),
     )
 
 
