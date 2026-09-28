@@ -13,6 +13,15 @@ from tests.fixtures import make_device
 BELL = Circuit(2).h(0).cnot(0, 1)
 
 
+def test_a_builder_call_with_its_arguments_out_of_order_shows_the_call_and_the_order() -> None:
+    with pytest.raises(
+        TypeError, match=r"rx\(0\.5, 0\): the qubits come first, as whole numbers, then the angles"
+    ):
+        Circuit(1).rx(0.5, 0)
+    with pytest.raises(TypeError, match=r"rx\(0, 'pi/2'\): angles are numbers in radians"):
+        Circuit(1).rx(0, "pi/2")  # type: ignore[arg-type]
+
+
 @pytest.fixture(scope="module")
 def machine() -> Machine:
     return Machine(make_device())

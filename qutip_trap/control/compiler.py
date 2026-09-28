@@ -306,9 +306,13 @@ class Circuit:
     # ---- the builder -------------------------------------------------------------------------------------------------------
 
     def _op(self, name: str, qubits: tuple[int, ...], params: tuple[float, ...] = ()) -> Circuit:
+        given_qubits: tuple[object, ...] = qubits
         given: tuple[object, ...] = params
+        call = f"{name}({', '.join(map(repr, (*given_qubits, *given)))})"
+        if not all(isinstance(q, int | np.integer) and not isinstance(q, bool) for q in given_qubits):
+            raise TypeError(f"{call}: the qubits come first, as whole numbers, then the angles in radians")
         if any(isinstance(p, str) for p in given):
-            raise TypeError(f"{name}: angles are numbers in radians, such as math.pi / 2; got {params}")
+            raise TypeError(f"{call}: angles are numbers in radians, such as math.pi / 2")
         return dataclasses.replace(self, ops=self.ops + (Operation(name, qubits, params),))
 
     def gpi(self, q: int, phase: float) -> Circuit:
