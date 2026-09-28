@@ -1043,8 +1043,8 @@ def test_a_calibration_absorbs_the_carrier_s_saturation_of_the_force() -> None:
     left to sum."""
     device = yb171_chain(2).device
     table = two_ion_surrogate(2000).table
-    shaped, modes = surrogate_waveform(device, (0, 1), (0, 1), nbar=dict.fromkeys(range(6), 0.0))
-    seed = shaped.waveform
+    pulse = surrogate_waveform(device, (0, 1), (0, 1), nbar=dict.fromkeys(range(6), 0.0))
+    seed, modes = pulse.shaped.waveform, pulse.modes
     assert seed.phi_m.status == "seed" and len(seed.segments) == 5
     space, _classes = spot_check_space(device, modes, seed, (0, 1), Numerics())
     run = calibrate_entangling_angle(

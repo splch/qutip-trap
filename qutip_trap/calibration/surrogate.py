@@ -53,6 +53,27 @@ CROSSTALK_MIN = 1e-6
 """Rabi ratios below this are not stored (a beam of finite waist gives every ion some light)."""
 MU_ABOVE_TOP_FRACTION = 0.35
 """The surrogate's AM beat note sits this fraction of the smallest mode gap above the highest coupled mode."""
+AM_CONDITION_MAX = 10.0
+"""The largest condition number of its two-body angle (``angle_condition_number``) the surrogate accepts from a segmented
+AM solution before it adds segments (PLAN.md Section 7.5).
+
+Choi's 2N + 1 segments leave the 2N real closure conditions a ONE-dimensional null space, whose one direction is scaled to
+|chi| = pi/4 however little angle it carries; where it carries almost none, the per-mode angles are large and cancel. On
+pair (0, 1) of ``presets.yb171_chain`` (radial 3.0 and 2.9 MHz) Choi's solutions of 2 to 5 ions at 1.0 MHz axial, 6 at
+0.6, 8 at 0.4 and 12 at 0.35 have condition numbers 1.20 to 2.30 and need 1.5 to 3.2 times the entangling pair's
+full-power carrier Rabi frequency (2 ions: 1.74, 228 kHz against 147 kHz), and 8 ions at 0.5 MHz a condition number of
+517 (chi_m of -177, +83, +59, +50, -26, ... rad), a 9.745 MHz peak, 70.7 carriers. Over every pair of 25 linear chains of
+2 to 12 ions at 0.3 to 1.5 MHz axial (272 pairs up to mirror symmetry) the median is 1.96, the chains the test suite
+calibrates stay below 2.7, and the 25 pairs above 10 each pass at 2N + 3 (one at 2N + 5), with condition numbers below
+3.0 and peaks below 4.7 carriers. The condition number rather than the peak against the carrier because the waveform does
+not depend on the beam power and the carrier does: a ten times stronger pair would accept the 8-ion solution at 7.1
+carriers and a ten times weaker one refuse the 2-ion solution at 15.6."""
+AM_SEGMENT_STEP = 2
+"""Segments are added two at a time, each one more null-space dimension, so that the count stays odd like Choi's 2N + 1."""
+AM_SEGMENTS_ADDED_MAX = 16
+"""The most segments the surrogate adds to Choi's 2N + 1 (eight steps, a 17-dimensional null space): every refused pair
+of ``AM_CONDITION_MAX``'s survey passes within four, so the cap bounds only the search (about 10 ms a solve for 12 ions at
+2N + 17)."""
 
 
 def _seed(value: float, pid: str, experiment: str, t0_s: float) -> CalEntry:
@@ -73,6 +94,51 @@ class SurrogateReport:
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
+def angle_condition_number(waveform: Waveform) -> float:
+    """kappa = sum_m |chi_m| / |sum_m chi_m|: the condition number of the waveform's two-body angle as the sum of its
+    per-mode angles, the factor by which the angle amplifies a relative error of one mode's loop area (1 when every mode
+    adds to the angle with one sign)."""
+    return sum(abs(chi) for chi in waveform.chi_m.values()) / abs(waveform.chi_total_rad)
+
+
+def _peak_rabi_hz(shaped: ShapedPulse) -> float:
+    """The largest per-tone Rabi frequency the pulse plays on any of its ions, Hz."""
+    return max(abs(float(x)) for amps in shaped.envelope.amplitude_rad_s.values() for x in amps) / TWO_PI
+
+
+@dataclass(frozen=True)
+class SurrogatePulse:
+    """The closed-form pulse ``surrogate_waveform`` solves for one pair: the solution, the modes it closes and, when the
+    segment rule refused Choi's 2N + 1 solution, that solution."""
+
+    shaped: ShapedPulse
+    modes: GateModes
+    refused: ShapedPulse | None = None
+    """Choi's 2N + 1 solution when its angle's condition number exceeds ``AM_CONDITION_MAX``, ``shaped`` being what the
+    rule kept in its place; None when ``shaped`` is Choi's solution or the one-mode square pulse."""
+
+    @property
+    def summary(self) -> str:
+        """The pulse as the calibration notes name it: the solver's method and, when the rule refused Choi's count, the
+        segments, peak Rabi frequency and condition number of the refused solution and of the kept one."""
+        head = f"{self.shaped.method} waveform"
+        if self.refused is None:
+            return head
+        n_min, n = len(self.refused.waveform.segments), len(self.shaped.waveform.segments)
+        kappa = angle_condition_number(self.shaped.waveform)
+        choi = (
+            f"Choi's 2N + 1 = {n_min} need a {_peak_rabi_hz(self.refused) / 1e3:.1f} kHz peak, their angle's condition "
+            f"number {angle_condition_number(self.refused.waveform):.3g} above AM_CONDITION_MAX = {AM_CONDITION_MAX:g}"
+        )
+        kept = f"{_peak_rabi_hz(self.shaped) / 1e3:.1f} kHz at condition number {kappa:.3g}"
+        if kappa <= AM_CONDITION_MAX:
+            return f"{head} on {n} segments ({choi}; {n} need {kept})"
+        return (
+            f"{head} on {n} segments ({choi}, and no count up to {n_min + AM_SEGMENTS_ADDED_MAX} comes within it: the "
+            f"lowest peak, {kept} on {n}, is kept)"
+        )
+
+
 def surrogate_waveform(
     device: Device,
     pair: tuple[int, int],
@@ -81,19 +147,34 @@ def surrogate_waveform(
     nbar: Mapping[int, float],
     duration_s: float = 100e-6,
     mode_frequencies_hz: Mapping[int, float] | None = None,
-) -> tuple[ShapedPulse, GateModes]:
-    """The closed-form waveform for ``pair``: the symmetric square pulse when the Raman pair couples the pair to
-    one mode, else Choi's segmented AM (2N + 1 segments) with the beat note ``MU_ABOVE_TOP_FRACTION`` of the smallest gap
-    between the coupled modes above the highest one (Landsman's and Chen's placement above the spectrum; at the midpoint of
-    two modes the power-optimal direction of the one-dimensional null space flips within tens of hertz).
-    ``mode_frequencies_hz`` solves at the frequencies the table BELIEVES instead of the crystal's."""
+) -> SurrogatePulse:
+    """The closed-form pulse for ``pair``: the symmetric square pulse when the Raman pair couples the pair to one mode,
+    else Choi's segmented AM with the beat note ``MU_ABOVE_TOP_FRACTION`` of the smallest gap between the coupled modes
+    above the highest one (Landsman's and Chen's placement above the spectrum; at the midpoint of two modes the
+    power-optimal direction of the one-dimensional null space flips within tens of hertz). The AM pulse has Choi's 2N + 1
+    segments unless their angle is ill-conditioned (``angle_condition_number`` above ``AM_CONDITION_MAX``); then segments
+    are added ``AM_SEGMENT_STEP`` at a time, up to ``AM_SEGMENTS_ADDED_MAX``, and the fewest that pass are kept, or the
+    lowest peak Rabi frequency when none does. ``mode_frequencies_hz`` solves at the frequencies the table BELIEVES
+    instead of the crystal's."""
     modes = gate_modes(device, pair, beams, nbar=nbar, eta_min=1e-9, mode_frequencies_hz=mode_frequencies_hz)
     if modes.n_modes == 1:
-        return symmetric_pulse(modes, gate_mode=modes.modes[0], loops=1, duration_s=duration_s), modes
+        return SurrogatePulse(
+            symmetric_pulse(modes, gate_mode=modes.modes[0], loops=1, duration_s=duration_s), modes
+        )
     freqs = sorted(w / TWO_PI for w in modes.omega_rad_s)
     gap = min(b - a for a, b in zip(freqs[:-1], freqs[1:]))
     mu = freqs[-1] + MU_ABOVE_TOP_FRACTION * gap
-    return solve_amplitude_modulation(modes, mu_hz=mu, duration_s=duration_s), modes
+    minimal = solve_amplitude_modulation(modes, mu_hz=mu, duration_s=duration_s)
+    if angle_condition_number(minimal.waveform) <= AM_CONDITION_MAX:
+        return SurrogatePulse(minimal, modes)
+    n_min = len(minimal.waveform.segments)
+    tried = [minimal]
+    for n in range(n_min + AM_SEGMENT_STEP, n_min + AM_SEGMENTS_ADDED_MAX + 1, AM_SEGMENT_STEP):
+        longer = solve_amplitude_modulation(modes, mu_hz=mu, duration_s=duration_s, n_segments=n)
+        if angle_condition_number(longer.waveform) <= AM_CONDITION_MAX:
+            return SurrogatePulse(longer, modes, refused=minimal)
+        tried.append(longer)
+    return SurrogatePulse(min(tried, key=_peak_rabi_hz), modes, refused=minimal)
 
 
 def canonical_pairs(device: Device, pairs: Sequence[Sequence[int]] | None) -> tuple[tuple[int, int], ...]:
@@ -230,12 +311,11 @@ def surrogate_table(
             notes.append(f"pair {(a, b)}: the surrogate solves Raman (bichromatic) waveforms only; skipped")
             continue
         try:
-            shaped, modes = surrogate_waveform(
-                device, (a, b), (spec_a.beams[0], spec_a.beams[1]), nbar=occupations
-            )
+            pulse = surrogate_waveform(device, (a, b), (spec_a.beams[0], spec_a.beams[1]), nbar=occupations)
         except ClosureError as exc:
             notes.append(f"pair {(a, b)}: no closed-form waveform ({exc}); skipped")
             continue
+        shaped, modes = pulse.shaped, pulse.modes
         space_for = partial(spot_check_space, device, modes, shaped.waveform, (a, b), opts)
         space, classes = space_for()
         classes_by_pair[(a, b)] = classes
@@ -284,14 +364,12 @@ def surrogate_table(
             runs[(a, b)] = run
             ms[(a, b)] = run.waveform
             notes.append(
-                f"pair {(a, b)}: {shaped.method} waveform, resolved modes {tuple(t.mode for t in space.resolved)} "
+                f"pair {(a, b)}: {pulse.summary}, resolved modes {tuple(t.mode for t in space.resolved)} "
                 f"(dims {space.dims}), surrogate error {run.surrogate_error:.4f}, converged {run.converged}"
             )
         else:
             ms[(a, b)] = shaped.waveform
-            notes.append(
-                f"pair {(a, b)}: {shaped.method} waveform stored as the closed-form seed (no spot check)"
-            )
+            notes.append(f"pair {(a, b)}: {pulse.summary} stored as the closed-form seed (no spot check)")
     # detection: the threshold and window on ion 0's simulated readout model (one threshold for the register)
     det_cal: DetectionCalibration | None = None
     detection: dict[str, CalEntry] = {}

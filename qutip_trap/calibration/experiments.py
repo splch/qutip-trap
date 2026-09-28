@@ -650,9 +650,9 @@ def _resolved_at_calibrated_modes(
     nbar_belief: Mapping[int, float],
     notes: list[str],
 ) -> Waveform:
-    """``wf`` re-solved at the table's mode frequencies with its duration and beat-note rule, keeping its phase entries (the
-    spot check only rescales amplitudes and the phase scan aligns the axis afterwards); a solver failure keeps ``wf`` with a
-    note."""
+    """``wf`` re-solved at the table's mode frequencies with its duration and the surrogate's beat-note and segment rules
+    (``surrogate_waveform``), keeping its phase entries (the spot check only rescales amplitudes and the phase scan aligns
+    the axis afterwards); a solver failure keeps ``wf`` with a note."""
     from qutip_trap.calibration.surrogate import surrogate_waveform
     from qutip_trap.control.shaping import ClosureError
 
@@ -660,7 +660,7 @@ def _resolved_at_calibrated_modes(
     if wf.kind != "ms" or not modes_hz or len(spec.beams) != 2:
         return wf
     try:
-        shaped, _gm = surrogate_waveform(
+        pulse = surrogate_waveform(
             device,
             (int(pair[0]), int(pair[1])),
             (int(spec.beams[0]), int(spec.beams[1])),
@@ -674,9 +674,9 @@ def _resolved_at_calibrated_modes(
             "the scan refines it by a rigid detuning shift"
         )
         return wf
-    out = replace(shaped.waveform, phi_s=wf.phi_s, phi_m=wf.phi_m)
+    out = replace(pulse.shaped.waveform, phi_s=wf.phi_s, phi_m=wf.phi_m)
     shown = {m: round(float(modes_hz[m]), 1) for m in sorted(wf.chi_m) if m in modes_hz}
-    notes.append(f"pair {pair}: waveform re-solved at the calibrated mode frequencies {shown}")
+    notes.append(f"pair {pair}: {pulse.summary} re-solved at the calibrated mode frequencies {shown}")
     return out
 
 

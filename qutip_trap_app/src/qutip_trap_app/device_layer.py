@@ -1283,10 +1283,11 @@ def gate_solutions(
         wf_t = None if table is None else table.waveform_for(pair)
         duration = DEFAULT_MS_DURATION_S if wf_t is None else float(wf_t.duration_s)
         try:
-            shaped, gm = core.surrogate_waveform(device, pair, beams, nbar=nbar or {}, duration_s=duration)
+            pulse = core.surrogate_waveform(device, pair, beams, nbar=nbar or {}, duration_s=duration)
         except ValueError as exc:  # no coupled mode, or loops the solver cannot close (ClosureError)
             out.append(_unsolved(pair, duration, f"the pulse solver could not close the loops: {exc}"))
             continue
+        shaped, gm = pulse.shaped, pulse.modes
         assert isinstance(shaped.envelope, core.SegmentedEnvelope), "the surrogate's pulses are segmented"
         diag = shaped.diagnostics
         mu_rule = (

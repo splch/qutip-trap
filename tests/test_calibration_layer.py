@@ -1,11 +1,12 @@
 """The calibration layer without the long experiments (PLAN.md Section 7): the played chain, the scheduler's Stark
-compensation, the servo, the cache, the lineshape fit, the crystal image, ``Device.derived()``, the dependency refusal and
-table edits as proposals."""
+compensation, the servo, the cache, the surrogate's segment count, the lineshape fit, the crystal image,
+``Device.derived()``, the dependency refusal and table edits as proposals."""
 
 from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 from typing import get_args
 
 import numpy as np
@@ -20,6 +21,13 @@ from qutip_trap.calibration.experiments import (
     full_calibration,
     refused_table,
     upstream_status,
+)
+from qutip_trap.calibration.surrogate import (
+    AM_CONDITION_MAX,
+    AM_SEGMENTS_ADDED_MAX,
+    MU_ABOVE_TOP_FRACTION,
+    angle_condition_number,
+    surrogate_waveform,
 )
 from qutip_trap.control.compiler import Circuit, Operation, compile_report
 from qutip_trap.control.hardware import physical_schedule
@@ -38,11 +46,12 @@ from qutip_trap.control.schedule import (
     single_qubit_pulse,
     stark_phase_rad,
 )
-from qutip_trap.control.shaping import gate_modes
+from qutip_trap.control.shaping import GateModes, ShapedPulse, gate_modes, solve_amplitude_modulation
 from qutip_trap.control.table import ENTRY_KINDS, CalEntry, CalibrationTable, EntryGroup
 from qutip_trap.device.model import BeamRoles
 from qutip_trap.device.presets import yb171_chain
 from qutip_trap.dynamics.engine import JointExactEngine, SeedSpec
+from qutip_trap.dynamics.truncation import TruncationWarning
 from qutip_trap.experiments.fitting import (
     Observation,
     fit_lineshape,
@@ -66,10 +75,18 @@ from qutip_trap.noise.model import NoiseModel, servo_residual
 from qutip_trap.noise.sampling import KEY_FIELD_OFFSET_T, correlated_normals, quiet_sample
 from qutip_trap.noise.spectra import Drift
 from qutip_trap.options import Numerics, Physics
+from qutip_trap.prep.recipe import preparation_occupations, recipe_of
 from qutip_trap.provenance import load_ledger
 from qutip_trap.run.results import RunState
 from qutip_trap.units import TWO_PI
-from tests.fixtures import BELL, WINDOWS, make_device, single_ion_raman_device, two_ion_surrogate
+from tests.fixtures import (
+    BELL,
+    WINDOWS,
+    chain_device,
+    make_device,
+    single_ion_raman_device,
+    two_ion_surrogate,
+)
 
 
 @pytest.fixture(scope="module")
@@ -303,6 +320,115 @@ def test_a_run_and_a_caller_asking_for_the_same_pairs_share_one_cache_entry() ->
     assert len(cache.reports) == 2
     with pytest.raises(ValueError, match="two distinct ions"):
         calibrate(machine, cache=cache, pairs=[(1, 1)], **cheap)
+
+
+# ---- the surrogate's segment count --------------------------------------------------------------------------------------------------
+
+
+def _peak_khz(shaped: ShapedPulse) -> float:
+    """The largest per-tone Rabi frequency of a solved pulse, kHz."""
+    return max(abs(x) for amps in shaped.envelope.amplitude_rad_s.values() for x in amps) / TWO_PI / 1e3
+
+
+def _surrogate_mu_hz(modes: GateModes) -> float:
+    """The surrogate's beat note: ``MU_ABOVE_TOP_FRACTION`` of the smallest coupled-mode gap above the highest mode."""
+    freqs = sorted(w / TWO_PI for w in modes.omega_rad_s)
+    return freqs[-1] + MU_ABOVE_TOP_FRACTION * min(b - a for a, b in zip(freqs[:-1], freqs[1:]))
+
+
+EIGHT_IONS_HZ = (3.0e6, 2.9e6, 0.5e6)
+"""The trap of the eight-ion chain whose pair (0, 1) has an ill-conditioned 2N + 1 solution. ``chain_device`` carries the
+preset's crystal, field and entangling pair without its preparation (seconds to optimize for eight ions), so it solves the
+preset's waveforms exactly; the solve does not read the occupations."""
+
+
+@pytest.mark.parametrize(
+    ("n_ions", "pair", "peak_khz", "kappa", "chi_m"),
+    [
+        (2, (0, 1), 228.413275, 1.744119, {2: 0.2922150203, 3: -1.0776131837}),
+        (3, (0, 1), 301.760763, 1.279762, {3: 0.1098624190, 5: -0.8952605824}),
+        (3, (0, 2), 335.804495, 1.996394, {3: -0.0680246995, 4: 0.3912828480, 5: -1.1086563118}),
+    ],
+)
+def test_a_well_conditioned_pair_keeps_choi_s_2n_plus_1_solution_bit_for_bit(
+    n_ions: int, pair: tuple[int, int], peak_khz: float, kappa: float, chi_m: dict[int, float]
+) -> None:
+    """On the two- and three-ion chains the surrogate's pulse is Choi's 2N + 1 solution at its beat note, equal field by
+    field, with the peak Rabi frequency, angle condition number and per-mode angles the test suite's numbers rest on."""
+    device = yb171_chain(n_ions).device
+    nbar = preparation_occupations(device, recipe_of(device, raman_pair=(0, 1)))
+    pulse = surrogate_waveform(device, pair, (0, 1), nbar=nbar)
+    assert pulse.refused is None and pulse.summary == "am_segmented waveform"
+    minimal = solve_amplitude_modulation(pulse.modes, mu_hz=_surrogate_mu_hz(pulse.modes), duration_s=100e-6)
+    wf = pulse.shaped.waveform
+    assert wf == minimal.waveform and len(wf.segments) == 2 * pulse.modes.n_modes + 1
+    assert _peak_khz(pulse.shaped) == pytest.approx(peak_khz, rel=1e-8)
+    assert angle_condition_number(wf) == pytest.approx(kappa, rel=1e-6) and kappa < AM_CONDITION_MAX
+    for m, chi in chi_m.items():
+        assert wf.chi_m[m] == pytest.approx(chi, rel=1e-8), m
+
+
+def test_an_ill_conditioned_minimal_solution_is_refused_for_the_fewest_segments_that_pass() -> None:
+    """Pair (0, 1) of eight ions at 0.5 MHz axial: Choi's 17 segments leave one null-space direction whose angle has
+    condition number 517 (per-mode angles down to -177 rad cancelling to pi/4) and a 9.745 MHz peak, 70.7 times the
+    entangling pair's 138 kHz full-power carrier; the surrogate plays 19 segments instead, condition number 1.73 at a
+    320 kHz peak (2.3 carriers) with every mode closed, and its summary, the pair's calibration note, names both."""
+    device = chain_device(8, EIGHT_IONS_HZ)
+    pulse = surrogate_waveform(device, (0, 1), (0, 1), nbar={})
+    assert pulse.refused is not None
+    refused, kept = pulse.refused.waveform, pulse.shaped.waveform
+    assert len(refused.segments) == 17 == 2 * pulse.modes.n_modes + 1 and len(kept.segments) == 19
+    assert angle_condition_number(refused) == pytest.approx(517.27, rel=1e-4)
+    assert min(refused.chi_m.values()) == pytest.approx(-176.69, rel=1e-4)
+    assert angle_condition_number(kept) == pytest.approx(1.7322, rel=1e-4)
+    assert angle_condition_number(kept) < AM_CONDITION_MAX < angle_condition_number(refused)
+    carrier_khz = derive_raman_drive(device, 0, (0, 1), scattering=False).carrier_rabi_hz / 1e3
+    assert carrier_khz == pytest.approx(137.94, rel=1e-4)
+    assert _peak_khz(pulse.refused) == pytest.approx(9745.21, rel=1e-6)
+    assert _peak_khz(pulse.shaped) == pytest.approx(320.2194, rel=1e-6)
+    assert abs(pulse.shaped.chi_rad) == pytest.approx(math.pi / 4, rel=1e-12)
+    assert pulse.shaped.residual_error < 1e-25
+    assert pulse.summary == (
+        "am_segmented waveform on 19 segments (Choi's 2N + 1 = 17 need a 9745.2 kHz peak, their angle's condition number "
+        "517 above AM_CONDITION_MAX = 10; 19 need 320.2 kHz at condition number 1.73)"
+    )
+
+
+def test_a_pair_no_segment_count_conditions_keeps_the_lowest_peak_and_says_so() -> None:
+    """A 10 us gate on pair (0, 5) of the eight-ion chain has no count from Choi's 17 to 17 + AM_SEGMENTS_ADDED_MAX segments
+    within AM_CONDITION_MAX (113 at 17, 12.8 at the best): the surrogate keeps the lowest peak of them, 28.3 MHz on 21
+    segments, and its summary says that none passed."""
+    device = chain_device(8, EIGHT_IONS_HZ)
+    pulse = surrogate_waveform(device, (0, 5), (0, 1), nbar={}, duration_s=10e-6)
+    assert pulse.refused is not None and len(pulse.refused.waveform.segments) == 17
+    mu = _surrogate_mu_hz(pulse.modes)
+    tried = {
+        n: solve_amplitude_modulation(pulse.modes, mu_hz=mu, duration_s=10e-6, n_segments=n)
+        for n in range(17, 17 + AM_SEGMENTS_ADDED_MAX + 1, 2)
+    }
+    assert min(angle_condition_number(s.waveform) for s in tried.values()) > AM_CONDITION_MAX
+    assert min(tried, key=lambda n: _peak_khz(tried[n])) == 21 and pulse.shaped.waveform == tried[21].waveform
+    assert _peak_khz(pulse.shaped) == pytest.approx(28279.2, rel=1e-5)
+    assert "no count up to 33 comes within it: the lowest peak, 28279.2 kHz" in pulse.summary
+
+
+@pytest.mark.slow
+def test_the_eight_ion_bell_estimate_clamps_no_cap_and_overflows_no_operator() -> None:
+    """The Bell circuit on the eight-ion chain calibrates its pair on the 19-segment waveform: no cap is clamped and no
+    displacement operator overflows (no TruncationWarning, no RuntimeWarning), the resolved modes hold at most 18 levels
+    and one pass is guessed at under 10^3 s, where the 17-segment solution asked for caps up to d = 1445 (clamped to 64)
+    and 4.5e11 s; the pair's note, which a run's approximations carry, is among the estimate's."""
+    machine = yb171_chain(8, omega_hz=EIGHT_IONS_HZ).machine()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", TruncationWarning)
+        warnings.simplefilter("error", RuntimeWarning)
+        est = machine.estimate(Circuit(8).h(0).cnot(0, 1))
+    assert max(t.d for t in est.space.resolved) <= 18 < Numerics().mode_dimension_max
+    assert est.wall_time_s < 1e3
+    assert any(
+        n.startswith("pair (0, 1): am_segmented waveform on 19 segments (Choi's 2N + 1 = 17")
+        for n in est.notes
+    )
 
 
 # ---- the dependency graph ---------------------------------------------------------------------------------------------------------------
