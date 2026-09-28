@@ -114,6 +114,12 @@ def _calibrated(
     return job, preset, table
 
 
+def _at_level(job: JobSpec) -> str:
+    """The fidelity level a job asked for, in its progress line; nothing for "auto", where the core picks one (the
+    numerics strip names it once the run is in)."""
+    return "" if job.level == "auto" else f" at {job.level}"
+
+
 def _core_progress(progress: Progress) -> Callable[[core.Progress], None]:
     """The core's ``Progress`` of ``Machine.run`` (per pulse, branch, sample and readout) as worker progress events."""
 
@@ -134,7 +140,7 @@ def _run_job(state: _LiveState, progress: Progress, *, job: JobSpec) -> Record:
     job, preset, _table = _calibrated(
         state, job, progress, "the surrogate calibration table (cached per device and seed)"
     )
-    progress("running", None, f"{job.level} run of {job.shots} shots on {preset.device.crystal.n_ions} ions")
+    progress("running", None, f"{job.shots} shots on {preset.device.crystal.n_ions} ions{_at_level(job)}")
     record, live = execute(job, preset, progress=_core_progress(progress))
     state.records[record.key()] = record
     state.lives[record.key()] = live
@@ -166,7 +172,9 @@ def _zoom(
     n_store: int = resim.DEFAULT_ZOOM_POINTS,
 ) -> dict[str, Any]:
     record, live = _live(state, key)
-    progress("zooming", None, f"re-simulating step {step} with {n_store} stored points per segment")
+    progress(
+        "zooming", None, f"re-simulating {record.step(step).gate_id} with {n_store} stored points per segment"
+    )
     record, z, stats = resim.zoom(record, live, step, sample, branch, n_store=n_store)
     progress("building", 0.9, "listing the Hamiltonian terms and collapse operators of the step")
     record, ham = resim.hamiltonian_record(record, live, step, sample, branch)
@@ -252,7 +260,7 @@ def _request_run(state: _LiveState, progress: Progress, *, job: JobSpec, step: i
         progress,
         "the surrogate calibration table, with the hand-set detunings applied where requested",
     )
-    progress("running", None, f"{job.level} run of {job.shots} shots: {job.label or 'the requested job'}")
+    progress("running", None, f"{job.shots} shots{_at_level(job)}: {job.label or 'the requested job'}")
     record, live = execute(job, preset, progress=_core_progress(progress))
     key = record.key()
     state.lives[key] = live
