@@ -16,6 +16,8 @@ that imports it; nothing in the core imports the app.
 - `knobs.py`, `device_layer.py` - the Level 4 knobs and the device layer the physics pages read.
 - `presets.py` - the published-experiment presets of Section 14.5.
 - `workers.py` - the worker process that holds the live state and streams progress (in-process under WebAssembly).
+- `app.py` - the page function `main(page)`; `__main__.py` the `qutip-trap-app` command, and `src/main.py` the entry
+  point `flet run` and `flet build` look for.
 - `provenance.py` - the index behind the provenance chips and the explain drawer, built from `docs/provenance/ledger.yaml`
   and `PLAN.md`.
 - `viewmodel/` - pure view-models over the record (no Flet import); `views/` - the Flet screens.
@@ -31,8 +33,12 @@ From the repository root:
 
 Run the app (the first Run derives the channel library for the device, about a minute):
 
-    cd qutip_trap_app && uv run --project .. flet run src/main.py                  # native window
-    cd qutip_trap_app && uv run --project .. flet run --web -p 8550 src/main.py   # browser served from the host
+    uv run qutip-trap-app          # native window
+    uv run qutip-trap-app --web    # browser served from the host at http://127.0.0.1:8550 (--port to change it)
+
+`flet run` reloads the app when a source file changes, which is the loop for working on the views:
+
+    cd qutip_trap_app && uv run --project .. flet run --web -p 8550 src/main.py
 
 A checkout builds the provenance index from PLAN.md and the ledger when it is first loaded. A packaged build has no PLAN.md,
 so the index is written into the package before building:

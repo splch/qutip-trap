@@ -11,6 +11,9 @@ dependencies = [
     "flet-charts>=0.86,<1.0",
 ]
 
+[project.scripts]
+qutip-trap-app = "qutip_trap_app.__main__:cli"
+
 [dependency-groups]
 dev = [
     # `flet test` integration tests: pytest-asyncio and the Flutter test host's client

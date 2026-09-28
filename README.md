@@ -16,7 +16,8 @@ Python 3.13 and [uv](https://docs.astral.sh/uv/). The package is not on PyPI yet
 uv add git+https://github.com/splch/qutip-trap
 ```
 
-Extras: `qiskit` (a Qiskit `BackendV2`), `gui` (the Flet application).
+Extras: `qiskit` (a Qiskit `BackendV2`) and `gui` (Flet, which the application in `qutip_trap_app` needs). The application
+runs from a checkout: `uv sync --all-packages --extra gui`, then `uv run qutip-trap-app` (`--web` for the browser).
 
 ## Quickstart
 
