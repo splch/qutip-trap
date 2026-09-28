@@ -61,6 +61,7 @@ Circuits also load from OpenQASM 2 and IonQ JSON (`trap.Circuit.from_openqasm`, 
 
 - [PLAN.md](PLAN.md) is the specification: the scope and what the simulator does not do (Section 1.3), the physics (Part II), the numerics, noise, control and readout with the governing equations in one place (Part III, Section 5.7), the validation targets (Section 9), the open physics (Section 12) and one convention per quantity (Section 13).
 - [docs/api.md](docs/api.md): the public API, module by module.
+- [docs/tutorial.md](docs/tutorial.md): a guided tutorial from a first run to the pulse engine, with a check at the end of every section, executed by the test suite.
 - [docs/examples.md](docs/examples.md): a runnable tour from a device to the error model, executed by the test suite.
 - [docs/provenance/ledger.yaml](docs/provenance/ledger.yaml): the provenance record every derived number and every provenance chip names.
 

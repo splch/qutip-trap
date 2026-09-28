@@ -4,7 +4,7 @@
 `presets` and `__version__`. Every other name is imported from the module that defines it; this page lists them by what a
 user does, one line each, and the docstrings carry the detail. Public numbers are in Hz, seconds and radians (IonQ's turns
 only at the IonQ boundary), and every bitstring key has qubit 0 as the least-significant bit, the rightmost character
-(PLAN.md Section 13). [examples.md](examples.md) runs the main path. Every record prints as one line (the option records and the `Machine` as the
+(PLAN.md Section 13). [examples.md](examples.md) runs the main path, and [tutorial.md](tutorial.md) teaches it step by step. Every record prints as one line (the option records and the `Machine` as the
 constructor call that differs from the defaults); `Machine.specs()`, `Device.specs()` and `Result.summary()` are the full
 reports.
 

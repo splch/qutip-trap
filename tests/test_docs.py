@@ -13,6 +13,7 @@ from qutip_trap.provenance import load_ledger, repository_root
 ROOT = repository_root()
 PAGES = (*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md")
 EXAMPLES = ROOT / "docs" / "examples.md"
+TUTORIAL = ROOT / "docs" / "tutorial.md"
 README = ROOT / "README.md"
 
 
@@ -32,7 +33,7 @@ def test_every_ledger_id_cited_in_the_documentation_resolves() -> None:
 
 
 def test_examples_compile() -> None:
-    for page in (EXAMPLES, README):
+    for page in (EXAMPLES, TUTORIAL, README):
         blocks = _python_blocks(page)
         assert blocks, page.name
         for block in blocks:
@@ -44,6 +45,15 @@ def test_examples_execute_in_order() -> None:
     namespace: dict[str, object] = {}
     for k, block in enumerate(_python_blocks(EXAMPLES)):
         exec(compile(block, f"examples.md[{k}]", "exec"), namespace)  # noqa: S102  (the documented examples)
+
+
+@pytest.mark.slow
+def test_the_tutorial_executes_in_order() -> None:
+    """The tutorial's blocks run in one namespace as a reader runs them, Qiskit door included."""
+    pytest.importorskip("qiskit")
+    namespace: dict[str, object] = {}
+    for k, block in enumerate(_python_blocks(TUTORIAL)):
+        exec(compile(block, f"tutorial.md[{k}]", "exec"), namespace)  # noqa: S102  (the documented tutorial)
 
 
 @pytest.mark.slow

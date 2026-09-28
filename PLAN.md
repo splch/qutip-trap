@@ -114,7 +114,7 @@ qutip_trap/
   interop/         the Qiskit BackendV2
 tests/             the test suite (Section 9)
 qutip_trap_app/    the application (Section 14): a separate package that imports the core only in core.py
-docs/              the API page, the examples and the provenance ledger
+docs/              the API page, the examples, the tutorial and the provenance ledger
 ```
 
 `control/` never imports `calibration/` (the calibration table is a plain data object the scheduler reads), and the core never imports the application or Flet; tests check both.
