@@ -113,6 +113,20 @@ def fmt_shown(s: Shown) -> str:
     return str(v)
 
 
+MODE_FAMILY_NAMES: dict[str, str] = {
+    "axial": "axial",
+    "transverse_1": "transverse 1",
+    "transverse_2": "transverse 2",
+}
+"""A mode family (``Mode.family``) in words."""
+
+
+def mode_family_text(family: str, family_index: int) -> str:
+    """``transverse 1 #2``: the family in words and the mode's place in it, counted from 1 up in frequency (the order of
+    ``Crystal.modes`` within a family)."""
+    return f"{MODE_FAMILY_NAMES[family]} #{family_index + 1}"
+
+
 def vector_text(v: tuple[float, float, float]) -> str:
     """A unit vector's components as a displayed value: (+0.707, +0.000, -0.707)."""
     return f"({v[0]:+.3f}, {v[1]:+.3f}, {v[2]:+.3f})"

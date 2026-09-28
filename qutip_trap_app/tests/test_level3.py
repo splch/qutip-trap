@@ -167,11 +167,18 @@ def test_the_tables_readout_entries_reach_the_readout_page_and_the_device_card(
     layer = device_layer.derive_device_layer(record.job.device.build(), table=live.table, sweeps=False)
     eps_b = record.table.entries[detection_key("eps_B")].value
     rows = readout_view(layer, record.table).table
-    assert [r.label for r in rows] == ["table threshold", "table window", "table eps_B", "table eps_D"]
+    assert [r.label for r in rows] == [
+        "calibrated threshold",
+        "calibrated window",
+        "bright read as dark, calibrated",
+        "dark read as bright, calibrated",
+    ]
     assert rows[2].value.value == eps_b and {r.status for r in rows} == {"calibrated"}
-    card_rows = [r for r in layer_card_view(layer, record.table).spam if r.label.startswith("table")]
-    assert [r.label for r in card_rows] == ["table eps_B", "table eps_D"] and card_rows[
-        0
-    ].value.value == eps_b
+    card_rows = [r for r in layer_card_view(layer, record.table).spam if r.label.endswith(", calibrated")]
+    assert [r.label for r in card_rows] == [
+        "bright read as dark, calibrated",
+        "dark read as bright, calibrated",
+    ]
+    assert card_rows[0].value.value == eps_b
     other = dataclasses.replace(record.table, device_hash="another device")
     assert {r.status for r in readout_view(layer, other).table} == {"stale"}

@@ -15,7 +15,7 @@ from typing import Literal
 
 from qutip_trap_app.provenance import TAG_GLYPH, TAGS, ProvenanceIndex
 from qutip_trap_app.record import Record
-from qutip_trap_app.viewmodel.catalogue import CATALOGUE, fmt_shown
+from qutip_trap_app.viewmodel.catalogue import CATALOGUE, fmt_shown, mode_family_text
 from qutip_trap_app.viewmodel.machine import device_card_view, histogram
 
 DrillKind = Literal["status", "chip_tag", "mode_class", "bar_within"]
@@ -92,7 +92,7 @@ def drills_for(record: Record, index: ProvenanceIndex) -> tuple[Drill, ...]:
             Drill(
                 f"mode:{m}",
                 "mode_class",
-                f"Mode {m} ({mode.family} {mode.family_index} at {mode.omega_hz / 1e6:.3f} MHz). In this run it was",
+                f"Mode {m} ({mode_family_text(mode.family, mode.family_index)} at {mode.omega_hz / 1e6:.3f} MHz). In this run it was",
                 MODE_OPTIONS,
                 cls,
                 CONCEPT_OF["mode_class"],

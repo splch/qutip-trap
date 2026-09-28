@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 
 from qutip_trap_app.record import PulseRecord, Record, SampledFn
-from qutip_trap_app.viewmodel.catalogue import Shown, vector_text
+from qutip_trap_app.viewmodel.catalogue import Shown, mode_family_text, vector_text
 
 CLOSURE_THRESHOLD = 1e-6
 """Section 5.2's drop criterion |alpha_m(tau)|^2 (2 nbar_m + 1) < 1e-6: below it a loop counts as closed."""
@@ -128,7 +128,9 @@ def pulse_view(record: Record, pulse_index: int) -> PulseView:
         sidebands = tuple(
             SidebandView(
                 mode=m.index,
-                mode_frequency=Shown("mode_frequency", m.omega_hz, f"{m.family} {m.family_index}"),
+                mode_frequency=Shown(
+                    "mode_frequency", m.omega_hz, mode_family_text(m.family, m.family_index)
+                ),
                 detuning=Shown(
                     "sideband_detuning",
                     mu0 - m.omega_hz if mu0 >= 0 else mu0 + m.omega_hz,
@@ -165,7 +167,9 @@ def pulse_view(record: Record, pulse_index: int) -> PulseView:
         beams=beams,
         tones=tuple(tones),
         mode_spectrum=tuple(
-            Shown("mode_frequency", m.omega_hz, f"mode {m.index}: {m.family} {m.family_index}")
+            Shown(
+                "mode_frequency", m.omega_hz, f"mode {m.index}: {mode_family_text(m.family, m.family_index)}"
+            )
             for m in card.modes
         ),
         crosstalk=tuple(Shown("crosstalk", abs(e), f"onto ion {j}") for j, e in sorted(p.crosstalk.items())),

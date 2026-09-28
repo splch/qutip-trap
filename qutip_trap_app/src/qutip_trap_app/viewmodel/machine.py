@@ -12,7 +12,7 @@ import numpy as np
 from qutip_trap_app.core import Circuit, ideal_probabilities
 from qutip_trap_app.record import DeviceCard, GateError, Record
 from qutip_trap_app.viewmodel.builder import listed
-from qutip_trap_app.viewmodel.catalogue import Row, Shown
+from qutip_trap_app.viewmodel.catalogue import Row, Shown, mode_family_text
 
 HERALD_NAMES: tuple[tuple[int, str], ...] = ((1, "collision"), (2, "dark or lost ion"), (4, "count anomaly"))
 """``Result.heralds`` bit meanings (Section 8.6)."""
@@ -183,7 +183,9 @@ def card_rows(card: DeviceCard) -> tuple[Row, ...]:
 
 
 def card_modes(card: DeviceCard) -> tuple[Shown, ...]:
-    return tuple(Shown("mode_frequency", m.omega_hz, f"{m.family} {m.family_index}") for m in card.modes)
+    return tuple(
+        Shown("mode_frequency", m.omega_hz, mode_family_text(m.family, m.family_index)) for m in card.modes
+    )
 
 
 def spam_rows(card: DeviceCard, status: str) -> list[Row]:

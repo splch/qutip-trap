@@ -11,7 +11,7 @@ import numpy as np
 from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.knobs import Knob, knob
 from qutip_trap_app.record import HamiltonianRecord, Record, TableRecord
-from qutip_trap_app.viewmodel.catalogue import Row, Shown, vector_text
+from qutip_trap_app.viewmodel.catalogue import Row, Shown, mode_family_text, vector_text
 from qutip_trap_app.viewmodel.circuit import pair_waveform
 from qutip_trap_app.viewmodel.machine import axis_rows, card_modes, card_rows, gate_error_rows, spam_rows
 
@@ -283,7 +283,9 @@ def crystal_view(layer: DeviceLayer) -> CrystalView:
             index=m.index,
             family=m.family,
             family_index=m.family_index,
-            frequency=Shown("mode_frequency", m.omega_hz, f"mode {m.index}: {m.family} {m.family_index}"),
+            frequency=Shown(
+                "mode_frequency", m.omega_hz, f"mode {m.index}: {mode_family_text(m.family, m.family_index)}"
+            ),
             e_hat=m.e_hat,
             eigenvector=m.eigenvector,
             components=tuple(
@@ -715,6 +717,10 @@ class ReadoutView:
     notes: tuple[str, ...]
 
 
+TABLE_SPAM_LABELS: dict[str, str] = {"eps_B": "bright read as dark", "eps_D": "dark read as bright"}
+"""The table's two readout errors in words."""
+
+
 DETECTOR_NAMES: dict[str, str] = {
     "pmt": "photomultiplier (PMT)",
     "snspd": "superconducting nanowire (SNSPD)",
@@ -820,10 +826,10 @@ def readout_view(layer: DeviceLayer, table: TableRecord | None) -> ReadoutView:
     trows: list[Row] = []
     if table is not None:
         for key, label, qid in (
-            ("threshold", "table threshold", "threshold"),
-            ("window_s", "table window", "detection_window"),
-            ("eps_B", "table eps_B", "spam_eps_b"),
-            ("eps_D", "table eps_D", "spam_eps_d"),
+            ("threshold", "calibrated threshold", "threshold"),
+            ("window_s", "calibrated window", "detection_window"),
+            ("eps_B", f"{TABLE_SPAM_LABELS['eps_B']}, calibrated", "spam_eps_b"),
+            ("eps_D", f"{TABLE_SPAM_LABELS['eps_D']}, calibrated", "spam_eps_d"),
         ):
             e = table.entries.get(detection_key(key))
             if e is not None:
@@ -1158,10 +1164,6 @@ class LayerCardView:
     gate_errors: tuple[Row, ...]
     device_hash: Shown
     overrides: tuple[Row, ...]
-
-
-TABLE_SPAM_LABELS: dict[str, str] = {"eps_B": "bright read as dark", "eps_D": "dark read as bright"}
-"""The table's two readout errors in words."""
 
 
 def layer_card_view(layer: DeviceLayer, table: TableRecord | None) -> LayerCardView:

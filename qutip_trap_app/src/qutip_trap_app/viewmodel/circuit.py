@@ -322,7 +322,7 @@ def phase_register(record: Record) -> PhaseRegister:
     return PhaseRegister(
         final_frame={q: Shown("phase_frame", v) for q, v in sorted(record.schedule.phase_frame.items())},
         stark_increments=tuple(incs),
-        rule="a virtual Z by theta shifts every later pulse's phase: phi -> phi - theta (conv.virtual_z_propagation)",
+        rule="a virtual Z by theta shifts every later pulse's phase: phi -> phi - theta",
     )
 
 

@@ -288,7 +288,10 @@ def ShotsPanel(store: Store, record: Record, h: Histogram, index: ProvenanceInde
                 stat_tile(c, index, label=f"photons, ion {i}") for i, c in enumerate(sv.photon_counts)
             )
         rows: list[tuple[str, ft.Control]] = [
-            ("sampled levels (ion 0 first)", ft.Text(str(sv.levels), size=theme.SIZE_SMALL)),
+            (
+                "sampled levels",
+                ft.Text(", ".join(f"ion {i}: {lv}" for i, lv in enumerate(sv.levels)), size=theme.SIZE_SMALL),
+            ),
             ("flags", ft.Text(", ".join(sv.heralds) or "none", size=theme.SIZE_SMALL)),
             ("dynamical sample", ft.Text(str(sv.sample_index), size=theme.SIZE_SMALL)),
         ]

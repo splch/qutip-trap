@@ -282,7 +282,10 @@ def Level3Page(
                 value=str(branch),
                 options=[
                     ft.DropdownOption(
-                        key=str(b.index), text=f"branch {b.index} (weight {b.weight:.3g}, Fock {b.fock})"
+                        key=str(b.index),
+                        text=f"branch {b.index} (weight {b.weight:.3g}; "
+                        + ", ".join(f"mode {m} at n = {n}" for m, n in sorted(b.fock.items()))
+                        + ")",
                     )
                     for b in record.branches
                 ],

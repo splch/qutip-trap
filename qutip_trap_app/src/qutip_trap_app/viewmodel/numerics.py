@@ -146,7 +146,7 @@ def numerics_panel(
         Shown(
             "truncation_cap",
             t.d,
-            f"expected n in {t.expected_n_range}, eta_max {t.eta_max:.3g}",
+            f"expected n from {t.expected_n_range[0]} to {t.expected_n_range[1]}, eta_max {t.eta_max:.3g}",
             of=f"mode {t.mode}",
         )
         for t in sp.resolved
@@ -175,7 +175,7 @@ def numerics_panel(
         for m, lv in sorted(d.margin_levels.items())
     )
     if d.level == "JOINT_EXACT":
-        engine_note = f"{d.level}: every pulse on the {sp.dimension}-dimensional joint space {list(sp.dims)}"
+        engine_note = f"{d.level}: every pulse on the joint space of dimension {' x '.join(map(str, sp.dims))} = {sp.dimension}"
     elif d.level == "GATE_LOCAL":
         engine_note = (
             "GATE_LOCAL: exact gate-local spaces up to dimension "

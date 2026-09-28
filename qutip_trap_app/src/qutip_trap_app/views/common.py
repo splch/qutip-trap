@@ -31,7 +31,7 @@ def hover_text(s: Shown) -> str:
     q = CATALOGUE[s.quantity]
     parts = [q.term]
     if q.unit == "Hz":
-        parts.append("ordinary frequency; the angular value is 2 pi times this (conv.frequencies)")
+        parts.append("ordinary frequency; the angular value is 2 pi times this")
     if s.detail:
         parts.append(s.detail)
     parts.append(f"Section {q.section}")
@@ -290,7 +290,8 @@ def numerics_strip(
         if c is not None:
             rows.append(
                 status_line(
-                    f"tolerances {c.tolerances} against {c.tightened_tolerances}: max change {c.max_change:.2e} "
+                    f"atol {c.tolerances[0]:g} and rtol {c.tolerances[1]:g} against {c.tightened_tolerances[0]:g} and "
+                    f"{c.tightened_tolerances[1]:g}: the largest change {c.max_change:.2e} "
                     f"({'converged' if c.converged else 'NOT converged'})"
                 )
             )
@@ -298,8 +299,9 @@ def numerics_strip(
         t = panel.truncation_check
         rows.append(
             status_line(
-                f"caps {t.caps} against {t.grown_caps}: max change {t.max_change:.2e} "
-                f"({'converged' if t.converged else 'NOT converged'})"
+                "caps "
+                + ", ".join(f"mode {m}: {d} against {t.grown_caps[m]}" for m, d in sorted(t.caps.items()))
+                + f": the largest change {t.max_change:.2e} ({'converged' if t.converged else 'NOT converged'})"
             )
         )
     if panel.badge.reasons:

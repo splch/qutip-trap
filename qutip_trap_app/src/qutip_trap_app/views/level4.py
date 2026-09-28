@@ -20,7 +20,8 @@ from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record, StepRecord, TableRecord
 from qutip_trap_app.resim import hamiltonian_key
-from qutip_trap_app.viewmodel.catalogue import Row, Shown, fmt_number
+from qutip_trap_app.viewmodel.builder import listed
+from qutip_trap_app.viewmodel.catalogue import Row, Shown, fmt_number, mode_family_text
 from qutip_trap_app.viewmodel.physics import (
     KnobRow,
     cooling_view,
@@ -471,7 +472,7 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         species=v.species,
         title=""
         if m is None
-        else f"mode {m.index}: {m.family} {m.family_index}, {m.frequency.value / 1e6:.4f} MHz"
+        else f"mode {m.index}: {mode_family_text(m.family, m.family_index)}, {m.frequency.value / 1e6:.4f} MHz"
         if isinstance(m.frequency.value, float)
         else "",
     )
@@ -495,7 +496,9 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         label="mode to draw",
         value=str(m.index if m is not None else 0),
         options=[
-            ft.DropdownOption(key=str(mr.index), text=f"mode {mr.index}: {mr.family} {mr.family_index}")
+            ft.DropdownOption(
+                key=str(mr.index), text=f"mode {mr.index}: {mode_family_text(mr.family, mr.family_index)}"
+            )
             for mr in v.modes
         ],
         on_select=lambda e: set_mode(int(e.control.value)),
@@ -503,7 +506,12 @@ def CrystalPage(store: Store, session: Session, layer: DeviceLayer, index: Prove
         **input_style(),
     )
     mode_tiles = [
-        stat_tile(mr.frequency, index, plain=plain, label=f"mode {mr.index}: {mr.family} {mr.family_index}")
+        stat_tile(
+            mr.frequency,
+            index,
+            plain=plain,
+            label=f"mode {mr.index}: {mode_family_text(mr.family, mr.family_index)}",
+        )
         for mr in v.modes[:6]
     ]
     return card(
@@ -865,7 +873,8 @@ def _cooling_page(ctx: Page) -> list[ft.Control]:
                     ),
                     tile_row((sb.nbar_start, sb.nbar_end, sb.nbar_final_run), index, plain=plain),
                     status_line(
-                        f"{len(sb.orders)} pulses; orders {sorted(set(sb.orders), reverse=True)}, higher first; "
+                        f"{len(sb.orders)} pulses on sideband orders "
+                        f"{listed([str(k) for k in sorted(set(sb.orders), reverse=True)])}, higher first; "
                         + ", ".join(
                             f"k={k}: {t * 1e6:.1f} µs"
                             for k, t in dict(zip(sb.orders, sb.durations_s)).items()

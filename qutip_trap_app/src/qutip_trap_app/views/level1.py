@@ -161,7 +161,7 @@ def _lanes(
                     w,
                     color=GATE_COLORS.get(str(g.name.value), ft.Colors.SURFACE_CONTAINER_HIGHEST),
                     selected=g.gate_id == selected,
-                    tooltip=f"{g.gate_id}: {g.name.value} on ions {g.ions}, {g.t_start_s * 1e6:.1f} to {g.t_end_s * 1e6:.1f} µs",
+                    tooltip=f"{g.gate_id}: {g.name.value} on {ions_text(g.ions)}, {g.t_start_s * 1e6:.1f} to {g.t_end_s * 1e6:.1f} µs",
                     on_click=functools.partial(on_select, g.gate_id),
                     key=f"gate:{g.gate_id}" if ion == g.ions[0] else None,
                 )
