@@ -19,10 +19,13 @@ from qutip_trap_app.views import routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
     ExplainDrawer,
+    compact,
     content_margin,
+    drawer_docked,
     empty_state,
     event_bool,
     numerics_strip,
+    page_padding,
     status_line,
 )
 from qutip_trap_app.views.learn import ACTIVITIES, KNOWLEDGE, LearnPage
@@ -32,6 +35,9 @@ from qutip_trap_app.views.level2 import Level2Page
 from qutip_trap_app.views.level3 import Level3Page, level3_numerics
 from qutip_trap_app.views.level4 import DEVICE_PAGES, Level4Page
 from qutip_trap_app.views.state import Session, Store, ThemeChoice
+
+DOCKED_MIN_HEIGHT = 240.0
+"""The shortest the explain drawer gets when docked under the content (else 45 % of the window's height)."""
 
 LEVEL_SECTIONS = {0: "8.6", 1: "7.6", 2: "7.3", 3: "4.4.1"}
 """The Part II subsection the explain drawer opens per level; a Level 4 page opens its own."""
@@ -268,10 +274,22 @@ def crumbs_of(store: Store, path: str) -> list[tuple[str, str | None]]:
 # ---- the screens -----------------------------------------------------------------------------------------------------
 
 
+def theme_toggle(store: Store, session: Session) -> ft.Control:
+    """The colour scheme's button: the platform's, light or dark, one click to the next."""
+    choice = store.learner.theme
+    return ft.IconButton(
+        icon=THEMES[choice].icon,
+        icon_color=MUTED,
+        tooltip=f"theme: {choice}; click for {THEMES[choice].next}",
+        on_click=lambda e: session.set_learner(theme=THEMES[choice].next),
+        key="theme-toggle",
+    )
+
+
 @ft.component
-def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Control:
+def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys, *, narrow: bool) -> ft.Control:
     """The zoom buttons, the crumbs and the explain toggle on one 48 px line (the convergence badge lives in the numerics
-    strip)."""
+    strip); on a compact window, which has no rail, the theme button too."""
     ft.use_state(store)
     page = ft.context.page
     level = max(parse_route(path).level, 0)
@@ -337,12 +355,13 @@ def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Con
                     style=ft.ButtonStyle(bgcolor={ft.ControlState.SELECTED: ft.Colors.SECONDARY_CONTAINER}),
                     key="explain-toggle",
                 ),
-            ],
+            ]
+            + ([theme_toggle(store, session)] if narrow else []),
             spacing=6,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         height=48,
-        padding=ft.Padding.symmetric(horizontal=theme.PAGE_PADDING - theme.GAP),
+        padding=ft.Padding.symmetric(horizontal=page_padding(page) - theme.GAP),
     )
 
 
@@ -568,8 +587,26 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             page.update()
 
     ft.use_effect(apply_theme, dependencies=[choice])
+    narrow = compact(page)
+    docked = drawer_docked(page)
+    selected = 5 if route.level == -1 else route.level
+    bar = ft.NavigationBar(
+        selected_index=selected,
+        destinations=[
+            ft.NavigationBarDestination(
+                icon=item.icon if why is None else ft.Icon(item.icon, tooltip=why),
+                selected_icon=item.selected_icon,
+                label=item.label,
+                disabled=why is not None,
+            )
+            for item, why in zip(RAIL, why_shut, strict=True)
+        ],
+        label_behavior=ft.NavigationBarLabelBehavior.ALWAYS_SHOW,
+        on_change=rail_change,
+        height=64,
+    )
     rail = ft.NavigationRail(
-        selected_index=5 if route.level == -1 else route.level,
+        selected_index=selected,
         label_type=ft.NavigationRailLabelType.ALL,
         min_width=theme.RAIL_WIDTH,
         group_alignment=-1.0,
@@ -586,16 +623,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             )
             for item, why in zip(RAIL, why_shut, strict=True)
         ],
-        trailing=ft.Container(
-            content=ft.IconButton(
-                icon=THEMES[choice].icon,
-                icon_color=MUTED,
-                tooltip=f"theme: {choice}; click for {THEMES[choice].next}",
-                on_click=lambda e: session.set_learner(theme=THEMES[choice].next),
-                key="theme-toggle",
-            ),
-            padding=ft.Padding.only(bottom=12),
-        ),
+        trailing=ft.Container(content=theme_toggle(store, session), padding=ft.Padding.only(bottom=12)),
         pin_trailing_to_bottom=True,
         on_change=rail_change,
     )
@@ -629,26 +657,18 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         else bool(store.learner.explain_open) or store.spec_section is not None
     )
     margin = content_margin(page, explain_open)
-    columns: list[ft.Control] = [
-        rail,
-        ft.Column(
-            [
-                ZoomBar(store, session, path, keys),
-                error_banner(store),
-                finished_banner(store, path),
-                ft.Container(
-                    content=RoutedContent(store, session, index, path),
-                    expand=True,
-                    padding=ft.Padding.only(
-                        left=theme.PAGE_PADDING + margin, right=theme.PAGE_PADDING + margin, bottom=theme.GAP
-                    ),
-                ),
-                strip,
-            ],
+    pad = page_padding(page) + margin
+    main: list[ft.Control] = [
+        ZoomBar(store, session, path, keys, narrow=narrow),
+        error_banner(store),
+        finished_banner(store, path),
+        ft.Container(
+            content=RoutedContent(store, session, index, path),
             expand=True,
-            spacing=0,
+            padding=ft.Padding.only(left=pad, right=pad, bottom=theme.GAP),
         ),
     ]
+    drawer: ft.Control | None = None
     if explain_open:
         if route.level == 4:
             device_page = DEVICE_PAGES[route.page]
@@ -659,14 +679,27 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             concepts = level_concepts(0) if spec is None else (spec.concept_id,)
         else:
             section, concepts = LEVEL_SECTIONS[level], level_concepts(level)
-        columns.append(ExplainDrawer(store, session, level, index, section, concepts))
+        drawer = ExplainDrawer(store, session, level, index, section, concepts, docked=docked)
     # asked once per device: the saved learner is read first, so a returning learner never sees the question again
     ft.use_dialog(_learner_dialog(session) if store.learner_loaded and not store.learner.asked else None)
-    return ft.Container(
-        content=ft.Row(columns, expand=True, spacing=0, vertical_alignment=ft.CrossAxisAlignment.STRETCH),
-        bgcolor=ft.Colors.SURFACE,
-        expand=True,
-    )
+    if drawer is not None and docked:
+        # a sheet docked under the content, where beside it the content would be too narrow to read
+        main.append(
+            ft.Container(content=drawer, height=max(DOCKED_MIN_HEIGHT, (page.height or 800.0) * 0.45))
+        )
+        drawer = None
+    if narrow:
+        # a compact window: the rail is a bar along the bottom
+        body: ft.Control = ft.Column(main + [strip, bar], expand=True, spacing=0)
+    else:
+        body = ft.Row(
+            [rail, ft.Column(main + [strip], expand=True, spacing=0)]
+            + ([drawer] if drawer is not None else []),
+            expand=True,
+            spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+        )
+    return ft.Container(content=body, bgcolor=ft.Colors.SURFACE, expand=True)
 
 
 @ft.component

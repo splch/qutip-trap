@@ -339,15 +339,41 @@ CONTENT_MIN_WIDTH = 160.0
 """The narrowest content column the layout computes with (a window this narrow shows little either way)."""
 
 
+def compact(page: Any) -> bool:
+    """Whether the window is Material's compact class (narrower than ``theme.COMPACT_MAX_WIDTH``): the levels are a bar
+    along the bottom, so the rail takes no width from the content."""
+    return (page.width or 1200.0) < theme.COMPACT_MAX_WIDTH
+
+
+def page_padding(page: Any) -> float:
+    """The page's side padding: Material's margin on a compact window, the app's own otherwise."""
+    return float(theme.PAGE_PADDING_COMPACT if compact(page) else theme.PAGE_PADDING)
+
+
+def drawer_docked(page: Any) -> bool:
+    """Whether the explain drawer is docked under the content rather than beside it: on a compact window, and on any
+    window where beside it the content column would keep less than ``theme.CONTENT_BESIDE_DRAWER_MIN_WIDTH``."""
+    beside = (page.width or 1200.0) - theme.RAIL_WIDTH - theme.DRAWER_WIDTH - 2 * page_padding(page)
+    return compact(page) or beside < theme.CONTENT_BESIDE_DRAWER_MIN_WIDTH
+
+
+def _beside_content(page: Any, drawer_open: bool) -> float:
+    """The width beside the content column: the rail (none on a compact window, which has a bar along the bottom), and
+    the drawer when it is open beside the content."""
+    rail = 0.0 if compact(page) else theme.RAIL_WIDTH
+    return rail + (theme.DRAWER_WIDTH if drawer_open and not drawer_docked(page) else 0.0)
+
+
 def content_width(store: Any, page: Any, level: int = 0) -> float:
     """The width of the content column: the window less the rail, the explain drawer when open and the page margins,
     capped at the reading width. Every layout decision that depends on the room available reads this one number."""
-    drawer = theme.DRAWER_WIDTH if store.learner.explain_is_open(level) else 0.0
-    # the room there is, however little: a floor above it would size drawings wider than the column that holds them
-    return min(
-        max((page.width or 1200.0) - theme.RAIL_WIDTH - drawer - 2 * theme.PAGE_PADDING, CONTENT_MIN_WIDTH),
-        theme.CONTENT_MAX_WIDTH,
+    room = (
+        (page.width or 1200.0)
+        - _beside_content(page, store.learner.explain_is_open(level))
+        - 2 * page_padding(page)
     )
+    # the room there is, however little: a floor above it would size drawings wider than the column that holds them
+    return min(max(room, CONTENT_MIN_WIDTH), theme.CONTENT_MAX_WIDTH)
 
 
 def content_widths(store: Any, page: Any, level: int = 0) -> tuple[float, float]:
@@ -401,13 +427,8 @@ def columns(
 
 def content_margin(page: Any, drawer_open: bool) -> float:
     """The side margin that centres the content column once the window is wider than the reading width."""
-    avail = (
-        (page.width or 1200.0)
-        - theme.RAIL_WIDTH
-        - (theme.DRAWER_WIDTH if drawer_open else 0.0)
-        - 2 * theme.PAGE_PADDING
-    )
-    return max(0.0, (avail - theme.CONTENT_MAX_WIDTH) / 2.0)
+    room = (page.width or 1200.0) - _beside_content(page, drawer_open) - 2 * page_padding(page)
+    return max(0.0, (room - theme.CONTENT_MAX_WIDTH) / 2.0)
 
 
 def level_header(title: str, question: str, *, note: str = "") -> ft.Control:
@@ -901,9 +922,12 @@ def ExplainDrawer(
     index: ProvenanceIndex,
     section_number: str,
     concepts: tuple[str, ...],
+    *,
+    docked: bool,
 ) -> ft.Control:
     """The explain drawer: the concepts as a row of chips, the selected one open at the learner's depth with its chips and
-    its retrieval prompt, and the Specification tile with the governing text (or the section a chip asked for)."""
+    its retrieval prompt, and the Specification tile with the governing text (or the section a chip asked for). Beside
+    the content it has its own width; ``docked`` under the content on a compact window, it takes the window's."""
     ft.use_state(store)
     spec_open, set_spec_open = ft.use_state(store.spec_section is not None)
     depth = store.learner.depth(level)
@@ -964,10 +988,12 @@ def ExplainDrawer(
     )
     return ft.Container(
         content=ft.Column(body, spacing=12, scroll=ft.ScrollMode.AUTO, expand=True),
-        width=theme.DRAWER_WIDTH,
+        width=None if docked else theme.DRAWER_WIDTH,
         padding=ft.Padding.symmetric(horizontal=16, vertical=12),
         bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-        border=ft.Border.only(left=ft.BorderSide(1, HAIRLINE)),
+        border=ft.Border.only(top=ft.BorderSide(1, HAIRLINE))
+        if docked
+        else ft.Border.only(left=ft.BorderSide(1, HAIRLINE)),
     )
 
 

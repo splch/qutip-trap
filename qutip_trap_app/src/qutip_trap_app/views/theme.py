@@ -18,6 +18,14 @@ GAP = 8
 """The unit of the 8 pt grid; every spacing is a multiple of it or its 4 px half-step."""
 
 PAGE_PADDING = 24
+PAGE_PADDING_COMPACT = 16
+"""Material's margin on a compact window, where 24 px a side would take a seventh of a phone's width."""
+COMPACT_MAX_WIDTH = 600
+"""Material's compact window class ends here: a narrower window puts the levels in a bar along the bottom (DESIGN.md
+Section 4)."""
+CONTENT_BESIDE_DRAWER_MIN_WIDTH = 480
+"""The narrowest content column the explain drawer opens beside; a window that cannot keep it docks the drawer under the
+content instead, as a compact one always does."""
 CARD_PADDING = 16
 RADIUS_CARD = 12
 RADIUS_TILE = 8
