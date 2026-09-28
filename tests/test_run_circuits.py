@@ -300,6 +300,25 @@ def test_branch_enumeration_weights_and_cutoff() -> None:
     assert len(only) == 1 and only[0].weight == 1.0 and none == 0.0
 
 
+def test_four_doppler_hot_modes_enumerate_only_the_branches_above_the_cut() -> None:
+    """Four modes at nbar = 9 (about the Doppler occupations, 8.9 to 12.2, of the radial modes of ``presets.ca40_optical(2)``)
+    keep, at the default cut, the C(47, 4) = 178 365 Fock tuples of total occupation at most 43 (0.9^43 x 10^-4 >= 10^-6 >
+    0.9^44 x 10^-4) and drop the negative-binomial tail above them, while the internal levels one pump error away (10^-5)
+    keep none: no mode product reaches 10^-1. The walk over the full product visited 110^4 = 1.5 x 10^8 leaves for each of
+    the three choices of levels, over six minutes at the 0.9 us a leaf it took."""
+    pumped = [1.0 - 1e-5, 1e-5]
+    branches, dropped = enumerate_branches([pumped, pumped], {2: 9.0, 3: 9.0, 4: 9.0, 5: 9.0}, 1e-6)
+    assert len(branches) == math.comb(47, 4) == 178_365
+    assert all(b.levels == (0, 0) for b in branches)
+    assert max(sum(b.fock.values()) for b in branches) == 43
+    assert branches[0].fock == {2: 0, 3: 0, 4: 0, 5: 0} and branches[0].weight == pytest.approx(
+        (1.0 - 1e-5) ** 2 * 1e-4
+    )
+    kept = sum(math.comb(s + 3, 3) * 0.1**4 * 0.9**s for s in range(44))
+    assert dropped == pytest.approx(1.0 - (1.0 - 1e-5) ** 2 * kept, abs=1e-9)
+    assert 0.29 < dropped < 0.30
+
+
 def test_beat_phase_reset_offsets_the_legs_oppositely_and_keeps_the_spin_phase() -> None:
     """Programming each gate's tones from its own start shifts the red and blue legs by opposite phases 2 pi mu t_g and
     leaves their half-sum, the spin phase, unchanged (to 1e-9); phase-continuous hardware leaves the legs alone, and a

@@ -11,7 +11,6 @@ Every experiment takes the keywords of ``_LabOptions`` beside its own, and an un
 
 from __future__ import annotations
 
-import itertools
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -19,6 +18,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, Unpack
 
 import numpy as np
 
+from qutip_trap.dynamics.mixture import heavy_combinations
 from qutip_trap.experiments.fitting import (
     Observation,
     fit_lineshape,
@@ -269,18 +269,27 @@ class _ModeStates(NamedTuple):
     """(n, P_n) of every state at or above the branch cut."""
 
 
+class _FockBranch(NamedTuple):
+    """One branch of the thermal initial mixture over the coupled modes."""
+
+    weight: float
+    resolved: dict[int, int]
+    """Resolved mode -> the Fock state the branch starts it in."""
+    frozen: dict[int, int]
+    """Frozen spectator -> the Fock state whose Debye-Waller factor the branch's drive carries."""
+
+
 def _branches(
     space: HilbertSpace,
     nbar: Mapping[int, float],
     etas: Mapping[int, float],
     weight_min: float,
     fock_resolved: bool,
-) -> tuple[list[tuple[float, dict[int, int], dict[int, int]]], float]:
-    """(weight, resolved Fock states, frozen Fock states) of the thermal initial mixture over the coupled modes: the frozen
-    ones always (Wineland's shot-to-shot Debye-Waller statistics as a weighted sum, Section 5.2), the resolved ones when
-    ``fock_resolved`` (the Fock sum of Section 5.3); returned with the weight dropped below ``weight_min``. A mode with no
-    Fock state at ``weight_min``, or modes with no product of states at it, are refused (``RunError``), as ``run`` refuses
-    its own initial mixture."""
+) -> tuple[list[_FockBranch], float]:
+    """The branches of the thermal initial mixture over the coupled modes: the frozen ones always (Wineland's shot-to-shot
+    Debye-Waller statistics as a weighted sum, Section 5.2), the resolved ones when ``fock_resolved`` (the Fock sum of
+    Section 5.3); returned with the weight dropped below ``weight_min``. A mode with no Fock state at ``weight_min``, or
+    modes with no product of states at it, are refused (``RunError``), as ``run`` refuses its own initial mixture."""
     from qutip_trap.dynamics.operators import thermal_populations
     from qutip_trap.run.job import RunError
 
@@ -305,15 +314,13 @@ def _branches(
             )
         options.append(_ModeStates(m, resolved_flag, opts))
     if not options:
-        return [(1.0, {}, {})], 0.0
-    out: list[tuple[float, dict[int, int], dict[int, int]]] = []
-    for choice in itertools.product(*[o.states for o in options]):
-        w = float(np.prod([p for _n, p in choice]))
-        if w < weight_min:
-            continue
+        return [_FockBranch(1.0, {}, {})], 0.0
+    out: list[_FockBranch] = []
+    for combo in heavy_combinations([[p for _n, p in o.states] for o in options], weight_min):
+        choice = [o.states[c] for o, c in zip(options, combo.choice)]
         res = {o.mode: n for o, (n, _p) in zip(options, choice) if o.resolved}
         fro = {o.mode: n for o, (n, _p) in zip(options, choice) if not o.resolved}
-        out.append((w, res, fro))
+        out.append(_FockBranch(combo.weight, res, fro))
     if not out:
         best = float(np.prod([max(p for _n, p in o.states) for o in options]))
         raise RunError(
@@ -321,8 +328,8 @@ def _branches(
             f"{[o.mode for o in options]}: the most likely branch has weight {best:.3e}, and the Fock sum of Section 5.3 "
             "needs at least one; cool the modes"
         )
-    total = sum(w for w, _r, _f in out)
-    return [(w / total, r, f) for w, r, f in out], float(max(1.0 - total, 0.0))
+    total = sum(b.weight for b in out)
+    return [_FockBranch(b.weight / total, b.resolved, b.frozen) for b in out], float(max(1.0 - total, 0.0))
 
 
 def _run(
@@ -366,11 +373,11 @@ def _run(
     )
     times: np.ndarray | None = None
     acc: dict[str, np.ndarray] = {}
-    for weight, res_fock, frozen_fock in branches:
-        thermal = {m: v for m, v in lab.nbar.items() if m not in res_fock}
-        state = setup.space.initial_state([0] * n, fock=res_fock, thermal=thermal)
+    for branch in branches:
+        thermal = {m: v for m, v in lab.nbar.items() if m not in branch.resolved}
+        state = setup.space.initial_state([0] * n, fock=branch.resolved, thermal=thermal)
         values = dict(base_sample.values)
-        values.update({key_frozen_n(m): float(k) for m, k in frozen_fock.items()})
+        values.update({key_frozen_n(m): float(k) for m, k in branch.frozen.items()})
         sample = NoiseSample(
             sample_id=base_sample.sample_id,
             values=values,
@@ -383,12 +390,12 @@ def _run(
         for key, arr in tr.expectations.items():
             vals = np.asarray(arr)
             if key not in acc:
-                acc[key] = weight * vals
+                acc[key] = branch.weight * vals
             elif acc[key].shape == vals.shape:
-                acc[key] = acc[key] + weight * vals
+                acc[key] = acc[key] + branch.weight * vals
             else:
                 # differing time grids (a boundary retry): interpolate onto the first grid
-                acc[key] = acc[key] + weight * np.interp(times, np.asarray(tr.times_s), np.real(vals))
+                acc[key] = acc[key] + branch.weight * np.interp(times, np.asarray(tr.times_s), np.real(vals))
     assert times is not None
     return _Averaged(times, acc, dropped)
 

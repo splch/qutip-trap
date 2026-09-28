@@ -23,6 +23,7 @@ import qutip as qt
 from qutip_trap.control.compiler import CompileReport
 from qutip_trap.control.schedule import GateDrive, Schedule
 from qutip_trap.dynamics.engine import SeedSpec, State, Traces
+from qutip_trap.dynamics.mixture import heavy_combinations
 from qutip_trap.dynamics.operators import thermal_populations
 from qutip_trap.dynamics.space import HilbertSpace
 from qutip_trap.noise.scattering import InternalLevels, internal_levels, scattering_estimates
@@ -166,22 +167,15 @@ def enumerate_branches(
             what=f"thermal state of mode {m} (nbar = {nb:.3g})",
         )
     modes = sorted(mode_options)
+    mode_probabilities = [[p for _k, p in mode_options[m]] for m in modes]
     branches: list[Branch] = []
-    for ion_choice in itertools.product(*ion_options):
-        w_int = float(np.prod([p for _k, p in ion_choice])) if ion_choice else 1.0
-        if w_int < weight_min:
-            continue
-        for mode_choice in itertools.product(*[mode_options[m] for m in modes]):
-            w = w_int * float(np.prod([p for _k, p in mode_choice])) if mode_choice else w_int
-            if w < weight_min:
-                continue
-            branches.append(
-                Branch(
-                    w,
-                    tuple(k for k, _p in ion_choice),
-                    {m: k for m, (k, _p) in zip(modes, mode_choice)},
-                )
-            )
+    # the modes' products are enumerated under every kept choice of internal levels and weighed by it
+    for ions in heavy_combinations([[p for _k, p in o] for o in ion_options], weight_min):
+        ion_choice = [o[c] for o, c in zip(ion_options, ions.choice)]
+        levels = tuple(k for k, _p in ion_choice)
+        for motion in heavy_combinations(mode_probabilities, weight_min, scale=ions.weight):
+            mode_choice = [mode_options[m][c] for m, c in zip(modes, motion.choice)]
+            branches.append(Branch(motion.weight, levels, {m: k for m, (k, _p) in zip(modes, mode_choice)}))
     branches.sort(key=lambda b: -b.weight)
     if not branches:
         # every factor kept a state but no PRODUCT of them reaches the cutoff

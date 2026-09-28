@@ -40,6 +40,7 @@ from qutip_trap.dynamics.engine import (
     _lindblad_method,
 )
 from qutip_trap.dynamics.evolve import tightened
+from qutip_trap.dynamics.mixture import heavy_combinations
 from qutip_trap.dynamics.operators import _thermal_levels, thermal_populations
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
 from qutip_trap.dynamics.space import HilbertSpace
@@ -394,14 +395,15 @@ def motional_branches(
     branches: list[MotionalBranch] = []
     total = 0.0
     n_resolved = len(resolved_options)
-    for combo in itertools.product(*[o for _m, o in resolved_options], *[o for _m, o in frozen_options]):
-        weight = float(np.prod([p for p, _s in combo])) if combo else 1.0
-        if weight < weight_min:
-            continue
-        kets = {m: ket for (m, _o), (_p, ket) in zip(resolved_options, combo[:n_resolved])}
-        frozen_n = {m: n for (m, _o), (_p, n) in zip(frozen_options, combo[n_resolved:])}
-        branches.append(MotionalBranch(weight, kets, frozen_n))
-        total += weight
+    factors = [[p for p, _ket in o] for _m, o in resolved_options]
+    factors += [[p for p, _n in o] for _m, o in frozen_options]
+    for combo in heavy_combinations(factors, weight_min):
+        resolved_choice = [o[c] for (_m, o), c in zip(resolved_options, combo.choice[:n_resolved])]
+        frozen_choice = [o[c] for (_m, o), c in zip(frozen_options, combo.choice[n_resolved:])]
+        kets = {m: ket for (m, _o), (_p, ket) in zip(resolved_options, resolved_choice)}
+        frozen_n = {m: n for (m, _o), (_p, n) in zip(frozen_options, frozen_choice)}
+        branches.append(MotionalBranch(combo.weight, kets, frozen_n))
+        total += combo.weight
     if not branches:
         raise ValueError("no motional branch survives the weight threshold")
     branches.sort(key=lambda b: -b.weight)

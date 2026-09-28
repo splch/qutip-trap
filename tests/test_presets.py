@@ -23,7 +23,7 @@ from qutip_trap.light.roles import gate_beams
 from qutip_trap.machine import Machine
 from qutip_trap.options import Numerics
 from qutip_trap.prep.recipe import recipe_of, run_preparation, standard_recipe
-from qutip_trap.run.job import register_fidelity
+from qutip_trap.run.job import last_record, register_fidelity
 from qutip_trap.species import species
 from tests.fixtures import derived_seeds
 
@@ -125,6 +125,48 @@ def test_run_completes_one_gpi2_on_the_optical_qubit() -> None:
     assert result.spam["q0.state_preparation"][0] < 1e-4
     assert abs(result.probabilities.get("0", 0.0) - 0.5) < 5.0 * result.error_bars["0"]
     assert set(result.probabilities) <= {"0", "1"}
+
+
+@pytest.mark.slow
+def test_run_completes_a_single_qubit_circuit_on_two_ions_with_four_doppler_hot_frozen_modes() -> None:
+    """X on the first of two 40Ca+ ions runs end to end: the recipe leaves the four radial modes at their Doppler occupations
+    (nbar 8.9 to 12.2), frozen, and the Fock sum over them at 1e-5 evolves the 8 903 tuples above the cut, every branch on
+    the register alone, and reports the 86 % of the mixture it dropped; the ion reads as flipped. Before the enumeration
+    pruned its prefixes it walked all 9.5 x 10^7 products of the four modes' options per choice of levels at this cut, and
+    2.3 x 10^8 at the default one, where the run did not finish in ten minutes."""
+    preset = ca40_optical(2)
+    result = (
+        Machine(preset.device, numerics=Numerics(branch_weight_min=1e-5))
+        .calibrated(pairs=[], detection_records=600, detection_windows_s=CA40_WINDOWS)
+        .run(Circuit(1).x(0), 200)
+    )
+    diagnostics = result.diagnostics
+    record = last_record(result)
+    assert diagnostics.level == "JOINT_EXACT" and diagnostics.space.dims == [2, 2]
+    assert diagnostics.mode_class == {
+        0: "dropped",
+        1: "dropped",
+        2: "frozen",
+        3: "frozen",
+        4: "frozen",
+        5: "frozen",
+    }
+    assert diagnostics.branches == len(record.branches) == 8903
+    assert all(
+        b.weight >= 1e-5 and b.levels == (0, 0) and set(b.fock) == {2, 3, 4, 5} for b in record.branches
+    )
+    assert diagnostics.dropped_branch_weight == pytest.approx(
+        1.0 - sum(b.weight for b in record.branches), abs=1e-12
+    )
+    assert 0.85 < diagnostics.dropped_branch_weight < 0.87
+    assert any(
+        a.startswith(
+            "initial-mixture branches below branch_weight_min = 1e-05 dropped: total weight "
+            f"{diagnostics.dropped_branch_weight:.3e}"
+        )
+        for a in diagnostics.approximations
+    )
+    assert set(result.probabilities) <= {"0", "1"} and result.probabilities.get("1", 0.0) > 0.95
 
 
 def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() -> None:
