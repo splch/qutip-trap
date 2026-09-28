@@ -686,7 +686,6 @@ def line_chart(
     chart: ft.Control = fc.LineChart(
         data_series=data,
         height=height,
-        expand=True,
         left_axis=fc.ChartAxis(
             title=_axis_title(("log10 " if log_y else "") + y_title + scale_note), label_size=48
         ),
@@ -725,6 +724,12 @@ class Bar:
     tooltip: str
     outlined: bool = False
     color: ft.ColorValue = ft.Colors.PRIMARY
+
+
+# The charts never set ``expand``: Flet wraps a control whose ``expand`` is set (False included) in a Flutter ``Expanded``
+# when its parent is a Row or Column, which a wrapping Row (a ``Wrap``) cannot hold (a release build draws the grey error
+# box) and a Column in a scroll view has no height to share out; a chart sizes itself to its box, so a chart without a width
+# fills the width of its column at its ``height``.
 
 
 def bar_chart(
@@ -800,13 +805,10 @@ def bar_chart(
         min_y=0.0,
         height=height,
         width=width,
-        expand=width is None,
         interactive=interactive,
         on_event=on_event if on_tap is not None else None,
     )
-    # a chart of fixed width placed straight into a wrapping Row (a Flutter Wrap, which leaves the height unbounded) fails to
-    # lay out and renders as the grey error box; a container of the chart's own size gives it tight constraints anywhere
-    return chart if width is None else ft.Container(content=chart, width=width, height=height)
+    return chart
 
 
 def two_histograms(bright: np.ndarray, dark: np.ndarray, threshold: float | None) -> ft.Control:
