@@ -30,9 +30,20 @@ HAIRLINE = ft.Colors.OUTLINE_VARIANT
 _SI = (("G", 1e9), ("M", 1e6), ("k", 1e3), ("", 1.0), ("m", 1e-3), ("µ", 1e-6), ("n", 1e-9), ("p", 1e-12))
 
 
+_SUPERSCRIPT = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+def fmt_scientific(value: float) -> str:
+    """``4.972 × 10⁻⁴``: four significant digits with the trailing zeros dropped, the exponent a superscript."""
+    mantissa, exponent = f"{value:.3e}".split("e")
+    if "." in mantissa:
+        mantissa = mantissa.rstrip("0").rstrip(".")
+    return f"{mantissa} × 10{str(int(exponent)).translate(_SUPERSCRIPT)}"
+
+
 def fmt_number(value: float, unit: str = "") -> str:
-    """A number to four significant digits, with an SI prefix for Hz, s, m and W; scientific notation for small
-    dimensionless numbers."""
+    """A number to four significant digits, with an SI prefix for Hz, s, m and W; below 10⁻³ or from 10⁶ on, a unit
+    without a prefix is written in scientific notation (``fmt_scientific``)."""
     if isinstance(value, bool):
         return str(value)
     if not math.isfinite(value):
@@ -42,11 +53,8 @@ def fmt_number(value: float, unit: str = "") -> str:
     if unit in ("Hz", "s", "m", "W"):
         prefix, scale = next(((p, sc) for p, sc in _SI if abs(value) >= sc), ("", 1.0))
         return f"{value / scale:.4g} {prefix}{unit}"
-    if unit in ("1/s", "quanta/s"):
-        return f"{value:.4g} {unit}"
-    if abs(value) < 1e-3 or abs(value) >= 1e6:
-        return f"{value:.3e} {unit}".strip()
-    return f"{value:.4g} {unit}".strip()
+    text = fmt_scientific(value) if abs(value) < 1e-3 or abs(value) >= 1e6 else f"{value:.4g}"
+    return f"{text} {unit}".strip()
 
 
 def fmt_shown(s: Shown) -> str:
