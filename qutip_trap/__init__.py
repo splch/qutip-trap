@@ -9,6 +9,14 @@
 Every other name is imported from the module that defines it.
 """
 
+import warnings
+
+with warnings.catch_warnings():
+    # QuTiP warns on import when matplotlib is absent ("Graphics will not work"); nothing here draws through QuTiP, so the
+    # warning would only mislead. The filter is scoped to this first import and leaves the caller's filters untouched.
+    warnings.filterwarnings("ignore", message="matplotlib not found", category=UserWarning)
+    import qutip  # noqa: F401
+
 from qutip_trap import presets
 from qutip_trap.control.compiler import Circuit
 from qutip_trap.machine import Machine
