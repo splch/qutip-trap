@@ -272,7 +272,8 @@ class Machine:
 
     def estimate(self, circuit: Circuit, *, seed: int = 0) -> Estimate:
         """What a run would cost before anything is integrated: the schedule, the space Section 5.2 declares for it, the level
-        the guards resolve to (and why), and the Section 11.2 wall-time guess."""
+        the guards resolve to (and why), and the Section 11.2 wall-time guess. A machine without a table calibrates first
+        (the cached surrogate, seconds, once per device and shared with ``run``); the guess leaves that out."""
         from qutip_trap.prep.recipe import recipe_of, run_preparation
         from qutip_trap.run.job import raman_pair_hint
         from qutip_trap.run.pipeline import compile_calibrate_schedule

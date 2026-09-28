@@ -20,7 +20,7 @@ reports.
   - `submit(circuit, shots, *, seed=0, keep_final_state=False, label="")`: the same run in a worker process, a `Job`; `spec(...)`: its `RunSpec`.
   - `compile(circuit)`: the `CompileReport`; `schedule(circuit, *, seed=0)`: the `Schedule`, nothing integrated.
   - `calibrated(method="closed_form", *, seed=0, **scans)`: this machine with the table of `calibrate` pinned.
-  - `estimate(circuit, *, seed=0)`: the `Estimate` of a run before anything is integrated.
+  - `estimate(circuit, *, seed=0)`: the `Estimate` of a run before anything is integrated. A machine without a table calibrates first (once per device, cached and shared with `run`), and `wall_time_s` leaves that out.
   - `engine`: the `JointExactEngine` configured from the machine's physics and table.
   - `error_model(*, qubits=None)`: the `ErrorModel`; `specs()`: a text report; `hash()`: the identity a record stores.
 - `Estimate`: the level and why, the declared space and every mode's class, the dimension and drive non-zeros, the pulse counts, the schedule's length and a wall-time guess.
