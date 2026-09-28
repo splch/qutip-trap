@@ -27,7 +27,7 @@ reports.
 
 **`qutip_trap.run.spec`**
 - `RunSpec`: a run request as a frozen record a JSON document can carry (`of`, `to_dict`, `from_dict`).
-- `Job`: a run in a worker process: `status()`, `progress`, `result(timeout_s=None)`, `record()`, `cancel(terminate_after_s=None)`.
+- `Job`: a run in a worker process: `status()`, `progress`, `result(timeout_s=None)`, `record()`, `cancel(*, terminate_after_s=None)`.
 - `JobStatus`: queued, running, done, failed or cancelled; `JobCancelled` and `JobError` are what `Job.result()` raises.
 
 **`qutip_trap.run.results`**: `Progress`, one step of a run handed to the `progress` callback (`stage`, `done`, `total`, `elapsed_s`, `fraction`), which prints as one log line (`progress=print`).
@@ -50,7 +50,7 @@ reports.
 - `Operation(name, qubits, params)`: one operation, parameters in radians.
 - `NATIVE_GATES`, `STANDARD_GATES`, `NON_UNITARY`, `EXPORTED_NATIVE`: the gate sets with their arities.
 - `compile_report(circuit, *, entangler="ms")`: a `CompileReport` (the native circuit, the pulse and entangling counts, every block and the whole circuit verified); `compile_to_native(circuit)`; `CompileError`.
-- `ideal_probabilities(circuit)`, `circuit_unitary(circuit)`, `gate_matrix(op)`: what the circuit should compute.
+- `ideal_probabilities(circuit)`, `circuit_unitary(circuit, ops=None)`, `gate_matrix(op)`: what the circuit should compute.
 
 **`qutip_trap.control.two_qubit`**: `kak_decomposition(u)` (a `KAK`), `decompose_two_qubit_unitary(u, pair)`, `haar_random_unitary(rng, dim)`.
 
@@ -65,7 +65,7 @@ reports.
 ## Devices and presets
 
 **`qutip_trap.device.model`**
-- `Device(crystal, trap, field, beams, noise, detector, hardware, preparation, gradient, roles)`: the apparatus: `derived()`, `specs()`, `to_dict()`, `from_dict(data)`, `hash()`.
+- `Device(crystal, trap, field, beams, noise, detector, hardware, preparation=None, gradient=None, roles=BeamRoles())`: the apparatus, every part type-checked on construction: `derived()`, `specs()`, `to_dict()`, `from_dict(data)`, `hash()`.
 - `DerivedQuantities`: every derived number (`values`) with the ledger id of its provenance (`provenance`) and `notes`.
 - `Field`: the static magnetic field, the quantization axis; `GradientField`: a near-field microwave gradient.
 - `BeamRoles`: which beams play the single-qubit, entangling and detection parts; `resolve(device)` gives `ResolvedRoles`.
@@ -107,7 +107,7 @@ reports.
 
 ## The laboratory
 
-**`qutip_trap.experiments`**: every experiment takes the machine first and returns an `ExperimentResult` (`experiments.result`): `value(key)`, `uncertainty(key)`, `converged`, `chi2`, `quality`, the scan `requested` and `realized` (`ScanParameters`), the `subject`, and `table_updates` for `CalibrationTable.updated_with`. Beside its own parameters each takes `table`, `options`, `builder_options`, `sample`, `shots`, `readout`, `seed`, `stream`, `nbar` and `qubit_shifts_hz`.
+**`qutip_trap.experiments`**: every experiment takes the machine first and returns an `ExperimentResult` (`experiments.result`): `value(key)`, `uncertainty(key)`, `converged`, `chi2`, `quality`, the scan `requested` and `realized` (`ScanParameters`), the `subject`, and `table_updates` for `CalibrationTable.updated_with`. Beside its own parameters each takes `table`, `options`, `builder_options`, `sample`, `shots`, `readout`, `seed`, `stream`, `nbar` and `qubit_shifts_hz`, except `readout.detection_histogram`, which takes `windows_s`, `seed`, `t0_s` and `sample_id`; an ion the crystal does not have is refused by name.
 - `single_ion`: `rabi_scan` (a `RabiScan`), `ramsey` and `ramsey_frequency` (`RamseyFringe`), `sideband_spectroscopy` (`SidebandSpectrum`).
 - `motion`: `thermometry` (`ThermometryResult`), `mode_spectroscopy` (`SidebandSpectrum`), `heating_rate` (`HeatingRateFit`).
 - `entangling`: `ms_scan`, `ms_phase_scan`, `parity_scan`; `readout`: `detection_histogram`; `imaging`: `crystal_image`.
@@ -163,7 +163,7 @@ reports.
 **`qutip_trap.noise.scattering`**: `scattering_channels`, `scattering_estimates`, `InternalLevels`, `internal_levels`.
 
 **`qutip_trap.run`**
-- `job`: `prepare(device, space, table, ...)`, the initial state of a run; `space`: `select_space`, the Section 5.2 mode classes as a `SpaceSelection`, and `mode_cap` (a `ModeCap`), the per-mode truncation the run and the spot check share.
+- `job`: `prepare(device, space, *, preparation=None, levels=None)`, the initial state of a run; `space`: `select_space`, the Section 5.2 mode classes as a `SpaceSelection`, and `mode_cap` (a `ModeCap`), the per-mode truncation the run and the spot check share.
 - `gate_local`: `gate_steps`, `GateStep`, `GateLocalReport`, `GateLocalStep`, the walk of Section 5.4.
 
 ## Results and records
@@ -174,7 +174,7 @@ reports.
   - `to_ionq_v1_probabilities`, `to_ionq_v1_histogram`, `to_ionq_v1_shots`, `from_ionq_v1_shots`: IonQ's v1 formats, decimal keys.
   - `to_ionq_v2_probabilities`, `to_ionq_v2_histogram`, `to_ionq_v2_shots`: IonQ's v0.4 envelope, bitstrings in its wire order, q[0] first.
   - `reversed_bits()`: every key reversed, for the SDKs that write qubit 0's bit first; `sample_of_shot`: each kept shot's dynamical sample, None for imported shots or a record without per-shot arrays.
-  - `to_dict(per_shot=False)` and `from_dict(d)`: the versioned record (schema version 4; `per_shot` carries `sample_of_shot`).
+  - `to_dict(*, per_shot=False)` and `from_dict(d)`: the versioned record (schema version 4; `per_shot` carries `sample_of_shot`).
 - `Diagnostics`: what the run did and approximated: the level and why, the space and mode classes, the boundary populations and margins, the integrator and tolerances, samples, trajectories and branches, the seeds, the approximations and the intrinsic error budget, an `IntrinsicBudget`: per-gate typed records (`EntanglingScales`, `CarrierScales`, `ScatteringScales`) whose `total` sums the counted terms, `by_gate()`, and `omitted`, what the total leaves out.
 - `RunState`: the machine state a run threads through its shots (ion order, dark and lost ions, events).
 - `bitstring_key`, `decimal_key`, `aggregate`: the key conventions.

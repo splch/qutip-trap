@@ -24,17 +24,17 @@ runs from a checkout: `uv sync --all-packages --extra gui`, then `uv run qutip-t
 ```python
 import qutip_trap as trap
 
-machine = trap.presets.yb171_chain(2)        # a two-ion 171Yb+ chain with 355 nm Raman gates
-bell = trap.Circuit(2).h(0).cnot(0, 1)       # every qubit is measured unless .measured(...) narrows it
-print(bell)                                  # the circuit as a text diagram
-result = machine.run(bell, shots=2000)       # compile, calibrate, schedule, prepare, evolve, read out
+machine = trap.presets.yb171_chain(2)                # a two-ion 171Yb+ chain with 355 nm Raman gates
+bell = trap.Circuit(2).h(0).cnot(0, 1)               # every qubit is measured unless .measured(...) narrows it
+print(bell)                                          # the circuit as a text diagram
+result = machine.run(bell, shots=2000)               # compile, calibrate, schedule, prepare, evolve, read out
 
-print(result.counts)                         # about 1000 each of '00' and '11', a few of '01' and '10'
-print(result.summary())                      # the outcomes beside the ideal, the level, the modes, the budget, SPAM
-print(result.diagnostics.approximations)     # what the run approximated, in words
+print(result.counts)                                 # about 1000 each of '00' and '11', a few of '01' and '10'
+print(result.summary())                              # the outcomes beside the ideal, the level, the budget, SPAM
+print(*result.diagnostics.approximations, sep="\n")  # what the run approximated, one per line
 ```
 
-A two-ion Bell circuit takes a few seconds on a laptop, calibration included. A `Machine` is a frozen record of a `Device`, its calibration table, the option objects `Physics`, `Numerics` and `Readout`, and a `FidelityLevel`; variants come from `dataclasses.replace(machine, physics=trap.Physics(noise=False))`. Small crystals run `JOINT_EXACT` on the full joint space, and larger ones switch to `GATE_LOCAL`, where each gate is exact on the ions it addresses and the modes they couple to. `machine.estimate(circuit)` says which level a run would take, on which space and for roughly how long, before anything is integrated.
+A two-ion Bell circuit takes a few seconds on a laptop, calibration included. A `Machine` is a frozen record of a `Device`, its calibration table, the option objects `Physics`, `Numerics` and `Readout`, and a `FidelityLevel`; variants come from `dataclasses.replace(machine, physics=trap.Physics(noise=False))`. Small crystals run `JOINT_EXACT` on the joint space of every ion and the modes the gates drive (the others frozen or dropped, and said so), and larger ones switch to `GATE_LOCAL`, where each gate is exact on the ions it addresses and the modes they couple to. `machine.estimate(circuit)` says which level a run would take, on which space and for roughly how long, before anything is integrated.
 
 ### From Qiskit
 
@@ -51,7 +51,7 @@ Circuits also load from OpenQASM 2 and IonQ JSON (`trap.Circuit.from_openqasm`, 
 
 ## What is in the box
 
-- **The machine and the levels below it.** `Machine.run` takes a circuit to counts; `Machine.compile`, `Machine.schedule`, `Machine.engine` and `Machine.device` open the verified compiler, the pulse schedule with its calibration table, the Hamiltonian builder with the JOINT_EXACT engine, and the physical records (species, trap and crystal, beams, noise, detector, preparation), each importable on its own.
+- **The machine and the levels below it.** `Machine.run` takes a circuit to counts; `Machine.compile`, `Machine.schedule`, `Machine.engine` and `Machine.device` open the verified compiler, the pulse schedule played from the calibration table, the Hamiltonian builder with the JOINT_EXACT engine, and the physical records (species, trap and crystal, beams, noise, detector, preparation), each importable on its own.
 - **The laboratory.** `qutip_trap.experiments` runs Rabi, Ramsey, sideband, thermometry, heating-rate, Stark, crosstalk, field, micromotion, detection, MS and parity scans on the machine through the same engine; `qutip_trap.calibration` fits them into a table or builds the closed-form surrogate; `qutip_trap.benchmarks` runs randomized benchmarking, GHZ fidelity and quantum volume with the simulator's own error budget beside each number.
 - **The error model.** `machine.error_model()` derives per-gate infidelities, durations and SPAM errors from the simulation and exports them in IonQ's, Quantinuum's and the QDK estimator's vocabularies.
 - **Devices.** Two example machines, `yb171_chain` (hyperfine qubit, Raman gates) and `ca40_optical` (optical qubit on the 729 nm line), with atomic data for 171Yb+, 40Ca+, 43Ca+, 137Ba+, 9Be+ and 88Sr+. The example numbers are a realizable laboratory configuration, not a published apparatus.

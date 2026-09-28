@@ -13,6 +13,7 @@ from qutip_trap.provenance import load_ledger, repository_root
 ROOT = repository_root()
 PAGES = (*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md")
 EXAMPLES = ROOT / "docs" / "examples.md"
+README = ROOT / "README.md"
 
 
 def _python_blocks(path: Path) -> list[str]:
@@ -31,10 +32,11 @@ def test_every_ledger_id_cited_in_the_documentation_resolves() -> None:
 
 
 def test_examples_compile() -> None:
-    blocks = _python_blocks(EXAMPLES)
-    assert blocks
-    for block in blocks:
-        compile(block, "examples.md", "exec")
+    for page in (EXAMPLES, README):
+        blocks = _python_blocks(page)
+        assert blocks, page.name
+        for block in blocks:
+            compile(block, page.name, "exec")
 
 
 @pytest.mark.slow
@@ -42,6 +44,14 @@ def test_examples_execute_in_order() -> None:
     namespace: dict[str, object] = {}
     for k, block in enumerate(_python_blocks(EXAMPLES)):
         exec(compile(block, f"examples.md[{k}]", "exec"), namespace)  # noqa: S102  (the documented examples)
+
+
+@pytest.mark.slow
+def test_the_readme_blocks_execute() -> None:
+    """The quickstart and the Qiskit door run as the README prints them, each in a fresh namespace."""
+    pytest.importorskip("qiskit")
+    for k, block in enumerate(_python_blocks(README)):
+        exec(compile(block, f"README.md[{k}]", "exec"), {})  # noqa: S102  (the documented examples)
 
 
 BIT_ORDER_CONTRADICTIONS = tuple(
