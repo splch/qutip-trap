@@ -93,14 +93,16 @@ def _lanes(record: Record, selected: int, on_select: Any, width: float) -> ft.Co
 
 def _spectrum_strip(pv: PulseView, width: float) -> ft.Control:
     """Mode frequencies as ticks and the pulse's tone detunings (their absolute values) drawn against them: the focal
-    picture."""
+    picture. The blue-side tones sit on the top row and the red-side ones under them, so the mirror pair of a
+    bichromatic pulse, at the same distance from the carrier, reads as two dots rather than one."""
     modes = [(float(m.value or 0.0), m.detail or "") for m in pv.mode_spectrum]
     tones = [abs(float(t.detuning.value or 0.0)) for t in pv.tones]
     values = [f for f, _ in modes] + tones
     lo, hi = min(values) * 0.97, max(values) * 1.03 + 1.0
     scale = width / (hi - lo)
+    tick_top, tick_height = 34, 28
     controls: list[ft.Control] = [
-        ft.Container(left=0, top=44, width=width, height=1, bgcolor=ft.Colors.OUTLINE)
+        ft.Container(left=0, top=tick_top + tick_height - 2, width=width, height=1, bgcolor=ft.Colors.OUTLINE)
     ]
     label_right = -1e9
     for f, label in sorted(modes):
@@ -108,39 +110,42 @@ def _spectrum_strip(pv: PulseView, width: float) -> ft.Control:
         controls.append(
             ft.Container(
                 left=x - 1,
-                top=16,
+                top=tick_top,
                 width=2,
-                height=30,
+                height=tick_height,
                 bgcolor=ft.Colors.ON_SURFACE,
                 tooltip=f"{label}: {f / 1e6:.4f} MHz",
             )
         )
-        # one label per 46 px: close-lying modes keep their ticks and tooltips, their labels do not pile up
-        if x - 22.0 >= label_right + 2.0:
+        # one label per 46 px, kept inside the strip: close-lying modes keep their ticks and tooltips, their labels do not
+        # pile up or run past the edge
+        left = min(max(x - 22.0, 0.0), width - 44.0)
+        if left >= label_right + 2.0:
             controls.append(
                 ft.Container(
                     content=ft.Text(f"{f / 1e6:.3f}", size=theme.SIZE_MICRO, color=MUTED),
-                    left=x - 22,
-                    top=48,
+                    left=left,
+                    top=tick_top + tick_height + 2,
                     width=44,
                     alignment=ft.Alignment.CENTER,
                 )
             )
-            label_right = x + 22.0
+            label_right = left + 44.0
     for tone, mu in zip(pv.tones, tones):
         # the 14 px dot stays inside the strip (a carrier tone sits at the far left edge)
         x = min(max((mu - lo) * scale, 7.0), width - 7.0)
-        sign = "+" if float(tone.detuning.value or 0.0) >= 0 else "-"
+        blue_side = float(tone.detuning.value or 0.0) >= 0
         controls.append(
             ft.Container(
                 left=x - 7,
-                top=2,
+                top=0 if blue_side else 16,
                 width=14,
                 height=14,
                 border_radius=ft.BorderRadius.all(7),
                 bgcolor=theme.tone_color(tone.role),
                 border=ft.Border.all(2, ft.Colors.SURFACE_CONTAINER_LOWEST),
-                tooltip=f"tone {tone.index}: mu = {sign}{mu / 1e6:.4f} MHz from the carrier ({tone.role} sideband)",
+                tooltip=f"tone {tone.index}: mu = {'+' if blue_side else '-'}{mu / 1e6:.4f} MHz from the carrier "
+                f"({tone.role} sideband)",
             )
         )
 
@@ -149,18 +154,18 @@ def _spectrum_strip(pv: PulseView, width: float) -> ft.Control:
 
     legend = ft.Row(
         [
-            dot("red"),
-            ft.Text("red tone", size=theme.SIZE_CAPTION, color=MUTED),
             dot("blue"),
-            ft.Text("blue tone", size=theme.SIZE_CAPTION, color=MUTED),
+            ft.Text("blue tone (top row)", size=theme.SIZE_CAPTION, color=MUTED),
+            dot("red"),
+            ft.Text("red tone (under it)", size=theme.SIZE_CAPTION, color=MUTED),
             ft.Container(width=2, height=14, bgcolor=ft.Colors.ON_SURFACE),
-            ft.Text("mode (|detuning| in MHz)", size=theme.SIZE_CAPTION, color=MUTED),
+            ft.Text("mode; the axis is MHz from the carrier", size=theme.SIZE_CAPTION, color=MUTED),
         ],
         spacing=6,
         wrap=True,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
-    return ft.Column([ft.Stack(controls, width=width, height=66), legend], spacing=6)
+    return ft.Column([ft.Stack(controls, width=width, height=80), legend], spacing=6)
 
 
 def _closure_pill(m: ModeClosure) -> ft.Control:
