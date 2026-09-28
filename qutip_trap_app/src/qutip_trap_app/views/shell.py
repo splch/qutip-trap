@@ -223,6 +223,20 @@ def child_route(store: Store, path: str) -> str | None:
     return None
 
 
+def nothing_below(store: Store, path: str) -> str:
+    """Why zooming in opens nothing from ``path`` (``child_route`` is None there)."""
+    r = parse_route(path)
+    if r.level == -1:
+        return "Learn is off the zoom ladder"
+    if r.level == 4:
+        return "the physics pages are the deepest level"
+    if store.record() is None:
+        return "run a job first"
+    if r.level == 1:
+        return "this gate plays no pulse"
+    return "this run plays no pulse"
+
+
 def crumbs_of(store: Store, path: str) -> list[tuple[str, str | None]]:
     """The trail the zoom bar shows: the level's name, then the path (job, gate, pulse, sample; the physics page; the Learn
     activity), each with the route it opens or None for the place the learner already is."""
@@ -291,7 +305,7 @@ def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Con
                 ft.IconButton(
                     icon=ft.Icons.ZOOM_OUT,
                     icon_size=20,
-                    tooltip=f"zoom out ({keys.out_hint})",
+                    tooltip=f"zoom out ({keys.out_hint})" if up else "zoom out: nothing above this page",
                     on_click=(lambda e: page.navigate(up)) if up else None,
                     disabled=up is None,
                     key="zoom-out",
@@ -299,7 +313,7 @@ def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Con
                 ft.IconButton(
                     icon=ft.Icons.ZOOM_IN,
                     icon_size=20,
-                    tooltip=f"zoom in ({keys.in_hint})",
+                    tooltip=f"zoom in ({keys.in_hint})" if down else f"zoom in: {nothing_below(store, path)}",
                     on_click=(lambda e: page.navigate(down)) if down else None,
                     disabled=down is None,
                     key="zoom-in",
@@ -308,7 +322,7 @@ def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Con
                     crumbs,
                     spacing=0,
                     expand=True,
-                    scroll=ft.ScrollMode.HIDDEN,
+                    scroll=ft.ScrollMode.AUTO,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.IconButton(

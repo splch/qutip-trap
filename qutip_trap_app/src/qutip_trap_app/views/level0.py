@@ -410,11 +410,21 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
                 spacing=4,
             )
         )
+    # the chart's table is its keyboard path too: an outcome opens its shots as its bar does
     table = data_table(
         ["outcome", "count", "probability", "error bar", "target"],
         [
             [
-                b.key,
+                ft.TextButton(
+                    content=ft.Text(b.key, size=theme.SIZE_SMALL),
+                    on_click=lambda e, k=b.key: on_bar(k),
+                    tooltip=f"open the shots that read {b.key}",
+                    style=ft.ButtonStyle(
+                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                        visual_density=ft.VisualDensity.COMPACT,
+                    ),
+                    key=f"outcome-{b.key}",
+                ),
                 value_cell(b.count, index),
                 value_cell(b.probability, index),
                 value_cell(b.error_bar, index),

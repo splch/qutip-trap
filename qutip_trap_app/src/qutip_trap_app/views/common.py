@@ -640,8 +640,8 @@ def data_table(
 def page_tabs(
     items: Sequence[tuple[str, str]], selected: str, on_select: Callable[[str], None], *, key_prefix: str
 ) -> ft.Control:
-    """A row of secondary tabs for sibling pages (the physics pages, the Learn activities): one line that scrolls sideways
-    when narrow, the selected tab underlined and in ink, the others muted."""
+    """A row of secondary tabs for sibling pages (the physics pages, the Learn activities): the selected tab underlined and
+    in ink, the others muted; when narrow the tabs wrap onto a second line, so none hides past the edge."""
     tabs: list[ft.Control] = []
     for i, label in items:
         active = i == selected
@@ -664,7 +664,7 @@ def page_tabs(
             )
         )
     return ft.Container(
-        content=ft.Row(tabs, spacing=0, scroll=ft.ScrollMode.HIDDEN),
+        content=ft.Row(tabs, spacing=0, wrap=True),
         border=ft.Border.only(bottom=ft.BorderSide(1, HAIRLINE)),
     )
 

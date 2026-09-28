@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 import flet as ft
 import numpy as np
@@ -151,7 +151,11 @@ def DeviceStatusStrip(store: Store, session: Session, layer: DeviceLayer) -> ft.
                 icon=ft.Icons.TUNE,
                 on_click=lambda e: session.submit_recalibrate(),
                 disabled=not needs_table or recalibrating,
-                tooltip="the surrogate table for this device: closed forms, exact spot checks, detection records (Section 7.5); the next Run uses it",
+                tooltip="recalibrating: the progress is under Working"
+                if recalibrating
+                else "the table is this device's already: change a knob to need a new one"
+                if not needs_table
+                else "the surrogate table for this device: closed forms, exact spot checks, detection records (Section 7.5); the next Run uses it",
                 key="recalibrate",
             ),
             ft.TextButton(
@@ -172,6 +176,81 @@ def DeviceStatusStrip(store: Store, session: Session, layer: DeviceLayer) -> ft.
     )
 
 
+KNOB_STEPS = 200
+"""Steps along a knob's slider: the drag snaps to them, so the slider shows its value while dragged."""
+
+
+def _knob_text(k: KnobRow, value: float) -> str:
+    return fmt_number(value, k.knob.unit) if not k.knob.relative else f"x {value:.3g}"
+
+
+@ft.component
+def KnobSlider(
+    session: Session, k: KnobRow, index: ProvenanceIndex, *, disabled: bool, why: str
+) -> ft.Control:
+    """One knob: its name, its value (the dragged one while the thumb moves, which re-renders this row alone), its chip and
+    a reset, and the slider, which applies the value when the drag or the key press ends. The slider's label carries the
+    name and the value, for the value shown while dragging and for a screen reader."""
+    dragged, set_dragged = ft.use_state(cast(float | None, None))
+    text = _knob_text(k, k.value if dragged is None else _slider_to_value(k, dragged))
+
+    def end(e: Any) -> None:
+        set_dragged(None)
+        session.set_knob(k.knob.id, _slider_to_value(k, float(e.control.value)))
+
+    return ft.Row(
+        [
+            ft.Column(
+                [
+                    ft.Text(
+                        k.knob.label, size=theme.SIZE_SMALL, weight=ft.FontWeight.W_500, tooltip=k.knob.term
+                    ),
+                    ft.Row(
+                        [
+                            ft.Text(
+                                text,
+                                size=theme.SIZE_SMALL + 1,
+                                weight=ft.FontWeight.W_600,
+                                tooltip=f"{k.knob.term}; Section {k.knob.section}",
+                            ),
+                            chip(k.knob.ledger_id, index),
+                            ft.IconButton(
+                                icon=ft.Icons.RESTART_ALT,
+                                tooltip="back to the preset's value",
+                                on_click=lambda e: session.set_knob(k.knob.id, None),
+                                visible=k.is_override,
+                                icon_size=14,
+                                width=24,
+                                height=24,
+                                padding=0,
+                            ),
+                        ],
+                        spacing=6,
+                        tight=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=0,
+                width=260,
+            ),
+            ft.Slider(
+                min=0.0,
+                max=1.0,
+                divisions=KNOB_STEPS,
+                value=_value_to_slider(k, k.value) if dragged is None else dragged,
+                label=f"{k.knob.label}: {text}",
+                on_change=lambda e: set_dragged(float(e.control.value)),
+                on_change_end=end,
+                disabled=disabled,
+                tooltip=why,
+                expand=True,
+            ),
+        ],
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=theme.GAP,
+    )
+
+
 @ft.component
 def KnobPanel(
     store: Store, session: Session, layer: DeviceLayer, page_name: str, index: ProvenanceIndex
@@ -181,71 +260,20 @@ def KnobPanel(
     deriving = store.running_of("derive") is not None
     controls: list[ft.Control] = []
     for k in rows:
-
-        def on_end(e: Any, kk: KnobRow = k) -> None:
-            session.set_knob(kk.knob.id, _slider_to_value(kk, float(e.control.value)))
-
-        def reset(_e: Any, kk: KnobRow = k) -> None:
-            session.set_knob(kk.knob.id, None)
-
         needs_rf = k.knob.requires_rf and layer.trap.rf_frequency_hz is None
         controls.append(
-            ft.Row(
-                [
-                    ft.Column(
-                        [
-                            ft.Text(
-                                k.knob.label,
-                                size=theme.SIZE_SMALL,
-                                weight=ft.FontWeight.W_500,
-                                tooltip=k.knob.term,
-                            ),
-                            ft.Row(
-                                [
-                                    ft.Text(
-                                        fmt_number(k.value, k.knob.unit)
-                                        if not k.knob.relative
-                                        else f"x {k.value:.3g}",
-                                        size=theme.SIZE_SMALL + 1,
-                                        weight=ft.FontWeight.W_600,
-                                        tooltip=f"{k.knob.term}; Section {k.knob.section}",
-                                    ),
-                                    chip(k.knob.ledger_id, index),
-                                    ft.IconButton(
-                                        icon=ft.Icons.RESTART_ALT,
-                                        tooltip="back to the preset's value",
-                                        on_click=reset,
-                                        visible=k.is_override,
-                                        icon_size=14,
-                                        width=24,
-                                        height=24,
-                                        padding=0,
-                                    ),
-                                ],
-                                spacing=6,
-                                tight=True,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                        ],
-                        spacing=0,
-                        width=260,
-                    ),
-                    ft.Slider(
-                        min=0.0,
-                        max=1.0,
-                        value=_value_to_slider(k, k.value),
-                        on_change_end=on_end,
-                        disabled=deriving or needs_rf,
-                        tooltip=(
-                            "declare the rf drive frequency first: without it the Mathieu a is unknown and q cannot be scaled"
-                            if needs_rf
-                            else k.knob.doc
-                        ),
-                        expand=True,
-                    ),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=theme.GAP,
+            KnobSlider(
+                session,
+                k,
+                index,
+                disabled=deriving or needs_rf,
+                why=(
+                    "declare the rf drive frequency first: without it the Mathieu a is unknown and q cannot be scaled"
+                    if needs_rf
+                    else "wait: the device is being derived from the last change"
+                    if deriving
+                    else k.knob.doc
+                ),
             )
         )
     if not controls:
