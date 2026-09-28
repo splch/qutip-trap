@@ -39,15 +39,21 @@ def index() -> ProvenanceIndex:
 
 
 class _Preferences:
-    """A storage service whose read answers when the test says so."""
+    """A storage service whose reads answer when the test says so, except the first ``lost`` reads, which are never
+    answered (as a read sent before the client has bound the service)."""
 
-    def __init__(self, saved: str | None) -> None:
+    def __init__(self, saved: str | None, lost: int = 0) -> None:
         self.saved = saved
         self.answer = asyncio.Event()
         self.writes: list[str] = []
+        self.lost = lost
+        self.reads = 0
 
     async def get(self, key: str) -> str | None:
         assert key == LEARNER_KEY
+        self.reads += 1
+        if self.reads <= self.lost:
+            await asyncio.Event().wait()
         await self.answer.wait()
         return self.saved
 
@@ -80,25 +86,52 @@ async def test_a_saved_learner_read_in_time_is_the_learner(index: ProvenanceInde
     assert len(learner.log.attempts) == 1 and prefs.writes == [], "read, not written back"
 
 
-async def test_a_slow_read_asks_and_then_lands_without_losing_the_log(
-    index: ProvenanceIndex, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def fast_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read bounded to a hundredth of a second, with reads enough for any test."""
+    monkeypatch.setattr(state, "READ_S", 0.01)
+    monkeypatch.setattr(state, "READS", 1000)
+
+
+async def test_an_unanswered_read_is_sent_again(index: ProvenanceIndex, fast_reads: None) -> None:
+    prefs, page = _Preferences(_saved_learner(), lost=1), _Page()
+    session = Session(Store(), index, page, preferences=prefs)
+    prefs.answer.set()
+    await session.restore_learner()
+    assert prefs.reads == 2 and session.store.learner.knowledge == "physicist" and session.store.error == ""
+
+
+async def test_a_saved_learner_that_never_arrives_is_never_saved_over(
+    index: ProvenanceIndex, fast_reads: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Past the bound the question is asked; the read goes on, and when it lands it keeps the answer and the attempts
-    made meanwhile. Nothing is saved before, so the saved log is never replaced by the session's empty one."""
-    monkeypatch.setattr(state, "RESTORE_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(state, "READS", 3)
+    prefs, page = _Preferences(_saved_learner(), lost=3), _Page()
+    session = Session(Store(), index, page, preferences=prefs)
+    await session.restore_learner()
+    assert prefs.reads == 3 and session.store.learner_loaded and "did not load" in session.store.error
+    session.set_learner(knowledge="circuits", asked=True)
+    assert page.tasks == [] and prefs.writes == [], "the log that did not arrive is not replaced"
+
+
+async def test_a_slow_read_holds_the_question_and_lands_without_losing_the_log(
+    index: ProvenanceIndex, fast_reads: None
+) -> None:
+    """While the reads go unanswered the question waits (one it had to close again at once could stay open on a slow
+    client); what the session does meanwhile lands with the saved learner, and nothing is saved before, so the saved log
+    is never replaced by the session's empty one."""
     prefs, page = _Preferences(_saved_learner()), _Page()
     session = Session(Store(), index, page, preferences=prefs)
     restoring = asyncio.ensure_future(session.restore_learner())
     await asyncio.sleep(0.05)
-    assert session.store.learner_loaded and not session.store.learner.asked, "the question is asked"
-    session.set_learner(knowledge="circuits", asked=True)
+    assert not session.store.learner_loaded and prefs.reads > 1, "the question waits; the read is sent again"
+    session.set_learner(knowledge="circuits", asked=True)  # set in Learn meanwhile
     session.record_attempt(Attempt("shot", "shot.q1", 2.0, False, unaided=True))
     assert page.tasks == [] and prefs.writes == [], "nothing saved while the read is out"
     prefs.answer.set()
     await restoring
     await asyncio.gather(*page.tasks)
     learner = session.store.learner
-    assert learner.knowledge == "circuits" and learner.asked, "the answer given meanwhile stands"
+    assert learner.knowledge == "circuits" and learner.asked, "the choice made meanwhile stands"
     assert [a.prompt_id for a in learner.log.attempts] == ["histogram.q1", "shot.q1"], (
         "the saved log and the new"
     )

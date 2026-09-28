@@ -360,7 +360,11 @@ class Store(ft.Observable):
         return self.circuit_text != self.last_run_text
 
 
-RESTORE_TIMEOUT_S = 8.0
+READ_S = 4.0
+"""How long one read of the saved learner may take before it is sent again: a read sent before the client has bound its
+storage service is never answered (Flet 0.86 in a browser slow to start), and the next one is."""
+READS = 15
+"""Reads of the saved learner before it is given up for the session (a minute at ``READ_S``)."""
 HEARTBEAT_S = 1.0
 POLL_S = 0.2
 
@@ -379,7 +383,7 @@ class Session:
         """A ``flet.SharedPreferences`` service; None in tests and headless use, where the learner lives in memory only."""
         self._restored = preferences is None
         """Whether the saved learner has been read (or found absent or unreadable): nothing is saved before, so a slow
-        read never loses the mastery log to a fresh one."""
+        read never loses the mastery log to a fresh one. A saved learner that never arrives is never saved over."""
         self._unsaved = False
         self._last_beat = time.monotonic()
         self.device_page = "hamiltonian"
@@ -420,30 +424,44 @@ class Session:
             self.store.error = f"the learner settings could not be saved on this device: {exc}"
 
     async def restore_learner(self) -> None:
-        """Read the saved learner at start-up. The first-launch question waits for ``learner_loaded``, so it is asked once
-        per device, but at most ``RESTORE_TIMEOUT_S``: a slower read is not given up, and lands when it comes with what
-        the session did meanwhile (:meth:`_with_session`). Nothing is saved until it has landed."""
+        """Read the saved learner at start-up. The first-launch question waits for ``learner_loaded``, so a returning
+        learner is not asked again; the read is sent again every ``READ_S`` until the client answers (it lands with what
+        the session did meanwhile, :meth:`_with_session`). The question never opens before an answer, since one it had to
+        close again at once could stay open on a slow client. Nothing is saved until the saved learner has landed; if it
+        never does, the learner is asked and nothing is saved this session, so the saved log is not replaced."""
         try:
             if self.preferences is not None:
-                read = asyncio.ensure_future(self.preferences.get(LEARNER_KEY))
-                done, _pending = await asyncio.wait({read}, timeout=RESTORE_TIMEOUT_S)
-                if not done:
-                    self.store.learner_loaded = True  # a slow client is asked; the read goes on
-                raw = await read
+                raw = await self._read_saved(self.preferences)
                 if isinstance(raw, str) and raw:
                     self.store.learner = self._with_session(learner_from_document(json.loads(raw)))
-        except (
-            Exception
-        ) as exc:  # a malformed or unreadable document: the defaults are used and the reason is shown
+        except TimeoutError:
+            self.store.error = (
+                "the saved learner settings did not load; this session's are not saved over them"
+            )
+            return
+        except (ValueError, KeyError, TypeError) as exc:  # a malformed document: the defaults, saved over it
             self.store.error = (
                 f"the saved learner settings could not be read, so the defaults are used: {exc}"
             )
         finally:
             self.store.learner_loaded = True
-            self._restored = True
-            if self._unsaved:
-                self._unsaved = False
-                self.set_learner()
+        self._restored = True
+        if self._unsaved:
+            self._unsaved = False
+            self.set_learner()
+
+    @staticmethod
+    async def _read_saved(preferences: Any) -> object:
+        """The saved learner document as the storage service returns it (None when there is none), read again every
+        ``READ_S`` until it is answered: a read sent before the client has bound its storage service is never answered,
+        or refused. After ``READS`` reads, a TimeoutError."""
+        for _ in range(READS):
+            sent = time.monotonic()
+            try:
+                return await asyncio.wait_for(preferences.get(LEARNER_KEY), timeout=READ_S)
+            except Exception:  # unanswered or refused: read again
+                await asyncio.sleep(max(0.0, READ_S - (time.monotonic() - sent)))
+        raise TimeoutError(f"no answer to {READS} reads of the saved learner")
 
     def _with_session(self, saved: Learner) -> Learner:
         """The saved learner with what this session added before it was read: the answer to the first-launch question
