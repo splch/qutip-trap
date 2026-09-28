@@ -20,7 +20,7 @@ from qutip_trap_app.viewmodel.circuit import (
     target_ket_after,
     timeline,
 )
-from qutip_trap_app.views.shell import child_route
+from qutip_trap_app.views.shell import child_route, parse_route
 from qutip_trap_app.views.state import Store
 
 
@@ -57,7 +57,7 @@ def test_the_register_of_a_gate_local_run_is_the_walks_own(bell_gate_local: tupl
     store.records, store.current = {key: record}, key
     route = child_route(store, f"/job/{key}")
     assert route is not None and route.startswith(f"/job/{key}/circuit/")
-    gate = route.rsplit("/", 1)[1]
+    gate = parse_route(route).gate
     register_after(record, next(g.index for g in gates if g.gate_id == gate))
 
 
