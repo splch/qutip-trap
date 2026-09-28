@@ -302,7 +302,7 @@ def _run_engine_tasks(
     """The (sample, branch) engine runs of a JOINT_EXACT run: in-process on one engine when the map is serial, one worker is
     available or there is a single run (the engine's trajectory map then takes the workers), else spread over the workers
     (Section 11.3 item 9). Returns the (traces, report) pairs in order and the workers used. In-process runs report every
-    pulse and every run; a parallel map reports its runs once, when it returns."""
+    pulse and every run; a parallel map reports each run as it finishes, and no pulses."""
     workers = worker_count(opts)
     n_runs = len(payloads)
     if opts.map == "serial" or workers <= 1 or n_runs < 2:
@@ -326,9 +326,8 @@ def _run_engine_tasks(
         return out, used
     inner = replace(opts, map="serial")
     items = [(engine, device, sched, run.state, space, run.noise, seeds, inner) for run in payloads]
-    results = map_tasks(_engine_task, items, map_kind=opts.map, workers=workers)
-    if report is not None:
-        report("branch", n_runs, n_runs)
+    finished = None if report is None else (lambda done: report("branch", done, n_runs))
+    results = map_tasks(_engine_task, items, map_kind=opts.map, workers=workers, on_done=finished)
     return results, min(workers, n_runs)
 
 
@@ -773,14 +772,15 @@ def execute(
     """Section 3.4's pipeline on one machine (``Machine.run``): compile, calibrate, schedule, prepare, evolve, read out every
     dynamical sample with the collision process per shot, and assemble the ``Result`` with its ``Diagnostics`` and
     ``RunRecord``. ``seed`` is the root of every keyed stream."""
-    if shots <= 0:
-        raise ValueError("shots must be positive")
+    shots = checked_count("shots", shots, minimum=1)
     started = time.perf_counter()
     created_at = datetime.now(UTC).isoformat(timespec="seconds")
     notify = _Reporter(progress, started)
     opts, reading = machine.numerics, machine.readout
     path: _ReadoutPath = _FastReadout() if reading.mode == "fast" else _FullReadout()
+    notify("calibrate", 0, 1)
     prefix = compile_calibrate_schedule(machine, circuit, seed=seed)
+    notify("calibrate", 1, 1)
     physics = prefix.physics
     notes: list[str] = list(prefix.notes)
     compiled = prefix.compiled

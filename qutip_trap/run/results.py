@@ -509,11 +509,12 @@ class Diagnostics:
 
 @dataclass(frozen=True)
 class Progress:
-    """One step of a run's progress, handed to the ``progress`` callback of ``Machine.run``: the ``stage`` (``pulse``, one
+    """One step of a run's progress, handed to the ``progress`` callback of ``Machine.run``: the ``stage`` (``calibrate``,
+    the compile-calibrate-schedule prefix, whose surrogate calibration takes seconds on a device's first run; ``pulse``, one
     integrated pulse segment counted across the in-process engine runs; ``branch``, one (sample, branch) engine run;
     ``sample``, one dynamical sample evolved; ``readout``, one sample read out), how many of its ``total`` steps are
     ``done``, and the seconds since the run started. A stage's counts are monotone and end at ``done == total``; a parallel
-    map reports its branches when it returns and no pulses."""
+    map reports each branch as it finishes and no pulses."""
 
     stage: str
     done: int

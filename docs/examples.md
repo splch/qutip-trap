@@ -29,8 +29,9 @@ assert quiet.hash() != machine.hash()
 
 A `Machine` is frozen, and its variants are `dataclasses.replace(machine, ...)`: `numerics=trap.Numerics(branch_weight_min=1e-3)`
 drops the lighter branches of the initial mixture, `level=trap.FidelityLevel.GATE_LOCAL` walks the circuit gate by gate.
-`machine.run(bell, 200, progress=print)` reports every pulse, branch, sample and readout, and `machine.submit(bell, 200)`
-runs it in a worker process behind a `Job`.
+`machine.run(bell, 200, progress=print)` prints one line per step: the calibration, every branch as it finishes (and
+every pulse under `Numerics(map="serial")`), every sample and readout; `machine.submit(bell, 200)` runs it in a worker
+process behind a `Job`.
 
 ## A device
 

@@ -320,7 +320,7 @@ def test_spec_of_a_machine_carries_its_hash_and_policy(machine) -> None:
     assert spec.machine_hash == m.hash() and spec.level is m.level
     assert spec.physics == m.physics and spec.numerics == m.numerics and spec.readout == m.readout
     assert spec.shots == 200 and spec.seed == 3 and spec.circuit == BELL and not spec.keep_final_state
-    with pytest.raises(ValueError, match="shots must be positive"):
+    with pytest.raises(ValueError, match="shots is at least 1"):
         RunSpec(BELL, 0)
 
 
@@ -442,9 +442,10 @@ def test_cancel_stops_the_worker_at_its_next_pulse_report(machine) -> None:
     release = mp.get_context("spawn").Event()
     held = HeldAtFirstPulse(m.device, m.table, m.physics, SERIAL, m.readout, m.level, release=release)
     job = submit(held, BELL, 2000, seed=1)
-    # a hang guard only: the worker holds at its first pulse report, so what the parent sees does not depend on time
+    # a hang guard only: the worker holds at its first pulse report (after its calibrate reports), so what the parent sees
+    # does not depend on time
     deadline = time.monotonic() + 600.0
-    while (first := job.progress) is None:
+    while (first := job.progress) is None or first.stage != "pulse":
         assert job.status() == "running" and time.monotonic() < deadline, job.status()
         time.sleep(0.05)
     assert first.stage == "pulse" and first.done == 1, first

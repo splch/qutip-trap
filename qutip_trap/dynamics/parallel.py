@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from importlib.util import find_spec
 from typing import TYPE_CHECKING, Literal
 
 from qutip.settings import available_cpu_count
@@ -67,22 +69,58 @@ def worker_count(options: Numerics) -> int:
     return max(1, min(wanted, memory_worker_cap()))
 
 
+@dataclass(frozen=True)
+class _Indexed[T, R]:
+    """``task`` applied to an (index, item) pair, the index returned beside the result: what lets results that arrive in
+    completion order be put back in the order of the inputs (a module-level class, so it pickles with the task)."""
+
+    task: Callable[[T], R]
+
+    def __call__(self, pair: tuple[int, T]) -> tuple[int, R]:
+        return pair[0], self.task(pair[1])
+
+
 def map_tasks[T, R](
-    task: Callable[[T], R], items: Sequence[T], *, map_kind: MapKind, workers: int
+    task: Callable[[T], R],
+    items: Sequence[T],
+    *,
+    map_kind: MapKind,
+    workers: int,
+    on_done: Callable[[int], None] | None = None,
 ) -> list[R]:
-    """``[task(item) for item in items]`` through QuTiP's serial, ``parallel`` or ``loky`` map, in the order of ``items``.
+    """``[task(item) for item in items]`` through QuTiP's serial, ``parallel`` or ``loky`` map, in the order of ``items``;
+    ``on_done`` is called with the number of items finished each time one finishes (in completion order under a parallel
+    map, so a caller can report progress while the others run).
 
     In-process when the map is serial, one worker is available or fewer than two items are given; under the parallel
     maps every argument and result must pickle.
     """
     items_list = list(items)
     if map_kind == "serial" or workers <= 1 or len(items_list) < 2:
-        return [task(item) for item in items_list]
+        out: list[R] = []
+        for item in items_list:
+            out.append(task(item))
+            if on_done is not None:
+                on_done(len(out))
+        return out
+    if map_kind == "loky" and find_spec("loky") is None:
+        raise ImportError(
+            "Numerics(map='loky') maps through the loky package, which is not installed: install it (pip install loky) "
+            "or use map='parallel'"
+        )
     mapper = parallel_map if map_kind == "parallel" else loky_pmap
-    out: list[R] = mapper(
-        task,
-        items_list,
+    results: dict[int, R] = {}
+
+    def collect(indexed: tuple[int, R]) -> None:
+        results[indexed[0]] = indexed[1]
+        if on_done is not None:
+            on_done(len(results))
+
+    mapper(
+        _Indexed(task),
+        list(enumerate(items_list)),
+        reduce_func=collect,
         map_kw={"num_cpus": min(int(workers), len(items_list))},
         progress_bar="",
     )
-    return out
+    return [results[k] for k in range(len(items_list))]
