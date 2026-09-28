@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -341,9 +341,38 @@ class DeviceCard:
     spam: dict[str, tuple[float, float]]
     """Per qubit ``q{i}`` -> (eps_B, eps_D), plus ``q{i}.state_preparation`` (Section 13, "Readout figure of merit")."""
     gate_error_estimates: dict[str, float]
-    """Per played gate, the summed closed-form error scales of Section 9.6 (an ESTIMATE, labelled so on the card)."""
-    gate_error_tomography: dict[str, float]
-    """Per gate step, the average gate infidelity from process tomography where the run produced one (GATE_LOCAL)."""
+    """Per played gate piece, the summed closed-form error scales of Section 9.6 (an ESTIMATE; Level 1 shows the piece's)."""
+    gate_errors: tuple[GateError, ...]
+    """The card's gate errors, one per native gate kind and ions (``GateError``)."""
+
+
+@dataclass(frozen=True)
+class GateError:
+    """One native gate kind's error on the device card: the kind (``gpi2``, ``ms``, ...), the ions it acts on, the error and
+    where it comes from, ``tomography`` (1 - F_avg of the extracted channel of the played gate) or ``estimate`` (the summed
+    closed-form error scales of Section 9.6); the pieces of one kind on the same ions are one entry, the worst of them."""
+
+    kind: str
+    ions: tuple[int, ...]
+    error: float
+    source: Literal["tomography", "estimate"]
+
+
+def kind_errors(
+    pieces: Iterable[tuple[str, str, tuple[int, ...]]],
+    errors: Mapping[str, float],
+    source: Literal["tomography", "estimate"],
+) -> tuple[GateError, ...]:
+    """One ``GateError`` per (kind, ions) over the pieces ``(gate id, native kind, ions)`` that ``errors`` holds a finite
+    value for (not every piece has one: tomography covers the steps a run extracted), the worst piece's value."""
+    worst: dict[tuple[str, tuple[int, ...]], float] = {}
+    for gate_id, kind, ions in pieces:
+        value = errors.get(gate_id)
+        if value is None or not math.isfinite(value):
+            continue
+        key = (kind, tuple(int(i) for i in ions))
+        worst[key] = max(worst.get(key, value), value)
+    return tuple(GateError(kind, ions, float(v), source) for (kind, ions), v in worst.items())
 
 
 # ---- compiled circuit, schedule, space, preparation -------------------------------------------------------------------------------
@@ -1078,10 +1107,10 @@ def device_card(
     *,
     spam: Mapping[str, tuple[float, float]],
     gate_estimates: Mapping[str, float],
-    tomography: Mapping[str, float],
+    gate_errors: Iterable[GateError],
 ) -> DeviceCard:
-    """The Level 0 device card from the device and the run's SPAM, closed-form error scale per gate and tomography
-    infidelities."""
+    """The Level 0 device card from the device and the run's SPAM, the closed-form error scale per played piece and the
+    gate errors per kind."""
     derived = device.derived()
     crystal = device.crystal
     modes = tuple(
@@ -1125,7 +1154,7 @@ def device_card(
         native_gates=NATIVE_GATE_SET,
         spam={str(k): (float(v[0]), float(v[1])) for k, v in spam.items()},
         gate_error_estimates={str(k): float(v) for k, v in gate_estimates.items()},
-        gate_error_tomography={str(k): float(v) for k, v in tomography.items() if not math.isnan(v)},
+        gate_errors=tuple(gate_errors),
     )
 
 
@@ -1465,6 +1494,8 @@ def build_record(
         if rec.gate_local is not None
         else {}
     )
+    pieces = [(t.gate_id, t.native[0], tuple(t.ions)) for t in rec.schedule.targets]
+    estimates = result.diagnostics.intrinsic_budget.by_piece(t.gate_id for t in rec.schedule.targets)
     return Record(
         job=job,
         device_hash=device.hash(),
@@ -1472,10 +1503,9 @@ def build_record(
         device_card=device_card(
             device,
             spam=result.spam,
-            gate_estimates=result.diagnostics.intrinsic_budget.by_piece(
-                t.gate_id for t in rec.schedule.targets
-            ),
-            tomography=tomography,
+            gate_estimates=estimates,
+            gate_errors=kind_errors(pieces, tomography, "tomography")
+            + kind_errors(pieces, estimates, "estimate"),
         ),
         compiled=compiled_record(rec.compile),
         schedule=schedule_record(rec.schedule),

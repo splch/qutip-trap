@@ -13,7 +13,7 @@ from qutip_trap_app.knobs import Knob, knob
 from qutip_trap_app.record import HamiltonianRecord, Record, TableRecord
 from qutip_trap_app.viewmodel.catalogue import Row, Shown, vector_text
 from qutip_trap_app.viewmodel.circuit import pair_waveform
-from qutip_trap_app.viewmodel.machine import axis_rows, card_modes, card_rows, estimate_rows, spam_rows
+from qutip_trap_app.viewmodel.machine import axis_rows, card_modes, card_rows, gate_error_rows, spam_rows
 
 
 @dataclass(frozen=True)
@@ -1172,7 +1172,7 @@ def layer_card_view(layer: DeviceLayer, table: TableRecord | None) -> LayerCardV
         rows=card_rows(card),
         modes=card_modes(card),
         spam=tuple(spam),
-        gate_errors=estimate_rows(card),
+        gate_errors=gate_error_rows(card),
         device_hash=Shown("device_hash", layer.device_hash),
         overrides=overrides,
     )

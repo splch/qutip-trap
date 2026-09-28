@@ -22,6 +22,7 @@ from qutip_trap_app import core, knobs
 from qutip_trap_app.record import (
     CalEntryRecord,
     DeviceCard,
+    GateError,
     Progress,
     TableRecord,
     WaveformRecord,
@@ -1402,8 +1403,9 @@ def derive_device_layer(
     if cooling is not None:
         for pump in cooling.pumps:
             spam[f"q{pump.ion}.state_preparation"] = (pump.preparation_error, 0.0)
-    # per gate, the closed-form error scales: an MS gate's residual displacement and its ions' scattering, a GPi2's scattering
-    estimates: dict[str, float] = {}
+    # per gate kind, the closed-form error scales: an MS gate's residual displacement and its ions' scattering, a GPi2's
+    # scattering (the device has no circuit, so no played piece: the card's errors are per kind)
+    estimates: list[GateError] = []
     for g in gates:
         terms = [] if g.residual_error is None else [g.residual_error]
         terms += [
@@ -1412,10 +1414,10 @@ def derive_device_layer(
             if d.role == "entangling gates" and d.ion in g.pair
         ]
         if terms:
-            estimates[f"ms[{g.pair[0]},{g.pair[1]}]"] = float(sum(terms))
+            estimates.append(GateError("ms", tuple(g.pair), float(sum(terms)), "estimate"))
     for d in light.drives:
         if d.role == "single-qubit gates":
-            estimates[f"gpi2[{d.ion}]"] = 0.5 * d.error_per_pi_pulse
+            estimates.append(GateError("gpi2", (d.ion,), 0.5 * d.error_per_pi_pulse, "estimate"))
     table_hash = (
         table.device_hash
         if table is not None
@@ -1434,7 +1436,7 @@ def derive_device_layer(
         cooling_error=cooling_error,
         readout=readout,
         gates=gates,
-        card=device_card(device, spam=spam, gate_estimates=estimates, tomography={}),
+        card=device_card(device, spam=spam, gate_estimates={}, gate_errors=estimates),
         table_hash=table_hash,
         stale=table_hash is not None and table_hash != device.hash(),
         notes=tuple(notes) + tuple(str(n) for n in preset.notes[-1:]) if overrides else tuple(notes),

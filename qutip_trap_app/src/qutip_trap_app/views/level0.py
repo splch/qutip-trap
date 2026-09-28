@@ -16,6 +16,7 @@ import flet as ft
 from qutip_trap_app.core import ReadoutMode
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
+from qutip_trap_app.viewmodel.catalogue import CATALOGUE
 from qutip_trap_app.viewmodel.learn import score_histogram_prediction, sketch_distribution
 from qutip_trap_app.viewmodel.machine import Histogram, device_card_view, histogram, ideal_outcomes, shot
 from qutip_trap_app.viewmodel.presets import PRESETS, circuit_comparisons, circuit_presets
@@ -465,9 +466,11 @@ def DeviceCardView(store: Store, session: Session, record: Record, index: Proven
     tiles: list[ft.Control] = []
     for r in cv.spam:
         if r.label.startswith("q0"):
-            tiles.append(stat_tile(r.value, index, plain=plain, status=r.status))
+            q = CATALOGUE[r.value.quantity]
+            caption = f"{q.label if plain else q.term}, qubit 0"
+            tiles.append(stat_tile(r.value, index, plain=plain, label=caption, status=r.status))
     for r in cv.gate_errors[:3]:
-        tiles.append(stat_tile(r.value, index, plain=plain, label=f"{r.label} error", status=r.status))
+        tiles.append(stat_tile(r.value, index, plain=plain, label=f"error of {r.label}", status=r.status))
     modes = ", ".join(f"{float(m.value or 0.0) / 1e6:.3f}" for m in cv.modes)
     rows: list[tuple[str, ft.Control]] = [
         ("species", ft.Text(", ".join(cv.species), size=theme.SIZE_SMALL)),

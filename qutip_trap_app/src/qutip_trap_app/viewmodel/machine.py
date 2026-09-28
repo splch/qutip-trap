@@ -10,7 +10,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from qutip_trap_app.core import Circuit, ideal_probabilities
-from qutip_trap_app.record import DeviceCard, Record
+from qutip_trap_app.record import DeviceCard, GateError, Record
+from qutip_trap_app.viewmodel.builder import listed
 from qutip_trap_app.viewmodel.catalogue import Row, Shown
 
 HERALD_NAMES: tuple[tuple[int, str], ...] = ((1, "collision"), (2, "dark or lost ion"), (4, "count anomaly"))
@@ -168,7 +169,7 @@ def card_rows(card: DeviceCard) -> tuple[Row, ...]:
     rows.append(Row("magnetic field", Shown("field", card.field_gauss), "device parameter"))
     for key, value in sorted(card.derived.values.items()):
         if key.startswith("qubit_freq_hz"):
-            label = f"qubit frequency {key[len('qubit_freq_hz') :]}"
+            label = f"qubit frequency, ion {key[len('qubit_freq_hz') :].strip('[]')}"
             rows.append(Row(label, Shown("qubit_frequency", value), "derived"))
     for m, rate in sorted(card.heating_quanta_per_s.items()):
         rows.append(Row(f"heating rate, mode {m}", Shown("heating_rate", rate), "derived"))
@@ -199,11 +200,25 @@ def spam_rows(card: DeviceCard, status: str) -> list[Row]:
     return rows
 
 
-def estimate_rows(card: DeviceCard) -> tuple[Row, ...]:
-    return tuple(
-        Row(gate, Shown("gate_error_estimate", v), "estimate")
-        for gate, v in sorted(card.gate_error_estimates.items())
-    )
+NATIVE_NAMES: dict[str, str] = {"gpi": "GPi", "gpi2": "GPi2", "ms": "MS", "zz": "ZZ"}
+"""How the card names a native gate kind."""
+
+
+def gate_error_rows(card: DeviceCard) -> tuple[Row, ...]:
+    """One row per gate error of the card (``MS on ions 0 and 1``): the entangling gates first, whose errors dominate, then
+    the single-qubit gates by ion, a gate's tomography before its estimate."""
+
+    def order(e: GateError) -> tuple[int, tuple[int, ...], int]:
+        return (0 if len(e.ions) > 1 else 1, e.ions, 0 if e.source == "tomography" else 1)
+
+    rows: list[Row] = []
+    for e in sorted(card.gate_errors, key=order):
+        label = f"{NATIVE_NAMES[e.kind]} on {'ion' if len(e.ions) == 1 else 'ions'} {listed([str(i) for i in e.ions])}"
+        if e.source == "tomography":
+            rows.append(Row(label, Shown("gate_error_tomography", e.error), "calibrated"))
+        else:
+            rows.append(Row(label, Shown("gate_error_estimate", e.error), "estimate"))
+    return tuple(rows)
 
 
 @dataclass(frozen=True)
@@ -227,10 +242,6 @@ def device_card_view(record: Record) -> CardView:
     card = record.device_card
     replay = record.diagnostics.level == "CHANNEL_REPLAY"
     spam_status = "calibrated (table)" if replay else "measured (this run's readout model)"
-    tomography = tuple(
-        Row(gate, Shown("gate_error_tomography", v), "calibrated")
-        for gate, v in sorted(card.gate_error_tomography.items())
-    )
     return CardView(
         species=card.species,
         n_ions=card.n_ions,
@@ -238,7 +249,7 @@ def device_card_view(record: Record) -> CardView:
         rows=card_rows(card),
         modes=card_modes(card),
         spam=tuple(spam_rows(card, spam_status)),
-        gate_errors=tomography + estimate_rows(card),
+        gate_errors=gate_error_rows(card),
         device_hash=Shown("device_hash", record.device_hash),
         seed=Shown("seed", record.job.seed),
         fidelity_level=Shown("fidelity_level", record.diagnostics.level),
