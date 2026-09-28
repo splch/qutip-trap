@@ -119,7 +119,7 @@ PRESETS: dict[str, PresetSpec] = {p.id: p for p in (
         published_ledger_id="published.harty_2014_epg", simulated_ledger_id="anchor.m2.harty_randomized_benchmarking",
         concept_id="native_gate", level=1, duration="about 5 s",
         method=(
-            "randomized benchmarking as a product of 2 x 2 propagators: 12.1 us pi/2 pulses, 14 us dead times, +4.5 Hz "
+            "randomized benchmarking as a product of 2 x 2 propagators: 12.1 µs pi/2 pulses, 14 µs dead times, +4.5 Hz "
             "detuning and a 5e-4 pulse-area error over 16 sets of 32 sequences of 2000 gates (Section 4.3.3)"
         ),
         values=(
@@ -195,11 +195,11 @@ PRESETS: dict[str, PresetSpec] = {p.id: p for p in (
         method=(
             "Kirchmair's exact single-loop propagator: alpha(t) = (eta Omega/2 eps)(e^{i eps t} - 1), the populations "
             "of Eq. 14 on a thermal mode, and the Debye-Waller angle spread |sum_n P_n e^{-i 4 chi eta^2 n}| at "
-            "eta = 0.044, nu/2pi = 1.232 MHz, t_g = 50 us (Section 4.4.1)"
+            "eta = 0.044, nu/2pi = 1.232 MHz, t_g = 50 µs (Section 4.4.1)"
         ),
         values=(
             _v("contrast", "parity contrast at nbar = 20", 0.964, None, "", "kirchmair_contrast", "contrast_nbar20"),
-            _v("fidelity_50", "Bell-state fidelity at 50 us", 0.993, 0.001, "", "kirchmair_fidelity",
+            _v("fidelity_50", "Bell-state fidelity at 50 µs", 0.993, 0.001, "", "kirchmair_fidelity",
                "fidelity_first_principles", expect_agreement=False,
                why_not=(
                    "the first-principles terms (residual displacement, Debye-Waller) at nbar = 0 are below 1e-5, three "
@@ -219,7 +219,7 @@ PRESETS: dict[str, PresetSpec] = {p.id: p for p in (
             "background, 1.168 s shelf lifetime) at every window, the best threshold at each (Sections 8.2, 8.3)"
         ),
         values=(
-            _v("eps_at_point", "error at n_c = 5.5, t_b = 420 us", 1.8e-4, 0.1e-4, "", "myerson_eps", "eps_at_point",
+            _v("eps_at_point", "error at n_c = 5.5, t_b = 420 µs", 1.8e-4, 0.1e-4, "", "myerson_eps", "eps_at_point",
                expect_agreement=False, scale=1e4,
                why_not=(
                    "the exact chain with Poisson statistics gives 1.37e-4 there; the measured optimum sits at a higher "
@@ -227,7 +227,7 @@ PRESETS: dict[str, PresetSpec] = {p.id: p for p in (
                    "eps_D is cosmic rays), which the model does not carry"
                )),
             _v("window_opt", "the optimum window", 420e-6, None, "s", "myerson_window", "window_opt", expect_agreement=False,
-               why_not="the ideal-Poisson chain's optimum is at 320 us and n_c = 3.5 (anchor.m5.myerson_optimum_and_recursion)"),
+               why_not="the ideal-Poisson chain's optimum is at 320 µs and n_c = 3.5 (anchor.m5.myerson_optimum_and_recursion)"),
         ),
     ),
     PresetSpec(
@@ -246,8 +246,8 @@ PRESETS: dict[str, PresetSpec] = {p.id: p for p in (
             _v("window", "average detection time of the protocol", 11e-6, None, "s", "crain_window", "window_opt",
                expect_agreement=False,
                why_not=(
-                   "11 us is the average time the stop-on-first-photon protocol runs; a fixed-window threshold reaches its "
-                   "minimum at 20 to 25 us (the corrected form of anchor.m5.crain_corrections_and_operating_point)"
+                   "11 µs is the average time the stop-on-first-photon protocol runs; a fixed-window threshold reaches its "
+                   "minimum at 20 to 25 µs (the corrected form of anchor.m5.crain_corrections_and_operating_point)"
                )),
         ),
     ),

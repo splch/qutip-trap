@@ -86,13 +86,13 @@ def test_the_verdicts_agree_with_the_ledger(runs: dict[str, tuple[vm.PresetResul
     assert by_key[("crain_2019", "readout error, first-photon protocol")].within
     contrast = by_key[("kirchmair_2009", "parity contrast at nbar = 20")]
     assert contrast.within and abs(contrast.simulated.value - 0.9923) < 1e-3
-    fidelity = by_key[("kirchmair_2009", "Bell-state fidelity at 50 us")]
+    fidelity = by_key[("kirchmair_2009", "Bell-state fidelity at 50 µs")]
     assert (
         not fidelity.expect_agreement
         and fidelity.why_not
         and "not a first-principles prediction" in fidelity.verdict
     )
-    myerson = by_key[("myerson_2008", "error at n_c = 5.5, t_b = 420 us")]
+    myerson = by_key[("myerson_2008", "error at n_c = 5.5, t_b = 420 µs")]
     assert abs(myerson.simulated.value - 1.37e-4) < 0.05e-4 and not myerson.expect_agreement
     monroe = by_key[("monroe_1995", "the paper's theoretical occupation, 11.2 MHz mode")]
     assert monroe.within and abs(monroe.simulated.value - 0.484) < 0.005

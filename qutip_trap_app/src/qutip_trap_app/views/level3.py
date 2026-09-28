@@ -99,7 +99,7 @@ def level3_numerics(store: Store, record: Record, pulse_param: str, sample_param
 
 def _series_chart(series: Any, *, y_title: str, height: float) -> ft.Control:
     data = [(s.label, np.asarray(s.times_s) * 1e6, np.asarray(s.values)) for s in series]
-    return drawing.line_chart(data, x_title="t (us)", y_title=y_title, height=height)
+    return drawing.line_chart(data, x_title="t (µs)", y_title=y_title, height=height)
 
 
 @ft.component
@@ -393,7 +393,7 @@ def Level3Page(
                         hm.values[:, : top_n + 1].T,
                         x_labels=[f"{t * 1e6:.1f}" for t in hm.times_s],
                         y_labels=[str(n) for n in range(top_n + 1)],
-                        x_title="t (us)",
+                        x_title="t (µs)",
                         y_title="n",
                         tooltip="log colour scale over six decades; hover for values",
                     ),
@@ -414,7 +414,7 @@ def Level3Page(
     # ---- jumps and the sample ----
     jump_controls: list[ft.Control] = [
         ft.TextButton(
-            content=ft.Text(f"{float(j.value or 0.0) * 1e6:.2f} us: {j.detail}", size=theme.SIZE_SMALL),
+            content=ft.Text(f"{float(j.value or 0.0) * 1e6:.2f} µs: {j.detail}", size=theme.SIZE_SMALL),
             icon=ft.Icons.BOLT,
             on_click=lambda e, ch=str(j.detail): open_channel(ch),
             tooltip="open this channel's collapse operator on the Hamiltonian page",

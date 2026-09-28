@@ -267,7 +267,7 @@ def kirchmair_2009(progress: Progress | None = None) -> PresetResult:
         charts.append(
             ChartRecord(
                 title=f"populations with 0, 1 and 2 ions bright, nbar = {nbar:g}",
-                x_title="t (us)",
+                x_title="t (µs)",
                 y_title="population",
                 series=(
                     SeriesRecord("both bright (P00)", times * 1e6, pops[:, 2]),
@@ -302,7 +302,7 @@ def kirchmair_2009(progress: Progress | None = None) -> PresetResult:
             "omega_hz": omega / TWO_PI,
         },
         notes=(
-            f"closing one loop in {t_gate * 1e6:.0f} us needs Omega/2pi = {omega / TWO_PI / 1e3:.1f} kHz at eta = {eta}",
+            f"closing one loop in {t_gate * 1e6:.0f} µs needs Omega/2pi = {omega / TWO_PI / 1e3:.1f} kHz at eta = {eta}",
             "the first-principles infidelity at nbar = 0 is the residual displacement plus the Debye-Waller term of Section 4.4.7",
         ),
         wall_time_s=time.perf_counter() - t0,
@@ -323,7 +323,7 @@ def _threshold_scan(
     eps = np.zeros(windows_s.size)
     n_c = np.zeros(windows_s.size)
     for k, w in enumerate(windows_s):
-        _progress(progress, "scanning", 0.1 + 0.8 * k / windows_s.size, f"{what}: window {w * 1e6:.0f} us")
+        _progress(progress, "scanning", 0.1 + 0.8 * k / windows_s.size, f"{what}: window {w * 1e6:.0f} µs")
         opt = core.optimize_threshold(model, [float(w)], dark_start=dark_start)
         eps[k] = 0.5 * (opt.best.eps_B + opt.best.eps_D)
         n_c[k] = opt.best.n_c
@@ -347,11 +347,11 @@ def myerson_2008(progress: Progress | None = None) -> PresetResult:
     charts = (
         ChartRecord(
             title="threshold readout error against the window (best threshold at each)",
-            x_title="window (us)",
+            x_title="window (µs)",
             y_title="(eps_B + eps_D)/2",
             series=(SeriesRecord("exact chain, Poisson counts", w * 1e6, eps),),
             log_y=True,
-            markers=((420.0, "Myerson: 420 us, n_c = 5.5"),),
+            markers=((420.0, "Myerson: 420 µs, n_c = 5.5"),),
         ),
     )
     return PresetResult(
@@ -371,7 +371,7 @@ def myerson_2008(progress: Progress | None = None) -> PresetResult:
             "background_per_s": preset.background_per_s,
             "shelf_lifetime_s": float(preset.shelf_lifetime_s or 0.0),
         },
-        notes=(f"optimum of the exact chain: {eps[k]:.3g} at n_c = {n_c[k]:.1f}, t_b = {w[k] * 1e6:.0f} us",),
+        notes=(f"optimum of the exact chain: {eps[k]:.3g} at n_c = {n_c[k]:.1f}, t_b = {w[k] * 1e6:.0f} µs",),
         wall_time_s=time.perf_counter() - t0,
     )
 
@@ -388,11 +388,11 @@ def crain_2019(progress: Progress | None = None) -> PresetResult:
     charts = (
         ChartRecord(
             title="threshold readout error against the window (best threshold at each)",
-            x_title="window (us)",
+            x_title="window (µs)",
             y_title="(eps_B + eps_D)/2",
             series=(SeriesRecord("exact chain from the measured rates", w * 1e6, eps),),
             log_y=True,
-            markers=((11.0, "Crain: 11 us average detection time"),),
+            markers=((11.0, "Crain: 11 µs average detection time"),),
         ),
     )
     return PresetResult(
@@ -407,7 +407,7 @@ def crain_2019(progress: Progress | None = None) -> PresetResult:
             "background_per_s": preset.background_per_s,
             "efficiency": preset.efficiency,
         },
-        notes=(f"threshold optimum {eps[k]:.3g} at n_c = {n_c[k]:.1f}, window {w[k] * 1e6:.1f} us",),
+        notes=(f"threshold optimum {eps[k]:.3g} at n_c = {n_c[k]:.1f}, window {w[k] * 1e6:.1f} µs",),
         wall_time_s=time.perf_counter() - t0,
     )
 

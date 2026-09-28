@@ -1008,7 +1008,7 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
     header = (
         Row(
             "gate step",
-            Shown("native_gate", ham.gate_id, f"{ham.t_start_s * 1e6:.2f} to {ham.t_end_s * 1e6:.2f} us"),
+            Shown("native_gate", ham.gate_id, f"{ham.t_start_s * 1e6:.2f} to {ham.t_end_s * 1e6:.2f} µs"),
             "record",
         ),
         Row("frame", Shown("frame", ham.frame), "derived"),
@@ -1116,7 +1116,7 @@ def hamiltonian_view(record: Record, ham: HamiltonianRecord) -> HamiltonianView:
             Shown(
                 "gate_duration",
                 s.t_end_s - s.t_start_s,
-                f"{s.t_start_s * 1e6:.2f} to {s.t_end_s * 1e6:.2f} us",
+                f"{s.t_start_s * 1e6:.2f} to {s.t_end_s * 1e6:.2f} µs",
             ),
             Shown("omega_max", s.omega_max_hz),
             ", ".join(s.pulses),
