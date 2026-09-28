@@ -26,7 +26,9 @@ def test_a_circuit_reads_as_the_builder_chain_that_makes_it() -> None:
     mid_circuit = Circuit(2, (Operation("h", (0,), ()), Operation("reset", (1,), ())))
     assert repr(bell) == "Circuit(2).h(0).cnot(0, 1)"
     assert repr(narrowed) == "Circuit(3).rx(1, 1.5707963267948966).cp(0, 2, 0.3).measured(2, 0)"
-    assert repr(two_registers) == "Circuit(2).h(0).cnot(0, 1).measured(0, 1, registers={'a': (0,), 'b': (1,)})"
+    assert (
+        repr(two_registers) == "Circuit(2).h(0).cnot(0, 1).measured(0, 1, registers={'a': (0,), 'b': (1,)})"
+    )
     assert repr(mid_circuit).startswith("Circuit(2, ops=(Operation(name='h'")
     for c in (bell, narrowed, two_registers, mid_circuit):
         assert eval(repr(c)) == c
