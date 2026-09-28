@@ -9,13 +9,13 @@
 Every other name is imported from the module that defines it.
 """
 
-import warnings
+import warnings as _warnings
 
-with warnings.catch_warnings():
+with _warnings.catch_warnings():
     # QuTiP warns on import when matplotlib is absent ("Graphics will not work"); nothing here draws through QuTiP, so the
     # warning would only mislead. The filter is scoped to this first import and leaves the caller's filters untouched.
-    warnings.filterwarnings("ignore", message="matplotlib not found", category=UserWarning)
-    import qutip  # noqa: F401
+    _warnings.filterwarnings("ignore", message="matplotlib not found", category=UserWarning)
+    import qutip as _qutip  # noqa: F401
 
 from qutip_trap import presets
 from qutip_trap.control.compiler import Circuit
@@ -26,6 +26,8 @@ from qutip_trap.run.results import Result
 
 __version__ = "0.4.0"
 """The release, recorded by ``Result.to_dict()`` as ``qutip_trap_version``."""
+
+del _qutip, _warnings  # imported for the filter only: the namespace is the package's own names
 
 __all__ = [
     "Circuit",
