@@ -407,16 +407,41 @@ def level_header(title: str, question: str, *, note: str = "") -> ft.Control:
 def small_icon_button(
     icon: ft.IconData, tooltip: str, on_click: Callable[[Any], None] | None = None
 ) -> ft.Control:
+    """A 28 px icon button in the muted ink; without ``on_click`` it is disabled, so that nothing takes focus or ripples
+    without doing anything (the tooltip still says why)."""
     return ft.IconButton(
         icon=icon,
         icon_size=16,
         icon_color=MUTED,
         tooltip=tooltip,
         on_click=on_click,
+        disabled=on_click is None,
         width=28,
         height=28,
         padding=0,
         visual_density=ft.VisualDensity.COMPACT,
+    )
+
+
+def notes_dialog(page: ft.Page, title: str, lines: Sequence[str]) -> None:
+    """A card's notes in a dialog, where a keyboard reaches them too (a tooltip shows on hover only)."""
+    page.show_dialog(
+        ft.AlertDialog(
+            title=ft.Text(f"{title}: notes", size=theme.SIZE_CARD_TITLE, weight=ft.FontWeight.W_600),
+            content=ft.Column(
+                [ft.Text(f"· {ln}", size=theme.SIZE_BODY, selectable=True) for ln in lines],
+                tight=True,
+                width=560,
+                spacing=8,
+            ),
+            actions=[
+                ft.TextButton(
+                    content=ft.Text("Close"), on_click=lambda e: page.pop_dialog(), key="notes-close"
+                )
+            ],
+            # as tall as its notes, scrolling when they are longer than the window
+            scrollable=True,
+        )
     )
 
 
@@ -442,7 +467,11 @@ def card(
     if info:
         lines = [info] if isinstance(info, str) else list(info)
         head.append(
-            small_icon_button(ft.Icons.INFO_OUTLINE, "notes:\n" + "\n".join(f"· {ln}" for ln in lines))
+            small_icon_button(
+                ft.Icons.INFO_OUTLINE,
+                "notes:\n" + "\n".join(f"· {ln}" for ln in lines),
+                lambda e: notes_dialog(e.control.page, title, lines),
+            )
         )
     head.append(ft.Container(expand=True))
     head.extend(trailing)
