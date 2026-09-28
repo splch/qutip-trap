@@ -104,6 +104,36 @@ def test_bell_state_probabilities_match_the_ideal_distribution_within_readout_an
     assert res.heralds.shape == (2000,) and res.discarded_shots == 0 and res.photon_records is None
 
 
+def test_the_summary_reads_the_bell_run_against_its_ideal(bell) -> None:
+    """``summary()`` tabulates every outcome beside the compiled circuit's ideal distribution with the total variation
+    distance, and names the level, the modes, the budget and the SPAM; ``repr`` is one line with the counts."""
+    _fx, _sur, res = bell
+    text = res.summary()
+    lines = text.splitlines()
+    assert lines[0].startswith("2000 shots on 2 qubits at JOINT_EXACT on [2, 2, ")
+    assert lines[1].split() == ["outcome", "counts", "probability", "ideal"]
+    rows = {line.split()[0]: line.split() for line in lines[2:] if line.split()[0] in res.counts}
+    assert (
+        set(rows) == set(res.counts) and rows["00"][1] == str(res.counts["00"]) and rows["00"][-1] == "0.5000"
+    )
+    tv = 0.5 * sum(
+        abs(res.probabilities.get(k, 0.0) - q)
+        for k, q in {"00": 0.5, "01": 0.0, "10": 0.0, "11": 0.5}.items()
+    )
+    assert f"total variation distance to the ideal: {tv:.4f}" in text
+    for head in (
+        "level     JOINT_EXACT:",
+        "modes     ",
+        "ensemble  ",
+        "budget    intrinsic ",
+        "SPAM      q0, q1:",
+    ):
+        assert any(line.startswith(head) for line in lines), head
+    assert f"{len(res.diagnostics.approximations)} approximations in diagnostics.approximations" in text
+    assert repr(res).startswith("<Result: 2000 shots on 2 qubits at JOINT_EXACT, counts {'00': ")
+    assert list(res.counts) == sorted(res.counts)
+
+
 def test_bell_register_fidelity_sits_inside_the_intrinsic_budget(bell) -> None:
     """The register infidelity against the compiled circuit's ideal state lies between 1e-5 and the reported intrinsic
     budget, and above 0.3 times the gate's own exact-check infidelity (1.32e-4), which the gate's own terms bound from
@@ -160,6 +190,11 @@ def test_bell_diagnostics_report_the_space_classes_branches_and_approximations(b
         assert any(
             a.startswith(f"mode {m}:") and "handed off as the thermal state" in a for a in d.approximations
         )
+    # each statement once; a dropped mode has no Fock state to draw, and the MS gate's partner ion is driven by its own
+    # pulse on the global pair, not reached by unlisted crosstalk
+    assert len(set(d.approximations)) == len(d.approximations)
+    assert not any("no Fock state given" in a for a in d.approximations)
+    assert not any("is not listed in the table" in a for a in d.approximations)
     assert d.wall_clock_span_s > 0.0
     assert res.spam["q0"][0] == pytest.approx(res.spam["q1"][0]) and 1e-4 < res.spam["q0"][0] < 5e-3
     assert res.spam["q0.state_preparation"][0] < 1e-4

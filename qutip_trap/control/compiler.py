@@ -74,6 +74,8 @@ EXPORTED_NATIVE: Final[frozenset[str]] = frozenset({"gpi", "gpi2", "ms", "zz"})
 
 BLOCK_TOLERANCE: Final[float] = 1e-9
 """Residual (max |U_block - e^{i alpha} U_target|) above which a compiled block is refused."""
+REPR_OPS_MAX: Final[int] = 16
+"""The operations ``repr(circuit)`` spells out before it abbreviates."""
 
 Entangler = Literal["ms", "zz"]
 
@@ -167,6 +169,30 @@ class Circuit:
             if len(set(qubits)) != len(qubits) or any(q < 0 or q >= self.n_qubits for q in qubits):
                 raise ValueError(f"register {name!r} names a qubit outside the circuit, or one qubit twice")
         object.__setattr__(self, "registers", registers)
+
+    def __repr__(self) -> str:
+        """The builder chain that makes the circuit, ``Circuit(2).h(0).cnot(0, 1)``, with ``.measured(...)`` when the
+        terminal targets or the registers are not the defaults, cut after ``REPR_OPS_MAX`` operations; a circuit with a
+        mid-circuit measure, reset or recool, which the builder has no method for, reads as its constructor call.
+        ``str(circuit)`` is the text diagram (``control.diagram``)."""
+        if any(op.is_non_unitary for op in self.ops):
+            return f"Circuit({self.n_qubits}, ops={self.ops!r}, measure={self.measure!r}, registers={self.registers!r})"
+        chain = "".join(
+            f".{op.name}({', '.join([*map(str, op.qubits), *map(repr, op.params)])})"
+            for op in self.ops[:REPR_OPS_MAX]
+        )
+        if len(self.ops) > REPR_OPS_MAX:
+            chain += f"... ({len(self.ops)} operations)"
+        if self.measure != tuple(range(self.n_qubits)) or self.registers != {"c": self.measure}:
+            registers = "" if self.registers == {"c": self.measure} else f", registers={self.registers!r}"
+            chain += f".measured({', '.join(map(str, self.measure))}{registers})"
+        return f"Circuit({self.n_qubits}){chain}"
+
+    def __str__(self) -> str:
+        """The text diagram: one wire per qubit, the gates in columns, the terminal measurement at the end."""
+        from qutip_trap.control.diagram import draw
+
+        return draw(self)
 
     @property
     def is_native(self) -> bool:
@@ -646,6 +672,15 @@ class CompileReport:
     than ten qubits prevent it)."""
     entangler: Entangler
     notes: tuple[str, ...] = field(default_factory=tuple)
+
+    def __repr__(self) -> str:
+        """``<CompileReport: 6 native gates (1 entangling, ms), whole-circuit residual 4.7e-16>``; ``circuit`` is the
+        compiled circuit."""
+        residual = "unchecked" if self.circuit_residual is None else f"{self.circuit_residual:.2g}"
+        return (
+            f"<CompileReport: {self.n_pulses} native gates ({self.n_entangling} entangling, {self.entangler}), "
+            f"whole-circuit residual {residual}>"
+        )
 
 
 def compile_report(circuit: Circuit, *, entangler: Entangler = "ms") -> CompileReport:

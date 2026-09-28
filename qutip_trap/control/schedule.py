@@ -183,6 +183,16 @@ class Schedule:
                 if set(p.drive.ions) & set(q.drive.ions):
                     raise ValueError(f"pulses {p.gate_id!r} and {q.gate_id!r} overlap on a shared ion")
 
+    def __repr__(self) -> str:
+        """``<Schedule: 16 pulses for 6 gates (1 entangling) on ions 0, 1, ending at 114.5 us, then measure>``."""
+        ions = sorted({i for p in self.pulses for i in p.drive.ions})
+        events = ", ".join(e.kind for e in self.events)
+        return (
+            f"<Schedule: {len(self.pulses)} pulses for {len(self.targets)} gates ({len(self.gates)} entangling) on "
+            f"ions {', '.join(map(str, ions)) or 'none'}, ending at {self.pulses_end_s * 1e6:.4g} us"
+            + (f", then {events}>" if events else ">")
+        )
+
     @property
     def duration_s(self) -> float:
         ends = [p.t_end_s for p in self.pulses] + [e.t_end_s for e in self.events] + [b for _, b in self.idle]

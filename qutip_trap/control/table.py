@@ -272,6 +272,19 @@ class CalibrationTable:
     fitted_at_s: float = 0.0
     """The laboratory time the table was assembled at."""
 
+    def __repr__(self) -> str:
+        """``<CalibrationTable for device 35bf441409a0: surrogate, seed 0, 30 entries (none uncalibrated), waveforms for
+        pairs (0, 1)>``; ``entries()`` holds the entries and ``to_dict()`` the whole table."""
+        if not self.device_hash:
+            return "<CalibrationTable: empty>"
+        n_uncalibrated = len(self.uncalibrated())
+        pairs = ", ".join(str(p) for p in sorted(self.ms)) or "none"
+        return (
+            f"<CalibrationTable for device {self.device_hash[:12]}: {'surrogate' if self.surrogate else 'fitted'}, seed "
+            f"{self.seed}, {len(self.entries())} entries ({n_uncalibrated or 'none'} uncalibrated), waveforms for pairs "
+            f"{pairs}>"
+        )
+
     def waveform_for(self, pair: Sequence[int]) -> Waveform | None:
         """The pair's entangling waveform under either key order, None when uncalibrated."""
         a, b = int(pair[0]), int(pair[1])

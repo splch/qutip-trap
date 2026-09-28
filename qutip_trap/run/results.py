@@ -28,6 +28,13 @@ if TYPE_CHECKING:
 
 RESULT_SCHEMA_VERSION = 4
 """The ``schema_version`` ``Result.to_dict`` writes and ``Result.from_dict`` reads."""
+SUMMARY_OUTCOMES_REPR = 8
+"""The most frequent outcomes ``repr(result)`` shows."""
+SUMMARY_OUTCOMES = 16
+"""The most probable outcomes (simulated or ideal) ``Result.summary`` tabulates."""
+SUMMARY_IDEAL_QUBITS_MAX = 10
+"""The widest register ``Result.summary`` computes the ideal distribution for (the compiler's whole-circuit check stops at
+the same width)."""
 
 
 def bitstring_key(bits: np.ndarray) -> str:
@@ -332,6 +339,14 @@ class Diagnostics:
     level_reason: str = ""
     """Why the run integrated at ``level`` (``run.levels.LevelDecision.reason``)."""
 
+    def __repr__(self) -> str:
+        """``<Diagnostics: JOINT_EXACT on [2, 2, 11, 13] (dimension 572), 22 approximations, intrinsic budget 3.1e-03>``;
+        ``Result.summary()`` reads the rest out."""
+        return (
+            f"<Diagnostics: {self.level} on {list(self.space.dims)} (dimension {self.space.dimension}), "
+            f"{len(self.approximations)} approximations, intrinsic budget {self.intrinsic_budget.total:.2g}>"
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """The summary as plain JSON-able values: every scalar and per-mode field, the declared space, the calibration
         table's entries (``CalibrationTable.to_dict``), and for the two reports only whether they exist."""
@@ -633,6 +648,103 @@ class Result:
     def column_qubits(self) -> tuple[int, ...]:
         """The circuit qubit of every column of ``bitstrings``: ``qubits`` when given, else 0, 1, ..., n - 1."""
         return self.qubits if self.qubits is not None else tuple(range(self.n_qubits))
+
+    def __repr__(self) -> str:
+        """``<Result: 2000 shots on 2 qubits at JOINT_EXACT, counts {'00': 994, '01': 1, '10': 2, '11': 1003}>``, the counts
+        cut to the eight most frequent outcomes; ``summary()`` is the full report."""
+        top = sorted(sorted(self.counts, key=lambda k: -self.counts[k])[:SUMMARY_OUTCOMES_REPR])
+        shown = ", ".join(f"{k!r}: {self.counts[k]}" for k in top)
+        rest = len(self.counts) - len(top)
+        more = f", ... {rest} more" if rest else ""
+        return (
+            f"<Result: {self.shots} shots on {self.n_qubits} qubits at {self.diagnostics.level}, "
+            f"counts {{{shown}{more}}}>"
+        )
+
+    def summary(self) -> str:
+        """The run as a readable report: the outcomes with their counts, probabilities, error bars and (when the run's
+        record carries the compiled circuit and it has at most ``SUMMARY_IDEAL_QUBITS_MAX`` qubits) the ideal distribution
+        and the total variation distance to it; then the level and why, the modes and the truncation monitor, the
+        ensemble, the intrinsic error budget, the SPAM errors and the identity of the run. The approximations stay in
+        ``diagnostics.approximations``, counted here."""
+        d = self.diagnostics
+        ideal: dict[str, float] | None = None
+        if self.record is not None and self.n_qubits <= SUMMARY_IDEAL_QUBITS_MAX:
+            from qutip_trap.control.compiler import ideal_probabilities
+
+            compiled = self.record.compile.circuit
+            if not any(op.is_non_unitary for op in compiled.ops):
+                ideal = ideal_probabilities(compiled)
+        outcomes = sorted(set(self.counts) | set(ideal or {}))
+        kept = sorted(
+            sorted(outcomes, key=lambda k: -max(self.probabilities.get(k, 0.0), (ideal or {}).get(k, 0.0)))[
+                :SUMMARY_OUTCOMES
+            ]
+        )
+        width = max(7, self.n_qubits)
+        lines = [
+            f"{self.shots} shots on {self.n_qubits} qubits at {d.level} on {list(d.space.dims)} "
+            f"(dimension {d.space.dimension}), {self.duration_s:.1f} s",
+            f"  {'outcome':<{width}}  {'counts':>7}  {'probability':<17}"
+            + ("  ideal" if ideal is not None else ""),
+        ]
+        for k in kept:
+            p = self.probabilities.get(k, 0.0)
+            bar = f"{p:.4f} +- {self.error_bars[k]:.4f}" if k in self.error_bars else f"{p:.4f}"
+            row = f"  {k:<{width}}  {self.counts.get(k, 0):>7}  {bar:<17}"
+            if ideal is not None:
+                row += f"  {ideal.get(k, 0.0):.4f}"
+            lines.append(row)
+        if len(outcomes) > len(kept):
+            lines.append(f"  ... {len(outcomes) - len(kept)} more outcomes")
+        if ideal is not None:
+            tv = 0.5 * sum(abs(self.probabilities.get(k, 0.0) - ideal.get(k, 0.0)) for k in outcomes)
+            lines.append(f"  total variation distance to the ideal: {tv:.4f}")
+        classes: dict[str, list[int]] = {}
+        for m, cls in sorted(d.mode_class.items()):
+            classes.setdefault(cls, []).append(m)
+        caps = {t.mode: t.d for t in d.space.resolved}
+        modes = "; ".join(
+            f"{', '.join(f'{m} (d = {caps[m]})' if m in caps else str(m) for m in ms)} {cls}"
+            for cls, ms in classes.items()
+        )
+        boundary = max(d.boundary_population.values(), default=0.0)
+        lines += [
+            f"level     {d.level_reason or d.level}",
+            f"modes     {modes or 'none'}; boundary population at most {boundary:.1e}",
+            f"ensemble  {d.samples} sample(s), {d.branches} branch(es), {d.trajectories} evolution(s) in all; "
+            f"effective sample size {d.effective_sample_size:.4g}",
+        ]
+        budget = d.intrinsic_budget
+        if budget.records:
+            # charged to the schedule's gate pieces when the record says what they are, else per budget record
+            per = (
+                budget.by_piece(t.gate_id for t in self.record.schedule.targets)
+                if self.record is not None
+                else budget.by_gate()
+            )
+            worst = max(per, key=lambda g: per[g])
+            omitted = f"; it leaves out {len(budget.omitted)} named error(s)" if budget.omitted else ""
+            lines.append(
+                f"budget    intrinsic {budget.total:.2g} over {len(per)} gates (largest {worst}: {per[worst]:.2g})"
+                + omitted
+            )
+        # one line per distinct (eps_B, eps_D, preparation), so a register of identical ions reads as one row
+        spam: dict[str, list[str]] = {}
+        for q, (eps_b, eps_d) in self.spam.items():
+            if "." not in q:
+                prep = self.spam[f"{q}.state_preparation"][0]
+                spam.setdefault(f"eps_B {eps_b:.2g}, eps_D {eps_d:.2g}, preparation {prep:.2g}", []).append(q)
+        if spam:
+            lines.append("SPAM      " + "; ".join(f"{', '.join(qs)}: {text}" for text, qs in spam.items()))
+        if self.discarded_shots:
+            lines.append(f"discarded {self.discarded_shots} shot(s) the collision process flagged")
+        lines += [
+            f"identity  seed {d.root_seed}, machine {(self.machine_hash or 'unknown')[:12]}, "
+            f"{self.created_at or 'time unknown'}",
+            f"{len(d.approximations)} approximations in diagnostics.approximations",
+        ]
+        return "\n".join(line.rstrip() for line in lines)
 
     # ---- the IonQ v1 formats: decimal keys, qubit 0 the 2^0 bit (Section 8.6) ---------------------------------------------
 

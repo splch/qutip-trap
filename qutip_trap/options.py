@@ -5,12 +5,16 @@ the ``Numerics``; ``Machine.engine`` builds the engine from the ``Physics``.
 
 from __future__ import annotations
 
+import dataclasses
+import enum
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
+
     from qutip_trap.control.schedule import CrosstalkSuppression
     from qutip_trap.dynamics.channels import CollapseOp, RecoilOption
     from qutip_trap.dynamics.hamiltonian import BuilderOptions
@@ -27,6 +31,20 @@ MULTISTEP_INTEGRATORS: frozenset[str] = frozenset({"adams", "bdf", "lsoda", "vod
 ALLOWED_INTEGRATORS: frozenset[str] = frozenset(
     {"dop853", "vern7", "vern9", "tsit5", "explicit_rk", "krylov", "diag"}
 )
+
+
+def changed_fields_repr(record: DataclassInstance) -> str:
+    """``Name(field=value, ...)`` over the fields of a dataclass: every field without a default and every defaulted one
+    that differs from its default, the constructor call that rebuilds the record (``Physics(noise=False)``,
+    ``Numerics()``); an enum member reads as ``FidelityLevel.GATE_LOCAL``."""
+    parts: list[str] = []
+    for f in dataclasses.fields(record):
+        default = f.default if f.default_factory is dataclasses.MISSING else f.default_factory()
+        value = getattr(record, f.name)
+        if value != default:
+            text = f"{type(value).__name__}.{value.name}" if isinstance(value, enum.Enum) else repr(value)
+            parts.append(f"{f.name}={text}")
+    return f"{type(record).__name__}({', '.join(parts)})"
 
 
 @dataclass(frozen=True)
@@ -122,6 +140,9 @@ class Numerics:
     addressing: bool | None = None
     """Schedule single-qubit gates in parallel (Section 7.3); None = the device's ``HardwareChain.parallel_addressing``."""
 
+    def __repr__(self) -> str:
+        return changed_fields_repr(self)
+
     def __post_init__(self) -> None:
         if self.caps is not None:
             object.__setattr__(self, "caps", {int(m): int(d) for m, d in dict(self.caps).items()})
@@ -203,6 +224,9 @@ class Physics:
     shot_period_s: float | None = None
     """T_rep (s); None derives it from the preparation, the schedule and the detection window."""
 
+    def __repr__(self) -> str:
+        return changed_fields_repr(self)
+
     def __post_init__(self) -> None:
         if self.internal_levels < 2:
             raise ValueError("internal_levels is at least 2")
@@ -231,6 +255,9 @@ class Readout:
     """The strategy over the record (threshold, time-resolved ML, adaptive, first-photon); None = the table's threshold."""
     povm_samples: int = 20_000
     """Records sampled per level per ion when a discriminator has no closed-form confusion (Section 8.4)."""
+
+    def __repr__(self) -> str:
+        return changed_fields_repr(self)
 
     def __post_init__(self) -> None:
         if self.mode not in ("fast", "full"):

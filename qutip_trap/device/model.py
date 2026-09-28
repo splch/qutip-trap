@@ -204,6 +204,16 @@ class Device:
     def __post_init__(self) -> None:
         self.trap.check_masses(self.crystal.species)
 
+    def __repr__(self) -> str:
+        """``<Device 35bf441409a0: 2 x 171Yb+, 6 modes, 7 beams, B = 5 G>``: the hash prefix ``specs`` opens with and the
+        apparatus in one line; ``specs()`` is the full report."""
+        names = [s.name for s in self.crystal.species]
+        ions = f"{len(names)} x {names[0]}" if len(set(names)) == 1 else ", ".join(names)
+        return (
+            f"<Device {self.hash()[:12]}: {ions}, {len(self.crystal.modes)} modes, {len(self.beams)} beams, "
+            f"B = {self.field.B_gauss:g} G>"
+        )
+
     def derived(self) -> DerivedQuantities:
         """Every computed number with its provenance id (Section 3.3; the ledger of Section 14.5): the qubit transitions and
         their Zeeman sensitivities, the trap's secular frequencies, Mathieu parameters and C0, the mode frequencies and

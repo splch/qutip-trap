@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from qutip_trap.hashing import canonical_digest
-from qutip_trap.options import Numerics, Physics, Readout
+from qutip_trap.options import Numerics, Physics, Readout, changed_fields_repr
 from qutip_trap.run.levels import FidelityLevel, decide_level
 from qutip_trap.run.space import ModeClass3
 
@@ -60,6 +60,15 @@ class Estimate:
     integration on the runs ``EVALUATIONS_PER_PULSE_SECOND`` is counted on, and the order of a run's wall time when its
     branches and samples fit on the workers at once."""
     notes: tuple[str, ...] = ()
+
+    def __repr__(self) -> str:
+        """``<Estimate: JOINT_EXACT on [2, 2, 11, 13] (dimension 572, 163592 drive non-zeros), 6 native gates (1
+        entangling) ending at 114.5 us, about 1.6 s per pass>``; ``reason`` says why the level."""
+        return (
+            f"<Estimate: {self.level.value} on {list(self.space.dims)} (dimension {self.dimension}, {self.nnz} drive "
+            f"non-zeros), {self.n_pulses} native gates ({self.n_entangling} entangling) ending at "
+            f"{self.duration_s * 1e6:.4g} us, about {self.wall_time_s:.2g} s per pass>"
+        )
 
 
 def _evaluation_cost_s(dims: Sequence[int], ion_factors: Sequence[int], mode_factors: Sequence[int]) -> float:
@@ -164,6 +173,11 @@ class Machine:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "level", FidelityLevel(self.level))
+
+    def __repr__(self) -> str:
+        """The device and the fields that differ from their defaults, the call a variant is made from:
+        ``Machine(device=<Device ...>, physics=Physics(noise=False), name='...')``; ``specs()`` is the full report."""
+        return changed_fields_repr(self)
 
     def run(
         self,
