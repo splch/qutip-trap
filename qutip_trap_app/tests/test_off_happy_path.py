@@ -17,6 +17,7 @@ from qutip_trap_app.replay import ChannelLibrary, replay
 from qutip_trap_app.verify import VerifyReport
 from qutip_trap_app.viewmodel.circuit import register_after, timeline
 from qutip_trap_app.viewmodel.machine import histogram, shot
+from qutip_trap_app.views import routes
 from qutip_trap_app.views.state import FULL, JobStatus, Session, Store
 from qutip_trap_app.workers import Event, Ticket
 
@@ -309,7 +310,7 @@ def test_a_replay_record_reruns_at_the_full_engine_where_it_has_no_trace(
     bell: tuple[Record, LiveRun],
 ) -> None:
     """A channel-replay record has no trace inside a pulse; the levels that need one rerun the record's own job at the full
-    engine, and the engine choice follows so the next Run is full too."""
+    engine, opening on the same screen of the new record, and the engine choice follows so the next Run is full too."""
     record, _live = bell
     submitted: list[tuple[str, dict[str, object]]] = []
 
@@ -321,6 +322,7 @@ def test_a_replay_record_reruns_at_the_full_engine_where_it_has_no_trace(
     session = Session(Store(), ProvenanceIndex.load())
     session.worker = Recording()
     session.store.error = "stale"
-    status = session.rerun_full(record)
+    status = session.rerun_full(record, lambda key: routes.dynamics(key, 3, 0))
     assert status.request == "run_job" and status.job is record.job and session.store.engine is FULL
+    assert status.landing is not None and status.landing.route("new") == routes.dynamics("new", 3, 0)
     assert submitted == [("run_job", {"job": record.job})] and session.store.error == ""

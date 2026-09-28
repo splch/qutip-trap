@@ -1212,7 +1212,9 @@ def _hamiltonian_page(ctx: Page) -> list[ft.Control]:
                                         ft.OutlinedButton(
                                             content=ft.Text("Run this job at the full engine"),
                                             icon=ft.Icons.PLAY_ARROW,
-                                            on_click=lambda e: session.rerun_full(record),
+                                            on_click=lambda e: session.rerun_full(
+                                                record, lambda key: routes.device("hamiltonian")
+                                            ),
                                             disabled=bool(store.running()),
                                             key="rerun-full",
                                         )
@@ -1606,8 +1608,7 @@ def Level4Page(store: Store, session: Session, page_name: str, index: Provenance
     ft.use_state(store)
     page = ft.context.page
     device_page = DEVICE_PAGES[page_name]
-    if store.device_page != page_name:
-        store.device_page = page_name
+    session.device_page = page_name
     ck = store.device_ref().cache_key()
 
     def derive() -> None:

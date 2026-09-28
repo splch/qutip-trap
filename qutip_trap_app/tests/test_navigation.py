@@ -1,7 +1,8 @@
 """A Bell-state job is followed from a histogram bar to a Hamiltonian matrix element in at most
 six clicks. This walks the routing model of the shell (the functions the zoom buttons, the rail, the crumbs and the keyboard
 use) without a Flutter client; ``test_main.py`` drives the same path through the rendered controls under ``flet test``.
-Also the Learn routes, the tour's routes, and the request that a run made from Level 1 lands on its gate."""
+Also the Learn routes, the tour's routes, and where a finished run opens: on its gate for a request made from Level 1 if
+the learner is still there, and in the shell's banner if they have moved on."""
 
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from qutip_trap_app.viewmodel.presets import PresetResult
 from qutip_trap_app.views import routes
 from qutip_trap_app.views.learn import ACTIVITIES
 from qutip_trap_app.views.shell import child_route, crumbs_of, parent_route, parse_route, pulse_of_path
-from qutip_trap_app.views.state import JobStatus, Session, Store
+from qutip_trap_app.views.state import FinishedRun, JobStatus, Landing, Session, Store
 from qutip_trap_app.workers import Event
 
 
@@ -95,18 +96,41 @@ def test_a_request_run_lands_on_its_gate_and_a_preset_result_lands_in_the_store(
     session = Session(Store(), ProvenanceIndex.load())
     store = session.store
     navigated: list[str] = []
+    origin = routes.circuit("an earlier run", "ms[2]")
 
     class FakePage:
+        route = origin
+
         def navigate(self, route: str) -> None:
             navigated.append(route)
 
         def run_task(self, *_a: object, **_k: object) -> None:
             return None
 
+    def request_run(ticket: str) -> JobStatus:
+        """What ``submit_request`` tracks for a request made on Level 1 at the gate ms[2]."""
+        return JobStatus(
+            ticket,
+            "request_run",
+            target={"gate_id": "ms[2]", "kind": "angle"},
+            landing=Landing(origin, lambda key: routes.circuit(key, "ms[2]")),
+        )
+
     session.page = FakePage()
-    store.jobs = {"r1": JobStatus("r1", "request_run", target={"gate_id": "ms[2]", "kind": "angle"})}
+    store.jobs = {"r1": request_run("r1")}
     session.apply_events([Event("result", "r1", "request_run", payload=record)])
-    assert store.current == record.key() and navigated == [routes.circuit(record.key(), "ms[2]")]
+    assert navigated == [routes.circuit(record.key(), "ms[2]")] and store.finished_run is None, (
+        "the learner stayed on the gate: the new run opens there (the shell makes it current on arrival)"
+    )
+    session.page.route = routes.learn()
+    store.jobs = {**store.jobs, "r2": request_run("r2")}
+    session.apply_events([Event("result", "r2", "request_run", payload=record)])
+    assert navigated == [routes.circuit(record.key(), "ms[2]")], (
+        "the learner moved on: nothing pulls them back"
+    )
+    assert store.finished_run == FinishedRun(
+        f"the requested run finished: job {record.key()[:8]}", routes.circuit(record.key(), "ms[2]")
+    )
     result = PresetResult("harty_2014", {"epg": 7.5e-7}, {"epg": 1e-7}, (), {}, (), 1.0)
     store.jobs = {**store.jobs, "p1": JobStatus("p1", "preset", target={"preset_id": "harty_2014"})}
     session.apply_events([Event("result", "p1", "preset", payload=result)])

@@ -437,11 +437,12 @@ def ResultsPanel(store: Store, session: Session, record: Record, index: Provenan
         if report.deep_record_key and report.deep_record_key in store.records:
             deep_key = report.deep_record_key
 
-            def open_deep(_e: Any, k: str = deep_key) -> None:
-                store.current = k
-                ft.context.page.navigate(routes.job(k))
-
-            detail_controls.append(ft.TextButton(content=ft.Text("open the deeper run"), on_click=open_deep))
+            detail_controls.append(
+                ft.TextButton(
+                    content=ft.Text("open the deeper run"),
+                    on_click=lambda e, k=deep_key: ft.context.page.navigate(routes.job(k)),
+                )
+            )
     body.append(details(store, session, 0, "level0.results", detail_controls))
     verified_line = (
         status_line(

@@ -316,6 +316,31 @@ def ZoomBar(store: Store, session: Session, path: str, keys: ZoomKeys) -> ft.Con
     )
 
 
+def _banner(
+    icon: ft.IconData, text: str, fg: str, bg: str, actions: list[tuple[str, Any]], key: str
+) -> ft.Control:
+    """One line across the top of the content: an icon, the text, and its buttons (label, handler)."""
+    controls: list[ft.Control] = [
+        ft.Icon(icon, size=18, color=fg),
+        ft.Text(text, color=fg, size=theme.SIZE_SMALL + 1, expand=True, selectable=True, key=key),
+    ]
+    controls += [
+        ft.TextButton(content=ft.Text(label, color=fg), on_click=handler, key=f"{key}-{label.lower()}")
+        for label, handler in actions
+    ]
+    return ft.Container(
+        content=ft.Row(
+            controls,
+            spacing=theme.GAP,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=bg,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+        margin=ft.Margin.symmetric(horizontal=theme.PAGE_PADDING - theme.GAP),
+        border_radius=ft.BorderRadius.all(8),
+    )
+
+
 def error_banner(store: Store) -> ft.Control:
     """The last error, on whichever level the learner is (a request refused on Level 1, a re-simulation that failed, a
     setting that could not be saved), with a Dismiss; nothing when there is none."""
@@ -325,31 +350,34 @@ def error_banner(store: Store) -> ft.Control:
     def dismiss(_e: Any) -> None:
         store.error = ""
 
-    return ft.Container(
-        content=ft.Row(
-            [
-                ft.Icon(ft.Icons.ERROR_OUTLINE, size=18, color=ft.Colors.ON_ERROR_CONTAINER),
-                ft.Text(
-                    store.error,
-                    color=ft.Colors.ON_ERROR_CONTAINER,
-                    size=theme.SIZE_SMALL + 1,
-                    expand=True,
-                    selectable=True,
-                    key="error",
-                ),
-                ft.TextButton(
-                    content=ft.Text("Dismiss", color=ft.Colors.ON_ERROR_CONTAINER),
-                    on_click=dismiss,
-                    key="error-dismiss",
-                ),
-            ],
-            spacing=theme.GAP,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        bgcolor=ft.Colors.ERROR_CONTAINER,
-        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
-        margin=ft.Margin.symmetric(horizontal=theme.PAGE_PADDING - theme.GAP),
-        border_radius=ft.BorderRadius.all(8),
+    return _banner(
+        ft.Icons.ERROR_OUTLINE,
+        store.error,
+        ft.Colors.ON_ERROR_CONTAINER,
+        ft.Colors.ERROR_CONTAINER,
+        [("Dismiss", dismiss)],
+        "error",
+    )
+
+
+def finished_banner(store: Store, path: str) -> ft.Control:
+    """A run that finished while the learner was on another screen, with Open and Dismiss; nothing otherwise, or once the
+    learner is on it."""
+    finished = store.finished_run
+    if finished is None or finished.route == path:
+        return ft.Container()
+    page = ft.context.page
+
+    def dismiss(_e: Any) -> None:
+        store.finished_run = None
+
+    return _banner(
+        ft.Icons.CHECK_CIRCLE_OUTLINE,
+        finished.text,
+        ft.Colors.ON_SECONDARY_CONTAINER,
+        ft.Colors.SECONDARY_CONTAINER,
+        [("Open", lambda e: page.navigate(finished.route)), ("Dismiss", dismiss)],
+        "finished",
     )
 
 
@@ -379,8 +407,6 @@ def RoutedContent(store: Store, session: Session, index: ProvenanceIndex, path: 
             ),
             key="unknown-job",
         )
-    if store.current != r.job:
-        store.current = r.job
     if r.gate is not None:
         return Level1Page(store, session, record, r.gate, index)
     if r.pulse is not None and r.level == 2:
@@ -452,7 +478,17 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     path = ft.use_route_location() or "/"
     route = parse_route(path)
     level = max(route.level, 0)
+    # the job a path names is the current record before anything reads it (the rail, the numerics strip, the device's
+    # cards), so one render is about one record; an effect would draw a frame of the previous one first
+    if route.job is not None and route.job in store.records:
+        session.make_current(route.job)
     record = store.record()
+
+    def arrived() -> None:
+        if store.finished_run is not None and store.finished_run.route == path:
+            store.finished_run = None
+
+    ft.use_effect(arrived, dependencies=[path])
 
     def rail_change(e: Any) -> None:
         i = int(e.control.selected_index)
@@ -460,7 +496,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
         if i == 5:
             page.navigate(routes.learn())
         elif i == 4:
-            page.navigate(routes.device(store.device_page))
+            page.navigate(routes.device(session.device_page))
         elif record is None:
             page.navigate("/")
         elif i == 0:
@@ -571,6 +607,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             [
                 ZoomBar(store, session, path, keys),
                 error_banner(store),
+                finished_banner(store, path),
                 ft.Container(
                     content=RoutedContent(store, session, index, path),
                     expand=True,

@@ -109,6 +109,24 @@ LEARNER_KEY = "qutip_trap_app.learner.v1"
 """The SharedPreferences key under which the learner's settings and mastery log are kept on the device."""
 
 
+@dataclass(frozen=True)
+class Landing:
+    """Where a run's record opens when it finishes: ``route`` makes the path from the new record's key, and ``origin`` is
+    the path the run was submitted from. It opens by itself only if the learner is still there, and is offered otherwise,
+    so that a finished run never pulls the learner away from what they are reading."""
+
+    origin: str | None
+    route: Callable[[str], str]
+
+
+@dataclass(frozen=True)
+class FinishedRun:
+    """A run that finished while the learner was on another screen: what it was, and the path that opens it."""
+
+    text: str
+    route: str
+
+
 @dataclass
 class JobStatus:
     """One submitted job. ``stage``, ``fraction`` and ``message`` change in place as its progress arrives (the Activity
@@ -126,6 +144,8 @@ class JobStatus:
     target: dict[str, Any] = field(default_factory=dict)
     """What the request was about (record key, step, sample, branch, device cache key), read back when its result lands;
     ``message`` is display text that every progress event overwrites."""
+    landing: Landing | None = None
+    """For a run (a Run, a request, a re-run), where its record opens; None for a job that makes no record of its own."""
 
     @property
     def elapsed_s(self) -> float:
@@ -244,6 +264,8 @@ class Store(ft.Observable):
     selected_bar: str | None = None
     selected_shot: int | None = None
     error: str = ""
+    finished_run: FinishedRun | None = None
+    """A run that finished while the learner was elsewhere, offered in the shell until opened or dismissed."""
     activity: Activity = field(default_factory=Activity)
     # the device model: the Level 4 knobs over the preset, the derived layers and the recalibrated tables
     preset_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -253,7 +275,6 @@ class Store(ft.Observable):
     """Derived device layers per ``DeviceRef.cache_key()``."""
     tables: dict[str, TableRecord] = field(default_factory=dict)
     """Recalibrated tables per device hash."""
-    device_page: str = "hamiltonian"
     # Level 3 selections
     branch: int = 0
     """The initial-mixture branch Level 3 shows (the sample comes from the route)."""
@@ -356,7 +377,13 @@ class Session:
         self.page = page
         self.preferences = preferences
         """A ``flet.SharedPreferences`` service; None in tests and headless use, where the learner lives in memory only."""
+        self._restored = preferences is None
+        """Whether the saved learner has been read (or found absent or unreadable): nothing is saved before, so a slow
+        read never loses the mastery log to a fresh one."""
+        self._unsaved = False
         self._last_beat = time.monotonic()
+        self.device_page = "hamiltonian"
+        """The Level 4 page the rail's Physics item reopens: read on a click and never rendered, so not in the Store."""
         # a clicked provenance chip opens the drawer's Specification tile at its section
         provenance.on_open_section = self.open_specification
 
@@ -373,7 +400,9 @@ class Session:
         learner = dataclasses.replace(self.store.learner, **changes)
         learner.log.retention_days = learner.retention_days
         self.store.learner = learner
-        if self.preferences is not None and self.page is not None:
+        if not self._restored:
+            self._unsaved = True
+        elif self.preferences is not None and self.page is not None:
             self.page.run_task(self._save_learner, json.dumps(learner_document(learner)))
 
     def record_attempt(self, attempt: Attempt) -> None:
@@ -392,16 +421,17 @@ class Session:
 
     async def restore_learner(self) -> None:
         """Read the saved learner at start-up. The first-launch question waits for ``learner_loaded``, so it is asked once
-        per device; the read is bounded so a slow storage service never leaves the question gated off."""
+        per device, but at most ``RESTORE_TIMEOUT_S``: a slower read is not given up, and lands when it comes with what
+        the session did meanwhile (:meth:`_with_session`). Nothing is saved until it has landed."""
         try:
             if self.preferences is not None:
-                raw = await asyncio.wait_for(self.preferences.get(LEARNER_KEY), timeout=RESTORE_TIMEOUT_S)
+                read = asyncio.ensure_future(self.preferences.get(LEARNER_KEY))
+                done, _pending = await asyncio.wait({read}, timeout=RESTORE_TIMEOUT_S)
+                if not done:
+                    self.store.learner_loaded = True  # a slow client is asked; the read goes on
+                raw = await read
                 if isinstance(raw, str) and raw:
-                    self.store.learner = learner_from_document(json.loads(raw))
-        except TimeoutError:
-            self.store.error = (
-                "the saved settings did not load in time; starting fresh (new settings will still be saved)"
-            )
+                    self.store.learner = self._with_session(learner_from_document(json.loads(raw)))
         except (
             Exception
         ) as exc:  # a malformed or unreadable document: the defaults are used and the reason is shown
@@ -410,6 +440,19 @@ class Session:
             )
         finally:
             self.store.learner_loaded = True
+            self._restored = True
+            if self._unsaved:
+                self._unsaved = False
+                self.set_learner()
+
+    def _with_session(self, saved: Learner) -> Learner:
+        """The saved learner with what this session added before it was read: the answer to the first-launch question
+        (asked while a slow read was out) and the prompt attempts."""
+        now = self.store.learner
+        if now.asked:
+            saved = dataclasses.replace(saved, knowledge=now.knowledge, asked=True)
+        saved.log.attempts.extend(now.log.attempts)
+        return saved
 
     # ---- the circuit (every change to the text goes through here) ----
 
@@ -506,17 +549,30 @@ class Session:
         self.store.error = ""
         self.store.last_run_text = self.store.circuit_text
         request = self.store.engine.request
-        return self._track(JobStatus(self.worker.submit(request, job=job).id, request, job=job))
+        return self._track(
+            JobStatus(
+                self.worker.submit(request, job=job).id,
+                request,
+                job=job,
+                landing=Landing(self._here(), routes.job),
+            )
+        )
 
-    def rerun_full(self, record: Record) -> JobStatus:
-        """The record's own job again at the full engine: a channel-replay record stores no trace inside a pulse, and the
+    def rerun_full(self, record: Record, route: Callable[[str], str]) -> JobStatus:
+        """The record's own job again at the full engine, opening at ``route`` of the new record (the same screen, so the
+        learner sees what the replay could not show): a channel-replay record stores no trace inside a pulse, and the
         levels that open one (Level 3, the Hamiltonian page) offer this. The engine choice follows, so the next Run is
         full too."""
         self.store.engine = FULL
         self.store.error = ""
+        ticket = self.worker.submit(FULL.request, job=record.job)
         return self._track(
-            JobStatus(self.worker.submit(FULL.request, job=record.job).id, FULL.request, job=record.job)
+            JobStatus(ticket.id, FULL.request, job=record.job, landing=Landing(self._here(), route))
         )
+
+    def _here(self) -> str | None:
+        """The path the learner is on (None headless)."""
+        return None if self.page is None else str(self.page.route)
 
     def submit_preset(self, preset_id: str) -> JobStatus | None:
         """Run a published-experiment preset in the worker; a repeat while one runs is skipped."""
@@ -539,9 +595,16 @@ class Session:
         self.store.error = ""
         self.store.active_preset = None
         ticket = self.worker.submit("request_run", job=request.job, step=request.step_index)
-        target = {"gate_id": request.gate_id, "kind": request.kind}
+        gate_id = request.gate_id
         return self._track(
-            JobStatus(ticket.id, "request_run", message=request.job.label, job=request.job, target=target)
+            JobStatus(
+                ticket.id,
+                "request_run",
+                message=request.job.label,
+                job=request.job,
+                target={"gate_id": gate_id, "kind": request.kind},
+                landing=Landing(self._here(), lambda key: routes.circuit(key, gate_id)),
+            )
         )
 
     def submit_verify(self, key: str, shots: int | None = None) -> JobStatus:
@@ -670,22 +733,18 @@ class Session:
         match status.request:
             case "run_job" | "replay" | "request_run":
                 assert isinstance(payload, Record)
+                assert status.landing is not None, "every run is submitted with where it opens"
                 key = payload.key()
                 store.records = {**store.records, key: payload}
-                store.current = key
-                self._forget_selections()
-                route = routes.job(key)
                 if status.request == "request_run":
                     store.scored_prediction = None
-                    route = routes.circuit(key, status.target["gate_id"])
                 else:
                     # the last request was made against an earlier record (gate ids repeat across runs); the pick made
                     # before this run is scored beside its histogram, and the next run gets its own prompt
                     store.last_request = None
                     store.scored_prediction = store.prediction
                     store.prediction = None
-                if self.page is not None:
-                    self.page.navigate(route)
+                self._land(status.landing, key, f"{REQUEST_LABELS[status.request]} finished: job {key[:8]}")
             case "preset":
                 assert isinstance(payload, PresetResult)
                 store.preset_results = {**store.preset_results, payload.preset_id: payload}
@@ -737,10 +796,24 @@ class Session:
             case _:
                 assert_never(status.request)
 
-    def _forget_selections(self) -> None:
-        """A new record is current: the selections that index into a record (a bar, a shot, a branch, a Hamiltonian term or
-        channel, the step the Hamiltonian page shows) belonged to the previous one and are dropped. The per-record caches
-        keyed by record key (re-checks, closure picks) stay."""
+    def _land(self, landing: Landing, key: str, text: str) -> None:
+        """Open a finished run's record if the learner is still on the screen that submitted it (the shell makes it
+        current on arrival), and offer it otherwise; headless, it simply becomes current."""
+        route = landing.route(key)
+        if self.page is None:
+            self.make_current(key)
+        elif self.page.route == landing.origin:
+            self.page.navigate(route)
+        else:
+            self.store.finished_run = FinishedRun(text, route)
+
+    def make_current(self, key: str) -> None:
+        """Make the record ``key`` current (the shell does, for the job a path names). The selections that index into a
+        record (a bar, a shot, a branch, a Hamiltonian term or channel, the step the Hamiltonian page shows) belonged to
+        the previous one and are dropped; the per-record caches keyed by record key (re-checks, closure picks) stay."""
+        if self.store.current == key:
+            return
+        self.store.current = key
         self.store.selected_bar = None
         self.store.selected_shot = None
         self.store.branch = 0

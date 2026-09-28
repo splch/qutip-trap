@@ -221,7 +221,9 @@ def Level3Page(
                 ft.FilledButton(
                     content=ft.Text("Run this job at the full engine"),
                     icon=ft.Icons.PLAY_ARROW,
-                    on_click=lambda e: session.rerun_full(record),
+                    on_click=lambda e: session.rerun_full(
+                        record, lambda key: routes.dynamics(key, pulse_param, sample_param)
+                    ),
                     disabled=bool(store.running()),
                     tooltip="the same circuit, shots and seed, integrated pulse by pulse so that every pulse has a trace",
                     key="rerun-full",

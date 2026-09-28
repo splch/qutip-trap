@@ -5,6 +5,8 @@ needs no hidden global."""
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 from typing import Any
 
@@ -14,11 +16,14 @@ from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import CircuitRecord, JobSpec, LiveRun, Record, complete_job, execute
 from qutip_trap_app.viewmodel.learn import Attempt, MasteryLog, review_gap_days
 from qutip_trap_app.viewmodel.machine import shot
+from qutip_trap_app.views import routes, state
 from qutip_trap_app.views.shell import parent_route
 from qutip_trap_app.views.state import (
     FULL,
+    LEARNER_KEY,
     REPLAY,
     JobStatus,
+    Landing,
     Learner,
     Session,
     Store,
@@ -31,6 +36,86 @@ from qutip_trap_app.workers import Event, Ticket
 @pytest.fixture(scope="module")
 def index() -> ProvenanceIndex:
     return ProvenanceIndex.load()
+
+
+class _Preferences:
+    """A storage service whose read answers when the test says so."""
+
+    def __init__(self, saved: str | None) -> None:
+        self.saved = saved
+        self.answer = asyncio.Event()
+        self.writes: list[str] = []
+
+    async def get(self, key: str) -> str | None:
+        assert key == LEARNER_KEY
+        await self.answer.wait()
+        return self.saved
+
+    async def set(self, key: str, value: str) -> bool:
+        self.writes.append(value)
+        return True
+
+
+class _Page:
+    def __init__(self) -> None:
+        self.tasks: list[asyncio.Task[Any]] = []
+
+    def run_task(self, fn: Any, *args: Any) -> None:
+        self.tasks.append(asyncio.ensure_future(fn(*args)))
+
+
+def _saved_learner() -> str:
+    log = MasteryLog()
+    log.record(Attempt("histogram", "histogram.q1", 1.0, True, unaided=False))
+    return json.dumps(learner_document(Learner(knowledge="physicist", asked=True, log=log)))
+
+
+async def test_a_saved_learner_read_in_time_is_the_learner(index: ProvenanceIndex) -> None:
+    prefs, page = _Preferences(_saved_learner()), _Page()
+    session = Session(Store(), index, page, preferences=prefs)
+    prefs.answer.set()
+    await session.restore_learner()
+    learner = session.store.learner
+    assert session.store.learner_loaded and learner.knowledge == "physicist" and learner.asked
+    assert len(learner.log.attempts) == 1 and prefs.writes == [], "read, not written back"
+
+
+async def test_a_slow_read_asks_and_then_lands_without_losing_the_log(
+    index: ProvenanceIndex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past the bound the question is asked; the read goes on, and when it lands it keeps the answer and the attempts
+    made meanwhile. Nothing is saved before, so the saved log is never replaced by the session's empty one."""
+    monkeypatch.setattr(state, "RESTORE_TIMEOUT_S", 0.01)
+    prefs, page = _Preferences(_saved_learner()), _Page()
+    session = Session(Store(), index, page, preferences=prefs)
+    restoring = asyncio.ensure_future(session.restore_learner())
+    await asyncio.sleep(0.05)
+    assert session.store.learner_loaded and not session.store.learner.asked, "the question is asked"
+    session.set_learner(knowledge="circuits", asked=True)
+    session.record_attempt(Attempt("shot", "shot.q1", 2.0, False, unaided=True))
+    assert page.tasks == [] and prefs.writes == [], "nothing saved while the read is out"
+    prefs.answer.set()
+    await restoring
+    await asyncio.gather(*page.tasks)
+    learner = session.store.learner
+    assert learner.knowledge == "circuits" and learner.asked, "the answer given meanwhile stands"
+    assert [a.prompt_id for a in learner.log.attempts] == ["histogram.q1", "shot.q1"], (
+        "the saved log and the new"
+    )
+    assert [json.loads(w)["attempts"] for w in prefs.writes] == [
+        [dataclasses.asdict(a) for a in learner.log.attempts]
+    ], "saved once, merged"
+
+
+async def test_an_unreadable_saved_learner_is_reported_and_replaced(index: ProvenanceIndex) -> None:
+    prefs, page = _Preferences("{not json"), _Page()
+    session = Session(Store(), index, page, preferences=prefs)
+    prefs.answer.set()
+    await session.restore_learner()
+    assert session.store.learner_loaded and "could not be read" in session.store.error
+    session.set_learner(theme="dark")
+    await asyncio.gather(*page.tasks)
+    assert len(prefs.writes) == 1 and json.loads(prefs.writes[0])["theme"] == "dark"
 
 
 def test_learner_round_trips_through_its_document() -> None:
@@ -91,9 +176,11 @@ def test_a_run_scores_its_own_prediction_and_a_new_run_is_predicted_again(
     store.prediction = "ideal"
     store.last_run_text = store.circuit_text  # what submit_run records
     assert not store.prediction_pending(), "not asked again while that run is in flight"
-    store.jobs = {"t1": JobStatus("t1", "run_job")}
+    store.jobs = {"t1": JobStatus("t1", "run_job", landing=Landing(None, routes.job))}
     session.apply_events([Event("result", "t1", "run_job", payload=record)])
-    assert store.current == record.key() and store.jobs["t1"].done
+    assert store.current == record.key() and store.jobs["t1"].done, (
+        "headless, the finished run becomes current"
+    )
     assert store.scored_prediction == "ideal" and store.prediction is None
     assert not store.prediction_pending(), (
         "the same circuit has been run: its prediction is scored, not re-asked"
