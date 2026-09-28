@@ -182,6 +182,11 @@ def _setup(lab: _Lab, ion: int, probe: _Probe, space: HilbertSpace | None = None
     )
 
     device = lab.device
+    n_ions = device.crystal.n_ions
+    if not 0 <= ion < n_ions:
+        raise ValueError(
+            f"ion {ion} is not an ion of the {n_ions}-ion device (the ions are 0 to {n_ions - 1})"
+        )
     gate_drive = default_gate_drives(device)[ion]
     n_modes = len(device.crystal.modes)
     if gate_drive.kind == "microwave":

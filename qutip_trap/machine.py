@@ -172,6 +172,29 @@ class Machine:
     """A label for the record; not part of ``hash()``."""
 
     def __post_init__(self) -> None:
+        from qutip_trap.control.table import CalibrationTable
+        from qutip_trap.device.model import Device
+
+        fields: tuple[tuple[str, object, type | tuple[type, ...], str], ...] = (
+            (
+                "device",
+                self.device,
+                Device,
+                "a Device; a preset builds one: trap.presets.yb171_chain(2).device",
+            ),
+            (
+                "table",
+                self.table,
+                (CalibrationTable, type(None)),
+                "a CalibrationTable or None (the surrogate)",
+            ),
+            ("physics", self.physics, Physics, "a Physics, which effects are simulated"),
+            ("numerics", self.numerics, Numerics, "a Numerics, how the integration is done"),
+            ("readout", self.readout, Readout, "a Readout, how the photon record is read"),
+        )
+        for name, value, kind, what in fields:
+            if not isinstance(value, kind):
+                raise TypeError(f"Machine.{name} is {what}; got {type(value).__name__}")
         object.__setattr__(self, "level", FidelityLevel(self.level))
 
     def __repr__(self) -> str:
@@ -226,8 +249,9 @@ class Machine:
     def compile(self, circuit: Circuit) -> CompileReport:
         """Standard gates to native gates with phase tracking, every block and the whole circuit verified (Section 7.2)."""
         from qutip_trap.control.compiler import compile_report
+        from qutip_trap.run.pipeline import checked_circuit
 
-        return compile_report(circuit, entangler=self.physics.entangler)
+        return compile_report(checked_circuit(circuit), entangler=self.physics.entangler)
 
     def schedule(self, circuit: Circuit, *, seed: int = 0) -> Schedule:
         """The compile-calibrate-schedule prefix of ``run``: the pulses with absolute times, the played gates and the

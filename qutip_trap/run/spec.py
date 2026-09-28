@@ -73,10 +73,11 @@ class RunSpec:
     label: str = ""
 
     def __post_init__(self) -> None:
-        if int(self.shots) <= 0:
-            raise ValueError("shots must be positive")
-        object.__setattr__(self, "shots", int(self.shots))
-        object.__setattr__(self, "seed", int(self.seed))
+        from qutip_trap.run.pipeline import checked_circuit, checked_count
+
+        object.__setattr__(self, "circuit", checked_circuit(self.circuit))
+        object.__setattr__(self, "shots", checked_count("shots", self.shots, minimum=1))
+        object.__setattr__(self, "seed", checked_count("seed", self.seed, minimum=0))
         object.__setattr__(self, "level", FidelityLevel(self.level))
 
     @classmethod
@@ -474,6 +475,10 @@ def submit(
     keep_final_state: bool = False,
     label: str = "",
 ) -> Job:
-    """``Machine.submit``: the ``RunSpec`` of the call and a started ``Job`` running it in a worker process."""
+    """``Machine.submit``: the ``RunSpec`` of the call and a started ``Job`` running it in a worker process; a circuit wider
+    than the machine is refused here, before a worker starts."""
+    from qutip_trap.run.pipeline import check_fits
+
     spec = RunSpec.of(machine, circuit, shots, seed=seed, keep_final_state=keep_final_state, label=label)
+    check_fits(spec.circuit, machine.device)
     return Job(machine, spec).start()

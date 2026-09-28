@@ -8,7 +8,7 @@ rxx and rzz, imports through its own definitions, Section 7.6), gate application
 (ignored), ``measure`` (a trailing measurement is the circuit's terminal ``measure``; one followed by a later gate on the
 same qubit stays a mid-circuit ``measure`` operation the scheduler refuses), ``reset`` (a mid-circuit operation) and
 parameter expressions over pi with + - * / ^, unary minus, parentheses and sin, cos, tan, exp, ln, sqrt. Built-in gates:
-U/u3/u, u2, u1, CX/cx/cnot, id, x, y, z, h, s, sdg, t, tdg, sx, rx, ry, rz, cz, swap, cp/cu1, rxx, rzz and the native gpi,
+U/u3/u, u2, u1/p, CX/cx/cnot, id, x, y, z, h, s, sdg, t, tdg, sx, rx, ry, rz, cz, swap, cp/cu1, rxx, rzz and the native gpi,
 gpi2, ms, zz (radians when undeclared, the IR convention). Classical control (``if``) and ``opaque`` are refused.
 """
 
@@ -18,6 +18,7 @@ import math
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from qutip_trap.control.compiler import NATIVE_GATES, STANDARD_GATES, Circuit, Operation
@@ -86,6 +87,9 @@ _TOKEN = re.compile(
     r"|(?P<id>[A-Za-z_][A-Za-z0-9_]*)|(?P<arrow>->)|(?P<eq>==)|(?P<sym>[;,(){}\[\]+\-*/^])"
 )
 
+_HEADER = re.compile(r"\s*(?://[^\n]*\n\s*)*OPENQASM\s+([0-9][0-9.]*)")
+"""The version header, read before the tokenizer so that an OpenQASM 3 program is named rather than failing on its syntax."""
+
 BUILTIN_ARITY: dict[str, tuple[int, int]] = {
     **STANDARD_GATES,
     **NATIVE_GATES,
@@ -93,6 +97,7 @@ BUILTIN_ARITY: dict[str, tuple[int, int]] = {
     "u": (1, 3),
     "u2": (1, 2),
     "u1": (1, 1),
+    "p": (1, 1),
     "CX": (2, 0),
     "cu1": (2, 1),
 }
@@ -119,13 +124,19 @@ class _Tok:
     pos: int
 
 
+def position(text: str, pos: int) -> str:
+    """``line 3, column 7`` of the character at ``pos``, both counted from 1."""
+    line = text.count("\n", 0, pos) + 1
+    return f"line {line}, column {pos - (text.rfind(chr(10), 0, pos) + 1) + 1}"
+
+
 def tokenize(text: str) -> list[_Tok]:
     out: list[_Tok] = []
     pos = 0
     while pos < len(text):
         m = _TOKEN.match(text, pos)
         if m is None:
-            raise OpenQASMError(f"unexpected character {text[pos]!r} at offset {pos}")
+            raise OpenQASMError(f"unexpected character {text[pos]!r} at {position(text, pos)}")
         pos = m.end()
         if m.lastgroup is None:
             continue
@@ -145,6 +156,7 @@ class GateDef:
 
 class _Parser:
     def __init__(self, text: str) -> None:
+        self.text = text
         self.toks = tokenize(text)
         self.i = 0
         self.qregs: list[tuple[str, int, int]] = []  # name, size, offset
@@ -166,13 +178,13 @@ class _Parser:
     def expect(self, text: str) -> _Tok:
         t = self.take()
         if t.text != text:
-            raise OpenQASMError(f"expected {text!r} at offset {t.pos}, found {t.text!r}")
+            raise OpenQASMError(f"expected {text!r} at {position(self.text, t.pos)}, found {t.text!r}")
         return t
 
     def expect_kind(self, kind: str) -> _Tok:
         t = self.take()
         if t.kind != kind:
-            raise OpenQASMError(f"expected {kind} at offset {t.pos}, found {t.text!r}")
+            raise OpenQASMError(f"expected {kind} at {position(self.text, t.pos)}, found {t.text!r}")
         return t
 
     # ---- grammar
@@ -243,7 +255,7 @@ class _Parser:
             cname, dst = self.cargument()
             self.expect(";")
             if len(src) not in (1, len(dst)) and len(dst) != 1:
-                raise OpenQASMError(f"measure register sizes disagree at offset {t.pos}")
+                raise OpenQASMError(f"measure register sizes disagree at {position(self.text, t.pos)}")
             for k, q in enumerate(src):
                 self.cbits[len(self.ops)] = (cname, dst[k] if len(dst) > 1 else dst[0])
                 self.ops.append(Operation("measure", (q,), ()))
@@ -253,11 +265,13 @@ class _Parser:
                 self.ops.append(Operation("reset", (q,), ()))
             self.expect(";")
         elif t.text in ("if", "opaque"):
-            raise OpenQASMError(f"{t.text!r} statements are outside the accepted subset (offset {t.pos})")
+            raise OpenQASMError(
+                f"{t.text!r} statements are outside the accepted subset ({position(self.text, t.pos)})"
+            )
         elif t.kind == "id":
             self.application()
         else:
-            raise OpenQASMError(f"unexpected token {t.text!r} at offset {t.pos}")
+            raise OpenQASMError(f"unexpected token {t.text!r} at {position(self.text, t.pos)}")
 
     def decl(self) -> None:
         kind = self.take().text
@@ -347,10 +361,11 @@ class _Parser:
 
     def argument(self) -> list[int]:
         """A qubit argument: q[i] or a whole register (broadcast)."""
-        name = self.expect_kind("id").text
+        tok = self.expect_kind("id")
+        name = tok.text
         reg = next((r for r in self.qregs if r[0] == name), None)
         if reg is None:
-            raise OpenQASMError(f"unknown qreg {name!r}")
+            raise OpenQASMError(f"unknown qreg {name!r} at {position(self.text, tok.pos)}")
         _n, size, offset = reg
         if self.peek().text == "[":
             self.take()
@@ -387,8 +402,14 @@ class _Parser:
         args: list[list[int]] = []
         while self.peek().text != ";":
             args.append(self.argument())
-            if self.peek().text == ",":
+            nxt = self.peek()
+            if nxt.text == ",":
                 self.take()
+            elif nxt.text != ";":
+                raise OpenQASMError(
+                    f"expected ',' or ';' after an argument of {name} at {position(self.text, nxt.pos)}, found "
+                    f"{nxt.text!r} (a missing ';'?)"
+                )
         self.expect(";")
         if not args:
             raise OpenQASMError(f"gate {name} has no arguments")
@@ -417,7 +438,8 @@ class _Parser:
             return
         if name not in BUILTIN_ARITY:
             raise OpenQASMError(
-                f"unknown gate {name!r}: declare it with a gate statement or use one of {sorted(BUILTIN_ARITY)}"
+                f"unknown gate {name!r}: declare it with a gate statement, or decompose the program into the accepted "
+                f"gates first (qiskit.transpile(qc, backend) does for a Qiskit circuit); they are {sorted(BUILTIN_ARITY)}"
             )
         arity, n_params = BUILTIN_ARITY[name]
         if len(qubits) != arity or len(values) != n_params:
@@ -431,8 +453,8 @@ def builtin_operations(name: str, values: tuple[float, ...], qubits: tuple[int, 
         return [Operation("u3", qubits, values)]
     if name == "u2":
         return [Operation("u3", qubits, (math.pi / 2.0, values[0], values[1]))]
-    if name == "u1":
-        return [Operation("rz", qubits, (values[0],))]  # u1(lambda) = e^{i lambda/2} RZ(lambda)
+    if name in ("u1", "p"):
+        return [Operation("rz", qubits, (values[0],))]  # u1(lambda) = p(lambda) = e^{i lambda/2} RZ(lambda)
     if name in ("CX", "cx"):
         return [Operation("cnot", qubits, ())]
     if name == "cu1":
@@ -531,5 +553,22 @@ def evaluate(tokens: Sequence[_Tok], env: dict[str, float]) -> float:
 
 def load_openqasm2(text: str) -> Circuit:
     """Import OpenQASM 2 text (the subset in the module docstring) into the IR: angles in radians, the terminal measurements
-    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers``."""
+    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers``. A file path or an OpenQASM 3
+    program is refused with what to pass instead."""
+    stripped = text.strip()
+    if (
+        ";" not in stripped
+        and "\n" not in stripped
+        and (stripped.endswith(".qasm") or Path(stripped).is_file())
+    ):
+        raise OpenQASMError(
+            f"expected OpenQASM 2 program text, got what looks like a file path {stripped!r}: pass its text, "
+            "Circuit.from_openqasm(Path(path).read_text())"
+        )
+    header = _HEADER.match(text)
+    if header is not None and not header.group(1).startswith("2"):
+        raise OpenQASMError(
+            f"OpenQASM {header.group(1)} is not supported: this importer reads the OpenQASM 2.0 subset (a Qiskit circuit "
+            "exports it with qiskit.qasm2.dumps)"
+        )
     return _Parser(text).program()

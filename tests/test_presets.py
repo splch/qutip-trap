@@ -131,7 +131,7 @@ def test_run_refuses_a_two_qubit_circuit_on_a_device_with_no_entangling_drive() 
     """A two-qubit circuit on the 40Ca+ preset, which has no light-shift pair (Section 4.4.4), is refused."""
     preset = ca40_optical(2)
     bell = Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-    with pytest.raises(ScheduleError, match="no entangling waveform"):
+    with pytest.raises(ScheduleError, match="no entangling drive on this device"):
         (
             Machine(preset.device, numerics=Numerics(branch_weight_min=1e-2))
             .calibrated(

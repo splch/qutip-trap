@@ -21,6 +21,15 @@ class FidelityLevel(StrEnum):
     JOINT_EXACT = "JOINT_EXACT"
     GATE_LOCAL = "GATE_LOCAL"
 
+    @classmethod
+    def _missing_(cls, value: object) -> FidelityLevel:
+        """A level named in any case (``"joint_exact"``, ``"AUTO"``); anything else is refused with the names."""
+        if isinstance(value, str):
+            for member in cls:
+                if value.upper() == member.name:
+                    return member
+        raise ValueError(f"{value!r} is not a fidelity level; the levels are {[m.value for m in cls]}")
+
 
 class Budget(NamedTuple):
     """The Section 11.5 guards on a declared space: both hold, the joint dimension, the drive-operator non-zeros."""

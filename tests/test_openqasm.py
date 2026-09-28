@@ -65,10 +65,16 @@ def test_expressions_registers_and_broadcasting() -> None:
     assert circ.n_qubits == 3 and circ.measure == (1, 2)
     names = [op.name for op in circ.ops]
     assert names[:2] == ["rx", "rx"] and circ.ops[0].qubits == (0,) and circ.ops[1].qubits == (1,)
-    assert circ.ops[2] == Operation("ry", (2,), (pytest.approx(0.0),))
+    assert (circ.ops[2].name, circ.ops[2].qubits) == ("ry", (2,)) and circ.ops[2].params == pytest.approx(
+        (0.0,)
+    )
     assert circ.ops[3].name == "u3" and circ.ops[3].qubits == (2,)
-    assert circ.ops[4] == Operation("cp", (0, 2), (pytest.approx(math.pi / 2.0),))
-    assert circ.ops[5] == Operation("rz", (1,), (pytest.approx(0.25),))
+    assert (circ.ops[4].name, circ.ops[4].qubits) == ("cp", (0, 2)) and circ.ops[4].params == pytest.approx(
+        (math.pi / 2.0,)
+    )
+    assert (circ.ops[5].name, circ.ops[5].qubits) == ("rz", (1,)) and circ.ops[5].params == pytest.approx(
+        (0.25,)
+    )
     assert circ.ops[7] == Operation("cp", (1, 0), (0.5,))
     assert circ.ops[8].name == "swap" and circ.ops[9].name == "rxx" and circ.ops[10].name == "rzz"
     rep = compile_report(circ)

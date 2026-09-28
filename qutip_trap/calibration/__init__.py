@@ -102,6 +102,14 @@ CalibrationMethod = Literal["closed_form", "experiments"]
 """``closed_form``: the surrogate (derived seeds, closed-form waveforms with exact spot checks, the detection calibration);
 ``experiments``: the simulated experiments in the dependency order."""
 
+SURROGATE_SCANS: frozenset[str] = frozenset({"spot_check", "detection_records", "detection_windows_s"})
+"""The settings of ``surrogate_table`` a caller passes through ``calibrate``: its keywords the machine does not supply."""
+SCANS: dict[CalibrationMethod, frozenset[str]] = {
+    "closed_form": SURROGATE_SCANS,
+    "experiments": SURROGATE_SCANS | {"scans", "surrogate"},
+}
+"""The scan settings each method takes (``full_calibration``'s own and the surrogate's it starts from)."""
+
 
 def calibrate(
     machine: Machine,
@@ -125,6 +133,13 @@ def calibrate(
     request with its pairs as ``canonical_pairs`` orders them; a device whose hash changed never hits a cached table."""
     from qutip_trap.noise.sampling import quiet_sample
 
+    if method not in SCANS:
+        raise ValueError(f"method is 'closed_form' or 'experiments', got {method!r}")
+    unknown = sorted(set(scans) - SCANS[method])
+    if unknown:
+        raise TypeError(
+            f"calibrate() got unknown scan setting(s) {unknown}; method {method!r} takes {sorted(SCANS[method])}"
+        )
     device = machine.device
     t0 = float(machine.physics.t0_s if t0_s is None else t0_s)
     kwargs: dict[str, Any] = {
@@ -144,8 +159,6 @@ def calibrate(
             sample=quiet_sample(0, t0),
             experiments=(),
         )
-    if method != "experiments":
-        raise ValueError("method is 'closed_form' or 'experiments'")
 
     def build() -> CalibrationReport:
         return full_calibration(device, seed=seed, t0_s=t0, experiments=experiments, **kwargs)

@@ -132,8 +132,8 @@ def test_standard_two_qubit_gates_and_u3_compile_and_verify() -> None:
             assert all(r < 1e-9 for r in rep.block_residuals)
     rep = compile_report(Circuit(1, (Operation("u3", (0,), (0.3, 1.1, -2.0)),), (0,)))
     assert rep.circuit_residual is not None and rep.circuit_residual < 1e-12 and rep.n_pulses == 2
-    with pytest.raises(CompileError):
-        compile_report(Circuit(1, (Operation("rx", (0,), (float("nan"),)),), (0,)))
+    with pytest.raises(ValueError, match="finite angles"):
+        Operation("rx", (0,), (float("nan"),))
 
 
 def test_frame_propagation_absorbs_every_rz_and_the_measurement_discards_the_frame() -> None:
@@ -193,7 +193,8 @@ def test_ionq_json_round_trip_of_a_compiled_circuit_and_native_passthrough() -> 
         2, (Operation("rz", (1,), (0.4,)), Operation("ms", (0, 1), (0.0, 0.0, math.pi / 2.0))), (0, 1)
     )
     rep = compile_report(nat)
-    assert rep.circuit.ops == (Operation("ms", (0, 1), (0.0, pytest.approx(-0.4), math.pi / 2.0)),)
+    (ms,) = rep.circuit.ops
+    assert ms.name == "ms" and ms.qubits == (0, 1) and ms.params == pytest.approx((0.0, -0.4, math.pi / 2.0))
     assert rep.final_frame_rad == {0: 0.0, 1: pytest.approx(0.4)}
 
 
@@ -236,7 +237,7 @@ def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_de
     for name, (arity, n_params) in {**NATIVE_GATES, **STANDARD_GATES}.items():
         op = getattr(Circuit(2), name)(*(0, 1)[:arity], *[0.25] * n_params).ops[-1]
         assert op == Operation(name, (0, 1)[:arity], (0.25,) * n_params), name
-    with pytest.raises(ValueError, match="outside range"):
+    with pytest.raises(ValueError, match="the circuit has qubits 0 to 1"):
         Circuit(2).h(2)
     with pytest.raises(TypeError):
         Circuit(2).rx(0)  # the parameter is required

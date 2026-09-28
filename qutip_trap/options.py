@@ -145,14 +145,30 @@ class Numerics:
 
     def __post_init__(self) -> None:
         if self.caps is not None:
-            object.__setattr__(self, "caps", {int(m): int(d) for m, d in dict(self.caps).items()})
+            caps = {int(m): int(d) for m, d in dict(self.caps).items()}
+            bad_caps = {m: d for m, d in caps.items() if m < 0 or d < 2}
+            if bad_caps:
+                raise ValueError(
+                    f"caps maps a mode index to a Fock dimension of at least 2 levels, got {bad_caps}"
+                )
+            object.__setattr__(self, "caps", caps)
         if self.enr_group is not None:
             modes, n_exc = self.enr_group
             object.__setattr__(self, "enr_group", (tuple(int(m) for m in modes), int(n_exc)))
         if self.enr_group is not None and self.space is not None:
             raise ValueError("give the ENR group inside the supplied space or as enr_group, not both")
-        if self.atol <= 0.0 or self.rtol <= 0.0 or self.nsteps <= 0:
-            raise ValueError("tolerances and nsteps must be positive")
+        if not self.atol > 0.0:
+            raise ValueError(f"atol is a positive integrator tolerance, got {self.atol}")
+        if not self.rtol > 0.0:
+            raise ValueError(f"rtol is a positive integrator tolerance, got {self.rtol}")
+        if self.nsteps <= 0:
+            raise ValueError(f"nsteps is a positive step budget per segment, got {self.nsteps}")
+        given_integrators: object = self.integrators  # a bare string would be read as its characters
+        if isinstance(given_integrators, str):
+            raise TypeError(
+                f"integrators is a sequence of names, such as ('dop853', 'vern9'); got the string {given_integrators!r}"
+            )
+        object.__setattr__(self, "integrators", tuple(self.integrators))
         if not self.integrators:
             raise ValueError("at least one integrator is required")
         bad = [name for name in self.integrators if name in MULTISTEP_INTEGRATORS]
@@ -160,7 +176,15 @@ class Numerics:
             raise ValueError(f"multistep integrators are never used (Section 5.3): {bad}")
         unknown = [name for name in self.integrators if name not in ALLOWED_INTEGRATORS]
         if unknown:
-            raise ValueError(f"unknown QuTiP integrators: {unknown}")
+            raise ValueError(
+                f"unknown QuTiP integrators {unknown}; the integrators are {sorted(ALLOWED_INTEGRATORS)}"
+            )
+        if self.lindblad_method not in ("auto", "mesolve", "mcsolve"):
+            raise ValueError(
+                f"lindblad_method is 'auto', 'mesolve' or 'mcsolve', got {self.lindblad_method!r}"
+            )
+        if self.map not in ("serial", "parallel", "loky"):
+            raise ValueError(f"map is 'serial', 'parallel' or 'loky', got {self.map!r}")
         if self.joint_dimension_max < 2 or self.nnz_max < 1:
             raise ValueError("the size guards must be positive")
         if self.mode_dimension_max < 2:
@@ -228,6 +252,15 @@ class Physics:
         return changed_fields_repr(self)
 
     def __post_init__(self) -> None:
+        switches = (
+            ("noise", self.noise),
+            ("intensity_noise_channels", self.intensity_noise_channels),
+            ("hardware_chain", self.hardware_chain),
+            ("stark_compensation", self.stark_compensation),
+        )
+        for name, value in switches:
+            if not isinstance(value, bool):
+                raise TypeError(f"Physics.{name} is True or False, got {value!r}")
         if self.internal_levels < 2:
             raise ValueError("internal_levels is at least 2")
         if self.scattering not in ("estimate", "channels"):

@@ -16,18 +16,19 @@
 from __future__ import annotations
 
 import math
+import operator
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, SupportsIndex
 
 import numpy as np
 import qutip as qt
 
-from qutip_trap.control.compiler import CompileReport, compile_report
-from qutip_trap.control.schedule import GateDrive, Schedule, resolve_drives, schedule
+from qutip_trap.control.compiler import Circuit, CompileReport, compile_report
+from qutip_trap.control.schedule import GateDrive, Schedule, ScheduleError, resolve_drives, schedule
 from qutip_trap.dynamics.engine import EngineReport, MotionalModel, SeedSpec, State, Traces
 from qutip_trap.dynamics.evolve import ConvergenceReport, convergence_check
 from qutip_trap.dynamics.parallel import map_tasks, worker_count
@@ -64,11 +65,64 @@ from qutip_trap.run.results import Diagnostics, Progress, Result, RunState, aggr
 from qutip_trap.run.space import SpaceSelection, coupled_modes, select_space
 
 if TYPE_CHECKING:
-    from qutip_trap.control.compiler import Circuit
     from qutip_trap.control.table import CalibrationTable
     from qutip_trap.device.model import Device
     from qutip_trap.machine import Machine
     from qutip_trap.options import Physics, ReadoutMode
+
+
+def checked_circuit(circuit: object) -> Circuit:
+    """``circuit`` when it is a ``Circuit``; otherwise a ``TypeError`` that names the door the object belongs to (the
+    OpenQASM or IonQ importer, the Qiskit backend, a loop over a batch)."""
+    if isinstance(circuit, Circuit):
+        return circuit
+    kind = type(circuit)
+    if kind.__module__.split(".")[0] == "qiskit":
+        hint = (
+            "a Qiskit circuit runs through the Qiskit backend (qutip_trap.interop.qiskit.QutipTrapBackend) or converts with "
+            "Circuit.from_openqasm(qiskit.qasm2.dumps(qc))"
+        )
+    elif isinstance(circuit, str):
+        hint = "program text converts with Circuit.from_openqasm(text)"
+    elif isinstance(circuit, dict):
+        hint = "an IonQ circuit converts with Circuit.from_ionq(obj)"
+    elif isinstance(circuit, (list, tuple)):
+        hint = "a run takes one circuit: run a batch in a loop, or through the Qiskit backend"
+    else:
+        hint = "build one with Circuit(n_qubits).h(0).cnot(0, 1)"
+    raise TypeError(f"expected a qutip_trap Circuit, got {kind.__name__}: {hint}")
+
+
+def check_fits(circuit: Circuit, device: Device) -> None:
+    """Every qubit of ``circuit`` runs on its own ion of ``device``: a wider circuit is refused before anything is built."""
+    n_ions = device.crystal.n_ions
+    if circuit.n_qubits > n_ions:
+        raise ValueError(
+            f"the circuit has {circuit.n_qubits} qubits and the machine {n_ions} ion(s), one ion per qubit: run it on a "
+            f"machine of at least {circuit.n_qubits} ions (trap.presets.yb171_chain({circuit.n_qubits}))"
+        )
+
+
+def checked_count(name: str, value: object, *, minimum: int) -> int:
+    """``value`` as a whole number of at least ``minimum`` (``shots`` at least 1, ``seed`` at least 0); a float, a string
+    or a bool is refused rather than rounded."""
+    if isinstance(value, bool) or not isinstance(value, SupportsIndex):
+        raise TypeError(f"{name} is a whole number, got {type(value).__name__} {value!r}")
+    count = operator.index(value)
+    if count < minimum:
+        raise ValueError(f"{name} is at least {minimum}, got {count}")
+    return count
+
+
+def check_entangling_drives(circuit: Circuit, entangling: Mapping[int, GateDrive]) -> None:
+    """Every ion of the circuit's two-qubit gates has an entangling drive, else the gate cannot be played on this device
+    whatever the calibration holds: refused before the calibration runs."""
+    missing = sorted({q for pair in circuit.entangling_pairs() for q in pair if q not in entangling})
+    if missing:
+        raise ScheduleError(
+            f"the circuit entangles ion(s) {missing}, which have no entangling drive on this device (Device.roles."
+            "entangling): run its two-qubit gates on a machine with one, such as trap.presets.yb171_chain(2)"
+        )
 
 
 @dataclass(frozen=True)
@@ -90,8 +144,11 @@ class Prefix:
 def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int = 0) -> Prefix:
     """Compile, calibrate (the cached surrogate when the machine carries no table), program the calibrated micromotion shims
     and schedule: the prefix of Section 3.4's pipeline."""
+    circuit = checked_circuit(circuit)
+    seed = checked_count("seed", seed, minimum=0)
     physics, numerics = machine.physics, machine.numerics
     device = machine.device
+    check_fits(circuit, device)
     drives, ent_drives = resolve_drives(device)
     notes: list[str] = []
     # Section 4.5.5: "leakage is simulated, not estimated, whenever d > 2", so a d > 2 register turns the scattering
@@ -107,6 +164,7 @@ def compile_calibrate_schedule(machine: Machine, circuit: Circuit, *, seed: int 
         )
     report = compile_report(circuit, entangler=physics.entangler)
     compiled = report.circuit
+    check_entangling_drives(compiled, ent_drives)
     table = machine.table
     if table is None:
         from qutip_trap.calibration import cached_surrogate

@@ -202,6 +202,36 @@ class Device:
     identifies the apparatus; ``Machine.hash()`` carries the roles."""
 
     def __post_init__(self) -> None:
+        from qutip_trap.control.hardware import HardwareChain
+        from qutip_trap.light.beams import Beam
+        from qutip_trap.noise.model import NoiseModel
+        from qutip_trap.prep.recipe import PreparationRecipe
+        from qutip_trap.readout.detection import Detector
+        from qutip_trap.trap.crystal import Crystal
+        from qutip_trap.trap.model import Trap
+
+        parts: tuple[tuple[str, object, type | tuple[type, ...], str], ...] = (
+            ("crystal", self.crystal, Crystal, "a Crystal (trap.crystal.solve_crystal)"),
+            ("trap", self.trap, Trap, "a Trap (trap.model)"),
+            ("field", self.field, Field, "a Field"),
+            (
+                "noise",
+                self.noise,
+                NoiseModel,
+                "a NoiseModel (noise.model; NoiseModel() is quiet, and Physics(noise=False) switches a run's noise off)",
+            ),
+            ("detector", self.detector, Detector, "a Detector (readout.detection)"),
+            ("hardware", self.hardware, HardwareChain, "a HardwareChain (control.hardware)"),
+            ("preparation", self.preparation, (PreparationRecipe, type(None)), "a PreparationRecipe or None"),
+            ("gradient", self.gradient, (GradientField, type(None)), "a GradientField or None"),
+            ("roles", self.roles, BeamRoles, "a BeamRoles"),
+        )
+        for name, value, kind, what in parts:
+            if not isinstance(value, kind):
+                raise TypeError(f"Device.{name} is {what}; got {type(value).__name__}")
+        beams: tuple[object, ...] = tuple(self.beams)
+        if not all(isinstance(b, Beam) for b in beams):
+            raise TypeError("Device.beams is a tuple of Beam records (light.beams)")
         self.trap.check_masses(self.crystal.species)
 
     def __repr__(self) -> str:

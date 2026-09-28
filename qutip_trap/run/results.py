@@ -940,7 +940,17 @@ class Result:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Result:
         """The inverse of :meth:`to_dict`: the per-shot arrays when the record carries them, else bitstrings rebuilt from
-        the counts (one row per counted shot, in key order) with zero heralds and no sample map."""
+        the counts (one row per counted shot, in key order) with zero heralds and no sample map. ``d`` is the parsed
+        record (``json.loads(text)``); a record that is not one is refused by what it lacks."""
+        given: object = d
+        if not isinstance(given, Mapping):
+            raise TypeError(
+                f"expected the dict of Result.to_dict (json.loads(text)), got {type(given).__name__}"
+            )
+        if "schema_version" not in d:
+            raise ValueError(
+                f"not a Result record: no 'schema_version' (Result.to_dict writes it); got the keys {sorted(d)[:12]}"
+            )
         if d["schema_version"] != RESULT_SCHEMA_VERSION:
             raise ValueError(
                 f"Result.from_dict reads schema version {RESULT_SCHEMA_VERSION}, got {d['schema_version']!r}"

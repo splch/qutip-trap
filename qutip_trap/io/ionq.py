@@ -74,11 +74,25 @@ def _qubits_of(item: dict[str, Any]) -> tuple[int, ...]:
 
 
 def load_ionq_json(obj: dict[str, Any]) -> Circuit:
-    """Import an IonQ circuit (a job body with ``input``, or the ``input`` object itself) into the IR."""
+    """Import an IonQ circuit (a job body with ``input``, or the ``input`` object itself) into the IR. The object is the
+    parsed JSON (``json.loads(text)``); a missing field is refused by name."""
+    given: object = obj
+    if not isinstance(given, dict):
+        raise TypeError(
+            f"expected the parsed IonQ JSON object (json.loads(text)), got {type(given).__name__}"
+        )
     inp = obj["input"] if "input" in obj else obj
+    missing = [k for k in ("qubits", "circuit") if k not in inp]
+    if missing:
+        raise ValueError(
+            f"an IonQ circuit has 'qubits' and 'circuit' (or a job body with them under 'input'); missing {missing}, "
+            f"got the keys {sorted(inp)}"
+        )
     n_qubits = int(inp["qubits"])
     ops: list[Operation] = []
     for item in inp["circuit"]:
+        if "gate" not in item:
+            raise ValueError(f"every IonQ circuit item names its 'gate', got {item!r}")
         name = str(item["gate"]).lower()
         if name == "nop":
             continue
@@ -86,6 +100,8 @@ def load_ionq_json(obj: dict[str, Any]) -> Circuit:
         qubits = _qubits_of(item)
         params: tuple[float, ...]
         if name == "gpi" or name == "gpi2":
+            if "phase" not in item:
+                raise ValueError(f"IonQ native {name} needs its 'phase' (in turns), got {item!r}")
             params = (rad_from_turns(float(item["phase"])),)
         elif name == "ms":
             phases = item.get("phases", [0.0, 0.0])
@@ -100,6 +116,8 @@ def load_ionq_json(obj: dict[str, Any]) -> Circuit:
         elif name == "zz":
             if "phases" in item:
                 raise ValueError("zz carries angle only (Section 7.6)")
+            if "angle" not in item:
+                raise ValueError(f"IonQ native zz needs its 'angle' (in turns), got {item!r}")
             params = (rad_from_turns(float(item["angle"])),)
         elif name in STANDARD_GATES or name == "rz":
             n_params = (NATIVE_GATES["rz"] if name == "rz" else STANDARD_GATES[name])[1]

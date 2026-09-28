@@ -95,6 +95,20 @@ class Operation:
 
     def __post_init__(self) -> None:
         name = self.name
+        given_qubits: object = self.qubits
+        given_params: object = self.params
+        if not isinstance(given_qubits, (tuple, list)) or not all(
+            isinstance(q, int | np.integer) and not isinstance(q, bool) for q in given_qubits
+        ):
+            raise TypeError(
+                f"{name}: qubits is a tuple of qubit indices, such as (0,) or (0, 1); got {given_qubits!r}"
+            )
+        if not isinstance(given_params, (tuple, list)):
+            raise TypeError(
+                f"{name}: params is a tuple of angles in radians, such as (math.pi / 2,); got {given_params!r}"
+            )
+        object.__setattr__(self, "qubits", tuple(int(q) for q in given_qubits))
+        object.__setattr__(self, "params", tuple(given_params))
         if name in NATIVE_GATES or name in STANDARD_GATES:
             arity, n_params = NATIVE_GATES.get(name) or STANDARD_GATES[name]
             if len(self.qubits) != arity:
@@ -107,11 +121,22 @@ class Operation:
             if self.params:
                 raise ValueError(f"{name} takes no parameters")
         else:
-            raise ValueError(f"unknown operation {name!r}")
+            names = sorted(NATIVE_GATES) + sorted(STANDARD_GATES) + sorted(NON_UNITARY)
+            hint = (
+                f" (did you mean {name.lower()!r}?)"
+                if isinstance(name, str) and name.lower() in names
+                else ""
+            )
+            raise ValueError(f"unknown operation {name!r}{hint}; the operations are {names}")
+        if not all(
+            isinstance(p, (int, float, np.floating, np.integer)) and math.isfinite(p) for p in self.params
+        ):
+            raise ValueError(f"{name}: parameters are finite angles in radians, got {self.params}")
+        object.__setattr__(self, "params", tuple(float(p) for p in self.params))
         if len(set(self.qubits)) != len(self.qubits):
-            raise ValueError(f"{name}: qubit indices must be distinct")
+            raise ValueError(f"{name}: qubit indices must be distinct, got {self.qubits}")
         if any(q < 0 for q in self.qubits):
-            raise ValueError(f"{name}: qubit indices must be non-negative")
+            raise ValueError(f"{name}: qubit indices must be non-negative, got {self.qubits}")
 
     @property
     def is_native(self) -> bool:
@@ -145,18 +170,33 @@ class Circuit:
     ``measure``. The OpenQASM 2 importer fills it from the ``creg`` declarations and the exporter writes them back."""
 
     def __post_init__(self) -> None:
+        given_n: object = self.n_qubits
+        if isinstance(given_n, bool) or not isinstance(given_n, int | np.integer):
+            raise TypeError(f"a circuit's n_qubits is a whole number, got {given_n!r}")
+        object.__setattr__(self, "n_qubits", int(given_n))
         if self.n_qubits <= 0:
             raise ValueError("a circuit has at least one qubit")
         object.__setattr__(self, "ops", tuple(self.ops))
         for op in self.ops:
+            given_op: object = op
+            if not isinstance(given_op, Operation):
+                raise TypeError(
+                    f"Circuit.ops holds Operation records, such as Operation('h', (0,), ()); got {given_op!r}"
+                )
             if any(q >= self.n_qubits for q in op.qubits):
-                raise ValueError(f"operation {op.name} addresses a qubit outside range({self.n_qubits})")
+                raise ValueError(
+                    f"{op.name} on qubits {op.qubits}: the circuit has qubits 0 to {self.n_qubits - 1} "
+                    f"(Circuit({max(op.qubits) + 1}) holds qubit {max(op.qubits)})"
+                )
         given_measure: object = self.measure
         measure = (
             tuple(range(self.n_qubits)) if given_measure is None else tuple(int(q) for q in self.measure)
         )
-        if len(set(measure)) != len(measure) or any(q < 0 or q >= self.n_qubits for q in measure):
-            raise ValueError("measure targets must be distinct qubits of the circuit")
+        outside = sorted({q for q in measure if q < 0 or q >= self.n_qubits})
+        if outside:
+            raise ValueError(f"measure names qubits {outside} outside the circuit's 0 to {self.n_qubits - 1}")
+        if len(set(measure)) != len(measure):
+            raise ValueError(f"measure names a qubit twice: {measure}")
         object.__setattr__(self, "measure", measure)
         given_registers: object = self.registers
         if given_registers is None:
@@ -172,10 +212,10 @@ class Circuit:
 
     def __repr__(self) -> str:
         """The builder chain that makes the circuit, ``Circuit(2).h(0).cnot(0, 1)``, with ``.measured(...)`` when the
-        terminal targets or the registers are not the defaults, cut after ``REPR_OPS_MAX`` operations; a circuit with a
-        mid-circuit measure, reset or recool, which the builder has no method for, reads as its constructor call.
-        ``str(circuit)`` is the text diagram (``control.diagram``)."""
-        if any(op.is_non_unitary for op in self.ops):
+        terminal targets or the registers are not the defaults, cut after ``REPR_OPS_MAX`` operations; a circuit the
+        builder cannot make (a mid-circuit measure, reset or recool, or no terminal measurement) reads as its constructor
+        call. ``str(circuit)`` is the text diagram (``control.diagram``)."""
+        if not self.measure or any(op.is_non_unitary for op in self.ops):
             return f"Circuit({self.n_qubits}, ops={self.ops!r}, measure={self.measure!r}, registers={self.registers!r})"
         chain = "".join(
             f".{op.name}({', '.join([*map(str, op.qubits), *map(repr, op.params)])})"
@@ -215,7 +255,11 @@ class Circuit:
 
     def measured(self, *qubits: int, registers: Mapping[str, Sequence[int]] | None = None) -> Circuit:
         """This circuit measuring exactly ``qubits`` at the end, reported under ``registers`` (default: one register ``"c"``
-        over them in the order given)."""
+        over them in the order given). Every qubit is measured unless this narrows it, so it takes at least one."""
+        if not qubits:
+            raise ValueError(
+                "measured() names the qubits to measure, such as measured(0); every qubit is measured by default"
+            )
         measure = tuple(int(q) for q in qubits)
         regs = (
             {"c": measure}
@@ -236,6 +280,11 @@ class Circuit:
         """The IonQ circuit JSON importer: a job body with ``input`` or the ``input`` object, turns converted to radians."""
         from qutip_trap.io.ionq import load_ionq_json
 
+        given: object = obj
+        if not isinstance(given, Mapping):
+            raise TypeError(
+                f"expected the parsed IonQ JSON object (json.loads(text)), got {type(given).__name__}"
+            )
         return load_ionq_json(dict(obj))
 
     def to_openqasm(self, *, declare_native: bool = True) -> str:
@@ -253,8 +302,10 @@ class Circuit:
     # ---- the builder -------------------------------------------------------------------------------------------------------
 
     def _op(self, name: str, qubits: tuple[int, ...], params: tuple[float, ...] = ()) -> Circuit:
-        op = Operation(name, tuple(int(q) for q in qubits), tuple(float(p) for p in params))
-        return dataclasses.replace(self, ops=self.ops + (op,))
+        given: tuple[object, ...] = params
+        if any(isinstance(p, str) for p in given):
+            raise TypeError(f"{name}: angles are numbers in radians, such as math.pi / 2; got {params}")
+        return dataclasses.replace(self, ops=self.ops + (Operation(name, qubits, params),))
 
     def gpi(self, q: int, phase: float) -> Circuit:
         return self._op("gpi", (q,), (phase,))

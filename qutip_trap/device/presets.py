@@ -161,6 +161,9 @@ def yb171_chain(
 ) -> DevicePreset:
     """The example 171Yb+ chain (module docstring): ``n_ions`` ions, a global Raman pair, one addressing pair per ion, the oblique
     detection beam, Crain's detector, a quiet noise model and near-ideal electronics unless overridden."""
+    given_n: object = n_ions
+    if isinstance(given_n, bool) or not isinstance(given_n, int):
+        raise TypeError(f"n_ions is a whole number of ions, got {given_n!r}")
     if n_ions < 1:
         raise ValueError("a chain has at least one ion")
     trap = secular_trap(omega_hz)
@@ -391,6 +394,9 @@ def ca40_optical(
 
     There is NO entangling drive: the light-shift force of Section 4.4.4 needs a far-detuned pair near 398.5 nm, so
     ``entangling_drives`` is empty and a circuit with a two-qubit gate is refused by the scheduler."""
+    given_n: object = n_ions
+    if isinstance(given_n, bool) or not isinstance(given_n, int):
+        raise TypeError(f"n_ions is a whole number of ions, got {given_n!r}")
     if n_ions < 1:
         raise ValueError("a chain has at least one ion")
     trap = secular_trap(omega_hz)
