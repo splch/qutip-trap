@@ -468,13 +468,16 @@ class JointExactEngine:
         nbar: Mapping[int, float],
         notes: list[str],
     ) -> dict[int, int]:
-        """The frozen spectators' Fock states for this evolution (Section 5.2): the sample's, where ``run()`` put them (it
-        enumerates them as weighted branches), else a thermal draw keyed per sample and reported."""
+        """The frozen spectators' Fock states for this evolution (Section 5.2): the sample's, where ``Machine.run`` put them
+        (it enumerates the frozen modes its pulses couple to as weighted branches), else a thermal draw keyed per sample and
+        reported. A dropped mode is not modelled at all (no Debye-Waller factor, no Fock branch), so it has no state."""
         from qutip_trap.dynamics.operators import thermal_populations
         from qutip_trap.noise.sampling import key_frozen_n
 
         frozen_n: dict[int, int] = {}
         for m in space.frozen:
+            if m in space.dropped:
+                continue
             key = key_frozen_n(m)
             if key in sample.values:
                 frozen_n[m] = int(round(sample.values[key]))
@@ -489,8 +492,7 @@ class JointExactEngine:
                     frozen_n[m] = int(rng.choice(len(probs), p=probs))
                     notes.append(
                         f"frozen mode {m}: no Fock state given for this evolution, so n = {frozen_n[m]} was drawn from the "
-                        f"thermal distribution at nbar = {nbar_m:.4g}, keyed per sample (run() enumerates the branches "
-                        "instead)"
+                        f"thermal distribution at nbar = {nbar_m:.4g}, keyed per sample"
                     )
         return frozen_n
 
