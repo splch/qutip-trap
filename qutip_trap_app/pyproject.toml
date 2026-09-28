@@ -46,6 +46,8 @@ strict = true
 files = ["src/qutip_trap_app"]
 mypy_path = "src"
 warn_unreachable = true
+# Flet leaves some of its public API unannotated (the input filters' constructors); calling it is not an untyped call of ours
+untyped_calls_exclude = ["flet"]
 
 [[tool.mypy.overrides]]
 module = ["qutip", "qutip.*", "scipy", "scipy.*", "flet_charts", "flet_charts.*", "yaml"]

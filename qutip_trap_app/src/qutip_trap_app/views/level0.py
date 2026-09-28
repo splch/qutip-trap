@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 import flet as ft
+from flet.components.hooks.use_ref import MutableRef
 
 from qutip_trap_app.core import ReadoutMode
 from qutip_trap_app.provenance import ProvenanceIndex
@@ -51,16 +52,34 @@ from qutip_trap_app.views.state import ENGINES, MAX_SHOTS, Session, Store
 def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
     ft.use_state(store)
     running = bool(store.running())
+    # the shot count as typed: kept here, so that a keystroke re-renders nothing, and put in the Store when the field is
+    # left, on Enter, or by Run
+    typed: MutableRef[str] = ft.use_ref(None)
+    _, refresh = ft.use_state(0)
 
-    def set_shots(e: Any) -> None:
-        try:
-            shots = int(str(e.control.value))
-        except ValueError:
-            store.error = "shots must be a positive integer"
+    def type_shots(e: Any) -> None:
+        typed.current = str(e.control.value)
+
+    def commit_shots() -> None:
+        """The typed count into the Store, clamped to 1 to ``MAX_SHOTS`` (and said so); an empty field keeps the count."""
+        text, typed.current = typed.current, None
+        if text is None:
             return
-        store.shots = min(max(1, shots), MAX_SHOTS)
-        if shots > MAX_SHOTS:
-            store.error = f"shots are capped at {MAX_SHOTS}: every shot is read out one by one"
+        if text.isdigit():
+            shots = int(text)
+            store.shots = min(max(1, shots), MAX_SHOTS)
+            if shots > MAX_SHOTS:
+                store.error = f"shots are capped at {MAX_SHOTS:,}: every shot is read out one by one"
+            elif shots < 1:
+                store.error = "a run takes at least one shot"
+        elif text:
+            store.error = f"shots are a whole number: the run keeps {store.shots:,}"
+        # the field shows the count the run uses, also when the Store kept its own
+        refresh(lambda n: n + 1)
+
+    def run(_e: Any) -> None:
+        commit_shots()
+        session.submit_run()
 
     def set_engine(e: Any) -> None:
         store.engine = ENGINES[str(e.control.value)]
@@ -79,7 +98,16 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
     controls = ft.Row(
         [
             ft.TextField(
-                label="shots", value=str(store.shots), width=96, on_change=set_shots, **input_style()
+                label="shots",
+                value=str(store.shots) if typed.current is None else typed.current,
+                width=96,
+                input_filter=ft.NumbersOnlyInputFilter(),
+                keyboard_type=ft.KeyboardType.NUMBER,
+                on_change=type_shots,
+                on_blur=lambda e: commit_shots(),
+                on_submit=lambda e: commit_shots(),
+                tooltip=f"how many times the machine runs the circuit: 1 to {MAX_SHOTS:,}",
+                **input_style(),
             ),
             ft.Dropdown(
                 label="engine",
@@ -124,7 +152,7 @@ def CircuitEditor(store: Store, session: Session, index: ProvenanceIndex) -> ft.
         ft.FilledButton(
             content=ft.Text("Run", size=15, weight=ft.FontWeight.W_600),
             icon=ft.Icons.PLAY_ARROW,
-            on_click=lambda e: session.submit_run(),
+            on_click=run,
             disabled=running,
             height=44,
             key="run",
