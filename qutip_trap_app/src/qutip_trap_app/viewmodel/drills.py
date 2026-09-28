@@ -15,7 +15,7 @@ from typing import Literal
 
 from qutip_trap_app.provenance import TAG_GLYPH, TAGS, ProvenanceIndex
 from qutip_trap_app.record import Record
-from qutip_trap_app.viewmodel.catalogue import CATALOGUE
+from qutip_trap_app.viewmodel.catalogue import CATALOGUE, fmt_shown
 from qutip_trap_app.viewmodel.machine import device_card_view, histogram
 
 DrillKind = Literal["status", "chip_tag", "mode_class", "bar_within"]
@@ -45,10 +45,6 @@ class Drill:
     """Where on the screens the answer can be checked, in plain words."""
 
 
-def _value_text(value: object, unit: str) -> str:
-    return (f"{value:.4g} {unit}" if isinstance(value, float) else f"{value} {unit}").strip()
-
-
 def drills_for(record: Record, index: ProvenanceIndex) -> tuple[Drill, ...]:
     """Up to ``N_DRILLS`` drills over ``record``, the four kinds interleaved, in an order fixed by the record's key (the same
     set on re-render, another set on another record)."""
@@ -59,12 +55,11 @@ def drills_for(record: Record, index: ProvenanceIndex) -> tuple[Drill, ...]:
         word = next((w for w in STATUS_OPTIONS if row.status.lower().startswith(w)), None)
         if word is None:
             continue
-        q = CATALOGUE[row.value.quantity]
         pools["status"].append(
             Drill(
                 f"status:{row.label}",
                 "status",
-                f"On the device card, {row.label} reads {_value_text(row.value.value, q.unit)}. Is that number",
+                f"On the device card, {row.label} reads {fmt_shown(row.value)}. Is that number",
                 STATUS_OPTIONS,
                 word,
                 CONCEPT_OF["status"],

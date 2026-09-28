@@ -7,6 +7,7 @@ section the explain drawer opens and the ledger id its chip resolves to.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -36,6 +37,80 @@ class Shown:
             raise KeyError(
                 f"{self.quantity!r} is not in the catalogue: add it with its ledger id before showing it"
             )
+
+
+# ---- the one number format of the screens ---------------------------------------------------------------------------------
+
+SI_PREFIXES: tuple[tuple[str, float], ...] = (
+    ("P", 1e15),
+    ("T", 1e12),
+    ("G", 1e9),
+    ("M", 1e6),
+    ("k", 1e3),
+    ("", 1.0),
+    ("m", 1e-3),
+    ("µ", 1e-6),
+    ("n", 1e-9),
+    ("p", 1e-12),
+    ("f", 1e-15),
+)
+SI_UNITS: frozenset[str] = frozenset({"Hz", "s", "m", "W", "V", "T", "Pa"})
+"""The units a value is written with an SI prefix in (``147.1 kHz``, ``1.699 µs``)."""
+UNIT_TEXT: dict[str, str] = {"1/s": "s⁻¹"}
+"""A catalogue unit as it is printed."""
+_SUPERSCRIPT = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+def fmt_scientific(value: float) -> str:
+    """``4.972 × 10⁻⁴``: four significant digits with the trailing zeros dropped, the exponent a superscript."""
+    mantissa, exponent = f"{value:.3e}".split("e")
+    if "." in mantissa:
+        mantissa = mantissa.rstrip("0").rstrip(".")
+    return f"{mantissa} × 10{str(int(exponent)).translate(_SUPERSCRIPT)}"
+
+
+def fmt_decimal(value: float) -> str:
+    """Four significant digits, and as many more (up to eight) as it takes not to round the value to a whole number it is
+    not: a purity of 0.99995 reads 0.99995, never 1."""
+    text = f"{value:.4g}"
+    digits = 4
+    while digits < 8 and float(text) != value and float(text).is_integer():
+        digits += 1
+        text = f"{value:.{digits}g}"
+    return text
+
+
+def fmt_number(value: float, unit: str = "") -> str:
+    """The number format of every screen: a value in an SI unit with its prefix (``147.1 kHz``); any other value as a
+    decimal from 10⁻³ to below 10⁴ (``fmt_decimal``) and in scientific notation outside it (``4.972 × 10⁻⁴``); the unit
+    as ``UNIT_TEXT`` prints it."""
+    if isinstance(value, bool):
+        return str(value)
+    if not math.isfinite(value):
+        return "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
+    if value == 0.0:
+        return f"0 {UNIT_TEXT.get(unit, unit)}".strip()
+    if unit in SI_UNITS and abs(value) >= SI_PREFIXES[-1][1]:
+        prefix, scale = next((p, sc) for p, sc in SI_PREFIXES if abs(value) >= sc)
+        return f"{fmt_decimal(value / scale)} {prefix}{unit}"
+    text = fmt_scientific(value) if abs(value) < 1e-3 or abs(value) >= 1e4 else fmt_decimal(value)
+    return f"{text} {UNIT_TEXT.get(unit, unit)}".strip()
+
+
+def fmt_shown(s: Shown) -> str:
+    """A displayed value as the screens print it: ``-`` for none, yes or no, a whole number with its unit, a float through
+    ``fmt_number``, a word as it is."""
+    unit = UNIT_TEXT.get(CATALOGUE[s.quantity].unit, CATALOGUE[s.quantity].unit)
+    v = s.value
+    if v is None:
+        return "-"
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, int):
+        return f"{v} {unit}".strip()
+    if isinstance(v, float):
+        return fmt_number(v, CATALOGUE[s.quantity].unit)
+    return str(v)
 
 
 def vector_text(v: tuple[float, float, float]) -> str:

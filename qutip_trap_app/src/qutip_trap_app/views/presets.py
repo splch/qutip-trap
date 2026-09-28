@@ -10,7 +10,7 @@ import flet as ft
 import numpy as np
 
 from qutip_trap_app.provenance import ProvenanceIndex
-from qutip_trap_app.viewmodel.catalogue import CATALOGUE
+from qutip_trap_app.viewmodel.catalogue import CATALOGUE, fmt_number
 from qutip_trap_app.viewmodel.presets import PRESETS, ChartRecord, Comparison, PresetSpec, compare
 from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
@@ -19,7 +19,6 @@ from qutip_trap_app.views.common import (
     chip,
     data_table,
     details,
-    fmt_number,
     level_header,
     status_line,
 )

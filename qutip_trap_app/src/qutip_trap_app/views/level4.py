@@ -20,7 +20,7 @@ from qutip_trap_app.device_layer import DeviceLayer
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record, StepRecord, TableRecord
 from qutip_trap_app.resim import hamiltonian_key
-from qutip_trap_app.viewmodel.catalogue import Row, Shown
+from qutip_trap_app.viewmodel.catalogue import Row, Shown, fmt_number
 from qutip_trap_app.viewmodel.physics import (
     KnobRow,
     cooling_view,
@@ -45,7 +45,6 @@ from qutip_trap_app.views.common import (
     columns,
     data_table,
     details,
-    fmt_number,
     hint,
     input_style,
     ions_text,
@@ -858,7 +857,7 @@ def _cooling_page(ctx: Page) -> list[ft.Control]:
                     ),
                     drawing.line_chart(
                         [(f"<n> of mode {sb.mode} after each pulse", sb.times_s * 1e6, sb.nbar_after_pulse)],
-                        x_title="t (us)",
+                        x_title="t (µs)",
                         y_title="<n>",
                         log_y=True,
                         height=160,
@@ -867,7 +866,7 @@ def _cooling_page(ctx: Page) -> list[ft.Control]:
                     status_line(
                         f"{len(sb.orders)} pulses; orders {sorted(set(sb.orders), reverse=True)}, higher first; "
                         + ", ".join(
-                            f"k={k}: {t * 1e6:.1f} us"
+                            f"k={k}: {t * 1e6:.1f} µs"
                             for k, t in dict(zip(sb.orders, sb.durations_s)).items()
                         )
                     ),
@@ -886,7 +885,7 @@ def _cooling_page(ctx: Page) -> list[ft.Control]:
             ft.Column(
                 [
                     section_title(f"ion {p.ion}"),
-                    drawing.line_chart(series, x_title="t (us)", y_title="population", height=150)
+                    drawing.line_chart(series, x_title="t (µs)", y_title="population", height=150)
                     if series
                     else ft.Container(),
                     stat_row(
@@ -1022,7 +1021,7 @@ def _readout_page(ctx: Page) -> list[ft.Control]:
                                 ("eps_B", i.scan_windows_s * 1e6, i.scan_eps_b),
                                 ("eps_D", i.scan_windows_s * 1e6, i.scan_eps_d),
                             ],
-                            x_title="window (us)",
+                            x_title="window (µs)",
                             y_title="error",
                             log_y=True,
                             height=150,

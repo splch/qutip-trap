@@ -8,7 +8,6 @@ colour alone; the explain drawer shows one concept at a time with the Part II te
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -16,7 +15,7 @@ import flet as ft
 
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.viewmodel.builder import listed
-from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
+from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown, fmt_shown
 from qutip_trap_app.viewmodel.learn import CONCEPTS, DEPTHS, Attempt, Prompt, explain, now_days, score_choice
 from qutip_trap_app.viewmodel.numerics import Badge, NumericsPanel
 from qutip_trap_app.views import theme
@@ -26,49 +25,6 @@ MUTED = ft.Colors.ON_SURFACE_VARIANT
 HAIRLINE = ft.Colors.OUTLINE_VARIANT
 
 # ---- formatting ------------------------------------------------------------------------------------------------------
-
-_SI = (("G", 1e9), ("M", 1e6), ("k", 1e3), ("", 1.0), ("m", 1e-3), ("µ", 1e-6), ("n", 1e-9), ("p", 1e-12))
-
-
-_SUPERSCRIPT = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
-
-
-def fmt_scientific(value: float) -> str:
-    """``4.972 × 10⁻⁴``: four significant digits with the trailing zeros dropped, the exponent a superscript."""
-    mantissa, exponent = f"{value:.3e}".split("e")
-    if "." in mantissa:
-        mantissa = mantissa.rstrip("0").rstrip(".")
-    return f"{mantissa} × 10{str(int(exponent)).translate(_SUPERSCRIPT)}"
-
-
-def fmt_number(value: float, unit: str = "") -> str:
-    """A number to four significant digits, with an SI prefix for Hz, s, m and W; below 10⁻³ or from 10⁶ on, a unit
-    without a prefix is written in scientific notation (``fmt_scientific``)."""
-    if isinstance(value, bool):
-        return str(value)
-    if not math.isfinite(value):
-        return "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
-    if value == 0.0:
-        return f"0 {unit}".strip()
-    if unit in ("Hz", "s", "m", "W"):
-        prefix, scale = next(((p, sc) for p, sc in _SI if abs(value) >= sc), ("", 1.0))
-        return f"{value / scale:.4g} {prefix}{unit}"
-    text = fmt_scientific(value) if abs(value) < 1e-3 or abs(value) >= 1e6 else f"{value:.4g}"
-    return f"{text} {unit}".strip()
-
-
-def fmt_shown(s: Shown) -> str:
-    unit = CATALOGUE[s.quantity].unit
-    v = s.value
-    if v is None:
-        return "-"
-    if isinstance(v, bool):
-        return "yes" if v else "no"
-    if isinstance(v, int):
-        return f"{v} {unit}".strip()
-    if isinstance(v, float):
-        return fmt_number(v, unit)
-    return str(v)
 
 
 def hover_text(s: Shown) -> str:
