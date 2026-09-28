@@ -166,6 +166,23 @@ def PresetList(store: Store, session: Session, index: ProvenanceIndex) -> ft.Con
 
 
 @ft.component
+def PresetProgress(store: Store, preset_id: str) -> ft.Control:
+    """The running experiment's stage and progress; it re-renders on the progress tick, which the page around it does not
+    read."""
+    ft.use_state(store.activity)
+    running = store.running_of("preset", preset_id=preset_id)
+    if running is None:
+        return ft.Container()
+    return ft.Column(
+        [
+            status_line(f"{running.stage}: {running.message}"),
+            ft.ProgressBar(value=running.fraction, bar_height=4, border_radius=ft.BorderRadius.all(2)),
+        ],
+        spacing=6,
+    )
+
+
+@ft.component
 def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id: str) -> ft.Control:
     ft.use_state(store)
     page = ft.context.page
@@ -187,17 +204,14 @@ def PresetPage(store: Store, session: Session, index: ProvenanceIndex, preset_id
                         disabled=running is not None,
                         key="run-preset",
                     ),
-                    status_line(spec.duration if running is None else f"{running.stage}: {running.message}"),
+                    status_line(spec.duration),
                 ],
                 spacing=10,
                 wrap=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
         )
-        if running is not None:
-            body.append(
-                ft.ProgressBar(value=running.fraction, bar_height=4, border_radius=ft.BorderRadius.all(2))
-            )
+        body.append(PresetProgress(store, preset_id))
     else:
         comps = compare(spec, result)
         body.append(comparison_table(comps, index))

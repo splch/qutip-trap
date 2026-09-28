@@ -475,7 +475,7 @@ def Shell(store: Store, session: Session, index: ProvenanceIndex) -> ft.Control:
             # a record with no gate (a bare measurement) has nothing on Levels 1 to 3: stay with the job, and re-render
             # so the rail's highlight follows the route rather than the click
             page.navigate(routes.job(record.key()))
-            store.tick = store.tick + 1
+            store.changed()
 
     keys = WEB_KEYS if page.web else DESKTOP_KEYS
 

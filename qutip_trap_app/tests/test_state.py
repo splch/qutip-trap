@@ -152,9 +152,9 @@ def test_progress_rows_keep_moving_between_worker_events(index: ProvenanceIndex)
     session._last_beat = t0
     assert not session.heartbeat(t0 + 5.0), "nothing runs: nothing to re-render"
     store.jobs = {"t1": JobStatus("t1", "replay")}
-    tick = store.tick
-    assert not session.heartbeat(t0 + 0.5) and store.tick == tick
-    assert session.heartbeat(t0 + 1.0) and store.tick == tick + 1
+    tick = store.activity.tick
+    assert not session.heartbeat(t0 + 0.5) and store.activity.tick == tick
+    assert session.heartbeat(t0 + 1.0) and store.activity.tick == tick + 1
     assert not session.heartbeat(t0 + 1.5), "once per second"
 
 

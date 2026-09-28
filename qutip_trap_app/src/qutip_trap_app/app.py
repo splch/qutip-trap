@@ -38,7 +38,7 @@ def main(page: ft.Page) -> None:
     async def settle(gen: int) -> None:
         await asyncio.sleep(0.15)
         if gen == generation:
-            store.tick = store.tick + 1
+            store.changed()
 
     def on_resize(_e: Any) -> None:
         nonlocal generation
@@ -46,7 +46,7 @@ def main(page: ft.Page) -> None:
         page.run_task(settle, generation)
 
     def on_brightness(_e: Any) -> None:
-        store.tick = store.tick + 1
+        store.changed()
 
     page.on_resize = on_resize
     page.on_platform_brightness_change = on_brightness

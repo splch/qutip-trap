@@ -692,8 +692,9 @@ def inset(controls: list[ft.Control]) -> ft.Control:
 
 @ft.component
 def ProgressRows(store: Any, session: Any) -> ft.Control:
-    """The running jobs with their stage, elapsed time and progress, and one Cancel for all of them."""
-    ft.use_state(store)
+    """The running jobs with their stage, elapsed time and progress, and one Cancel for all of them. It re-renders on the
+    progress tick, which the rest of the screen does not read."""
+    ft.use_state(store.activity)
     rows: list[ft.Control] = [
         ft.Column(
             [

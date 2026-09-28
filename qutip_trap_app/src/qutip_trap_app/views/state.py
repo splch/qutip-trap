@@ -1,8 +1,9 @@
 """The application state: records, jobs in flight, the learner's settings, and the worker bridge (DESIGN.md Sections 3, 4).
 
-An observable dataclass (Flet re-renders every component that read it through ``use_state``). Records are immutable and
-replaced whole; the worker's events are applied by :meth:`Session.apply_events`, which the shell polls from an asyncio task
-so that no solver ever runs on the UI loop. The learner's settings and mastery log stay on the learner's device through
+An observable dataclass (Flet re-renders every component that read it through ``use_state``), with the running jobs'
+progress apart in its own observable, :class:`Activity`, so that a job's progress re-renders the progress rows and not every
+screen. Records are immutable and replaced whole; the worker's events are applied by :meth:`Session.apply_events`, which
+the shell polls from an asyncio task so that no solver ever runs on the UI loop. The learner's settings and mastery log stay on the learner's device through
 Flet's ``SharedPreferences`` (browser storage in the served mode, a preferences file in the desktop window).
 """
 
@@ -110,6 +111,9 @@ LEARNER_KEY = "qutip_trap_app.learner.v1"
 
 @dataclass
 class JobStatus:
+    """One submitted job. ``stage``, ``fraction`` and ``message`` change in place as its progress arrives (the Activity
+    tick re-renders the rows that show them); ``done`` and ``error`` change once, when the Store notifies every screen."""
+
     ticket: str
     request: Request
     stage: str = "queued"
@@ -202,9 +206,16 @@ def learner_from_document(doc: Mapping[str, Any]) -> Learner:
     )
 
 
-@ft.observable
 @dataclass
-class Store:
+class Activity(ft.Observable):
+    """What changes while a job runs: the poll loop bumps ``tick`` after every batch of progress events and once a second,
+    so that the elapsed time keeps moving. Only the progress rows read it; a job starting or finishing notifies the Store."""
+
+    tick: int = 0
+
+
+@dataclass
+class Store(ft.Observable):
     """Everything the screens read. Assigning a field notifies the components that read it."""
 
     records: dict[str, Record] = field(default_factory=dict)
@@ -233,8 +244,7 @@ class Store:
     selected_bar: str | None = None
     selected_shot: int | None = None
     error: str = ""
-    tick: int = 0
-    """Bumped by the poll loop when any job progressed (and once a second while one runs), so progress rows re-render."""
+    activity: Activity = field(default_factory=Activity)
     # the device model: the Level 4 knobs over the preset, the derived layers and the recalibrated tables
     preset_kwargs: dict[str, Any] = field(default_factory=dict)
     device_overrides: dict[str, float] = field(default_factory=dict)
@@ -275,6 +285,11 @@ class Store:
 
     def record(self) -> Record | None:
         return self.records.get(self.current) if self.current else None
+
+    def changed(self) -> None:
+        """Re-render every screen for a change that no assignment shows: a job finished (its status changes in place), or
+        the window was resized or the platform's brightness changed (the drawings and badges follow both)."""
+        self._notify(None)
 
     def running(self) -> list[JobStatus]:
         return [j for j in self.jobs.values() if not j.done]
@@ -614,35 +629,34 @@ class Session:
         self._finish_running("cancelled", "cancelled by the user")
 
     def _finish_running(self, stage: str, error: str) -> None:
-        jobs = dict(self.store.jobs)
-        for status in jobs.values():
-            if not status.done:
-                status.done, status.stage, status.error = True, stage, error
-        self.store.jobs = jobs
-        self.store.tick = self.store.tick + 1
+        for status in self.store.running():
+            status.done, status.stage, status.error = True, stage, error
+        self.store.changed()
 
     # ---- applying events ----
 
     def apply_events(self, events: list[Event]) -> None:
         if not events:
             return
-        jobs = dict(self.store.jobs)
-        # published before the handlers run: a result handler may submit a follow-up job (a finished recalibration
-        # re-derives the layer), and a write-back after the loop would drop that job's status
-        self.store.jobs = jobs
+        finished = False
         for ev in events:
-            status = jobs.get(ev.ticket)
+            status = self.store.jobs.get(ev.ticket)
             if status is None:
                 continue
             if ev.kind == "progress":
                 status.stage, status.fraction, status.message = ev.stage, ev.fraction, ev.message
-            elif ev.kind == "error":
+                continue
+            finished = True
+            if ev.kind == "error":
                 status.error, status.done, status.stage = ev.message, True, "failed"
                 self.store.error = ev.message.strip().splitlines()[-1] if ev.message else "the worker failed"
             else:
                 status.done, status.stage, status.fraction = True, "done", 1.0
                 self._apply_result(status, ev.payload)
-        self.store.tick = self.store.tick + 1
+        self.store.activity.tick += 1
+        if finished:
+            # the controls a running job disables, and the screens that wait for its result, re-render
+            self.store.changed()
 
     def _merge(self, status: JobStatus, change: Callable[[Record], Record]) -> None:
         """A step result lands on the record its ticket was about (the record may have left the session since)."""
@@ -740,7 +754,7 @@ class Session:
         if not self.store.running() or now - self._last_beat < HEARTBEAT_S:
             return False
         self._last_beat = now
-        self.store.tick = self.store.tick + 1
+        self.store.activity.tick += 1
         return True
 
     def worker_died(self) -> bool:
