@@ -41,7 +41,7 @@ markers = [
 python_version = "3.13"
 strict = true
 files = ["src/qutip_trap_app"]
-mypy_path = "src:.."  # the core is type-checked from its source tree; it ships no py.typed
+mypy_path = "src"
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
