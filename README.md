@@ -25,14 +25,15 @@ import qutip_trap as trap
 
 machine = trap.presets.yb171_chain(2)        # a two-ion 171Yb+ chain with 355 nm Raman gates
 bell = trap.Circuit(2).h(0).cnot(0, 1)       # every qubit is measured unless .measured(...) narrows it
+print(bell)                                  # the circuit as a text diagram
 result = machine.run(bell, shots=2000)       # compile, calibrate, schedule, prepare, evolve, read out
 
 print(result.counts)                         # about 1000 each of '00' and '11', a few of '01' and '10'
-print(result.diagnostics.level)              # JOINT_EXACT
+print(result.summary())                      # the outcomes beside the ideal, the level, the modes, the budget, SPAM
 print(result.diagnostics.approximations)     # what the run approximated, in words
 ```
 
-A two-ion Bell circuit takes a few seconds on a laptop, calibration included. A `Machine` is a frozen record of a `Device`, its calibration table, the option objects `Physics`, `Numerics` and `Readout`, and a `FidelityLevel`; variants come from `dataclasses.replace(machine, physics=trap.Physics(noise=False))`. Small crystals run `JOINT_EXACT` on the full joint space, and larger ones switch to `GATE_LOCAL`, where each gate is exact on the ions it addresses and the modes they couple to.
+A two-ion Bell circuit takes a few seconds on a laptop, calibration included. A `Machine` is a frozen record of a `Device`, its calibration table, the option objects `Physics`, `Numerics` and `Readout`, and a `FidelityLevel`; variants come from `dataclasses.replace(machine, physics=trap.Physics(noise=False))`. Small crystals run `JOINT_EXACT` on the full joint space, and larger ones switch to `GATE_LOCAL`, where each gate is exact on the ions it addresses and the modes they couple to. `machine.estimate(circuit)` says which level a run would take, on which space and for roughly how long, before anything is integrated.
 
 ### From Qiskit
 

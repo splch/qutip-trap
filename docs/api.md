@@ -4,7 +4,9 @@
 `presets` and `__version__`. Every other name is imported from the module that defines it; this page lists them by what a
 user does, one line each, and the docstrings carry the detail. Public numbers are in Hz, seconds and radians (IonQ's turns
 only at the IonQ boundary), and every bitstring key has qubit 0 as the least-significant bit, the rightmost character
-(PLAN.md Section 13). [examples.md](examples.md) runs the main path.
+(PLAN.md Section 13). [examples.md](examples.md) runs the main path. Every record prints as one line (the option records and the `Machine` as the
+constructor call that differs from the defaults); `Machine.specs()`, `Device.specs()` and `Result.summary()` are the full
+reports.
 
 ## Run a circuit on a machine
 
@@ -28,7 +30,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 - `Job`: a run in a worker process: `status()`, `progress`, `result(timeout_s=None)`, `record()`, `cancel(terminate_after_s=None)`.
 - `JobStatus`: queued, running, done, failed or cancelled; `JobCancelled` and `JobError` are what `Job.result()` raises.
 
-**`qutip_trap.run.results`**: `Progress`, one step of a run handed to the `progress` callback (`stage`, `done`, `total`, `elapsed_s`, `fraction`).
+**`qutip_trap.run.results`**: `Progress`, one step of a run handed to the `progress` callback (`stage`, `done`, `total`, `elapsed_s`, `fraction`), which prints as one log line (`progress=print`).
 
 ## The option objects
 
@@ -44,7 +46,7 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 ## Circuits and wire formats
 
 **`qutip_trap.control.compiler`**
-- `Circuit(n_qubits, ops=(), measure=None, registers=None)`: the program and a persistent builder: one method per gate (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `h`, `x`, `y`, `z`, `s`, `sdg`, `t`, `tdg`, `sx`, `rx`, `ry`, `cnot`, `cx`, `cz`, `swap`, `cp`, `rxx`, `rzz`, `u3`, `id`), `measured(*qubits, registers=None)`, and `from_openqasm`, `to_openqasm`, `from_ionq`, `to_ionq`.
+- `Circuit(n_qubits, ops=(), measure=None, registers=None)`: the program and a persistent builder: one method per gate (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `h`, `x`, `y`, `z`, `s`, `sdg`, `t`, `tdg`, `sx`, `rx`, `ry`, `cnot`, `cx`, `cz`, `swap`, `cp`, `rxx`, `rzz`, `u3`, `id`), `measured(*qubits, registers=None)`, and `from_openqasm`, `to_openqasm`, `from_ionq`, `to_ionq`; `repr` is the builder chain that makes it and `str` its text diagram (`control.diagram.draw`).
 - `Operation(name, qubits, params)`: one operation, parameters in radians.
 - `NATIVE_GATES`, `STANDARD_GATES`, `NON_UNITARY`, `EXPORTED_NATIVE`: the gate sets with their arities.
 - `compile_report(circuit, *, entangler="ms")`: a `CompileReport` (the native circuit, the pulse and entangling counts, every block and the whole circuit verified); `compile_to_native(circuit)`; `CompileError`.
@@ -167,7 +169,8 @@ only at the IonQ boundary), and every bitstring key has qubit 0 as the least-sig
 ## Results and records
 
 **`qutip_trap.run.results`**
-- `Result`: the per-shot `bitstrings` and their `counts`, `probabilities` and `error_bars`, the photon records and posteriors of a full readout, the noise samples, `heralds`, `spam`, `final_state` (with `keep_final_state=True`), `diagnostics`, `machine_hash`, `created_at`, `duration_s` and `record`.
+- `Result`: the per-shot `bitstrings` and their `counts` (in key order), `probabilities` and `error_bars`, the photon records and posteriors of a full readout, the noise samples, `heralds`, `spam`, `final_state` (with `keep_final_state=True`), `diagnostics`, `machine_hash`, `created_at`, `duration_s` and `record`.
+  - `summary()`: the run as a readable report, the outcomes beside the compiled circuit's ideal distribution with the total variation distance, the level and why, the modes, the ensemble, the intrinsic budget and the SPAM.
   - `to_ionq_v1_probabilities`, `to_ionq_v1_histogram`, `to_ionq_v1_shots`, `from_ionq_v1_shots`: IonQ's v1 formats, decimal keys.
   - `to_ionq_v2_probabilities`, `to_ionq_v2_histogram`, `to_ionq_v2_shots`: IonQ's v0.4 envelope, bitstrings in its wire order, q[0] first.
   - `reversed_bits()`: every key reversed, for the SDKs that write qubit 0's bit first; `sample_of_shot`: each kept shot's dynamical sample, None for imported shots or a record without per-shot arrays.

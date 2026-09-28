@@ -89,9 +89,9 @@ qutip_trap/
                    modes, anharmonic couplings, heating (4.1)
   light/           beams and beam roles, derived Raman and microwave drives, comb drives, the optical-Bloch
                    scattering-rate object, recoil (4.2.8, 4.3, 4.5.4, 4.5.5)
-  control/         native gates, the circuit IR and compiler, KAK, pulses, the scheduler and its virtual-Z
-                   frame, the calibration table, pulse shaping, composite pulses, the played and hardware
-                   chains (4.3.5, 4.4.3, 7)
+  control/         native gates, the circuit IR and compiler with the circuit's text diagram, KAK, pulses, the
+                   scheduler and its virtual-Z frame, the calibration table, pulse shaping, composite pulses, the
+                   played and hardware chains (4.3.5, 4.4.3, 7)
   dynamics/        the composite space with the ENR option, displacement operators and truncation, the one
                    Hamiltonian builder and its multi-level mode, collapse operators, solvers, the JOINT_EXACT engine,
                    the exact rotating frame, the factorized kernel, steady states, parallel maps, process
