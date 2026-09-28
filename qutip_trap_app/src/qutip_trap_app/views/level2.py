@@ -23,6 +23,7 @@ from qutip_trap_app.viewmodel.schedule import (
 from qutip_trap_app.views import drawing, routes, theme
 from qutip_trap_app.views.common import (
     MUTED,
+    ProgressRows,
     card,
     columns,
     content_widths,
@@ -31,6 +32,7 @@ from qutip_trap_app.views.common import (
     hint,
     ions_text,
     level_header,
+    not_in_record,
     pill,
     stat_row,
     stat_tile,
@@ -201,7 +203,8 @@ def _closure_card(
             button="Set the detuning by hand",
             tooltip="applied as written: blue legs up, red legs down, amplitude unchanged; the job re-runs at the full engine and Level 1 shows the actual unitary (Section 14.4)",
             parse_error="the offset must be a number in kHz",
-        )
+        ),
+        ProgressRows(store, session),
     ]
     if record.job.waveform_overrides:
         request.append(
@@ -229,7 +232,7 @@ def _closure_card(
                             mode_rows,
                         ),
                         status_line("values at calibration; a hand-set detuning opens the loops on Level 3"),
-                        data_table(["segment"] + [""] * (len(cl.segments[0]) if cl.segments else 0), seg_rows)
+                        data_table(["segment", *cl.segment_columns], seg_rows)
                         if seg_rows
                         else status_line("Fourier-parameterized waveform"),
                     ],
@@ -251,13 +254,16 @@ def Level2Page(
     pulses = record.schedule.pulses
     if not pulses:
         return status_line("this schedule has no pulses")
-    try:
-        sel = int(pulse_param)
-    except ValueError:
-        sel = 0
-    sel = min(max(sel, 0), len(pulses) - 1)
-    page = ft.context.page
     key = record.key()
+    if not pulse_param.isdigit() or int(pulse_param) >= len(pulses):
+        return not_in_record(
+            f"pulse {pulse_param}",
+            f"the pulses are 0 to {len(pulses) - 1}",
+            routes.schedule(key, 0),
+            "Open pulse 0",
+        )
+    sel = int(pulse_param)
+    page = ft.context.page
     pv = pulse_view(record, sel)
     lanes_width, strip_width = content_widths(store, page, 2)
     plain = store.learner.plan(2).plain_labels_first

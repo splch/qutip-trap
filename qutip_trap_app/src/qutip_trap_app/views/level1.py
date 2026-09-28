@@ -16,6 +16,7 @@ from qutip_trap_app import resim
 from qutip_trap_app.provenance import ProvenanceIndex
 from qutip_trap_app.record import Record
 from qutip_trap_app.requests import GateRequest, RequestError, RequestKind, request_angle, request_outcome
+from qutip_trap_app.viewmodel.builder import listed
 from qutip_trap_app.viewmodel.catalogue import CATALOGUE, Shown
 from qutip_trap_app.viewmodel.circuit import (
     GateView,
@@ -31,6 +32,7 @@ from qutip_trap_app.views.common import (
     HAIRLINE,
     MUTED,
     TILES_MAX,
+    ProgressRows,
     card,
     columns,
     content_widths,
@@ -42,6 +44,7 @@ from qutip_trap_app.views.common import (
     ions_text,
     kv_rows,
     level_header,
+    not_in_record,
     shown,
     stat_row,
     stat_tile,
@@ -396,9 +399,16 @@ def Level1Page(
     gates = timeline(record)
     if not gates:
         return status_line("this circuit compiled to no gate pieces")
-    selected = next((g for g in gates if g.gate_id == gate_param), gates[0])
-    page = ft.context.page
     key = record.key()
+    selected = next((g for g in gates if g.gate_id == gate_param), None)
+    if selected is None:
+        return not_in_record(
+            f"gate {gate_param}",
+            f"the gates are {listed([g.gate_id for g in gates])}",
+            routes.circuit(key, gates[0].gate_id),
+            f"Open {gates[0].gate_id}",
+        )
+    page = ft.context.page
     plain = store.learner.plan(1).plain_labels_first
 
     def on_select(gid: str) -> None:
@@ -474,6 +484,7 @@ def Level1Page(
         stat_row(tiles[:TILES_MAX]),
     ]
     if selected.name.value == "ms" and len(selected.ions) == 2:
+        gate_body.append(ProgressRows(store, session))
         gate_body.append(RequestOutcomeView(store, session, record, selected, index))
         gate_body.append(
             RequestPanel(

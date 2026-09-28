@@ -195,6 +195,8 @@ class ClosureView:
     duration: Shown
     segments: tuple[tuple[Shown, ...], ...]
     """One row per segment: duration, then Omega per (ion, leg), then the leg detunings."""
+    segment_columns: tuple[str, ...]
+    """The title of every column of ``segments``."""
     beat_phase: Shown
 
 
@@ -224,17 +226,24 @@ def closure(record: Record, gate_id: str) -> ClosureView:
             )
         )
     rows: list[tuple[Shown, ...]] = []
+    columns: tuple[str, ...] = ()
     for s in wf.segments:
-        row = [Shown("waveform_segment", s.duration_s, "duration")]
+        row = [Shown("gate_duration", s.duration_s, "the segment's duration")]
+        titles = ["duration"]
         for key, fn in sorted(s.amplitude_hz.items()):
-            row.append(Shown("tone_envelope", float(np.max(np.abs(_values(fn)))), f"Omega ion,leg {key}"))
+            ion, leg = key.split(",")
+            row.append(Shown("tone_envelope", float(np.max(np.abs(_values(fn)))), f"ion {ion}, {leg} leg"))
+            titles.append(f"Omega, ion {ion} {leg}")
         for leg, fn in sorted(s.detuning_hz.items()):
             row.append(Shown("tone_detuning", float(_values(fn)[0]), f"{leg} leg"))
+            titles.append(f"detuning, {leg}")
         rows.append(tuple(row))
+        columns = tuple(titles)
     return ClosureView(
         modes=tuple(modes),
         chi_total=Shown("entangling_angle", wf.chi_total_rad, "signed sum over modes"),
         duration=Shown("gate_duration", wf.duration_s),
         segments=tuple(rows),
+        segment_columns=columns,
         beat_phase=Shown("beat_phase", wf.phi_m.value, wf.phi_m.status),
     )

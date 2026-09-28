@@ -545,6 +545,21 @@ def empty_state(
     )
 
 
+def not_in_record(what: str, known: str, route: str, go: str) -> ft.Control:
+    """A route that names a gate, pulse or sample the job does not have: say so and what it has, and offer the way to a
+    real one, rather than showing another in its place under a crumb that names the missing one."""
+    page = ft.context.page
+    return empty_state(
+        f"No {what} in this job",
+        known,
+        icon=ft.Icons.SEARCH_OFF,
+        action=ft.FilledTonalButton(
+            content=ft.Text(go), on_click=lambda e: page.navigate(route), key="not-in-record"
+        ),
+        key="not-in-record-state",
+    )
+
+
 def kv_rows(pairs: Sequence[tuple[str, ft.Control]], *, label_width: float = 150) -> ft.Control:
     return ft.Column(
         [

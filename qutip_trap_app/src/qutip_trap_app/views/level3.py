@@ -38,6 +38,7 @@ from qutip_trap_app.views.common import (
     input_style,
     kv_rows,
     level_header,
+    not_in_record,
     section_title,
     shown,
     shown_row,
@@ -179,6 +180,21 @@ def Level3Page(
     ft.use_state(store)
     page = ft.context.page
     key = record.key()
+    n_pulses, n_samples = len(record.schedule.pulses), max(record.n_samples, 1)
+    if n_pulses and (not pulse_param.isdigit() or int(pulse_param) >= n_pulses):
+        return not_in_record(
+            f"pulse {pulse_param}",
+            f"the pulses are 0 to {n_pulses - 1}",
+            routes.dynamics(key, 0),
+            "Open pulse 0",
+        )
+    if not sample_param.isdigit() or int(sample_param) >= n_samples:
+        return not_in_record(
+            f"sample {sample_param}",
+            f"the dynamical samples are 0 to {n_samples - 1}",
+            routes.dynamics(key, pulse_param),
+            "Open sample 0",
+        )
     step, sample, branch = selection(store, record, pulse_param, sample_param)
     # a circuit that plays no pulse (a bare measurement, or virtual Z alone) has no step: reached by a deep link or a
     # reload of a dynamics route, since the rail does not offer Level 3 for such a record
