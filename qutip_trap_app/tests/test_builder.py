@@ -29,7 +29,7 @@ def test_every_palette_gate_is_a_compiler_gate_that_round_trips_through_the_text
     assert len(circuit.ops) == len(PALETTE)
     text = builder.to_openqasm2(circuit)
     back = builder.parse_circuit_text(text, "openqasm2")
-    assert back.n_qubits == n and back.measure == (0, 1)
+    assert back.n_qubits == n and back.measured == (0, 1)
     assert [op.name for op in back.ops] == [spec.name for spec in PALETTE]
     for a, b in zip(circuit.ops, back.ops):
         assert a.qubits == b.qubits
@@ -121,7 +121,7 @@ def test_edits_are_pure_and_keep_the_circuit_valid() -> None:
 def test_qubits_are_added_and_removed_within_bounds() -> None:
     c = _bell()
     c3 = builder.add_qubit(c)
-    assert c3.n_qubits == 3 and c3.measure == (0, 1, 2) and len(c3.ops) == 2
+    assert c3.n_qubits == 3 and c3.measured == (0, 1, 2) and len(c3.ops) == 2
     c4 = builder.add_qubit(c3)
     with pytest.raises(ValueError, match="at most"):
         builder.add_qubit(c4)
@@ -238,7 +238,7 @@ def test_edits_and_the_text_keep_a_subset_measurement() -> None:
     c = builder.parse_circuit_text(
         "qreg q[3]; creg c[2]; h q[0]; cx q[0],q[1]; measure q[0] -> c[0]; measure q[1] -> c[1];"
     )
-    assert c.measure == (0, 1)
+    assert c.measured == (0, 1)
     for edited in (
         builder.remove_gate(c, 1),
         builder.append_gate(c, GATES["x"], (2,)),
@@ -246,9 +246,9 @@ def test_edits_and_the_text_keep_a_subset_measurement() -> None:
         builder.clear(c),
         builder.remove_qubit(c),
     ):
-        assert edited.measure == (0, 1) and dict(edited.registers) == {"c": (0, 1)}
+        assert edited.measured == (0, 1) and dict(edited.registers) == {"c": (0, 1)}
         back = builder.parse_circuit_text(builder.to_openqasm2(edited))
-        assert back.measure == (0, 1) and dict(back.registers) == {"c": (0, 1)}
+        assert back.measured == (0, 1) and dict(back.registers) == {"c": (0, 1)}
     named = builder.parse_circuit_text(
         "qreg q[2]; creg a[1]; creg b[1]; h q[0]; measure q[1] -> a[0]; measure q[0] -> b[0];"
     )
@@ -260,8 +260,8 @@ def test_edits_and_the_text_keep_a_subset_measurement() -> None:
     )
     assert builder.remove_qubit(
         builder.parse_circuit_text("qreg q[3]; creg c[3]; measure q -> c;")
-    ).measure == (0, 1)
+    ).measured == (0, 1)
     # a program that measures nothing stays one (the machine then reads every ion out), with no zero-size register written
     nothing = builder.parse_circuit_text("qreg q[2]; h q[0];")
-    assert nothing.measure == () and "creg" not in builder.to_openqasm2(nothing)
-    assert builder.parse_circuit_text(builder.to_openqasm2(nothing)).measure == ()
+    assert nothing.measured == () and "creg" not in builder.to_openqasm2(nothing)
+    assert builder.parse_circuit_text(builder.to_openqasm2(nothing)).measured == ()

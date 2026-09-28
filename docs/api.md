@@ -46,7 +46,7 @@ reports.
 ## Circuits and wire formats
 
 **`qutip_trap.control.compiler`**
-- `Circuit(n_qubits, ops=(), measure=None, registers=None)`: the program and a persistent builder: one method per gate (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `h`, `x`, `y`, `z`, `s`, `sdg`, `t`, `tdg`, `sx`, `rx`, `ry`, `cnot`, `cx`, `cz`, `swap`, `cp`, `rxx`, `rzz`, `u3`, `id`), `measured(*qubits, registers=None)`, and `from_openqasm`, `to_openqasm`, `from_ionq`, `to_ionq`; `repr` is the builder chain that makes it and `str` its text diagram (`control.diagram.draw`).
+- `Circuit(n_qubits, ops=(), measured=None, registers=None)`: the program and a persistent builder: one method per gate (`gpi`, `gpi2`, `ms`, `zz`, `rz`, `h`, `x`, `y`, `z`, `s`, `sdg`, `t`, `tdg`, `sx`, `rx`, `ry`, `cnot`, `cx`, `cz`, `swap`, `cp`, `rxx`, `rzz`, `u3`, `id`), `measure(*qubits, registers=None)` for the qubits measured at the end (every one unless it narrows them; `measured` holds them), and `from_openqasm`, `to_openqasm`, `from_ionq`, `to_ionq`; `repr` is the builder chain that makes it and `str` its text diagram (`control.diagram.draw`).
 - `Operation(name, qubits, params)`: one operation, parameters in radians.
 - `NATIVE_GATES`, `STANDARD_GATES`, `NON_UNITARY`, `EXPORTED_NATIVE`: the gate sets with their arities.
 - `compile_report(circuit, *, entangler="ms")`: a `CompileReport` (the native circuit, the pulse and entangling counts, every block and the whole circuit verified); `compile_to_native(circuit)`; `CompileError`.

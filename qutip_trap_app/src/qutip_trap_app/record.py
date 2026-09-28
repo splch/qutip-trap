@@ -57,7 +57,7 @@ class OpRecord:
 class CircuitRecord:
     n_qubits: int
     ops: tuple[OpRecord, ...]
-    measure: tuple[int, ...]
+    measured: tuple[int, ...]
     registers: dict[str, tuple[int, ...]]
     """The classical registers a result is reported under, name -> the qubits in bit order (``Circuit.registers``)."""
 
@@ -65,7 +65,7 @@ class CircuitRecord:
         return core.Circuit(
             self.n_qubits,
             tuple(core.Operation(op.name, op.qubits, op.params) for op in self.ops),
-            self.measure,
+            self.measured,
             self.registers,
         )
 
@@ -76,7 +76,7 @@ class CircuitRecord:
             tuple(
                 OpRecord(op.name, tuple(op.qubits), tuple(float(p) for p in op.params)) for op in circuit.ops
             ),
-            tuple(circuit.measure),
+            tuple(circuit.measured),
             {str(name): tuple(int(q) for q in qubits) for name, qubits in circuit.registers.items()},
         )
 

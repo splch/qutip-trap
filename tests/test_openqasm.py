@@ -37,7 +37,7 @@ measure q -> c;
 
 def test_bell_circuit_imports_with_terminal_measurements() -> None:
     circ = load_openqasm2(BELL)
-    assert circ.n_qubits == 2 and circ.measure == (0, 1)
+    assert circ.n_qubits == 2 and circ.measured == (0, 1)
     assert circ.ops == (Operation("h", (0,), ()), Operation("cnot", (0, 1), ()))
     assert ideal_probabilities(circ) == pytest.approx({"00": 0.5, "11": 0.5})
 
@@ -62,7 +62,7 @@ def test_expressions_registers_and_broadcasting() -> None:
     measure b -> c[2];
     """
     circ = load_openqasm2(text)
-    assert circ.n_qubits == 3 and circ.measure == (1, 2)
+    assert circ.n_qubits == 3 and circ.measured == (1, 2)
     names = [op.name for op in circ.ops]
     assert names[:2] == ["rx", "rx"] and circ.ops[0].qubits == (0,) and circ.ops[1].qubits == (1,)
     assert (circ.ops[2].name, circ.ops[2].qubits) == ("ry", (2,)) and circ.ops[2].params == pytest.approx(
@@ -125,7 +125,7 @@ def test_mid_circuit_measure_and_reset_stay_in_ops() -> None:
     text = "OPENQASM 2.0; qreg q[2]; creg c[2]; h q[0]; measure q[0] -> c[0]; x q[0]; reset q[1]; measure q[1] -> c[1];"
     circ = load_openqasm2(text)
     assert [op.name for op in circ.ops] == ["h", "measure", "x", "reset"]
-    assert circ.measure == (1,)
+    assert circ.measured == (1,)
 
 
 def test_refusals_and_expression_errors() -> None:
@@ -156,7 +156,7 @@ def test_registers_survive_an_openqasm_round_trip() -> None:
         "measure q[2] -> a[0]; measure q[0] -> b[1]; measure q[1] -> b[0];"
     )
     c = Circuit.from_openqasm(text)
-    assert c.registers == {"a": (2,), "b": (1, 0)} and c.measure == (0, 1, 2)
+    assert c.registers == {"a": (2,), "b": (1, 0)} and c.measured == (0, 1, 2)
     assert load_openqasm2(dump_openqasm2(c)) == c
     assert Circuit.from_openqasm(BELL).registers == {"c": (0, 1)}
     # a broadcast measure writes bit k of the creg from qubit k of the qreg
@@ -164,7 +164,7 @@ def test_registers_survive_an_openqasm_round_trip() -> None:
     # no creg, or a creg nothing writes into: the default register over the terminal targets, which a program without a
     # measure statement leaves empty (a run then measures every ion)
     for text in ("OPENQASM 2.0; qreg q[2]; h q[0];", "OPENQASM 2.0; qreg q[2]; creg c[2]; h q[0];"):
-        assert load_openqasm2(text).measure == () and load_openqasm2(text).registers == {"c": ()}
+        assert load_openqasm2(text).measured == () and load_openqasm2(text).registers == {"c": ()}
     assert load_openqasm2("OPENQASM 2.0; qreg q[2]; creg c[2]; h q[0]; measure q[1] -> c[0];").registers == {
         "c": (1,)
     }
@@ -225,7 +225,7 @@ def test_dumps_writes_standard_gates_mid_circuit_operations_and_refuses_recool()
         .u3(0, 0.1, 0.2, 0.3)
         .cp(0, 2, 1.5)
         .swap(1, 2)
-        .measured(0, 2)
+        .measure(0, 2)
     )
     text = dump_openqasm2(c)
     assert "cx q[0], q[1];" in text and "u3(0.1, 0.2, 0.3) q[0];" in text and "measure q[1]" not in text

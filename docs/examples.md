@@ -13,7 +13,7 @@ import dataclasses
 import qutip_trap as trap
 
 machine = trap.presets.yb171_chain(2)             # the example two-ion 171Yb+ chain
-bell = trap.Circuit(2).h(0).cnot(0, 1)            # every qubit is measured unless .measured(...) narrows it
+bell = trap.Circuit(2).h(0).cnot(0, 1)            # every qubit is measured unless .measure(...) narrows it
 print(bell)                                       # the circuit as a text diagram; repr(bell) is the builder chain
 result = machine.run(bell, shots=2000)            # compile, calibrate, schedule, prepare, evolve, read out
 print(result.summary())                           # the outcomes beside the ideal, the level and why, the budget, SPAM

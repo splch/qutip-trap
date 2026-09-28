@@ -59,8 +59,8 @@ def parity_circuit(qubits: Sequence[int], n_qubits: int, phi_rad: float) -> Circ
     base = ghz_circuit(qubits, n_qubits)
     return Circuit(
         n_qubits,
-        (*base.ops, *(Operation("gpi2", (q,), (float(phi_rad),)) for q in base.measure)),
-        base.measure,
+        (*base.ops, *(Operation("gpi2", (q,), (float(phi_rad),)) for q in base.measured)),
+        base.measured,
     )
 
 

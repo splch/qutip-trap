@@ -914,7 +914,7 @@ def execute(
             i: collision_rate_per_ion(collisions, float(device.crystal.masses_kg[i])) for i in range(n_ions)
         }
     # the measured set is the circuit's targets and every trailing measure operation: the scheduler's terminal event
-    declared: list[int] = list(compiled.measure)
+    declared: list[int] = list(compiled.measured)
     for op in compiled.ops:
         if op.name == "measure":
             declared.extend(q for q in op.qubits if q not in declared)

@@ -339,7 +339,7 @@ def test_spec_round_trips_through_json(machine) -> None:
     )
     physics = trap.Physics(noise=False, internal_levels=3, entangler="zz", shot_period_s=2e-3)
     spec = RunSpec(
-        BELL.measured(1),
+        BELL.measure(1),
         shots=7,
         seed=11,
         machine_hash=m.hash(),
@@ -355,7 +355,7 @@ def test_spec_round_trips_through_json(machine) -> None:
     assert d["schema_version"] == SPEC_SCHEMA_VERSION and d["qutip_trap_version"] == trap.__version__
     assert d["numerics"]["caps"] == {"2": 12, "3": 14}
     assert d["numerics"]["enr_group"] == [[4, 5], 2]
-    assert d["level"] == "GATE_LOCAL" and d["circuit"]["measure"] == [1]
+    assert d["level"] == "GATE_LOCAL" and d["circuit"]["measured"] == [1]
     back = RunSpec.from_dict(json.loads(text))
     assert back == spec, "exact: the option objects, the level and the circuit rebuilt as the same values"
     assert back.numerics.caps == {2: 12, 3: 14} and back.numerics.enr_group == (

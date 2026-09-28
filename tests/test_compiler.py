@@ -215,7 +215,7 @@ def test_mid_circuit_operations_pass_through_and_skip_the_whole_circuit_check() 
 def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_default() -> None:
     built = Circuit(2).h(0).cnot(0, 1)
     assert built == Circuit(2, (Operation("h", (0,), ()), Operation("cnot", (0, 1), ())), (0, 1))
-    assert built.measure == (0, 1) and built.registers == {"c": (0, 1)}
+    assert built.measured == (0, 1) and built.registers == {"c": (0, 1)}
     native_circuit = (
         Circuit(2)
         .gpi2(0, phase=0.0)
@@ -232,7 +232,7 @@ def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_de
     assert Circuit(1).rx(0, theta=0.5) == Circuit(1).rx(0, 0.5)
     # a builder never mutates: the original stays what it was
     base = Circuit(2)
-    assert base.h(0) != base and base.ops == () and base.measure == (0, 1)
+    assert base.h(0) != base and base.ops == () and base.measured == (0, 1)
     # every gate of the two tables has a method that appends it, qubits first and then the parameters
     for name, (arity, n_params) in {**NATIVE_GATES, **STANDARD_GATES}.items():
         op = getattr(Circuit(2), name)(*(0, 1)[:arity], *[0.25] * n_params).ops[-1]
@@ -244,13 +244,13 @@ def test_the_builder_equals_explicit_construction_and_measures_every_qubit_by_de
 
 
 def test_measured_registers_and_the_third_positional_argument() -> None:
-    narrowed = Circuit(3).x(0).measured(0, 1)
-    assert narrowed.measure == (0, 1) and narrowed.registers == {"c": (0, 1)}
-    split = Circuit(3).x(0).measured(2, 0, registers={"a": (2,), "b": (0,)})
-    assert split.measure == (2, 0) and split.registers == {"a": (2,), "b": (0,)}
+    narrowed = Circuit(3).x(0).measure(0, 1)
+    assert narrowed.measured == (0, 1) and narrowed.registers == {"c": (0, 1)}
+    split = Circuit(3).x(0).measure(2, 0, registers={"a": (2,), "b": (0,)})
+    assert split.measured == (2, 0) and split.registers == {"a": (2,), "b": (0,)}
     # the third positional argument narrows the measurement
-    assert Circuit(2, (), (1,)).measure == (1,) and Circuit(2, (), (1,)).registers == {"c": (1,)}
-    assert Circuit(2, (), ()).measure == () and Circuit(2, (), ()).registers == {"c": ()}
+    assert Circuit(2, (), (1,)).measured == (1,) and Circuit(2, (), (1,)).registers == {"c": (1,)}
+    assert Circuit(2, (), ()).measured == () and Circuit(2, (), ()).registers == {"c": ()}
     with pytest.raises(ValueError, match="register 'r'"):
         Circuit(2, registers={"r": (0, 5)})
     with pytest.raises(ValueError, match="register 'r'"):
@@ -258,7 +258,7 @@ def test_measured_registers_and_the_third_positional_argument() -> None:
     # the compiler keeps the registers on the native circuit
     c = Circuit(2, registers={"a": (0,), "b": (1,)}).h(0).cnot(0, 1)
     assert compile_report(c).circuit.registers == {"a": (0,), "b": (1,)}
-    assert compile_to_native(c).measure == (0, 1)
+    assert compile_to_native(c).measured == (0, 1)
 
 
 def test_from_and_to_ionq_on_the_builder() -> None:

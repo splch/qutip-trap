@@ -18,17 +18,15 @@ from tests.fixtures import make_calibration_table, make_device, make_result
 
 def test_a_circuit_reads_as_the_builder_chain_that_makes_it() -> None:
     bell = Circuit(2).h(0).cnot(0, 1)
-    narrowed = Circuit(3).rx(1, math.pi / 2).cp(0, 2, 0.3).measured(2, 0)
+    narrowed = Circuit(3).rx(1, math.pi / 2).cp(0, 2, 0.3).measure(2, 0)
     two_registers = Circuit.from_openqasm(
         'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg a[1]; creg b[1]; h q[0]; cx q[0],q[1];'
         " measure q[0] -> a[0]; measure q[1] -> b[0];"
     )
     mid_circuit = Circuit(2, (Operation("h", (0,), ()), Operation("reset", (1,), ())))
     assert repr(bell) == "Circuit(2).h(0).cnot(0, 1)"
-    assert repr(narrowed) == "Circuit(3).rx(1, 1.5707963267948966).cp(0, 2, 0.3).measured(2, 0)"
-    assert (
-        repr(two_registers) == "Circuit(2).h(0).cnot(0, 1).measured(0, 1, registers={'a': (0,), 'b': (1,)})"
-    )
+    assert repr(narrowed) == "Circuit(3).rx(1, 1.5707963267948966).cp(0, 2, 0.3).measure(2, 0)"
+    assert repr(two_registers) == "Circuit(2).h(0).cnot(0, 1).measure(0, 1, registers={'a': (0,), 'b': (1,)})"
     assert repr(mid_circuit).startswith("Circuit(2, ops=(Operation(name='h'")
     for c in (bell, narrowed, two_registers, mid_circuit):
         assert eval(repr(c)) == c
@@ -40,7 +38,7 @@ def test_a_circuit_reads_as_the_builder_chain_that_makes_it() -> None:
 
 def test_a_circuit_prints_as_its_diagram() -> None:
     assert str(Circuit(2).h(0).cnot(0, 1)) == "q0: ─H──●──M─\n        │\nq1: ────X──M─"
-    crossing = str(Circuit(3).rzz(0, 2, math.pi / 2).measured(1))
+    crossing = str(Circuit(3).rzz(0, 2, math.pi / 2).measure(1))
     assert crossing.splitlines()[2] == "q1: ────┼──────M─" and crossing.splitlines()[0].startswith(
         "q0: ─RZZ(π/2)─"
     )

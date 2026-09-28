@@ -149,7 +149,7 @@ def test_ionq_circuit_json_round_trip() -> None:
     assert ms_op.name == "ms" and ms_op.params == pytest.approx((0.0, math.pi / 2, math.pi / 2))
     assert gpi2_op.name == "gpi2" and gpi2_op.params == pytest.approx((1.5 * math.pi,))
     assert zz_op.params == pytest.approx((0.2 * math.pi,))
-    assert circ.measure == (0, 1)
+    assert circ.measured == (0, 1)
     out = dump_ionq_json(circ)
     assert out["circuit"] == obj["circuit"]
     assert out["qubits"] == 2 and out["gateset"] == "native"

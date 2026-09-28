@@ -191,14 +191,14 @@ def test_random_sequences_close_to_the_identity_and_measure_their_qubits() -> No
     rng = np.random.default_rng(3)
     for m in (1, 5, 12):
         seq = single_qubit_sequences(rng, (1,), m, 2)
-        assert seq.circuit.measure == (1,) and all(op.qubits == (1,) for op in seq.circuit.ops)
+        assert seq.circuit.measured == (1,) and all(op.qubits == (1,) for op in seq.circuit.ops)
         assert (
             global_phase(seq.inverse[0] @ single_qubit_sequence_unitary(seq.cliffords[0]), np.eye(2))
             is not None
         )
         assert global_phase(operations_unitary(list(seq.circuit.ops), (1,)), np.eye(2), atol=1e-8) is not None
         two = two_qubit_sequence(rng, (0, 1), m, 2)
-        assert two.circuit.measure == (0, 1)
+        assert two.circuit.measured == (0, 1)
         assert (
             global_phase(operations_unitary(list(two.circuit.ops), (0, 1)), np.eye(4), atol=1e-8) is not None
         )
@@ -207,5 +207,5 @@ def test_random_sequences_close_to_the_identity_and_measure_their_qubits() -> No
         )
         assert compile_report(two.circuit).n_entangling == expected
     sim = single_qubit_sequences(rng, (0, 1), 4, 2)
-    assert sim.circuit.measure == (0, 1) and len(sim.cliffords) == 2
+    assert sim.circuit.measured == (0, 1) and len(sim.cliffords) == 2
     assert global_phase(operations_unitary(list(sim.circuit.ops), (0, 1)), np.eye(4), atol=1e-8) is not None

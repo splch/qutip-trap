@@ -143,7 +143,7 @@ def test_knill_sequences_end_on_their_own_target_and_cost_one_pulse_per_gate() -
                 length,
                 qubits,
             )
-            assert seq.circuit.measure == tuple(int(q) for q in qubits)
+            assert seq.circuit.measured == tuple(int(q) for q in qubits)
             assert set(seq.key) <= {"0", "1"} and len(seq.key) == len(qubits)
             pulses = [op for op in seq.circuit.ops if op.name in ("gpi", "gpi2")]
             # per qubit: length Clifford pulses, at most length Pauli pulses, at most one closing pi/2
@@ -416,7 +416,7 @@ def test_random_square_circuits_have_heavy_sets_of_half_the_strings_and_three_ga
         assert rep.n_entangling == qc.entangling_count and rep.circuit_residual is not None
         assert rep.circuit_residual < 1e-7
     assert one_gate_circuit("ms[0,1]", 2).ops[0].params == (0.0, 0.0, math.pi / 2)
-    assert one_gate_circuit("gpi2[1]", 2).measure == (1,)
+    assert one_gate_circuit("gpi2[1]", 2).measured == (1,)
     with pytest.raises(ValueError):
         one_gate_circuit("cnot[0,1]", 2)
 
@@ -473,7 +473,7 @@ def test_single_qubit_rb_decays_at_the_channel_scale_with_the_budget_alongside(t
     assert "first-order composition" in b.notes[0]
     d = rb.results[0].diagnostics
     assert d.level == "JOINT_EXACT" and d.propagator_cache_hits >= 0
-    assert rb.results[0].n_qubits == 1 and rb.sequences[0].circuit.measure == (0,)
+    assert rb.results[0].n_qubits == 1 and rb.sequences[0].circuit.measured == (0,)
 
 
 @pytest.mark.slow
@@ -554,7 +554,7 @@ def test_simultaneous_rb_runs_on_three_ions() -> None:
     assert rb.joint_error_per_layer is not None
     assert all(0.0 <= v < 1e-2 for v, _ in rb.marginal_error_per_clifford)
     assert rb.survival.shape == (2, 1) and rb.results[0].n_qubits == 3
-    assert rb.sequences[0].circuit.measure == (0, 1, 2)
+    assert rb.sequences[0].circuit.measured == (0, 1, 2)
 
 
 @pytest.mark.slow

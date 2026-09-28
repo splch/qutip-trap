@@ -297,7 +297,7 @@ HEADER = 'OPENQASM 2.0;\ninclude "qelib1.inc";\n'
 def _measures_everything(circuit: Circuit) -> bool:
     """Whether the terminal measurement is the worked example's: every qubit into the one register ``c`` in qubit order."""
     every = tuple(range(circuit.n_qubits))
-    return tuple(circuit.measure) == every and dict(circuit.registers) == {"c": every}
+    return tuple(circuit.measured) == every and dict(circuit.registers) == {"c": every}
 
 
 def to_openqasm2(circuit: Circuit) -> str:
@@ -440,10 +440,10 @@ def _with_ops(circuit: Circuit, ops: Sequence[Operation], n_qubits: int | None =
     qubits that no longer exist."""
     n = circuit.n_qubits if n_qubits is None else n_qubits
     if n == circuit.n_qubits:
-        return Circuit(n, tuple(ops), circuit.measure, circuit.registers)
+        return Circuit(n, tuple(ops), circuit.measured, circuit.registers)
     if _measures_everything(circuit):
         return Circuit(n, tuple(ops), tuple(range(n)))
-    measure = tuple(q for q in circuit.measure if q < n)
+    measure = tuple(q for q in circuit.measured if q < n)
     registers = {name: tuple(q for q in qubits if q < n) for name, qubits in circuit.registers.items()}
     kept = {name: qubits for name, qubits in registers.items() if qubits}
     return Circuit(n, tuple(ops), measure, kept or {"c": measure})

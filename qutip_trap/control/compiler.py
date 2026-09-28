@@ -159,15 +159,16 @@ class Circuit:
 
     Also a persistent builder: one method per gate name of ``NATIVE_GATES`` and ``STANDARD_GATES``, qubits first
     (``q``, or ``q0`` and ``q1`` in the gate's own order) and then the parameters in radians, each returning a new circuit
-    with the operation appended (``Circuit(2).h(0).cnot(0, 1)``); ``measured`` sets the terminal targets."""
+    with the operation appended (``Circuit(2).h(0).cnot(0, 1)``); ``measure`` narrows the terminal targets, which
+    ``measured`` holds."""
 
     n_qubits: int
     ops: tuple[Operation, ...] = ()
-    measure: tuple[int, ...] = None  # type: ignore[assignment]  # omitted (None) means every qubit; a tuple after __post_init__
+    measured: tuple[int, ...] = None  # type: ignore[assignment]  # omitted (None) means every qubit; a tuple after __post_init__
     """The terminal measurement targets; omitted, every qubit. Mid-circuit measure and reset live in ``ops``."""
-    registers: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]  # omitted (None) means {"c": measure}
+    registers: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]  # omitted (None) means {"c": measured}
     """Name -> the qubits of each classical register in bit order (bit 0 first); omitted, one register ``"c"`` over
-    ``measure``. The OpenQASM 2 importer fills it from the ``creg`` declarations and the exporter writes them back."""
+    ``measured``. The OpenQASM 2 importer fills it from the ``creg`` declarations and the exporter writes them back."""
 
     def __post_init__(self) -> None:
         given_n: object = self.n_qubits
@@ -188,19 +189,21 @@ class Circuit:
                     f"{op.name} on qubits {op.qubits}: the circuit has qubits 0 to {self.n_qubits - 1} "
                     f"(Circuit({max(op.qubits) + 1}) holds qubit {max(op.qubits)})"
                 )
-        given_measure: object = self.measure
-        measure = (
-            tuple(range(self.n_qubits)) if given_measure is None else tuple(int(q) for q in self.measure)
+        given_measured: object = self.measured
+        measured = (
+            tuple(range(self.n_qubits)) if given_measured is None else tuple(int(q) for q in self.measured)
         )
-        outside = sorted({q for q in measure if q < 0 or q >= self.n_qubits})
+        outside = sorted({q for q in measured if q < 0 or q >= self.n_qubits})
         if outside:
-            raise ValueError(f"measure names qubits {outside} outside the circuit's 0 to {self.n_qubits - 1}")
-        if len(set(measure)) != len(measure):
-            raise ValueError(f"measure names a qubit twice: {measure}")
-        object.__setattr__(self, "measure", measure)
+            raise ValueError(
+                f"the measured qubits {outside} are outside the circuit's 0 to {self.n_qubits - 1}"
+            )
+        if len(set(measured)) != len(measured):
+            raise ValueError(f"the measured qubits name one twice: {measured}")
+        object.__setattr__(self, "measured", measured)
         given_registers: object = self.registers
         if given_registers is None:
-            registers = {"c": measure}
+            registers = {"c": measured}
         else:
             registers = {
                 str(name): tuple(int(q) for q in qubits) for name, qubits in dict(self.registers).items()
@@ -211,21 +214,21 @@ class Circuit:
         object.__setattr__(self, "registers", registers)
 
     def __repr__(self) -> str:
-        """The builder chain that makes the circuit, ``Circuit(2).h(0).cnot(0, 1)``, with ``.measured(...)`` when the
+        """The builder chain that makes the circuit, ``Circuit(2).h(0).cnot(0, 1)``, with ``.measure(...)`` when the
         terminal targets or the registers are not the defaults, cut after ``REPR_OPS_MAX`` operations; a circuit the
         builder cannot make (a mid-circuit measure, reset or recool, or no terminal measurement) reads as its constructor
         call. ``str(circuit)`` is the text diagram (``control.diagram``)."""
-        if not self.measure or any(op.is_non_unitary for op in self.ops):
-            return f"Circuit({self.n_qubits}, ops={self.ops!r}, measure={self.measure!r}, registers={self.registers!r})"
+        if not self.measured or any(op.is_non_unitary for op in self.ops):
+            return f"Circuit({self.n_qubits}, ops={self.ops!r}, measured={self.measured!r}, registers={self.registers!r})"
         chain = "".join(
             f".{op.name}({', '.join([*map(str, op.qubits), *map(repr, op.params)])})"
             for op in self.ops[:REPR_OPS_MAX]
         )
         if len(self.ops) > REPR_OPS_MAX:
             chain += f"... ({len(self.ops)} operations)"
-        if self.measure != tuple(range(self.n_qubits)) or self.registers != {"c": self.measure}:
-            registers = "" if self.registers == {"c": self.measure} else f", registers={self.registers!r}"
-            chain += f".measured({', '.join(map(str, self.measure))}{registers})"
+        if self.measured != tuple(range(self.n_qubits)) or self.registers != {"c": self.measured}:
+            registers = "" if self.registers == {"c": self.measured} else f", registers={self.registers!r}"
+            chain += f".measure({', '.join(map(str, self.measured))}{registers})"
         return f"Circuit({self.n_qubits}){chain}"
 
     def __str__(self) -> str:
@@ -253,20 +256,21 @@ class Circuit:
                     seen.append(pair)
         return tuple(seen)
 
-    def measured(self, *qubits: int, registers: Mapping[str, Sequence[int]] | None = None) -> Circuit:
-        """This circuit measuring exactly ``qubits`` at the end, reported under ``registers`` (default: one register ``"c"``
-        over them in the order given). Every qubit is measured unless this narrows it, so it takes at least one."""
+    def measure(self, *qubits: int, registers: Mapping[str, Sequence[int]] | None = None) -> Circuit:
+        """This circuit measuring exactly ``qubits`` at the end, wherever in the chain it is called, reported under
+        ``registers`` (default: one register ``"c"`` over them in the order given). Every qubit is measured unless this
+        narrows it, so it takes at least one; a measurement mid-circuit is an ``Operation("measure", ...)`` in ``ops``."""
         if not qubits:
             raise ValueError(
-                "measured() names the qubits to measure, such as measured(0); every qubit is measured by default"
+                "measure() names the qubits to measure, such as measure(0); every qubit is measured by default"
             )
-        measure = tuple(int(q) for q in qubits)
+        measured = tuple(int(q) for q in qubits)
         regs = (
-            {"c": measure}
+            {"c": measured}
             if registers is None
             else {name: tuple(int(q) for q in qs) for name, qs in registers.items()}
         )
-        return dataclasses.replace(self, measure=measure, registers=regs)
+        return dataclasses.replace(self, measured=measured, registers=regs)
 
     @classmethod
     def from_openqasm(cls, text: str) -> Circuit:
@@ -479,11 +483,11 @@ def circuit_unitary(circuit: Circuit, ops: Sequence[Operation] | None = None) ->
 
 def ideal_probabilities(circuit: Circuit) -> dict[str, float]:
     """The target distribution |<b|U|0...0>|^2 keyed by the bitstring (qubit 0 rightmost), over the measured qubits only
-    when ``circuit.measure`` is a subset."""
+    when ``circuit.measured`` is a subset."""
     u = circuit_unitary(circuit)
     amps = u[:, 0]
     n = circuit.n_qubits
-    measured = tuple(sorted(circuit.measure)) if circuit.measure else tuple(range(n))
+    measured = tuple(sorted(circuit.measured)) if circuit.measured else tuple(range(n))
     out: dict[str, float] = {}
     for index, a in enumerate(amps):
         p = float(abs(a) ** 2)
@@ -751,7 +755,7 @@ def compile_report(circuit: Circuit, *, entangler: Entangler = "ms") -> CompileR
         residuals.append(verify_operations(block, gate_matrix(op), op.qubits))
         native_ops.extend(block)
     propagated, frame = propagate_frames(native_ops, circuit.n_qubits)
-    compiled = Circuit(circuit.n_qubits, tuple(propagated), circuit.measure, circuit.registers)
+    compiled = Circuit(circuit.n_qubits, tuple(propagated), circuit.measured, circuit.registers)
     circuit_residual: float | None = None
     if any(op.is_non_unitary for op in circuit.ops):
         notes.append(

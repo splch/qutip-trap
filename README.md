@@ -25,7 +25,7 @@ runs from a checkout: `uv sync --all-packages --extra gui`, then `uv run qutip-t
 import qutip_trap as trap
 
 machine = trap.presets.yb171_chain(2)                # a two-ion 171Yb+ chain with 355 nm Raman gates
-bell = trap.Circuit(2).h(0).cnot(0, 1)               # every qubit is measured unless .measured(...) narrows it
+bell = trap.Circuit(2).h(0).cnot(0, 1)               # every qubit is measured unless .measure(...) narrows it
 print(bell)                                          # the circuit as a text diagram
 result = machine.run(bell, shots=2000)               # compile, calibrate, schedule, prepare, evolve, read out
 

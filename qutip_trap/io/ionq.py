@@ -132,7 +132,7 @@ def load_ionq_json(obj: dict[str, Any]) -> Circuit:
         else:
             raise ValueError(f"unsupported IonQ gate {name!r}")
         ops.append(Operation(name, qubits, params))
-    return Circuit(n_qubits=n_qubits, ops=tuple(ops), measure=tuple(range(n_qubits)))
+    return Circuit(n_qubits=n_qubits, ops=tuple(ops), measured=tuple(range(n_qubits)))
 
 
 def dump_ionq_json(circuit: Circuit) -> dict[str, Any]:

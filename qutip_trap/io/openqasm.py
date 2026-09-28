@@ -74,7 +74,7 @@ def dump_openqasm2(circuit: Circuit, *, declare_native: bool = True) -> str:
             gate = QELIB_NAMES.get(op.name, op.name)
             params = f"({', '.join(repr(float(x)) for x in op.params)})" if op.params else ""
             lines.append(f"{gate}{params} {', '.join(f'q[{q}]' for q in op.qubits)};")
-    measured = set(circuit.measure)
+    measured = set(circuit.measured)
     for name, qubits in circuit.registers.items():
         for k, q in enumerate(qubits):
             if q in measured:
@@ -553,7 +553,7 @@ def evaluate(tokens: Sequence[_Tok], env: dict[str, float]) -> float:
 
 def load_openqasm2(text: str) -> Circuit:
     """Import OpenQASM 2 text (the subset in the module docstring) into the IR: angles in radians, the terminal measurements
-    as ``Circuit.measure`` and the classical registers they write as ``Circuit.registers``. A file path or an OpenQASM 3
+    as ``Circuit.measured`` and the classical registers they write as ``Circuit.registers``. A file path or an OpenQASM 3
     program is refused with what to pass instead."""
     stripped = text.strip()
     if (

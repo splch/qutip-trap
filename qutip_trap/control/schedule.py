@@ -785,7 +785,7 @@ def schedule(
         return timeline.on_each(ions, start, train)
 
     last_unitary = max([k for k, op in enumerate(circuit.ops) if not op.is_non_unitary], default=-1)
-    measured: list[int] = list(circuit.measure)
+    measured: list[int] = list(circuit.measured)
     for k, op in enumerate(circuit.ops):
         if op.is_non_unitary and (op.name != "measure" or k < last_unitary):
             raise ScheduleError(f"{op.name!r} at position {k}: {MID_CIRCUIT_REFUSAL}")

@@ -89,9 +89,9 @@ def draw(circuit: Circuit, *, width: int = 100) -> str:
             first, second = ENDPOINTS.get(op.name, (label(op), label(op)))
             cells[col][a], cells[col][b] = first, second
             spans[col].append((lo, hi))
-    if circuit.measure:
+    if circuit.measured:
         col = place(range(n))
-        for q in circuit.measure:
+        for q in circuit.measured:
             cells[col][q] = NON_UNITARY_LABELS["measure"]
 
     prefix = [f"q{q}: " for q in range(n)]

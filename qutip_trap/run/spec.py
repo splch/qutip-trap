@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from qutip_trap.run.job import RunRecord
     from qutip_trap.run.results import Progress, Result
 
-SPEC_SCHEMA_VERSION = 2
-"""The ``schema_version`` ``RunSpec.to_dict`` writes."""
+SPEC_SCHEMA_VERSION = 3
+"""The ``schema_version`` ``RunSpec.to_dict`` writes (3: the circuit's terminal targets under ``"measured"``)."""
 
 JobStatus = Literal["queued", "running", "done", "failed", "cancelled"]
 """What ``Job.status()`` returns: ``queued`` before the worker started, ``running`` while it runs, then one of the three
@@ -158,7 +158,7 @@ def _circuit_to_dict(circuit: Circuit) -> dict[str, Any]:
             }
             for op in circuit.ops
         ],
-        "measure": [int(q) for q in circuit.measure],
+        "measured": [int(q) for q in circuit.measured],
         "registers": {str(k): [int(q) for q in v] for k, v in circuit.registers.items()},
     }
 
@@ -172,7 +172,7 @@ def _circuit_from_dict(d: Mapping[str, Any]) -> Circuit:
             )
             for op in d["ops"]
         ),
-        tuple(int(q) for q in d["measure"]),
+        tuple(int(q) for q in d["measured"]),
         {str(k): tuple(int(q) for q in v) for k, v in dict(d["registers"]).items()},
     )
 
