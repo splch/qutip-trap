@@ -291,8 +291,9 @@ print(estimate.reason)
 
 Its `wall_time_s` is **one pass** through the schedule. A run makes one pass per *branch* of the initial mixture (the
 thermal motion's Fock states and the pumped internal levels above `Numerics.branch_weight_min`), per noise *sample*, per
-*trajectory*. The branches run in parallel on worker processes. The number of shots barely matters on a quiet machine,
-because the shots are sampled from the final register state after the evolution.
+*trajectory*. The branches run in parallel on worker processes. On a quiet machine shots cost little next to the
+evolution: they are sampled from the final register state, which the evolution computes once, and sampling and reading
+out take about 20 µs a shot. A few thousand shots add hundredths of a second; 200,000 add about 4 s.
 
 ### Pin the calibration
 
@@ -353,7 +354,8 @@ print(estimate4.level, estimate4.dimension, f"about {estimate4.wall_time_s:.3g} 
 
 1. Pin the calibration with `machine.calibrated(pairs=...)`. The surrogate cache is keyed on the seed, so an unpinned
    machine would rebuild it for every new seed.
-2. Barely longer: the shots are sampled from the final register state, so the evolution does not repeat.
+2. About 6 s. The evolution does not repeat: the shots are sampled from the final register state. Only the sampling and
+   the readout grow, at about 20 µs a shot, so the extra 198,000 shots add about 4 s.
 3. The declared joint space's dimension and drive-operator non-zeros against `Numerics.joint_dimension_max` and
    `Numerics.nnz_max`. `estimate(...).reason` prints the comparison.
 
